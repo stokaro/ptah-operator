@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/operate"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -422,4 +423,71 @@ func TestApproveWaitStopsOnARefusalThatWithdrewItsApproval(t *testing.T) {
 	})
 
 	assertRefusalStopsWait(t, err, "require_signature")
+}
+
+// kubectl ptah approve --wait when the run it approved has applied and the read
+// that comes after the run is refused. The history read back after the run fails,
+// gives way to the next read at spec.interval, and that read's Verify refuses the
+// artifact, so nothing reads the database again until an artifact passes. The
+// database changed, so neither wait says the target will not come: each names the
+// run, says it applied, and says no reading has followed it.
+func TestAnAppliedWaitSaysTheRunAppliedWhenARefusalHoldsItsReadBack(t *testing.T) {
+	t.Parallel()
+	harness, clock, plan := waitingForAnApproval(t)
+	waiting := harness.migration()
+	approval := migrationApprovalFor(waiting, plan)
+	if err := harness.api.Create(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+	harness.claimed(operatorv1alpha1.MigrationOperationApply)
+	harness.answer(runner.Result{
+		Operation: runner.OperationMigrationApply, ChildExitCode: 0,
+		CoordinationDigest:   harness.coordinationDigest(),
+		TargetIdentityDigest: testDigest,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract,
+			Direction:       "up", Outcome: dataplane.MigrationOutcomeApplied,
+			Planned: []int64{1}, Applied: []int64{1},
+		},
+	})
+	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+	harness.answer(runner.Result{
+		Operation: runner.OperationMigrationHistory, ChildExitCode: 1,
+		Error: &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 1"},
+	})
+	harness.dueNow(clock)
+	harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+	harness.answer(resolvedTo(testDigest))
+	harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+	harness.answer(refusedBy(testDigest))
+	refused := harness.migration()
+	run := refused.Status.LastRun
+	if refused.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked || run == nil ||
+		run.Outcome != operatorv1alpha1.MigrationRunOutcomeApplied || run.Verification != nil {
+		t.Fatalf("phase %s, run %#v; want an applied run with no reading after it, beside a refusal", refused.Status.Phase, run)
+	}
+	ref := operate.Ref{Family: operate.FamilyMigration, Namespace: waiting.Namespace, Name: waiting.Name}
+
+	for _, row := range []struct {
+		name    string
+		options operate.WaitOptions
+	}{
+		{"approve --wait", operate.WaitOptions{
+			Target: operate.TargetApplied, Since: waiting,
+			Decision: &operate.Decision{PlanName: plan.Name, PlanUID: plan.UID, ApprovalName: approval.Name, ApprovalUID: approval.UID},
+		}},
+		{"wait --for applied", operate.WaitOptions{Target: operate.TargetApplied, Since: waiting}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			_, err := waitOn(harness.api, ref, row.options)
+
+			var stop *operate.StopError
+			if !errors.As(err, &stop) || stop.Reason != operate.StopNotProved ||
+				!strings.Contains(stop.Message, "run "+run.JobName+" recorded its migrations applied, and no reading of its database has followed") ||
+				!strings.Contains(stop.Message, "require_signature") {
+				t.Fatalf("wait = %v, want a %s stop that names run %s as applied, with no reading after it while the policy refuses the artifact",
+					err, operate.StopNotProved, run.JobName)
+			}
+		})
+	}
 }

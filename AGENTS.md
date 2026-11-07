@@ -120,10 +120,11 @@ controller runs there, so what they prove is the API server's own verdict:
   and `TestPodBoundReceiverTokenCannotAuthenticateToAPI` verifies a Pod-bound
   token as a user granted only TokenReview create and Pod get. Both hold the
   grants they name, and neither proves the chart's RBAC. No receiver, controller
-  or garbage collector runs here. `cmd/manager/main.go` starts the receiver and
-  the collector when `--result-endpoint` is set, which the chart does while
-  `resultDelivery.enabled` holds its default, so installed delivery is proven in
-  `test/e2e`.
+  or garbage collector runs here. The manager starts the collector in both
+  delivery modes, which a unit test in `cmd/manager` holds, and the receiver
+  only when `--result-endpoint` is set, which the chart does while
+  `resultDelivery.enabled` holds its default. Installed delivery is proven in
+  `test/e2e`; no acceptance row runs the collector with delivery off.
 
 The API server reports only the first policy that refused a request, in no
 fixed order, so a refusal row is shaped so that one policy refuses it.

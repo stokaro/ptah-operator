@@ -350,3 +350,140 @@ func TestWaitForAPlanStopsOnARefusal(t *testing.T) {
 		})
 	}
 }
+
+// A refusal that comes after the run a wait for applied is about has ended does not
+// say the target will not come: the run changed the database. It holds back the
+// reading after the run, so the wait names the run, says it applied, and says no
+// reading of its database has followed. The reading the resource shows is the one
+// from before the run, dated before it, or in the same second, or after it by
+// another manager's clock; none of those dates may read as a history read back.
+func TestARefusalAfterAnAppliedRunSaysTheRunApplied(t *testing.T) {
+	t.Parallel()
+
+	const job = "run-1"
+	baseline := doc{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-a", uid: "plan-uid-a"}}
+	applied := func(finishedAt int) *runDoc {
+		return &runDoc{
+			outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: job, jobUID: "job-uid-1",
+			startedAt: at(40), finishedAt: at(finishedAt), operationID: "op-1",
+			plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
+		}
+	}
+	refusedAfter := func(run *runDoc, observedAt int) doc {
+		return doc{phase: "Blocked", observedAt: at(observedAt), lastRun: run, conditions: refused(operate.FamilyMigration, 3)}
+	}
+	claimed := func(run *runDoc) doc {
+		return doc{phase: "Resolving", operation: "Resolve", observedAt: at(0), lastRun: run, conditions: refused(operate.FamilyMigration, 3)}
+	}
+	waits := []struct {
+		name    string
+		options operate.WaitOptions
+	}{
+		{"any run", operate.WaitOptions{}},
+		{"a plan", operate.WaitOptions{Plan: "plan-a"}},
+		{"a decision", operate.WaitOptions{Decision: &operate.Decision{
+			PlanName: "plan-a", PlanUID: "plan-uid-a", ApprovalName: "approval-a", ApprovalUID: "approval-uid-a",
+		}}},
+	}
+	for _, row := range []struct {
+		name string
+		docs []doc
+		// wantStop is the read the wait stops at. Zero expects a timeout.
+		wantStop int
+	}{
+		{
+			name:     "the reading from before the run",
+			docs:     []doc{baseline, refusedAfter(applied(80), 0)},
+			wantStop: 3,
+		},
+		{
+			name:     "the reading from before the run, in the run's second",
+			docs:     []doc{baseline, refusedAfter(applied(0), 0)},
+			wantStop: 3,
+		},
+		{
+			name:     "the reading from before the run, dated after it",
+			docs:     []doc{baseline, refusedAfter(applied(80), 90)},
+			wantStop: 3,
+		},
+		{
+			name: "one read of the refusal is not enough: the next read found a claim",
+			docs: []doc{baseline, refusedAfter(applied(80), 0), claimed(applied(80))},
+		},
+	} {
+		for _, wait := range waits {
+			t.Run(row.name+"/"+wait.name, func(t *testing.T) {
+				t.Parallel()
+
+				tl := &timeline{family: operate.FamilyMigration, docs: row.docs}
+				options := wait.options
+				options.Target, options.Timeout, options.Interval, options.Clock = operate.TargetApplied, timeout, interval, newStepClock()
+				_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), options)
+
+				var stop *operate.StopError
+				var timedOut *operate.TimeoutError
+				switch {
+				case row.wantStop > 0:
+					if !errors.As(err, &stop) || stop.Reason != operate.StopNotProved || tl.readCount() != row.wantStop ||
+						!strings.Contains(stop.Message, "run "+job+" recorded its migrations applied, and no reading of its database has followed") ||
+						!strings.Contains(stop.Message, refusalMessage) {
+						t.Fatalf("err = %v after %d reads, want a %s stop at read %d that names run %s and %q",
+							err, tl.readCount(), operate.StopNotProved, row.wantStop, job, refusalMessage)
+					}
+				case !errors.As(err, &timedOut):
+					t.Fatalf("err = %v, want a timeout", err)
+				}
+			})
+		}
+	}
+}
+
+// A run whose reading afterwards is recorded on it was read back, so a refusal that
+// comes later stops no wait for it, whatever date that reading carries. Here another
+// manager's clock dated it before the run ended: a wait for a plan or a decision
+// goes by the record and is done, and a wait for any run, which dates the reading,
+// keeps waiting for one after the run. Neither may say the target will not come, or
+// that no reading followed the run.
+func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
+	t.Parallel()
+
+	run := &runDoc{
+		outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: "run-1", jobUID: "job-uid-1",
+		startedAt: at(40), finishedAt: at(80), operationID: "op-1",
+		plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
+		verification: operatorv1alpha1.MigrationRunVerifiedInSync, verifiedAt: at(70),
+	}
+	docs := []doc{
+		{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-a", uid: "plan-uid-a"}},
+		{phase: "Blocked", observedAt: at(70), lastRun: run, conditions: refused(operate.FamilyMigration, 3)},
+	}
+	for _, wait := range []struct {
+		name    string
+		options operate.WaitOptions
+		// done is a wait the record ends; any other keeps waiting to its timeout.
+		done bool
+	}{
+		{name: "any run"},
+		{name: "a plan", options: operate.WaitOptions{Plan: "plan-a"}, done: true},
+		{name: "a decision", options: operate.WaitOptions{Decision: &operate.Decision{
+			PlanName: "plan-a", PlanUID: "plan-uid-a", ApprovalName: "approval-a", ApprovalUID: "approval-uid-a",
+		}}, done: true},
+	} {
+		t.Run(wait.name, func(t *testing.T) {
+			t.Parallel()
+
+			tl := &timeline{family: operate.FamilyMigration, docs: docs}
+			options := wait.options
+			options.Target, options.Timeout, options.Interval, options.Clock = operate.TargetApplied, timeout, interval, newStepClock()
+			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), options)
+
+			var timedOut *operate.TimeoutError
+			switch {
+			case wait.done && err != nil:
+				t.Fatalf("err = %v, want the run recorded as read back to end the wait", err)
+			case !wait.done && (!errors.As(err, &timedOut) || !strings.Contains(timedOut.Waiting, "the history read back after run run-1")):
+				t.Fatalf("err = %v, want a timeout still waiting for the history read back after run run-1", err)
+			}
+		})
+	}
+}

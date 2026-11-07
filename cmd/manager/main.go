@@ -35,9 +35,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
-	"github.com/stokaro/ptah-operator/internal/resultcleanup"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
-	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultservice"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -234,19 +232,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	// A record outlives the setting that wrote it, so retention runs with delivery
-	// on or off. Nothing here needs the receiver: the collector scans metadata, and
-	// admission judges every write it sends.
-	cleanupPolicy := resultcleanup.Policy{Reader: manager.GetAPIReader(), Window: resultretention.MinimumWindow}
-	collector, err := resultcleanup.New(manager.GetClient(), cleanupPolicy, ctrlmetrics.Registry)
-	if err != nil {
-		log.Error(err, "configure result cleanup")
-		os.Exit(1)
-	}
-	if err := manager.Add(collector); err != nil {
-		log.Error(err, "register result cleanup")
-		os.Exit(1)
-	}
 
 	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
 	// Read alert state directly from the API once per leader scrape. A warm
@@ -346,9 +331,11 @@ func main() {
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
 	}})
-	writeValidator := &controllerwrite.Validator{Reader: manager.GetAPIReader(), Jobs: builder, ManagerUsername: controllerServiceAccountUsername, ResultCleanup: &cleanupPolicy}
-	if results != nil {
-		writeValidator.ResultCredentials = results
+	// Result retention runs with delivery on or off; see newWriteValidator.
+	writeValidator, err := newWriteValidator(manager, ctrlmetrics.Registry, builder, controllerServiceAccountUsername, results)
+	if err != nil {
+		log.Error(err, "configure result retention")
+		os.Exit(1)
 	}
 	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{Validator: writeValidator}})
 

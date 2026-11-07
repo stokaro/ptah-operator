@@ -62,8 +62,12 @@ until it ships a fix, so read a blocked reading from `status.journal` or
 `kubectl ptah migration`. `kubectl ptah wait
 --for approval` now ends on a plan already waiting, so a script that used it to
 wait for a newer reading has to run `kubectl ptah refresh --wait`. `kubectl ptah
-wait` and `kubectl ptah approve --wait` now exit 8 with `PolicyRefused` on an
-artifact the verification policy refuses, where they ran to the timeout and exited 7.
+wait --for in-sync`, `approval` or `applied`, `approve --wait`, `set-source --wait`
+and `resume --wait` now exit 8 with `PolicyRefused` on an artifact the verification
+policy refuses, where they ran to the timeout and exited 7. A wait for a migration
+run that applied before the refusal exits 8 with `CompletionNotProved` and names the
+run, so a script that reads exit status 8 as a plan that did not run has to read the
+reason as well.
 A migration Apply
 now writes the approver's username to the target database, so check what that
 means for the retention of its backups and dumps if the name is an email address.
@@ -99,8 +103,11 @@ After a manual `kubectl rollout undo` to an earlier manager, a run keeps the att
 of the run before it, because [its merge patch leaves the fields it does not
 know](../../use/operations/#rollback-stop).
 An installation with `resultDelivery.enabled=false` that still holds result records
-loses them about an hour after the upgrade, unless a resource still pins them, so copy
-any you want first. Its manager's ClusterRole gains `get`, `list`, `create` and
+starts losing them at the upgrade, so copy any you want first. Records whose attempt
+was retired while delivery was on go as soon as the collector reaches them, once that
+retirement is an hour old. The collector retires any other attempt once no resource
+pins it, and its records go about an hour later. Either way they also wait for their
+Job to be gone. The manager's ClusterRole there gains `get`, `list`, `create` and
 `delete` on `ptahresultrecords`, so check that against whatever audits the role.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
@@ -115,6 +122,15 @@ at once. Admission lets a delivery-off manager create a retirement and no other 
 and the collector adds a metadata list of records every 5 seconds to that installation,
 with or without records to find.
 [While result delivery is off](../../use/operations/#delivery-off) has what was measured.
+A rollback to 0.2.9 with delivery off can leave `retired` records this release wrote,
+and 0.2.9 never deletes them: it runs no collector with delivery off, and its webhook
+refuses to delete any record but a `credential` one, so a namespace holding one stays
+`Terminating`. The collector writes one for every attempt nothing pins on its first
+pass after the upgrade, and each stays at least an hour, so roll back only once
+`kubectl get ptahresultrecords -A -l operator.ptah.run/result-record=retired` lists
+nothing. Where a namespace is already stuck, upgrade to 0.2.10 again, whose collector
+removes those records once they are an hour old, or turn delivery on in 0.2.9 as
+[that section](../../use/operations/#delivery-off) says, where the 0.2.9 chart allows it.
 
 PostgreSQL 18.x joins the supported release lines, and a cluster on 17.x has
 nothing to change for that. Its official image keeps its data under

@@ -857,6 +857,41 @@ func TestAMigrationReadRequestThatIsNotAnInstantIsAnsweredWhileAReadFails(t *tes
 			t.Fatalf("an Apply answered the request: %q", actual.Status.LastReadRequest)
 		}
 	})
+	// A read on its first attempt has not failed: it dispatches its Job, and the
+	// value waits for the claim to end as it always did.
+	for _, operationType := range []operatorv1alpha1.MigrationOperationType{
+		operatorv1alpha1.MigrationOperationHistory, operatorv1alpha1.MigrationOperationResolve,
+	} {
+		t.Run("a first "+string(operationType)+" attempt does not answer it", func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			migration.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: retryDelay}
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.ObservedGeneration = migration.Generation
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			operation := migrationClaim(t, migration, operationType)
+			migration.Annotations = map[string]string{operatorv1alpha1.ReadRequestAnnotation: "now please"}
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, verificationPolicyConfigMap())
+
+			// The passes up to the dispatch, each of which could have answered it.
+			for pass := 1; ; pass++ {
+				actual := reconcileMigration(t, reconciler, api, migration)
+				if actual.Status.LastReadRequest != "" {
+					t.Fatalf("pass %d answered the request before the first attempt dispatched: %q", pass, actual.Status.LastReadRequest)
+				}
+				err := api.Get(context.Background(), client.ObjectKey{Namespace: migration.Namespace, Name: operation.JobName}, &batchv1.Job{})
+				if err == nil {
+					break
+				}
+				if pass == 4 {
+					t.Fatalf("the first attempt dispatched no Job %s in %d passes (operation %#v): %v",
+						operation.JobName, pass, actual.Status.ActiveOperation, err)
+				}
+			}
+		})
+	}
 }
 
 // What a migration keeps: a claim on its first attempt has not failed, and an

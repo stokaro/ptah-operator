@@ -90,7 +90,7 @@ func atTheGate(earlier *runDoc, journal ...operatorv1alpha1.JournalEntry) *doc {
 func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 	t.Parallel()
 
-	refused := doc{phase: "Blocked", observedAt: at(0), conditions: refused(operate.FamilyMigration, 3)}
+	refusal := doc{phase: "Blocked", observedAt: at(0), conditions: refused(operate.FamilyMigration, 3)}
 	// The read after a refusal, failing at Resolve: the refusal no longer holds,
 	// and the status alone may still come back to the same plan.
 	reread := doc{phase: "Resolving", observedAt: at(0), operation: "Resolve", conditions: resolvedAgain(operate.FamilyMigration)}
@@ -121,10 +121,30 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 		wantMessage  string
 		// wantApprovalReads is how many times the approval was read, when it matters.
 		wantApprovalReads int
+		// wantReached is a wait that meets its target.
+		wantReached bool
 	}{
 		{
+			// Once the run the wait is for has ended, its record decides. A mark the
+			// writer never makes on a spent approval, and here not even on a spent
+			// one, changes nothing about a run already applied and read back.
+			name:      "an applied run whose approval was later marked stale",
+			docs:      []doc{{phase: "InSync", observedAt: at(90), lastRun: verified(run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)}},
+			approvals: stale("PlanNoLongerCurrent"), wantReached: true,
+		},
+		{
+			// A refusal that holds back the reading after the run is the run's
+			// record to answer, which says what the run did; the stale approval
+			// says nothing about a run that already ran.
+			name: "an applied run whose read-back a refusal holds, with its approval marked stale",
+			docs: []doc{{phase: "Blocked", observedAt: at(0), lastRun: run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-a", "plan-a", "approve-a", 20),
+				conditions: refused(operate.FamilyMigration, 3)}},
+			approvals: stale("PolicyRefused"),
+			wantStop:  operate.StopNotProved, wantMessage: "run job-op-a recorded its migrations applied, and no reading of its database has followed",
+		},
+		{
 			// The refusal answers in its own words while it holds.
-			name: "a refusal that holds is the policy's to name", docs: []doc{refused}, approvals: stale("PolicyRefused"),
+			name: "a refusal that holds is the policy's to name", docs: []doc{refusal}, approvals: stale("PolicyRefused"),
 			wantStop: operate.StopPolicyRefused, wantMessage: "require_signature",
 		},
 		{
@@ -184,16 +204,21 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 			t.Parallel()
 			tl := &timeline{family: operate.FamilyMigration, docs: row.docs, approvals: row.approvals, approvalErrs: row.approvalErrs}
 			named := decisionA
-			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+			result, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
 				Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
 				Since: atTheGate(nil).object(operate.FamilyMigration), Decision: &named,
 			})
-			if row.wantStop != "" {
+			switch {
+			case row.wantReached:
+				if err != nil || result.Run == nil || result.Run.JobName != "job-op-a" {
+					t.Fatalf("err = %v, run %+v, want the run of approve-a reached", err, result.Run)
+				}
+			case row.wantStop != "":
 				var stop *operate.StopError
 				if !errors.As(err, &stop) || stop.Reason != row.wantStop || !strings.Contains(stop.Message, row.wantMessage) {
 					t.Fatalf("err = %v, want %s naming %q", err, row.wantStop, row.wantMessage)
 				}
-			} else {
+			default:
 				var timedOut *operate.TimeoutError
 				if !errors.As(err, &timedOut) || !strings.Contains(timedOut.Error(), row.wantMessage) {
 					t.Fatalf("err = %v, want a timeout naming %q", err, row.wantMessage)

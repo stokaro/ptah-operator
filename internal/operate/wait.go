@@ -202,7 +202,9 @@ const (
 	// has no reading to show for it, with no record that says more: one that names
 	// no plan, one that names this plan and not what allowed it or not the
 	// fingerprint the wait named, one whose reading afterwards is no longer
-	// recorded, or one whose database moved before the next reading.
+	// recorded, one whose database moved before the next reading, or one that
+	// applied and has no reading after it while a verification policy refuses the
+	// artifact, which holds back every reading.
 	StopNotProved StopReason = "CompletionNotProved"
 	// StopNothingApplied is a migration run that found nothing to apply.
 	StopNothingApplied StopReason = "NothingApplied"
@@ -220,6 +222,8 @@ const (
 	// artifact it names now. No plan outlives the refusal, no approval does, and
 	// the database is not read, until the operator reads an artifact the policy
 	// accepts: at spec.interval, on a read request, or at once after a spec edit.
+	// A wait for a migration run that has ended goes by the run's record instead,
+	// and one that applied with no reading after it is StopNotProved.
 	StopPolicyRefused StopReason = "PolicyRefused"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
@@ -846,11 +850,11 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 //
 // A verification policy that refuses the artifact stops the wait as well, with
 // StopPolicyRefused: no plan and no approval outlives that refusal, and nothing
-// reads the database until an artifact passes. See artifactRefusal.
+// reads the database until an artifact passes. See artifactRefusal. A wait for a
+// migration run that has ended does not come here (checkApplied).
 func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
-	if refused := w.artifactRefusal(s); refused != nil && w.refusalReads >= refusalReadsToStop {
-		return w.stop(s, StopPolicyRefused, fmt.Sprintf("%s; a new artifact or a policy edit is read at spec.interval "+
-			"or on a read request, and a spec edit at once", refused.Message)), true
+	if refused := w.heldRefusal(s); refused != nil {
+		return w.stop(s, StopPolicyRefused, fmt.Sprintf("%s; %s", refused.Message, refusalEnds)), true
 	}
 	if s.plan == nil || !fresh {
 		return verdict{}, false
@@ -872,6 +876,39 @@ func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
 // brings the next read forward, so one document says nothing of the claim the next
 // pass writes. That pass runs within a read's interval, and the second read sees it.
 const refusalReadsToStop = 2
+
+// refusalEnds says what ends a verification policy's refusal.
+const refusalEnds = "a new artifact or a policy edit is read at spec.interval or on a read request, and a spec edit at once"
+
+// heldRefusal is artifactRefusal once enough reads in a row have found it, or nil.
+// check counts the reads, so a count that high means this document has it too.
+func (w *waiter) heldRefusal(s snapshot) *metav1.Condition {
+	if w.refusalReads < refusalReadsToStop {
+		return nil
+	}
+	return w.artifactRefusal(s)
+}
+
+// readBackHeld stops a wait on a migration run that recorded its migrations
+// applied and has no reading of its database after it, while a verification
+// policy's refusal holds: the operator reads the history only once an artifact
+// passes. The run changed the database, so this is no refusal of the target. It
+// is a run that has nothing to show for it, and the message names it.
+//
+// The first read that finds the refusal waits for the second, as policyHeld does,
+// and decides nothing else about the run.
+func (w *waiter) readBackHeld(s snapshot, run *runRecord) (verdict, bool) {
+	refused := w.artifactRefusal(s)
+	if refused == nil {
+		return verdict{}, false
+	}
+	if w.refusalReads < refusalReadsToStop {
+		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s)), true
+	}
+	return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and no reading of its database "+
+		"has followed, since nothing reads the database while the verification policy refuses the artifact: %s; %s",
+		run.jobName, refused.Message, refusalEnds)), true
+}
 
 // artifactRefusal is the condition that says the verification policy's refusal of
 // the source the resource names now holds, or nil.
@@ -988,8 +1025,11 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 	// asks it.
 	fresh := w.fresh.see(s)
 	if s.family == FamilyMigration {
-		run := w.checkRun(s)
-		if run.done || run.stop != nil {
+		// A policy stops the wait only while the run it is for has not ended. Once
+		// it has, the run's own record decides: a refusal that came after it holds
+		// back the reading that would confirm it, and does not undo what it changed.
+		run, ended := w.checkRun(s)
+		if run.done || run.stop != nil || ended {
 			return run
 		}
 		if held, ok := w.policyHeld(s, fresh); ok {
@@ -1056,7 +1096,9 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 	return waitingFor("an Apply that ends after the wait began; now %s", inFlight(s))
 }
 
-func (w *waiter) checkRun(s snapshot) verdict {
+// checkRun decides TargetApplied for a migration. The second result reports that
+// the run the wait is for has ended, so that its record alone decides the wait.
+func (w *waiter) checkRun(s snapshot) (verdict, bool) {
 	if w.options.Decision != nil || w.options.Plan != "" {
 		return w.checkBoundRun(s)
 	}
@@ -1065,17 +1107,25 @@ func (w *waiter) checkRun(s snapshot) verdict {
 		(b.unresolved == nil || b.unresolved.operationID != unresolved.operationID) {
 		return w.stop(s, StopUnresolved, fmt.Sprintf("the run of plan %s (Job %s) ended %s: its effect on the "+
 			"database is not established, and nothing runs until a reading or a person accounts for it",
-			unresolved.plan, unresolved.jobName, unresolved.outcome))
+			unresolved.plan, unresolved.jobName, unresolved.outcome)), true
 	}
 	if run := s.lastRun; run != nil && run.finished && newRun(b.lastRun, run) {
 		switch run.outcome {
 		case operatorv1alpha1.MigrationRunOutcomeApplied:
+			// Before the reading is dated: with no reading of the run's database
+			// recorded on it, the reading the resource shows can be the one from
+			// before the run, which two managers' clocks may date after it.
+			if !run.verified {
+				if held, ok := w.readBackHeld(s, run); ok {
+					return held, true
+				}
+			}
 			// The run's own account is written with VerifyingHistory, which
 			// does not rest, and the operator reads the history back before
 			// the resource settles: only that reading says what the revision
 			// table holds.
 			if !s.resting() || s.observedAt.Before(run.finishedAt) {
-				return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
+				return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s)), true
 			}
 			if s.phase == string(operatorv1alpha1.MigrationPhaseBlocked) {
 				message := "the history read back afterwards is blocked"
@@ -1083,14 +1133,14 @@ func (w *waiter) checkRun(s snapshot) verdict {
 					message = fmt.Sprintf("the history read back afterwards is blocked (%s): %s", blocker.Reason, blocker.Message)
 				}
 				return w.stop(s, StopNotConverged, fmt.Sprintf("run %s recorded its migrations applied, and %s",
-					run.jobName, message))
+					run.jobName, message)), true
 			}
 			if v, ok := w.generationReached(s); !ok {
-				return v
+				return v, true
 			}
-			return verdict{done: true}
+			return verdict{done: true}, true
 		default:
-			return w.runDidNotApply(s, run)
+			return w.runDidNotApply(s, run), true
 		}
 	}
 	// An Apply claim the operator could not dispatch is given up, recorded as
@@ -1098,10 +1148,10 @@ func (w *waiter) checkRun(s snapshot) verdict {
 	for _, entry := range journalSince(b.journal, s.journal) {
 		if entry.Type == operatorv1alpha1.JournalOperationFailed &&
 			entry.Operation == string(operatorv1alpha1.MigrationOperationApply) && s.operation == "" {
-			return w.stop(s, StopApplyFailed, w.failureMessage(s, entry))
+			return w.stop(s, StopApplyFailed, w.failureMessage(s, entry)), false
 		}
 	}
-	return waitingFor("a run that finishes after the wait began; now %s", inFlight(s))
+	return waitingFor("a run that finishes after the wait began; now %s", inFlight(s)), false
 }
 
 // runDidNotApply stops a wait on a run that ended any way but Applied.
@@ -1189,13 +1239,13 @@ func (w *waiter) boundPlan() string {
 // of events and not by when one happened: first status.lastRun, then, since a
 // later run may have replaced that between two reads, the journal. Only once
 // neither holds this run does anything else that happened say it will not come.
-func (w *waiter) checkBoundRun(s snapshot) verdict {
+func (w *waiter) checkBoundRun(s snapshot) (verdict, bool) {
 	b := w.baseline
 	since := journalSince(b.journal, s.journal)
 	run := s.lastRun
 	finished := run != nil && run.finished && newRun(b.lastRun, run)
 	if finished && w.bindingOf(run.identity) == runIsBound {
-		return w.boundRunEnded(s, run)
+		return w.boundRunEnded(s, run), true
 	}
 	var ended []operatorv1alpha1.JournalEntry
 	for _, entry := range since {
@@ -1203,12 +1253,14 @@ func (w *waiter) checkBoundRun(s snapshot) verdict {
 			continue
 		}
 		if w.bindingOf(identityOfEntry(entry)) == runIsBound {
-			return w.boundRunJournaled(s, entry)
+			return w.boundRunJournaled(s, entry), true
 		}
 		ended = append(ended, entry)
 	}
+	// Every verdict below stops the wait but the last, which waits for a run that
+	// has not ended.
 	if finished {
-		return w.anotherRunEnded(s, run.identity, fmt.Sprintf("the run (Job %s) ended %s", run.jobName, run.outcome))
+		return w.anotherRunEnded(s, run.identity, fmt.Sprintf("the run (Job %s) ended %s", run.jobName, run.outcome)), false
 	}
 	// Before the journal's other ends: the write that brings a hold back with no
 	// run beside it also writes the hold's entry, and the hold says more.
@@ -1217,29 +1269,29 @@ func (w *waiter) checkBoundRun(s snapshot) verdict {
 		identity := runIdentity{plan: unresolved.plan, planUID: unresolved.planUID}
 		if w.bindingOf(identity) == runOfAnotherPlan {
 			return w.stop(s, StopPlanSuperseded, fmt.Sprintf("plan %s ran and ended %s, and plan %s did not run",
-				unresolved.plan, unresolved.outcome, w.boundPlan()))
+				unresolved.plan, unresolved.outcome, w.boundPlan())), false
 		}
 		return w.stop(s, StopUnresolved, fmt.Sprintf("the run of plan %s (Job %s) ended %s: its effect on the "+
 			"database is not established, and nothing runs until a reading or a person accounts for it",
-			unresolved.plan, unresolved.jobName, unresolved.outcome))
+			unresolved.plan, unresolved.jobName, unresolved.outcome)), false
 	}
 	if len(ended) > 0 {
 		entry := ended[0]
-		return w.anotherRunEnded(s, identityOfEntry(entry), fmt.Sprintf("a run ended %s", entry.Outcome))
+		return w.anotherRunEnded(s, identityOfEntry(entry), fmt.Sprintf("a run ended %s", entry.Outcome)), false
 	}
 	if stop, superseded := w.planSuperseded(s); superseded {
-		return stop
+		return stop, false
 	}
 	if stop, withdrawn := w.approvalWithdrawn(s); withdrawn {
-		return stop
+		return stop, false
 	}
 	for _, entry := range since {
 		if entry.Type == operatorv1alpha1.JournalOperationFailed &&
 			entry.Operation == string(operatorv1alpha1.MigrationOperationApply) && s.operation == "" {
-			return w.stop(s, StopApplyFailed, w.failureMessage(s, entry))
+			return w.stop(s, StopApplyFailed, w.failureMessage(s, entry)), false
 		}
 	}
-	return waitingFor("the run of plan %s; now %s", w.boundPlan(), inFlight(s))
+	return waitingFor("the run of plan %s; now %s", w.boundPlan(), inFlight(s)), false
 }
 
 // boundRunEnded judges the run the wait names, from status.lastRun.
@@ -1248,6 +1300,13 @@ func (w *waiter) boundRunEnded(s snapshot, run *runRecord) verdict {
 		return w.runDidNotApply(s, run)
 	}
 	if !run.verified {
+		// A verification policy's refusal holds back the reading that would record
+		// itself on the run. It goes before the date of the reading the resource
+		// shows, which can be the one from before the run, dated after it by another
+		// manager's clock.
+		if held, ok := w.readBackHeld(s, run); ok {
+			return held
+		}
 		// A reading records itself on the run in the status write that records the
 		// reading, so a later one with nothing recorded was of another database, and
 		// only that database's next reading is left to wait for, if it ever comes. Two

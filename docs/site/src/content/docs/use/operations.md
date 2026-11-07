@@ -1641,13 +1641,27 @@ nothing to whoever owns the installation.
 
 #### While result delivery is off {#delivery-off}
 
-A record outlives the setting that wrote it, so retention runs with
+A record outlives the setting that wrote it, so from 0.2.10 retention runs with
 `resultDelivery.enabled=false` as it does with delivery on. The collector runs on the
 leader, the manager holds the same grant on records, and the webhook judges every
 deletion by the same window, a `credential` record included. Operations write no
 records while delivery is off, so what this collects is what an earlier setting left.
 Nothing has to be turned on: a namespace holding such records reads the refusal above,
 with its time, and goes about an hour after they were retired.
+
+A manager older than 0.2.10 runs no collector with delivery off, and its webhook
+refuses to delete any record but a `credential` one, with the message that names no
+time. A namespace holding one stays `Terminating` while delivery stays off. On such a
+release, turn delivery on until `kubectl get ptahresultrecords -A` lists nothing you
+are waiting for:
+
+```sh
+helm upgrade <release> <chart> --values <values> --set resultDelivery.enabled=true
+```
+
+That release's chart refuses `resultDelivery.enabled=true` beside
+`certificateRotation.enabled=false` or a `webhook.existingSecret`, so such an
+installation has [the uninstall below](#teardown) until it runs 0.2.10.
 
 On kind with Kubernetes 1.37.0, a resource deleted with delivery off got its `retired`
 record on the collector's next pass. A namespace deleted with delivery off read the
@@ -1788,7 +1802,7 @@ reads those rather than the order or the time of what happened.
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest, or a run spent that other approval, which leaves this one `Stale` |
 | `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it, or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -1847,7 +1861,10 @@ kubectl ptah schema storefront -n application shows where it stands.
 A verification policy that refuses the artifact stops a wait for `in-sync`,
 `approval` or `applied` with the reason `PolicyRefused` and the requirements it
 named. No plan outlives the refusal and no approval does, and the database is not
-read. The wait reads the refusal from `ArtifactVerified`, `False` with
+read. A wait for `applied` whose migration run has already ended goes by that run
+instead: one that applied stops with `CompletionNotProved`, naming the run, since
+the database changed and the refusal holds back the reading that would confirm it.
+The wait reads the refusal from `ArtifactVerified`, `False` with
 `PolicyRefused`, for the generation the resource has now, at rest in `Blocked`, on
 two reads in a row. No reading dates it, so a refusal that stands when the wait
 begins stops it too. An older one does not: a spec edited since, a read request
