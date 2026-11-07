@@ -98,13 +98,9 @@ parameters that can inject session SQL. `multiStatements` is always rejected.
 Conventional IPv6 MySQL URLs must include an explicit port; the network DSN form
 remains supported without one.
 
-The privileges above decide which object kinds the account can see. Under the
-Ptah v0.22.0 executor this build pins, a kind it cannot see stays out of the
-drift report: [What the login cannot see](#what-the-login-cannot-see). Ptah
-v0.23.0 refuses such a read instead, with `permission_denied`, and the operator
-then says which kinds of object the account cannot see. With the grants above
-both builds give the same answer, including the refusal of a routine another
-account defined.
+The privileges above decide which object kinds the account can see, and the
+executor refuses a read that cannot see one of them rather than report less:
+[What the login cannot see](#what-the-login-cannot-see).
 
 ## What the login cannot see
 
@@ -112,13 +108,16 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.22.0, the executor this operator build pins
+This section describes Ptah v0.23.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. The acceptance row for it also runs on PostgreSQL 18. Another executor
-build can answer differently. PostgreSQL has no gap at
-this build, and
-[stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks MySQL.
+8.4.11. The PostgreSQL table was measured at v0.22.0; the acceptance row that
+reads a table another role created under this login runs at the pinned build on
+PostgreSQL 17 and 18. The runner harness holds the MySQL refusals to the release
+image. Another executor build can answer differently. Neither engine reads an
+object the login cannot see as absent at this build: PostgreSQL shows the login
+every object, and MySQL refuses the read
+([stokaro/ptah#5545](https://github.com/stokaro/ptah/pull/5545)).
 
 ### PostgreSQL
 
@@ -177,31 +176,32 @@ read fails at exit 2 and says so, so an Observe fails rather than finding nothin
 
 ### MySQL
 
-MySQL has no catalog that lists every object to every account, so here the report
-still depends on the privileges, as it did before this build. An account with
-`SELECT` on the database sees its tables, views, indexes and constraints. Triggers
-and routines take privileges of their own:
+MySQL has no catalog that lists every object to every account:
+`information_schema` lists only what the account holds a privilege on. The
+executor checks that the account could see every trigger, routine and view
+definition in the database before it compares, and refuses the read when it
+could not. `schema drift` and `schema plan` then exit 2 with
+`permission_denied`, and Ptah's message names the privilege each kind needs. The
+operator fails the Observe or the Plan with `permission_denied` and a sentence
+that names the kinds of object the account cannot see, such as "the user cannot
+see every trigger and routine in the database". Status carries no database or
+object name.
 
-| Account, on the managed database unless noted | Not reported |
-| --- | --- |
-| `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, `REFERENCES` | triggers, functions, procedures |
-| The above with `TRIGGER` | functions, procedures |
-| The above with `SHOW_ROUTINE`, granted globally | none of these |
-| `root` | none of these |
+| Account, on the managed database unless noted | Only the declared tables | A trigger and routines another account made | A view |
+| --- | --- | --- | --- |
+| `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, `REFERENCES`, the login this page documented before this build | refused: triggers, routines | refused: triggers, routines | |
+| The above with `TRIGGER`, `EXECUTE`, `SHOW VIEW`, the login this page documents | read | refused: routines | read |
+| The above without `SHOW VIEW` | read | refused: routines | refused: views |
+| `TRIGGER`, `SHOW VIEW`, and `SHOW_ROUTINE` granted globally | read | read: `triggers_removed`, `functions_removed` | read |
 
-When a trigger or a routine is the only difference, `schema drift` exits 0 with
-`"drift": false` and `schema plan` answers `no-changes`. `CREATE ROUTINE` and
-`ALTER ROUTINE` on the database show a routine without its body when another
-account defined it: the read then fails at exit 2, naming `SHOW_ROUTINE`, so an
-Observe fails too. An account with table-level grants does not see a table it
-holds nothing on. A hand-made event is not reported under any account, `root`
-included.
-
-Until the pinned executor changes, add `TRIGGER` on the database and
-`SHOW_ROUTINE` globally where a hand-made trigger or routine has to show up.
-`TRIGGER` lets the account create and drop triggers, and `SHOW_ROUTINE` reads
-routine definitions in every database. To keep the account as it is, run
-`ptah schema drift` at the pinned digest as an account that holds them.
+The login this page documented before this build fails every Observe and Plan,
+on an empty database too, because it cannot show that it saw every trigger and
+routine. `EXECUTE` lists the routines in the database and shows the body of the
+routines the account defined itself. A routine another account defined stops the
+read, and Ptah's message names it, until `SHOW_ROUTINE` is granted globally. An account with table-level grants does
+not see a table it holds nothing on. A hand-made event is not reported under any
+account, `root` included: the drift document lists events under `not_compared`,
+which the operator does not read.
 
 ## Proving a custom privilege set
 

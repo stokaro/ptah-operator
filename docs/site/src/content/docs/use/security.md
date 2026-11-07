@@ -773,8 +773,7 @@ Observe exposes one canonical category aggregate for each category the report
 found, each containing only a category from the closed v1 machine vocabulary, a
 positive count, and a severity. A syntactically valid but unknown category fails the operation rather
 than being published or dropped. The vocabulary is the list the pinned Ptah can
-emit, recorded in `support/ptah-drift-categories.json`, plus the categories of a
-release the operator reads ahead of the pin, and a Ptah pin that grows
+emit, recorded in `support/ptah-drift-categories.json`, and a Ptah pin that grows
 that list cannot merge until the vocabulary, the status enum and the CRD schema
 version follow it. The frame never carries
 object names, SQL, schema literals, or the native diff. The vocabulary fits
@@ -852,7 +851,7 @@ schema declares. Any other answer leaves the failure with the code it had.
 
 That reason can quote the file. A parser names the token it stopped at, and a
 YAML error repeats the start of the value it could not decode:
-`unsupported SQL statement: SELCT at position 153`, or
+`schema.sql:7:1: unsupported SQL statement: SELCT`, or
 ``cannot unmarshal !!str `hunter2...` ``. Status and Events are readable by more
 roles than the file is: the diagnostic reader may read them and is denied
 ConfigMaps and plan chunks, so a fragment of a source file can reach someone who

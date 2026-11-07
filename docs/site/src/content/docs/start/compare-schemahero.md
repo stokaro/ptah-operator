@@ -47,7 +47,7 @@ computes its SQL and keeps its plans in the cluster.
 | A hand edit to the database | No migration and no log line in five minutes | Reported in 81 seconds, by category, with a one-minute interval, except a table the login cannot read ([tracked](https://github.com/stokaro/ptah-operator/issues/792)) |
 | A statement that fails | Retried 30 times in two minutes, then ran unattended once it could | Warned in the plan, did not retry, and required a new approval |
 | Who approved | Recorded any name passed to `--actor` | Recorded the Kubernetes identity, and can refuse the author |
-| PostgreSQL objects in one desired schema | No fields for check constraints, partial or expression indexes, enums, generated columns, row-level security, policies, comments or partitioning | All of these created and converged, with a partitioned parent table only: a schema file cannot yet declare `PARTITION OF` ([tracked](https://github.com/stokaro/ptah/issues/5506)) |
+| PostgreSQL objects in one desired schema | No fields for check constraints, partial or expression indexes, enums, generated columns, row-level security, policies, comments or partitioning | All of these created and converged, with a partitioned parent table only. A SQL schema file can declare `PARTITION OF` since Ptah v0.23.0 ([stokaro/ptah#5506](https://github.com/stokaro/ptah/issues/5506)), after that run |
 | A GIN index | `type: gin` built a B-tree | Built a GIN index |
 | Adding a column beside a composite foreign key | Also dropped and recreated the key | One `ADD COLUMN` |
 

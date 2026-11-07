@@ -297,17 +297,16 @@ where Ptah's words leave it out, as a YAML parser's do. For a migration director
 it names the file Ptah stopped at, or the version when a file is missing:
 
 ```
-desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180
+desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS
 desired_source_unreadable: schema.yaml: error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator
 desired_source_unreadable: failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false
 desired_source_unreadable: incomplete migrations found (missing up or down files): [1]
 ```
 
 The path is where the file sits in the operation Pod: `/source/schema/` and the
-path a ConfigMap item names or the last part of a Git path. In a SQL file,
-`position` is the offset in bytes from the start of the file, counted from zero,
-and `head -c $((180 + 1)) schema.sql | tail -n 1` prints that line up to the first
-byte of the token Ptah stopped at. YAML, HCL and DBML name a line.
+path a ConfigMap item names or the last part of a Git path. SQL names the line
+and the column after the path, as `schema.sql:2:29` above, and YAML, HCL and
+DBML name a line.
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |
@@ -355,25 +354,40 @@ not reach this code:
   failure keeps `child_exit`, or `invalid_plan_output` from a Plan.
 - A foreign key into a schema the database holds and the file declares nothing of
   is refused by the comparison with that database, which the second run does not
-  have. It keeps those codes too, and a fault the second run finds elsewhere in the
-  same file is not why the command stopped.
+  have. An Observe keeps `child_exit`, a Plan reads as the next paragraph says, and
+  a fault the second run finds elsewhere in the same file is not why the command
+  stopped.
 
-Ptah v0.23.0 refuses such a file with the refusal code `declaration-refused`
-rather than failing the plan, and keeps the same sentence. The operator asks the
-second run about that refusal as it asks about a failure, so the faults above
-read the same with either version. A declaration refusal the second run does not
-explain reads `plan_refused: ptah refused to plan the change (declaration-refused)`.
+`schema plan` refuses such a file with the refusal code `declaration-refused`,
+and the operator asks the second run about that refusal as it asks about a
+failure. A declaration refusal the second run does not explain, such as the
+foreign key into a schema only the database holds, reads `plan_refused: ptah
+refused to plan the change (declaration-refused)`.
 
 `ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
 file alone can be refused for, indexes included, with no database.
 
-A schema published to an OCI registry is the exception, and for it the operator
-gives no reason. Ptah parses the artifact in the `fetch-schema` init container,
-before the operation starts. `ptah schema push` refuses a file it cannot parse, so
-an artifact that fails here comes from a newer Ptah than the executor, or from
-something other than Ptah. The message names only the step, with no file and no
-reason: `the fetch-schema step exited 2, so the run never started`. That container
-holds the registry credentials, so what it wrote does not reach status or an Event.
+A schema published to an OCI registry reads the same way. The `fetch-schema`
+init container checks the manifest, the artifact type, and each layer's media
+type, size, digest and name, and writes the schema without parsing it
+(`ptah schema pull --skip-parse`). The operation container parses it, and the
+second run names the file:
+
+```
+desired_source_unreadable: error parsing schema file: parse HCL schema: /source/schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.
+```
+
+The fetched file sits at `/source/schema.hcl` in the Pod, not under
+`/source/schema/`.
+
+`ptah schema push` refuses a file it cannot parse, so such an artifact comes from
+a newer Ptah than the executor, or from something other than Ptah.
+
+What the fetch itself refuses still gets no reason: an artifact of another type,
+or a layer whose media type, size or digest does not match. The message names
+only the step: `the fetch-schema step exited 2, so the run never started`. That
+container holds the registry credentials, so what it wrote does not reach status
+or an Event.
 
 An author reads the reason without the cluster, by pulling the artifact with the
 Ptah version [the operator pins](../../support/ptah/):
@@ -392,15 +406,18 @@ kubectl logs -n application job/<job> -c fetch-schema
 
 ## A Plan that stops without saying why
 
-Ptah refuses some changes rather than plan them, and only its failure to open the
-target or to read the file reaches status. Any other sentence stays in the Pod, and
-what the operator says is `invalid_plan_output: plan command did not complete
-successfully`. Running `ptah schema plan` yourself, at the digest the operator pins,
-prints the sentence.
+Ptah refuses some changes rather than plan them. A refusal Ptah names by a code
+reaches status as `plan_refused: ptah refused to plan the change (<code>)`, with
+no more than the code. A plan Ptah fails to make for any other reason than
+opening the target or reading the file reads `invalid_plan_output: plan command
+did not complete successfully`. Either way the sentence stays in the Pod, and
+running `ptah schema plan` yourself, at the digest the operator pins, prints it.
 
 | What Ptah refused | How it shows | What to do |
 | --- | --- | --- |
-| A view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. Since Ptah v0.22.0. | An Observe reports `views_modified`, and the Plan fails at every retry. | State the option in the schema and push it with a Ptah v0.22.0 CLI, since v0.18.0 cannot parse it: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
+| A view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
+| The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
+| The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
 
 ## A change a policy fences off
 
