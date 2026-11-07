@@ -450,8 +450,9 @@ settles it.
 
 `spec.suspend` prevents new Jobs. A Job already applying is still observed to a
 terminal result, because abandoning it would leave the database in a state
-nothing recorded; suspension while an operation is live stages the Lease
-release first.
+nothing recorded. So is a read that serves a proof, and the proof keeps the
+Lease until it ends. Any other read under way is dropped, and the status write
+that drops it stages the release of any Lease it holds.
 
 `leaseContinuityLost` is set before any result can be harvested when the
 persisted epoch no longer owns an uninterrupted lock interval. A result

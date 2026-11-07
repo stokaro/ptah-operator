@@ -293,7 +293,7 @@ No read of another target can say what the Apply did, and the resource stops:
   another claimant of that database waits.
 - It reads again every `spec.execution.failureRetryInterval`, so it finds the first
   target if that comes back, and it connects to the new one each time. No source is
-  read, no plan is published, no Apply runs and a read request waits.
+  resolved, no plan is published, no Apply runs and a read request waits.
 
 **Put the first URL back.** The next read matches, and the proof runs as it would
 have. An Apply that succeeded is recorded in `status.applied`. This loses nothing,
@@ -308,18 +308,34 @@ kubectl get ptahschemas storefront -n application \
   -o jsonpath='{.status.conditions[?(@.type=="ReconciliationFailed")].message}'
 ```
 
-It writes the `operator.ptah.run/settled-apply` annotation with a value only this
-stop prints: the Apply's operation ID and the digest of the target the read named. A
-value written earlier, the Apply's ID on its own for one, settles nothing and arms
-nothing, so a later move by the store cannot use it. If the store moves again, the
-value no longer matches and the resource prints another.
+It writes the `operator.ptah.run/settled-apply` annotation with the Apply's operation
+ID and the digest of the target the read named. The value is a statement about this
+Apply and this target, not a secret: the digest is a plain SHA-256 of the target's
+identity, so anyone who knows the URL can work it out, and the status of anything
+planned against that URL shows it. The Apply's ID on its own settles nothing.
+
+The statement holds until the proof ends. The operator takes it at a read that names
+its target, once the resource has stopped there and printed that value, so you see
+that stop even if you wrote the value first. If the store moves on, the resource
+prints another value and the statement waits. If the store comes back, the resource
+stops there again and the next read settles, with no new write. A store that flips
+from the first target to this one and back, A, B, A, B, settles on B, which is what
+the statement said. To take it back, remove the annotation:
+
+```sh
+kubectl annotate ptahschemas storefront -n application operator.ptah.run/settled-apply-
+```
+
+Any other value does nothing, and the next stop says the annotation holds another
+value.
 
 That statement says you account for what the Apply did to the first target. A read
 under the new target says nothing about it, and `status.journal` says whether the
 Apply reported `Succeeded` or `Unknown`, so check the first target first if it
-matters. The operator takes the statement at the next read that names that target,
-up to `failureRetryInterval` later. A suspended resource runs no reads, so it takes
-it after it resumes. By then every Pod the Apply could still be running has stopped.
+matters. A resource that has stopped takes the statement at its next read, up to
+`failureRetryInterval` later. A suspended resource starts no reads, so it takes it
+after it resumes, though a read already under way is still taken. By then every Pod
+the Apply could still be running has stopped.
 It gives up the proof, the plan and the realm in one status write, records
 `Verified`, `Unknown` in the journal with a `ProofSettled` Event, and starts again
 from `Resolve` under the URL the Secret holds. Nothing is written to `status.applied`.
@@ -337,14 +353,25 @@ its audit policy records writes to `PtahSchema`. It is something `patch` could n
 otherwise: deleting the resource takes `delete`, and patching its target does not end
 a proof. So `patch` alone can end a proof hold and release the database realm.
 
-A read names a target only if its Pod starts and the URL parses. If you point
-`spec.target.urlFrom` at a new Secret and delete the old one, which is the natural way
-to move, the proof still reads the old one: its Pod cannot start, and the resource
-reports `PodConfigurationError`, holds its realm and prints no command. A URL that
-does not parse reports `invalid_target` the same way, and in neither state does the
-annotation do anything. Create the Secret `status.pendingObservation.target` names
-again, with any valid URL. The first URL finishes the proof, and any other one leads
-to `Blocked` and the command above.
+A read names a target only if its Pod starts, its source fetch succeeds, its Job
+completes and the URL parses. A read that ends any other way is an ordinary failed
+read. The annotation does nothing at it, whatever it holds, `ReconciliationFailed`
+reports `OperationFailed` with no command, and a later read of the target stops the
+resource again before it settles.
+
+If you point `spec.target.urlFrom` at a new Secret and delete the old one, which is the
+natural way to move, the proof still reads the old one. Its Pod cannot start, so `Ready`
+reports `PodConfigurationError`, and the resource holds its realm. If it had already
+stopped, `ReconciliationFailed` goes on printing that stop's command until the Job
+reaches its deadline, and running it settles nothing until a read names that target. A
+URL that does not parse fails the read with `invalid_target`. Either way, write the
+Secret `status.pendingObservation.target` names, with any valid URL. The first URL
+finishes the proof, and any other one leads to `Blocked` and the command above.
+
+A source fetch that fails, or a Job killed at its deadline, names no target either. If
+every attempt ends that way, as with an artifact the registry lost, the proof cannot be
+settled and a new URL does not help. Restore what the read needs, or delete the
+resource.
 
 Deleting the resource also ends the proof, once the Apply's Pods have stopped, and a
 resource created again reads the database afresh. It takes the plans, the approvals

@@ -2380,6 +2380,20 @@ func (r *SchemaReconciler) retryOperationAs(
 	failure error,
 	record func(*operatorv1alpha1.PtahSchema),
 ) (ctrl.Result, error) {
+	return r.retryOperationReporting(ctx, schema, job, reason, failure, bounded(failure.Error(), 512), record)
+}
+
+// retryOperationReporting is retryOperationAs with the Event's text the caller's,
+// for a failure whose sentence does not survive an Event's bound.
+func (r *SchemaReconciler) retryOperationReporting(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	reason operatorv1alpha1.ConditionReason,
+	failure error,
+	eventText string,
+	record func(*operatorv1alpha1.PtahSchema),
+) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	if !isReadOnlyOperation(operation) {
 		operationType := operatorv1alpha1.OperationType("")
@@ -2439,7 +2453,7 @@ func (r *SchemaReconciler) retryOperationAs(
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.StageForOperation(operation.Type), telemetry.FailureOperation)
 	}
-	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
+	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", eventText)
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
 }
 

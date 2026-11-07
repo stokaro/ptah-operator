@@ -28,6 +28,9 @@ import (
 // moves twice.
 const thirdTargetDigest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
 
+// What a stop says when the annotation holds a value that is not the one it prints.
+const anotherValueClause = "the settled-apply annotation holds another value, which settles nothing on this target; "
+
 // movedTargetFrame is what a proof's read says when the URL Secret names digest:
 // a read the child finished, or one it could not, whose error is childError.
 func movedTargetFrame(
@@ -139,10 +142,42 @@ func nextProofRead(
 	childError *runner.ResultError,
 ) *operatorv1alpha1.PtahSchema {
 	t.Helper()
+	return proofReadEnding(t, reconciler, api, schema, attempt, proofReadShape{
+		ending: batchv1.JobComplete,
+		log: func(stored *operatorv1alpha1.PtahSchema) []byte {
+			return movedTargetFrame(t, stored, digest, childError)
+		},
+	})
+}
+
+// proofReadShape is how one attempt of a proof's read ended, for the rows where it
+// did not simply finish.
+type proofReadShape struct {
+	ending batchv1.JobConditionType
+	log    func(*operatorv1alpha1.PtahSchema) []byte
+	// pod shapes the attempt's Pod. Returning nil leaves the Job with none, as a
+	// Job's deadline does.
+	pod func(*corev1.Pod) *corev1.Pod
+	// startedLongAgo puts the attempt past the grace a Job's missing Pod gets.
+	startedLongAgo bool
+}
+
+func proofReadEnding(
+	t *testing.T,
+	reconciler *SchemaReconciler,
+	api client.Client,
+	schema *operatorv1alpha1.PtahSchema,
+	attempt string,
+	shape proofReadShape,
+) *operatorv1alpha1.PtahSchema {
+	t.Helper()
 	stored := storedSchemaOf(t, api, schema)
 	if next := stored.Status.NextReconciliationTime; next != nil {
 		reached := next.Add(time.Second)
 		reconciler.Clock = func() time.Time { return reached }
+	}
+	if shape.startedLongAgo {
+		stored.Status.ActiveOperation.StartedAt = metav1.NewTime(reconciler.Clock().Add(-2 * terminalPodGrace))
 	}
 	stale := &batchv1.Job{}
 	err := api.Get(context.Background(), client.ObjectKey{Namespace: stored.Namespace, Name: stored.Status.ActiveOperation.JobName}, stale)
@@ -153,11 +188,14 @@ func nextProofRead(
 	} else if !apierrors.IsNotFound(err) {
 		t.Fatal(err)
 	}
-	job, pod := terminalWorkload(stored, batchv1.JobComplete)
+	job, pod := terminalWorkload(stored, shape.ending)
 	job.UID, pod.UID = types.UID(attempt+"-job-uid"), types.UID(attempt+"-pod-uid")
 	pod.OwnerReferences = []metav1.OwnerReference{jobControllerReference(job)}
 	if err := api.Delete(context.Background(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: pod.Name}}); err != nil && !apierrors.IsNotFound(err) {
 		t.Fatal(err)
+	}
+	if shape.pod != nil {
+		pod = shape.pod(pod)
 	}
 	stored.Status.ActiveOperation.JobUID = job.UID
 	if err := api.Status().Update(context.Background(), stored); err != nil {
@@ -166,11 +204,48 @@ func nextProofRead(
 	if err := api.Create(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
-	if err := api.Create(context.Background(), pod); err != nil {
-		t.Fatal(err)
+	if pod != nil {
+		if err := api.Create(context.Background(), pod); err != nil {
+			t.Fatal(err)
+		}
 	}
-	reconciler.Logs = staticLogs{content: movedTargetFrame(t, stored, digest, childError)}
+	reconciler.Logs = staticLogs{content: shape.log(stored)}
 	return reconcileSchema(t, reconciler, api, schema)
+}
+
+// settledApplyCommand is the command a stop prints for value, in the fixtures'
+// namespace and name, as it ends the message.
+func settledApplyCommand(schema *operatorv1alpha1.PtahSchema, value string) string {
+	return "kubectl annotate ptahschema " + schema.Name + " -n " + schema.Namespace + " " +
+		operatorv1alpha1.SettledApplyAnnotation + "=" + value + " --overwrite"
+}
+
+// assertStopPrints holds a resource to a stop whose message ends with the command
+// for value, and to the clause about another value being there or not.
+func assertStopPrints(t *testing.T, actual *operatorv1alpha1.PtahSchema, value string, anotherValue bool) {
+	t.Helper()
+	assertProofStillOwed(t, actual)
+	if !schemaProofBlocked(actual) {
+		t.Fatalf("phase %s, want the resource stopped", actual.Status.Phase)
+	}
+	failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonTargetIdentityChanged) {
+		t.Fatalf("ReconciliationFailed = %#v, want TargetIdentityChanged", failed)
+	}
+	if !strings.HasSuffix(failed.Message, settledApplyCommand(actual, value)) {
+		t.Fatalf("the stop prints %q, want it to end with the command for %q", failed.Message, value)
+	}
+	if said := strings.Contains(failed.Message, anotherValueClause); said != anotherValue {
+		t.Fatalf("says the annotation holds another value = %t, want %t: %q", said, anotherValue, failed.Message)
+	}
+}
+
+// assertSettled holds a resource to a proof a read gave up.
+func assertSettled(t *testing.T, actual *operatorv1alpha1.PtahSchema) {
+	t.Helper()
+	if actual.Status.PendingObservation != nil || actual.Status.Phase != operatorv1alpha1.PhasePending {
+		t.Fatalf("the read did not take the statement: phase %s, %#v", actual.Status.Phase, actual.Status.PendingObservation)
+	}
 }
 
 // The reproduction of stokaro/ptah-operator#819. A proof's read names another
@@ -237,12 +312,13 @@ func TestAProofThatReadsAnotherTargetStopsAndSaysHowToEndIt(t *testing.T) {
 				"put the first URL back",
 				"login, host, port, database or URL parameter",
 				"under apply: Always, applies the next plan with no approval unless it is destructive or changes privileges",
-				"kubectl annotate ptahschema " + schema.Name + " -n " + schema.Namespace + " " +
-					operatorv1alpha1.SettledApplyAnnotation + "=" + movedValue() + " --overwrite",
 			} {
 				if !strings.Contains(failed.Message, says) {
 					t.Errorf("the message does not say %q: %q", says, failed.Message)
 				}
+			}
+			if command := settledApplyCommand(schema, movedValue()); !strings.HasSuffix(failed.Message, command) {
+				t.Errorf("the message does not end with %q: %q", command, failed.Message)
 			}
 			ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady)
 			if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != string(operatorv1alpha1.ReasonTargetIdentityChanged) {
@@ -255,16 +331,45 @@ func TestAProofThatReadsAnotherTargetStopsAndSaysHowToEndIt(t *testing.T) {
 	}
 }
 
-// The command is the last thing the message says, and a person runs it as it
-// stands, so it has to fit at the longest name and namespace the API admits.
+// The command is the last thing the message says, a person runs it as it stands,
+// and a settlement reads its value back from there. So it has to fit at the longest
+// name and namespace the API admits, with the clause about another value as well.
 func TestTheStopPrintsTheWholeCommandAtTheLongestNames(t *testing.T) {
 	t.Parallel()
 	schema := safetyPostApplyObserveSchema(t)
 	schema.Name, schema.Namespace = strings.Repeat("n", 253), strings.Repeat("s", 63)
 	schema.Status.PendingObservation.ApplyOperationID = "sha256:" + strings.Repeat("a", 64)
-	message := movedTargetFailure(schema, "sha256:"+strings.Repeat("b", 64)).Error()
+	schema.Annotations = map[string]string{operatorv1alpha1.SettledApplyAnnotation: "another value"}
+	digest := "sha256:" + strings.Repeat("b", 64)
+	message := movedTargetFailure(schema, digest).Error()
+	if !strings.Contains(message, anotherValueClause) {
+		t.Fatalf("the fixture is not the longest message: %q", message)
+	}
 	if bounded(message, 1024) != message {
 		t.Fatalf("the message is %d bytes, and a condition keeps 1024", len(message))
+	}
+	if command := settledApplyCommand(schema, settledApplyValue(schema.Status.PendingObservation.ApplyOperationID, digest)); !strings.HasSuffix(message, command) {
+		t.Fatalf("the message does not end with %q: %q", command, message)
+	}
+}
+
+// An Event keeps 512 bytes and the command runs past them at ordinary names, so an
+// Event that carried it would hand a person a value cut short, which kubectl accepts
+// and nothing refuses. It names the condition instead.
+func TestTheStopsEventNamesTheConditionAndPrintsNoCommand(t *testing.T) {
+	t.Parallel()
+	schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
+	recorder := record.NewFakeRecorder(16)
+	reconciler.Recorder = recorder
+	reconcileSchema(t, reconciler, api, schema)
+	event := findEvent(recorder, corev1.EventTypeWarning+" OperationFailed")
+	if !strings.Contains(event, operatorv1alpha1.ConditionReconciliationFailed) || !strings.Contains(event, "another target") {
+		t.Fatalf("the Event = %q, want it to name the failure and the condition", event)
+	}
+	for _, never := range []string{"kubectl", operatorv1alpha1.SettledApplyAnnotation, safetyOtherDigest} {
+		if strings.Contains(event, never) {
+			t.Fatalf("the Event carries %q: %q", never, event)
+		}
 	}
 }
 
@@ -489,12 +594,13 @@ func TestSettlingAProofRetiresTheApprovalThePlanRecorded(t *testing.T) {
 	}
 }
 
-// The early value. The database is down and the proof is failing, a person reads
-// the proof's ID from status and writes it, and nothing happens. Later the store
-// moves the Secret by mistake. Before, the stop and the settlement followed with
-// no write by anyone, and under apply: Always the next plan ran on that target. The
-// ID of the Apply's own claim, read during the Apply, is the same value.
-func TestAValueWrittenBeforeTheStopArmsNothing(t *testing.T) {
+// The database is down and the proof is failing, a person reads the proof's ID from
+// status and writes it, and nothing happens. Later the store moves the Secret by
+// mistake. Before, the stop and the settlement followed with no write by anyone,
+// and under apply: Always the next plan ran on that target. The ID names no target,
+// so it arms nothing. The ID of the Apply's own claim, read during the Apply, is the
+// same value.
+func TestTheApplysIDAloneArmsNothing(t *testing.T) {
 	t.Parallel()
 	failure := &runner.ResultError{Code: "execution_error", Message: "the server went away"}
 	schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
@@ -508,31 +614,198 @@ func TestAValueWrittenBeforeTheStopArmsNothing(t *testing.T) {
 	assertProofStillOwed(t, reconcileSchema(t, reconciler, api, schema))
 
 	first := nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil)
-	if !schemaProofBlocked(first) {
-		t.Fatalf("the store's move did not stop the proof: phase %s", first.Status.Phase)
-	}
+	assertStopPrints(t, first, movedValue(), true)
 	// Every pass and every later read, with no write by anyone.
 	assertProofStillOwed(t, reconcileSchema(t, reconciler, api, schema))
-	again := nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil)
-	assertProofStillOwed(t, again)
-	if !schemaProofBlocked(again) {
-		t.Fatalf("a value written before the stop moved the resource to phase %s", again.Status.Phase)
-	}
+	assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil), movedValue(), true)
 }
 
-// The value the stop would print is no value before the stop: even a person who
-// worked it out does not get to skip the stop that says what settling does.
-func TestTheStopComesBeforeASettlement(t *testing.T) {
+// The digest is a plain SHA-256 of the URL, so a person can work the value out and
+// write it before the resource stops. That does not skip the stop that says what
+// settling does. It is a statement all the same, and the read after that stop takes
+// it with no further write.
+func TestAValueWorkedOutInAdvanceStillMeetsTheStop(t *testing.T) {
 	t.Parallel()
 	schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
 	setSettledApply(t, api, schema, movedValue())
-	first := reconcileSchema(t, reconciler, api, schema)
-	assertProofStillOwed(t, first)
-	if !schemaProofBlocked(first) {
-		t.Fatalf("the first read of the moved target did not stop the proof: phase %s", first.Status.Phase)
+	assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), movedValue(), false)
+	assertSettled(t, nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil))
+}
+
+// The stop has to have printed the value, and the last stop at that. A value for a
+// target the resource last stopped elsewhere from has to meet its own stop first.
+func TestASettlementWaitsForAStopThatPrintedItsValue(t *testing.T) {
+	t.Parallel()
+	t.Run("the store moved on and came back", func(t *testing.T) {
+		t.Parallel()
+		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, movedValue())
+		third := settledApplyValue("apply-operation", thirdTargetDigest)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", thirdTargetDigest, nil), third, true)
+		// The condition prints the third target's value, so this read of the second
+		// target is no read a person has seen a stop for.
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
+	})
+	t.Run("a value worked out for a target the only stop did not name", func(t *testing.T) {
+		t.Parallel()
+		schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
+		reconciler.Logs = staticLogs{content: movedTargetFrame(t, schema, thirdTargetDigest, nil)}
+		setSettledApply(t, api, schema, movedValue())
+		third := settledApplyValue("apply-operation", thirdTargetDigest)
+		assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), third, true)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil), movedValue(), false)
+		assertSettled(t, nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil))
+	})
+}
+
+// The value is a person's statement about this Apply and this target, and it holds
+// until the proof ends. A store that goes back to the first target and then to the
+// second again stops there and settles, with no new write, because that is what the
+// statement said. Taking the annotation off is how to take it back.
+func TestAStatementHoldsUntilTheProofEnds(t *testing.T) {
+	t.Parallel()
+	failure := &runner.ResultError{Code: "execution_error", Message: "the server went away"}
+	t.Run("the first target answered in between", func(t *testing.T) {
+		t.Parallel()
+		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, movedValue())
+		observed := nextProofRead(t, reconciler, api, blocked, "second", testDigest, nil)
+		safetyAssertPendingProof(t, observed)
+		if failed := meta.FindStatusCondition(observed.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failed == nil ||
+			failed.Status != metav1.ConditionFalse {
+			t.Fatalf("the read of the first target left %#v", failed)
+		}
+		claimed := reconcileSchema(t, reconciler, api, blocked)
+		if claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan {
+			t.Fatalf("the proof did not go on to its Plan: %#v", claimed.Status.ActiveOperation)
+		}
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
+	})
+	t.Run("the first target was down in between", func(t *testing.T) {
+		t.Parallel()
+		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, movedValue())
+		down := nextProofRead(t, reconciler, api, blocked, "second", testDigest, failure)
+		assertProofStillOwed(t, down)
+		if down.Status.Phase != operatorv1alpha1.PhaseFailed {
+			t.Fatalf("phase %s, want Failed", down.Status.Phase)
+		}
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
+	})
+	t.Run("the annotation came off", func(t *testing.T) {
+		t.Parallel()
+		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, movedValue())
+		stored := storedSchemaOf(t, api, blocked)
+		delete(stored.Annotations, operatorv1alpha1.SettledApplyAnnotation)
+		if err := api.Update(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), false)
+	})
+}
+
+// A read that ends without its Job completing names no target, whatever its log says
+// and whatever the annotation holds. It is an ordinary failed read: the message no
+// longer prints a command, and a later read of the target stops the resource again
+// before it settles.
+func TestAReadWhoseJobFailedNamesNoTarget(t *testing.T) {
+	t.Parallel()
+	reachedDeadline := func(*corev1.Pod) *corev1.Pod { return nil }
+	fetchRefused := func(pod *corev1.Pod) *corev1.Pod {
+		pod.Status.ContainerStatuses = nil
+		pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{
+			Name: "fetch", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
+		}}
+		return pod
 	}
-	if settled := nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil); settled.Status.PendingObservation != nil {
-		t.Fatalf("the read after the stop did not take the statement: %#v", settled.Status.PendingObservation)
+	noFrame := func(*operatorv1alpha1.PtahSchema) []byte { return nil }
+	for _, row := range []struct {
+		name  string
+		shape proofReadShape
+		says  string
+	}{
+		{
+			name: "the Job failed with a frame that names the target",
+			shape: proofReadShape{ending: batchv1.JobFailed, log: func(stored *operatorv1alpha1.PtahSchema) []byte {
+				return movedTargetFrame(t, stored, safetyOtherDigest, nil)
+			}},
+			says: "Job failed",
+		},
+		{
+			name:  "the Job reached its deadline and took its Pod",
+			shape: proofReadShape{ending: batchv1.JobFailed, log: noFrame, pod: reachedDeadline, startedLongAgo: true},
+			says:  "read Observe result",
+		},
+		{
+			name:  "the source fetch failed",
+			shape: proofReadShape{ending: batchv1.JobFailed, log: noFrame, pod: fetchRefused},
+			says:  "the fetch step exited 1",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+			setSettledApply(t, api, blocked, movedValue())
+
+			failed := proofReadEnding(t, reconciler, api, blocked, "second", row.shape)
+
+			assertProofStillOwed(t, failed)
+			if failed.Status.Phase != operatorv1alpha1.PhaseFailed {
+				t.Fatalf("phase %s, want Failed", failed.Status.Phase)
+			}
+			condition := meta.FindStatusCondition(failed.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+			if condition == nil || condition.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
+				!strings.Contains(condition.Message, row.says) || strings.Contains(condition.Message, "kubectl") {
+				t.Fatalf("ReconciliationFailed = %#v, want OperationFailed saying %q and no command", condition, row.says)
+			}
+			assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+			assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
+		})
+	}
+}
+
+// A Secret deleted after the stop: the next attempt's Pod cannot start. Ready says so
+// and ReconciliationFailed goes on printing the stop's command, which does nothing,
+// because no read has named the target. The value waits for a read that does.
+func TestAStopKeepsItsCommandWhileThePodCannotStart(t *testing.T) {
+	t.Parallel()
+	blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+	setSettledApply(t, api, blocked, movedValue())
+	stored := storedSchemaOf(t, api, blocked)
+	reached := stored.Status.NextReconciliationTime.Add(time.Second)
+	reconciler.Clock = func() time.Time { return reached }
+	stale := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: stored.Namespace, Name: stored.Status.ActiveOperation.JobName}}
+	if err := api.Delete(context.Background(), stale); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatal(err)
+	}
+	job, _ := terminalWorkload(stored, batchv1.JobComplete)
+	job.UID = "starting-job-uid"
+	job.Status = batchv1.JobStatus{Active: 1}
+	stored.Status.ActiveOperation.JobUID = job.UID
+	if err := api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Create(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	pod := configurationErrorPod(job, createContainerConfigError, missingSecretText)
+	if err := api.Create(context.Background(), pod.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Status().Update(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+
+	actual := reconcileSchema(t, reconciler, api, blocked)
+
+	assertStopPrints(t, actual, movedValue(), false)
+	ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) {
+		t.Fatalf("Ready = %#v, want PodConfigurationError", ready)
 	}
 }
 
@@ -550,6 +823,7 @@ func TestWhatASettlementRefuses(t *testing.T) {
 		{name: "the target alone", value: safetyOtherDigest, read: safetyOtherDigest},
 		{name: "another Apply on this target", value: settledApplyValue("an-earlier-apply", safetyOtherDigest), read: safetyOtherDigest},
 		{name: "this Apply on the plan's own target", value: settledApplyValue("apply-operation", testDigest), read: safetyOtherDigest},
+		{name: "a value cut short", value: movedValue()[:len(movedValue())-1], read: safetyOtherDigest},
 		{name: "a store that moved again since the stop", value: movedValue(), read: thirdTargetDigest},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -559,16 +833,16 @@ func TestWhatASettlementRefuses(t *testing.T) {
 				setSettledApply(t, api, blocked, row.value)
 			}
 			actual := nextProofRead(t, reconciler, api, blocked, "second", row.read, nil)
-			assertProofStillOwed(t, actual)
-			if !schemaProofBlocked(actual) {
-				t.Fatalf("phase %s, want the resource stopped", actual.Status.Phase)
-			}
-			printed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed).Message
-			if want := settledApplyValue("apply-operation", row.read); !strings.Contains(printed, want) {
-				t.Fatalf("the stop prints %q, want the value for the target just read, %q", printed, want)
-			}
+			assertStopPrints(t, actual, settledApplyValue("apply-operation", row.read), row.value != "")
 		})
 	}
+
+	t.Run("an empty value", func(t *testing.T) {
+		t.Parallel()
+		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, "")
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), true)
+	})
 
 	t.Run("the first target back", func(t *testing.T) {
 		t.Parallel()
@@ -610,6 +884,17 @@ func TestWhatASettlementRefuses(t *testing.T) {
 		}
 	})
 
+	t.Run("a stop that printed another value", func(t *testing.T) {
+		t.Parallel()
+		blocked, _, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		setSettledApply(t, api, blocked, movedValue())
+		stored := storedSchemaOf(t, api, blocked)
+		setFailure(stored, operatorv1alpha1.ReasonTargetIdentityChanged, movedTargetFailure(stored, thirdTargetDigest))
+		if proofSettlementAsked(stored, safetyOtherDigest) {
+			t.Fatal("a settlement was taken on a stop that printed another target's value")
+		}
+	})
+
 	t.Run("an Apply Pod that may still run", func(t *testing.T) {
 		t.Parallel()
 		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
@@ -621,11 +906,35 @@ func TestWhatASettlementRefuses(t *testing.T) {
 	})
 }
 
+// A read a suspension finds under way runs to its end, since a proof outranks a
+// suspension, so a statement is still taken from it. The resource settles, and then
+// stands suspended with nothing claimed and nothing held.
+func TestAReadUnderWayWhenSuspendedStillTakesTheStatement(t *testing.T) {
+	t.Parallel()
+	blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+	suspended := storedSchemaOf(t, api, blocked)
+	suspended.Spec.Suspend = true
+	if err := api.Update(context.Background(), suspended); err != nil {
+		t.Fatal(err)
+	}
+	setSettledApply(t, api, blocked, movedValue())
+
+	assertSettled(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil))
+
+	next := reconcileSchema(t, reconciler, api, blocked)
+	if next.Status.Phase != operatorv1alpha1.PhaseSuspended || next.Status.ActiveOperation != nil {
+		t.Fatalf("phase %s, claim %#v; want Suspended and no claim", next.Status.Phase, next.Status.ActiveOperation)
+	}
+	if holder := proofLeaseHolder(t, reconciler, api); holder != "" {
+		t.Fatalf("the settled proof kept its Lease: holder %q", holder)
+	}
+}
+
 // A suspension retires the claim of a proof waiting out its retry delay and keeps
 // the proof. Nothing else wakes a suspended resource, so it has to keep its own
 // passes, or the Lease goes unrenewed and another claimant can take the database
-// and cost the Apply its credit. It runs no reads, so a statement waits for the
-// first read after it resumes.
+// and cost the Apply its credit. It starts no reads, so with none under way a
+// statement waits for the first read after it resumes.
 func TestASuspendedProofKeepsItsLeaseAndTakesTheStatementAfterItResumes(t *testing.T) {
 	t.Parallel()
 	blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)

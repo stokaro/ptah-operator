@@ -1368,7 +1368,7 @@ continue, the same immutable plan returns as current when its inputs are
 unchanged, and no `Apply` Job is created during the refresh. A moved tag or
 database drift observed by a due refresh therefore invalidates stale plan or
 approval evidence before mutation can begin. A resource `Blocked` with
-`TargetIdentityChanged` is the exception: it reads no source until [its proof
+`TargetIdentityChanged` is the exception: it resolves no source until [its proof
 ends](../recovery/#a-schema-whose-target-moved).
 
 Native verification always inspects the resolved digest. When the selected

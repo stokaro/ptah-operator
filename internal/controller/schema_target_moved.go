@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -31,17 +32,21 @@ import (
 // of another target would attribute it to a database it may never have reached,
 // and giving the proof up unasked would let a store's mistake reach the next
 // plan with nobody looking. So the proof ends only on a statement about this
-// Apply and this target. SettledApplyAnnotation has to hold the value the stop
-// printed, the Apply's operation ID with the digest the read named, and nothing
-// prints that digest earlier. A value written while the database was down, or
-// copied from status during the Apply, cannot arm the stop that comes later.
+// Apply and this target: SettledApplyAnnotation holds the Apply's operation ID
+// with the digest of the target. That value is no secret. The release namespace
+// is trusted, and anyone who knows the URL can work the digest out. What it takes
+// is a person naming the target, and the Apply's ID alone names none.
 //
-// The statement is taken at a read rather than when it is written. The read has
-// to name the target the value names, and the resource has to have stopped
-// already, so a store that moved again needs a new statement, and a suspended
-// resource, which runs no reads, takes it after it resumes. Every Pod the Apply
-// could still be running has stopped by then, because a claim serving the proof
-// reaches a harvest only past that check. A statement does not stop a Pod.
+// The statement holds until the proof ends, and it is taken at a read rather than
+// when it is written. The read has to name the target the value names, and the
+// last stop has to have printed that value, so the stop that says what settling
+// does always comes first. A store that leaves the target and comes back stops
+// the resource there again, and the next read takes the statement with no new
+// write. That is what the statement said, and removing the annotation takes it
+// back. A suspended resource starts no reads, so it takes the statement from a
+// read already under way or after it resumes. Every Pod the Apply could still be
+// running has stopped by then, because a claim serving the proof reaches a
+// harvest only past that check. A statement does not stop a Pod.
 //
 // Settling gives up the proof, its plan and its Lease in one status write, and
 // the resource starts again from Resolve under whatever the Secret holds. The
@@ -65,16 +70,29 @@ func settledApplyValue(applyOperationID, targetDigest string) string {
 	return applyOperationID + "/" + targetDigest
 }
 
-// movedTargetFailure is the sentence the stop reports. It keeps below the 1024
-// bytes a condition holds at the longest name and namespace, with the command
-// last so that a person can run it as it stands.
+// movedTargetEvent is what the stop's Event says. The command stays on the
+// condition: an Event keeps 512 bytes, the command runs past them at ordinary
+// names, and kubectl accepts a value cut short with nothing to say it was wrong.
+const movedTargetEvent = "The URL Secret now holds another target than the plan this Apply ran from, so the proof cannot be read: " +
+	"the ReconciliationFailed condition says how to end it"
+
+// movedTargetFailure is the sentence the stop reports, and proofSettlementAsked
+// reads the value back from it. It keeps below the 1024 bytes a condition holds at
+// the longest name and namespace, with the command last so that a person can run
+// it as it stands. It says when the annotation holds another value, since nothing
+// refuses one when it is written, and does not repeat that value, which can be as
+// long as an annotation can.
 func movedTargetFailure(schema *operatorv1alpha1.PtahSchema, targetDigest string) error {
+	value := settledApplyValue(schema.Status.PendingObservation.ApplyOperationID, targetDigest)
+	another := ""
+	if held, written := schema.Annotations[operatorv1alpha1.SettledApplyAnnotation]; written && held != value {
+		another = "the settled-apply annotation holds another value, which settles nothing on this target; "
+	}
 	return fmt.Errorf("the URL Secret now holds another target than the plan this Apply ran from: another login, host, port, "+
-		"database or URL parameter, so no read can say what the Apply did; put the first URL back and the proof finishes, "+
+		"database or URL parameter, so no read can say what the Apply did; %sput the first URL back and the proof finishes, "+
 		"or give the proof up, which reads the database under the new URL and, under apply: Always, applies the next plan "+
 		"with no approval unless it is destructive or changes privileges: kubectl annotate ptahschema %s -n %s %s=%s --overwrite",
-		schema.Name, schema.Namespace, operatorv1alpha1.SettledApplyAnnotation,
-		settledApplyValue(schema.Status.PendingObservation.ApplyOperationID, targetDigest))
+		another, schema.Name, schema.Namespace, operatorv1alpha1.SettledApplyAnnotation, value)
 }
 
 // blockProofOnMovedTarget records what stops the proof and what ends it. It is a
@@ -87,7 +105,7 @@ func (r *SchemaReconciler) blockProofOnMovedTarget(
 	targetDigest string,
 ) (ctrl.Result, error) {
 	failure := movedTargetFailure(schema, targetDigest)
-	return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonTargetIdentityChanged, failure, func(schema *operatorv1alpha1.PtahSchema) {
+	return r.retryOperationReporting(ctx, schema, job, operatorv1alpha1.ReasonTargetIdentityChanged, failure, movedTargetEvent, func(schema *operatorv1alpha1.PtahSchema) {
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonTargetIdentityChanged,
 			"The proof of the last Apply needs a person: ReconciliationFailed says what to do")
@@ -99,15 +117,24 @@ func schemaProofBlocked(schema *operatorv1alpha1.PtahSchema) bool {
 	return schema.Status.Phase == operatorv1alpha1.PhaseBlocked && schema.Status.PendingObservation != nil
 }
 
-// proofSettlementAsked reports that the resource has stopped on the target a read
-// names, and that a person wrote the value that stop printed.
+// proofSettlementAsked reports that the annotation holds the value for the target
+// a read names, and that the last stop printed that value. The condition is the
+// only record of where the resource last stopped: a stop on another target prints
+// another value, and a read that finished or failed otherwise leaves no value, so
+// a statement about a target the resource has not just stopped on waits for that
+// stop.
 func proofSettlementAsked(schema *operatorv1alpha1.PtahSchema, targetDigest string) bool {
 	pending := schema.Status.PendingObservation
-	if pending == nil || schema.Annotations[operatorv1alpha1.SettledApplyAnnotation] != settledApplyValue(pending.ApplyOperationID, targetDigest) {
+	if pending == nil {
+		return false
+	}
+	value := settledApplyValue(pending.ApplyOperationID, targetDigest)
+	if schema.Annotations[operatorv1alpha1.SettledApplyAnnotation] != value {
 		return false
 	}
 	failed := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-	return failed != nil && failed.Status == metav1.ConditionTrue && failed.Reason == string(operatorv1alpha1.ReasonTargetIdentityChanged)
+	return failed != nil && failed.Status == metav1.ConditionTrue && failed.Reason == string(operatorv1alpha1.ReasonTargetIdentityChanged) &&
+		strings.Contains(failed.Message, operatorv1alpha1.SettledApplyAnnotation+"="+value+" ")
 }
 
 // settleProofOnMovedTarget ends the proof in the name of the person who asked. It
