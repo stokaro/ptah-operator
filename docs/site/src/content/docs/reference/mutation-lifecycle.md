@@ -425,7 +425,7 @@ not stopped, and a read that could not say all count as "may still be writing",
 and the Lease is left to expire instead. Nothing that can still write stops
 being able to, so a release recorded on that answer is safe whenever the next
 pass performs it. The reading that settles the account comes afterwards and takes no
-Lease: the one in `VerifyingHistory` after a run that reported what it did, and
+Lease: the one `VerifyingHistory` hands to after a run that reported what it did, and
 the one that clears `status.unresolvedRun` (`migrationUnresolvedRunSettledBy`)
 after a run that ended `Partial` or `Unknown`. Another resource that shares the
 realm may hold the Lease while that reading runs.

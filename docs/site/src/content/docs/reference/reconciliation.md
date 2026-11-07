@@ -169,32 +169,147 @@ The operator rolls nothing back. Each branch has its own recovery, and
 
 ## The schema lifecycle
 
+`status.phase` says where a schema is. The diagrams below give the moves between
+phases. Each reads the same way: a phase on the left, and on the right the phase
+it moves to and what moves it. A claim is the operation in flight, held in
+`status.activeOperation`.
+
+From the source to a plan's verdict:
+
 ```mermaid
-stateDiagram-v2
-  [*] --> Pending
-  Pending --> Resolving
-  Resolving --> Verifying: digest pinned
-  Resolving --> Observing: ConfigMap snapshot taken
-  Resolving --> Observing: Git commit resolved
-  Verifying --> Observing: policy satisfied
-  Observing --> Planning: drift read
-  Planning --> InSync: no change
-  Planning --> AwaitingApproval: change, approval required
-  Planning --> ReadyToApply: change, policy Always
-  AwaitingApproval --> ReadyToApply: exact approval accepted
-  ReadyToApply --> Applying
-  Applying --> VerifyingConvergence: result read
-  VerifyingConvergence --> InSync: fresh no-change plan
-  InSync --> Resolving: interval
-  Blocked --> Resolving: interval
-  Verifying --> Blocked: artifact refused
-  Planning --> Blocked: protected table, destructive<br/>disallowed, or apply Never
-  Pending --> Blocked: realm conflict or refusal,<br/>unsupported engine
-  Applying --> Failed: run failed
-  Failed --> Resolving: retry interval
-  Pending --> Suspended: suspend
-  Suspended --> Pending: resume
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: A schema's phases from its source to a plan's verdict
+  accDescr: Resolving, Verifying, Observing and Planning lead to InSync, ReadyToApply, AwaitingApproval or Blocked. Each box on the right names the next phase and what moves the resource there.
+  due(["New, or a<br/>read is due"])
+  resolving["Resolving"]
+  verifying["Verifying"]
+  observing["Observing"]
+  planning["Planning"]
+  due --> dueOci["<b>Resolving</b><br/>OCI or Git: a Job reads it"]
+  due --> dueConfigMap["<b>Observing</b><br/>ConfigMap: the manager<br/>takes the snapshot, no Job"]
+  resolving --> resolvedOci["<b>Verifying</b><br/>OCI digest pinned"]
+  resolving --> resolvedGit["<b>Observing</b><br/>Git commit resolved"]
+  verifying --> verified["<b>Observing</b><br/>Policy satisfied"]
+  verifying --> refused["<b>Blocked</b><br/>Policy refused the artifact"]
+  observing --> observed["<b>Planning</b><br/>Drift read"]
+  planning --> noChange["<b>InSync</b><br/>No change"]
+  planning --> automatic["<b>ReadyToApply</b><br/>Changes under Always,<br/>nothing destructive, no<br/>privilege change"]
+  planning --> needsApproval["<b>AwaitingApproval</b><br/>Any other change the<br/>policy allows"]
+  planning --> planRefused["<b>Blocked</b><br/>A protected table, a<br/>destructive plan the policy<br/>disallows, or apply: Never"]
+  planning --> replans["<b>Observing</b><br/>The target moved, or the<br/>lock was lost, while it<br/>planned"]
 ```
+
+From a plan to the proof that it worked:
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: A schema's phases from a plan to the proof
+  accDescr: ReadyToApply and AwaitingApproval lead to Applying, and every Apply Job that ended leads to VerifyingConvergence, which leads to InSync or back to a plan's verdict. Each box on the right names the next phase and what moves the resource there.
+  ready["ReadyToApply"]
+  approval["AwaitingApproval"]
+  applying["Applying"]
+  proof["VerifyingConvergence"]
+  insync["InSync"]
+  ready --> readyApplies["<b>Applying</b><br/>Every gate holds"]
+  ready --> readyRefreshes["<b>Resolving</b><br/>The interval ended first"]
+  ready --> readyStale["<b>Observing</b><br/>The plan went stale"]
+  approval --> approved["<b>Applying</b><br/>The exact approval exists"]
+  approval --> approvalRefreshes["<b>Resolving</b><br/>The interval ended first"]
+  approval --> approvalStale["<b>Observing</b><br/>The plan went stale"]
+  applying --> applyEnded["<b>VerifyingConvergence</b><br/>The Job ended or was lost,<br/>whatever it reported"]
+  applying --> applyWithdrawn["<b>Observing, Verifying,</b><br/><b>AwaitingApproval,</b><br/><b>Pending or Suspended</b><br/>What the claim rests on<br/>moved before any Job<br/>existed"]
+  applying --> applyUnbuilt["<b>Failed</b><br/>The Job could not be built,<br/>or held to its admission<br/>snapshot. None exists, and<br/>the claim tries again"]
+  proof --> proved["<b>InSync</b><br/>A fresh no-change plan"]
+  proof --> changesRemain["<b>ReadyToApply,</b><br/><b>AwaitingApproval</b><br/><b>or Blocked</b><br/>Changes remain: as from<br/>Planning"]
+  proof --> superseded["<b>Pending or Verifying</b><br/>A newer generation, policy<br/>or execution binding took<br/>over"]
+  proof --> targetMoved["<b>Blocked</b><br/>The proof read another<br/>target than the plan's.<br/>Claim and Lease stay"]
+  insync --> insyncReads["<b>Resolving</b><br/>The interval ended, or<br/>an input changed"]
+```
+
+What leaves that path, and how it comes back. A read is `Resolving`, `Verifying`,
+`Observing`, `Planning` or `VerifyingConvergence`:
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: How a schema leaves the path and comes back
+  accDescr: Any phase with no claim can move to Blocked, Suspended, Failed, Verifying or Pending. A read under way can move to Failed, Suspended or Pending. Each box on the right names the next phase and what moves the resource there.
+  idle(["Any phase,<br/>no claim"])
+  read(["Any read<br/>under way"])
+  blocked["Blocked"]
+  failed["Failed"]
+  pending["Pending"]
+  suspended["Suspended"]
+  idle --> idleBlocked["<b>Blocked</b><br/>A realm conflict or<br/>refusal, or an unsupported<br/>engine"]
+  idle --> idleSuspended["<b>Suspended</b><br/>spec.suspend"]
+  idle --> idleFailed["<b>Failed</b><br/>Source refused before any<br/>Job, or a configuration<br/>error"]
+  idle --> idleVerifying["<b>Verifying</b><br/>The verification policy<br/>changed"]
+  idle --> idlePending["<b>Pending</b><br/>An execution component<br/>changed"]
+  read --> readFailed["<b>Failed</b><br/>Its Job failed, or could<br/>not be built. The claim<br/>stays for the next attempt"]
+  read --> readSuspended["<b>Suspended</b><br/>spec.suspend drops the<br/>claim. A proof's Job runs<br/>to its end first"]
+  read --> readPending["<b>Pending</b><br/>Inputs changed: result<br/>discarded"]
+  blocked --> blockedReads["<b>Resolving</b><br/>The interval ended, or<br/>an input changed"]
+  blocked --> targetBack["<b>What the proof's result</b><br/><b>says</b><br/>A proof holding its claim<br/>reads again after<br/>failureRetryInterval"]
+  blocked --> settled["<b>Pending</b><br/>A person settled it with<br/>the settled-apply<br/>annotation"]
+  failed --> retried["<b>What the read's result</b><br/><b>says</b><br/>The same read, after<br/>failureRetryInterval. The<br/>phase stays Failed while it<br/>runs"]
+  failed --> gaveWay["<b>Pending</b><br/>The read gave way to a<br/>new Resolve"]
+  failed --> noClaim["<b>Resolving</b><br/>No claim: after<br/>failureRetryInterval"]
+  failed --> failedSuspended["<b>Suspended</b><br/>spec.suspend"]
+  pending --> pendingReads["<b>Resolving</b><br/>The next pass"]
+  pending --> pendingProof["<b>VerifyingConvergence</b><br/>The next pass, with a proof<br/>owed"]
+  suspended --> resumed["<b>Resolving</b><br/>Resumed: the edit moved<br/>the generation"]
+  suspended --> resumedProof["<b>VerifyingConvergence</b><br/>Resumed with a proof owed"]
+```
+
+Wherever a move says `Resolving`, a ConfigMap source goes straight to `Observing`:
+the manager takes [its snapshot](#a-configmap-source) in one write, so `Resolving`
+never shows. A new resource has no phase until its first read starts. `Pending` is
+where a discarded claim leaves a resource for one pass, not where it begins.
+
+A finished Apply Job never reaches `Failed`, whatever it reported. Every Apply
+error is an outcome nobody established, so the read-only proof comes next.
+`AwaitingApproval` goes straight to `Applying`: `ReadyToApply` is only for a plan
+that needs no approval. A read that failed [gives way](#a-read-that-keeps-failing)
+to a new `Resolve` in the cases that section lists. A proof that read another
+target [stops until a person ends it](../../use/recovery/#a-schema-whose-target-moved).
 
 Five operations run as Jobs: `Resolve`, `Verify`, `Observe`, `Plan`, `Apply`.
 Approval is not an operation — it is a phase in which nothing runs.
@@ -313,17 +428,22 @@ never establishes that the database changed the way the plan said it would.
 ### Blocked is a refusal, not a fault
 
 `Blocked` means the answer will not change until somebody changes an input. It
-is reached from seven places: a realm conflict, a `PtahRealm` that does not
+is reached from eight places: a realm conflict, a `PtahRealm` that does not
 admit the resource, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
-a protected table, a destructive plan the policy disallows, and `apply: Never`,
+protected table, a destructive plan the policy disallows, a proof that read
+another target than its plan's, and `apply: Never`,
 which is not a problem at all — it is the policy that records plans and applies
 none, and a resource can sit there for as long as somebody wants. `Failed` is
 different again: something went wrong and a retry is reasonable.
 
-A blocked resource still refreshes on its interval through the complete
-Resolve → Verify → Observe → Plan pipeline, so a policy edit or a new artifact
-is noticed without anybody touching the resource.
+A resource blocked by a policy or by what its plan would do still refreshes on
+its interval through the complete Resolve → Verify → Observe → Plan pipeline, so
+a policy edit or a new artifact is noticed without anybody touching the resource.
+A realm refusal is taken again at least once a minute instead, and the pipeline
+starts once it ends. An unsupported engine waits for an edit, because the engine
+is in the spec. A proof that read another target keeps its claim and reads again
+at `spec.execution.failureRetryInterval`.
 
 ### Suspended, and losing a lock
 
@@ -339,29 +459,119 @@ was somebody else's by then.
 
 ## The migration lifecycle
 
+The diagrams read as a schema's do. Wherever a move says `Resolving`, a ConfigMap
+source goes straight to `Reading`, for the same reason.
+
+From the source to a plan:
+
 ```mermaid
-stateDiagram-v2
-  [*] --> Pending
-  Pending --> Resolving
-  Resolving --> Verifying: digest pinned
-  Resolving --> Reading: ConfigMap snapshot taken
-  Resolving --> Reading: Git commit resolved
-  Verifying --> Reading: policy satisfied
-  Reading --> InSync: nothing pending
-  Reading --> Planning: pending versions
-  Reading --> Blocked: dirty, modified, out of order, ahead
-  Planning --> AwaitingApproval: approval required
-  Planning --> Applying: policy Always
-  AwaitingApproval --> Applying: exact approval accepted
-  Applying --> VerifyingHistory: result read
-  VerifyingHistory --> InSync: history matches
-  Applying --> Blocked: partial or unknown outcome
-  Resolving --> Failed: dispatch or configuration
-  InSync --> Resolving: interval
-  Blocked --> Resolving: interval
-  Failed --> Resolving: retry interval
-  Pending --> Suspended: suspend
-  Suspended --> Pending: resume
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: A migration's phases from its source to a plan
+  accDescr: Resolving, Verifying and Reading lead to InSync, Planning or Blocked, and Planning leads to AwaitingApproval or Applying. Each box on the right names the next phase and what moves the resource there.
+  due(["New, or a<br/>read is due"])
+  resolving["Resolving"]
+  verifying["Verifying"]
+  reading["Reading"]
+  planning["Planning"]
+  due --> dueOci["<b>Resolving</b><br/>OCI or Git: a Job reads it"]
+  due --> dueConfigMap["<b>Reading</b><br/>ConfigMap: the manager<br/>takes the snapshot, no Job"]
+  resolving --> resolvedOci["<b>Verifying</b><br/>OCI digest pinned"]
+  resolving --> resolvedGit["<b>Reading</b><br/>Git commit resolved"]
+  verifying --> verified["<b>Reading</b><br/>Policy satisfied"]
+  verifying --> refusedArtifact["<b>Blocked</b><br/>Policy refused the artifact"]
+  reading --> nothingPending["<b>InSync</b><br/>Nothing pending"]
+  reading --> pendingVersions["<b>Planning</b><br/>Pending versions the history<br/>can continue"]
+  reading --> refused["<b>Blocked</b><br/>Dirty, modified, out of order,<br/>ahead, or an unsettled run"]
+  planning --> needsApproval["<b>AwaitingApproval</b><br/>Plan published, OnApproval"]
+  planning --> automatic["<b>Applying</b><br/>Plan published, Always"]
+  planning --> rests["<b>Planning</b>, and it stays<br/>Plan published, apply: Never"]
+```
+
+From a plan to the verdict on its run:
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: A migration's phases from a plan to the verdict on its run
+  accDescr: AwaitingApproval leads to Applying. A run leads to VerifyingHistory, Failed or Blocked, and VerifyingHistory leads to Reading, whose result is the verdict. Each box on the right names the next phase and what moves the resource there.
+  approval["AwaitingApproval"]
+  waiting(["Planning or<br/>AwaitingApproval"])
+  applying["Applying"]
+  verifyingHistory["VerifyingHistory"]
+  insync["InSync"]
+  approval --> approved["<b>Applying</b><br/>The exact approval exists"]
+  waiting --> refreshes["<b>Resolving</b><br/>The interval ended first"]
+  waiting --> planStale["<b>Pending</b><br/>The plan no longer fits<br/>the history or the source"]
+  applying --> reported["<b>VerifyingHistory</b><br/>The run applied, found<br/>nothing to do, or failed<br/>past its selection"]
+  applying --> stopped["<b>Failed</b><br/>The run stopped before it<br/>selected a migration, and<br/>ran none"]
+  applying --> unresolved["<b>Blocked</b><br/>Partial or Unknown, or a<br/>dispatched Job nobody<br/>can read"]
+  applying --> withdrawn["<b>Pending</b><br/>What the claim rests on<br/>moved before any Job<br/>existed"]
+  applying --> unbuilt["<b>Failed</b><br/>The Job could not be built,<br/>or held to its admission<br/>snapshot"]
+  verifyingHistory --> reads["<b>Reading</b><br/>The next pass claims the<br/>read. Its result is the<br/>verdict"]
+  insync --> insyncReads["<b>Resolving</b><br/>The interval ended, or<br/>an input changed"]
+```
+
+What leaves that path, and how it comes back. A read is `Resolving`, `Verifying` or
+`Reading`:
+
+```mermaid
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 260
+    nodeSpacing: 12
+    rankSpacing: 10
+    padding: 4
+    diagramPadding: 6
+---
+flowchart LR
+  %% status.phase
+  accTitle: How a migration leaves the path and comes back
+  accDescr: Any phase with no claim can move to Blocked, Suspended or Failed. A read under way keeps its phase while it retries, and can move to Pending or Failed. Each box on the right names the next phase and what moves the resource there.
+  idle(["Any phase,<br/>no claim"])
+  read(["Any read<br/>under way"])
+  blocked["Blocked"]
+  failed["Failed"]
+  pending["Pending"]
+  suspended["Suspended"]
+  idle --> idleBlocked["<b>Blocked</b><br/>A realm conflict or refusal,<br/>an unsupported engine, or a<br/>run's record put back from<br/>metadata"]
+  idle --> idleSuspended["<b>Suspended</b><br/>spec.suspend"]
+  idle --> idleFailed["<b>Failed</b><br/>Source refused before any<br/>Job, a configuration error,<br/>or a plan that could not be<br/>published"]
+  read --> retried["<b>The same phase</b><br/>Its Job failed. The same<br/>read, after<br/>failureRetryInterval"]
+  read --> readPending["<b>Pending</b><br/>Inputs or an execution<br/>component changed,<br/>spec.suspend, or the read<br/>gave way"]
+  read --> readFailed["<b>Failed</b><br/>The Job could not be built,<br/>or held to its admission<br/>snapshot"]
+  blocked --> blockedReads["<b>Resolving</b><br/>The interval ended, or<br/>an input changed"]
+  failed --> failedReads["<b>Resolving</b><br/>After failureRetryInterval"]
+  pending --> pendingReads["<b>Resolving</b><br/>The next pass"]
+  suspended --> resumed["<b>Resolving</b><br/>Resumed: the edit moved<br/>the generation"]
 ```
 
 Four operations run as Jobs: `Resolve`, `Verify`, `History`, `Apply`. Only
@@ -379,25 +589,27 @@ a sequence is ready to plan. Pending selection is Ptah's own list rather than a
 subtraction of counts, because a checkpoint bootstrap makes those two answers
 differ.
 
-The two ways out of the ordinary path are the same two words the schema path
-uses, and they mean the same thing here. `Blocked` is a verdict about the
-database that will not change on its own; `Failed` is a configuration or
-dispatch failure the controller could not resolve by retrying immediately, and
-it retries on its own interval.
+`Blocked` is a verdict about the database or the artifact that will not change
+on its own. `Failed` is narrower than a schema's: a configuration or dispatch
+failure, or a run that stopped before it selected a migration, and the resource
+starts again from resolution after `spec.execution.failureRetryInterval`. A read
+whose Job fails does not show `Failed`. It stays in its phase, with
+`Progressing=True` and the reason, and runs again under the same claim.
 
-An outcome that is `Partial` or `Unknown` refuses every later Apply until the
-database itself settles it. The resource goes to `Blocked`, and only a history
-reading that shows nothing pending releases it — never a retry, because
+An outcome that is `Partial` or `Unknown` refuses every later Apply until it is
+settled. The resource goes to `Blocked`, and a history reading that shows nothing
+pending or a person's acknowledgment releases it. A retry never does, because
 replaying a non-idempotent statement is exactly the damage the refusal exists to
-prevent. Every other outcome is confirmed by reading the history back in
-`VerifyingHistory`.
+prevent. Any other run that selected a migration is confirmed by reading the
+history back. `VerifyingHistory` lasts one pass: the next pass claims that read,
+and the phase shows `Reading` until its result is the verdict.
 
 An `Apply` runs the approved sequence and nothing else. The Job carries the
 sequence, and Ptah compares it with its own selection under the migration lock,
 the moment every earlier check is behind it. Any difference refuses the run
-before it changes anything, which reads as `Failed` with nothing applied: a
-history restored backwards after the approval is caught there rather than
-executed.
+before it changes anything, which `status.lastRun` records as outcome `Failed`
+with nothing applied: a history restored backwards after the approval is caught
+there rather than executed.
 
 Adoption of an existing schema is deliberately not an operator feature: an
 empty revision table reads as everything pending, and the answer is Ptah's own

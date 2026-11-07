@@ -21,6 +21,8 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +67,28 @@ var architectureVocabularies = []struct {
 	{TypeName: "MigrationPhase", Section: "## The migration lifecycle"},
 	{TypeName: "MigrationOperationType", Section: "## The migration lifecycle"},
 }
+
+// The vocabularies a lifecycle section has to draw, each with the section whose
+// phase diagrams draw it.
+var phaseDiagramVocabularies = []struct {
+	TypeName string
+	Section  string
+}{
+	{TypeName: "ReconciliationPhase", Section: "## The schema lifecycle"},
+	{TypeName: "MigrationPhase", Section: "## The migration lifecycle"},
+}
+
+// phaseDiagramMarker is the comment that opens a flowchart drawing a family's
+// phases. A flowchart can name components too, so a diagram says which it is
+// rather than leaving a check to guess.
+const phaseDiagramMarker = "%% status.phase"
+
+// A phase on the left of a phase diagram is a plain box. A box with any other
+// shape is a group of phases or a condition, and says so in words.
+var phaseDiagramBox = regexp.MustCompile(`^\w+\["([^"]*)"\]$`)
+
+// What a move leads to is what its box holds in bold.
+var phaseDiagramTarget = regexp.MustCompile(`<b>([^<]*)</b>`)
 
 // vocabularyTypeNames is the list the API reader is given.
 func vocabularyTypeNames() []string {
@@ -167,11 +191,15 @@ func TestTheArchitecturePageNamesNoValueTheAPIDropped(t *testing.T) {
 	}
 
 	// Only the words the page presents as status values are judged, which is
-	// what a state-diagram line and a backticked name have in common: they
+	// what a phase diagram's boxes and a backticked name have in common: they
 	// stand alone. Ordinary prose that happens to contain "Pending" is not a
 	// claim about the API.
+	words := architectureStateWords(page)
+	if len(words) == 0 {
+		t.Fatal("no phase diagram was read, so this check holds the page to nothing")
+	}
 	var invented []string
-	for _, candidate := range architectureStateWords(page) {
+	for _, candidate := range words {
 		if _, ok := served[candidate]; ok {
 			continue
 		}
@@ -181,6 +209,82 @@ func TestTheArchitecturePageNamesNoValueTheAPIDropped(t *testing.T) {
 	if len(invented) > 0 {
 		t.Fatalf("%s names %d value(s) the API does not serve: %s",
 			"the architecture group", len(invented), strings.Join(invented, ", "))
+	}
+}
+
+// The diagrams are the precise reference, so backticks in the prose beside them
+// do not answer for a phase they leave out, and a diagram that does not declare
+// itself would go unread by the check above.
+func TestThePhaseDiagramsDrawEveryPhase(t *testing.T) {
+	t.Parallel()
+
+	page := readArchitecturePage(t)
+	values, err := apiVocabularyValues(repositoryFile(t, "api/v1alpha1"), vocabularyTypeNames())
+	if err != nil {
+		t.Fatalf("read the API vocabularies: %v", err)
+	}
+	for _, vocabulary := range phaseDiagramVocabularies {
+		scope := section(t, page, vocabulary.Section)
+		diagrams := strings.Count(scope, "```mermaid")
+		if marked := strings.Count(scope, phaseDiagramMarker); diagrams == 0 || marked != diagrams {
+			t.Errorf("%q has %d diagrams, and %d are marked %q", vocabulary.Section, diagrams, marked, phaseDiagramMarker)
+		}
+		drawn := architectureStateWords(scope)
+		if len(values[vocabulary.TypeName]) == 0 {
+			t.Fatalf("no %s constants were found; the check is reading the wrong package", vocabulary.TypeName)
+		}
+		for _, name := range values[vocabulary.TypeName] {
+			if !slices.Contains(drawn, name) {
+				t.Errorf("the diagrams of %q do not draw %s %q", vocabulary.Section, vocabulary.TypeName, name)
+			}
+		}
+	}
+}
+
+func TestArchitectureStateWordsReadsWhatADiagramClaims(t *testing.T) {
+	t.Parallel()
+
+	const phases = "```mermaid\n---\nconfig:\n  look: classic\n---\nflowchart LR\n  %% status.phase\n" +
+		"  accTitle: Pending and Failed in a sentence, with no move\n" +
+		"  idle([\"Any Phase,<br/>no claim\"])\n" +
+		"  resolving[\"Resolving\"]\n" +
+		"  idle --> one[\"<b>Blocked</b><br/>Refused\"]\n" +
+		"  resolving --> two[\"<b>Observing, Verifying,</b><br/><b>AwaitingApproval,</b><br/><b>Pending or Suspended</b><br/>Moved\"]\n" +
+		"  resolving --> three[\"<b>Planning</b>, and it stays<br/>Never\"]\n" +
+		"  resolving --> four[\"<b>What the read's result</b><br/><b>says</b><br/>Retried\"]\n" +
+		"  resolving --> five[\"<b>Bloked</b><br/>A misspelling is a claim too\"]\n" +
+		"```\n"
+	want := []string{
+		"Resolving", "Blocked", "Observing", "Verifying", "AwaitingApproval", "Pending", "Suspended", "Planning", "Bloked",
+	}
+	if got := architectureStateWords(phases); !slices.Equal(got, want) {
+		t.Errorf("a phase diagram read %q, want %q", got, want)
+	}
+
+	got := architectureStateWords("```mermaid\nstateDiagram-v2\n  [*] --> Pending\n  Pending --> Resolving: interval\n```\n")
+	if want := []string{"Pending", "Pending", "Resolving"}; !slices.Equal(got, want) {
+		t.Errorf("a state diagram read %q, want %q", got, want)
+	}
+
+	for name, page := range map[string]string{
+		"a flowchart of components": "```mermaid\nflowchart LR\n  manager[\"Manager\"]\n  manager --> job[\"<b>Job</b><br/>Runs\"]\n```\n",
+		"a sequence diagram":        "```mermaid\nsequenceDiagram\n  Manager->>Job: create\n```\n",
+		"a marker in the prose":     phaseDiagramMarker + "\n  resolving[\"Resolving\"]\n",
+		"a marker in a closed fence, then a flowchart": "```mermaid\nflowchart LR\n  %% status.phase\n```\n" +
+			"```mermaid\nflowchart LR\n  manager[\"Manager\"]\n```\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if words := architectureStateWords(page); len(words) != 0 {
+				t.Fatalf("architectureStateWords() read %q", words)
+			}
+		})
+	}
+
+	// The fence ends what the diagram claims.
+	after := architectureStateWords(phases + "\nSee <b>Elsewhere</b>.\n  other[\"Elsewhere\"]\n")
+	if !slices.Equal(after, want) {
+		t.Errorf("past the fence, read %q, want %q", after, want)
 	}
 }
 
@@ -199,7 +303,7 @@ func readArchitecturePage(t *testing.T) string {
 }
 
 // namesValue accepts the two ways the page introduces a status value: inside
-// backticks, and as a bare word in a Mermaid state diagram.
+// backticks, and as a state in a phase diagram or a Mermaid state diagram.
 func namesValue(page, name string) bool {
 	if strings.Contains(page, "`"+name+"`") {
 		return true
@@ -212,30 +316,42 @@ func namesValue(page, name string) bool {
 	return false
 }
 
-// architectureStateWords collects the capitalized bare words that appear as
-// states in the page's Mermaid state diagrams. Those lines are where the page
-// makes its claims about the API's vocabulary without backticks.
+// architectureStateWords collects the words the page's diagrams present as
+// states: the bare words of a Mermaid state diagram, and the boxes of a flowchart
+// that declares itself a phase diagram. Those lines are where the page makes its
+// claims about the API's vocabulary without backticks.
 func architectureStateWords(page string) []string {
 	var words []string
 	inDiagram := false
 	stateDiagram := false
+	phaseDiagram := false
 	for _, line := range strings.Split(page, "\n") {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trimmed, "```mermaid"):
 			inDiagram = true
 			stateDiagram = false
+			phaseDiagram = false
 			continue
 		case strings.HasPrefix(trimmed, "```"):
 			inDiagram = false
 			stateDiagram = false
+			phaseDiagram = false
 			continue
 		}
 		if inDiagram && strings.HasPrefix(trimmed, "stateDiagram") {
 			stateDiagram = true
 			continue
 		}
-		// Only a state diagram declares status values. A flowchart names
+		if inDiagram && trimmed == phaseDiagramMarker {
+			phaseDiagram = true
+			continue
+		}
+		if phaseDiagram {
+			words = append(words, phaseDiagramWords(trimmed)...)
+			continue
+		}
+		// Only these two declare status values. Any other flowchart names
 		// components and a sequence diagram names participants, and reading
 		// either as a phase is how a check invents findings.
 		if !stateDiagram || !strings.Contains(trimmed, "-->") {
@@ -250,6 +366,30 @@ func architectureStateWords(page string) []string {
 			if word == "" || word == "[*]" || !isCapitalizedWord(word) {
 				continue
 			}
+			words = append(words, word)
+		}
+	}
+	return words
+}
+
+// phaseDiagramWords reads one line of a phase diagram: the phase a plain box
+// names, or the phases a move leads to. Bold words that make a sentence say what
+// a move leads to without naming a phase, and they are left alone. A single word
+// is taken at its word, so a misspelled phase reaches the check that refuses it.
+func phaseDiagramWords(line string) []string {
+	if box := phaseDiagramBox.FindStringSubmatch(line); box != nil {
+		return []string{box[1]}
+	}
+	if !strings.Contains(line, "-->") {
+		return nil
+	}
+	var bold []string
+	for _, match := range phaseDiagramTarget.FindAllStringSubmatch(line, -1) {
+		bold = append(bold, match[1])
+	}
+	var words []string
+	for _, part := range strings.Split(strings.ReplaceAll(strings.Join(bold, " "), " or ", ","), ",") {
+		if word := strings.TrimSpace(part); word != "" && !strings.Contains(word, " ") {
 			words = append(words, word)
 		}
 	}
