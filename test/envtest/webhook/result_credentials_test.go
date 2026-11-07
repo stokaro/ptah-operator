@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,7 +139,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("active attempt cannot be marked retired", func(t *testing.T) {
-		requireDenied(t, managerAPI.Create(ctx, retirement.DeepCopy(), client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, managerAPI.Create(ctx, retirement.DeepCopy(), client.DryRunAll), controllerWriteWebhook, "creation is not authorized for its operation")
 	})
 	t.Run("record metadata cannot move the Pod pin", func(t *testing.T) {
 		next := record.DeepCopy()
@@ -169,10 +170,10 @@ func TestResultCredentialAdmission(t *testing.T) {
 		requireDenied(t, clientAs(t, jobController).Create(ctx, podFor(job), client.DryRunAll), podIntentWebhook, "already bound to the original Pod")
 	})
 	t.Run("active deletion is refused even to an administrator", func(t *testing.T) {
-		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "result credential retention has not authorized deletion")
 	})
 	t.Run("collection deletion cannot erase an active pin", func(t *testing.T) {
-		requireDenied(t, admin.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": secret.Name}, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(fixture.namespace), client.MatchingFields{"metadata.name": secret.Name}, client.DryRunAll), controllerWriteWebhook, "result credential retention has not authorized deletion")
 	})
 	t.Run("manager cannot create ordinary Secrets with its CREATE grant", func(t *testing.T) {
 		requireDenied(t, managerAPI.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: fixture.namespace, Name: "ordinary-manager"}}, client.DryRunAll), controllerWriteWebhook, "outside the result credential namespace")
@@ -212,7 +213,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, attempt(), controllerWriteWebhook, "result credential retention has not authorized deletion")
 		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
 	})
 	t.Run("retired record is collected before its Secret", func(t *testing.T) {
@@ -222,7 +223,7 @@ func TestResultCredentialAdmission(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		requireDenied(t, managerAPI.Create(ctx, wrong, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, managerAPI.Create(ctx, wrong, client.DryRunAll), controllerWriteWebhook, "creation is not authorized for its operation")
 		requireDenied(t, admin.Create(ctx, retirement.DeepCopy(), client.DryRunAll), controllerWriteWebhook, "only the configured operator manager")
 		before := time.Now().Add(-time.Second)
 		// A caller-supplied date must not backdate the retention clock.
@@ -256,12 +257,12 @@ func TestResultCredentialAdmission(t *testing.T) {
 			secret.OwnerReferences[0].BlockOwnerDeletion == nil || *secret.OwnerReferences[0].BlockOwnerDeletion {
 			t.Fatal("Secret does not belong to its exact canonical record")
 		}
-		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "result credential retention has not authorized deletion")
 		requireDenied(t, admin.Delete(ctx, record, client.PropagationPolicy(metav1.DeletePropagationOrphan), client.DryRunAll), controllerWriteWebhook, "require cascading deletion")
 		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, windowDenial(record))
 		cleanupClockOffset.Store(int64(2 * time.Hour))
 		defer cleanupClockOffset.Store(0)
-		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		requireDenied(t, admin.Delete(ctx, record, client.DryRunAll), controllerWriteWebhook, "retention has not authorized deletion")
 		if err := admin.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
 			t.Fatal(err)
 		}
@@ -276,7 +277,20 @@ func TestResultCredentialAdmission(t *testing.T) {
 		if record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 1 || record.Finalizers[0] != metav1.FinalizerDeleteDependents {
 			t.Fatal("API did not stage foreground deletion")
 		}
-		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "immutable operation binding")
+		// The finalizer update asks for that same deletion. A pin refuses it, and
+		// no time would lift a pin, so the refusal names retention and no time.
+		fixture.schema.Status.ActiveOperation = op
+		writeStatus(t, fixture.schema)
+		finishing := record.DeepCopy()
+		finishing.Finalizers = nil
+		pinned := admin.Update(ctx, finishing, client.DryRunAll)
+		requireDenied(t, pinned, controllerWriteWebhook, "result publication retention has not authorized deletion")
+		if strings.Contains(pinned.Error(), "cannot be deleted before") {
+			t.Fatalf("a refusal that is not about time named one: %v", pinned)
+		}
+		fixture.schema.Status.ActiveOperation = nil
+		writeStatus(t, fixture.schema)
+		requireDenied(t, admin.Delete(ctx, secret, client.DryRunAll), controllerWriteWebhook, "result credential retention has not authorized deletion")
 		record.Finalizers = nil
 		if err := admin.Update(ctx, record); err != nil {
 			t.Fatalf("garbage collector cannot finalize the record: %v", err)
@@ -488,7 +502,7 @@ func TestResultEnrollmentPolicyFencesStaleReplicas(t *testing.T) {
 	if _, err := oldIssuer.Ensure(t.Context(), identity); !errors.Is(err, resultcredentials.ErrCredential) {
 		t.Fatalf("stale issuer enrolled after policy advanced: %v", err)
 	}
-	requireDenied(t, attempt(), controllerWriteWebhook, "immutable operation binding")
+	requireDenied(t, attempt(), controllerWriteWebhook, "creation is not authorized for its operation")
 	if err := admin.Get(t.Context(), client.ObjectKey{Namespace: f.namespace, Name: candidate.Name}, &recordapi.PtahResultRecord{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("refused enrollment left a canonical record: %v", err)
 	}

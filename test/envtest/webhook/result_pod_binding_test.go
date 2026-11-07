@@ -92,7 +92,7 @@ func TestPublicPodPinAuthorityAtAdmissionAndReturn(t *testing.T) {
 					t.Fatalf("valid public pin was not persisted exactly: enrollment=%v readback=%v", err, readErr)
 				}
 			case "before CREATE":
-				requireDenied(t, err, controllerWriteWebhook, "immutable operation binding")
+				requireDenied(t, err, controllerWriteWebhook, "creation is not authorized for its operation")
 				if revocations != 1 || credential.UID != "" || !apierrors.IsNotFound(readErr) {
 					t.Fatalf("revoked CREATE persisted a pin: revoked=%d credential=%+v readback=%v", revocations, credential, readErr)
 				}

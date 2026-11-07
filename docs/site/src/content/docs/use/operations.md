@@ -1591,14 +1591,13 @@ The manager's collector removes each record once its window has ended, and the
 namespace follows.
 
 A message that ends at `has not authorized deletion`, with no time, is not about
-time. A credential record says the same thing as
-`result record write violates its immutable operation binding`. The record's
-operation may still be pinned by its resource, its original Job may still exist,
-the records it depends on may still have to go first, or the manager may have
-failed to read one of those. No time would lift any of them, so the message names
-none. In a terminating namespace they normally clear on their own, as the resource
-and its Job go and the collector removes records in order. If one outlasts the last
-window, the manager is the place to look: the collector runs on the leader. A
+time. The record's operation may still be pinned by its resource, its original Job
+may still exist, the records it depends on may still have to go first, or the
+manager may have failed to read one of those. No time would lift any of them, so
+the message names none. In a terminating namespace they normally clear on their
+own, as the resource and its Job go and the collector removes records in order. If
+one outlasts the last window, the manager is the place to look: the collector runs
+on the leader. A
 `failed calling webhook` message means the manager is not answering at all; see
 [Webhook certificate lifecycle](#webhook-certificate-lifecycle).
 

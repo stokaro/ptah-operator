@@ -292,7 +292,7 @@ func TestResultPublicationRefusesUnissuedOrRetiredAuthority(t *testing.T) {
 				}}
 			}
 			_, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
-			requireDenied(t, err, controllerWriteWebhook, "immutable operation binding")
+			requireDenied(t, err, controllerWriteWebhook, "creation is not authorized for its operation")
 			name, _ := resultstore.Name(identity.Binding)
 			if err := admin.Get(t.Context(), client.ObjectKey{Namespace: f.namespace, Name: name + "-complete"}, &api.PtahResultRecord{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("refused publication has completion: %v", err)

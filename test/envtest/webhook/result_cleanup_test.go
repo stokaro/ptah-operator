@@ -163,7 +163,7 @@ func TestRetentionDenialNamesTheEndOfTheWindow(t *testing.T) {
 		reason string
 	}{
 		{intent, "retention has not authorized deletion"},
-		{credential, "immutable operation binding"},
+		{credential, "retention has not authorized deletion"},
 	} {
 		t.Run(row.record.Spec.Type+" past its window", func(t *testing.T) {
 			for _, err := range []error{admin.Delete(t.Context(), row.record, client.DryRunAll), collection(row.record)} {
