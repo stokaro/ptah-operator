@@ -19,15 +19,23 @@ out of silence.
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. An alert or a script that matches `child_exit: ptah exited
-with code 2` to find a database the operator could not open has to match the
-kind of failure instead, and one that matches it or `invalid_plan_output` to
-find a desired file Ptah could not read has to match
+on the upgrade. This operator needs Ptah v0.23.0 or later as its executor: it
+fetches an OCI schema with `--skip-parse`, which an older executor does not know,
+so every OCI Observe and Plan would fail at `fetch-schema`. A MySQL account that holds only `SELECT`, `CREATE`, `ALTER`,
+`DROP`, `INDEX` and `REFERENCES` on its database, the login these pages
+documented until now, fails every Observe and Plan once the executor moves to
+Ptah v0.23.0, so grant it `TRIGGER`, `EXECUTE` and `SHOW VIEW` on the database
+first, and `SHOW_ROUTINE` globally where the database holds a routine another
+account defined ([MySQL authority](../databases/#mysql-authority)). An alert or
+a script that matches `child_exit: ptah exited with code 2` to find a database
+the operator could not open has to match the kind of failure instead, and one
+that matches it or `invalid_plan_output` to find a desired file Ptah could not
+read has to match
 `desired_source_unreadable`, or `desired_schema_invalid` for a schema it read and
 refuses. A pipeline that ships Pod logs now receives what the
 database answered when an Apply fails, row values included, so decide what it may
 store first. A plan waiting for approval has to be approved again
-once the executor moves to Ptah v0.22.0, a database audit that lists what the
+once the executor moves to Ptah v0.23.0, a database audit that lists what the
 executor sends to PostgreSQL has to expect reads of `pg_catalog` in place of
 `information_schema`, and `kubectl ptah` and Ptah Console have to move with the
 operator. A script that matches a sentence about a count of migrations in a
@@ -109,8 +117,8 @@ retirement is an hour old. The collector retires any other attempt once no resou
 pins it, and its records go about an hour later. Either way they also wait for their
 Job to be gone. The manager's ClusterRole there gains `get`, `list`, `create` and
 `delete` on `ptahresultrecords`, so check that against whatever audits the role.
-The move to Ptah v0.22.0 can also change what a running schema reports and plans,
-which the next paragraph covers. Nothing else.
+The move to Ptah v0.23.0 can also change what a running schema reports and plans,
+which the paragraphs after the next one cover. Nothing else.
 
 The manager now retires and collects result records whether delivery is on or off,
 because a record outlives the setting that wrote it. With delivery off they used to
@@ -160,6 +168,44 @@ first report after the upgrade. `spec.suspend: true` holds a resource too, but i
 starts no read, so run `ptah schema drift` at the new digest yourself to see what
 it would report.
 
+Ptah v0.23.0 refuses a MySQL read that cannot see every trigger, routine or view
+definition in the database, where the executor before it reported what it could
+not see as absent ([stokaro/ptah#5545](https://github.com/stokaro/ptah/pull/5545)).
+The Observe or the Plan fails with `permission_denied`, and the message says which
+kinds of object the account cannot see, with no database or object name. The grants
+above end it. A Git or ConfigMap schema in SQL can now move a PostgreSQL partition:
+it plans `DETACH PARTITION` and `ATTACH PARTITION` where the executor before it
+could not parse `PARTITION OF` or read the database as converged. Ptah rates those
+statements a warning. The operator holds a `DETACH` that leaves the partition out of
+its parent, or attaches it to another parent, as destructive, because the parent
+stops returning those rows; a bound change and a plain `ATTACH` run under
+`apply: Always` with nobody approving them. On MySQL, Ptah replaces the index behind a foreign key
+with `DROP INDEX ..., ADD ...` in one statement and rates it safe, and the operator
+holds it as destructive for its `DROP`, so a plan that adds a unique key or an index
+on such a column now asks for `allowDestructive` and an approval. A MySQL migration
+whose DDL statement the server refuses now ends `Unknown` rather than `Failed`.
+The statement did not commit, but Ptah v0.23.0 records a DDL statement the server
+refused as interrupted
+([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), so the run
+leaves `status.unresolvedRun`, the resource reads `Blocked` with reason
+`ApplyOutcomeUnknown`, and the retry needs an acknowledgment
+([A row in `state=pending`](../../use/recovery/#failed-pending-row)). A later Ptah
+release is expected to read it as `Failed`.
+A migration run whose Pod is stopped, by a node drain, an eviction or its deadline,
+while a statement runs outside a transaction (`-- +ptah no_transaction`) also ends
+`Unknown` rather than `Failed`, on both engines, and needs the same acknowledgment.
+Ptah v0.23.0 cancels the statement and cannot tell whether the server applied it.
+This one is Ptah's intent, so no later release is expected to change it. A
+migration that runs in a transaction rolls back and still ends `Failed`.
+A PostgreSQL migration whose commit fails, such as one a deferred foreign key stops,
+reads `Failed` with a message that names the migration and says nothing committed.
+A narrowed column type and a dropped identity now carry `column_types_narrowed` and
+`column_identities_removed` in `status.target.driftFindings` beside
+`columns_modified`, so a script that matches the categories has to expect them.
+A Plan that Ptah refuses as `declaration-refused` for a reason the file alone does
+not show, such as a foreign key into a schema only the database holds, reads
+`plan_refused` where it read `invalid_plan_output`.
+
 - **One command to install.** A release now publishes its chart to
   `oci://ghcr.io/stokaro/charts/ptah-operator` with its images stamped in, signed
   and attested, so `helm upgrade --install ptah-operator
@@ -195,8 +241,11 @@ it would report.
   [Output handling](../../use/security/#output-handling) says who that reaches.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says how to read the reason and how to make the resource read the repaired
-  file. A schema whose `fetch-schema` step fails now names that step and its
-  exit status, and gives no reason: that page says how to get one.
+  file. An OCI schema the executor cannot parse reads the same way: the
+  `fetch-schema` step checks the artifact and leaves the schema unparsed, and
+  the operation container names the fault. What that step refuses itself, such
+  as a layer of another media type, names the step and its exit status and gives
+  no reason: that page says how to get one.
 - **A schema Ptah read and refuses.** When drift or a Plan stops on a fault of the
   schema as a whole, such as a foreign key into a table it does not declare, the
   condition message and the Warning Event carry that fault under the code
@@ -296,14 +345,30 @@ it would report.
   the execution binding changes under a dispatched Apply. It is recorded `Unknown`
   and blocks the resource until a History reading or an acknowledgment settles it,
   and its rows carry no name.
+- **A login that owns its tables, and a row file outside the schema.** Earlier
+  executors planned to revoke a login's own privileges on a table it owns when the
+  desired schema declared that login, and an approved Apply left it with
+  `permission denied` on its own table
+  ([stokaro/ptah#5508](https://github.com/stokaro/ptah/issues/5508)). Ptah v0.23.0
+  leaves what an owner holds out of the comparison, so the workaround of leaving
+  the login role out of the desired schema can go. It gives nothing back: on a
+  database where such an Apply ran, the owner's missing privileges read `InSync`
+  and the next plan is empty. Run, as the login, a `GRANT` for each `REVOKE` that
+  Apply ran, such as `GRANT ALL ON TABLE t TO shop`; the plan after it stays empty.
+  `schema drift` also read a row file that a `data` block names outside the
+  schema's directory. Ptah v0.23.0 refuses that file in drift and plan alike
+  ([stokaro/ptah#5560](https://github.com/stokaro/ptah/pull/5560)), and the Observe
+  fails with `child_exit` and the Plan with `invalid_plan_output`, not
+  `desired_source_unreadable`, with no reason that names the file;
+  [#939](https://github.com/stokaro/ptah-operator/issues/939) tracks naming it.
 - **A withdrawn migration approval.** Deleting or replacing a
   `PtahMigrationApproval` after the Apply is claimed and before its Job exists now
   retires the claim, and no Job runs. Before, the run went ahead under the
   withdrawn approval. Once the Job exists, deleting the approval changes nothing
   about the run.
-- **Executor.** The verified executor is now Ptah v0.22.0. A new executor
+- **Executor.** The verified executor is now Ptah v0.23.0. A new executor
   retires the execution binding, as in 0.2.9: approve again whatever was
-  waiting, after the resource has read its database with v0.22.0 and planned.
+  waiting, after the resource has read its database with v0.23.0 and planned.
   Applied state is not touched. Ptah v0.18.0 names its command in every document
   and moves the plan, apply and migration document versions; this operator
   reads them and refuses the old ones, so the operator and the executor move
@@ -312,7 +377,10 @@ it would report.
   schema the desired schema declares nothing in count as drift, the same
   tables a plan already proposed to drop. Plans are written in Ptah's exact
   statement style ([stokaro/ptah#5341](https://github.com/stokaro/ptah/pull/5341)):
-  the comment lines in front of a statement are gone, and a drop reads `DROP TABLE
+  most comment lines in front of a statement are gone, though a `-- POSTGRES: ...`
+  warning stays where a statement can fail on the rows it meets, and Ptah v0.23.0
+  adds one before a `NOT NULL` `ADD COLUMN` with no default
+  ([stokaro/ptah#5526](https://github.com/stokaro/ptah/pull/5526)). A drop reads `DROP TABLE
   "name"` where it read `DROP TABLE IF EXISTS "name" CASCADE`, so `kubectl ptah plan
   -o sql` and a database audit show different text. Ptah now rates a view rebuilt for
   a changed column list `warning`. The operator still reads its `DROP VIEW` as
@@ -328,7 +396,7 @@ it would report.
 - **A view with a security option the artifact does not state.** A view holding
   `security_invoker=true` or `security_barrier=true` that the artifact leaves out
   read as converged. Now an Observe reports `views_modified`, and the Plan stops with
-  `invalid_plan_output: plan command did not complete successfully`, because the plan
+  `plan_refused: ptah refused to plan the change (view-security-option)`, because the plan
   that removed the option would widen what readers see
   ([stokaro/ptah#5361](https://github.com/stokaro/ptah/pull/5361)). The resource does
   not converge until you state the option in an artifact pushed with a v0.22.0 CLI,
@@ -352,9 +420,9 @@ it would report.
   database or the schema: then the table and its rows are gone, whatever privilege
   the login holds on the table. For a table that should stay, such as a monitoring
   agent's, list it in `spec.policy.exclude`. A table the desired schema declares no
-  longer reads as missing when the login holds nothing on it. MySQL accounts still
-  see what their privileges show, which
-  [stokaro/ptah#5497](https://github.com/stokaro/ptah/issues/5497) tracks.
+  longer reads as missing when the login holds nothing on it. A MySQL read that
+  cannot see every object is refused rather than short, as the paragraphs above
+  say.
 - **Extensions and policies in the inventory.** `status.target.inventory` now
   counts what a feature owner compares, which Ptah v0.18.0 reports. An entry
   `ptah.run/pgextension/extension-change` with `desired: 1` and `observed: 0`

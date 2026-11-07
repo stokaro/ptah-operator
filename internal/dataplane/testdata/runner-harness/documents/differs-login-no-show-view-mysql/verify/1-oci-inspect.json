@@ -1,0 +1,23 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@sha256:f8e5f030bb488f667c287175dc6570c13943779532420ee78e204fb4463cffb8",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-login-no-show-view-mysql@sha256:f8e5f030bb488f667c287175dc6570c13943779532420ee78e204fb4463cffb8",
+  "digest": "sha256:f8e5f030bb488f667c287175dc6570c13943779532420ee78e204fb4463cffb8",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813,
+  "artifact_type": "application/vnd.stokaro.ptah.schema.v1",
+  "annotations": {
+    "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.schema.v1",
+    "io.stokaro.ptah.schema-format": "hcl",
+    "io.stokaro.ptah.version": "0.23.0",
+    "org.opencontainers.image.created": "2026-11-07T17:05:00Z",
+    "org.opencontainers.image.revision": "f47b2bfa3b696c93730e7d25397987ed0a4a2562"
+  },
+  "layers": [
+    {
+      "name": "schema.hcl",
+      "media_type": "application/vnd.stokaro.ptah.schema.hcl.v1",
+      "size": 284,
+      "digest": "sha256:1f99e265655b9ba2e157126eeb69ac6be2b07481f5ab4617496a6ee736440dba"
+    }
+  ]
+}

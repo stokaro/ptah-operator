@@ -8,12 +8,12 @@
     "kind": "schema",
     "name": "harness_differs_precision_mysql"
   },
-  "destructive": false,
+  "destructive": true,
   "statements": [
     {
       "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL",
-      "severity": "warning",
-      "reason": "MODIFY or CHANGE ... NOT NULL fails when a row holds NULL; outside strict SQL mode MySQL and MariaDB rewrite the NULL to the type's zero value instead"
+      "severity": "destructive",
+      "reason": "column type narrows from timestamp(6) to timestamp"
     }
   ]
 }

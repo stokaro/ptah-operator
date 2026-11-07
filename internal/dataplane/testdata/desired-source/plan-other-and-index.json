@@ -1,7 +1,10 @@
 {
   "contract_version": 3,
   "command": "schema plan",
-  "outcome": "failed",
+  "outcome": "refused",
+  "refusal": {
+    "code": "declaration-refused"
+  },
   "error": {
     "message": "compare database schema: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it"
   }

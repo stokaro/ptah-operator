@@ -2,7 +2,7 @@
   "contract_version": 2,
   "command": "migrations up",
   "direction": "up",
-  "outcome": "failed",
+  "outcome": "unknown",
   "planned": [
     1
   ],
@@ -19,6 +19,9 @@
     "statements": 1,
     "sqlstate": "23000",
     "error_number": 1062
+  },
+  "migration_log": {
+    "written": 2
   },
   "status": {
     "current_version": 0,
@@ -41,9 +44,9 @@
       "total": 1,
       "error": "statement execution outcome is unknown after process interruption",
       "error_stmt": "CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
-      "execution_time": 7000000,
+      "execution_time": 8000000,
       "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-      "applied_at": "2026-11-06T19:54:51Z",
+      "applied_at": "2026-11-07T17:03:35Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -53,8 +56,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-        "applied_at": "2026-11-06T19:54:51Z",
-        "execution_time_ms": 7,
+        "applied_at": "2026-11-07T17:03:35Z",
+        "execution_time_ms": 8,
         "state": "dirty"
       }
     ],

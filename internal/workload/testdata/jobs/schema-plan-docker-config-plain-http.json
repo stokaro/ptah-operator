@@ -220,7 +220,8 @@
               "pull",
               "oci://registry.example:5000/acme/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "--out",
-              "/source/schema.hcl"
+              "/source/schema.hcl",
+              "--skip-parse"
             ],
             "workingDir": "/fetch-work",
             "env": [

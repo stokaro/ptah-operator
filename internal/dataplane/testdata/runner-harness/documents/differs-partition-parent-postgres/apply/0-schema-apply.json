@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_bbda223c6d80",
+  "plan_digest": "sha256:f02aad20d5b9ef6a8522cac9150f76c5e2ef8051b7f8c084b59e41dad5c60b03",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
+    },
+    {
+      "sql": "ALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')"
+    }
+  ]
+}

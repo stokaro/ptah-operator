@@ -1,0 +1,1 @@
+INSERT INTO child VALUES (1, 99);

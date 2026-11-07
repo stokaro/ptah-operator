@@ -133,7 +133,11 @@ bound change does: a detached partition keeps its rows, and the parent stops
 returning them. Ptah v0.23.0 rates that statement a warning. A bound change stays
 a warning because both statements run in one transaction, and an `ATTACH` the
 bound refuses rolls the `DETACH` back. Under `transactionMode: none` they commit
-one at a time, and a refused `ATTACH` leaves the partition detached. Where that
+one at a time, and a refused `ATTACH` leaves the partition detached. On MySQL,
+Ptah v0.23.0 replaces the index that backs a foreign key with one statement,
+``ALTER TABLE `c` DROP INDEX `c_fk`, ADD CONSTRAINT `u` UNIQUE (`pid`)``, and
+rates it safe; its `DROP` makes it destructive here, so `apply: Always` asks for
+`allowDestructive` and an approval. Where that
 rating is higher than Ptah's, the line says whose each one is, because Ptah's
 reason still explains the lower one. It names this
 plugin rather than the operator for the reason the `Privileges` line does: the

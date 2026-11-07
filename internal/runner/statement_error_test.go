@@ -89,8 +89,10 @@ func TestARefusedStatementLeavesTheDatabasesAnswerInThePodLog(t *testing.T) {
 			want:      `ERROR: duplicate key value violates unique constraint "orders_pkey" (SQLSTATE 23505)`,
 			statement: `literal-in-the-migration-file`,
 		},
+		// MySQL commits a DDL statement on its own, so since v0.23.0 Ptah
+		// reports a migration it refused unknown (stokaro/ptah#5661).
 		{
-			fixture: "my-unique-up.json", family: migration,
+			fixture: "my-unique-up.json", family: migration, uncertain: true,
 			want:      `Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'`,
 			statement: `CREATE UNIQUE INDEX`,
 		},
@@ -115,7 +117,7 @@ func TestARefusedStatementLeavesTheDatabasesAnswerInThePodLog(t *testing.T) {
 		// A row holding what erases the line on a reader's terminal. It reads, and
 		// it no longer acts.
 		{
-			fixture: "my-control-up.json", family: migration,
+			fixture: "my-control-up.json", family: migration, uncertain: true,
 			want:      `Duplicate entry 'esc- [2K- FORGED-TEXT' for key 'orders.orders_one_per_customer'`,
 			statement: "\x1b",
 		},

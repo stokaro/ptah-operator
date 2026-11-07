@@ -339,10 +339,16 @@ func (b Builder) Build(
 		// schema the fetch left behind. A ConfigMap source has no credential:
 		// its snapshot is checked against the bound content digest and copied
 		// in before the operation container starts.
+		//
+		// --skip-parse leaves the schema unparsed in the fetch, so a fault in
+		// the file is found by the operation container, which holds no
+		// registry credential and can name it, rather than by the fetch, whose
+		// words never reach status. The fetch still checks the manifest, the
+		// layer types, sizes, digests and names (stokaro/ptah#5554).
 		job.fetch = &artifactFetchRequest{
 			source:        source,
 			containerName: fetchContainerName,
-			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
+			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath, "--skip-parse"},
 			destination:   schemaSnapshotPath,
 			schema:        true,
 		}

@@ -19,6 +19,9 @@
     "statements": 1,
     "sqlstate": "23505"
   },
+  "migration_log": {
+    "written": 2
+  },
   "status": {
     "current_version": 0,
     "applied_migrations": [],
@@ -40,9 +43,9 @@
       "total": 1,
       "error": "failed to execute migration SQL: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_id)",
       "error_stmt": "CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_id)",
-      "execution_time": 9000000,
+      "execution_time": 8000000,
       "checksum": "5b8001839097958a8872c003520d34c87c908caedff8d5c7d7858c9049608b37",
-      "applied_at": "2026-11-06T19:54:28.965162Z",
+      "applied_at": "2026-11-07T17:03:54.891189Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -52,8 +55,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "5b8001839097958a8872c003520d34c87c908caedff8d5c7d7858c9049608b37",
-        "applied_at": "2026-11-06T19:54:28.965162Z",
-        "execution_time_ms": 9,
+        "applied_at": "2026-11-07T17:03:54.891189Z",
+        "execution_time_ms": 8,
         "state": "dirty"
       }
     ],

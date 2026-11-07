@@ -19,6 +19,9 @@
     "statements": 1,
     "sqlstate": "22P02"
   },
+  "migration_log": {
+    "written": 2
+  },
   "status": {
     "current_version": 0,
     "applied_migrations": [],
@@ -40,9 +43,9 @@
       "total": 1,
       "error": "failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"row-value-not-a-number\" (SQLSTATE 22P02)\nSQL: ALTER TABLE items ALTER COLUMN qty TYPE integer USING qty::integer",
       "error_stmt": "ALTER TABLE items ALTER COLUMN qty TYPE integer USING qty::integer",
-      "execution_time": 12000000,
+      "execution_time": 8000000,
       "checksum": "9aac794bd5b66cc61e455ab8df652abac917f078367cbfceddc5250a4740c54d",
-      "applied_at": "2026-11-06T19:54:25.979748Z",
+      "applied_at": "2026-11-07T17:03:55.403186Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -52,8 +55,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "9aac794bd5b66cc61e455ab8df652abac917f078367cbfceddc5250a4740c54d",
-        "applied_at": "2026-11-06T19:54:25.979748Z",
-        "execution_time_ms": 12,
+        "applied_at": "2026-11-07T17:03:55.403186Z",
+        "execution_time_ms": 8,
         "state": "dirty"
       }
     ],

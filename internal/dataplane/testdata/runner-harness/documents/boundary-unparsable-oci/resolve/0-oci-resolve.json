@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/boundary-unparsable-oci:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/boundary-unparsable-oci@sha256:0dc2e35e620a3874ca1100bd611921201d76f26d01d98010ecfc180fe5518001",
+  "digest": "sha256:0dc2e35e620a3874ca1100bd611921201d76f26d01d98010ecfc180fe5518001",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 634
+}

@@ -20,6 +20,9 @@
     "sqlstate": "23000",
     "error_number": 1062
   },
+  "migration_log": {
+    "written": 2
+  },
   "status": {
     "current_version": 0,
     "applied_migrations": [],
@@ -41,9 +44,9 @@
       "total": 1,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'declared-literal-in-plan@example.com' for key 'orders.customer_email'\nSQL: INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')",
       "error_stmt": "INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')",
-      "execution_time": 11000000,
+      "execution_time": 8000000,
       "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
-      "applied_at": "2026-11-06T19:54:44Z",
+      "applied_at": "2026-11-07T17:03:35Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -53,8 +56,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "e79a2c2ea5d73f816e8f835d9840280a8254419cc9437d3f4a2e2d58431bc8ac",
-        "applied_at": "2026-11-06T19:54:44Z",
-        "execution_time_ms": 11,
+        "applied_at": "2026-11-07T17:03:35Z",
+        "execution_time_ms": 8,
         "state": "dirty"
       }
     ],

@@ -2,6 +2,6 @@
   "contract_version": 1,
   "command": "schema drift",
   "error": {
-    "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql: expected '(' after table name: expected Operator, got Identifier at position 180"
+    "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS"
   }
 }

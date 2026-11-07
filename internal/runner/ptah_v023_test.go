@@ -14,15 +14,13 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The rows in this file run documents Ptah printed at f47b2bfa3, the commit
-// v0.23.0 is to be tagged on, through the runner. They live under
-// testdata/ptah-f47b2bfa3 at the repository root, whose README says how each
-// was captured; the repin moves these rows to the harness's own captures.
+// The rows in this file run documents Ptah v0.23.0 printed through the runner,
+// as the runner harness captured them from the pinned release image.
 
 // ptahV023Document reads one of those documents.
 func ptahV023Document(t *testing.T, name string) string {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ptah-f47b2bfa3", name))
+	content, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +60,9 @@ func TestObserveFramesPtahV023ColumnCategories(t *testing.T) {
 		environment func(string) []string
 		category    string
 	}{
-		{document: "drift-column-types-narrowed-postgres.json", environment: databaseEnvironment, category: "column_types_narrowed"},
-		{document: "drift-column-types-narrowed-mysql.json", environment: mysqlEnvironment, category: "column_types_narrowed"},
-		{document: "drift-column-identities-removed-postgres.json", environment: databaseEnvironment, category: "column_identities_removed"},
+		{document: "differing/drift-column-types-narrowed-postgres.json", environment: databaseEnvironment, category: "column_types_narrowed"},
+		{document: "differing/drift-column-types-narrowed-mysql.json", environment: mysqlEnvironment, category: "column_types_narrowed"},
+		{document: "differing/drift-column-identities-removed-postgres.json", environment: databaseEnvironment, category: "column_identities_removed"},
 	}
 	for _, test := range tests {
 		t.Run(test.document, func(t *testing.T) {
@@ -109,10 +107,6 @@ func TestMigrationRunCarriesPtahV023CommitFailure(t *testing.T) {
 			want: dataplane.MigrationRunFailure{Version: 1, Statement: 0, Statements: 3, Commit: true, SQLState: "23503"}},
 		{document: "migrations-up-commit-failed-second.json",
 			want: dataplane.MigrationRunFailure{Version: 2, Statement: 0, Statements: 1, Commit: true, SQLState: "23503"}},
-		{document: "migrations-up-commit-failed-tx-all.json",
-			want: dataplane.MigrationRunFailure{Version: 1, Statement: 0, Statements: 3, Commit: true, SQLState: "23503"}},
-		{document: "migrations-up-commit-failed-tx-all-second.json",
-			want: dataplane.MigrationRunFailure{Version: 2, Statement: 0, Statements: 1, Commit: true, SQLState: "23503"}},
 	} {
 		t.Run(test.document, func(t *testing.T) {
 			t.Parallel()
@@ -156,7 +150,7 @@ func TestMigrationRunCarriesPtahV023CommitFailure(t *testing.T) {
 func TestMigrationRunCarriesPtahV023UnknownMySQLRun(t *testing.T) {
 	t.Parallel()
 
-	document := ptahV023Document(t, "migrations-up-unknown-mysql-ddl.json")
+	document := ptahV023Document(t, "statement-errors/my-unique-up.json")
 	const marker = "statement execution outcome is unknown"
 	if !strings.Contains(document, marker) {
 		t.Fatal("the captured document no longer carries the in-flight marker, so this row proves nothing about it")
@@ -219,12 +213,12 @@ func TestADeclarationRefusalIsNamedLikeAFailure(t *testing.T) {
 	}{
 		{
 			name: "a foreign key to a table nothing declares", run: desiredSourceRuns()["plan"],
-			refused: ptahV023Document(t, "plan-declaration-refused-foreign-key.json"), validated: ptahV023Document(t, "validate-foreign-key.txt"),
+			refused: ptahV023Document(t, "desired-source/plan-foreign-key.json"), validated: ptahV023Document(t, "desired-source/validate-foreign-key.txt"),
 			code: CodeDesiredSchemaInvalid, message: `schema.sql: invalid foreign key: field "id" references unknown table "nope"`, children: 2,
 		},
 		{
 			name: "a MySQL key to a table nothing declares", run: mysql(desiredSourceRuns()["plan"]),
-			refused: ptahV023Document(t, "plan-declaration-refused-key-mysql.json"), validated: ptahV023Document(t, "validate-key-mysql.txt"),
+			refused: ptahV023Document(t, "desired-source/plan-key-mysql.json"), validated: ptahV023Document(t, "desired-source/validate-key-mysql.txt"),
 			code: CodeDesiredSchemaInvalid, message: `schema.sql: invalid foreign key: constraint "t_nope" references unknown table "nope"`, children: 2,
 		},
 		{
@@ -232,7 +226,7 @@ func TestADeclarationRefusalIsNamedLikeAFailure(t *testing.T) {
 			// the file does not declare; validate faults another key. The two
 			// sentences differ, so the refusal keeps its code.
 			name: "a fault the plan did not stop on", run: desiredSourceRuns()["plan"],
-			refused: ptahV023Document(t, "plan-declaration-refused-other-and-key.json"), validated: ptahV023Document(t, "validate-other-and-key.txt"),
+			refused: ptahV023Document(t, "desired-source/plan-other-and-key.json"), validated: ptahV023Document(t, "desired-source/validate-other-and-key.txt"),
 			code: "plan_refused", message: "ptah refused to plan the change (declaration-refused)", children: 2,
 		},
 		{
@@ -289,16 +283,16 @@ func TestUnseenObjectsReachTheFrame(t *testing.T) {
 		want      []string
 		sentence  string
 	}{
-		{document: "drift-permission-denied-triggers-routines.json", operation: OperationObserve,
+		{document: "differing/drift-permission-denied-triggers-routines.json", operation: OperationObserve,
 			want:     []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines},
 			sentence: "the target database server accepted the credentials, and the user cannot see every trigger and routine in the database"},
-		{document: "plan-permission-denied-triggers-routines.json", operation: OperationPlan,
+		{document: "differing/plan-permission-denied-triggers-routines.json", operation: OperationPlan,
 			want:     []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines},
 			sentence: "the target database server accepted the credentials, and the user cannot see every trigger and routine in the database"},
-		{document: "drift-permission-denied-named-routines.json", operation: OperationObserve,
+		{document: "differing/drift-permission-denied-named-routines.json", operation: OperationObserve,
 			want:     []string{dataplane.UnseenRoutines},
 			sentence: "the target database server accepted the credentials, and the user cannot see every routine in the database"},
-		{document: "drift-permission-denied-named-views.json", operation: OperationObserve,
+		{document: "differing/drift-permission-denied-named-views.json", operation: OperationObserve,
 			want:     []string{dataplane.UnseenViews},
 			sentence: "the target database server accepted the credentials, and the user cannot see every view definition in the database"},
 	} {
@@ -316,7 +310,7 @@ func TestUnseenObjectsReachTheFrame(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MarshalFrame() error = %v", err)
 			}
-			for _, written := range []string{"c_login", "hand_fn", "parent_names", "l_doc", "l_exec", "SHOW_ROUTINE", "TRIGGER on"} {
+			for _, written := range []string{"harness_differs", "harness_login", "differs_hand_fn", "differs_notes_view", "SHOW_ROUTINE", "TRIGGER on"} {
 				if strings.Contains(string(frame), written) || strings.Contains(diagnostics.String(), written) {
 					t.Fatalf("the frame or the Pod log repeats %q from Ptah's document:\n%s\n%s", written, frame, diagnostics)
 				}
@@ -362,7 +356,7 @@ func TestTheFrameRefusesAnUnseenObjectsListTheRunnerCannotWrite(t *testing.T) {
 	result := Run(context.Background(), Config{
 		Operation: OperationObserve, Environment: withRunnerProtocol(mysqlEnvironment(operationID)),
 		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{
-			stdout: ptahV023Document(t, "drift-permission-denied-triggers-routines.json"), exitCode: 2}}},
+			stdout: ptahV023Document(t, "differing/drift-permission-denied-triggers-routines.json"), exitCode: 2}}},
 	})
 	if result.Error == nil || len(result.Error.UnseenObjects) == 0 {
 		t.Fatalf("Run() error = %#v, want unseen objects to forge from", result.Error)

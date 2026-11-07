@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-login-before-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-login-before-mysql@sha256:8f5abc053b14e012f0797346b666c52a073a286acdb38ae29795c9bd90e340f4",
+  "digest": "sha256:8f5abc053b14e012f0797346b666c52a073a286acdb38ae29795c9bd90e340f4",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

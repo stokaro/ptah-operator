@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "kind": "permission_denied",
+    "message": "error reading database schema: the account harness_login_no_view@% cannot see everything in database \"harness_differs_login_no_show_view_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views differs_notes_view: SELECT and SHOW VIEW on `harness_differs_login_no_show_view_mysql`.*",
+    "missing_privileges": [
+      {
+        "database": "harness_differs_login_no_show_view_mysql",
+        "objects": "views",
+        "names": [
+          "differs_notes_view"
+        ],
+        "privilege": "SELECT and SHOW VIEW on `harness_differs_login_no_show_view_mysql`.*"
+      }
+    ]
+  }
+}

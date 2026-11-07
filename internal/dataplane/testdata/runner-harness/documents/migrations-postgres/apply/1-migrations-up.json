@@ -23,6 +23,9 @@
     "2",
     "3"
   ],
+  "migration_log": {
+    "written": 6
+  },
   "status": {
     "current_version": 3,
     "applied_migrations": [
@@ -47,8 +50,8 @@
         "description": "Create Widgets",
         "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
         "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
-        "applied_at": "2026-11-06T16:38:50.036215Z",
-        "execution_time_ms": 13,
+        "applied_at": "2026-11-07T17:02:09.543958Z",
+        "execution_time_ms": 9,
         "state": "applied"
       },
       {
@@ -57,7 +60,7 @@
         "description": "Add Widget Color",
         "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
         "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
-        "applied_at": "2026-11-06T16:38:50.047367Z",
+        "applied_at": "2026-11-07T17:02:09.555148Z",
         "execution_time_ms": 9,
         "state": "applied"
       },
@@ -67,7 +70,7 @@
         "description": "Recolor First Widget",
         "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
         "applied_checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
-        "applied_at": "2026-11-06T16:38:50.056986Z",
+        "applied_at": "2026-11-07T17:02:09.56486Z",
         "execution_time_ms": 8,
         "state": "applied"
       }

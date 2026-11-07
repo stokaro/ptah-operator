@@ -436,7 +436,7 @@ The row's state and count say which path applies:
 | The row | What the database holds | `status.lastRun.outcome` | What ends it |
 | --- | --- | --- | --- |
 | `state=failed applied=0/2` | Nothing of this migration: its transaction rolled back | `Failed` | [Retry the migration](#retry-failed-migration) |
-| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Failed` where a MySQL DDL statement returned an error. `Unknown` where the session died and Ptah could not write the failure | [Retry the migration](#retry-failed-migration) |
+| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Unknown`, where a MySQL DDL statement returned an error, where a stopped Pod cut a statement outside a transaction short, and where the session died | [Retry the migration](#retry-failed-migration) and acknowledge the run |
 | `state=failed applied=1/2` | The statement before the failure. MySQL commits each DDL statement on its own, and `transactionMode: none` commits every statement | `Partial` | [Finish what it started](#failed-partial) |
 
 A run that ended `Unknown` or `Partial` also leaves
@@ -445,7 +445,8 @@ resource reads `Blocked` with reason `ApplyOutcomeUnknown` until a later read re
 the reason.
 
 Everything below was measured with Ptah v0.22.0, directly and under this operator's
-edge build on Kubernetes 1.37.0, against PostgreSQL 17.11 and MySQL 8.4.11.
+edge build on Kubernetes 1.37.0, against PostgreSQL 17.11 and MySQL 8.4.11, except
+where it names Ptah v0.23.0.
 
 ### Retry the migration {#retry-failed-migration}
 
@@ -539,9 +540,27 @@ is pending.
 
 A MySQL DDL statement that returns an error leaves this row, with the error
 `statement execution outcome is unknown after process interruption`, although the
-process was alive and heard the answer. `status.lastRun.message` has the answer:
-`failed at statement 1 of 2 with SQLSTATE 42S02 (error 1146) and committed nothing`.
-On PostgreSQL the same statement leaves `state=failed`.
+process was alive and heard the answer and the statement did not commit. Ptah
+v0.23.0 records a DDL statement the server refused as interrupted and reports the
+run `unknown` rather than `failed`
+([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), so the run
+leaves `status.unresolvedRun` like any other unknown run and needs an
+acknowledgment. A later Ptah release is expected to read it as `failed`. `status.lastRun.message`
+names the statement and the database's answer, measured with the runner harness
+for a `CREATE UNIQUE INDEX` that met a duplicate key:
+`Migration 1 (Change) stopped at statement 1 of 1 with SQLSTATE 23000 (error 1062), and whether it committed is not recorded`.
+On PostgreSQL the same statement leaves `state=failed` and the run `Failed`. A
+MySQL statement that changes rows, or one the server refuses to parse, still
+leaves the run `Failed`.
+
+A run whose Pod was stopped while a statement ran outside a transaction, in a
+file marked `-- +ptah no_transaction`, leaves the same row on both engines. Ptah
+canceled the statement when the runner passed SIGTERM on, and since v0.23.0 it
+keeps the mark, because a client that stopped waiting cannot know whether the
+server applied the statement. Measured on kind with a sleep that each engine cut
+short: `Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded`.
+A migration that runs in a transaction rolls back when it is stopped and still
+leaves `state=failed` and the run `Failed`.
 
 `ptah migrations status` calls that run interrupted, and tells you to apply what is
 missing by hand and then run `ptah migrations repair --version 2`. Do that only if you

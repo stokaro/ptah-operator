@@ -89,7 +89,7 @@ const (
 	gitUnreadableSchema   = "e2e-git-unreadable"
 	gitUnreadableDatabase = "ptah_e2e_git_unreadable"
 	gitUnreadableSecret   = "e2e-git-unreadable-database"
-	gitUnreadablePath     = "db/unreadable/" + unreadablePartitionFile
+	gitUnreadablePath     = "db/unreadable/" + unreadableSchemaFile
 
 	gitUnreadableMigration         = "e2e-git-unreadable-migration"
 	gitUnreadableMigrationDatabase = "ptah_e2e_git_unreadable_migrations"
@@ -121,7 +121,7 @@ func gitUnreadableSpec() gitrepo.Spec {
 	spec := gitRewrittenSpec()
 	last := spec.Commits[len(spec.Commits)-1]
 	files := maps.Clone(last.Files)
-	files[gitUnreadablePath] = unreadablePartitionSchema
+	files[gitUnreadablePath] = unreadableInheritsSchema
 	for _, file := range unreadableMigrationFiles {
 		files[gitUnreadableMigrationPath+"/"+file.path] = file.body
 	}

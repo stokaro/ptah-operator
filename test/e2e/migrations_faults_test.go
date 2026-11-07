@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -59,26 +60,75 @@ type mfReading struct {
 	document string
 }
 
-// The readings the migration filter self-test held
-// migration-stopped-run-recorded.jq to, judged with stoppedAt=3 and the job
+// mfStoppedKindReadings are the statuses the stopped row printed on
+// Kubernetes 1.35.8 with the Ptah v0.23.0 executor, one per engine, and the
+// Apply Job each was the run of. testdata/e2e/readings/README.md says in which
+// run.
+var mfStoppedKindReadings = []struct{ file, jobUID string }{
+	{"../../testdata/e2e/readings/stopped-run-postgresql.json", "5fe39c3b-bbd3-4194-ba4e-4a29123b0ba2"},
+	{"../../testdata/e2e/readings/stopped-run-mysql.json", "cd306b55-902a-4fb2-97ae-fbd5be320788"},
+}
+
+// mfStoppedKindStatus decodes a status the stopped row printed.
+func mfStoppedKindStatus(t *testing.T, file string) ptahv1alpha1.PtahMigrationStatus {
+	t.Helper()
+	body, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status ptahv1alpha1.PtahMigrationStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		t.Fatalf("decode %s: %v", file, err)
+	}
+	return status
+}
+
+func TestStoppedRunPredicatesAcceptTheKindReadings(t *testing.T) {
+	t.Parallel()
+	for _, reading := range mfStoppedKindReadings {
+		t.Run(reading.file, func(t *testing.T) {
+			t.Parallel()
+			status := mfStoppedKindStatus(t, reading.file)
+			if !stoppedRunRecorded(status, reading.jobUID, 2) {
+				t.Error("stoppedRunRecorded refused the reading")
+			}
+			if !stoppedRunNamesItsMigration(status.LastRun, 2, 1, 1) {
+				t.Errorf("stoppedRunNamesItsMigration refused %q", status.LastRun.Message)
+			}
+			if stoppedRunRecorded(status, "u-replacement", 2) {
+				t.Error("stoppedRunRecorded accepted the reading as another Job's run")
+			}
+		})
+	}
+}
+
+// The readings stoppedRunRecorded is judged on, with stoppedAt=3 and the job
 // u-isolated-apply.
 var mfStoppedReadings = []mfReading{
 	{"the report the stopped run wrote", true, `{"status":{"phase":"VerifyingHistory",
- "lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2],
-  "message":"A migration failed and committed nothing; 2 migrations before it are recorded applied"}}}`},
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","appliedVersions":[1,2],
+  "failure":{"version":3,"statement":1,"statements":1},
+  "message":"Migration 3 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded"}}}`},
 	{"the same record once the history read moved the resource on", true, `{"status":{"phase":"Blocked",
- "lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2]}}}`},
+ "lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","appliedVersions":[1,2],"failure":{"version":3,"statement":1,"statements":1}}}}`},
+	{"the report Ptah wrote before v0.23.0", false, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`},
 	{"no report was read, as before the runner passed SIGTERM on", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply",
   "message":"read the Apply result: ptah runner result frame not found"}}}`},
-	{"the outcome without the versions it applied", false, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply"}}}`},
-	{"fewer versions than the run applied", false, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1]}}}`},
-	{"the stopped migration named as applied", false, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-isolated-apply","appliedVersions":[1,2,3]}}}`},
+	{"the versions without the failure", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","appliedVersions":[1,2]}}}`},
+	{"the outcome without the versions it applied", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply",
+  "failure":{"version":3,"statement":1,"statements":1}}}}`},
+	{"fewer versions than the run applied", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","appliedVersions":[1],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`},
+	{"the stopped migration named as applied", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-isolated-apply","appliedVersions":[1,2,3],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`},
 	{"a run that was never stopped", false, `{"status":{"lastRun":{"outcome":"Applied","jobUID":"u-isolated-apply","appliedVersions":[1,2,3]}}}`},
-	{"a record of another run", false, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-replacement","appliedVersions":[1,2]}}}`},
+	{"a record of another run", false, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-replacement","appliedVersions":[1,2],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`},
 	{"no run recorded yet", false, `{"status":{"activeOperation":{"type":"Apply","jobUID":"u-isolated-apply"}}}`},
 }
 
-func TestStoppedRunRecordedJudgesTheSelfTestReadings(t *testing.T) {
+func TestStoppedRunRecordedJudgesTheReadings(t *testing.T) {
 	t.Parallel()
 	for _, reading := range mfStoppedReadings {
 		t.Run(reading.name, func(t *testing.T) {
@@ -92,7 +142,8 @@ func TestStoppedRunRecordedJudgesTheSelfTestReadings(t *testing.T) {
 
 func TestStoppedRunRecordedRefusesEachClause(t *testing.T) {
 	t.Parallel()
-	const stopped = `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1,2]}}}`
+	const stopped = `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-apply","appliedVersions":[1,2],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`
 	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
 		return stoppedRunRecorded(migration.Status, "u-apply", 3)
 	}
@@ -100,30 +151,41 @@ func TestStoppedRunRecordedRefusesEachClause(t *testing.T) {
 		{"no run recorded", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil }},
 		{"another run", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobUID = "u-other" }},
 		{"no Job UID", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.JobUID = "" }},
+		{"a Failed outcome", func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeFailed
+		}},
 		{"a Partial outcome", func(m *ptahv1alpha1.PtahMigration) {
 			m.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomePartial
 		}},
+		{"no failure", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Failure = nil }},
+		{"the failure in another version", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.Failure.Version = 2 }},
 		{"the versions out of order", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{2, 1} }},
 		{"a version skipped", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = []int64{1, 3} }},
 		{"no versions", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun.AppliedVersions = nil }},
 	})
 	// An empty job never matches a record with no UID, as jq's null never
 	// equals a string.
-	if stoppedRunRecorded(mfMigration(t, `{"status":{"lastRun":{"outcome":"Failed","appliedVersions":[1,2]}}}`).Status, "", 3) {
+	if stoppedRunRecorded(mfMigration(t, `{"status":{"lastRun":{"outcome":"Unknown","appliedVersions":[1,2],
+  "failure":{"version":3,"statement":1,"statements":1}}}}`).Status, "", 3) {
 		t.Error("a record with no Job UID matched an empty job")
 	}
 	// Stopped in the first migration, nothing is applied, and an absent list
-	// is the empty one, as ($run.appliedVersions // []) reads it.
-	if !stoppedRunRecorded(mfMigration(t, `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-apply"}}}`).Status, "u-apply", 1) {
+	// is the empty one. The failure is what tells it from a run with no report.
+	if !stoppedRunRecorded(mfMigration(t, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-apply",
+  "failure":{"version":1,"statement":1,"statements":1}}}}`).Status, "u-apply", 1) {
 		t.Error("a run stopped in its first migration was refused")
+	}
+	if stoppedRunRecorded(mfMigration(t, `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-apply"}}}`).Status, "u-apply", 1) {
+		t.Error("a run with no report was taken for one stopped in its first migration")
 	}
 }
 
 func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 	t.Parallel()
-	// The record both engines left on kind with the Ptah v0.14.0 executor.
-	const named = `{"status":{"lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1],
-  "message":"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied"}}}`
+	// The message both engines left on kind with the Ptah v0.23.0 executor,
+	// without the pointer to the Pod log.
+	const named = `{"status":{"lastRun":{"outcome":"Unknown","jobUID":"u-apply","appliedVersions":[1],
+  "message":"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded"}}}`
 	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
 		return stoppedRunNamesItsMigration(migration.Status.LastRun, 2, 1, 1)
 	}
@@ -133,46 +195,42 @@ func TestStoppedRunNamesItsMigrationRefusesEachClause(t *testing.T) {
 	mfRefusesEach(t, named, accepts, []mfMutation{
 		{"no run recorded", func(m *ptahv1alpha1.PtahMigration) { m.Status.LastRun = nil }},
 		{"no message", message("")},
-		{"the message before #678", message(
-			"A migration failed and committed nothing; 1 migration before it is recorded applied")},
-		{"the message without a failure, as Ptah v0.13.0 left it", message(
-			"Migration 2 (Wait To Be Stopped) failed and committed nothing; 1 migration before it is recorded applied")},
+		{"the message Ptah v0.22.0 left", message(
+			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
+		{"the message for an unknown run with no statement", message(
+			"The database's own account of the run could not be read")},
 		{"the version without its description", message(
-			"Migration 2 failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 stopped at statement 1 of 1, and whether it committed is not recorded")},
 		{"an empty description", message(
-			"Migration 2 () failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 () stopped at statement 1 of 1, and whether it committed is not recorded")},
 		{"another version", message(
-			"Migration 3 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 2 migrations before it are recorded applied")},
-		{"another count", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 0 migrations before it are recorded applied")},
-		{"the plural the operator wrote for one", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migrations before it are recorded applied")},
+			"Migration 3 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded")},
 		{"a version that only starts with the one stopped", message(
-			"Migration 21 (x) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 21 (x) stopped at statement 1 of 1, and whether it committed is not recorded")},
 		{"another statement", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 2 of 2 and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 (Wait To Be Stopped) stopped at statement 2 of 2, and whether it committed is not recorded")},
 		{"another statement count", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 10 and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 10, and whether it committed is not recorded")},
 		{"a SQLSTATE of the wrong form", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014x and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1 with SQLSTATE 57014x, and whether it committed is not recorded")},
 		{"a database answer that is not a code", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with canceling statement due to user request and committed nothing; 1 migration before it is recorded applied")},
+			"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1 with canceling statement due to user request, and whether it committed is not recorded")},
 		{"a partial run's message", message(
 			"Migration 2 (Wait To Be Stopped) committed 1 of its 2 statements and not the rest; " +
 				"retrying the file would run them twice")},
 		{"a word run on to the sentence", message(
-			"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded appliedly")},
+			"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recordedly")},
 	})
 	// Whether a canceled statement comes back with a code depends on the
 	// driver, so each shape the controller writes for one is admitted.
 	for _, text := range []string{
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 57014 and committed nothing; 1 migration before it is recorded applied",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with SQLSTATE 70100 (error 1317) and committed nothing; 1 migration before it is recorded applied",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 with error 2013 and committed nothing; 1 migration before it is recorded applied",
-		// What the controller ends a failed run's message with, under each policy.
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied. " +
+		"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1 with SQLSTATE 57014, and whether it committed is not recorded",
+		"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1 with SQLSTATE 70100 (error 1317), and whether it committed is not recorded",
+		"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1 with error 2013, and whether it committed is not recorded",
+		// What the controller ends the message with, under each policy.
+		"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded. " +
 			"What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
-		"Migration 2 (Wait To Be Stopped) failed at statement 1 of 1 and committed nothing; 1 migration before it is recorded applied. " +
+		"Migration 2 (Wait To Be Stopped) stopped at statement 1 of 1, and whether it committed is not recorded. " +
 			"What Ptah reported is in the Pod log for 5 minutes after the Job finishes: kubectl logs -n team-a job/ptah-m-apply-orders-1 -c ptah",
 	} {
 		reading := mfMigration(t, named)
@@ -795,11 +853,11 @@ func TestStateLinesNameTheStateAndNothingElse(t *testing.T) {
 func TestStoppedRunJournaledRefusesEachClause(t *testing.T) {
 	t.Parallel()
 	const journaled = `{"status":{
-  "lastRun":{"outcome":"Failed","jobUID":"u-apply","appliedVersions":[1],"startedAt":"2026-10-24T07:40:00Z",
+  "lastRun":{"outcome":"Unknown","jobUID":"u-apply","appliedVersions":[1],"startedAt":"2026-10-24T07:40:00Z",
     "finishedAt":"2026-10-24T07:42:00Z","failure":{"version":2,"statement":1,"statements":1,"sqlState":"57014"}},
   "journal":{"coveredSince":"2026-10-24T07:00:00Z","entries":[
     {"type":"PlanPublished","at":"2026-10-24T07:39:00Z","plan":"plan-a"},
-    {"type":"RunFinished","at":"2026-10-24T07:42:00Z","startedAt":"2026-10-24T07:40:00Z","outcome":"Failed",
+    {"type":"RunFinished","at":"2026-10-24T07:42:00Z","startedAt":"2026-10-24T07:40:00Z","outcome":"Unknown",
       "appliedVersions":1,"failure":{"version":2,"statement":1,"statements":1,"sqlState":"57014"}}]}}}`
 	accepts := func(migration *ptahv1alpha1.PtahMigration) bool {
 		return stoppedRunJournaled(migration.Status, 2, 1, 1)
@@ -818,6 +876,7 @@ func TestStoppedRunJournaledRefusesEachClause(t *testing.T) {
 		{"no journal", func(m *ptahv1alpha1.PtahMigration) { m.Status.Journal = nil }},
 		{"no run in the journal", func(m *ptahv1alpha1.PtahMigration) { m.Status.Journal.Entries = m.Status.Journal.Entries[:1] }},
 		{"a partial run journaled", newest(func(e *ptahv1alpha1.JournalEntry) { e.Outcome = ptahv1alpha1.JournalPartial })},
+		{"a failed run journaled", newest(func(e *ptahv1alpha1.JournalEntry) { e.Outcome = ptahv1alpha1.JournalFailed })},
 		{"the entry of another read", newest(func(e *ptahv1alpha1.JournalEntry) { e.At.Time = e.At.Add(time.Minute) })},
 		{"every version journaled applied", newest(func(e *ptahv1alpha1.JournalEntry) { e.AppliedVersions = 2 })},
 		{"no failure journaled", newest(func(e *ptahv1alpha1.JournalEntry) { e.Failure = nil })},

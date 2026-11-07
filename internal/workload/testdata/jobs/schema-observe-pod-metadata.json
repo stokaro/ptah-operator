@@ -256,7 +256,8 @@
               "pull",
               "oci://registry.example/acme/orders@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "--out",
-              "/source/schema.hcl"
+              "/source/schema.hcl",
+              "--skip-parse"
             ],
             "workingDir": "/fetch-work",
             "env": [

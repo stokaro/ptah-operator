@@ -1,0 +1,29 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:f5dbf91b8170dc379071192cdf9885f34914282345edcf7201dcb9291e1c7635",
+  "plan_path": "/work/ptah-plan-output-3147132247/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_c3c2ce7d7995",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:a86180f3f84721c6b7200bcc4f2564e3529659e9fdd9e4eece50b6e8c462ee78",
+    "to_fingerprint": "sha256:0c88eca05d07c13f7ec9f61485850882808ef6c9f1499c2343e337e81857c4f8",
+    "scope": {
+      "kind": "realm"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "transactions": [
+          "allowed"
+        ],
+        "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')",
+        "severity": "warning",
+        "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
+        "owned": true
+      }
+    ]
+  }
+}

@@ -1,2 +1,3 @@
-Pulled oci://harness-registry:5000/schemas/differs-dependent-view-mysql@sha256:3899f4b78d4b57426fe03d7fb341027f1a1c1c3dc7c8c98d21c66c77e73487b6 to /source/schema.hcl
-Digest: sha256:3899f4b78d4b57426fe03d7fb341027f1a1c1c3dc7c8c98d21c66c77e73487b6
+Pulled oci://harness-registry:5000/schemas/differs-dependent-view-mysql@sha256:f7365b6c598ff8e7e5132ac27e9afc0f123e4f56f42ddb6fff9f543d0fd8ff14 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:f7365b6c598ff8e7e5132ac27e9afc0f123e4f56f42ddb6fff9f543d0fd8ff14
+Not parsed: the next command that reads the file reports what it cannot read.

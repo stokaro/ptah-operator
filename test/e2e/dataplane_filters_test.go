@@ -382,7 +382,7 @@ func customCAPodFixture(t *testing.T) fixture {
 		spec.set(hardenedContainer, "initContainers", guard, "securityContext")
 		fetch := spec.named("fetch-schema", "initContainers")
 		spec.set([]any{"/usr/local/bin/ptah"}, "initContainers", fetch, "command")
-		spec.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl"},
+		spec.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl", "--skip-parse"},
 			"initContainers", fetch, "args")
 		spec.set([]any{}, "initContainers", fetch, "envFrom")
 		spec.set(hardenedContainer, "initContainers", fetch, "securityContext")
@@ -757,6 +757,12 @@ func TestCustomCAPodIsolationFilter(t *testing.T) {
 		{"guard-credentials", func(f fixture) {
 			f.push(optionalSecretEnvFixture("PTAH_OCI_PASSWORD", "registry-auth", "password"),
 				initContainer(f, "validate-source-authority", "env")...)
+		}},
+		// A fetch that parses the schema stops on a fault in it, in a
+		// container whose words never reach status.
+		{"fetch-parses-schema", func(f fixture) {
+			f.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl"},
+				initContainer(f, "fetch-schema", "args")...)
 		}},
 		{"fetch-source-ca", func(f fixture) {
 			f.push(map[string]any{"name": "registry-ca", "mountPath": "/credentials/ca-source", "readOnly": true},

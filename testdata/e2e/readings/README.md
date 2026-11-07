@@ -120,3 +120,15 @@ copies of them with the one field each mistake would change, including
 `DatabaseReachable=True` with reason `Observed` beside the `authentication_failed`
 sentence. The readings name Secrets only by name and key and hold no credentials
 or plan SQL.
+
+`stopped-run-postgresql.json` and `stopped-run-mysql.json` are the statuses the
+stopped row printed on Kubernetes 1.35.8 with the Ptah v0.23.0 executor, in CI
+jobs 128491888401 and 128491888423 of run 42400889438, which built the merge of
+pull request #937 at head `9f03f6d0`. They are stored as the row printed them, one
+line each: the phase, `lastRun` and `unresolvedRun`. Each run was stopped at its
+execution deadline inside a sleep that runs outside a transaction, and each
+recorded `Unknown` with migration 1 applied and the failure at statement 1 of
+migration 2, beside an unresolved run, because Ptah v0.23.0 reports such a
+statement's outcome as unknown. `TestStoppedRunPredicatesAcceptTheKindReadings`
+holds `stoppedRunRecorded` and `stoppedRunNamesItsMigration` to them. They name
+the test namespace, the Job and the images, and hold no credentials or SQL.

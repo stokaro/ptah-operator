@@ -3,7 +3,9 @@
 -- The row this fixture serves stops the run from outside and asks what the run
 -- said about itself. The runner sends Ptah SIGTERM at the Apply's execution
 -- deadline, Ptah cancels this statement, and it writes its account: migration 1
--- applied, this one failed with none of its statements committed. The sleep is
+-- applied, and this one stopped at its only statement. Since v0.23.0 Ptah
+-- reports that run unknown, because it cannot tell whether the server applied
+-- a statement outside a transaction that it stopped waiting for. The sleep is
 -- far longer than any window the row gives the run, so a run that reached it
 -- can only end by being stopped.
 --

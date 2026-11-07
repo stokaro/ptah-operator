@@ -82,29 +82,43 @@ func TestOnlyARunThatStopsItsResourceKeepsItsLogWithoutAnApproval(t *testing.T) 
 // TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats reads the documents
 // the pinned Ptah wrote, which the rule was written against. A statement it could not
 // run leaves a dirty revision in the report's status. A database it could not open
-// leaves no status at all, and that run comes around again.
+// leaves no status at all, and that run comes around again. A MySQL DDL statement the
+// server refused may have committed on its own, so Ptah reports that run unknown
+// (stokaro/ptah#5661), and it stops its resource as any unresolved run does.
 func TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name    string
-		pattern string
-		outcome string
-		keeps   bool
+		name     string
+		patterns []string
+		outcome  string
+		keeps    bool
 	}{
-		{name: "a statement refused", pattern: "../dataplane/testdata/statement-errors/*-up.json", outcome: dataplane.MigrationOutcomeFailed, keeps: true},
-		{name: "a statement refused after another migration applied", pattern: "../dataplane/testdata/migrations-up-failed-postgres.json", outcome: dataplane.MigrationOutcomeFailed, keeps: true},
-		{name: "a migration that committed half of itself", pattern: "../dataplane/testdata/migrations-up-partial-mysql.json", outcome: dataplane.MigrationOutcomePartial, keeps: true},
-		{name: "a database it could not open", pattern: "../dataplane/testdata/target-failures/*/up.json", outcome: dataplane.MigrationOutcomeFailed},
+		{name: "a statement refused", patterns: []string{
+			"../dataplane/testdata/statement-errors/pg-*-up.json",
+			"../dataplane/testdata/statement-errors/my-literal-up.json",
+			"../dataplane/testdata/statement-errors/my-syntax-up.json",
+		}, outcome: dataplane.MigrationOutcomeFailed, keeps: true},
+		{name: "a MySQL DDL statement refused", patterns: []string{
+			"../dataplane/testdata/statement-errors/my-unique-up.json",
+			"../dataplane/testdata/statement-errors/my-control-up.json",
+		}, outcome: dataplane.MigrationOutcomeUnknown, keeps: true},
+		{name: "a statement refused after another migration applied", patterns: []string{"../dataplane/testdata/migrations-up-failed-postgres.json"}, outcome: dataplane.MigrationOutcomeFailed, keeps: true},
+		{name: "a migration that committed half of itself", patterns: []string{"../dataplane/testdata/migrations-up-partial-mysql.json"}, outcome: dataplane.MigrationOutcomePartial, keeps: true},
+		{name: "a database it could not open", patterns: []string{"../dataplane/testdata/target-failures/*/up.json"}, outcome: dataplane.MigrationOutcomeFailed},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			documents, err := filepath.Glob(test.pattern)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(documents) == 0 {
-				t.Fatalf("no document matches %s, so this row read nothing", test.pattern)
+			var documents []string
+			for _, pattern := range test.patterns {
+				matched, err := filepath.Glob(pattern)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(matched) == 0 {
+					t.Fatalf("no document matches %s, so this row read nothing of it", pattern)
+				}
+				documents = append(documents, matched...)
 			}
 			for _, document := range documents {
 				content, err := os.ReadFile(document)

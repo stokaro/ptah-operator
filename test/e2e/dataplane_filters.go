@@ -1148,7 +1148,7 @@ func (in customCAPodIsolationInputs) guardIsolated(container *corev1.Container, 
 
 func (in customCAPodIsolationInputs) fetchIsolated(container *corev1.Container, view containerView) bool {
 	return slices.Equal(container.Command, []string{"/usr/local/bin/ptah"}) &&
-		slices.Equal(container.Args, []string{"schema", "pull", in.resolvedReference, "--out", "/source/schema.hcl"}) &&
+		slices.Equal(container.Args, []string{"schema", "pull", in.resolvedReference, "--out", "/source/schema.hcl", "--skip-parse"}) &&
 		view.hasSecretEnv("PTAH_OCI_USERNAME", in.registrySecret, "username", true) &&
 		view.hasSecretEnv("PTAH_OCI_PASSWORD", in.registrySecret, "password", true) &&
 		view.hasSecretEnv("PTAH_OCI_TOKEN", in.registrySecret, "token", true) &&

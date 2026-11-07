@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_c3c2ce7d7995",
+  "plan_digest": "sha256:f5dbf91b8170dc379071192cdf9885f34914282345edcf7201dcb9291e1c7635",
+  "units": [
+    {
+      "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')"
+    }
+  ]
+}

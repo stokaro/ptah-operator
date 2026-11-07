@@ -453,7 +453,7 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 	}
 	fetch := job.Spec.Template.Spec.InitContainers[2]
 	if fetch.Name != fetchContainerName || !reflect.DeepEqual(fetch.Command, []string{ptahBinaryPath}) ||
-		!reflect.DeepEqual(fetch.Args, []string{"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath}) {
+		!reflect.DeepEqual(fetch.Args, []string{"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath, "--skip-parse"}) {
 		t.Fatalf("source fetch command = %q %q", fetch.Command, fetch.Args)
 	}
 	if _, ok := containerEnvMap(fetch)["PTAH_DB_URL"]; ok {
@@ -564,7 +564,7 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 		t.Fatalf("coordination digest = %q, want persisted proof binding", got)
 	}
 	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
-	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath}) {
+	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath, "--skip-parse"}) {
 		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
 	}
 	fetchEnvironment := containerEnvMap(fetch)

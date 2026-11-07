@@ -62,18 +62,22 @@ func mfRunRecordedFor(migration *ptahv1alpha1.PtahMigration, jobUID string) bool
 	return run != nil && jobUID != "" && string(run.JobUID) == jobUID
 }
 
-// stoppedRunRecorded is what a
-// run stopped at its execution deadline left in the record. The run the claim
-// dispatched, by its Job's UID; the outcome its report gave, Failed rather than
-// Partial because the migration stopped is a single sleep that committed
-// nothing; and every version below the one it stopped in as applied. A run
-// with no report is Unknown with nothing applied, which is what every stopped
-// run recorded before the runner passed SIGTERM on and read what Ptah wrote.
-// The phase is left out on purpose: the reading after the run moves the
-// resource on.
+// stoppedRunRecorded is what a run stopped at its execution deadline left in
+// the record. The run the claim dispatched, by its Job's UID; the outcome its
+// report gave; every version below the one it stopped in as applied; and the
+// failure Ptah named in the version it stopped in. The stopped migration runs
+// outside a transaction, and since v0.23.0 Ptah reports a statement it stopped
+// waiting for there as unknown, because the server may have applied it. A run
+// with no report is Unknown too, but with nothing applied and no failure,
+// which is what every stopped run recorded before the runner passed SIGTERM on
+// and read what Ptah wrote. The phase is left out on purpose: the reading
+// after the run moves the resource on.
 func stoppedRunRecorded(status ptahv1alpha1.PtahMigrationStatus, jobUID string, stoppedAt int64) bool {
 	run := status.LastRun
-	if run == nil || jobUID == "" || string(run.JobUID) != jobUID || run.Outcome != ptahv1alpha1.MigrationRunOutcomeFailed {
+	if run == nil || jobUID == "" || string(run.JobUID) != jobUID || run.Outcome != ptahv1alpha1.MigrationRunOutcomeUnknown {
+		return false
+	}
+	if run.Failure == nil || run.Failure.Version != stoppedAt {
 		return false
 	}
 	want := make([]int64, 0, max(stoppedAt-1, 0))
@@ -85,33 +89,28 @@ func stoppedRunRecorded(status ptahv1alpha1.PtahMigrationStatus, jobUID string, 
 
 // stoppedRunNamesItsMigration is the message a run stopped in migration
 // stoppedAt, at statement of statements, leaves in its record: that version,
-// the description the artifact gave it, the statement Ptah's failure named,
-// and the versions applied before it (#678). The description is spelled by
-// Ptah, so the row asks that there is one rather than how it reads. Whether a
-// canceled statement comes back with a database code depends on how each
-// driver cancels, so the row admits one of the shapes the controller writes
-// and does not ask for it.
+// the description the artifact gave it, the statement Ptah's failure named
+// (#678), and that the database did not record whether it committed. The
+// description is spelled by Ptah, so the row asks that there is one rather
+// than how it reads. Whether a canceled statement comes back with a database
+// code depends on how each driver cancels, so the row admits one of the shapes
+// the controller writes and does not ask for it.
 func stoppedRunNamesItsMigration(run *ptahv1alpha1.MigrationRunStatus, stoppedAt, statement, statements int64) bool {
 	if run == nil {
 		return false
 	}
-	applied := max(stoppedAt-1, 0)
-	before := fmt.Sprintf("%d migrations before it are", applied)
-	if applied == 1 {
-		before = "1 migration before it is"
-	}
 	pattern := regexp.MustCompile(fmt.Sprintf(
-		`^Migration %d \(.+\) failed at statement %d of %d`+
+		`^Migration %d \(.+\) stopped at statement %d of %d`+
 			`(?: with (?:SQLSTATE [0-9A-Z]{5}(?: \(error [1-9][0-9]*\))?|error [1-9][0-9]*))?`+
-			` and committed nothing; %s recorded applied(?:$|\. )`,
-		stoppedAt, statement, statements, before))
+			`, and whether it committed is not recorded(?:$|\. )`,
+		stoppedAt, statement, statements))
 	return pattern.MatchString(run.Message)
 }
 
 // stoppedRunJournaled is the same stop in the structured record: where the run
 // stopped, in status.lastRun.failure, and the RunFinished entry the journal
-// wrote for that run, failed, with the versions before it applied and the same
-// failure. The entry is dated when the run was read, as lastRun is.
+// wrote for that run, unknown, with the versions before it applied and the
+// same failure. The entry is dated when the run was read, as lastRun is.
 func stoppedRunJournaled(status ptahv1alpha1.PtahMigrationStatus, stoppedAt int64, statement, statements int32) bool {
 	run := status.LastRun
 	want := ptahv1alpha1.MigrationRunFailureStatus{Version: stoppedAt, Statement: statement, Statements: statements}
@@ -123,7 +122,7 @@ func stoppedRunJournaled(status ptahv1alpha1.PtahMigrationStatus, stoppedAt int6
 		if entry.Type != ptahv1alpha1.JournalRunFinished {
 			continue
 		}
-		return entry.Outcome == ptahv1alpha1.JournalFailed && entry.At.Equal(run.FinishedAt) &&
+		return entry.Outcome == ptahv1alpha1.JournalUnknown && entry.At.Equal(run.FinishedAt) &&
 			int64(entry.AppliedVersions) == max(stoppedAt-1, 0) && sameStop(entry.Failure, want)
 	}
 	return false

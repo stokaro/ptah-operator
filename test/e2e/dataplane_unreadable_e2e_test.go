@@ -20,10 +20,12 @@ import (
 
 // unreadableOCISchema delivers a schema artifact the executor cannot parse. No
 // product command builds one, because `ptah schema push` parses the file first,
-// so a newer Ptah than the executor is what produces it. The run stops in the
-// fetch step, whose container holds the registry credentials and whose words do
-// not reach status: the row holds the condition and the Event to naming the step
-// and nothing more, and the step's log to holding the reason.
+// so a newer Ptah than the executor is what produces it. The fetch step holds the
+// registry credentials and writes the layer without parsing it, so the run goes on
+// to the ptah container, which holds none: its credential-free check names the
+// file and Ptah's reason. The row holds the condition and the Event to that
+// reason, and the Pods to a fetch that ended at zero before the ptah container
+// ran.
 func (d *dataPlane) unreadableOCISchema() {
 	d.t.Helper()
 	const (
@@ -39,19 +41,23 @@ func (d *dataPlane) unreadableOCISchema() {
 		coordinationKey: key, failureRetry: "5s", interval: "1m",
 	})
 	var message string
-	matched := d.waitForSchema(schemaName, "the schema to name the step that stopped it", func(s *ptahv1alpha1.PtahSchema) bool {
+	matched := d.waitForSchema(schemaName, "the schema to say why it could not read the artifact", func(s *ptahv1alpha1.PtahSchema) bool {
 		failed := meta.FindStatusCondition(s.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
 		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
 			return false
 		}
 		message = failed.Message
-		return fetchStepSays(message, unreadableFetchStep) == nil
+		return unreadableSourceSays(message, unreadableArtifactFile, unreadableArtifactWords) == nil
 	})
-	d.waitForFetchStepEvent(matched.UID)
-	d.readFetchStepLog(schemaName)
+	d.scan([]byte(message), "the ReconciliationFailed message of "+schemaName)
+	if strings.Contains(message, unreadableOCIPGDatabase) {
+		d.fatalf("the reason names the target: %s", message)
+	}
+	d.waitForUnreadableArtifactEvent(matched.UID)
+	d.readUnreadableArtifactPods(schemaName)
 	d.repairedTagIsRead(schemaName, repository)
 	d.deleteAndWait(schemaName, 2*time.Minute)
-	d.logf("PASS a schema artifact the executor cannot parse named its step, and the step's log holds why: %s", message)
+	d.logf("PASS a schema artifact the executor cannot parse said why from the ptah container: %s", message)
 }
 
 // repairedTagIsRead pushes a schema the executor reads to the tag the failing
@@ -104,46 +110,52 @@ func (d *dataPlane) publishUnparsableSchema(repository string) {
 	}
 }
 
-func (d *dataPlane) waitForFetchStepEvent(owner types.UID) {
+// waitForUnreadableArtifactEvent waits for the Event that repeats the reason.
+// Events are written after the status patch, so a reading of the condition does
+// not yet promise one.
+func (d *dataPlane) waitForUnreadableArtifactEvent(owner types.UID) {
 	d.t.Helper()
 	deadline := time.Now().Add(waitTimeout)
 	var last error
 	for time.Now().Before(deadline) {
 		events := &corev1.EventList{}
 		d.mustList(events)
-		if last = fetchStepEvent(events.Items, owner, "OperationFailed", unreadableFetchStep); last == nil {
+		if last = unreadableSourceEvent(events.Items, owner, "OperationFailed", unreadableArtifactFile, unreadableArtifactWords); last == nil {
 			return
 		}
 		d.sleep(2 * time.Second)
 	}
-	d.fatalf("the OperationFailed Event never named the fetch step: %v", last)
+	d.fatalf("the OperationFailed Event never said why the artifact could not be read: %v", last)
 }
 
-// readFetchStepLog reads the log a person with pods/log reads, from the Pod whose
-// fetch step exited nonzero. A later attempt may not have got that far yet, so only
-// a step that ended counts, and the row needs one.
-func (d *dataPlane) readFetchStepLog(schema string) {
+// readUnreadableArtifactPods holds every Pod of the schema's finished Observe
+// and Plan Jobs, the operations that fetch the layer, to a fetch that passed it
+// on, and scans the logs of both steps that read the artifact. Only the failed
+// reads have run when it is called, and a later attempt may not have finished,
+// so only a terminal Job counts, and the row needs one.
+func (d *dataPlane) readUnreadableArtifactPods(schema string) {
 	d.t.Helper()
 	jobs := &batchv1.JobList{}
 	d.mustList(jobs, client.MatchingLabels{labelSchema: schema})
 	examined := 0
 	for index := range jobs.Items {
+		operation := jobs.Items[index].Labels[labelOperation]
+		if (operation != "observe" && operation != "plan") || !jobTerminal(&jobs.Items[index]) {
+			continue
+		}
 		pods := &corev1.PodList{}
 		d.mustList(pods, client.MatchingLabels{"job-name": jobs.Items[index].Name})
 		for _, pod := range ownedPods(pods.Items, jobs.Items[index].UID) {
-			for _, status := range pod.Status.InitContainerStatuses {
-				if status.Name != unreadableFetchStep || status.State.Terminated == nil || status.State.Terminated.ExitCode == 0 {
-					continue
-				}
-				log, err := d.cluster.ContainerLog(d.ctx, d.in.TestNamespace, pod.Name, unreadableFetchStep)
-				d.check(err, "read the %s log of Pod %s", unreadableFetchStep, pod.Name)
-				d.scan(log, "the "+unreadableFetchStep+" log")
-				d.check(fetchStepLogSays(log), "the %s log of Pod %s", unreadableFetchStep, pod.Name)
-				examined++
+			d.check(fetchPassedTheLayerOn(&pod), "the Pod of Job %s", jobs.Items[index].Name)
+			for _, container := range []string{schemaFetchStep, "ptah"} {
+				log, err := d.cluster.ContainerLog(d.ctx, d.in.TestNamespace, pod.Name, container)
+				d.check(err, "read the %s log of Pod %s", container, pod.Name)
+				d.scan(log, "the "+container+" log of Pod "+pod.Name)
 			}
+			examined++
 		}
 	}
 	if examined == 0 {
-		d.fatalf("no Pod of %s has a %s step that ended nonzero, among %d Jobs", schema, unreadableFetchStep, len(jobs.Items))
+		d.fatalf("no finished Job of %s has a Pod to read, among %d Jobs", schema, len(jobs.Items))
 	}
 }

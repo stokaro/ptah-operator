@@ -358,8 +358,9 @@ func (m *migrationRun) mfPrintLastRun(name string, migration *ptahv1alpha1.PtahM
 
 // stoppedApplyProof stops a migration Apply part way at the execution
 // deadline the runner imposes on Ptah whatever the Pod is doing, and holds
-// the record to the report Ptah wrote: Failed, with the first migration
-// applied (#452). The execution deadline keeps the Pod available so its
+// the record to the report Ptah wrote (#452): Unknown, because the statement
+// it stopped runs outside a transaction, with the first migration applied and
+// the failure in the second. The execution deadline keeps the Pod available so its
 // termination timestamp can prove that SIGTERM was handled within the grace.
 // An acknowledged durable result survives later Pod loss. The revision table
 // must say the same, and the Pod's own record must show the runner ended after the
@@ -396,13 +397,13 @@ func (m *migrationRun) stoppedApplyProof() {
 		m.mfPrintLastRun(name, recorded)
 		m.fatalf("%s did not record where its run stopped in lastRun.failure and its journal", name)
 	}
-	// The database says the same: the first migration applied, the second
-	// recorded as a failure with none of its statements committed.
+	// The database says the same: the first migration applied, and the second
+	// left with Ptah's in-flight mark and none of its statements checkpointed.
 	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 1 AND state = 'applied'", database) != "1" {
 		m.fatalf("the %s database does not record the first migration of the stopped run as applied", m.engine.name)
 	}
 	if m.query("SELECT count(*) FROM schema_migrations WHERE version = 2 AND state <> 'applied' AND applied = 0", database) != "1" {
-		m.fatalf("the %s database does not record the stopped migration as failed with nothing committed", m.engine.name)
+		m.fatalf("the %s database does not record the stopped migration as unfinished with nothing checkpointed", m.engine.name)
 	}
 	m.endStopRowSleepingSessions(database)
 

@@ -639,7 +639,9 @@ func TestWhatPtahWroteDecidesWhatTheManagerKeeps(t *testing.T) {
 		phase    operatorv1alpha1.MigrationPhase
 	}{
 		{document: "statement-errors/pg-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
-		{document: "statement-errors/my-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
+		// A MySQL DDL statement the server refused may have committed on its
+		// own, so Ptah v0.23.0 reports the run unknown (stokaro/ptah#5661).
+		{document: "statement-errors/my-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseBlocked},
 		{document: "migrations-up-failed-postgres.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
 		{document: "migrations-up-partial-mysql.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseBlocked},
 		{document: "target-failures/pg-connect/up.json", ttl: jobclaim.CleanupTTLSeconds, phase: operatorv1alpha1.MigrationPhaseFailed},
@@ -666,7 +668,7 @@ func TestWhatPtahWroteDecidesWhatTheManagerKeeps(t *testing.T) {
 			frame := migrationFrame(t, runner.Result{
 				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
 				OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true,
-				Uncertain:            report.Outcome == dataplane.MigrationOutcomePartial,
+				Uncertain:            report.Outcome == dataplane.MigrationOutcomePartial || report.Outcome == dataplane.MigrationOutcomeUnknown,
 				CoordinationDigest:   operation.CoordinationDigest,
 				TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
 				MigrationRun:         &report,

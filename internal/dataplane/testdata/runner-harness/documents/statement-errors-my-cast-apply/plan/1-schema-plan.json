@@ -2,8 +2,8 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
-  "plan_path": "/work/ptah-plan-output-3971268027/first.plan.json",
+  "plan_digest": "sha256:df11f1eab9cc6678dc64818521dc7a67ad7f2547bb6d63885b29fc91ef232622",
+  "plan_path": "/work/ptah-plan-output-488348408/first.plan.json",
   "plan": {
     "format_version": 1,
     "name": "plan_5de14a26faee",
@@ -14,12 +14,12 @@
       "kind": "schema",
       "name": "harness_my_cast"
     },
-    "destructive": false,
+    "destructive": true,
     "statements": [
       {
         "sql": "ALTER TABLE `items` MODIFY COLUMN `qty` integer",
-        "severity": "safe",
-        "reason": "does not remove data or tighten constraints"
+        "severity": "destructive",
+        "reason": "column type narrows from text to integer"
       }
     ]
   }

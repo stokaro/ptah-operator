@@ -140,7 +140,7 @@ func TestSchemaMySQLAuditAfterACompletedEarlierWindow(t *testing.T) {
 	clients := map[string]operationSQLClient{mysqlAuditHost: schemaAuditActor("plan")}
 	check := func(rows []mysqlStatementRecord, unused bool) error {
 		counts, err := mysqlStatementRefusalSQL(before, append(slices.Clone(before), rows...), schemaAuditDatabase, mysqlAuditUser, clients, unused, schemaDiagnosticActor, policy.mysql)
-		if err == nil && counts[mysqlAuditHost] != 31 {
+		if err == nil && counts[mysqlAuditHost] != 39 {
 			t.Fatal("prior SQL was counted as a new diagnostic control")
 		}
 		return err
@@ -190,7 +190,7 @@ func TestSchemaSQLPlanValidation(t *testing.T) {
 			}
 			raw := schemaAuditReading(t, engine, "drift-validate-plan")
 			counts, err := check(raw, "plan")
-			want := map[string]int{"postgresql": 47, "mysql": 19}[engine]
+			want := map[string]int{"postgresql": 50, "mysql": 23}[engine]
 			if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
 				t.Fatalf("native Plan validation: counts=%v, error=%v", counts, err)
 			}
@@ -338,26 +338,26 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			var readings []witness
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					count := map[string]map[string]int{"postgresql": {"observe": 50, "plan": 89}, "mysql": {"observe": 16, "plan": 31}}[engine][operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 53, "plan": 95}, "mysql": {"observe": 20, "plan": 39}}[engine][operation]
 					if variant == "initial-v1-" {
-						count = map[string]map[string]int{"postgresql": {"observe": 44, "plan": 82}, "mysql": {"observe": 15, "plan": 29}}[engine][operation]
+						count = map[string]map[string]int{"postgresql": {"observe": 46, "plan": 86}, "mysql": {"observe": 19, "plan": 37}}[engine][operation]
 					}
 					readings = append(readings, witness{name: variant + operation, operation: operation, count: count, stem: engine})
 				}
 			}
-			readings = append(readings, witness{name: "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 47, "mysql": 19}[engine], stem: engine},
-				witness{name: "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 47, "mysql": 19}[engine], stem: engine})
+			readings = append(readings, witness{name: "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine},
+				witness{name: "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine})
 			if engine == "mysql" {
-				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 81, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 81, stem: engine})
+				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 101, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 101, stem: engine})
 			}
 			// PostgreSQL 18 reads a column's NOT NULL constraint name where 17
 			// selects an empty string, so that one declaration has a witness only
 			// on the added line.
 			if engine == "postgresql" {
 				readings = append(readings,
-					witness{name: "drift-observe", operation: "observe", count: 50, stem: "postgresql-18"},
-					witness{name: "drift-plan", operation: "plan", count: 89, stem: "postgresql-18"},
-					witness{name: "drift-stale-apply", operation: "stale-apply", count: 47, stem: "postgresql-18"})
+					witness{name: "drift-observe", operation: "observe", count: 53, stem: "postgresql-18"},
+					witness{name: "drift-plan", operation: "plan", count: 95, stem: "postgresql-18"},
+					witness{name: "drift-stale-apply", operation: "stale-apply", count: 50, stem: "postgresql-18"})
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)

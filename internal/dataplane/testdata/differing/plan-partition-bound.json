@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "name": "plan_f617f359b3e4",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:a86180f3f84721c6b7200bcc4f2564e3529659e9fdd9e4eece50b6e8c462ee78",
+  "to_fingerprint": "sha256:e70eb6c306453ed77dbfb7a810c128d7677eb05c329456c362bcd8ffbf9fcb9a",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "transactions": [
+        "allowed"
+      ],
+      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\"",
+      "severity": "warning",
+      "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
+      "owned": true
+    },
+    {
+      "transactions": [
+        "allowed"
+      ],
+      "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')",
+      "severity": "warning",
+      "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
+      "owned": true
+    }
+  ]
+}

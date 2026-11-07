@@ -5,8 +5,10 @@
 // push` parses a file before it publishes it. What the fixture imitates is a
 // schema published by a newer Ptah than the executor, in a syntax this one does
 // not read. The artifact passes `oci resolve` and `oci inspect`, which read the
-// manifest, and stops at `schema pull`, which parses the layer. That pull runs in
-// the fetch step of an Observe or a Plan, so that step is where the run ends.
+// manifest, and `schema pull --skip-parse`, which checks the layer's type, size,
+// digest and name and writes it unparsed. That pull runs in the fetch step of an
+// Observe or a Plan, so the run goes on to the operation container, and its
+// first read of the file is where the run ends.
 package main
 
 import (

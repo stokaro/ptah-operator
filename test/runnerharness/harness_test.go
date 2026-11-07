@@ -40,6 +40,7 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 	engines := []string{enginePostgres, engineMySQL}
 	inputs := map[string]*faultInputs{enginePostgres: {}, engineMySQL: {}}
 	rows := pullRows(t)
+	prepareDifferingServer(t, l)
 	t.Run("lifecycles", func(t *testing.T) {
 		for _, engine := range engines {
 			t.Run("schema-"+engine, func(t *testing.T) {
@@ -82,6 +83,10 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 		t.Run("structural-faults", func(t *testing.T) {
 			t.Parallel()
 			structuralFaults(t, l)
+		})
+		t.Run("source-boundaries", func(t *testing.T) {
+			t.Parallel()
+			sourceBoundaries(t, l)
 		})
 		t.Run("pulls", func(t *testing.T) {
 			t.Parallel()

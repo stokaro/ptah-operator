@@ -2,23 +2,23 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:8219f2054280a8f4865911ef125be561e0ea0dadf92507ccc1b1bda4cf0c0815",
-  "plan_path": "/work/ptah-plan-output-3979821784/first.plan.json",
+  "plan_digest": "sha256:341c5f4605f4b1683f9292fadd35b65aee1c0eef40aa741a74c7b1b4042f42a3",
+  "plan_path": "/work/ptah-plan-output-1217243058/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_547149ceb2e3",
+    "name": "plan_b5d53caebf10",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:d23b72ce66e252bec93f92f7617fa2fd2caa3c8a2c09d917c1a4306d61e1831d",
+    "from_fingerprint": "sha256:9f48b2336621221c781ab09f5aeab7b94bb1ec1f9cd4dc89a0f6175b1fd21713",
     "to_fingerprint": "sha256:b60dd8afa715d794475b702e380d52aa29e3b97994ce08e46e3bf2bc35f409e8",
     "scope": {
       "kind": "realm"
     },
-    "destructive": false,
+    "destructive": true,
     "statements": [
       {
         "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)",
-        "severity": "safe",
-        "reason": "does not remove data or tighten constraints"
+        "severity": "destructive",
+        "reason": "column type narrows from timestamp to timestamp(0)"
       }
     ]
   }

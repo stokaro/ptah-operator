@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_37df5501e6c0",
+  "plan_digest": "sha256:e6090884de4b3657436b2aa2e1bf5b2fc0ef52757967c74fad96fb98552b7f61",
+  "units": [
+    {
+      "sql": "ALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64)"
+    }
+  ]
+}

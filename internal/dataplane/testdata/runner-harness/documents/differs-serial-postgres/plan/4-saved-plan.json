@@ -1,8 +1,8 @@
 {
   "format_version": 1,
-  "name": "plan_aa267326a95d",
+  "name": "plan_715e661d1dc2",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:d7d4ce513dd9b5e7ec444d0642aa1fbfe7ac775b1306ecbd9703f6d672e1b3d2",
+  "from_fingerprint": "sha256:5834303de6c03259623b5d1a1068396c7ff88b1c07ffbff3d67c5ae959d60c36",
   "to_fingerprint": "sha256:5c2e6a097d04b06b2b8d0f75059fbb315dd8e3d0316ff47badbf806b29f7ff1d",
   "scope": {
     "kind": "realm"
@@ -11,8 +11,8 @@
   "statements": [
     {
       "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT",
-      "severity": "safe",
-      "reason": "does not remove data or tighten constraints"
+      "severity": "warning",
+      "reason": "DROP DEFAULT can break writers that leave the column out"
     },
     {
       "sql": "DROP SEQUENCE \"differs_items_id_seq\"",

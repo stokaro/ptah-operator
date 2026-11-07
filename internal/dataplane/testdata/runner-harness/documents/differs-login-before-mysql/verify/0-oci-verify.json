@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-login-before-mysql@sha256:8f5abc053b14e012f0797346b666c52a073a286acdb38ae29795c9bd90e340f4",
+  "digest": "sha256:8f5abc053b14e012f0797346b666c52a073a286acdb38ae29795c9bd90e340f4",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

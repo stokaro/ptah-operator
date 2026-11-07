@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,12 +39,12 @@ func TestUnreadableSourceSaysHoldsTheClaim(t *testing.T) {
 	t.Parallel()
 
 	const code = runner.CodeDesiredSourceUnreadable + ": "
-	partition := code + capturedReason(t, "validate-sql.txt")
+	inherits := code + capturedReason(t, "validate-sql.txt")
 	migration := code + capturedReason(t, "scratch-directive.json")
-	if err := unreadableSourceSays(partition, unreadablePartitionFile, unreadablePartitionReason); err != nil {
+	if err := unreadableSourceSays(inherits, unreadableSchemaFile, unreadableInheritsReason); err != nil {
 		t.Errorf("the schema reason: %v", err)
 	}
-	if err := unreadableSourceSays("OperationRetried history attempt 1: "+partition, unreadablePartitionFile, unreadablePartitionReason); err != nil {
+	if err := unreadableSourceSays("OperationRetried history attempt 1: "+inherits, unreadableSchemaFile, unreadableInheritsReason); err != nil {
 		t.Errorf("the reason inside an Event's sentence: %v", err)
 	}
 	// The fixture's migration file is named by the directory the pinned image
@@ -56,14 +57,17 @@ func TestUnreadableSourceSaysHoldsTheClaim(t *testing.T) {
 		"the exit status it replaced": "child_exit: ptah exited with code 2",
 		"the Plan code it replaced":   "invalid_plan_output: plan command did not complete successfully",
 		"the code with no reason":     code + "the file",
-		"another file":                code + "read SQL schema file other.sql: " + unreadablePartitionReason,
-		"another reason":              code + "read SQL schema file " + unreadablePartitionFile + ": unsupported SQL statement",
-		"another code":                "invalid_input: read SQL schema file " + unreadablePartitionFile + ": " + unreadablePartitionReason,
-		"a kind":                      "database_unreachable: " + unreadablePartitionFile + " " + unreadablePartitionReason,
+		"another file":                code + "error parsing schema file: read SQL schema file /source/other.sql:2:29: " + unreadableInheritsReason,
+		// The reason Ptah v0.22.0 gave for the PARTITION OF file this row
+		// delivered before.
+		"another reason": code + "error parsing schema file: read SQL schema file /source/" + unreadableSchemaFile +
+			": expected '(' after table name: expected Operator, got Identifier at position 180",
+		"another code": "invalid_input: read SQL schema file " + unreadableSchemaFile + ":2:29: " + unreadableInheritsReason,
+		"a kind":       "database_unreachable: " + unreadableSchemaFile + " " + unreadableInheritsReason,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if err := unreadableSourceSays(message, unreadablePartitionFile, unreadablePartitionReason); err == nil {
+			if err := unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason); err == nil {
 				t.Fatalf("unreadableSourceSays(%q) accepted it", message)
 			}
 		})
@@ -164,7 +168,7 @@ func TestUnreadableSourceEventFindsTheEventOfTheResource(t *testing.T) {
 		return corev1.Event{InvolvedObject: corev1.ObjectReference{UID: uid}, Type: kind, Reason: reason, Message: message}
 	}
 	check := func(events ...corev1.Event) error {
-		return unreadableSourceEvent(events, owner, "OperationFailed", unreadablePartitionFile, unreadablePartitionReason)
+		return unreadableSourceEvent(events, owner, "OperationFailed", unreadableSchemaFile, unreadableInheritsReason)
 	}
 
 	if err := check(event(owner, corev1.EventTypeWarning, "OperationFailed", "child_exit: ptah exited with code 2"),
@@ -227,7 +231,7 @@ func TestTheUnreadableGitCommitLeavesTheCapturedOnes(t *testing.T) {
 	if spec.Branches["main"] != captured {
 		t.Errorf("main names commit %d, want the added one", spec.Branches["main"])
 	}
-	if spec.Commits[captured].Files[gitUnreadablePath] != unreadablePartitionSchema {
+	if spec.Commits[captured].Files[gitUnreadablePath] != unreadableInheritsSchema {
 		t.Errorf("the added commit does not hold the file at %s", gitUnreadablePath)
 	}
 	migrationFile := gitUnreadableMigrationPath + "/" + unreadableMigrationFile
@@ -256,7 +260,7 @@ func TestTheRepairedGitCommitRepairsOnlyTheSchemaFile(t *testing.T) {
 		t.Fatalf("main names commit %d, not the repair", repaired.Branches["main"])
 	}
 	files := repaired.Commits[len(repaired.Commits)-1].Files
-	if body := files[gitUnreadablePath]; body == "" || body == unreadablePartitionSchema {
+	if body := files[gitUnreadablePath]; body == "" || body == unreadableInheritsSchema {
 		t.Fatalf("the repair left %q at %s", body, gitUnreadablePath)
 	}
 	migrationFile := gitUnreadableMigrationPath + "/" + unreadableMigrationFile
@@ -438,14 +442,18 @@ func TestAMigrationRepairIsReadFromTheSourceAlone(t *testing.T) {
 func TestTheUnreadableFilesAreTheOnesThePinnedImageRefused(t *testing.T) {
 	t.Parallel()
 
-	if !strings.Contains(capturedReason(t, "validate-sql.txt"), unreadablePartitionReason) {
-		t.Errorf("the capture does not say %q", unreadablePartitionReason)
+	if !strings.Contains(capturedReason(t, "validate-sql.txt"), unreadableInheritsReason) {
+		t.Errorf("the capture does not say %q", unreadableInheritsReason)
 	}
 	if !strings.Contains(capturedReason(t, "scratch-directive.json"), unreadableMigrationReason) {
 		t.Errorf("the capture does not say %q", unreadableMigrationReason)
 	}
-	if !strings.Contains(unreadablePartitionSchema, "PARTITION OF events") {
-		t.Errorf("the row's file lost the statement the parser stops at")
+	measured, err := os.ReadFile(filepath.Join("..", "runnerharness", "testdata", "sources", "desired-source", unreadableSchemaFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(measured) != unreadableInheritsSchema {
+		t.Errorf("the row delivers %q, and the capture read %q", unreadableInheritsSchema, measured)
 	}
 	up := unreadableMigrationFiles[0]
 	if up.path != unreadableMigrationFile || !strings.Contains(up.body, "no_transaction=sometimes") {
@@ -453,81 +461,142 @@ func TestTheUnreadableFilesAreTheOnesThePinnedImageRefused(t *testing.T) {
 	}
 }
 
-// TestFetchStepSaysHoldsTheClaim reads what failedInitBoundary writes, and refuses
-// what the row is there to catch: another step, a message that says nothing of the
-// run, and one that carries the words the step's container wrote.
-func TestFetchStepSaysHoldsTheClaim(t *testing.T) {
-	t.Parallel()
-
-	const named = "the fetch-schema step exited 2, so the run never started"
-	if err := fetchStepSays(named, unreadableFetchStep); err != nil {
-		t.Fatalf("fetchStepSays(%q) = %v", named, err)
+// capturedFrameError is the error a runner harness row's result frame holds:
+// what the runner said in the operation container, for the same fixture a row
+// delivers to the cluster.
+func capturedFrameError(t *testing.T, row string) runner.ResultError {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "dataplane", "testdata", "runner-harness", "transcript.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, message := range map[string]string{
-		"another step":       "the fetch-migrations step exited 2, so the run never started",
-		"a generic Job":      "observe Job failed",
-		"no word of the run": "the fetch-schema step exited 2",
-		"the reason":         named + ": parse schema artifact: parse HCL schema",
-		"the file":           named + ": schema.hcl:3,31-32",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if err := fetchStepSays(message, unreadableFetchStep); err == nil {
-				t.Fatalf("fetchStepSays(%q) accepted it", message)
-			}
-		})
+	var rows []struct {
+		Name   string `json:"name"`
+		Result struct {
+			Error *runner.ResultError `json:"error"`
+		} `json:"result"`
 	}
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, captured := range rows {
+		if captured.Name != row {
+			continue
+		}
+		if captured.Result.Error == nil {
+			t.Fatalf("the harness row %s holds no error", row)
+		}
+		return *captured.Result.Error
+	}
+	t.Fatalf("no harness row %s among %d: run `make runner-harness-write`", row, len(rows))
+	return runner.ResultError{}
 }
 
-// TestFetchStepLogSaysReadsTheMeasuredLine holds the log check to what `ptah schema
-// pull` printed for the fixture on the pinned image.
-func TestFetchStepLogSaysReadsTheMeasuredLine(t *testing.T) {
+// TestTheUnparsableArtifactIsReadInTheOperationContainer holds the OCI row's
+// checks to what the runner said of the artifact hack/unparsableschemafixture
+// publishes, and refuses what the cluster said while the fetch parsed it: the
+// step by name and nothing more.
+func TestTheUnparsableArtifactIsReadInTheOperationContainer(t *testing.T) {
 	t.Parallel()
 
-	measured := []byte("error: parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; " +
-		"A single-line block definition must end with a closing brace immediately after its single argument definition.\n")
-	if err := fetchStepLogSays(measured); err != nil {
-		t.Fatalf("fetchStepLogSays() = %v", err)
-	}
-	for name, log := range map[string][]byte{
-		"an empty log":          nil,
-		"a registry refusal":    []byte("error: unauthorized: authentication required\n"),
-		"another layer's parse": []byte("error: parse schema artifact: read managed data layer\n"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if err := fetchStepLogSays(log); err == nil {
-				t.Fatalf("fetchStepLogSays(%q) accepted it", log)
-			}
-		})
-	}
-}
-
-// TestFetchStepEventFindsTheEventOfTheResource keeps the Event search to the
-// resource and the reason it was asked about, and says which way it came up empty.
-func TestFetchStepEventFindsTheEventOfTheResource(t *testing.T) {
-	t.Parallel()
-
-	const named = "the fetch-schema step exited 2, so the run never started"
-	event := func(owner types.UID, reason, eventType, message string) corev1.Event {
-		return corev1.Event{
-			InvolvedObject: corev1.ObjectReference{UID: owner}, Reason: reason, Type: eventType, Message: message,
+	const owner = types.UID("schema-uid")
+	stopped := "the " + schemaFetchStep + " step exited 2, so the run never started"
+	for _, row := range []string{"boundary-unparsable-oci/observe", "boundary-unparsable-oci/plan"} {
+		failure := capturedFrameError(t, row)
+		if failure.Code != runner.CodeDesiredSourceUnreadable {
+			t.Fatalf("%s: the runner said %s, and the row waits for %s", row, failure.Code, runner.CodeDesiredSourceUnreadable)
+		}
+		said := failure.Code + ": " + failure.Message
+		if err := unreadableSourceSays(said, unreadableArtifactFile, unreadableArtifactWords); err != nil {
+			t.Errorf("%s: %v", row, err)
+		}
+		event := corev1.Event{
+			InvolvedObject: corev1.ObjectReference{UID: owner}, Type: corev1.EventTypeWarning, Reason: "OperationFailed", Message: said,
+		}
+		if err := unreadableSourceEvent([]corev1.Event{event}, owner, "OperationFailed", unreadableArtifactFile, unreadableArtifactWords); err != nil {
+			t.Errorf("%s, the Event: %v", row, err)
 		}
 	}
-	if err := fetchStepEvent([]corev1.Event{event("a", "OperationFailed", corev1.EventTypeWarning, named)}, "a", "OperationFailed", unreadableFetchStep); err != nil {
-		t.Fatalf("fetchStepEvent() = %v", err)
-	}
-	for name, events := range map[string][]corev1.Event{
-		"no Event":            nil,
-		"another resource":    {event("b", "OperationFailed", corev1.EventTypeWarning, named)},
-		"another reason":      {event("a", "OperationRetried", corev1.EventTypeWarning, named)},
-		"a Normal Event":      {event("a", "OperationFailed", corev1.EventTypeNormal, named)},
-		"an Event with words": {event("a", "OperationFailed", corev1.EventTypeWarning, named+": parse schema artifact")},
+	for name, message := range map[string]string{
+		"the fetch step that stopped the run": stopped,
+		"the step and the code":               runner.CodeDesiredSourceUnreadable + ": " + stopped,
+		// What `ptah schema pull` printed in the fetch step's log on Ptah v0.22.0.
+		"the fetch step's words": runner.CodeDesiredSourceUnreadable + ": parse schema artifact: parse HCL schema: schema.hcl:3,31-32: " +
+			"Invalid single-argument block definition",
+		"another file": runner.CodeDesiredSourceUnreadable + ": error parsing schema file: parse HCL schema: /source/schema/schema.hcl:3,31-32: " +
+			"Invalid single-argument block definition",
+		"a SQL file": runner.CodeDesiredSourceUnreadable + ": error parsing schema file: read SQL schema file " + unreadableArtifactFile +
+			":2:29: " + unreadableInheritsReason,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if err := fetchStepEvent(events, "a", "OperationFailed", unreadableFetchStep); err == nil {
-				t.Fatalf("fetchStepEvent() accepted %+v", events)
+			if err := unreadableSourceSays(message, unreadableArtifactFile, unreadableArtifactWords); err == nil {
+				t.Fatalf("unreadableSourceSays(%q) accepted it", message)
+			}
+		})
+	}
+}
+
+// TestFetchPassedTheLayerOnRefusesAFetchThatStopped accepts a Pod whose fetch
+// left the layer to the ptah container, and refuses the Pod a parsing fetch
+// left behind: kind printed it as Init:Error, the step terminated at exit 2.
+func TestFetchPassedTheLayerOnRefusesAFetchThatStopped(t *testing.T) {
+	t.Parallel()
+	terminated := func(code int32) corev1.ContainerState {
+		return corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: code}}
+	}
+	waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	passed := func() *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "observe-pod"},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodSucceeded,
+				InitContainerStatuses: []corev1.ContainerStatus{
+					{Name: "install-runner", State: terminated(0)},
+					{Name: "validate-source-authority", State: terminated(0)},
+					{Name: schemaFetchStep, State: terminated(0)},
+				},
+				ContainerStatuses: []corev1.ContainerStatus{{Name: "ptah", State: terminated(0)}},
+			},
+		}
+	}
+	if err := fetchPassedTheLayerOn(passed()); err != nil {
+		t.Fatalf("fetchPassedTheLayerOn() = %v", err)
+	}
+	for name, test := range map[string]struct {
+		edit func(*corev1.Pod)
+		want string
+	}{
+		"stopped at the fetch step": {func(p *corev1.Pod) {
+			p.Status.Phase = corev1.PodFailed
+			p.Status.InitContainerStatuses[2].State = terminated(2)
+			p.Status.ContainerStatuses[0].State = waiting
+		}, "exited 2"},
+		"with no fetch step": {func(p *corev1.Pod) {
+			p.Status.InitContainerStatuses = p.Status.InitContainerStatuses[:2]
+		}, "has no " + schemaFetchStep},
+		"still fetching": {func(p *corev1.Pod) {
+			p.Status.InitContainerStatuses[2].State = running
+			p.Status.ContainerStatuses[0].State = waiting
+		}, "has not ended"},
+		"whose ptah container never started": {func(p *corev1.Pod) {
+			p.Status.ContainerStatuses[0].State = waiting
+		}, "has not run to its end"},
+		"whose ptah container is running": {func(p *corev1.Pod) {
+			p.Status.ContainerStatuses[0].State = running
+		}, "has not run to its end"},
+		"with no ptah container": {func(p *corev1.Pod) {
+			p.Status.ContainerStatuses = nil
+		}, "has not run to its end"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pod := passed()
+			test.edit(pod)
+			err := fetchPassedTheLayerOn(pod)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("fetchPassedTheLayerOn() = %v, want %q", err, test.want)
 			}
 		})
 	}

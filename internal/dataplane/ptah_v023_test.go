@@ -10,24 +10,22 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The rows in this file decode documents Ptah printed at f47b2bfa3, the commit
-// v0.23.0 is to be tagged on. They live under testdata/ptah-f47b2bfa3 at the
-// repository root, whose README says how each was captured, because every
-// file under this package's testdata belongs to the runner harness, which
-// still runs the pinned v0.22.0.
+// The rows in this file decode documents Ptah v0.23.0 printed, as the runner
+// harness captured them from the pinned release image.
 
 func loadPtahV023(t *testing.T, name string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ptah-f47b2bfa3", name))
+	data, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return data
 }
 
-// A deferred foreign key that fails at commit, in the default per-file mode
-// and under --tx-mode all, with the failing migration first and second. Ptah
-// v0.23.0 reports statement 0 beside commit true, and the decoder reads it.
+// A deferred foreign key that fails at commit, with the failing migration
+// first and second. Ptah v0.23.0 reports statement 0 beside commit true, and
+// the decoder reads it. The operator asks for no --tx-mode all, so a run never
+// ends the commit of two migrations at once.
 func TestDecodeMigrationRun_ReadsPtahV023CommitFailure(t *testing.T) {
 	t.Parallel()
 
@@ -44,16 +42,6 @@ func TestDecodeMigrationRun_ReadsPtahV023CommitFailure(t *testing.T) {
 			file:    "migrations-up-commit-failed-second.json",
 			applied: []int64{1},
 			want:    dataplane.MigrationRunFailure{Version: 2, Statement: 0, Statements: 1, Commit: true, SQLState: "23503"},
-		},
-		{
-			file: "migrations-up-commit-failed-tx-all.json",
-			want: dataplane.MigrationRunFailure{Version: 1, Statement: 0, Statements: 3, Commit: true, SQLState: "23503"},
-		},
-		{
-			// One commit ends both migrations, so the failure names the last
-			// and neither is applied.
-			file: "migrations-up-commit-failed-tx-all-second.json",
-			want: dataplane.MigrationRunFailure{Version: 2, Statement: 0, Statements: 1, Commit: true, SQLState: "23503"},
 		},
 	} {
 		t.Run(test.file, func(t *testing.T) {
@@ -78,7 +66,7 @@ func TestDecodeMigrationRun_ReadsPtahV023CommitFailure(t *testing.T) {
 func TestDecodeMigrationRun_ReadsPtahV023UnknownMySQLRun(t *testing.T) {
 	t.Parallel()
 
-	report, err := dataplane.DecodeMigrationRun(loadPtahV023(t, "migrations-up-unknown-mysql-ddl.json"))
+	report, err := dataplane.DecodeMigrationRun(loadPtahV023(t, "statement-errors/my-unique-up.json"))
 	if err != nil {
 		t.Fatalf("DecodeMigrationRun() error = %v", err)
 	}
@@ -119,13 +107,13 @@ func TestUnseenObjectsFromPtahV023Failures(t *testing.T) {
 		want   []string
 		says   string
 	}{
-		{file: "drift-permission-denied-triggers-routines.json", decode: drift,
+		{file: "differing/drift-permission-denied-triggers-routines.json", decode: drift,
 			want: []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, says: "every trigger and routine"},
-		{file: "plan-permission-denied-triggers-routines.json", decode: plan,
+		{file: "differing/plan-permission-denied-triggers-routines.json", decode: plan,
 			want: []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, says: "every trigger and routine"},
-		{file: "drift-permission-denied-named-routines.json", decode: drift,
+		{file: "differing/drift-permission-denied-named-routines.json", decode: drift,
 			want: []string{dataplane.UnseenRoutines}, says: "every routine"},
-		{file: "drift-permission-denied-named-views.json", decode: drift,
+		{file: "differing/drift-permission-denied-named-views.json", decode: drift,
 			want: []string{dataplane.UnseenViews}, says: "every view definition"},
 	} {
 		t.Run(row.file, func(t *testing.T) {
@@ -139,7 +127,7 @@ func TestUnseenObjectsFromPtahV023Failures(t *testing.T) {
 			if !strings.Contains(sentence, row.says) {
 				t.Fatalf("UnseenObjectsDescription() = %q, want it to say %q", sentence, row.says)
 			}
-			for _, written := range []string{"c_login", "hand_fn", "hand_proc", "parent_names", "l_doc", "l_exec", "SHOW", "TRIGGER", "*.*"} {
+			for _, written := range []string{"harness_differs", "harness_login", "differs_hand_fn", "differs_notes_view", "SHOW", "TRIGGER", "*.*"} {
 				if strings.Contains(sentence, written) {
 					t.Fatalf("UnseenObjectsDescription() = %q repeats %q from Ptah's document", sentence, written)
 				}

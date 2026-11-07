@@ -16,27 +16,29 @@ import (
 
 // What the rows deliver that Ptah cannot read, and how Ptah words each reason.
 const (
-	// unreadablePartitionSchema is the file stokaro/ptah-operator#788 reports:
-	// the parser reads no PARTITION OF.
-	unreadablePartitionSchema = `CREATE TABLE events (
-    id bigint NOT NULL,
-    happened_at timestamptz NOT NULL,
-    PRIMARY KEY (id, happened_at)
-) PARTITION BY RANGE (happened_at);
-
-CREATE TABLE events_2026 PARTITION OF events
-    FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+	// unreadableInheritsSchema is a file the parser refuses: it reads no
+	// INHERITS. The PARTITION OF file stokaro/ptah-operator#788 reported was
+	// this row's file until Ptah v0.23.0 learned to read it. It is the runner
+	// harness's desired-source/schema.sql, whose capture gives the reason.
+	unreadableInheritsSchema = `CREATE TABLE p (id bigint NOT NULL PRIMARY KEY);
+CREATE TABLE c (extra text) INHERITS (p);
 `
-	unreadablePartitionFile   = "schema.sql"
-	unreadablePartitionReason = "expected '(' after table name"
+	unreadableSchemaFile     = "schema.sql"
+	unreadableInheritsReason = "unsupported table option: INHERITS"
 
 	unreadableMigrationFile   = "0000000001_create_events.up.sql"
 	unreadableMigrationReason = `invalid +ptah no_transaction value "sometimes"`
 
-	// unreadableFetchStep is where a schema artifact the executor cannot parse
-	// stops, and unreadableFetchLogReason how Ptah words that in the step's log.
-	unreadableFetchStep      = "fetch-schema"
-	unreadableFetchLogReason = "parse schema artifact: parse HCL schema: schema.hcl:"
+	// schemaFetchStep is the init container that pulls a schema artifact. It
+	// holds the registry credentials, writes the layer unparsed, and so passes
+	// a schema the executor cannot parse on to the operation container.
+	schemaFetchStep = "fetch-schema"
+	// unreadableArtifactFile is where the fetch leaves the layer in the
+	// operation Pod, and unreadableArtifactWords how Ptah opens its refusal of
+	// the layer hack/unparsableschemafixture publishes: the runner's check reads
+	// the file at that path, so the reason names it there.
+	unreadableArtifactFile  = "/source/schema.hcl"
+	unreadableArtifactWords = "error parsing schema file: parse HCL schema: " + unreadableArtifactFile + ":"
 
 	// invalidKeySchema loads, and declares a foreign key into a table it does
 	// not hold. invalidKeyWords is how Ptah opens the fault, which the capture
@@ -163,27 +165,33 @@ func invalidSchemaSays(message, file, reason string) error {
 	return nil
 }
 
-// fetchStepSays holds a condition's or an Event's message to what a failed fetch
-// says: the step by name, and nothing the step wrote, since its container holds
-// the registry credentials. A message carrying the reason would read better and
-// break that boundary, so the row refuses one.
-func fetchStepSays(message, step string) error {
-	switch {
-	case !strings.Contains(message, "the "+step+" step exited "):
-		return fmt.Errorf("the message does not name step %s: %q", step, message)
-	case !strings.Contains(message, "so the run never started"):
-		return fmt.Errorf("the message does not say the run never started: %q", message)
-	case strings.Contains(message, "parse schema artifact"), strings.Contains(message, "schema.hcl"):
-		return fmt.Errorf("the message carries what the step wrote: %q", message)
+// fetchPassedTheLayerOn holds a terminal Pod of a schema artifact's run to
+// where the run went: the fetch step ended at zero and the ptah container ran
+// to its end, so the reason in status is the words of a container that holds
+// no registry credential. A fetch that parses the layer stops the Pod at the
+// fetch step instead, and leaves the ptah container waiting.
+func fetchPassedTheLayerOn(pod *corev1.Pod) error {
+	var fetch, operation *corev1.ContainerStatus
+	for index := range pod.Status.InitContainerStatuses {
+		if status := &pod.Status.InitContainerStatuses[index]; status.Name == schemaFetchStep {
+			fetch = status
+		}
 	}
-	return nil
-}
-
-// fetchStepLogSays holds the step's log to the reason status leaves out, which is
-// what a person with pods/log comes to read.
-func fetchStepLogSays(log []byte) error {
-	if !strings.Contains(string(log), unreadableFetchLogReason) {
-		return fmt.Errorf("the log does not say %q: %q", unreadableFetchLogReason, log)
+	for index := range pod.Status.ContainerStatuses {
+		if status := &pod.Status.ContainerStatuses[index]; status.Name == "ptah" {
+			operation = status
+		}
+	}
+	switch {
+	case fetch == nil:
+		return fmt.Errorf("Pod %s has no %s step", pod.Name, schemaFetchStep)
+	case fetch.State.Terminated == nil:
+		return fmt.Errorf("the %s step of Pod %s has not ended: %+v", schemaFetchStep, pod.Name, fetch.State)
+	case fetch.State.Terminated.ExitCode != 0:
+		return fmt.Errorf("the %s step of Pod %s exited %d, so the run never reached the ptah container",
+			schemaFetchStep, pod.Name, fetch.State.Terminated.ExitCode)
+	case operation == nil || operation.State.Terminated == nil:
+		return fmt.Errorf("the ptah container of Pod %s has not run to its end: %+v", pod.Name, operation)
 	}
 	return nil
 }
@@ -201,13 +209,6 @@ func unreadableSourceEvent(events []corev1.Event, owner types.UID, reason, file,
 func invalidSchemaEvent(events []corev1.Event, owner types.UID, reason, file, want string) error {
 	return warningEventSays(events, owner, reason, func(message string) error {
 		return invalidSchemaSays(message, file, want)
-	})
-}
-
-// fetchStepEvent finds the Warning Event that names the step and nothing more.
-func fetchStepEvent(events []corev1.Event, owner types.UID, reason, step string) error {
-	return warningEventSays(events, owner, reason, func(message string) error {
-		return fetchStepSays(message, step)
 	})
 }
 

@@ -1,0 +1,33 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1,
+    2
+  ],
+  "pending_migration_keys": [
+    "1",
+    "2"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 2,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create",
+      "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
+      "state": "pending"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Orphan",
+      "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
+      "state": "pending"
+    }
+  ]
+}
