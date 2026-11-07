@@ -322,8 +322,8 @@ it would report.
   `ptah runner result frame not found`. Its condition now reads
   `PodConfigurationError` and carries the kubelet's words, such as `secret
   "application-database" not found`, with a Warning Event of the same name, and the
-  failure past the deadline carries them too. A Secret that arrives still lets the
-  operation go on by itself. An external secret store that has not synced yet looks
+  failure past the deadline carries them as what the resource last reported. A Secret
+  that arrives still lets the operation go on by itself. An external secret store that has not synced yet looks
   like this: [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced).
   A script that reads `Ready` or `Progressing` while a Secret is missing sees the new
   reason, and on a `PtahMigration` `Progressing` is `False` meanwhile.
@@ -331,7 +331,7 @@ it would report.
   had left, about five minutes, though the holder usually finished in seconds, and
   it said nothing while it did. It now asks every five seconds, as a schema always
   has, and `Progressing` reads reason `WaitingForDatabaseLock` and names the Lease
-  while it waits.
+  while it waits, and the Job when the Apply had started one before it lost the Lease.
 
 ## 0.2.9
 

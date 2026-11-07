@@ -336,8 +336,9 @@ func (r *MigrationReconciler) claimMigrationApply(
 
 // waitForMigrationApplyLock is acquireMigrationApplyLock for a pass that can do
 // nothing else until it holds the Lease, and it says so on the resource. A claim
-// that lost the Lease has no Job and no Event, and the wait can outlast the Job
-// it is waiting to create.
+// that lost the Lease before its dispatch has no Job and no Event, and the wait
+// can outlast the Job it is waiting to create. A manager down for longer than the
+// Lease lasts can lose it after the dispatch, with the Job still running.
 func (r *MigrationReconciler) waitForMigrationApplyLock(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -358,11 +359,17 @@ func (r *MigrationReconciler) waitForMigrationApplyLock(
 
 // migrationLockWaitMessage says what a claim is waiting for. It names the Lease,
 // which names its holder to whoever may read the operator's namespace, and not
-// the holder: the holder can be another team's resource in a shared realm.
+// the holder: the holder can be another team's resource in a shared realm. It also
+// says when the claim may have started its Job, because a reader who took the
+// wait for an Apply that has not started could act while its SQL runs.
 func migrationLockWaitMessage(operation *operatorv1alpha1.MigrationOperationStatus) string {
 	lease, err := targetlock.LeaseName(operation.CoordinationDigest)
 	if err != nil {
 		lease = "of this database's realm"
+	}
+	if migrationMayHaveDispatched(operation) {
+		return fmt.Sprintf("%s is waiting for the database lock it lost, and Job %s may still be running: another operation on this database holds Lease %s. It asks again every %s",
+			operation.Type, operation.JobName, lease, maxLockContentionPoll)
 	}
 	return fmt.Sprintf("%s is waiting for the database lock: another operation on this database holds Lease %s. It asks again every %s",
 		operation.Type, lease, maxLockContentionPoll)

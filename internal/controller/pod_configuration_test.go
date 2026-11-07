@@ -525,7 +525,7 @@ func TestWithUnstartedPodAddsWhatTheResourceReported(t *testing.T) {
 	}{
 		{
 			name: "a lost frame after the Pod could not start", failure: frameLost, reported: reported,
-			want: "read Observe result: ptah runner result frame not found; Job ptah-observe-app cannot start its Pod: " + missingSecretText,
+			want: "read Observe result: ptah runner result frame not found; last reported before that: Job ptah-observe-app cannot start its Pod: " + missingSecretText,
 		},
 		{name: "no condition", failure: frameLost, want: frameLost.Error()},
 		{
@@ -574,6 +574,92 @@ func TestAReadPastItsDeadlineKeepsSayingWhyItsPodNeverStarted(t *testing.T) {
 		!strings.Contains(failed.Message, said) {
 		t.Fatalf("ReconciliationFailed = %#v, want the lost frame and %q", failed, said)
 	}
+}
+
+// The resource looks at a running Pod every 30 seconds. A Secret that arrives and
+// a Pod that starts and dies without a result can fall inside one look, and the
+// terminal pass reads the Job's result rather than its Pod's waiting state. The
+// condition then still says the Pod cannot start, about a Pod that did, so the
+// failure has to say whose words those are and when they were true.
+func TestAFailureSaysItsPodReportIsTheLastOne(t *testing.T) {
+	t.Parallel()
+
+	const lastReported = "ptah runner result frame not found; last reported before that: "
+	t.Run("a schema read", func(t *testing.T) {
+		t.Parallel()
+		schema := schemaFixture()
+		schema.Finalizers = []string{activeOperationFinalizer}
+		schema.Status.Phase = operatorv1alpha1.PhaseObserving
+		schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, ID: "observe-started",
+			JobName: "observe-started-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+		}
+		bindActiveInput(t, schema)
+		said := "Job observe-started-job cannot start its Pod: " + missingSecretText
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalWorkload(schema, batchv1.JobFailed)
+		podStarted(t, pod)
+		reconciler, api := fakeReconciler(t, staticLogs{content: []byte("no frame here\n")}, schema, job, pod)
+
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || !strings.Contains(failed.Message, lastReported+said) {
+			t.Fatalf("ReconciliationFailed = %#v, want %q", failed, lastReported+said)
+		}
+	})
+	t.Run("a schema Apply", func(t *testing.T) {
+		t.Parallel()
+		schema, plan, policy := dispatchedApplyWithPlan(t)
+		said := "Job " + schema.Status.ActiveOperation.JobName + " cannot start its Pod: " + missingSecretText
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalWorkload(schema, batchv1.JobFailed)
+		podStarted(t, pod)
+		reconciler, api := fakeReconciler(t, staticLogs{content: []byte("no frame here\n")}, schema, plan, policy, job, pod)
+		reconciler.Locks = targetlock.New(api, api, nil)
+
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || !strings.Contains(failed.Message, lastReported+said) {
+			t.Fatalf("ReconciliationFailed = %#v, want %q", failed, lastReported+said)
+		}
+	})
+	t.Run("a migration read", func(t *testing.T) {
+		t.Parallel()
+		migration := migrationFixture()
+		migration.Status.ExecutionBinding = migrationExecutionBinding()
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseResolving
+		migration.Finalizers = []string{migrationOperationFinalizer}
+		operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
+		said := "Job " + operation.JobName + " cannot start its Pod: " + missingSecretText
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalMigrationWorkload(migration, batchv1.JobFailed)
+		podStarted(t, pod)
+		reconciler, api := fakeMigrationReconciler(t, staticLogs{content: []byte("no frame here\n")}, migration, job, pod)
+
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		progressing := meta.FindStatusCondition(readMigration(t, api, migration).Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+		if progressing == nil || !strings.Contains(progressing.Message, lastReported+said) {
+			t.Fatalf("Progressing = %#v, want %q", progressing, lastReported+said)
+		}
+	})
+}
+
+// podStarted makes pod one whose container ran and ended, which is what a kubelet
+// leaves after the Secret arrived and the process died without a result frame.
+func podStarted(t *testing.T, pod *corev1.Pod) {
+	t.Helper()
+	if len(pod.Status.ContainerStatuses) == 0 {
+		t.Fatalf("Pod %s has no container status to mark as started", pod.Name)
+	}
+	pod.Status.ContainerStatuses[0].State = corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+		ExitCode: 137, Reason: "Error", StartedAt: metav1.Now(), FinishedAt: metav1.Now(),
+	}}
 }
 
 // An Apply in the same place owes the read-only proof every Apply owes, and the
