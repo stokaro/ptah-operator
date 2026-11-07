@@ -177,8 +177,9 @@ reader role grants. The line can carry row values, and
 says who else that reaches.
 
 The Job keeps the log for 24 hours after it finishes when a person approved the Apply,
-and for five minutes under `apply: Always`, where the same failure comes around again
-with a fresh log. The message says which. Past that, or on a node that was replaced,
+or when a migration run under `apply: Always` stopped the resource by reporting
+`Partial` or `Unknown`, or nothing. Any other run under `Always` keeps five minutes.
+The message says which. Past that, or on a node that was replaced,
 the log is gone unless something shipped it, and running the statement against a copy
 of the database shows the same error. A Job harvested by the release before this one
 keeps the five minutes it was given.

@@ -90,9 +90,9 @@ func (v *Validator) migrationPlanForJob(
 }
 
 // validateMigrationJobUpdate authorizes one write on a migration Job: the
-// nil-to-300 cleanup TTL the controller sets once it has harvested the result.
-// Everything else about the Job is immutable, and a Job whose claim is gone is
-// never rewritten, because a claim is what makes a Job attributable.
+// cleanup TTL the controller sets once it has harvested the result. Everything
+// else about the Job is immutable, and a Job whose claim is gone is never
+// rewritten, because a claim is what makes a Job attributable.
 func (v *Validator) validateMigrationJobUpdate(
 	ctx context.Context,
 	oldJob, job *batchv1.Job,
@@ -113,7 +113,7 @@ func (v *Validator) validateMigrationJobUpdate(
 	if operation == nil || operation.JobName != oldJob.Name || operation.JobUID != oldJob.UID {
 		return denyf("Job is not the exact active migration operation instance")
 	}
-	if err := validateCleanupTTLApproved(*job.Spec.TTLSecondsAfterFinished, operation.ApprovalRef != nil); err != nil {
+	if err := v.validateMigrationRunKeepsLog(ctx, oldJob, *job.Spec.TTLSecondsAfterFinished, operation); err != nil {
 		return err
 	}
 	if err := validateClaimBoundMigrationJobCleanup(migration, operation, oldJob); err != nil {

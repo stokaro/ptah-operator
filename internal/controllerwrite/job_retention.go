@@ -17,15 +17,15 @@ import (
 const (
 	failedApplyRetentionSeconds = jobclaim.FailedApplyRetentionTTLSeconds
 	applyOperationLabel         = "apply"
-	executorContainer           = "ptah"
 )
 
 // validateCleanupTTLChoice holds a Job's cleanup TTL to one of the two values
 // and the long one to its reason. Every finished Job keeps CleanupTTLSeconds. A
 // Job keeps FailedApplyRetentionTTLSeconds only when it is an Apply Job whose run
 // failed or whose outcome is unknown, because its Pod log is the one place that
-// holds what the database answered, and validateCleanupTTLApproved then holds it to
-// an Apply a person approved.
+// holds what the database answered. validateCleanupTTLApproved then holds a schema's
+// to an Apply a person approved, and validateMigrationRunKeepsLog a migration's to
+// that or a run that stops its resource.
 //
 // The Job alone cannot say which Apply this is. A runner that delivered its
 // frame exits zero, so a failed Apply usually leaves a Complete Job, and the
@@ -61,16 +61,48 @@ func (v *Validator) validateCleanupTTLChoice(ctx context.Context, oldJob *batchv
 	return nil
 }
 
-// validateCleanupTTLApproved holds the long TTL to an Apply a person approved. Under
-// `apply: Always` the same failure repeats every cycle, so a long TTL would keep one
-// Job per cycle and could exhaust a namespace's Job quota, while each run writes a
-// fresh log anyway. Only the claim can say an approval authorized this run.
+// validateCleanupTTLApproved holds a schema's long TTL to an Apply a person approved.
+// Under `apply: Always` a failure repeats, and an uncertain Apply goes to a proof that
+// plans again and may Apply again, so a long TTL would keep one Job per cycle and
+// could exhaust a namespace's Job quota, while each run writes a fresh log anyway.
+// Only the claim can say an approval authorized this run.
 func validateCleanupTTLApproved(seconds int32, approved bool) error {
 	if seconds == failedApplyRetentionSeconds && !approved {
 		return denyf("Job cleanup TTL %d is for the Job of an Apply a person approved, and no approval authorized this run; it keeps %d seconds",
 			seconds, cleanupTTLSeconds)
 	}
 	return nil
+}
+
+// validateMigrationRunKeepsLog holds a migration's long TTL to
+// jobclaim.MigrationRunKeepsLog: the claim names an approval, or the run's own Pod
+// reports an outcome that stops the resource.
+//
+// It reads the report whatever the Job's condition says, unlike the success check in
+// validateCleanupTTLChoice: a run that reported Failed may leave either condition, and
+// under `apply: Always` it does not earn the long TTL. It reads neither
+// spec.policy.apply nor the resource's phase or unresolved run, because an edit moves
+// the first and the manager writes the others after this. Silence reads as unknown,
+// as it does for the manager, which blocks the resource on such a run.
+func (v *Validator) validateMigrationRunKeepsLog(
+	ctx context.Context,
+	job *batchv1.Job,
+	seconds int32,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) error {
+	if seconds != failedApplyRetentionSeconds || operation.ApprovalRef != nil {
+		return nil
+	}
+	pods, err := v.jobNamespacePods(ctx, job)
+	if err != nil {
+		return internalf("read the Pods of Apply Job %s/%s: %v", job.Namespace, job.Name, err)
+	}
+	outcome := jobclaim.ReportedMigrationRun(pods, job.UID, operation.ID)
+	if jobclaim.MigrationRunBlocks(outcome) {
+		return nil
+	}
+	return denyf("Job cleanup TTL %d is for an Apply a person approved or a migration run that stops its resource, "+
+		"and no approval authorized this run and it reported %s; it keeps %d seconds", seconds, outcome, cleanupTTLSeconds)
 }
 
 // schemaApplyApproved says whether the schema's Apply was authorized by an approval:
@@ -84,49 +116,30 @@ func schemaApplyApproved(schema *operatorv1alpha1.PtahSchema) bool {
 }
 
 // applyReportedSuccess reports whether the one Pod of a complete Apply Job says
-// in its termination summary that the run succeeded. A Job can start more than
-// one Pod, and no one Pod's report speaks for another, so more than one is not
-// a success. It is read through the API server: the cache may not have the Pod.
+// in its termination summary that the run succeeded.
 func (v *Validator) applyReportedSuccess(ctx context.Context, job *batchv1.Job, ownerKind string) (bool, error) {
-	pods := &corev1.PodList{}
-	if err := v.Reader.List(ctx, pods, client.InNamespace(job.Namespace), client.MatchingLabels{"job-name": job.Name}); err != nil {
+	pods, err := v.jobNamespacePods(ctx, job)
+	if err != nil {
 		return false, err
-	}
-	owned := make([]*corev1.Pod, 0, len(pods.Items))
-	for index := range pods.Items {
-		pod := &pods.Items[index]
-		for _, reference := range pod.OwnerReferences {
-			if reference.UID == job.UID && reference.Controller != nil && *reference.Controller {
-				owned = append(owned, pod)
-				break
-			}
-		}
-	}
-	if len(owned) != 1 {
-		return false, nil
 	}
 	operation := runner.OperationApply
 	if ownerKind == "PtahMigration" {
 		operation = runner.OperationMigrationApply
 	}
 	// The label holds a hash of the ID, and the summary the ID itself.
-	return podReportedSuccess(owned[0], operation, job.Annotations[workload.AnnotationOperationID]), nil
+	summary, read := jobclaim.ApplySummary(pods, job.UID, operation, job.Annotations[workload.AnnotationOperationID])
+	return read && summaryReportsSuccess(summary), nil
 }
 
-// podReportedSuccess reads the summary the executor container left. Only a
-// summary that reads, for this operation, can say the run succeeded.
-func podReportedSuccess(pod *corev1.Pod, operation runner.Operation, operationID string) bool {
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name != executorContainer || status.State.Terminated == nil {
-			continue
-		}
-		summary, err := runner.ParseSummaryFor(status.State.Terminated.Message, operation, operationID)
-		if err != nil {
-			return false
-		}
-		return summaryReportsSuccess(summary)
+// jobNamespacePods lists what jobclaim.ApplySummary matches by owner, the way the
+// manager does: removing the job-name label from a Pod must not silence its report.
+// It is read through the API server: the cache may not have the Pod.
+func (v *Validator) jobNamespacePods(ctx context.Context, job *batchv1.Job) ([]corev1.Pod, error) {
+	pods := &corev1.PodList{}
+	if err := v.Reader.List(ctx, pods, client.InNamespace(job.Namespace)); err != nil {
+		return nil, err
 	}
-	return false
+	return pods.Items, nil
 }
 
 // summaryReportsSuccess is the same reading the frame gets: no error code, and

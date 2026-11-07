@@ -40,9 +40,10 @@ import (
 const CleanupTTLSeconds int32 = 300
 
 // FailedApplyRetentionTTLSeconds is the TTL of the Job of an Apply that failed
-// or whose outcome is unknown. Its Pod log is the one place that holds what the
-// database answered, and a person may come to read it the next morning. Every
-// other finished Job keeps CleanupTTLSeconds.
+// or whose outcome is unknown, when a person approved it or, for a migration, when
+// its run stopped the resource (MigrationRunKeepsLog). Its Pod log is the one place
+// that holds what the database answered, and a person may come to read it the next
+// morning. Every other finished Job keeps CleanupTTLSeconds.
 const FailedApplyRetentionTTLSeconds int32 = 86400
 
 var (

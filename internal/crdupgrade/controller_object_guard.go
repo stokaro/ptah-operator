@@ -307,7 +307,7 @@ func eitherSubject(schemaExpression string) string {
 // these, so a refusal names the reason.
 const (
 	controllerJobCleanupTTLValidation = `request.operation != "UPDATE" || !has(dyn(object).spec.ttlSecondsAfterFinished) || dyn(object).spec.ttlSecondsAfterFinished in [300, 86400]`
-	controllerJobCleanupTTLMessage    = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an approved Apply that failed or whose outcome is unknown"
+	controllerJobCleanupTTLMessage    = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an Apply that failed or whose outcome is unknown, when a person approved it or its migration run stopped the resource"
 
 	controllerJobRetentionTTLValidation = `request.operation != "UPDATE" || !has(dyn(object).spec.ttlSecondsAfterFinished) || dyn(object).spec.ttlSecondsAfterFinished != 86400 || (has(object.metadata.labels) && "operator.ptah.run/operation" in object.metadata.labels && object.metadata.labels["operator.ptah.run/operation"] == "apply")`
 	controllerJobRetentionTTLMessage    = "only an Apply Job keeps 86400 seconds, because its Pod log holds what the database answered when the run failed; every other finished Job keeps 300 seconds"

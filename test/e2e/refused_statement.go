@@ -77,6 +77,16 @@ func failedApplyJobRetained(job *batchv1.Job) error {
 	return nil
 }
 
+// finishedJobKeepsShortTTL holds a Job to the five minutes. The long TTL on a run no
+// approval names and whose report does not stop its resource is the Job per cycle the
+// rule exists to prevent, and a Job with no TTL is never collected.
+func finishedJobKeepsShortTTL(job *batchv1.Job) error {
+	if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != jobclaim.CleanupTTLSeconds {
+		return fmt.Errorf("Job %s keeps %v seconds, want %d", job.Name, ttl, jobclaim.CleanupTTLSeconds)
+	}
+	return nil
+}
+
 // cleanupScheduled reads whether a Job carries one of the two cleanup TTLs. An
 // Apply the successor reads reported success or an unknown outcome, so either
 // is a cleanup scheduled, and any other value is neither.

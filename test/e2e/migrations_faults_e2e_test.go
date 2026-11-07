@@ -425,6 +425,10 @@ func (m *migrationRun) stoppedApplyProof() {
 	// Read the transport selected by this exact Job. Durable delivery writes
 	// no result frame to stdout; its receipt must carry the same run report.
 	job := m.readStopRowJob(pod, jobUID)
+	// Under Always a run that reported Failed keeps the five minutes, so a failure
+	// that repeats cannot hold a Job per cycle. The manager set this before it wrote
+	// the record the row waited for.
+	m.check(finishedJobKeepsShortTTL(job), "the stopped %s Apply reported Failed under Always", m.engine.name)
 	logs, err := m.stopRowLog(pod.Name)
 	if err != nil {
 		m.fatalf("the stopped %s Apply Pod's log could not be read: %v", m.engine.name, err)
@@ -680,6 +684,12 @@ func (m *migrationRun) suspensionDuringApplyProof() {
 	}
 
 	suspendedJobs := m.waitForSuspendedAfterApply(name, jobUID)
+	// The edit blocked this resource and the run reported Applied, so Blocked earns
+	// the Job nothing: the long TTL rests on what the run reported. The manager set
+	// this before it wrote the record the wait read.
+	suspendedJob := &batchv1.Job{}
+	m.check(m.get(job, suspendedJob), "read the %s Apply Job of the suspended run", m.engine.name)
+	m.check(finishedJobKeepsShortTTL(suspendedJob), "the suspended %s run reported Applied under Always", m.engine.name)
 	// The run finished what it started, once, and suspension undid none of
 	// it. The database says so even though the resource does not yet know.
 	if applied(3) != "3" {

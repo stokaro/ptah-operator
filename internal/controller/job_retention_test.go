@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +23,9 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
+	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
@@ -84,33 +87,33 @@ func TestAFailedApplysJobKeepsItsLogAndAGuardCannotStopItsCleanup(t *testing.T) 
 	conflict := apierrors.NewConflict(jobs, "ptah-apply-orders-0123", errors.New("modified"))
 
 	for _, test := range []struct {
-		name     string
-		approved bool
-		refuse   map[int32]error
-		want     *int32
-		wantErr  bool
-		noted    bool
+		name    string
+		keepLog bool
+		refuse  map[int32]error
+		want    *int32
+		wantErr bool
+		noted   bool
 	}{
-		{name: "an approved Apply", approved: true, want: &long},
+		{name: "a run that keeps its log", keepLog: true, want: &long},
 		// The one that bounds how many Jobs a namespace holds: the long TTL is not
 		// tried, so a refusal of it could not matter.
-		{name: "an Apply no approval names", refuse: map[int32]error{long: conflict}, want: &short},
-		{name: "an Apply no approval names, with its cleanup refused", refuse: map[int32]error{short: forbidden}, wantErr: true},
+		{name: "a run that repeats", refuse: map[int32]error{long: conflict}, want: &short},
+		{name: "a run that repeats, with its cleanup refused", refuse: map[int32]error{short: forbidden}, wantErr: true},
 		// The guard of the release before this one, for the moment an upgrade
 		// leaves it in place, and the webhook on a run that reported success.
-		{name: "a webhook refuses the long TTL", approved: true, refuse: map[int32]error{long: forbidden}, want: &short, noted: true},
-		{name: "a policy refuses the long TTL", approved: true, refuse: map[int32]error{long: invalid}, want: &short, noted: true},
+		{name: "a webhook refuses the long TTL", keepLog: true, refuse: map[int32]error{long: forbidden}, want: &short, noted: true},
+		{name: "a policy refuses the long TTL", keepLog: true, refuse: map[int32]error{long: invalid}, want: &short, noted: true},
 		// A refusal of the cleanup itself is not about the TTL, and is reported.
-		{name: "the guard refuses both", approved: true, refuse: map[int32]error{long: forbidden, short: forbidden}, wantErr: true},
+		{name: "the guard refuses both", keepLog: true, refuse: map[int32]error{long: forbidden, short: forbidden}, wantErr: true},
 		// A conflict owes a fresh read, not a shorter retention.
-		{name: "a conflict", approved: true, refuse: map[int32]error{long: conflict}, wantErr: true},
+		{name: "a conflict", keepLog: true, refuse: map[int32]error{long: conflict}, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			job := finishedJob(nil)
 			api := refusingCleanup(t, job, test.refuse)
 			note := ""
-			err := retainFailedApplyJob(context.Background(), api, job, test.approved, func(message string) { note = message })
+			err := retainFailedApplyJob(context.Background(), api, job, test.keepLog, func(message string) { note = message })
 			if (err != nil) != test.wantErr {
 				t.Fatalf("retainFailedApplyJob() error = %v, want an error: %v", err, test.wantErr)
 			}
@@ -409,38 +412,143 @@ func TestASchemaApplyKeepsItsLogByHowItEnded(t *testing.T) {
 	})
 }
 
+// TestAnUncertainSchemaApplyUnderAlwaysLeadsToTheNextApply is why a schema's long TTL
+// stays with an approval. Its proof plans again, the plan is ready at once under
+// `apply: Always`, and nothing is left to stop the next Apply, so a failure that goes
+// on being uncertain holds one Job per cycle. If this stops being true, the migration
+// family's rule in jobclaim is the one a schema could take too.
+func TestAnUncertainSchemaApplyUnderAlwaysLeadsToTheNextApply(t *testing.T) {
+	t.Parallel()
+
+	schema, objects := convergedProofPlan(t, operatorv1alpha1.PendingObservationOutcomeUnknown)
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	// The fixture's record differs from its schema on purpose, and a proof of an
+	// older policy would go back to Pending instead of publishing what it planned.
+	currentPolicy, err := policyFingerprint(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.PendingObservation.Plan.PolicyFingerprint = currentPolicy
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		CoordinationDigest: testCoordinationDigest, IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, objects...)
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+	stored := safetyGetSchema(t, api, schema)
+	document := safetyPlanDocument(t, "observed-state")
+	if _, err := reconciler.consumeResultWithTransport(context.Background(), stored, nil, runner.Result{
+		Operation:            runner.OperationPlan,
+		CoordinationDigest:   stored.Status.PendingObservation.CoordinationDigest,
+		TargetIdentityDigest: stored.Status.PendingObservation.Plan.TargetIdentityDigest,
+		Stdout:               string(document),
+		PlanContentDigest:    fingerprint.DigestBytes(document),
+		PlanOutcome:          runner.PlanOutcomeChanges,
+	}, nil, 0, true); err != nil {
+		t.Fatalf("consumeResultWithTransport() error = %v", err)
+	}
+	proved := safetyGetSchema(t, api, schema)
+	if proved.Status.PendingObservation != nil {
+		t.Fatalf("PendingObservation = %#v, want the proof settled, which is all that held the next Apply", proved.Status.PendingObservation)
+	}
+	if proved.Status.Plan == nil || proved.Status.Phase != operatorv1alpha1.PhaseReadyToApply {
+		t.Fatalf("phase = %q, plan = %#v, want a plan ready to Apply with nobody asked", proved.Status.Phase, proved.Status.Plan)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	next := safetyGetSchema(t, api, schema)
+	if next.Status.ActiveOperation == nil || next.Status.ActiveOperation.Type != operatorv1alpha1.OperationApply {
+		t.Fatalf("phase = %q, active operation = %#v, want the next Apply claimed", next.Status.Phase, next.Status.ActiveOperation)
+	}
+}
+
+// migrationEvents drains what a run's reconcile recorded.
+func migrationEvents(recorder *record.FakeRecorder) []string {
+	close(recorder.Events)
+	var events []string
+	for event := range recorder.Events {
+		events = append(events, event)
+	}
+	return events
+}
+
+// assertNoShortening holds the manager to not asking for what admission refuses: the
+// Warning says a log was cut short, and a run no rule gave the long TTL lost nothing.
+func assertNoShortening(t *testing.T, events []string) {
+	t.Helper()
+	if slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, "FailedApplyLogShortened") }) {
+		t.Fatalf("the Events %q say admission shortened a log", events)
+	}
+}
+
 // TestAMigrationRunKeepsItsLogByItsOutcome runs each outcome through the same frame,
 // with and without an approval on the claim. A run that succeeded keeps the short TTL
 // and says nothing of a log. A run that did not keeps the long TTL when a person
-// approved it, and says where, except a target that could not be opened, whose
-// sentence is whole and whose log holds nothing of Ptah's.
+// approved it or when it stopped the resource, and the short one when it did neither,
+// and each says where and for how long, except a target that could not be opened,
+// whose sentence is whole and whose log holds nothing of Ptah's. Phase is what ties
+// the TTL to the claim: only a run that leaves the resource Blocked keeps its log
+// under `apply: Always`.
 func TestAMigrationRunKeepsItsLogByItsOutcome(t *testing.T) {
 	t.Parallel()
 
 	failed := &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 2"}
+	const (
+		kept      = "What Ptah reported is in the Pod log for 24 hours"
+		collected = "What Ptah reported is in the Pod log for 5 minutes"
+	)
+	long, short := jobclaim.FailedApplyRetentionTTLSeconds, jobclaim.CleanupTTLSeconds
 	for _, test := range []struct {
 		name     string
 		outcome  string
+		planned  []int64
 		failure  *runner.ResultError
 		code     int
 		approved bool
 		ttl      int32
 		pointer  string
+		phase    operatorv1alpha1.MigrationPhase
 	}{
-		{name: "applied", outcome: dataplane.MigrationOutcomeApplied, approved: true, ttl: jobclaim.CleanupTTLSeconds},
-		{name: "up to date", outcome: dataplane.MigrationOutcomeUpToDate, approved: true, ttl: jobclaim.CleanupTTLSeconds},
+		{name: "applied", outcome: dataplane.MigrationOutcomeApplied, approved: true, ttl: short, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
+		{name: "up to date", outcome: dataplane.MigrationOutcomeUpToDate, approved: true, ttl: short, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
+		{name: "applied, under Always", outcome: dataplane.MigrationOutcomeApplied, ttl: short, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
+		{name: "up to date, under Always", outcome: dataplane.MigrationOutcomeUpToDate, ttl: short, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
 		{
 			name: "failed, approved", outcome: dataplane.MigrationOutcomeFailed, code: 2, failure: failed, approved: true,
-			ttl: jobclaim.FailedApplyRetentionTTLSeconds, pointer: "What Ptah reported is in the Pod log for 24 hours",
+			ttl: long, pointer: kept, phase: operatorv1alpha1.MigrationPhaseFailed,
 		},
 		{
-			name: "failed, under Always", outcome: dataplane.MigrationOutcomeFailed, code: 2, failure: failed,
-			ttl: jobclaim.CleanupTTLSeconds, pointer: "What Ptah reported is in the Pod log for 5 minutes",
+			// It starts again from resolution after the failure interval.
+			name: "failed before it selected a migration, under Always", outcome: dataplane.MigrationOutcomeFailed, code: 2, failure: failed,
+			ttl: short, pointer: collected, phase: operatorv1alpha1.MigrationPhaseFailed,
+		},
+		{
+			// The TTL is set here, from the outcome, ahead of the reading that decides
+			// what comes next.
+			name: "failed at a migration, under Always", outcome: dataplane.MigrationOutcomeFailed, planned: []int64{3}, code: 2, failure: failed,
+			ttl: short, pointer: collected, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory,
 		},
 		{
 			name: "a target that could not be opened", outcome: dataplane.MigrationOutcomeFailed, code: 2, approved: true,
 			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
-			ttl:     jobclaim.FailedApplyRetentionTTLSeconds,
+			ttl:     long, phase: operatorv1alpha1.MigrationPhaseFailed,
+		},
+		{
+			name: "a target that could not be opened, under Always", outcome: dataplane.MigrationOutcomeFailed, code: 2,
+			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
+			ttl:     short, phase: operatorv1alpha1.MigrationPhaseFailed,
+		},
+		{
+			name: "partial, approved", outcome: dataplane.MigrationOutcomePartial, planned: []int64{3}, code: 2, failure: failed, approved: true,
+			ttl: long, pointer: kept, phase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			name: "partial, under Always", outcome: dataplane.MigrationOutcomePartial, planned: []int64{3}, code: 2, failure: failed,
+			ttl: long, pointer: kept, phase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			name: "unknown, under Always", outcome: dataplane.MigrationOutcomeUnknown, planned: []int64{3}, code: 2, failure: failed,
+			ttl: long, pointer: kept, phase: operatorv1alpha1.MigrationPhaseBlocked,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -452,7 +560,7 @@ func TestAMigrationRunKeepsItsLogByItsOutcome(t *testing.T) {
 			}
 			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
 			report := &dataplane.MigrationRunReport{
-				ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: test.outcome,
+				ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: test.outcome, Planned: test.planned,
 			}
 			frame := migrationFrame(t, runner.Result{
 				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
@@ -464,17 +572,24 @@ func TestAMigrationRunKeepsItsLogByItsOutcome(t *testing.T) {
 			})
 			reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, plan, job, pod, verificationPolicyConfigMap())
 			holdMigrationApplyLease(t, reconciler, api, migration)
-			reconciler.Recorder = record.NewFakeRecorder(32)
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			if got := storedTTL(t, api, job); got == nil || *got != test.ttl {
 				t.Fatalf("the Job's TTL = %v, want %d", got, test.ttl)
 			}
-			run := readMigration(t, api, migration).Status.LastRun
+			settled := readMigration(t, api, migration)
+			run := settled.Status.LastRun
 			if run == nil {
 				t.Fatal("no run was recorded")
 			}
+			if settled.Status.Phase != test.phase {
+				t.Fatalf("phase = %q, want %q", settled.Status.Phase, test.phase)
+			}
+			events := migrationEvents(recorder)
+			assertNoShortening(t, events)
 			where := "kubectl logs -n " + job.Namespace + " job/" + job.Name + " -c ptah"
 			if test.pointer == "" {
 				if strings.Contains(run.Message, where) {
@@ -482,39 +597,82 @@ func TestAMigrationRunKeepsItsLogByItsOutcome(t *testing.T) {
 				}
 				return
 			}
-			if !strings.Contains(run.Message, test.pointer+" after the Job finishes: "+where) {
-				t.Fatalf("LastRun.Message = %q, want %q", run.Message, test.pointer)
+			pointer := test.pointer + " after the Job finishes: " + where
+			if !strings.Contains(run.Message, pointer) {
+				t.Fatalf("LastRun.Message = %q, want %q", run.Message, pointer)
+			}
+			if !slices.ContainsFunc(events, func(event string) bool {
+				return strings.Contains(event, "MigrationRunFinished") && strings.Contains(event, pointer)
+			}) {
+				t.Fatalf("the Events %q do not say %q", events, pointer)
+			}
+			if test.phase == operatorv1alpha1.MigrationPhaseBlocked {
+				blocked := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+				if blocked == nil || !strings.Contains(blocked.Message, pointer) {
+					t.Fatalf("Blocked = %#v, want it to say %q", blocked, pointer)
+				}
 			}
 		})
 	}
 }
 
-// TestAnUnreadMigrationApplyKeepsItsLogByItsApproval is the path with no report: an
-// Apply nobody could account for. It keeps what a run that failed keeps, and says of
-// the log only what a run nobody read allows.
-func TestAnUnreadMigrationApplyKeepsItsLogByItsApproval(t *testing.T) {
+// reportingPod leaves what a runner leaves on a run that reported this outcome.
+func reportingPod(t *testing.T, pod *corev1.Pod, operation *operatorv1alpha1.MigrationOperationStatus, outcome string) {
+	t.Helper()
+	encoded, err := runner.EncodeSummary(runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply, OperationID: operation.ID,
+		CoordinationDigest: operation.CoordinationDigest, TargetIdentityDigest: testDigest,
+		MutationStarted: outcome != dataplane.MigrationOutcomeUpToDate,
+		Uncertain:       outcome == dataplane.MigrationOutcomePartial || outcome == dataplane.MigrationOutcomeUnknown,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: outcome,
+		},
+	})
+	if err != nil {
+		t.Fatalf("EncodeSummary() error = %v", err)
+	}
+	pod.Status.ContainerStatuses[0].State.Terminated.Message = string(encoded)
+}
+
+// TestAnUncertainMigrationApplyKeepsItsLogByWhatItReported is the path that blocks the
+// resource without taking the run's report: nothing read it, or something other than
+// the run stopped the resource. Blocked is not what earns the long TTL, because an edit
+// can do that much. What the run's Pod reported is, as it is at the webhook. A run that
+// reported nothing is one nobody accounted for, and its log is all there is.
+func TestAnUncertainMigrationApplyKeepsItsLogByWhatItReported(t *testing.T) {
 	t.Parallel()
 
+	long, short := jobclaim.FailedApplyRetentionTTLSeconds, jobclaim.CleanupTTLSeconds
+	unread := errors.New("the Apply produced no readable account")
+	const (
+		kept      = "Anything the run wrote is in the Pod log for 24 hours"
+		collected = "Anything the run wrote is in the Pod log for 5 minutes"
+	)
 	for _, test := range []struct {
 		name     string
 		approved bool
+		reported string
 		failure  error
 		ttl      int32
 		pointer  string
 	}{
-		{
-			name: "approved", approved: true, failure: errors.New("the Apply produced no readable account"),
-			ttl: jobclaim.FailedApplyRetentionTTLSeconds, pointer: "Anything the run wrote is in the Pod log for 24 hours",
-		},
-		{
-			name: "under Always", failure: errors.New("the Apply produced no readable account"),
-			ttl: jobclaim.CleanupTTLSeconds, pointer: "Anything the run wrote is in the Pod log for 5 minutes",
-		},
+		{name: "approved", approved: true, failure: unread, ttl: long, pointer: kept},
+		{name: "under Always, with nothing reported", failure: unread, ttl: long, pointer: kept},
 		{
 			name: "a result that wrote no line", approved: true,
 			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, corev1.SecretKeySelector{}),
-			ttl:     jobclaim.FailedApplyRetentionTTLSeconds,
+			ttl:     long,
 		},
+		{
+			name:    "a result that wrote no line, under Always",
+			failure: resultFailure(&runner.ResultError{Code: "invalid_migration_run_output", Message: "failed strict validation"}, corev1.SecretKeySelector{}),
+			ttl:     long,
+		},
+		{name: "under Always, reported Partial", reported: dataplane.MigrationOutcomePartial, failure: unread, ttl: long, pointer: kept},
+		{name: "under Always, reported Unknown", reported: dataplane.MigrationOutcomeUnknown, failure: unread, ttl: long, pointer: kept},
+		{name: "under Always, reported Failed", reported: dataplane.MigrationOutcomeFailed, failure: unread, ttl: short, pointer: collected},
+		{name: "under Always, reported Applied", reported: dataplane.MigrationOutcomeApplied, failure: unread, ttl: short, pointer: collected},
+		{name: "approved, reported Failed", approved: true, reported: dataplane.MigrationOutcomeFailed, failure: unread, ttl: long, pointer: kept},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -524,15 +682,25 @@ func TestAnUnreadMigrationApplyKeepsItsLogByItsApproval(t *testing.T) {
 				operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: "approval", UID: "approval-uid"}
 			}
 			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			if test.reported != "" {
+				reportingPod(t, pod, operation, test.reported)
+			}
 			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap())
-			reconciler.Recorder = record.NewFakeRecorder(32)
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
 			if _, err := reconciler.retireUncertainMigrationApply(context.Background(), migration, job, test.failure, "", false); err != nil {
 				t.Fatalf("retireUncertainMigrationApply() error = %v", err)
 			}
 			if got := storedTTL(t, api, job); got == nil || *got != test.ttl {
 				t.Fatalf("the Job's TTL = %v, want %d", got, test.ttl)
 			}
-			message := readMigration(t, api, migration).Status.LastRun.Message
+			settled := readMigration(t, api, migration)
+			if settled.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked || settled.Status.UnresolvedRun == nil {
+				t.Fatalf("phase = %q, unresolved run = %#v, want the resource blocked on the run", settled.Status.Phase, settled.Status.UnresolvedRun)
+			}
+			events := migrationEvents(recorder)
+			assertNoShortening(t, events)
+			message := settled.Status.LastRun.Message
 			where := "kubectl logs -n " + job.Namespace + " job/" + job.Name + " -c ptah"
 			if test.pointer == "" {
 				if strings.Contains(message, where) {
@@ -540,10 +708,143 @@ func TestAnUnreadMigrationApplyKeepsItsLogByItsApproval(t *testing.T) {
 				}
 				return
 			}
-			if !strings.Contains(message, test.pointer+" after the Job finishes: "+where) {
-				t.Fatalf("LastRun.Message = %q, want %q", message, test.pointer)
+			pointer := test.pointer + " after the Job finishes: " + where
+			if !strings.Contains(message, pointer) {
+				t.Fatalf("LastRun.Message = %q, want %q", message, pointer)
+			}
+			blocked := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if blocked == nil || !strings.Contains(blocked.Message, pointer) {
+				t.Fatalf("Blocked = %#v, want it to say %q", blocked, pointer)
+			}
+			if !slices.ContainsFunc(events, func(event string) bool {
+				return strings.Contains(event, "MigrationRunUncertain") && strings.Contains(event, pointer)
+			}) {
+				t.Fatalf("the Events %q do not say %q", events, pointer)
 			}
 		})
+	}
+}
+
+// TestAnEditThatStopsAMigrationEarnsNoLongTTL takes the way a person reaches that path:
+// an edit while the run is out, so the claim's inputs moved and the run's report is not
+// taken. The resource is Blocked either way, and what the run reported decides.
+func TestAnEditThatStopsAMigrationEarnsNoLongTTL(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		reported string
+		ttl      int32
+	}{
+		{name: "a run that reported Failed", reported: dataplane.MigrationOutcomeFailed, ttl: jobclaim.CleanupTTLSeconds},
+		{name: "a run that reported Applied", reported: dataplane.MigrationOutcomeApplied, ttl: jobclaim.CleanupTTLSeconds},
+		{name: "a run that reported Partial", reported: dataplane.MigrationOutcomePartial, ttl: jobclaim.FailedApplyRetentionTTLSeconds},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan := awaitingApprovalFixture(t)
+			migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+			operation := applyClaimFor(t, migration, plan)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			reportingPod(t, pod, operation, test.reported)
+			migration.Spec.Suspend = true
+			migration.Generation++
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap())
+			holdMigrationApplyLease(t, reconciler, api, migration)
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			settled := readMigration(t, api, migration)
+			if settled.Status.LastRun == nil || settled.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown ||
+				settled.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked || settled.Status.UnresolvedRun == nil {
+				t.Fatalf("phase = %q, last run = %#v, unresolved run = %#v, want the edit to have stopped the resource",
+					settled.Status.Phase, settled.Status.LastRun, settled.Status.UnresolvedRun)
+			}
+			if got := storedTTL(t, api, job); got == nil || *got != test.ttl {
+				t.Fatalf("the Job's TTL = %v, want %d", got, test.ttl)
+			}
+			assertNoShortening(t, migrationEvents(recorder))
+		})
+	}
+}
+
+// TestABlockedRunAGuardHeldToFiveMinutesSaysSo is the upgrade: the webhook and the
+// guard of the release before this one refuse the long TTL on a run no approval names.
+// The claim settles, the Job is collected on the short TTL, and everything that names
+// the log gives the time the Job holds rather than the time it was due.
+func TestABlockedRunAGuardHeldToFiveMinutesSaysSo(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	frame := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
+		OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true, Uncertain: true,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
+		MigrationRun: &dataplane.MigrationRunReport{
+			ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: dataplane.MigrationOutcomePartial, Planned: []int64{3},
+		},
+		Error: &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 2"},
+	})
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, plan, job, pod, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	refused := apierrors.NewForbidden(schema.GroupResource{Group: "batch", Resource: "jobs"}, job.Name, errors.New("no approval authorized this run"))
+	reconciler.Client = interceptor.NewClient(api, interceptor.Funcs{
+		Patch: func(ctx context.Context, writer client.WithWatch, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+			if stored, isJob := object.(*batchv1.Job); isJob && stored.Spec.TTLSecondsAfterFinished != nil &&
+				*stored.Spec.TTLSecondsAfterFinished == jobclaim.FailedApplyRetentionTTLSeconds {
+				return refused
+			}
+			return writer.Patch(ctx, object, patch, options...)
+		},
+	})
+	recorder := record.NewFakeRecorder(32)
+	reconciler.Recorder = recorder
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if got := storedTTL(t, api, job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the Job's TTL = %v, want %d", got, jobclaim.CleanupTTLSeconds)
+	}
+	settled := readMigration(t, api, migration)
+	if settled.Status.ActiveOperation != nil || settled.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, claim = %#v, want the claim settled and the resource blocked", settled.Status.Phase, settled.Status.ActiveOperation)
+	}
+	const pointer = "What Ptah reported is in the Pod log for 5 minutes after the Job finishes"
+	blocked := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || !strings.Contains(blocked.Message, pointer) || !strings.Contains(settled.Status.LastRun.Message, pointer) {
+		t.Fatalf("Blocked = %#v, LastRun.Message = %q, want them to say %q", blocked, settled.Status.LastRun.Message, pointer)
+	}
+	events := migrationEvents(recorder)
+	if !slices.ContainsFunc(events, func(event string) bool {
+		return strings.Contains(event, "MigrationRunFinished") && strings.Contains(event, pointer)
+	}) {
+		t.Fatalf("the Events %q do not say %q", events, pointer)
+	}
+	if !slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, "FailedApplyLogShortened") }) {
+		t.Fatalf("the Events %q do not say the log was shortened", events)
+	}
+}
+
+// TestAJobHoldingTheLongTTLAfterARollbackGetsNoWrite is the other direction: a Job this
+// release gave 24 hours under no approval carries a TTL, so the manager that comes next
+// writes nothing to it, whatever it would have asked for, and no older guard judges it.
+func TestAJobHoldingTheLongTTLAfterARollbackGetsNoWrite(t *testing.T) {
+	t.Parallel()
+
+	long := jobclaim.FailedApplyRetentionTTLSeconds
+	job := finishedJob(&long)
+	refused := errors.New("no write reaches a Job that has a TTL")
+	api := refusingCleanup(t, job, map[int32]error{long: refused, jobclaim.CleanupTTLSeconds: refused})
+	if err := retainFailedApplyJob(context.Background(), api, job, false, func(string) {}); err != nil {
+		t.Fatalf("retainFailedApplyJob() error = %v", err)
+	}
+	if got := storedTTL(t, api, job); got == nil || *got != long {
+		t.Fatalf("the stored TTL = %v, want %d", got, long)
 	}
 }
 
