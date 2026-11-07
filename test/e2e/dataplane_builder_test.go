@@ -130,3 +130,61 @@ func TestSourceJobIsolationAcceptsTheBuildersJobs(t *testing.T) {
 		})
 	}
 }
+
+// The custom-CA row holds the fetch step to its exact command, arguments, variables
+// and mounts, and only a cluster runs that row. The step the manager's own builder
+// writes has to pass it here, or the row fails a correct operator there.
+func TestFetchIsolationAcceptsTheBuildersFetch(t *testing.T) {
+	t.Parallel()
+	var key planseal.PublicKey
+	for index := range key {
+		key[index] = byte(index)
+	}
+	builder := workload.Builder{
+		ExecutorImage: "example.invalid/ptah@" + builderDigest('d'), RunnerImage: "example.invalid/operator@" + builderDigest('e'),
+		PtahVersion: "v0.3.0", ControllerImage: "example.invalid/manager@" + builderDigest('f'),
+		ControllerRevision: "controller-test-revision", ControllerStateVersion: 1, PlanSealPublicKey: key,
+	}
+	schema := sourceContractSchema(ptahv1alpha1.RegistryAuthEnvironment)
+	schema.Spec.Desired.Transport = ptahv1alpha1.OCITransportSpec{CAFrom: &corev1.ConfigMapKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "registry-ca"}, Key: "ca.pem",
+	}}
+	active := ptahv1alpha1.ActiveOperationStatus{
+		Type: ptahv1alpha1.OperationObserve, ID: builderDigest('8'), InputFingerprint: builderDigest('f'),
+		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch, CoordinationDigest: builderDigest('c'),
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)), Attempt: 1,
+		Target: &ptahv1alpha1.DatabaseTargetBinding{Engine: schema.Spec.Target.Engine, URLFrom: schema.Spec.Target.URLFrom},
+		Source: &ptahv1alpha1.SourceAccessBinding{
+			ResolvedReference: schema.Status.Source.ResolvedReference, Digest: schema.Status.Source.Digest,
+			RegistryAuthFrom: schema.Spec.Desired.RegistryAuthFrom, Transport: schema.Spec.Desired.Transport,
+		},
+	}
+	job, err := builder.Build(schema, active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	inputs := customCAPodIsolationInputs{
+		databaseSecret: "database", registrySecret: schema.Spec.Desired.RegistryAuthFrom.Name, registryAuthority: "registry.example:5000",
+		caConfigMap: "registry-ca", resolvedReference: schema.Status.Source.ResolvedReference,
+	}
+	for _, container := range job.Spec.Template.Spec.InitContainers {
+		if container.Name != "fetch-schema" {
+			continue
+		}
+		found++
+		view := viewContainers([]corev1.Container{container})[0]
+		if !inputs.fetchIsolated(&container, view) {
+			t.Fatalf("the fetch isolation predicate refused the builder's fetch: %+v", container)
+		}
+		// And it still refuses: the same step read for another credential.
+		other := inputs
+		other.registrySecret = "another-registry-auth"
+		if other.fetchIsolated(&container, view) {
+			t.Fatal("the builder's fetch passed for a registry credential it does not name")
+		}
+	}
+	if found != 1 {
+		t.Fatalf("the Job has %d fetch steps", found)
+	}
+}

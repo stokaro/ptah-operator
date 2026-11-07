@@ -137,10 +137,11 @@ func TestAMigrationSaysWhyItsFilesCouldNotBeRead(t *testing.T) {
 }
 
 // TestAFailedFetchIsNamedAsItsStep covers the schema an OCI artifact delivers,
-// which `schema pull` reads in an init container: a file that does not parse
-// ends the Pod there, before the runner can speak. The step and its exit status
-// are structured fields, and what the container wrote stays in its log. A Job
-// that failed with no init container to blame keeps the sentence it had.
+// which `schema pull` reads in an init container, which ends the Pod before the
+// operation can speak. The step and its exit status are structured fields, and a
+// message the runner did not mark stays out of status, whatever it says:
+// TestAFetchThatCouldNotParseSaysWhy reads the one it did mark. A Job that failed
+// with no init container to blame keeps the sentence it had.
 func TestAFailedFetchIsNamedAsItsStep(t *testing.T) {
 	t.Parallel()
 

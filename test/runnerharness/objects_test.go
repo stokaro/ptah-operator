@@ -2,6 +2,7 @@ package runnerharness_test
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -129,6 +130,11 @@ func (l *lab) cluster(url string, policy []byte, chunks map[string]map[string][]
 				operatorv1alpha1.GitSSHPrivateKeySecretKey:    l.keys.ClientKeyPEM,
 				operatorv1alpha1.GitKnownHostsSHA256SecretKey: []byte(digestOfBytes(l.keys.KnownHosts)),
 			},
+			registryPasswordSecret:      registryPasswordKeys(l.registryPassword),
+			registryWrongPasswordSecret: registryPasswordKeys(wrongRegistryPassword),
+			registryDockerConfigSecret:  registryDockerConfigKeys(dockerConfigOf(registryUsername, l.registryPassword)),
+			registryWrongConfigSecret:   registryDockerConfigKeys(dockerConfigOf(registryUsername, wrongRegistryPassword)),
+			registryMalformedSecret:     registryDockerConfigKeys([]byte("{ this is not a Docker config")),
 		},
 		ConfigMaps: map[string]map[string][]byte{
 			policyConfigMap:     {policyKey: policy},
@@ -140,6 +146,45 @@ func (l *lab) cluster(url string, policy []byte, chunks map[string]map[string][]
 		cluster.ConfigMaps[name] = data
 	}
 	return cluster
+}
+
+// The Secrets a fetch from the authenticating registry can read. A row names one
+// of them as its registryAuthFrom.
+const (
+	registryPasswordSecret      = "harness-registry-password"
+	registryWrongPasswordSecret = "harness-registry-wrong-password"
+	registryDockerConfigSecret  = "harness-registry-docker-config"
+	registryWrongConfigSecret   = "harness-registry-wrong-docker-config"
+	registryMalformedSecret     = "harness-registry-malformed-docker-config"
+
+	wrongRegistryPassword = "not-the-registry-password"
+)
+
+// registryGrants is what the credential's owner grants: this registry, over the
+// plain HTTP the lab speaks.
+func registryGrants() map[string][]byte {
+	return map[string][]byte{
+		operatorv1alpha1.RegistryAuthoritySecretKey:      []byte(authRegistryHost),
+		operatorv1alpha1.RegistryAllowPlainHTTPSecretKey: []byte("true"),
+	}
+}
+
+func registryPasswordKeys(password string) map[string][]byte {
+	keys := registryGrants()
+	keys["username"] = []byte(registryUsername)
+	keys["password"] = []byte(password)
+	return keys
+}
+
+func registryDockerConfigKeys(config []byte) map[string][]byte {
+	keys := registryGrants()
+	keys[corev1.DockerConfigJsonKey] = config
+	return keys
+}
+
+func dockerConfigOf(username, password string) []byte {
+	encoded := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	return []byte(`{"auths":{"` + authRegistryHost + `":{"auth":"` + encoded + `"}}}`)
 }
 
 func digestOfBytes(data []byte) string {
@@ -206,6 +251,7 @@ func (s *schemaRun) access() operatorv1alpha1.SourceAccessBinding {
 	return operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: s.schema.Status.Source.ResolvedReference,
 		Digest:            s.schema.Status.Source.Digest,
+		RegistryAuthFrom:  s.schema.Spec.Desired.RegistryAuthFrom,
 		Transport:         s.schema.Spec.Desired.Transport,
 	}
 }

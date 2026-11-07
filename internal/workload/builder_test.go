@@ -452,8 +452,12 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 		t.Fatalf("source authority guard = %q %q", guard.Command, guard.Args)
 	}
 	fetch := job.Spec.Template.Spec.InitContainers[2]
-	if fetch.Name != fetchContainerName || !reflect.DeepEqual(fetch.Command, []string{ptahBinaryPath}) ||
-		!reflect.DeepEqual(fetch.Args, []string{"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath}) {
+	if fetch.Name != SchemaFetchContainerName || !reflect.DeepEqual(fetch.Command, []string{runnerPath}) ||
+		!reflect.DeepEqual(fetch.Args, []string{
+			"--fetch-oci-schema", schema.Status.Source.ResolvedReference,
+			"--fetch-oci-schema-to", sourceFilePath,
+			"--ptah-binary", ptahBinaryPath,
+		}) {
 		t.Fatalf("source fetch command = %q %q", fetch.Command, fetch.Args)
 	}
 	if _, ok := containerEnvMap(fetch)["PTAH_DB_URL"]; ok {
@@ -563,8 +567,12 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	if got := requireEnv(t, job, runner.EnvCoordinationDigest).Value; got != testCoordinationDigest() {
 		t.Fatalf("coordination digest = %q, want persisted proof binding", got)
 	}
-	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
-	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath}) {
+	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, SchemaFetchContainerName)
+	if !reflect.DeepEqual(fetch.Args, []string{
+		"--fetch-oci-schema", originalSource.ResolvedReference,
+		"--fetch-oci-schema-to", sourceFilePath,
+		"--ptah-binary", ptahBinaryPath,
+	}) {
 		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
 	}
 	fetchEnvironment := containerEnvMap(fetch)
@@ -620,7 +628,7 @@ func TestBuildObserveAndPlanSeparateRegistryAndDatabaseCredentials(t *testing.T)
 			}
 			pod := job.Spec.Template.Spec
 			main := pod.Containers[0]
-			fetch := requireContainer(t, pod.InitContainers, fetchContainerName)
+			fetch := requireContainer(t, pod.InitContainers, SchemaFetchContainerName)
 			mainEnvironment := containerEnvMap(main)
 			fetchEnvironment := containerEnvMap(fetch)
 
@@ -689,7 +697,7 @@ func TestBuildGuardsSourceAuthorityBeforeCredentialedFetch(t *testing.T) {
 	}
 	initContainers := job.Spec.Template.Spec.InitContainers
 	if len(initContainers) != 3 || initContainers[0].Name != initContainerName ||
-		initContainers[1].Name != guardContainerName || initContainers[2].Name != fetchContainerName {
+		initContainers[1].Name != guardContainerName || initContainers[2].Name != SchemaFetchContainerName {
 		t.Fatalf("init container order = %#v", initContainers)
 	}
 
@@ -799,7 +807,7 @@ func TestBuildSnapshotsAnonymousCABundleWithoutSecretGrant(t *testing.T) {
 			if !hasMount(guard, caVolumeName) || !hasMount(guard, caSnapshotVolumeName) {
 				t.Fatalf("anonymous CA guard mounts = %#v", guard.VolumeMounts)
 			}
-			fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
+			fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, SchemaFetchContainerName)
 			if hasMount(fetch, caVolumeName) || !hasMount(fetch, caSnapshotVolumeName) {
 				t.Fatalf("anonymous fetch mounts = %#v, want only CA snapshot", fetch.VolumeMounts)
 			}

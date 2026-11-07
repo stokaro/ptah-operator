@@ -213,14 +213,15 @@
             "name": "fetch-schema",
             "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "command": [
-              "/usr/local/bin/ptah"
+              "/runner/ptah-runner"
             ],
             "args": [
-              "schema",
-              "pull",
+              "--fetch-oci-schema",
               "oci://registry.example/acme/orders@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "--out",
-              "/source/schema.hcl"
+              "--fetch-oci-schema-to",
+              "/source/schema.hcl",
+              "--ptah-binary",
+              "/usr/local/bin/ptah"
             ],
             "workingDir": "/fetch-work",
             "env": [
@@ -235,6 +236,10 @@
               {
                 "name": "PTAH_PLAIN_HTTP",
                 "value": "false"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "1"
               },
               {
                 "name": "TMPDIR",
@@ -255,6 +260,11 @@
                 "name": "registry-ca-snapshot",
                 "readOnly": true,
                 "mountPath": "/credentials/ca-snapshot"
+              },
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
               }
             ],
             "terminationMessagePath": "/dev/termination-log",

@@ -91,10 +91,14 @@ const (
 	// which is what the runner's SIGTERM handling is for.
 	AnnotationSafeToEvict = "cluster-autoscaler.kubernetes.io/safe-to-evict"
 
+	// SchemaFetchContainerName is the init container that pulls an OCI schema.
+	// It is the one credentialed container whose termination message the manager
+	// reads, for the reason an artifact could not be parsed.
+	SchemaFetchContainerName = "fetch-schema"
+
 	mainContainerName     = "ptah"
 	initContainerName     = "install-runner"
 	guardContainerName    = "validate-source-authority"
-	fetchContainerName    = "fetch-schema"
 	snapshotContainerName = "copy-source-snapshot"
 	runnerVolumeName      = "runner"
 	workVolumeName        = "work"
@@ -341,10 +345,14 @@ func (b Builder) Build(
 		// in before the operation container starts.
 		job.fetch = &artifactFetchRequest{
 			source:        source,
-			containerName: fetchContainerName,
-			args:          []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
-			destination:   schemaSnapshotPath,
-			schema:        true,
+			containerName: SchemaFetchContainerName,
+			args: []string{
+				"--fetch-oci-schema", source.ResolvedReference,
+				"--fetch-oci-schema-to", sourceFilePath,
+				"--ptah-binary", ptahBinaryPath,
+			},
+			destination: schemaSnapshotPath,
+			schema:      true,
 		}
 	}
 	return b.buildOperationJob(job)
@@ -635,11 +643,10 @@ func (b Builder) snapshotCopy(
 }
 
 func (b Builder) artifactFetch(
-	source operatorv1alpha1.SourceAccessBinding,
-	fetchName string,
-	fetchArgs []string,
+	request artifactFetchRequest,
 	resources corev1.ResourceRequirements,
 ) (corev1.Container, corev1.Container, []corev1.Volume, error) {
+	source := request.source
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
 		literalEnv("TMPDIR", fetchWorkPath),
@@ -702,7 +709,7 @@ func (b Builder) artifactFetch(
 	)
 	// The guard is the runner from execution.runnerImage, and it authorizes
 	// the fetch that follows it. It refuses a protocol other than its own
-	// before it authorizes anything; the fetch is Ptah, and is not told.
+	// before it authorizes anything; a fetch that is Ptah is not told.
 	guardEnvironment = append(guardEnvironment, runnerProtocolEnv())
 	fetchEnvironment := omitEnvironment(environment,
 		runner.EnvOCIAuthMode,
@@ -714,6 +721,18 @@ func (b Builder) artifactFetch(
 	)
 	if source.Transport.CAFrom != nil {
 		fetchEnvironment = append(fetchEnvironment, literalEnv("PTAH_OCI_CA_FILE", caSnapshotFilePath))
+	}
+	// A schema's pull parses the artifact, so it can fail for a reason an author
+	// has to read, and the runner around it is what carries that reason out. A
+	// migration's pull parses nothing, and the operation container that reads
+	// the files reports what it cannot read, so that fetch stays Ptah. The runner
+	// gets what the fetch holds and adds only the protocol, which it keeps from
+	// its child.
+	fetchCommand := []string{ptahBinaryPath}
+	if request.schema {
+		fetchCommand = []string{runnerPath}
+		fetchEnvironment = append(fetchEnvironment, runnerProtocolEnv())
+		fetchMounts = append(fetchMounts, corev1.VolumeMount{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true})
 	}
 	sort.Slice(guardEnvironment, func(left, right int) bool { return guardEnvironment[left].Name < guardEnvironment[right].Name })
 	sort.Slice(fetchEnvironment, func(left, right int) bool { return fetchEnvironment[left].Name < fetchEnvironment[right].Name })
@@ -729,16 +748,21 @@ func (b Builder) artifactFetch(
 		VolumeMounts:    guardMounts,
 	}
 	fetch := corev1.Container{
-		Name:            fetchName,
+		Name:            request.containerName,
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{ptahBinaryPath},
-		Args:            fetchArgs,
+		Command:         fetchCommand,
+		Args:            request.args,
 		WorkingDir:      fetchWorkPath,
 		Env:             fetchEnvironment,
 		Resources:       resources,
 		SecurityContext: hardenedContainerContext(),
 		VolumeMounts:    fetchMounts,
+		// Named because the manager reads this message. The file holds only
+		// what the runner chose to write, and FallbackToLogsOnError would put
+		// the end of the log there, which is where a registry's words go.
+		TerminationMessagePath:   runner.TerminationMessagePath,
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
 	return guard, fetch, volumes, nil
 }

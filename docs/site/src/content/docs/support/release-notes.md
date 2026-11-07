@@ -104,8 +104,12 @@ it would report.
   [Output handling](../../use/security/#output-handling) says who that reaches.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says how to read the reason and how to make the resource read the repaired
-  file. A schema whose `fetch-schema` step fails now names that step and its
-  exit status, and gives no reason: that page says how to get one.
+  file. An OCI schema the executor cannot parse says why under the same code, from
+  the `fetch-schema` step, which now runs its pull under the runner, holding the same
+  credential. That one line leaves a container holding a registry credential, can
+  quote a fragment of the artifact, and reaches status readers who cannot pull it.
+  Every other failure of that step names the step and its exit status, and stays in
+  its log, which now reads as one line with credentials of the environment removed.
 - **`DatabaseReachable` says which kind it was.** `DatabaseReachable` is `False`
   when an operation's result names a kind, with a reason for each:
   `DatabaseUnreachable`, `AuthenticationFailed`, `DatabaseNotFound`,

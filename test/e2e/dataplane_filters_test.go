@@ -381,15 +381,18 @@ func customCAPodFixture(t *testing.T) fixture {
 		spec.set([]any{}, "initContainers", guard, "envFrom")
 		spec.set(hardenedContainer, "initContainers", guard, "securityContext")
 		fetch := spec.named("fetch-schema", "initContainers")
-		spec.set([]any{"/usr/local/bin/ptah"}, "initContainers", fetch, "command")
-		spec.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl"},
-			"initContainers", fetch, "args")
+		spec.set([]any{"/runner/ptah-runner"}, "initContainers", fetch, "command")
+		spec.set([]any{
+			"--fetch-oci-schema", fixtureResolvedReference, "--fetch-oci-schema-to", "/source/schema.hcl", "--ptah-binary", "/usr/local/bin/ptah",
+		}, "initContainers", fetch, "args")
+		spec.push(literalEnvFixture("PTAH_RUNNER_PROTOCOL_VERSION", "1"), "initContainers", fetch, "env")
 		spec.set([]any{}, "initContainers", fetch, "envFrom")
 		spec.set(hardenedContainer, "initContainers", fetch, "securityContext")
 		spec.set([]any{
 			map[string]any{"name": "schema-source", "mountPath": "/source"},
 			map[string]any{"name": "fetch-work", "mountPath": "/fetch-work"},
 			map[string]any{"name": "registry-ca-snapshot", "mountPath": "/credentials/ca-snapshot", "readOnly": true},
+			map[string]any{"name": "runner", "mountPath": "/runner", "readOnly": true},
 		}, "initContainers", fetch, "volumeMounts")
 		spec.set([]any{
 			map[string]any{"name": "runner", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}},
@@ -761,6 +764,13 @@ func TestCustomCAPodIsolationFilter(t *testing.T) {
 		{"fetch-source-ca", func(f fixture) {
 			f.push(map[string]any{"name": "registry-ca", "mountPath": "/credentials/ca-source", "readOnly": true},
 				initContainer(f, "fetch-schema", "volumeMounts")...)
+		}},
+		{"fetch-is-ptah", func(f fixture) {
+			f.set([]any{"/usr/local/bin/ptah"}, initContainer(f, "fetch-schema", "command")...)
+		}},
+		{"fetch-writes-the-runner", func(f fixture) {
+			mounts := f.at(initContainer(f, "fetch-schema", "volumeMounts")...).([]any)
+			f.set(map[string]any{"name": "runner", "mountPath": "/runner"}, append(initContainer(f, "fetch-schema", "volumeMounts"), len(mounts)-1)...)
 		}},
 		{"main-registry", func(f fixture) {
 			f.push(literalEnvFixture("PTAH_OCI_REGISTRY", "registry.example"), "items", 0, "spec", "containers", 0, "env")

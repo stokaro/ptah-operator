@@ -1,0 +1,2 @@
+Pulled oci://harness-registry-auth:5000/schemas/oci-schema-fetch@sha256:aff79ca9a315f5bc49d72f37bf106117d91949807abecd2dbcd91323d72906ce to /source/schema.hcl
+Digest: sha256:aff79ca9a315f5bc49d72f37bf106117d91949807abecd2dbcd91323d72906ce

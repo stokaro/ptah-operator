@@ -1,6 +1,7 @@
 package runnerharness_test
 
 import (
+	"bytes"
 	"os"
 	"path"
 	"path/filepath"
@@ -811,6 +812,122 @@ func unreadableSources(t *testing.T, l *lab) {
 		URL: migrationGit.URL, Ref: migrationGit.Ref, Path: migrationGit.Path, Commit: commit, ContentDigest: migrationContent,
 	})}
 	migration.history("history", unreadable(migrationVolume))
+}
+
+// ociSchemaFetches runs the fetch of an OCI schema through the way it delivers and
+// every way it stops, against a registry that asks for credentials. A delivery
+// from it shows the runner hands its child what the step holds. A stop shows which
+// of Ptah's sentences leave the container: the parse failure, and no sentence that
+// names the registry or the file holding the credential.
+func ociSchemaFetches(t *testing.T, l *lab) {
+	t.Helper()
+	const family = "oci-schema-fetch"
+	database := "harness_oci_schema_fetch"
+	l.createDatabase(t, enginePostgres, database)
+	url := l.databaseURL(enginePostgres, database)
+
+	source := func(reference, secret string, mode operatorv1alpha1.RegistryAuthMode) operatorv1alpha1.SourceSpec {
+		desired := ociSource(reference)
+		if secret != "" {
+			desired.RegistryAuthFrom = &operatorv1alpha1.RegistryAuthSource{Name: secret, Mode: mode}
+		}
+		return desired
+	}
+	// fetching is a schema past its Resolve and Verify, whose next Pod fetches
+	// this reference with this credential.
+	fetching := func(t *testing.T, reference, secret string, mode operatorv1alpha1.RegistryAuthMode) *schemaRun {
+		t.Helper()
+		run := l.newSchema(t, family, enginePostgres, url, source(reference, secret, mode))
+		run.schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+			RequestedReference: reference, ResolvedReference: reference, Digest: reference[strings.LastIndex(reference, "@")+1:],
+			Verified: true, ArtifactType: dataplane.SchemaArtifactType,
+		}
+		return run
+	}
+	// resolved is what the manager resolves a tag to. An artifact from a newer
+	// Ptah gets this far: the Resolve reads its manifest and no layer.
+	resolved := func(name, tagged string) string {
+		t.Helper()
+		run := l.newSchema(t, family, enginePostgres, url, source(tagged, registryPasswordSecret, operatorv1alpha1.RegistryAuthEnvironment))
+		run.resolve(name)
+		return run.schema.Status.Source.ResolvedReference
+	}
+
+	readable := resolved("resolve-readable", l.publishAuthenticated(t, "schemas/oci-schema-fetch",
+		"--schema-file", "/fixtures/"+engineFile(enginePostgres)+"-v1.sql", "--dialect", engineFile(enginePostgres)))
+	unparsable := resolved("resolve-unparsable", l.publishUnparsable(t, "schemas/oci-schema-fetch-unparsable"))
+
+	for _, row := range []struct {
+		name, secret string
+		mode         operatorv1alpha1.RegistryAuthMode
+	}{
+		{"observe-environment-credential", registryPasswordSecret, operatorv1alpha1.RegistryAuthEnvironment},
+		{"observe-docker-config", registryDockerConfigSecret, operatorv1alpha1.RegistryAuthDockerConfigJSON},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			outcome := fetching(t, readable, row.secret, row.mode).observe(row.name)
+			if outcome.terminationMessage != "" {
+				t.Errorf("%s: a delivered artifact left %q for the manager", row.name, outcome.terminationMessage)
+			}
+		})
+	}
+
+	for _, row := range []struct {
+		name string
+		run  func(*schemaRun, string, ...func(*rowSpec)) rowOutcome
+	}{
+		{"observe-unparsable", (*schemaRun).observe},
+		{"plan-unparsable", func(run *schemaRun, name string, adjust ...func(*rowSpec)) rowOutcome {
+			return run.plan(name, nil, adjust...)
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			outcome := row.run(fetching(t, unparsable, registryPasswordSecret, operatorv1alpha1.RegistryAuthEnvironment), row.name,
+				wantRefusal("the schema pull exited 2"))
+			reason, carried := runner.ParseFetchReason(outcome.terminationMessage)
+			if !carried {
+				t.Fatalf("%s: the manager reads no reason in %q", row.name, outcome.terminationMessage)
+			}
+			for _, word := range []string{"parse schema artifact: parse HCL schema: schema.hcl:3,31-32:", "Invalid single-argument block definition"} {
+				if !strings.Contains(reason, word) {
+					t.Errorf("%s: the reason %q does not say %q", row.name, reason, word)
+				}
+			}
+			if !bytes.Contains(outcome.logs, []byte(reason)) {
+				t.Errorf("%s: the log %q does not hold the reason", row.name, outcome.logs)
+			}
+		})
+	}
+
+	// Every stop that is not a parse. The digest is one no artifact has, so these
+	// captures do not move with what the fixture publishes. The word is what
+	// someone with pods/log still reads, and the message stays empty.
+	const absent = "/schemas/oci-schema-fetch@sha256:7777777777777777777777777777777777777777777777777777777777777777"
+	for _, row := range []struct {
+		name, reference, secret string
+		mode                    operatorv1alpha1.RegistryAuthMode
+		word                    string
+	}{
+		{"observe-wrong-password", authRegistryHost + absent, registryWrongPasswordSecret, operatorv1alpha1.RegistryAuthEnvironment, "unauthorized"},
+		{"observe-no-credential", authRegistryHost + absent, "", "", "credential not found"},
+		{"observe-wrong-docker-config", authRegistryHost + absent, registryWrongConfigSecret, operatorv1alpha1.RegistryAuthDockerConfigJSON, "unauthorized"},
+		{"observe-malformed-docker-config", authRegistryHost + absent, registryMalformedSecret, operatorv1alpha1.RegistryAuthDockerConfigJSON, "config.json"},
+		{"observe-unknown-digest", authRegistryHost + absent, registryPasswordSecret, operatorv1alpha1.RegistryAuthEnvironment, "not found"},
+		{"observe-unknown-host", missingHost + ":5000" + absent, "", "", "lookup " + missingHost},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			outcome := fetching(t, "oci://"+row.reference, row.secret, row.mode).observe(row.name, wantRefusal("the schema pull exited"))
+			if outcome.terminationMessage != "" {
+				t.Errorf("%s: this stop left %q for the manager", row.name, outcome.terminationMessage)
+			}
+			if !bytes.Contains(outcome.logs, []byte(row.word)) {
+				t.Errorf("%s: the log %q does not say %q", row.name, outcome.logs, row.word)
+			}
+		})
+	}
 }
 
 // fillSource makes a source volume holding these files, readable by the Pod.

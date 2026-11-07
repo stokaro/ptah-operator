@@ -277,6 +277,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:2fd3e4e30f8ab42478cd34c891a45ee89be92d815f4660dffeb2ea6059dda0ef",
       "reason": "Run Ptah v0.22.0 and read the plan scope it records (#792). Ptah v0.19.0 added a scope to the plan it saves (stokaro/ptah#5239), which the strict plan decoder refused, so internal/dataplane declares it and reads nothing from it. Every document the runner decodes keeps its contract version: plan 3, apply 4, migration status and run 2, drift 1. Arguments, exit statuses and frames, held to a Pod-shaped run of every operation, change only by that field and the statement text inside the plan. Commands, payloads, result frames, delivery identity, SQL authority and retry limits are unchanged. A runner of an earlier release refuses such a plan as invalid_plan_output, which is the answer a version mismatch gives, so the protocol keeps its number. The executor image changes with it, which retires every plan and approval made under the old one."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:48f4a1d1275d2fd03bf91180bd97737600adceb49b0716ebe015dafc73ffdd31",
+      "reason": "Report a schema artifact the executor cannot parse (#788). A new mode, --fetch-oci-schema with --fetch-oci-schema-to, runs Ptah's schema pull in the fetch-schema init container with the environment that container holds, less the protocol variable. The first line of the pull's standard error, only when it opens `error: parse schema artifact: `, goes through freeText to the container's termination message behind a marker of its own, which a manager of an earlier release does not read. The operation modes, their commands, payloads, result frames, termination summary, delivery identity, SQL authority and retry limits are as they were, and a migration's fetch is Ptah as before. A runner without the mode refuses the unknown flag before Ptah runs with the registry credential and before the container that holds the database URL starts, the refusal a version mismatch gives, so the protocol keeps its number."
     }
   ]
 }

@@ -809,6 +809,7 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | A desired file Ptah cannot read | `desired_source_unreadable` | A second child with no database URL and no credential | 485 bytes, so the code and the reason fit an Event's 512 |
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
+| A schema artifact the `fetch-schema` step cannot parse | `desired_source_unreadable` | The first line of standard error from `ptah schema pull`, which holds the registry credential and no database URL, and only when that line opens `error: parse schema artifact:`. It reaches a condition and an Event and no frame, since the run never started | 485 bytes, as the first row |
 
 One function in the runner handles all of them, and the Pod log line below. It removes
 the credentials of the Pod's environment wherever one appears whole, in any case,
@@ -843,13 +844,33 @@ cuts `Hunter2Hunter2` to `Hunter2...`, and the SQL reader stops at `PASS` in
 know what else in a file is sensitive either, so keep a value that must not reach
 status out of a desired file.
 
+An OCI schema's reason comes from another place, because the pull parses the artifact
+before anything else reads it. The `fetch-schema` container runs that pull under the
+runner, holding the registry credential it held when it was Ptah alone, and no
+database URL. The redactor matches a credential in that container's environment and
+cannot match one in a mounted Docker config, so what leaves is chosen by what the
+sentence is. Standard error has to open with `error: parse schema artifact:`, which
+Ptah writes after the registry has answered and the bytes have given their digest,
+and only that first line leaves. A registry's refusal opens with `error: pull
+<reference>:`, and one that writes a line break and those words into its answer is
+still on a later line. The runner puts the line in the container's termination
+message behind a marker of its own. The manager reads that message for this one step,
+and only when it holds one such line. That line can still quote a fragment of the
+file, as above, and a status reader may hold no registry credential at all, so the
+fragment can reach someone who cannot pull the artifact. The redactor cannot take a
+credential from a mounted Docker config out of that line either, so keep one out of
+the file.
+
 Outside status and Events, a failed `fetch-git-source` init container writes
 standard error, handled by the same function, to its log, and the kubelet copies
-the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations` init containers are Ptah itself,
-with no runner around them, so their logs hold what Ptah wrote with nothing
-removed. Those containers hold the registry credentials, which is why status and
-Events name only the step and its exit status. Whoever holds `pods/log` reads
-those logs, and whoever reads Pods reads the status.
+the end of that log into the Pod's status. The `fetch-schema` init container writes
+what its pull printed to its log the same way, including every sentence that stays
+out of status, and only the line above to its termination message. The
+`fetch-migrations` init container is Ptah itself, with no runner around it, so its
+log holds what Ptah wrote with nothing removed, and status and Events name only the
+step and its exit status. A migration's pull parses nothing, so a directory it
+cannot read is reported by the operation container, as above. Whoever holds
+`pods/log` reads those logs, and whoever reads Pods reads the status.
 
 The first line of a failed Apply's error sentence goes to the operation Pod's log,
 and nowhere else: not to status, an Event, the result frame or the termination
@@ -910,7 +931,9 @@ status already carries all of it, and it holds no plan bytes, error text, SQL
 or native output. Pod status is written by the kubelet and by control-plane
 controllers, and no default user-facing role grants it, so forging a summary
 takes either the node's credentials, which can already forge the log it stands
-in for, or a grant the default roles keep for the control plane.
+in for, or a grant the default roles keep for the control plane. The `fetch-schema`
+step writes no frame and so no summary. Its termination message holds the one line
+described above, or nothing when any other failure stopped it.
 
 ## Remaining deployment responsibilities
 

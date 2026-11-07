@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable:v1",
+  "pinned_reference": "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable@sha256:dd866eba0938a3c5deba89c7e7e66c9973a56eec6c6c7890d3dee4c032a89c53",
+  "digest": "sha256:dd866eba0938a3c5deba89c7e7e66c9973a56eec6c6c7890d3dee4c032a89c53",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 634
+}

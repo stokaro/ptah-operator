@@ -52,6 +52,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	materializeTo := flags.String("materialize-to", "", "directory a checked source snapshot is copied into")
 	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
+	fetchOCISchema := flags.String("fetch-oci-schema", "", "pull this schema artifact, and report a schema the executor cannot parse")
+	fetchOCISchemaTo := flags.String("fetch-oci-schema-to", "", "file a pulled schema artifact is written to")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -101,6 +103,26 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		return 0
+	}
+	schemaFetchFlags := map[string]bool{"fetch-oci-schema": true, "fetch-oci-schema-to": true}
+	schemaFetchMode := false
+	flags.Visit(func(current *flag.Flag) {
+		if schemaFetchFlags[current.Name] {
+			schemaFetchMode = true
+		}
+	})
+	if schemaFetchMode {
+		unexpectedFlag := false
+		flags.Visit(func(current *flag.Flag) {
+			if !schemaFetchFlags[current.Name] && current.Name != "ptah-binary" {
+				unexpectedFlag = true
+			}
+		})
+		if unexpectedFlag || flags.NArg() != 0 || *fetchOCISchema == "" || *fetchOCISchemaTo == "" {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: schema fetch mode takes only --fetch-oci-schema, --fetch-oci-schema-to and --ptah-binary")
+			return 2
+		}
+		return fetchSchemaArtifact(ctx, *ptahBinary, *fetchOCISchema, *fetchOCISchemaTo, stderr, environment, terminationLog)
 	}
 	materializeFlags := map[string]bool{"materialize-source-snapshot": true, "materialize-to": true, "content-digest": true}
 	materializeMode := false
@@ -286,4 +308,33 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	// A complete frame is the Job transport success. Child and operation-level
 	// failures remain explicit in the authenticated result payload.
 	return 0
+}
+
+// fetchSchemaArtifact is the Job's fetch step for an OCI schema. It holds the
+// registry credentials and writes what the process holding the database URL
+// reads next, so it is held to the protocol as the main run is.
+func fetchSchemaArtifact(
+	ctx context.Context,
+	ptahBinary, reference, out string,
+	stderr io.Writer,
+	environment []string,
+	terminationLog string,
+) int {
+	if err := runner.CheckProtocolBinding(environment); err != nil {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+		return 2
+	}
+	fetched, err := runner.FetchOCISchema(ctx, ptahBinary, environment, reference, out, runner.OSExecutor{}, stderr)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
+		return 2
+	}
+	// Losing this costs the reason and nothing else: the container still ends
+	// as the pull did, and the manager names the step.
+	if len(fetched.TerminationMessage) != 0 && terminationLog != "" {
+		if err := runner.WriteTerminationSummary(terminationLog, fetched.TerminationMessage); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the termination message")
+		}
+	}
+	return fetched.ExitCode
 }

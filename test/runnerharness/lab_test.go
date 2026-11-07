@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	batchv1 "k8s.io/api/batch/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -46,6 +47,10 @@ const (
 	postgresHost = "harness-postgres"
 	mysqlHost    = "harness-mysql"
 	registryHost = "harness-registry:5000"
+	// authRegistryHost asks for the password the run makes, as a registry whose
+	// credentials a fetch has to hold.
+	authRegistryHost = "harness-registry-auth:5000"
+	registryUsername = "harness"
 
 	missingHost = "harness-no-such-host.invalid"
 
@@ -151,6 +156,7 @@ type lab struct {
 	images  labImages
 
 	databasePassword string
+	registryPassword string
 	keys             gitfixture.Keys
 	seal             planseal.KeyPair
 	secrets          []string
@@ -252,13 +258,14 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 		images:  labImages{executor: executor, postgres: postgres, mysql: mysql, registry: registry},
 		keys:    keys, seal: seal,
 		databasePassword: randomHex(t, 16),
+		registryPassword: randomHex(t, 16),
 		slots:            make(chan struct{}, slots),
 		masker:           runnerharness.NewMasker(),
 		docs:             map[string][]byte{},
 		peaks:            map[string]int64{},
 		counts:           runnerharness.Ran{Operations: map[runnerharness.OperationCase]int{}, Commands: map[string]int{}},
 	}
-	l.secrets = []string{l.databasePassword, keys.Token, "PRIVATE KEY"}
+	l.secrets = []string{l.databasePassword, l.registryPassword, keys.Token, "PRIVATE KEY"}
 	for _, block := range [][]byte{keys.KeyPEM, keys.HostKeyPEM, keys.ClientKeyPEM} {
 		for line := range strings.SplitSeq(string(block), "\n") {
 			if line != "" && !strings.HasPrefix(line, "-----") {
@@ -410,6 +417,7 @@ func (l *lab) buildTools(t *testing.T, architecture string) string {
 	work := t.TempDir()
 	for binary, source := range map[string]string{
 		"recorder": "./recorder", "runner/ptah-runner": "./recorder", "e2e-git-server": "../e2e/gitserver",
+		"unparsable-schema": "../../hack/unparsableschemafixture",
 	} {
 		output := filepath.Join(work, binary)
 		build := exec.CommandContext(t.Context(), "go", "build", "-o", output, source) // #nosec G204 -- the harness's own command
@@ -465,6 +473,7 @@ func (l *lab) buildTools(t *testing.T, architecture string) string {
 		}
 		writeTree(t, filepath.Join(work, name), []byte(document), 0o444)
 	}
+	writeTree(t, filepath.Join(work, "credentials", "registry", "htpasswd"), l.registryHtpasswd(t), 0o444)
 	certificate, key := selfSignedWithoutNames(t)
 	writeTree(t, filepath.Join(work, "tls", "server.crt"), certificate, 0o444)
 	// PostgreSQL refuses a key anyone but its owner and group can read.
@@ -473,6 +482,7 @@ func (l *lab) buildTools(t *testing.T, architecture string) string {
 COPY recorder /recorder
 COPY runner/ /runner/
 COPY e2e-git-server /e2e-git-server
+COPY unparsable-schema /unparsable-schema
 COPY fixtures/ /fixtures/
 COPY spec/ /spec/
 COPY keys/ /keys/
@@ -565,17 +575,69 @@ func (l *lab) startRegistry(t *testing.T) {
 	l.docker.must(t, nil, "run", "--detach", "--pull", "never",
 		"--name", l.name("registry"), "--network", l.network, "--network-alias", strings.Split(registryHost, ":")[0],
 		"--tmpfs", "/var/lib/registry:rw,size=256m", l.images.registry)
-	deadline := time.Now().Add(time.Minute)
-	for time.Now().Before(deadline) {
-		_, _, exit, err := l.docker.run(context.Background(), nil, nil, "exec", l.name("registry"),
-			"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/")
-		if err == nil && exit == 0 {
-			return
+	l.docker.must(t, nil, "run", "--detach", "--pull", "never",
+		"--name", l.name("registry-auth"), "--network", l.network, "--network-alias", strings.Split(authRegistryHost, ":")[0],
+		"--env", "REGISTRY_AUTH=htpasswd", "--env", "REGISTRY_AUTH_HTPASSWD_REALM=harness",
+		"--env", "REGISTRY_AUTH_HTPASSWD_PATH=/credentials/registry/htpasswd",
+		"--mount", "type=volume,src="+l.name("credentials")+",dst=/credentials,readonly",
+		"--tmpfs", "/var/lib/registry:rw,size=64m", l.images.registry)
+	// A registry that authenticates answers an anonymous request with 401, and
+	// that answer says it is up as a 200 does.
+	for _, name := range []string{l.name("registry"), l.name("registry-auth")} {
+		deadline := time.Now().Add(time.Minute)
+		for {
+			stdout, stderr, _, err := l.docker.run(context.Background(), nil, nil, "exec", name,
+				"wget", "-S", "-O", "/dev/null", "http://127.0.0.1:5000/v2/")
+			answered := string(stdout) + string(stderr)
+			if err == nil && (strings.Contains(answered, "200 OK") || strings.Contains(answered, "401 Unauthorized")) {
+				break
+			}
+			if !time.Now().Before(deadline) {
+				logs, logErr, _, _ := l.docker.run(context.Background(), nil, nil, "logs", "--tail", "40", name)
+				t.Fatalf("the registry %s did not become ready: %s\n%s%s", name, answered, logs, logErr)
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
-	logs, stderr, _, _ := l.docker.run(context.Background(), nil, nil, "logs", "--tail", "40", l.name("registry"))
-	t.Fatalf("the registry did not become ready: %s%s", logs, stderr)
+}
+
+// registryHtpasswd is the one user the authenticating registry knows.
+func (l *lab) registryHtpasswd(t *testing.T) []byte {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(l.registryPassword), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []byte(registryUsername + ":" + string(hash) + "\n")
+}
+
+// publishAuthenticated runs `ptah schema push` to the authenticating registry
+// and returns the reference, by its tag.
+func (l *lab) publishAuthenticated(t *testing.T, repository string, source ...string) string {
+	t.Helper()
+	reference := "oci://" + authRegistryHost + "/" + repository + ":v1"
+	args := append([]string{"schema", "push", reference}, source...)
+	args = append(args, "--version", "v1", "--plain-http")
+	stdout, stderr, exit := l.ptah(t, args,
+		[]string{"PTAH_OCI_USERNAME=" + registryUsername, "PTAH_OCI_PASSWORD=" + l.registryPassword},
+		[]runnerharness.EnvVar{{Name: "PTAH_OCI_REGISTRY", Value: authRegistryHost}},
+		"fixtures", "/fixtures")
+	if exit != 0 {
+		t.Fatalf("publish %s exited %d: %s%s", reference, exit, stdout, stderr)
+	}
+	return reference
+}
+
+// publishUnparsable publishes a schema the executor cannot parse to the
+// authenticating registry, with the fixture acceptance publishes it with, and
+// returns the reference, by its tag. No Ptah command can produce this artifact.
+func (l *lab) publishUnparsable(t *testing.T, repository string) string {
+	t.Helper()
+	reference := authRegistryHost + "/" + repository + ":v1"
+	l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--name", l.name("publish-unparsable"), "--network", l.network,
+		"--entrypoint", "/unparsable-schema", l.images.tools,
+		"--reference", reference, "--username", registryUsername, "--password", l.registryPassword, "--plain-http")
+	return "oci://" + reference
 }
 
 // sql runs statements in a database, as a person editing it by hand would.
@@ -663,6 +725,8 @@ type rowOutcome struct {
 	refusal string
 	// logs is what the Pod's containers wrote to their logs.
 	logs []byte
+	// terminationMessage is what a schema fetch left for the manager to read.
+	terminationMessage string
 }
 
 const operationContainer = "ptah"
@@ -677,7 +741,7 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 	}
 	var children []recording.Child
 	var frame, logs []byte
-	var refusal string
+	var refusal, terminationMessage string
 	summaryError := ""
 	finished := false
 	containers := pod.Containers
@@ -698,6 +762,9 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 			if ran.Refusal != "" {
 				refusal = ran.Refusal
 			}
+			if ran.TerminationMessage != "" {
+				terminationMessage = ran.TerminationMessage
+			}
 			if ran.SummaryError != "" {
 				summaryError = ran.SummaryError
 			}
@@ -711,10 +778,10 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 		}
 		finished = true
 	})
-	outcome := rowOutcome{refusal: refusal, logs: logs}
+	outcome := rowOutcome{refusal: refusal, logs: logs, terminationMessage: terminationMessage}
 	record := runnerharness.Row{
 		Name: row.name, Operation: string(row.operation), Source: row.source, Engine: row.engine,
-		Refusal: l.masker.Text(refusal),
+		Refusal: l.masker.Text(refusal), TerminationMessage: l.masker.Text(terminationMessage),
 	}
 	l.count(row, children)
 	for index, child := range children {

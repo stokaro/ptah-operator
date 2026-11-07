@@ -47,6 +47,9 @@ type Transcript struct {
 	SummaryError string `json:"summaryError,omitempty"`
 	// Refusal is the error a fetch or a guard returned.
 	Refusal string `json:"refusal,omitempty"`
+	// TerminationMessage is what a schema fetch would leave in its termination
+	// message, the one thing it says that the manager reads.
+	TerminationMessage string `json:"terminationMessage,omitempty"`
 }
 
 // Executor runs a child as runner.OSExecutor does and keeps its arguments,

@@ -1147,8 +1147,11 @@ func (in customCAPodIsolationInputs) guardIsolated(container *corev1.Container, 
 }
 
 func (in customCAPodIsolationInputs) fetchIsolated(container *corev1.Container, view containerView) bool {
-	return slices.Equal(container.Command, []string{"/usr/local/bin/ptah"}) &&
-		slices.Equal(container.Args, []string{"schema", "pull", in.resolvedReference, "--out", "/source/schema.hcl"}) &&
+	return slices.Equal(container.Command, []string{"/runner/ptah-runner"}) &&
+		slices.Equal(container.Args, []string{
+			"--fetch-oci-schema", in.resolvedReference, "--fetch-oci-schema-to", "/source/schema.hcl", "--ptah-binary", "/usr/local/bin/ptah",
+		}) &&
+		runnerProtocolEnv(view) &&
 		view.hasSecretEnv("PTAH_OCI_USERNAME", in.registrySecret, "username", true) &&
 		view.hasSecretEnv("PTAH_OCI_PASSWORD", in.registrySecret, "password", true) &&
 		view.hasSecretEnv("PTAH_OCI_TOKEN", in.registrySecret, "token", true) &&
@@ -1160,6 +1163,7 @@ func (in customCAPodIsolationInputs) fetchIsolated(container *corev1.Container, 
 		exactMounts(container.VolumeMounts, []expectedMount{
 			{"fetch-work", "/fetch-work", false},
 			{"registry-ca-snapshot", "/credentials/ca-snapshot", true},
+			{"runner", "/runner", true},
 			{"schema-source", "/source", false},
 		})
 }

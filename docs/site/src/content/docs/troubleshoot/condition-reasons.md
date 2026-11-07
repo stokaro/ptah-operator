@@ -318,27 +318,38 @@ a table it does not declare, keeps `child_exit`: the runner reports only a load
 failure, because a structural problem `schema validate` finds is not always one
 the failed command refused. `ptah schema validate` prints those.
 
-A schema published to an OCI registry is the exception, and for it the operator
-gives no reason. Ptah parses the artifact in the `fetch-schema` init container,
-before the operation starts. `ptah schema push` refuses a file it cannot parse, so
-an artifact that fails here comes from a newer Ptah than the executor, or from
-something other than Ptah. The message names only the step, with no file and no
-reason: `the fetch-schema step exited 2, so the run never started`. That container
-holds the registry credentials, so what it wrote does not reach status or an Event.
+A schema published to an OCI registry stops earlier. Ptah parses the artifact in
+the `fetch-schema` init container, before the operation starts, and the first line
+of what it says is the reason. It carries the same code and appears in the same
+places, and the operation never reached the database:
 
-An author reads the reason without the cluster, by pulling the artifact with the
-Ptah version [the operator pins](../../support/ptah/):
-
-```bash
-ptah schema pull oci://registry.example/schemas/storefront:stable --out /tmp/schema.hcl
+```
+desired_source_unreadable: parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.
 ```
 
-The container's log holds the same sentence until the Job is collected, for
-whoever holds `pods/log`. The diagnostic reader role grants that, and the
+`schema.hcl` is the name the file has in the artifact, and `3,31-32` is the line and
+the columns in it. `ptah schema push` refuses a file it cannot parse, so an artifact
+that fails here comes from a newer Ptah than the executor, or from something other
+than Ptah. Push the schema again with the Ptah version
+[the operator pins](../../support/ptah/), or leave out what that version cannot read.
+
+That container holds the registry credentials, so no other sentence of it reaches
+status or an Event. A credential the registry refused, a digest it does not hold, a
+host that does not resolve, or a layer of a kind the executor does not know ends the
+same way, and the message names only the step: `the fetch-schema step exited 2, so
+the run never started`. To read why, whoever holds `pods/log` reads the step's log
+until the Job is collected. The diagnostic reader role grants that, and the
 desired-state author role does not:
 
 ```bash
 kubectl logs -n application job/<job> -c fetch-schema
+```
+
+An author reads the same sentence without the cluster, by pulling the artifact with
+the Ptah version the operator pins:
+
+```bash
+ptah schema pull oci://registry.example/schemas/storefront:stable --out /tmp/schema.hcl
 ```
 
 ## A Plan that stops without saying why

@@ -32,8 +32,12 @@ CREATE TABLE events_2026 PARTITION OF events
 
 	// unreadableFetchStep is where a schema artifact the executor cannot parse
 	// stops, and unreadableFetchLogReason how Ptah words that in the step's log.
+	// What reaches status starts with the same words, and goes on to the file
+	// and the reason.
 	unreadableFetchStep      = "fetch-schema"
 	unreadableFetchLogReason = "parse schema artifact: parse HCL schema: schema.hcl:"
+	unreadableFetchFile      = "schema.hcl:3,31-32"
+	unreadableFetchReason    = "Invalid single-argument block definition"
 )
 
 // unreadableMigrationFiles is a migration directory the loader refuses: the
@@ -59,24 +63,31 @@ func unreadableSourceSays(message, file, reason string) error {
 	return nil
 }
 
-// fetchStepSays holds a condition's or an Event's message to what a failed fetch
-// says: the step by name, and nothing the step wrote, since its container holds
-// the registry credentials. A message carrying the reason would read better and
-// break that boundary, so the row refuses one.
-func fetchStepSays(message, step string) error {
+// fetchReasonSays holds a condition's or an Event's message to what a fetch that
+// could not parse its artifact says: the code, Ptah's sentence with the file and
+// the reason in it, and no word of the registry the step's container talks to.
+// Naming only the step is the sentence this row exists to replace, so it refuses
+// that too. The registry's words are the ones the fetch keeps in its log.
+func fetchReasonSays(message, registryHost string) error {
+	if err := unreadableSourceSays(message, unreadableFetchFile, unreadableFetchReason); err != nil {
+		return err
+	}
 	switch {
-	case !strings.Contains(message, "the "+step+" step exited "):
-		return fmt.Errorf("the message does not name step %s: %q", step, message)
-	case !strings.Contains(message, "so the run never started"):
-		return fmt.Errorf("the message does not say the run never started: %q", message)
-	case strings.Contains(message, "parse schema artifact"), strings.Contains(message, "schema.hcl"):
-		return fmt.Errorf("the message carries what the step wrote: %q", message)
+	case !strings.HasPrefix(message, runner.CodeDesiredSourceUnreadable+": "+unreadableFetchLogReason):
+		return fmt.Errorf("the message does not open with the code and Ptah's sentence: %q", message)
+	case strings.Contains(message, " step exited "):
+		return fmt.Errorf("the message still names the step: %q", message)
+	}
+	for _, word := range []string{registryHost, "oci://", "fetch OCI manifest", "unauthorized", "/credentials/", "/fetch-work"} {
+		if strings.Contains(message, word) {
+			return fmt.Errorf("the message carries %q: %q", word, message)
+		}
 	}
 	return nil
 }
 
-// fetchStepLogSays holds the step's log to the reason status leaves out, which is
-// what a person with pods/log comes to read.
+// fetchStepLogSays holds the step's log to what a person with pods/log reads
+// there, the same sentence.
 func fetchStepLogSays(log []byte) error {
 	if !strings.Contains(string(log), unreadableFetchLogReason) {
 		return fmt.Errorf("the log does not say %q: %q", unreadableFetchLogReason, log)
@@ -92,11 +103,30 @@ func unreadableSourceEvent(events []corev1.Event, owner types.UID, reason, file,
 	})
 }
 
-// fetchStepEvent finds the Warning Event that names the step and nothing more.
-func fetchStepEvent(events []corev1.Event, owner types.UID, reason, step string) error {
+// fetchReasonEvent finds the Warning Event that says why the fetch stopped.
+func fetchReasonEvent(events []corev1.Event, owner types.UID, reason, registryHost string) error {
 	return warningEventSays(events, owner, reason, func(message string) error {
-		return fetchStepSays(message, step)
+		return fetchReasonSays(message, registryHost)
 	})
+}
+
+// fetchStatusSays holds what the kubelet copied into the Pod's status to what the
+// manager reads: the one sentence, behind the runner's marker. It is the only
+// thing of this container that leaves it for status, so the row reads it as well
+// as what the manager made of it.
+func fetchStatusSays(status corev1.ContainerStatus) error {
+	terminated := status.State.Terminated
+	if terminated == nil {
+		return fmt.Errorf("the %s step has not ended", status.Name)
+	}
+	reason, carried := runner.ParseFetchReason(terminated.Message)
+	if !carried {
+		return fmt.Errorf("the termination message holds no reason: %q", terminated.Message)
+	}
+	if !strings.HasPrefix(reason, unreadableFetchLogReason) || !strings.Contains(reason, unreadableFetchReason) {
+		return fmt.Errorf("the termination message does not say why: %q", reason)
+	}
+	return nil
 }
 
 // warningEventSays reports what it examined, so a list with no Event of that

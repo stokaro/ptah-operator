@@ -5653,6 +5653,356 @@
     }
   },
   {
+    "name": "oci-schema-fetch/observe-docker-config",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/oci-schema-fetch/observe-docker-config/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/oci-schema-fetch/observe-docker-config/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:72dc8133e6bba7a6b9447054a63f4f6f9be25929579c00d2a695f4ae1c5be7c9",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:e5619afc8628957c870b3c251357874ca3675978437ad56141ecbffc3d9f1a1f",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:a3ffcdbce8f42c646cf62dc0d9c43b50f817bd59ab15b07785c5021a16336b80"
+    }
+  },
+  {
+    "name": "oci-schema-fetch/observe-environment-credential",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/oci-schema-fetch/observe-environment-credential/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/oci-schema-fetch/observe-environment-credential/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:72dc8133e6bba7a6b9447054a63f4f6f9be25929579c00d2a695f4ae1c5be7c9",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:bfc662025c593e21f21537c5861032e2179a64026acf3ea210e3d865d23a0ca6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:a3ffcdbce8f42c646cf62dc0d9c43b50f817bd59ab15b07785c5021a16336b80"
+    }
+  },
+  {
+    "name": "oci-schema-fetch/observe-malformed-docker-config",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: open Docker credential store: failed to decode config file /credentials/docker/config.json: invalid config format: invalid character 't' looking for beginning of object key string\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/observe-no-credential",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: pull oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>: fetch OCI manifest: GET \"http://harness-registry-auth:5000/v2/schemas/oci-schema-fetch/manifests/sha256:7777777777777777777777777777777777777777777777777777777777777777\": basic credential not found\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/observe-unknown-digest",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: pull oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>: fetch OCI manifest: harness-registry-auth:5000/schemas/oci-schema-fetch@sha256:7777777777777777777777777777777777777777777777777777777777777777: not found\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/observe-unknown-host",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-no-such-host.invalid:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: pull oci://harness-no-such-host.invalid:5000/schemas/oci-schema-fetch@<digest>: fetch OCI manifest: Get \"http://harness-no-such-host.invalid:5000/v2/schemas/oci-schema-fetch/manifests/sha256:7777777777777777777777777777777777777777777777777777777777777777\": dial tcp: lookup harness-no-such-host.invalid on <address>: server misbehaving\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/observe-unparsable",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2",
+    "terminationMessage": "PTAH_RUNNER_FETCH_REASON_V1 parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n"
+  },
+  {
+    "name": "oci-schema-fetch/observe-wrong-docker-config",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: pull oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>: fetch OCI manifest: GET \"http://harness-registry-auth:5000/v2/schemas/oci-schema-fetch/manifests/sha256:7777777777777777777777777777777777777777777777777777777777777777\": response status code 401: unauthorized: authentication required: [map[Action:pull Class: Name:schemas/oci-schema-fetch Type:repository]]\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/observe-wrong-password",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: pull oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>: fetch OCI manifest: GET \"http://harness-registry-auth:5000/v2/schemas/oci-schema-fetch/manifests/sha256:7777777777777777777777777777777777777777777777777777777777777777\": response status code 401: unauthorized: authentication required: [map[Action:pull Class: Name:schemas/oci-schema-fetch Type:repository]]\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2"
+  },
+  {
+    "name": "oci-schema-fetch/plan-unparsable",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable@<digest>",
+          "--out",
+          "/source/schema.hcl"
+        ],
+        "exit": 2,
+        "stderr": "error: parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n"
+      }
+    ],
+    "refusal": "the schema pull exited 2",
+    "terminationMessage": "PTAH_RUNNER_FETCH_REASON_V1 parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition.\n"
+  },
+  {
+    "name": "oci-schema-fetch/resolve-readable",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/oci-schema-fetch/resolve-readable/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:be3533e7e6346e6f2e518fcc06827688335292c3c013c3988142d27131c72897",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry-auth:5000/schemas/oci-schema-fetch@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "oci-schema-fetch/resolve-unparsable",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/oci-schema-fetch/resolve-unparsable/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:18110fe95cd01bab4b744036abbda9e47823852b34d0f1f6dee6e932000d9a2a",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry-auth:5000/schemas/oci-schema-fetch-unparsable@<digest>",
+      "resolvedSize": 634,
+      "stdout": ""
+    }
+  },
+  {
     "name": "policy-existing-table/apply",
     "operation": "apply",
     "source": "none",

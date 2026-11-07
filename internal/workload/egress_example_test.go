@@ -103,7 +103,7 @@ func describePod(t *testing.T, name string, template corev1.PodTemplateSpec) ope
 		}
 	}
 	for _, container := range template.Spec.InitContainers {
-		if container.Name == fetchContainerName || container.Name == migrationFetchContainerName {
+		if container.Name == SchemaFetchContainerName || container.Name == migrationFetchContainerName {
 			pod.registry = true
 		}
 	}

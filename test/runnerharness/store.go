@@ -51,6 +51,8 @@ type Row struct {
 	Children []Child `json:"children"`
 	// Refusal is the error a fetch or a guard returned.
 	Refusal string `json:"refusal,omitempty"`
+	// TerminationMessage is what a schema fetch left for the manager to read.
+	TerminationMessage string `json:"terminationMessage,omitempty"`
 	// Result is the frame's payload as the manager's parser read it.
 	Result any `json:"result,omitempty"`
 	// SavedPlan is the file holding the plan a Plan operation saved.

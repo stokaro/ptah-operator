@@ -2087,6 +2087,11 @@ carry Ptah's words:
   quote a fragment of the file.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
   says what a person does with them.
+- An OCI schema the executor cannot parse, under the same code. The words are the
+  first line of native stderr from the `fetch-schema` step's pull, which holds the
+  registry credential and no database URL, and only that line when it opens
+  `error: parse schema artifact:`. They can quote a fragment of the artifact. Every
+  other failure of that step stays in its log.
 - A plan that would change a protected table, under `protected_table`. The words
   are the sentence of the `schema plan` report, which names the fenced tables.
 - A Git source a Resolve cannot fetch, under `child_exit`. The words are the last

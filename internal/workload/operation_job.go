@@ -215,7 +215,7 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 			initContainers = append(initContainers, copyContainer)
 			volumes = append(volumes, copyVolumes...)
 		default:
-			guard, fetchContainer, fetchVolumes, err := b.artifactFetch(fetch.source, fetch.containerName, fetch.args, resources)
+			guard, fetchContainer, fetchVolumes, err := b.artifactFetch(*fetch, resources)
 			if err != nil {
 				return nil, err
 			}

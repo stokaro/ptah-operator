@@ -49,6 +49,8 @@ func run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stder
 	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA here")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
+	fetchOCISchema := flags.String("fetch-oci-schema", "", "pull this schema artifact")
+	fetchOCISchemaTo := flags.String("fetch-oci-schema-to", "", "file a pulled schema artifact is written to")
 	prepareVolumes := flags.String("prepare-volumes", "", "unpack the volumes on standard input under this directory")
 	var appendArgs repeated
 	flags.Var(&appendArgs, "append-arg", "add this argument to every child")
@@ -88,6 +90,26 @@ func run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stder
 			transcript.Refusal = err.Error()
 			code = 2
 		}
+	case *fetchOCISchema != "":
+		// As cmd/ptah-runner does, the fetch is held to the protocol first. What
+		// it would write to the termination message goes in the transcript: only
+		// a Pod has that file.
+		var fetched runner.SchemaFetch
+		err := runner.CheckProtocolBinding(environment)
+		if err != nil {
+			err = fmt.Errorf("%s: %w", runner.CodeRunnerProtocolMismatch, err)
+		} else {
+			fetched, err = runner.FetchOCISchema(ctx, *ptahBinary, environment, *fetchOCISchema, *fetchOCISchemaTo, executor, stderr)
+		}
+		switch {
+		case err != nil:
+			transcript.Refusal = err.Error()
+			code = 2
+		case fetched.ExitCode != 0:
+			transcript.Refusal = fmt.Sprintf("the schema pull exited %d", fetched.ExitCode)
+			code = fetched.ExitCode
+		}
+		transcript.TerminationMessage = string(fetched.TerminationMessage)
 	default:
 		parsed := runner.Operation(*operation)
 		if !parsed.Valid() {

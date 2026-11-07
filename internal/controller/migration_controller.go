@@ -1636,11 +1636,17 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 // was refused, or the artifact never arrived. Each of those has a different
 // answer, and none of them is a retry.
 //
-// The container's own words are deliberately not carried. The container that
-// fetches an artifact holds registry credentials, so its output is not
+// A container's own words are not carried, with one exception. The container
+// that fetches an artifact holds registry credentials, so its output is not
 // evidence this controller puts in a status; the name and the exit code are
 // structured fields Kubernetes sets, and they are enough to say which boundary
-// failed.
+// failed. The exception is a schema artifact the executor cannot parse, which
+// no retry and no reading of the name can help an author with. The schema fetch
+// is the runner, and it writes that one sentence to its termination message;
+// runner.ParseFetchReason holds what is read here to it, and a message from any
+// other container is not read, since a fetch-git-source message is the tail of
+// its log. A Pod built before the fetch was the runner has no such message, and
+// reads as the step that failed.
 func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.Job) (string, error) {
 	if job == nil {
 		return "", nil
@@ -1654,6 +1660,11 @@ func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.
 			terminated := status.State.Terminated
 			if terminated == nil || terminated.ExitCode == 0 {
 				continue
+			}
+			if status.Name == workload.SchemaFetchContainerName {
+				if reason, carried := runner.ParseFetchReason(terminated.Message); carried {
+					return runner.CodeDesiredSourceUnreadable + ": " + reason, nil
+				}
 			}
 			return fmt.Sprintf(
 				"the %s step exited %d, so the run never started",

@@ -75,6 +75,10 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 			t.Parallel()
 			unreadableSources(t, l)
 		})
+		t.Run("oci-schema-fetch", func(t *testing.T) {
+			t.Parallel()
+			ociSchemaFetches(t, l)
+		})
 		t.Run("pulls", func(t *testing.T) {
 			t.Parallel()
 			for _, row := range rows {

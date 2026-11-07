@@ -21,9 +21,10 @@ import (
 // unreadableOCISchema delivers a schema artifact the executor cannot parse. No
 // product command builds one, because `ptah schema push` parses the file first,
 // so a newer Ptah than the executor is what produces it. The run stops in the
-// fetch step, whose container holds the registry credentials and whose words do
-// not reach status: the row holds the condition and the Event to naming the step
-// and nothing more, and the step's log to holding the reason.
+// fetch step, whose container holds the registry credentials. The one sentence
+// that leaves that container is this one: the row holds the condition and the
+// Event to the code and the reason and to no word of the registry, and the step's
+// log and termination message to holding the same sentence.
 func (d *dataPlane) unreadableOCISchema() {
 	d.t.Helper()
 	const (
@@ -39,18 +40,18 @@ func (d *dataPlane) unreadableOCISchema() {
 		coordinationKey: key, failureRetry: "5s", interval: reconcileInterval,
 	})
 	var message string
-	matched := d.waitForSchema(schemaName, "the schema to name the step that stopped it", func(s *ptahv1alpha1.PtahSchema) bool {
+	matched := d.waitForSchema(schemaName, "the schema to say why the fetch stopped", func(s *ptahv1alpha1.PtahSchema) bool {
 		failed := meta.FindStatusCondition(s.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
 		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
 			return false
 		}
 		message = failed.Message
-		return fetchStepSays(message, unreadableFetchStep) == nil
+		return fetchReasonSays(message, d.registryHost) == nil
 	})
-	d.waitForFetchStepEvent(matched.UID)
+	d.waitForFetchReasonEvent(matched.UID)
 	d.readFetchStepLog(schemaName)
 	d.deleteAndWait(schemaName, 2*time.Minute)
-	d.logf("PASS a schema artifact the executor cannot parse named its step, and the step's log holds why: %s", message)
+	d.logf("PASS a schema artifact the executor cannot parse said why in status and its Event: %s", message)
 }
 
 // publishUnparsableSchema runs the fixture on the host, against the registry as
@@ -73,19 +74,19 @@ func (d *dataPlane) publishUnparsableSchema(repository string) {
 	}
 }
 
-func (d *dataPlane) waitForFetchStepEvent(owner types.UID) {
+func (d *dataPlane) waitForFetchReasonEvent(owner types.UID) {
 	d.t.Helper()
 	deadline := time.Now().Add(waitTimeout)
 	var last error
 	for time.Now().Before(deadline) {
 		events := &corev1.EventList{}
 		d.mustList(events)
-		if last = fetchStepEvent(events.Items, owner, "OperationFailed", unreadableFetchStep); last == nil {
+		if last = fetchReasonEvent(events.Items, owner, "OperationFailed", d.registryHost); last == nil {
 			return
 		}
 		d.sleep(2 * time.Second)
 	}
-	d.fatalf("the OperationFailed Event never named the fetch step: %v", last)
+	d.fatalf("the OperationFailed Event never said why the fetch stopped: %v", last)
 }
 
 // readFetchStepLog reads the log a person with pods/log reads, from the Pod whose
@@ -108,6 +109,7 @@ func (d *dataPlane) readFetchStepLog(schema string) {
 				d.check(err, "read the %s log of Pod %s", unreadableFetchStep, pod.Name)
 				d.scan(log, "the "+unreadableFetchStep+" log")
 				d.check(fetchStepLogSays(log), "the %s log of Pod %s", unreadableFetchStep, pod.Name)
+				d.check(fetchStatusSays(status), "the %s status of Pod %s", unreadableFetchStep, pod.Name)
 				examined++
 			}
 		}

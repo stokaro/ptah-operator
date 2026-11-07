@@ -177,27 +177,80 @@ func TestTheUnreadableFilesAreTheOnesThePinnedImageRefused(t *testing.T) {
 	}
 }
 
-// TestFetchStepSaysHoldsTheClaim reads what failedInitBoundary writes, and refuses
-// what the row is there to catch: another step, a message that says nothing of the
-// run, and one that carries the words the step's container wrote.
-func TestFetchStepSaysHoldsTheClaim(t *testing.T) {
+// measuredFetchReason is what the manager writes for the fixture, from what
+// `ptah schema pull` printed on the pinned image: the harness row
+// oci-schema-fetch/observe-unparsable holds the sentence there.
+const measuredFetchReason = runner.CodeDesiredSourceUnreadable + ": parse schema artifact: parse HCL schema: schema.hcl:3,31-32: " +
+	"Invalid single-argument block definition; A single-line block definition must end with a closing brace immediately after its single argument definition."
+
+// TestFetchReasonSaysHoldsTheClaim reads what failedInitBoundary writes, and
+// refuses what the row is there to catch: the sentence that names only the step,
+// another step, a message that says nothing of the run, half of the reason, and a
+// sentence of the fetch's that carries the registry's words.
+func TestFetchReasonSaysHoldsTheClaim(t *testing.T) {
 	t.Parallel()
 
-	const named = "the fetch-schema step exited 2, so the run never started"
-	if err := fetchStepSays(named, unreadableFetchStep); err != nil {
-		t.Fatalf("fetchStepSays(%q) = %v", named, err)
+	const host = "e2e-registry.ptah-test.svc:5000"
+	if err := fetchReasonSays(measuredFetchReason, host); err != nil {
+		t.Fatalf("fetchReasonSays(%q) = %v", measuredFetchReason, err)
 	}
+	const named = "the fetch-schema step exited 2, so the run never started"
+	code := runner.CodeDesiredSourceUnreadable + ": "
 	for name, message := range map[string]string{
+		"only the step":      named,
 		"another step":       "the fetch-migrations step exited 2, so the run never started",
 		"a generic Job":      "observe Job failed",
 		"no word of the run": "the fetch-schema step exited 2",
-		"the reason":         named + ": parse schema artifact: parse HCL schema",
-		"the file":           named + ": schema.hcl:3,31-32",
+		"the step and the reason": named + ": parse schema artifact: parse HCL schema: schema.hcl:3,31-32: " +
+			"Invalid single-argument block definition",
+		"the reason with no code": "parse schema artifact: parse HCL schema: schema.hcl:3,31-32: Invalid single-argument block definition",
+		"the code with no reason": code + "parse schema artifact: parse HCL schema: schema.hcl:3,31-32:",
+		"no place in the file":    code + "parse schema artifact: parse HCL schema: Invalid single-argument block definition",
+		"another file's parser": code + "error parsing schema file: read SQL schema file /source/schema/schema.hcl:3,31-32: " +
+			"Invalid single-argument block definition",
+		"the reason and the step": measuredFetchReason + " the fetch-schema step exited 2",
+		"the registry by host":    measuredFetchReason + " from " + host,
+		"the reference":           measuredFetchReason + " oci://elsewhere/a@sha256:0",
+		"a registry refusal":      measuredFetchReason + " fetch OCI manifest",
+		"an authorization":        measuredFetchReason + " unauthorized",
+		"a credential's file":     measuredFetchReason + " /credentials/docker/config.json",
+		"the scratch space":       measuredFetchReason + " /fetch-work/schema.hcl",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if err := fetchStepSays(message, unreadableFetchStep); err == nil {
-				t.Fatalf("fetchStepSays(%q) accepted it", message)
+			if err := fetchReasonSays(message, host); err == nil {
+				t.Fatalf("fetchReasonSays(%q) accepted it", message)
+			}
+		})
+	}
+}
+
+// TestFetchStatusSaysReadsTheTerminationMessage holds the status check to what the
+// runner writes, and to the messages a Pod could hold in its place.
+func TestFetchStatusSaysReadsTheTerminationMessage(t *testing.T) {
+	t.Parallel()
+
+	status := func(message string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: unreadableFetchStep, State: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 2, Message: message},
+		}}
+	}
+	const marker = "PTAH_RUNNER_FETCH_REASON_V1 "
+	sentence := strings.TrimPrefix(measuredFetchReason, runner.CodeDesiredSourceUnreadable+": ")
+	if err := fetchStatusSays(status(marker + sentence + "\n")); err != nil {
+		t.Fatalf("fetchStatusSays() = %v", err)
+	}
+	for name, candidate := range map[string]corev1.ContainerStatus{
+		"no message":           status(""),
+		"the sentence bare":    status(sentence),
+		"another parse":        status(marker + "parse schema artifact: read schema.hcl\n"),
+		"a registry refusal":   status(marker + "pull oci://registry: unauthorized\n"),
+		"a step still running": {Name: unreadableFetchStep},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchStatusSays(candidate); err == nil {
+				t.Fatalf("fetchStatusSays(%+v) accepted it", candidate)
 			}
 		})
 	}
@@ -227,31 +280,34 @@ func TestFetchStepLogSaysReadsTheMeasuredLine(t *testing.T) {
 	}
 }
 
-// TestFetchStepEventFindsTheEventOfTheResource keeps the Event search to the
+// TestFetchReasonEventFindsTheEventOfTheResource keeps the Event search to the
 // resource and the reason it was asked about, and says which way it came up empty.
-func TestFetchStepEventFindsTheEventOfTheResource(t *testing.T) {
+func TestFetchReasonEventFindsTheEventOfTheResource(t *testing.T) {
 	t.Parallel()
 
-	const named = "the fetch-schema step exited 2, so the run never started"
+	const host = "e2e-registry.ptah-test.svc:5000"
 	event := func(owner types.UID, reason, eventType, message string) corev1.Event {
 		return corev1.Event{
 			InvolvedObject: corev1.ObjectReference{UID: owner}, Reason: reason, Type: eventType, Message: message,
 		}
 	}
-	if err := fetchStepEvent([]corev1.Event{event("a", "OperationFailed", corev1.EventTypeWarning, named)}, "a", "OperationFailed", unreadableFetchStep); err != nil {
-		t.Fatalf("fetchStepEvent() = %v", err)
+	if err := fetchReasonEvent([]corev1.Event{event("a", "OperationFailed", corev1.EventTypeWarning, measuredFetchReason)}, "a", "OperationFailed", host); err != nil {
+		t.Fatalf("fetchReasonEvent() = %v", err)
 	}
 	for name, events := range map[string][]corev1.Event{
-		"no Event":            nil,
-		"another resource":    {event("b", "OperationFailed", corev1.EventTypeWarning, named)},
-		"another reason":      {event("a", "OperationRetried", corev1.EventTypeWarning, named)},
-		"a Normal Event":      {event("a", "OperationFailed", corev1.EventTypeNormal, named)},
-		"an Event with words": {event("a", "OperationFailed", corev1.EventTypeWarning, named+": parse schema artifact")},
+		"no Event":         nil,
+		"another resource": {event("b", "OperationFailed", corev1.EventTypeWarning, measuredFetchReason)},
+		"another reason":   {event("a", "OperationRetried", corev1.EventTypeWarning, measuredFetchReason)},
+		"a Normal Event":   {event("a", "OperationFailed", corev1.EventTypeNormal, measuredFetchReason)},
+		"an Event naming only the step": {
+			event("a", "OperationFailed", corev1.EventTypeWarning, "the fetch-schema step exited 2, so the run never started"),
+		},
+		"an Event with the registry's words": {event("a", "OperationFailed", corev1.EventTypeWarning, measuredFetchReason+" "+host)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if err := fetchStepEvent(events, "a", "OperationFailed", unreadableFetchStep); err == nil {
-				t.Fatalf("fetchStepEvent() accepted %+v", events)
+			if err := fetchReasonEvent(events, "a", "OperationFailed", host); err == nil {
+				t.Fatalf("fetchReasonEvent() accepted %+v", events)
 			}
 		})
 	}
