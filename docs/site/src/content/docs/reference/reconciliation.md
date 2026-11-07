@@ -696,8 +696,12 @@ A value that is not an RFC 3339 instant starts nothing and ends nothing. It is
 recorded as answered, with a `ReadRequestInvalid` Warning Event that names it,
 so it is reported once rather than on every pass. A read-only operation between
 failed attempts answers it the same way at once, inside its retry delay too, and
-goes on retrying. A value longer than 64 bytes is recorded as its SHA-256 digest,
-written `sha256:<hex>`.
+goes on retrying. That one Event [can be
+lost](../../troubleshoot/events/#an-event-can-be-lost), and beside a read that
+keeps failing it usually is, since each failed attempt sends a Warning of its own.
+`status.lastReadRequest` is the record: a value there that is not an instant was
+answered and started no read. A value longer than 64 bytes is recorded as its
+SHA-256 digest, written `sha256:<hex>`.
 
 ## The lifecycle journal
 

@@ -348,7 +348,11 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 // answerReadRequest records a read request as answered. One that is an
 // instant and may bring the next read forward does, so the pass after this
 // one starts the read the interval would have started; one that is not an
-// instant starts nothing and says so once.
+// instant starts nothing and says so once. That Warning shares the resource's
+// spam-filter budget with every failed attempt's Warning, so beside a read that
+// keeps failing it is usually dropped, and a restart after the write loses it
+// too. status.lastReadRequest, written first, is the record that the value was
+// answered and started nothing.
 func (r *SchemaReconciler) answerReadRequest(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
