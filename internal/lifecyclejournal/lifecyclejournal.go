@@ -176,24 +176,8 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 		}
 		entries = append(entries, entry)
 	}
-	if run := after.LastRun; run != nil && run.FinishedAt != nil &&
-		(before.LastRun == nil || before.LastRun.JobUID != run.JobUID || before.LastRun.FinishedAt == nil) {
-		started := run.StartedAt
-		entry := operatorv1alpha1.JournalEntry{
-			Type: operatorv1alpha1.JournalRunFinished, At: *run.FinishedAt, StartedAt: &started,
-			// The API holds AppliedVersions to 256 entries.
-			Outcome: runOutcome(run.Outcome), AppliedVersions: int32(len(run.AppliedVersions)),
-		}
-		if run.Failure != nil {
-			entry.Failure = run.Failure.DeepCopy()
-		}
+	if entry, finished := finishedRun(before, after, journal, now); finished {
 		entries = append(entries, entry)
-	}
-	if run := after.UnresolvedRun; run != nil && (before.UnresolvedRun == nil || before.UnresolvedRun.OperationID != run.OperationID) {
-		entries = append(entries, operatorv1alpha1.JournalEntry{
-			Type: operatorv1alpha1.JournalRunFinished, At: orNow(run.RecordedAt, now),
-			Outcome: operatorv1alpha1.JournalUnknown, Plan: run.PlanRef.Name,
-		})
 	}
 	if resolved := after.ResolvedRun; resolved != nil && resolved.Resolution == operatorv1alpha1.MigrationRunResolvedByAcknowledgment &&
 		(before.ResolvedRun == nil || before.ResolvedRun.OperationID != resolved.OperationID) {
@@ -226,6 +210,83 @@ func MigrationEntries(before, after *operatorv1alpha1.PtahMigrationStatus, journ
 		}
 	}
 	return entries
+}
+
+// finishedRun is the RunFinished entry a status write owes, if any. One
+// execution ends once, whichever records its end writes: status.lastRun is the
+// run's account of itself, and status.unresolvedRun is the hold that account put
+// on the resource, which is a safety state and not a second run.
+//
+// A hold reaches this function without a new account in two ways. A restore
+// that dropped status brings it back from metadata, and a manager that kept no
+// journal may have left one standing. Either way the journal holds no end for
+// that execution, so the entry is made from what is left. A hold beside the
+// account that recorded its end is already journaled, unless there is no journal
+// yet.
+func finishedRun(
+	before, after *operatorv1alpha1.PtahMigrationStatus,
+	journal *operatorv1alpha1.LifecycleJournal,
+	now time.Time,
+) (operatorv1alpha1.JournalEntry, bool) {
+	run := after.LastRun
+	if run != nil && run.FinishedAt != nil && !sameRun(before.LastRun, run) {
+		entry := runFinished(run)
+		// Both writers of a finished run retire an Apply claim, and an Apply
+		// claim names its plan.
+		if operation := before.ActiveOperation; operation != nil && operation.PlanRef != nil {
+			entry.Plan = operation.PlanRef.Name
+		}
+		return entry, true
+	}
+	hold := after.UnresolvedRun
+	if hold == nil {
+		return operatorv1alpha1.JournalEntry{}, false
+	}
+	if held := before.UnresolvedRun != nil && before.UnresolvedRun.OperationID == hold.OperationID; held && journal != nil {
+		return operatorv1alpha1.JournalEntry{}, false
+	}
+	if run != nil && run.FinishedAt != nil && accountsFor(run, hold) {
+		if journal != nil {
+			return operatorv1alpha1.JournalEntry{}, false
+		}
+		entry := runFinished(run)
+		entry.Plan = hold.PlanRef.Name
+		return entry, true
+	}
+	return operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalRunFinished, At: orNow(hold.RecordedAt, now),
+		Outcome: runOutcome(hold.Outcome), Plan: hold.PlanRef.Name,
+	}, true
+}
+
+// runFinished is the entry of a finished run.
+func runFinished(run *operatorv1alpha1.MigrationRunStatus) operatorv1alpha1.JournalEntry {
+	started := run.StartedAt
+	entry := operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalRunFinished, At: *run.FinishedAt, StartedAt: &started,
+		// The API holds AppliedVersions to 256 entries.
+		Outcome: runOutcome(run.Outcome), AppliedVersions: int32(len(run.AppliedVersions)),
+	}
+	if run.Failure != nil {
+		entry.Failure = run.Failure.DeepCopy()
+	}
+	return entry
+}
+
+// sameRun reports that previous is the finished run current records. The Job
+// alone does not tell two runs apart: a run settled without its Job names none,
+// and neither does the next one settled that way, so the claim's start decides
+// between them.
+func sameRun(previous, current *operatorv1alpha1.MigrationRunStatus) bool {
+	return previous != nil && previous.FinishedAt != nil && previous.JobUID == current.JobUID &&
+		previous.StartedAt.Equal(&current.StartedAt)
+}
+
+// accountsFor reports that run is the account hold was recorded from. Nothing
+// runs while a hold stands, so the last run beside one is its own unless the
+// Job or the outcome says otherwise.
+func accountsFor(run *operatorv1alpha1.MigrationRunStatus, hold *operatorv1alpha1.UnresolvedMigrationRunStatus) bool {
+	return run.JobUID == hold.JobUID && run.Outcome == hold.Outcome
 }
 
 // planRecorded reports whether the journal's newest PlanPublished names plan

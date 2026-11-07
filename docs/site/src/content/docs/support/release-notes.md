@@ -46,6 +46,10 @@ A script that reads `ApprovalAccepted` entries in `status.journal` has to tell
 decisions apart by `approvalUID`, since an approval that reuses a name now writes
 an entry of its own, and has to treat an entry with no `approvalUID` as evidence
 of a name and not of an object.
+A script that counts `RunFinished` entries in `status.journal` as runs now gets
+one entry per run, on its plan, where a `Partial` or `Unknown` run used to write
+a second `Unknown` entry; entries already stored stay as they are until the
+journal's bounds drop them.
 The move to Ptah v0.22.0 can also change what a running schema reports and plans,
 which the next paragraph covers. Nothing else.
 

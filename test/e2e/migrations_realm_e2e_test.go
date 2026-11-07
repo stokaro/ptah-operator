@@ -343,6 +343,9 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	if !blockedRefusalHeld(stopped.Status) {
 		m.fatalf("%s did not refuse after a migration that committed half of itself", migration)
 	}
+	if !partialRunJournaledOnce(stopped.Status, plan.Name) {
+		m.fatalf("%s did not journal the partial run of plan %s once: %#v", migration, plan.Name, stopped.Status.Journal)
+	}
 	m.scanObject(stopped, "the partial-run refusal")
 
 	// Partial is a fact about the database, not a label the run chose: the

@@ -42,8 +42,11 @@ const (
 	JournalApplyFinished JournalEntryType = "ApplyFinished"
 	// JournalVerified is the post-Apply observation of a PtahSchema settling.
 	JournalVerified JournalEntryType = "Verified"
-	// JournalRunFinished is a PtahMigration run that ended, or one recorded as
-	// unresolved because nobody established its outcome.
+	// JournalRunFinished is a PtahMigration run that ended: one entry per
+	// execution. A run that ends Partial or Unknown also holds the resource in
+	// status.unresolvedRun, and that hold writes no entry of its own. A hold
+	// restored without the status that held its run is that run's entry, with
+	// the outcome the hold recorded.
 	JournalRunFinished JournalEntryType = "RunFinished"
 	// JournalRunAcknowledged is an unresolved run a person acknowledged.
 	JournalRunAcknowledged JournalEntryType = "RunAcknowledged"
