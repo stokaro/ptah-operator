@@ -1148,6 +1148,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if failure == nil {
 				failure = fmt.Errorf("Apply Job did not complete successfully")
 			}
+			failure = withUnstartedPod(failure, meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
 				evidence.PodUIDs, evidence.PodCount, !evidence.Trusted,
@@ -1159,7 +1160,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			} else if boundary != "" {
 				return r.retryOperation(ctx, schema, job, errors.New(boundary))
 			}
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
+			return r.retryOperation(ctx, schema, job, withUnstartedPod(fmt.Errorf("read %s result: %w", operation.Type, parseErr),
+				meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)))
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
 	}
@@ -4908,8 +4910,7 @@ func (r *SchemaReconciler) reportPodAdmission(
 	}
 	before := schema.DeepCopy()
 	if change.refused {
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonPodAdmissionRefused, change.message)
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, change.reason, change.message)
 	} else {
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation.Type))
@@ -4917,7 +4918,11 @@ func (r *SchemaReconciler) reportPodAdmission(
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return err
 	}
-	if change.refused {
+	switch {
+	case !change.refused:
+	case change.reason == operatorv1alpha1.ReasonPodConfigurationError:
+		r.event(schema, corev1.EventTypeWarning, "PodConfigurationError", "%s", change.message)
+	default:
 		r.event(schema, corev1.EventTypeWarning, "PodAdmissionRefused", "%s", change.message)
 	}
 	return nil

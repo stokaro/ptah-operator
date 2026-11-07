@@ -286,6 +286,11 @@ the spec takes effect on the next claim. The message is the API server's own
 text, bounded and stripped of control characters; it names the policy or the
 webhook and what it wanted, and nothing the operation holds.
 
+A Pod that exists and cannot start because the kubelet cannot configure its
+container reads the same way, with reason `PodConfigurationError` and the
+kubelet's words in the message: a [Secret or a key that does not exist
+yet](../credentials-and-admission/#external-secret-stores-not-synced), usually.
+
 ## When a Pod is stopped
 
 A node drain, a preemption, an eviction or a Pod deadline stops an operation

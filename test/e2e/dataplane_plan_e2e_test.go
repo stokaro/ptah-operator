@@ -175,6 +175,8 @@ type schemaResource struct {
 	// resources is an explicit task budget for operational boundary rows.
 	resources       *corev1.ResourceRequirements
 	transactionMode string
+	// activeDeadline is spec.execution.activeDeadlineSeconds, 300 when zero.
+	activeDeadline int64
 }
 
 // createSchemaResource creates the schema through both admission webhooks, and
@@ -206,7 +208,7 @@ func (d *dataPlane) createSchemaResource(resource schemaResource) {
 		schemaPolicy["apply"] = resource.apply
 	}
 	execution := map[string]any{
-		"activeDeadlineSeconds": int64(300), "failureRetryInterval": cmp.Or(resource.failureRetry, "5s"),
+		"activeDeadlineSeconds": cmp.Or(resource.activeDeadline, 300), "failureRetryInterval": cmp.Or(resource.failureRetry, "5s"),
 		"connectTimeout": "30s", "runtimeClassName": admissionRuntimeClass,
 	}
 	if resource.podMetadata != nil {

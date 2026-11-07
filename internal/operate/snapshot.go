@@ -277,8 +277,9 @@ func (s snapshot) inSyncCondition() string {
 // recorded failure or refusal first, then a Ready that is not True.
 //
 // A schema records a failed attempt on ReconciliationFailed, and a Pod
-// admission refusal on Ready. A migration records both on Progressing, which
-// a retried attempt leaves True with the failure as its message.
+// admission refusal or a Pod the kubelet cannot configure on Ready. A migration
+// records all of them on Progressing, which a retried attempt leaves True with
+// the failure as its message.
 func (s snapshot) blocker() *metav1.Condition {
 	if s.family == FamilyMigration {
 		if blocked := s.condition(operatorv1alpha1.ConditionMigrationBlocked); blocked != nil && blocked.Status == metav1.ConditionTrue {
@@ -286,7 +287,8 @@ func (s snapshot) blocker() *metav1.Condition {
 		}
 		if progressing := s.condition(operatorv1alpha1.ConditionMigrationProgressing); progressing != nil &&
 			(progressing.Reason == string(operatorv1alpha1.ReasonOperationFailed) ||
-				progressing.Reason == string(operatorv1alpha1.ReasonPodAdmissionRefused)) {
+				progressing.Reason == string(operatorv1alpha1.ReasonPodAdmissionRefused) ||
+				progressing.Reason == string(operatorv1alpha1.ReasonPodConfigurationError)) {
 			return progressing.DeepCopy()
 		}
 	} else {

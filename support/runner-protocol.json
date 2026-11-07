@@ -292,6 +292,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:20303d2a5a119124b79a84b9a532313b5b2a805940f31bec0c0b5a726ac69cd6",
       "reason": "Reword the comment on JournalRunFinished in api/v1alpha1, a package the runner links for its types (#802). No code the runner runs changes: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:62ee3976426a4de3eaa18ec686e4556fab0a368b0a0707db09e90d0f6be4fecd",
+      "reason": "Add the condition reason PodConfigurationError to the API package, which the runner imports for its types (#821). The manager sets it when the kubelet cannot configure an operation Pod, as with a missing Secret, and the runner has not started by then. It neither reads nor writes conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
     }
   ]
 }

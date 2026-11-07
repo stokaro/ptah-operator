@@ -275,6 +275,16 @@ it would report.
   was published, because the database target moved during the read, records
   `PlanTargetChanged` instead. A script that counts `PlanStale` to see reads has to
   read `status.target.lastObservedAt`.
+- **A Secret that does not exist yet.** An operation whose Pod the kubelet cannot
+  configure reported only that it was in progress, and past the Job's deadline read
+  `ptah runner result frame not found`. Its condition now reads
+  `PodConfigurationError` and carries the kubelet's words, such as `secret
+  "application-database" not found`, with a Warning Event of the same name, and the
+  failure past the deadline carries them too. A Secret that arrives still lets the
+  operation go on by itself. An external secret store that has not synced yet looks
+  like this: [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced).
+  A script that reads `Ready` or `Progressing` while a Secret is missing sees the new
+  reason, and on a `PtahMigration` `Progressing` is `False` meanwhile.
 
 ## 0.2.9
 

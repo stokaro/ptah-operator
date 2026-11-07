@@ -38,12 +38,13 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 		t.Fatalf("passwords = %q, %q, %q", credentials.pgPassword, credentials.mysqlPassword, credentials.mysqlRootPassword)
 	}
 	for name, url := range map[string]string{
-		"primary":      credentials.pgURL,
-		"custom CA":    credentials.customCAPGURL,
-		"four-eyes":    credentials.fourEyesPGURL,
-		"Pod metadata": credentials.podMetadataPGURL,
-		"extension":    credentials.extensionPGURL,
-		"unreadable":   credentials.unreadableOCIPGURL,
+		"primary":           credentials.pgURL,
+		"custom CA":         credentials.customCAPGURL,
+		"four-eyes":         credentials.fourEyesPGURL,
+		"Pod metadata":      credentials.podMetadataPGURL,
+		"Pod configuration": credentials.podConfigurationPGURL,
+		"extension":         credentials.extensionPGURL,
+		"unreadable":        credentials.unreadableOCIPGURL,
 	} {
 		if !strings.HasPrefix(url, "postgres://ptah_e2e:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e") ||
 			!strings.HasSuffix(url, "?sslmode=disable") {
@@ -51,7 +52,7 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 		}
 	}
 	databases := []string{credentials.pgURL, credentials.customCAPGURL, credentials.fourEyesPGURL, credentials.podMetadataPGURL,
-		credentials.extensionPGURL, credentials.unreadableOCIPGURL, credentials.loginVisibilityPGURL}
+		credentials.podConfigurationPGURL, credentials.extensionPGURL, credentials.unreadableOCIPGURL, credentials.loginVisibilityPGURL}
 	if len(slices.Compact(slices.Sorted(slices.Values(databases)))) != len(databases) {
 		t.Fatalf("two rows share a database: %v", databases)
 	}
