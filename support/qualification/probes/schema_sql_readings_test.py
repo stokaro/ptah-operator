@@ -132,5 +132,43 @@ class LabCleanupTest(unittest.TestCase):
         self.assert_removed_everything(lab)
 
 
+class CaptureTest(unittest.TestCase):
+    """What a whole capture writes, against a daemon that answers every command."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.scratch = Path(directory.name)
+        for patcher in (mock.patch.object(schema_sql_readings, 'run', self.docker),
+                        mock.patch.dict(schema_sql_readings.os.environ, {'TMPDIR': str(self.scratch)})):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # Each reading of the clock is a minute later, so a wait ends at once.
+        clock = mock.patch.object(schema_sql_readings, 'time')
+        clock.start().time.side_effect = itertools.count(step=60)
+        self.addCleanup(clock.stop)
+
+    def docker(self, argv, data=None, check=True):
+        verb = argv[3:]
+        # A saved plan copied out of the executor's container.
+        if verb[0] == 'cp' and verb[1].endswith(':/tmp/plan.json'):
+            Path(verb[2]).write_text('{}')
+        return SimpleNamespace(returncode=0, stdout=b'', stderr=b'')
+
+    def test_a_capture_writes_every_reading_the_contract_reads(self):
+        for engine in ('postgresql', 'mysql'):
+            with self.subTest(engine):
+                out = self.scratch / engine
+                out.mkdir()
+                results = schema_sql_readings.capture('ctx', 'executor', engine, out)
+                witnesses = {name for name, _ in contract_readings(engine) if name.startswith(f'{engine}-schema-')}
+                self.assertTrue(witnesses)
+                expected = witnesses | {f'{engine}-schema-drift-plan-before.jsonl', f'{engine}-schema-drift-apply-current.jsonl'}
+                self.assertEqual(set(results), expected)
+                self.assertEqual({path.name for path in out.glob('*.jsonl')}, expected)
+                for scope in ('wide', 'narrow'):
+                    self.assertTrue((out / f'{engine}-schema-exclusion-{scope}-plan.json').is_file())
+
+
 if __name__ == '__main__':
     unittest.main()

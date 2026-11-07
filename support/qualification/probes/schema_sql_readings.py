@@ -234,6 +234,7 @@ def capture(context, image, engine, out):
     # A runner Plan reads the plan twice and validates the first read with a
     # dry run under the resource's lock timeout.
     if engine == 'mysql':
+        fault, v3 = f'{engine}-fault-v1.sql', f'{engine}-v3.sql'
         for timeout in (45, 60):
             with Lab(context, engine, image) as lab:
                 lab.seed(v3, statements=(CONTROL_V3,))
