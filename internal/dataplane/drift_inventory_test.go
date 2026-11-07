@@ -114,7 +114,7 @@ func TestIsKnownDriftInventoryKind(t *testing.T) {
 // Ptah counts the objects a feature owner compares under the kind its
 // qualified categories carry. The decoder keeps those entries beside the stems,
 // with their counts and in the order Ptah wrote them. The reports are the ones
-// the Ptah v0.18.0 release image printed.
+// the Ptah v0.22.0 release image printed.
 func TestDecodeDriftKeepsFeatureKindsInTheInventory(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

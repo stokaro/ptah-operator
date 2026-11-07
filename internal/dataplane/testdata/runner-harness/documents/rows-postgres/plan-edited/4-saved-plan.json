@@ -1,9 +1,12 @@
 {
   "format_version": 1,
-  "name": "plan_aa9cb6ef7fac",
+  "name": "plan_4a8d0feea814",
   "dialect": "postgres",
   "from_fingerprint": "sha256:d95a8d225fc016b1819f97bb7aa299d4cbfbf32f1164f3264254edb63134e420",
-  "to_fingerprint": "sha256:e090c04393e384b4ba7413a76d77a774c43820cf0355cb8ebf6f7f1c758ecf6b",
+  "to_fingerprint": "sha256:852cbfc2186a48d41d2174b55a0d235688717b025e01165aeac3fdaf12fe60e6",
+  "scope": {
+    "kind": "realm"
+  },
   "managed_rows": [
     {
       "table": "regions",

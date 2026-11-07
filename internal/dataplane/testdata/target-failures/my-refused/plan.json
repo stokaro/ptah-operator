@@ -4,6 +4,6 @@
   "outcome": "failed",
   "error": {
     "kind": "database_unreachable",
-    "message": "connect to --db-url: failed to ping database: dial tcp 172.20.0.3:3309: connect: connection refused"
+    "message": "connect to --db-url: failed to ping database: dial tcp 172.22.0.3:3309: connect: connection refused"
   }
 }

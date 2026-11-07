@@ -9,7 +9,8 @@ for `schema_migrations_log` after one `ptah migrations up --migrations-dir
 
 - Executor: the Ptah v0.18.0 release image,
   `ghcr.io/stokaro/ptah@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303`,
-  source `6e1d430e`
+  source `6e1d430e`. The v0.22.0 release image (`0dd9190b`) wrote the same rows in all
+  eight runs, apart from the run id, against PostgreSQL 17.11 and MySQL 8.4.11
 - PostgreSQL: `17.11`, `postgres@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675`
 - MySQL: `8.4.13`, `mysql@sha256:a0225d1ea6631c8bc2385dc4c2faba17bbf1834ecf369e1659a9a382bd8d5dd7`
 

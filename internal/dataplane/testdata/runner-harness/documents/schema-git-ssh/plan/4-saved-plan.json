@@ -4,6 +4,9 @@
   "dialect": "postgres",
   "from_fingerprint": "sha256:b53f16e6e4f3187bd68e99db9d33403d529c47336604bfeaeb46582515f9efa8",
   "to_fingerprint": "sha256:376dba1bb8c16fcc9e559162f7568b079a82ff93b32a967830f87ef06452e10e",
+  "scope": {
+    "kind": "realm"
+  },
   "destructive": false,
   "statements": [
     {

@@ -110,19 +110,17 @@ CREATE TABLE "customers" (
 );
 ```
 
-The statements come out as the planner wrote them, comments and all. The line
-above each one is not SQL. It gives the statement's severity, which
+The statements come out as the planner wrote them. The line above each one is
+not SQL. It gives the statement's severity, which
 `Destructive` summarizes for the whole plan, and the reason Ptah gave for it.
 Statements that do different things read differently:
 
 ```text
 Statement 1 of 2: safe (does not remove data or tighten constraints)
--- Add/modify columns for table: e2e_widgets
 ALTER TABLE "e2e_widgets" ADD COLUMN "fault_token" text;
 
 Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)
--- WARNING: This will delete all data!
-DROP TABLE IF EXISTS "e2e_excluded_policy_keep" CASCADE;
+DROP TABLE "e2e_excluded_policy_keep";
 ```
 
 The plugin also reads each statement, by the rules the manager reads a plan
@@ -299,7 +297,7 @@ ConfigMap's name, and `Snapshot`, the copy every operation reads.
 
 `Observed: not yet` and `Drift: none` are different answers. The first is a
 schema nothing has read; the second is a database that matches its declaration
-as far as the login can read it, which
+as far as the login can read it, which on MySQL
 [leaves some objects out](../../support/databases/#what-the-login-cannot-see).
 
 A change the drift report has no category for prints

@@ -2,18 +2,22 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:2eac772983d20731d143feaf40b021b6adaf56c67dae317ace9beebe969b4634",
-  "plan_path": "/work/ptah-plan-output-2898984526/first.plan.json",
+  "plan_digest": "sha256:2902cb8e93f51b6f763ce4362b644dc2709356e6677cdef2f27141bcaefbcad3",
+  "plan_path": "/work/ptah-plan-output-473025015/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_475d4bfc3e05",
+    "name": "plan_1ff9465dff2d",
     "dialect": "mysql",
     "from_fingerprint": "sha256:17cff4a0711a79bf6f8dcbaa191df91410b6e3a9b7785c99cf602d1f00aaa471",
-    "to_fingerprint": "sha256:8973bb390eb82ed19fadf72504443bec6802ab3ab7853fca5e28870d3d27279c",
+    "to_fingerprint": "sha256:8241222fa207a7375030e96d00d7dd56b4eb53654bb08e038fe89fb023182ec8",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_schema_mysql"
+    },
     "destructive": false,
     "statements": [
       {
-        "sql": "-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)",
+        "sql": "ALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

@@ -30,7 +30,7 @@ func TestPgExtensionChangeIsTheCategoryPtahPrinted(t *testing.T) {
 	}
 }
 
-func readExtensionReading(t *testing.T, name string) *ptahv1alpha1.PtahSchema {
+func readSchemaReading(t *testing.T, name string) *ptahv1alpha1.PtahSchema {
 	t.Helper()
 	body, err := os.ReadFile("../../testdata/e2e/readings/" + name)
 	if err != nil {
@@ -43,9 +43,9 @@ func readExtensionReading(t *testing.T, name string) *ptahv1alpha1.PtahSchema {
 	return native
 }
 
-// The derived reading counts what Ptah's report counts, entry by entry and in
-// the order status keeps them, so it does not drift from the capture it was
-// written from.
+// The reading a run printed counts what Ptah's captured report counts, entry by
+// entry and in the order status keeps them, so a repin that moves either one has
+// to retake the other.
 func TestExtensionReadingCountsWhatPtahPrinted(t *testing.T) {
 	t.Parallel()
 	body, err := os.ReadFile("../../internal/dataplane/testdata/drift-feature-extension.json")
@@ -61,7 +61,7 @@ func TestExtensionReadingCountsWhatPtahPrinted(t *testing.T) {
 	if len(report.Inventory) == 0 {
 		t.Fatal("the captured report counts nothing, so this test would hold the reading to nothing")
 	}
-	reading := readExtensionReading(t, "postgresql-extension-drift-inventory.json")
+	reading := readSchemaReading(t, "postgresql-extension-drift-inventory.json")
 	if !slices.Equal(reading.Status.Target.Inventory, report.Inventory) {
 		t.Fatalf("the reading counts %+v, and Ptah reported %+v", reading.Status.Target.Inventory, report.Inventory)
 	}
@@ -72,7 +72,7 @@ func TestExtensionReadingCountsWhatPtahPrinted(t *testing.T) {
 // like when the entry does not reach status, so the predicate has to refuse it.
 func TestDroppedExtensionObservedRefusesACapturedStatusWithoutTheEntry(t *testing.T) {
 	t.Parallel()
-	captured := readExtensionReading(t, "postgresql-extension-drift.json")
+	captured := readSchemaReading(t, "postgresql-extension-drift.json")
 	digest := captured.Status.Source.Digest
 	if digest == "" || captured.Status.Target.DriftFindingCount != 1 || len(captured.Status.Target.Inventory) != 0 {
 		t.Fatalf("the captured reading is not the one this row is about: %+v", captured.Status.Target)
@@ -87,12 +87,12 @@ func TestDroppedExtensionObservedRefusesACapturedStatusWithoutTheEntry(t *testin
 	}
 }
 
-// The accepted reading is derived rather than read from a cluster:
-// testdata/e2e/readings/README.md says from what. Each refused reading is that
+// The accepted reading is the status the row printed on kind:
+// testdata/e2e/readings/README.md says in which run. Each refused reading is that
 // status with the one field the mistake would change.
 func TestDroppedExtensionObservedRefusesEveryOtherReading(t *testing.T) {
 	t.Parallel()
-	native := readExtensionReading(t, "postgresql-extension-drift-inventory.json")
+	native := readSchemaReading(t, "postgresql-extension-drift-inventory.json")
 	digest := native.Status.Source.Digest
 	if digest == "" || native.Status.Applied == nil || native.Status.Applied.ArtifactDigest != digest {
 		t.Fatalf("the reading was not taken after the artifact %q was applied", digest)

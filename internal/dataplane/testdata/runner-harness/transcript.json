@@ -488,7 +488,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4cc539ba36b8dbc6d3e942e31d0815ae4738292d4d38776715cb03c8c80ec849",
-      "planContentDigest": "sha256:a12362697390485142a8dcb207024b819b26b75e9eb8c59fcced4a3dd13a55ab",
+      "planContentDigest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:94195566117e11d16de007f766e199c401b0032c62e0f65d8bb261ec938f2f44"
@@ -633,7 +633,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:0b4091197a5864343b8c96a638c3c4cca91d86a8d67145046449758a0b2cbfa8",
-      "planContentDigest": "sha256:a12362697390485142a8dcb207024b819b26b75e9eb8c59fcced4a3dd13a55ab",
+      "planContentDigest": "sha256:4ddb6030a8c4ed824ed9a2d329f9ffb45e12550b807b5d18aa9257b298e57a85",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -748,7 +748,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:395ca64b18d633b8ad15e8e1525fe2104b9e6651c3217bd0b498370a20220059",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:53c3420ec4078d0be3ebf2f55fd6b88d23e612aa4744a80800bbb8906b71998b",
@@ -787,7 +787,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:bdacb969970deaa783967e16d3f1052d4ee82382cb8b3c0074afe171c935595d",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:53c3420ec4078d0be3ebf2f55fd6b88d23e612aa4744a80800bbb8906b71998b",
@@ -968,7 +968,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:18d00708060c45d2c2a7c5e6941bef6da334b7d8712b7f5dbc7ed3455da58441",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:356c8a96c3f291ef78756ab24df5ba5f110ef7675fc4df86f994f1e2b8f2e349",
@@ -1007,7 +1007,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b81737d3cdfaf721d189f2f42b6fec046c1b33fcff8e82c1a6194b6fea979936",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:356c8a96c3f291ef78756ab24df5ba5f110ef7675fc4df86f994f1e2b8f2e349",
@@ -1188,7 +1188,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4721643a13c8cab8f86ca0c29f2dbabbd1f09897ba6b35363efca7f15a9b949a",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:29c735939052cea267ff343e0992ef84ab0e132e803cf0ff3a1eacd8e6efa570",
@@ -1227,7 +1227,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:af777ac354505b16e829144677d5c987079b29bb1d338150e0cc994809c33f31",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:29c735939052cea267ff343e0992ef84ab0e132e803cf0ff3a1eacd8e6efa570",
@@ -1408,7 +1408,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:1c2f89850c5f0ec853fb8bb3d98627fdeb34d5a5af65f813c1f6f91dbb4dfa72",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:f006f9bfba1a0f366a21473e96f978e39c1a5be728eb2cec8667599cb447eeb8",
@@ -1447,7 +1447,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:ea361aa31cf8d33fd2021dd7361bdbade200d8fb161756f80075a02314998cec",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:f006f9bfba1a0f366a21473e96f978e39c1a5be728eb2cec8667599cb447eeb8",
@@ -1628,7 +1628,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:37b10f058f5f34b5a7b484519b3f4034de25c6746bbad7a199f20d03e460d300",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8315c515864558ef6d38d83558aedc2748100debc7b24b5962834a9cce3f0416",
@@ -1667,7 +1667,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:8bc252b0d5b1270fcc8bc6260f28879680c302d7f98f91cf93dbe05def2585c0",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8315c515864558ef6d38d83558aedc2748100debc7b24b5962834a9cce3f0416",
@@ -1848,7 +1848,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4d339f7205876388508d8cfa017de0809d68ae2fde33e8e6bb214e4954ecdf0e",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:f96c63ee3929863efbaad2dc103f3ac8b99be3aecfe936009a8b665a50e9c740",
@@ -1887,7 +1887,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:941d86c5feb9ece9cc7a7dc3ac6f8fabfe53c960a28ffbb91d4cc18d585ee295",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:f96c63ee3929863efbaad2dc103f3ac8b99be3aecfe936009a8b665a50e9c740",
@@ -2068,7 +2068,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb212313f8bff875f4abe80a9a0bab99afc7f39c5a42d52c0f0618bd06811c9a",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -2107,7 +2107,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b4d7ce23b0df16bcee6a0abb74e3237bee2a37dbff9d132d32eec04887bc6896",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -2288,7 +2288,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:288ac55de79fe4f00abcc6679b5ffb0777fa186939a66b49a126d563a5edb750",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -2327,7 +2327,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb1c11d0f2f608257a84c15a04cf9d8f49d3c985f37cd9514c7d282d0409dde8",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -2508,7 +2508,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e2f51a9196bd64dae017bd9446b1a41d8466a7a93ac37eda39f455904425140d",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -2547,7 +2547,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:915e8c54ec9f79d0ed5394921d0085c12faee0795815ce42c8b5a531cf158a52",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -2728,7 +2728,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d545d3ac60533a8cce3bbcf9ad1bbb209aefac88e06a7e8dd02250164de68388",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -2767,7 +2767,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d0fa0dceb0e88c143f6cac71dbf195673d63e1981ed129c0c0aa0aa0849aa509",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -2948,7 +2948,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:29ba757fa21dd815ebd444226631e1b76b84eb8a661b8987dcec3220a74e6a58",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -2987,7 +2987,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:9f0bfd77b540ebf8a19b20ab381dfb7f804898fba4038faf3043436a9ddc371b",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -3168,7 +3168,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a4c69d56a0b72a0970378e7bfe1c23b92eee7d42b56f6d2fa58e2e0855c23783",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -3207,7 +3207,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d3c037310c7dbc7d8957b8124926ea4aeab09cadf1b4641522ab86ff23ba14c8",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -3388,7 +3388,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb56e47bc2901c51e3e37b45ca0baae63ce2cea7313fff8a5ec5a1907491a48e",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -3427,7 +3427,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:7d5299f84da0a27dc27028f70209d8428de8f17791eb548bff6cb6e24acf17ca",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -5679,7 +5679,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e238787c6e103842d8153275747dc4c12139e3c8730398edf350b411c42a9eed",
-      "planContentDigest": "sha256:509baf411c742268b425c73c3625d886368badb2ca275c7cf018ed339b651776",
+      "planContentDigest": "sha256:841b4f5368a374bf6f8679e4c9068a8daf372f0d56cbf76aca59855a379cd0bf",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:2dccb54e938085ead09e112c6a4fdb717595ab8f5340be1592f9aaf353dc1dc2"
@@ -5834,7 +5834,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:695dc0c4396898edf8da9d83af2503823019a01d03bbb44da09696243cb052a9",
-      "planContentDigest": "sha256:509baf411c742268b425c73c3625d886368badb2ca275c7cf018ed339b651776",
+      "planContentDigest": "sha256:841b4f5368a374bf6f8679e4c9068a8daf372f0d56cbf76aca59855a379cd0bf",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -5945,7 +5945,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9021452fd7311fba0e45cffc339db39a6d2b471d4aaa6b4b4743d14e227cf3d",
-      "planContentDigest": "sha256:64d216bc292869521b2093ff1177afc35c930f9bf05800eb82c50e97e7769712",
+      "planContentDigest": "sha256:79b4674262befcfedccf61ef14668c2ac63ee160205057a1172912cbe0b87ccc",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:1922c2ccf1ea8fe4075657954ce0e3c710e2fd059b83cf4e5d41152ed6f52960"
@@ -6085,7 +6085,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:76695c3a4cad8737354239ff68526f9c780f309c08af6c1d1c70aac7c4578c52",
-      "planContentDigest": "sha256:64d216bc292869521b2093ff1177afc35c930f9bf05800eb82c50e97e7769712",
+      "planContentDigest": "sha256:79b4674262befcfedccf61ef14668c2ac63ee160205057a1172912cbe0b87ccc",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6196,7 +6196,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:7210e35b0c97d7cc67b094e171c64fdc6203393bec974a248f152ba7f72dc165",
-      "planContentDigest": "sha256:3e35513874a1168a8b1f5f2cab77b573be4cf002cfdaa6b65dcd004f43abb501",
+      "planContentDigest": "sha256:6d2eff0fa07963a126fbb73d2853fee55aa614a71654ebade530f321858ee10e",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:abad9b0c254b37ecf91e2b837ebcfb8d2b900286835859a61948a4c34db5ba2d"
@@ -6346,7 +6346,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:288481432270f0543d1d5c1607eb67c50c0ce72044aa5eef6ac62aeed70ff295",
-      "planContentDigest": "sha256:3e35513874a1168a8b1f5f2cab77b573be4cf002cfdaa6b65dcd004f43abb501",
+      "planContentDigest": "sha256:6d2eff0fa07963a126fbb73d2853fee55aa614a71654ebade530f321858ee10e",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6419,7 +6419,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:e35cc4df17fb250c6e4759b3238cafffafddc4f379b7f9094e8cbe5165825153",
-      "planContentDigest": "sha256:a51cb9f57ef858c2d404f7c9c32f95ca459801f96a4bdf23243efe98fe3f16ba",
+      "planContentDigest": "sha256:1bd409cf7358058c5ed8d2604a482889fce627f94c62e08ad6126c13f804609d",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6577,7 +6577,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378",
-      "planContentDigest": "sha256:8bf0c43b0b77a26283746c6160067184afdc8031894a62e6fcb7194fd5577790",
+      "planContentDigest": "sha256:1573872295d7810ba95c2c04d656c6b3d686ff4038daae42c19fd8b1ecb26437",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:24ec3e794a34e79469f1c3f51917c79c8e4400d061a6d2cadaa8e8d8efcc565f"
@@ -6727,7 +6727,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:99c6bdbf7e31acde15cd5602b377eed4c9e13eccf41cb55236184c466825b5d9",
-      "planContentDigest": "sha256:8bf0c43b0b77a26283746c6160067184afdc8031894a62e6fcb7194fd5577790",
+      "planContentDigest": "sha256:1573872295d7810ba95c2c04d656c6b3d686ff4038daae42c19fd8b1ecb26437",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6800,7 +6800,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:e6eedc4397731172935e4a0742efd748fb3c7ca7ce81bd954d6eb30efe91b701",
-      "planContentDigest": "sha256:061caa7c65af1680d4fdbfaaac0adf963bfe917fc4ee5307defb029cf69ae90d",
+      "planContentDigest": "sha256:78e095e77f932c0a443d5fcee747dca691e234212e7e631664a88f34f98ed45a",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6958,7 +6958,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5",
-      "planContentDigest": "sha256:94a5614cbcfcd39b5a4a352785113207857e2e19ea0e1ed5745d7b702cca0f88",
+      "planContentDigest": "sha256:0554a8d43d1f9c5d09edb98f5c64910014be2ad1b518dc495b5c0459342009b8",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6afcc36a43a5e163556bba7a2ad5a600cc6148c556477a6a1e8ba6521d93d0eb"
@@ -7175,7 +7175,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:5857ccdd77f7a3e1df43cc3f27bd4c332c3e5be39602e0592219a6103c3f3026",
-      "planContentDigest": "sha256:94a5614cbcfcd39b5a4a352785113207857e2e19ea0e1ed5745d7b702cca0f88",
+      "planContentDigest": "sha256:0554a8d43d1f9c5d09edb98f5c64910014be2ad1b518dc495b5c0459342009b8",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7392,7 +7392,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb67e4f5224ce06b5aff0949623d6da39ecb0e9b6921fc9a87a8006c1d7959a4",
-      "planContentDigest": "sha256:36a62c9505da0b854e1c48a8df799586abcaef5baf36c362d5aaeddeaf33eaa2",
+      "planContentDigest": "sha256:7f889b089646e87b835554a96739fbfcc4f0255c87d241d47dc9f3fe77abc0fa",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0aa23be78bda77755ed69cf3dc30a05bac818b41f6403d494cb41e4592bd9218"
@@ -7544,7 +7544,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:3492c5098da26a4c003180db751d6af329e9bb7dabe3b7f87147aafd32dee26b",
-      "planContentDigest": "sha256:36a62c9505da0b854e1c48a8df799586abcaef5baf36c362d5aaeddeaf33eaa2",
+      "planContentDigest": "sha256:7f889b089646e87b835554a96739fbfcc4f0255c87d241d47dc9f3fe77abc0fa",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7606,7 +7606,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-mysql/apply-column/0-schema-apply.json"
       }
     ],
@@ -7616,7 +7616,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:3c6bdfc4c47c6f818a8d001243be6a1eab54bf3f66b35281d1adf460fdc21e42",
-      "planContentDigest": "sha256:2eac772983d20731d143feaf40b021b6adaf56c67dae317ace9beebe969b4634",
+      "planContentDigest": "sha256:2902cb8e93f51b6f763ce4362b644dc2709356e6677cdef2f27141bcaefbcad3",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8bb5655026246f010c2eda8529206fdd17cdbf078063def470361abb7d87c003"
@@ -7653,7 +7653,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:080a624af4fbbbe3558475b5722aa126975ca81fd53dc9e868221214cf93927f",
-      "planContentDigest": "sha256:2eac772983d20731d143feaf40b021b6adaf56c67dae317ace9beebe969b4634",
+      "planContentDigest": "sha256:2902cb8e93f51b6f763ce4362b644dc2709356e6677cdef2f27141bcaefbcad3",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8bb5655026246f010c2eda8529206fdd17cdbf078063def470361abb7d87c003",
@@ -7687,7 +7687,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:de7a9b166a12e8ae9efaa7bf4ab4b7689eb6b34945aaf24f07fedb29e24567c8",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8bb5655026246f010c2eda8529206fdd17cdbf078063def470361abb7d87c003"
@@ -7928,7 +7928,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/schema-mysql/plan-column/1-schema-plan.json"
       },
       {
@@ -7941,7 +7941,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-mysql/plan-column/2-schema-plan.json"
       },
       {
@@ -7956,7 +7956,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\n",
         "stdout": "runner-harness/documents/schema-mysql/plan-column/3-schema-apply---dry-run.json"
       }
     ],
@@ -7965,7 +7965,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:d63ad42f4f4799260e99baaa48174a42473f26a1e8cd8c8404edee52970a5609",
-      "planContentDigest": "sha256:2eac772983d20731d143feaf40b021b6adaf56c67dae317ace9beebe969b4634",
+      "planContentDigest": "sha256:2902cb8e93f51b6f763ce4362b644dc2709356e6677cdef2f27141bcaefbcad3",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -8094,7 +8094,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:38943881cdf6aa861ab1f7f0cd61dc36a2c2d1dbc8b556dba9d4fe6f8b4505b7",
-      "planContentDigest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+      "planContentDigest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -8271,7 +8271,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-postgres/apply-column/0-schema-apply.json"
       }
     ],
@@ -8281,7 +8281,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:420dfc966f0c4faf513a9801736f7581e1cc343ffa8d08d4731fbb36857c28ad",
-      "planContentDigest": "sha256:e1c739e1752a1048d599e5507418991a0fcd944284276f37bab54fa7f062da3e",
+      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -8318,7 +8318,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9b48b550116d3bba765b81933285a94622ddcfd3a009db36b574f907f5dd59d",
-      "planContentDigest": "sha256:e1c739e1752a1048d599e5507418991a0fcd944284276f37bab54fa7f062da3e",
+      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181",
@@ -8352,7 +8352,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:bf09f6a9c67be0d070be66ef450704abc061b300f7fc64b53152f8e1a3f452f8",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -8573,7 +8573,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "schema-plan-report.json"
       },
       {
@@ -8586,7 +8586,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-postgres/plan-column/2-schema-plan.json"
       },
       {
@@ -8601,7 +8601,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\n",
         "stdout": "schema-apply-dry-run-report.json"
       }
     ],
@@ -8610,7 +8610,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a720e527aa287c781368bd8face5668214e5f626f48e15dff2161a6c61918b68",
-      "planContentDigest": "sha256:e1c739e1752a1048d599e5507418991a0fcd944284276f37bab54fa7f062da3e",
+      "planContentDigest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -8739,7 +8739,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a3824fcf7333fd272602957b530dbdbf9477084f6ac36f119809d3ed3f6f3bb4",
-      "planContentDigest": "sha256:7ccf027b410c5cf7237f8f36ab32eb1be117cf3662e83976b4ebb205b8094eb7",
+      "planContentDigest": "sha256:00558f524a7c21d09025aaa5c9506b4e03585851d2a1ef6c45c075702e958e6a",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9021,7 +9021,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1366 (HY000): Incorrect integer value: 'row-value-not-a-number' for column 'qty' at row 1\nSQL: -- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1366 (HY000): Incorrect integer value: 'row-value-not-a-number' for column 'qty' at row 1\nSQL: ALTER TABLE `items` MODIFY COLUMN `qty` integer\n",
         "stdout": "statement-errors/my-cast-apply.json"
       }
     ],
@@ -9035,7 +9035,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:93d6129860652681dc5e646e3abf3a1c07970bf372ffebe316538875275c0f02",
-      "planContentDigest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+      "planContentDigest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cb752d8d3b6891f65b155ece418db2f71ca31d5765467ce11c382fba44c28ded",
@@ -9139,7 +9139,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/1-schema-plan.json"
       },
       {
@@ -9152,7 +9152,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/2-schema-plan.json"
       },
       {
@@ -9167,7 +9167,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\n-- Modify table: items\n-- Modify column items.qty: type: text -> integer\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\n",
         "stdout": "runner-harness/documents/statement-errors-my-cast-apply/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -9176,7 +9176,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:3da5ba2de04d31fef1aabb2b050f0f56ce3fb1a5ce965f5d3d9ab3f6ec0c1746",
-      "planContentDigest": "sha256:87c4016ee17ce5317f0b11ec0b2becc5aeddb9a4df79401312622f8492832e36",
+      "planContentDigest": "sha256:ca6c477bf8c0a34e703ddcf000e2081d8a16577d349955230089fc50a22ae3ce",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9828,7 +9828,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:1b7778cf61c2787555361dcfeb2e7025ada658f6b2f7c80703432049685fce3c",
-      "planContentDigest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+      "planContentDigest": "sha256:eecb8f873c76559811a705d023bb58a321e57d330fd53c72a23b497f20f35ebf",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fd17c58807e204f45377095d0adb64dfae57dbaa35be6e110e70fc1f51f5f2cb",
@@ -9974,7 +9974,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:c3a47ad85cfb82d8e3edf92e20feb04d4477dec18066d216070152826eb7d226",
-      "planContentDigest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
+      "planContentDigest": "sha256:eecb8f873c76559811a705d023bb58a321e57d330fd53c72a23b497f20f35ebf",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10788,7 +10788,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")\n",
         "stdout": "statement-errors/pg-unique-apply.json"
       }
     ],
@@ -10802,7 +10802,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61",
-      "planContentDigest": "sha256:003a9702f537e0fe956e93a14b54590dc2b048c1401c6f1dfe0233a80398c5d8",
+      "planContentDigest": "sha256:8afb27c3428cdda973b1f4b2d627f0b96b305a68c9b375de8ad12d3db66fc6ce",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842",
@@ -10911,7 +10911,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/1-schema-plan.json"
       },
       {
@@ -10924,7 +10924,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/2-schema-plan.json"
       },
       {
@@ -10939,7 +10939,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX IF NOT EXISTS \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -10948,7 +10948,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a5ea4e54b515c5128026744c7db7ac5db4978f48865cb8f088196f7db076fc6f",
-      "planContentDigest": "sha256:003a9702f537e0fe956e93a14b54590dc2b048c1401c6f1dfe0233a80398c5d8",
+      "planContentDigest": "sha256:8afb27c3428cdda973b1f4b2d627f0b96b305a68c9b375de8ad12d3db66fc6ce",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",

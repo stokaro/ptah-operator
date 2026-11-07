@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_4b43ac3a06de",
-  "plan_digest": "sha256:acf7ceb9516605364d756ddbff3b8b916b1a1895b62a97f86457d7709387de23",
+  "plan_name": "plan_d68a3b20b7c5",
+  "plan_digest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
   "error": {
     "kind": "database_not_found",
     "message": "connect to --db-url: failed to ping database: Error 1049 (42000): Unknown database 'no_such_db'"

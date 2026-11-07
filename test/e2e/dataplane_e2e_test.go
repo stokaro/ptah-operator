@@ -57,6 +57,7 @@ func TestDataPlane(t *testing.T) {
 		{"pod-metadata-admission", d.podMetadataAdmission},
 		{"postgresql-extension-drift", d.postgresqlExtensionDrift},
 		{"oci-unreadable-schema", d.unreadableOCISchema},
+		{"postgresql-login-visibility-drift", d.postgresqlLoginVisibilityDrift},
 	} {
 		if !run.Scenario(scenario.name, d.scenario(scenario.body)) {
 			return
@@ -253,6 +254,7 @@ func newDataPlane(t *testing.T, run *harness.Run, in phases.DataPlaneInputs) *da
 		d.registry.Password,
 		d.credentials.pgPassword, d.credentials.pgURL, d.credentials.customCAPGURL,
 		d.credentials.fourEyesPGURL, d.credentials.podMetadataPGURL, d.credentials.extensionPGURL, d.credentials.unreadableOCIPGURL,
+		d.credentials.loginVisibilityPGURL,
 		d.credentials.mysqlPassword, d.credentials.mysqlRootPassword, d.credentials.mysqlURL,
 		d.external.Password, d.external.URL,
 	); err != nil {

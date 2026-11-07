@@ -4,15 +4,19 @@
   "dialect": "mysql",
   "from_fingerprint": "sha256:3c9f2bb52939b2aef05f19b0622168972cdcd0b5c57c231278c0801f89d429b2",
   "to_fingerprint": "sha256:d282f84154bc56c19d486f0d3005ad3a9ab03e364d336a33f3cef5c87a784990",
+  "scope": {
+    "kind": "schema",
+    "name": "ptah_audit_schema"
+  },
   "destructive": true,
   "statements": [
     {
-      "sql": "-- Modify table: e2e_widgets\nALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255)",
+      "sql": "ALTER TABLE `e2e_widgets` ADD COLUMN `fault_token` varchar(255)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },
     {
-      "sql": "-- WARNING: This will delete all data!\nDROP TABLE IF EXISTS `e2e_excluded_policy_keep`",
+      "sql": "DROP TABLE `e2e_excluded_policy_keep`",
       "severity": "destructive",
       "reason": "DROP TABLE removes the table and all rows"
     }

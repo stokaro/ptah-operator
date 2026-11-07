@@ -227,8 +227,8 @@ type DataPlaneInputs struct {
 
 // DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
 // four-eyes approval, Pod metadata, a PostgreSQL extension's drift in Ptah's
-// feature categories, and what a schema artifact the executor cannot parse says.
-// It also prepares the other suites.
+// feature categories, what a schema artifact the executor cannot parse says, and
+// drift under the documented login. It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
 	Name:         "dataplane",
 	Test:         "TestDataPlane",
@@ -243,6 +243,7 @@ var DataPlane = define[DataPlaneInputs](Phase{
 		"pod-metadata-admission",
 		"postgresql-extension-drift",
 		"oci-unreadable-schema",
+		"postgresql-login-visibility-drift",
 	},
 	Preparation: 1,
 })

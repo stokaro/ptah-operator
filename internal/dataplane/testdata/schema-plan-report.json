@@ -2,18 +2,21 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:e1c739e1752a1048d599e5507418991a0fcd944284276f37bab54fa7f062da3e",
-  "plan_path": "/work/ptah-plan-output-1764312628/first.plan.json",
+  "plan_digest": "sha256:428ef914c17d50007331d191fc78f2709b60cfbedf7339aecf49cff485017e56",
+  "plan_path": "/work/ptah-plan-output-127150892/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_cd698c60f55a",
+    "name": "plan_4193a9b06516",
     "dialect": "postgres",
     "from_fingerprint": "sha256:f6ca8486111bee58d99c7f9a5ea92e302e655f7e177c7e43fe5dd0f39e7d8af6",
-    "to_fingerprint": "sha256:58717f183f30327018c682c307394a6ba4b89c3dc6f2f4254b065b853692afa4",
+    "to_fingerprint": "sha256:ae2145cbe5d971f87568cb15e5dc421444a0abb2757cdc6c3e3b9e2a19d69320",
+    "scope": {
+      "kind": "realm"
+    },
     "destructive": false,
     "statements": [
       {
-        "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text",
+        "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

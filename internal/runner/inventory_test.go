@@ -192,7 +192,7 @@ func TestObserveFramesTheInventory(t *testing.T) {
 	}
 }
 
-// A report the Ptah v0.18.0 release image printed reaches the frame with its
+// A report the Ptah v0.22.0 release image printed reaches the frame with its
 // feature kinds, and the manager reads them back. Drift exits 1, which is a
 // domain outcome rather than a failure.
 func TestObserveFramesTheFeatureKindsPtahPrinted(t *testing.T) {

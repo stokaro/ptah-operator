@@ -51,9 +51,12 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 		}
 	}
 	databases := []string{credentials.pgURL, credentials.customCAPGURL, credentials.fourEyesPGURL, credentials.podMetadataPGURL,
-		credentials.extensionPGURL, credentials.unreadableOCIPGURL}
+		credentials.extensionPGURL, credentials.unreadableOCIPGURL, credentials.loginVisibilityPGURL}
 	if len(slices.Compact(slices.Sorted(slices.Values(databases)))) != len(databases) {
 		t.Fatalf("two rows share a database: %v", databases)
+	}
+	if credentials.loginVisibilityPGURL != "postgres://ptah_e2e_documented:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e_login_visibility?sslmode=disable" {
+		t.Fatalf("documented login URL = %s", credentials.loginVisibilityPGURL)
 	}
 	if credentials.mysqlURL != "mysql://ptah_e2e:e2eMy216964841Q7@tcp(e2e-mysql.ptah-e2e-12345.svc.cluster.local:3306)/ptah_e2e" {
 		t.Fatalf("MySQL URL = %s", credentials.mysqlURL)
@@ -65,12 +68,12 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 // e2e_widgets and blocks.
 func TestIsolatedDatabasesAreNotTheLifecycles(t *testing.T) {
 	t.Parallel()
-	for _, database := range []string{customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase, extensionPGDatabase, unreadableOCIPGDatabase} {
+	for _, database := range []string{customCAPGDatabase, fourEyesPGDatabase, podMetadataPGDatabase, extensionPGDatabase, unreadableOCIPGDatabase, loginVisibilityPGDatabase} {
 		if database == pgDatabase || !strings.HasPrefix(database, "ptah_e2e_") {
 			t.Errorf("database %s is the lifecycle's or outside the ptah_e2e_ prefix", database)
 		}
 	}
-	for _, secret := range []string{customCAPGSecret, fourEyesPGSecret, podMetadataPGSecret, extensionPGSecret, unreadableOCIPGSecret} {
+	for _, secret := range []string{customCAPGSecret, fourEyesPGSecret, podMetadataPGSecret, extensionPGSecret, unreadableOCIPGSecret, loginVisibilityPGSecret} {
 		if secret == pgSecret {
 			t.Errorf("Secret %s is the lifecycle's", secret)
 		}

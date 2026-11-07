@@ -2,14 +2,18 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:f66d338b1cc817db506f8ac7283c2db73b858b7e83a18700d897c5cb1b5f53e7",
-  "plan_path": "/work/ptah-plan-output-4280756895/first.plan.json",
+  "plan_digest": "sha256:eecb8f873c76559811a705d023bb58a321e57d330fd53c72a23b497f20f35ebf",
+  "plan_path": "/work/ptah-plan-output-2049119037/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_e5464fad5e3d",
+    "name": "plan_919d72b43c2f",
     "dialect": "mysql",
     "from_fingerprint": "sha256:2c0e5f62125075c5d6553be6926f5768565526f899041ffc5ac657e851793fa7",
-    "to_fingerprint": "sha256:c719010e73c3c56fedef7de8a6d09b3bfecd489d84d979a55ca55fdec22a5271",
+    "to_fingerprint": "sha256:2fb208bc5ac61e15b5008a8b321e00451e65aafc9af72fd296b000c4ed50d1ad",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_my_unique"
+    },
     "destructive": false,
     "statements": [
       {

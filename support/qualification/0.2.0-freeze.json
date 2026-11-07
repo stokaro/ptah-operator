@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-06T20:08:07.646098+00:00",
+  "frozenAt": "2026-11-06T23:05:19.411355+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "d445b7bfa0bcc598a5701391021051d2c8b2114001d5a1e1e78e49394dbe511c"
+      "sha256": "7296f555f5f904cfe74a4897c6c12ae6db03e1ac76bbfb1d0fd9ee46a5d174c7"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "5403025b4aaf9766ba3bf8837359d732a3d9c66e1430fe578ef17d55c93b15fe"
+      "sha256": "13a5d6f76d961cd0bca6b2b7807864b9817994fbdd8d1c05865705e3bcfeb4a4"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "0012f275b36376416d54b2770c496a192a1a6b9de6a99882be6ef5c70317ce9e",
+    "sha256": "2269d7188976e6c27272d1a06a93b1fc957f67cd77635cb821929f7a3b68a655",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -68,7 +68,7 @@
     "cellsPerPlatform": 27,
     "requiredCells": 54,
     "additionalRequirements": "Q-01 through Q-12 in support/qualification/0.2.0-coverage.md remain required; the functional matrix alone is insufficient.",
-    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged. Revision 57 adds the phase git-sources to the schema-approvals suite: a schema and a migration sequence read from Git over HTTPS and SSH, a branch that moves without and with a selected change, and a credential granted for another host. Suites, cells, platforms and targets are unchanged. Revision 58 changes only the line naming the Ptah build under test, now the v0.15.0 release image; no phase, scenario, cell, platform or target changes. Revision 59 adds the scenarios git-schema-pinned, git-force-push and git-source-refused to the phase git-sources. Suites, cells, platforms and targets are unchanged. Revision 60 moves the phases configmap-sources and git-sources from the schema-approvals suite to data-plane, because schema-approvals with both ran past the 90-minute job limit. No phase, scenario, cell, platform or target changes. Revision 61 adds the scenario git-source-policy to the phase git-sources and moves the phase reference-data-postgresql from data-plane to lifecycle, because data-plane came within two minutes of the 90-minute job limit. No phase, cell, platform or target changes. Revision 62 changes only the line naming the Ptah build under test, now the v0.16.0 release image; no phase, scenario, cell, platform or target changes. Revision 66 changes only the line naming the Ptah build under test, now the v0.17.0 release image; no phase, scenario, cell, platform or target changes. Revision 68 changes only the line naming the Ptah build under test, now the v0.18.0 release image; no phase, scenario, cell, platform or target changes. Revision 71 adds the scenario configmap-unreadable-source to the phase configmap-sources and git-source-unreadable to git-sources. Revision 73 adds the data-plane scenario database-reachable-kind to the configmap-sources phase, which drives a PtahSchema and a PtahMigration to DatabaseReachable=False with reason AuthenticationFailed and back to True; phases, suites, cells, platforms and targets are unchanged. Revision 74 adds the scenario oci-unreadable-schema to the phase dataplane. Revision 75 adds the scenario configmap-refused-statement to the phase configmap-sources."
+    "sourceChanges": "Move plan-store alerting from lifecycle to certificates and PostgreSQL reference data from certificates to data-plane. Master CI run 37420035400 passed in 92m45s; its slowest lifecycle spent 20m02s on plan-store alerting before the upgrade fault window. Rebalance the existing nine suites without adding phases or scenarios. All 17 phases, 345 scenario/engine/family rows, supported minors and platforms, observation windows, and Q-01 through Q-12 targets remain unchanged. Revision 42 changes only the line naming the Ptah build under test, now the v0.13.0 release image; no phase, scenario, cell, platform or target changes. Revision 54 adds the data-plane scenario postgresql-extension-drift, which stores Ptah v0.14.0's feature category for a dropped PostgreSQL extension through a cluster; phases, suites, cells, platforms and targets are unchanged. Revision 55 adds the phase configmap-sources to the schema-approvals suite: a schema and a migration sequence read from ConfigMaps with no registry, edits to a selected and an unselected key, snapshot retention, and a replaced snapshot the Pod refuses. Suites, cells, platforms and targets are unchanged. Revision 57 adds the phase git-sources to the schema-approvals suite: a schema and a migration sequence read from Git over HTTPS and SSH, a branch that moves without and with a selected change, and a credential granted for another host. Suites, cells, platforms and targets are unchanged. Revision 58 changes only the line naming the Ptah build under test, now the v0.15.0 release image; no phase, scenario, cell, platform or target changes. Revision 59 adds the scenarios git-schema-pinned, git-force-push and git-source-refused to the phase git-sources. Suites, cells, platforms and targets are unchanged. Revision 60 moves the phases configmap-sources and git-sources from the schema-approvals suite to data-plane, because schema-approvals with both ran past the 90-minute job limit. No phase, scenario, cell, platform or target changes. Revision 61 adds the scenario git-source-policy to the phase git-sources and moves the phase reference-data-postgresql from data-plane to lifecycle, because data-plane came within two minutes of the 90-minute job limit. No phase, cell, platform or target changes. Revision 62 changes only the line naming the Ptah build under test, now the v0.16.0 release image; no phase, scenario, cell, platform or target changes. Revision 66 changes only the line naming the Ptah build under test, now the v0.17.0 release image; no phase, scenario, cell, platform or target changes. Revision 68 changes only the line naming the Ptah build under test, now the v0.18.0 release image; no phase, scenario, cell, platform or target changes. Revision 71 adds the scenario configmap-unreadable-source to the phase configmap-sources and git-source-unreadable to git-sources. Revision 73 adds the data-plane scenario database-reachable-kind to the configmap-sources phase, which drives a PtahSchema and a PtahMigration to DatabaseReachable=False with reason AuthenticationFailed and back to True; phases, suites, cells, platforms and targets are unchanged. Revision 74 adds the scenario oci-unreadable-schema to the phase dataplane. Revision 75 adds the scenario configmap-refused-statement to the phase configmap-sources. Revision 76 adds the data-plane scenario postgresql-login-visibility-drift, which runs drift detection under the login the databases page documents with a table another role created, and moves the line naming the Ptah build under test to the v0.22.0 release image; phases, suites, cells, platforms and targets are unchanged."
   },
   "publishedPredecessors": {
     "checkedAt": "2026-11-02T19:00:17+00:00",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 75,
+  "revision": 76,
   "supersedes": {
-    "freezeCommit": "ae3dacc6d38b2dfc01ef91558e704069d3557b81",
-    "sha256": "6ecf4aa68cf3f5498c38d90de23a5398de2edd85b822c76dacc0c2e0d8b14823"
+    "freezeCommit": "f513fd30e941179bdcd05456e9c73b64fc0f50e3",
+    "sha256": "49156dd0dc919a64e9a930ac34043c857832b43e6c22581a5d002e4cc14abf5c"
   },
-  "revisionReason": "Add the scenario configmap-refused-statement (#787): a schema Apply and a migration run the database refuses leave its answer in the Pod log, name the log in the condition and the Event, keep the answer out of status, and keep the Job for 24 hours. Phases, cells, platforms and targets do not change."
+  "revisionReason": "Move the Ptah build under test to the v0.22.0 release image, commit 0dd9190b, which reads a PostgreSQL schema through pg_catalog for every role and records a scope in the plan it saves. It moves no document contract version and adds no drift category. The data-plane phase gains the scenario postgresql-login-visibility-drift, and the databases page describes the new build. Phases, cells, platforms, the profile and its targets are unchanged."
 }

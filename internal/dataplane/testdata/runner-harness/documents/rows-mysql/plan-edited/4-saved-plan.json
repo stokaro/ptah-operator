@@ -1,9 +1,13 @@
 {
   "format_version": 1,
-  "name": "plan_b5c80129e474",
+  "name": "plan_ebeab0781e4a",
   "dialect": "mysql",
   "from_fingerprint": "sha256:2d0c13b87902ac099273b7f35f50170a80319b075b376d87b7a7ad96456334b2",
-  "to_fingerprint": "sha256:e090c04393e384b4ba7413a76d77a774c43820cf0355cb8ebf6f7f1c758ecf6b",
+  "to_fingerprint": "sha256:852cbfc2186a48d41d2174b55a0d235688717b025e01165aeac3fdaf12fe60e6",
+  "scope": {
+    "kind": "schema",
+    "name": "harness_rows_mysql"
+  },
   "managed_rows": [
     {
       "table": "regions",

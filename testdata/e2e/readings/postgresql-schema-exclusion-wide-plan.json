@@ -4,15 +4,18 @@
   "dialect": "postgres",
   "from_fingerprint": "sha256:2ff3f38f6db15e63f051681678da5b14c351fd70164ba2f5eaa63fdadb0662b0",
   "to_fingerprint": "sha256:d4aa1cc3e221114eba17e25b5ca5f95e1dc8a87e86fa57ba7cd964c6def69089",
+  "scope": {
+    "kind": "realm"
+  },
   "destructive": true,
   "statements": [
     {
-      "sql": "-- Add/modify columns for table: e2e_widgets\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },
     {
-      "sql": "-- WARNING: This will delete all data!\nDROP TABLE IF EXISTS \"e2e_excluded_policy_keep\" CASCADE",
+      "sql": "DROP TABLE \"e2e_excluded_policy_keep\"",
       "severity": "destructive",
       "reason": "DROP TABLE removes the table and all rows"
     }

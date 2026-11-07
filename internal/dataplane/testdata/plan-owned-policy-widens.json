@@ -1,9 +1,12 @@
 {
   "format_version": 1,
-  "name": "plan_61db41e6cdef",
+  "name": "plan_cf081ae410b5",
   "dialect": "postgres",
   "from_fingerprint": "sha256:47b2f733fe0d157f6d39e6caba3d1544274ec664d4517401e1f4d615e860e5cc",
-  "to_fingerprint": "sha256:ca38002e2ef807de9fa587c7595e657ccd6a08c2a4ccd2d94d83490e073a4268",
+  "to_fingerprint": "sha256:5ee5cc5dde4ce87c2218bfa31cf7b9c406df7a6571ca057b27b7465cb1561ad1",
+  "scope": {
+    "kind": "realm"
+  },
   "destructive": true,
   "statements": [
     {

@@ -26,12 +26,10 @@ func TestRenderTextLabelsEachStatementWithItsSeverityAndReason(t *testing.T) {
 	text := renderPlan(t, view, planview.Text)
 
 	want := "\nStatement 1 of 2: safe (does not remove data or tighten constraints)\n" +
-		"-- Add/modify columns for table: e2e_widgets\n" +
 		"ALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text;\n" +
 		"\n" +
 		"Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)\n" +
-		"-- WARNING: This will delete all data!\n" +
-		"DROP TABLE IF EXISTS \"e2e_excluded_policy_keep\" CASCADE;\n"
+		"DROP TABLE \"e2e_excluded_policy_keep\";\n"
 	if !strings.HasSuffix(text, want) {
 		t.Fatalf("the text output does not end with the labeled statements:\n%s\nwant the end to be:\n%s", text, want)
 	}
