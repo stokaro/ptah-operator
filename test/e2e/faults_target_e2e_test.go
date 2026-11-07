@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -138,6 +139,23 @@ func (f *faultRun) targetLoginChanges() {
 	f.finishedApplyProvedUnderTheFirstLogin()
 }
 
+// runPrintedSettleCommand reads the command from the resource's condition and runs
+// it, as a person does, rather than writing what the row expects it to say.
+func (f *faultRun) runPrintedSettleCommand(name, operationID string) {
+	f.t.Helper()
+	resource := &ptahv1alpha1.PtahSchema{}
+	f.check(f.get(name, resource), "read PtahSchema %s", name)
+	failed := meta.FindStatusCondition(resource.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+	if failed == nil {
+		f.fatalf("%s reports no failure to read a command from", name)
+	}
+	arguments, err := printedSettleCommand(failed.Message, name, f.in.TestNamespace, operationID)
+	f.check(err, "read the command %s prints", name)
+	if _, stderr, err := f.cluster.Kubectl(f.ctx, arguments...); err != nil {
+		f.fatalf("the command %s prints failed: %v: %s", name, err, strings.TrimSpace(string(stderr)))
+	}
+}
+
 // setTargetURL rewrites the URL a resource's Secret holds, as a store does.
 func (f *faultRun) setTargetURL(secret, url, description string) {
 	f.t.Helper()
@@ -158,10 +176,12 @@ func (f *faultRun) loginURL(database string) string {
 }
 
 // refusedApplySettledUnderANewLogin moves the login behind an approved Apply's
-// Pod, so the runner refuses it and the proof reads the new login. A value that
-// names another Apply settles nothing, and the value that names this one lets the
-// resource read the database afresh. Its next plan binds the new login and runs on
-// an approval of its own, and the first approval does not carry over.
+// Pod, so the runner refuses it and the proof reads the new login. The Apply's ID,
+// which a person can read from status at any time and writes here before the move,
+// settles nothing. The command the stop prints does, and it has to replace that
+// value to run at all. The resource reads the database afresh, its next plan binds
+// the new login and runs on an approval of its own, and the first approval does not
+// carry over.
 func (f *faultRun) refusedApplySettledUnderANewLogin() {
 	f.t.Helper()
 	const name, database, secret = "e2e-target-login-settled", "e2e_target_login_settled", "e2e-target-login-settled-db"
@@ -174,6 +194,9 @@ func (f *faultRun) refusedApplySettledUnderANewLogin() {
 	active := f.waitForSchema(name, "the Apply claimed behind the scheduling barrier", applyDispatched).Status.ActiveOperation
 	operationID, jobUID := active.ID, string(active.JobUID)
 	f.assertReadBlocked(jobUID, "the approved Apply before its login changes")
+	f.patchSchema(name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+		ptahv1alpha1.SettledApplyAnnotation: operationID,
+	}}})
 	f.setTargetURL(secret, f.loginURL(database), "move the Secret to the second login")
 	f.stopReadBarrier()
 
@@ -190,16 +213,12 @@ func (f *faultRun) refusedApplySettledUnderANewLogin() {
 		f.fatalf("%s changed the database under an approval of the first login", name)
 	}
 
-	f.patchSchema(name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
-		ptahv1alpha1.SettledApplyAnnotation: "sha256:" + strings.Repeat("0", 64),
-	}}})
+	// Blocked with the Apply's ID on it: a read that begins after this document has
+	// had the value in front of it and still finds the proof owed.
 	f.waitForSchema(name, "a later read to find the proof still owed", func(resource *ptahv1alpha1.PtahSchema) bool {
 		return proofReadAgain(resource, operationID, blocked.Status.ActiveOperation.Attempt)
 	})
-
-	f.patchSchema(name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
-		ptahv1alpha1.SettledApplyAnnotation: operationID,
-	}}})
+	f.runPrintedSettleCommand(name, operationID)
 	current := f.waitForSchema(name, "a plan under the new login", func(resource *ptahv1alpha1.PtahSchema) bool {
 		return planUnderAnotherTarget(resource, old.Spec.TargetIdentityDigest)
 	})

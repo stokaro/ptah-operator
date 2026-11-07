@@ -1,0 +1,2 @@
+Pulled oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:e2f5137c62310464ce73c655f0aba5596a6e0210f8fa3b30aaf7b633d6b007c3 to /source/schema.hcl
+Digest: sha256:e2f5137c62310464ce73c655f0aba5596a6e0210f8fa3b30aaf7b633d6b007c3

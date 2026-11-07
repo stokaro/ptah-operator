@@ -160,12 +160,15 @@ type JournalEntry struct {
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
 	ApprovalUID types.UID `json:"approvalUID,omitempty"`
-	// Approver is the user admission stamped on that approval.
+	// Approver is the user admission stamped on that approval, cut to the first
+	// 512 characters where the name is longer.
 	// +kubebuilder:validation:MaxLength=512
 	// +optional
 	Approver string `json:"approver,omitempty"`
 
-	// Outcome is how an Apply, a proof or a run ended.
+	// Outcome is how an Apply, a proof or a run ended. On a PtahMigration's
+	// Verified entry it is what the reading after the run found, and on a
+	// RunAcknowledged entry how the run that person settled ended.
 	// +optional
 	Outcome JournalOutcome `json:"outcome,omitempty"`
 
@@ -204,7 +207,8 @@ type JournalEntry struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	Acknowledgment string `json:"acknowledgment,omitempty"`
-	// AcknowledgedBy is the user admission stamped on that acknowledgment.
+	// AcknowledgedBy is the user admission stamped on that acknowledgment, cut to
+	// the first 512 characters where the name is longer.
 	// +kubebuilder:validation:MaxLength=512
 	// +optional
 	AcknowledgedBy string `json:"acknowledgedBy,omitempty"`

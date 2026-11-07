@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "name": "plan_76a534145518",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:ddf48afab29bbd729234ec95293c3b5ef7db9791d4a3379ded1c26631234620f",
+  "to_fingerprint": "sha256:5c2e6a097d04b06b2b8d0f75059fbb315dd8e3d0316ff47badbf806b29f7ff1d",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

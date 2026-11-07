@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-missing-schema-mysql@sha256:0520d7d0f740de41f2d392f552515a92f6f78a42c7908df2d3737060f86b3dba",
+  "digest": "sha256:0520d7d0f740de41f2d392f552515a92f6f78a42c7908df2d3737060f86b3dba",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

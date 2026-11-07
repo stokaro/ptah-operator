@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_56acdc5347c1",
+  "plan_digest": "sha256:147d60c4d5804aaab608830eb7991d3100b875712bf078907723c9beb8172a08",
+  "units": [
+    {
+      "sql": "DROP TABLE `differs_parent`"
+    }
+  ]
+}

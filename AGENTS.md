@@ -147,6 +147,11 @@ anywhere else, and the variable has no default. It lives in `test/runnerharness`
 - `CompareCaptures` and `Masker` in `shape.go` and `store.go` say what a change of
   shape is and which values are volatile. A rule that masked nothing in a complete
   run fails it.
+- `differingRows` are databases that differ from their declaration, since a
+  comparison a release adds never fires on a converged one. A run records whatever
+  they answer, so a moved outcome reaches a repin's diff, and
+  `TestDifferingRowsReachTheirShape` holds the committed readings, and the manager's
+  rating of each plan, offline.
 
 Every document is decoded with `internal/dataplane`, every result is framed and
 parsed back with the manager's parser, and everything is compared with the

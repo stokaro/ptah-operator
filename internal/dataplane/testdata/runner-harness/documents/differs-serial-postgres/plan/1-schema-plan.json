@@ -1,0 +1,30 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:a34403063017fdd1b60503fae5f877d09f72cf0b3f4ceb8f097d33f818931ac2",
+  "plan_path": "/work/ptah-plan-output-3117882765/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_aa267326a95d",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:d7d4ce513dd9b5e7ec444d0642aa1fbfe7ac775b1306ecbd9703f6d672e1b3d2",
+    "to_fingerprint": "sha256:5c2e6a097d04b06b2b8d0f75059fbb315dd8e3d0316ff47badbf806b29f7ff1d",
+    "scope": {
+      "kind": "realm"
+    },
+    "destructive": true,
+    "statements": [
+      {
+        "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      },
+      {
+        "sql": "DROP SEQUENCE \"differs_items_id_seq\"",
+        "severity": "destructive",
+        "reason": "DROP SEQUENCE removes the sequence and its position; one created again can hand out a key a row already holds"
+      }
+    ]
+  }
+}

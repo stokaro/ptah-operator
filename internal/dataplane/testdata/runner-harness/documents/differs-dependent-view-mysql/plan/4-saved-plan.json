@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "name": "plan_56acdc5347c1",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:08776cdc3497abfb67a6aa7387b9e7836d5930b4f40f3080f3d691f66e353980",
+  "to_fingerprint": "sha256:d613394cc3c2cf3b9439059cc5702f6f9a18a7d763fa0b82fd3fc4f6a603c59b",
+  "scope": {
+    "kind": "schema",
+    "name": "harness_differs_dependent_view_mysql"
+  },
+  "destructive": true,
+  "statements": [
+    {
+      "sql": "DROP TABLE `differs_parent`",
+      "severity": "destructive",
+      "reason": "DROP TABLE removes the table and all rows"
+    }
+  ]
+}

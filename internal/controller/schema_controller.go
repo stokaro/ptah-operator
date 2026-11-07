@@ -561,11 +561,6 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 	}
 	wait := until(pending.ObserveAfter, r.now())
 
-	// Ahead of suspension: settling reads no database, so a suspended resource
-	// still ends what a person accounted for.
-	if !activePod && wait <= 0 && proofSettlementAsked(schema) {
-		return r.settleProofOnMovedTarget(ctx, schema)
-	}
 	if schema.Spec.Suspend {
 		before := schema.DeepCopy()
 		schema.Status.Phase = operatorv1alpha1.PhaseSuspended
@@ -936,15 +931,6 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		operation = schema.Status.ActiveOperation
-		if proofSettlementAsked(schema) {
-			between, err := r.proofClaimBetweenAttempts(ctx, schema)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			if between {
-				return r.settleProofOnMovedTarget(ctx, schema)
-			}
-		}
 	}
 	if schemaOperation(operation).Mutating && !schemaMayHaveDispatched(operation) &&
 		schema.Status.Plan != nil {
@@ -1183,7 +1169,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	// child starts, and a login that cannot connect reads no more of what the
 	// Apply did than one that can.
 	if schemaClaimServesProof(schema) && proofReadAnotherTarget(schema.Status.PendingObservation, result.TargetIdentityDigest) {
-		return r.blockProofOnMovedTarget(ctx, schema, job)
+		if proofSettlementAsked(schema, result.TargetIdentityDigest) {
+			return r.settleProofOnMovedTarget(ctx, schema, job)
+		}
+		return r.blockProofOnMovedTarget(ctx, schema, job, result.TargetIdentityDigest)
 	}
 	if result.Error != nil {
 		err := resultFailure(result.Error, operationURLSecret(operation.Target, schema.Spec.Target.URLFrom))
@@ -1538,12 +1527,13 @@ func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *o
 		return ctrl.Result{}, err
 	}
 	r.observeOperation(operation, telemetry.OperationCanceled)
-	if schema.Status.PendingObservation == nil {
-		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
+	if schema.Status.PendingObservation != nil {
+		// The proof still holds the realm, and nothing else wakes a suspended
+		// resource: an unrenewed Lease would let another claimant take the
+		// database and cost the Apply its credit.
+		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, r.removeActiveFinalizer(ctx, schema)
 }
 
 func (r *SchemaReconciler) consumeResult(
@@ -2390,6 +2380,20 @@ func (r *SchemaReconciler) retryOperationAs(
 	failure error,
 	record func(*operatorv1alpha1.PtahSchema),
 ) (ctrl.Result, error) {
+	return r.retryOperationReporting(ctx, schema, job, reason, failure, bounded(failure.Error(), 512), record)
+}
+
+// retryOperationReporting is retryOperationAs with the Event's text the caller's,
+// for a failure whose sentence does not survive an Event's bound.
+func (r *SchemaReconciler) retryOperationReporting(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	reason operatorv1alpha1.ConditionReason,
+	failure error,
+	eventText string,
+	record func(*operatorv1alpha1.PtahSchema),
+) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	if !isReadOnlyOperation(operation) {
 		operationType := operatorv1alpha1.OperationType("")
@@ -2449,7 +2453,7 @@ func (r *SchemaReconciler) retryOperationAs(
 	if r.Telemetry != nil {
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.StageForOperation(operation.Type), telemetry.FailureOperation)
 	}
-	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
+	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", eventText)
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
 }
 

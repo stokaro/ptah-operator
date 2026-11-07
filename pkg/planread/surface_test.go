@@ -22,8 +22,8 @@ func TestPublicSurfaceNamesNoInternalPackage(t *testing.T) {
 	// The declarations each directory must be seen to check: a walker that
 	// skipped them would pass by reading nothing.
 	required := map[string][]string{
-		".":            {"Load", "Plan", "Statement", "SQL"},
-		"planreadtest": {"NewLab", "Lab", "Cases", "Case", "Want", "NewClient"},
+		".":            {"Load", "LoadForDisplay", "Plan", "DisplayPlan", "Display", "Statement", "SQL"},
+		"planreadtest": {"NewLab", "Lab", "Cases", "DisplayCases", "Case", "Want", "NewClient", "DocumentWithUnreadFields"},
 	}
 	for dir, names := range required {
 		checked, guarded := map[string]bool{}, 0

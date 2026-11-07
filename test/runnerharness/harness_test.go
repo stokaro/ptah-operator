@@ -67,6 +67,10 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 			t.Parallel()
 			gitLifecycles(t, l)
 		})
+		t.Run("differing", func(t *testing.T) {
+			t.Parallel()
+			differingDatabases(t, l)
+		})
 		t.Run("statement-errors", func(t *testing.T) {
 			t.Parallel()
 			statementErrors(t, l)

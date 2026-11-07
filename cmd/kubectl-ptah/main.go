@@ -149,7 +149,7 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 		return exitUsage
 	}
 
-	reader, resolved, err := connect(*kubeconfig, *kubeContext, *namespace, *timeout)
+	reader, resolved, err := connector(*kubeconfig, *kubeContext, *namespace, *timeout)
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		return exitFailed
@@ -158,21 +158,48 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := planread.Load(ctx, reader, resolved, flags.Arg(0), selection)
+	show, err := readPlan(ctx, reader, resolved, flags.Arg(0), selection, format, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, planread.ErrNoPlan) || errors.Is(err, planread.ErrSchemaNotFound) {
 			return exitAbsent
 		}
+		if errors.Is(err, planread.ErrUnreadFields) {
+			fmt.Fprintf(stderr, "kubectl-ptah: -o %s prints the whole plan, and this plugin does not read all of it. "+
+				"Without -o this command shows what it reads; a plugin at the operator's version prints the rest.\n", format)
+		}
 		return exitFailed
 	}
 	// Only here. Every check the store makes has held, so nothing half-verified
 	// has reached the reader's terminal or the file they redirected it to.
-	if err := planview.Render(stdout, view, format); err != nil {
+	if err := show(); err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: write the plan: %v\n", err)
 		return exitFailed
 	}
 	return exitOK
+}
+
+// readPlan reads a plan and returns what prints it.
+//
+// The text format is for a person, so it reads a plan a newer Ptah added a field
+// to, and says so. The other formats are for a program, which takes what it gets
+// for the whole plan: a pipe into a database would run the statements of a plan
+// that can run differently from them. They read through planread.Load, as
+// approve does, and refuse such a plan.
+func readPlan(
+	ctx context.Context,
+	reader client.Reader,
+	namespace, name string,
+	selection planread.Selection,
+	format planview.Format,
+	stdout io.Writer,
+) (func() error, error) {
+	if format == planview.Text {
+		shown, err := planread.LoadForDisplay(ctx, reader, namespace, name, selection)
+		return func() error { return planview.RenderDisplay(stdout, shown) }, err
+	}
+	whole, err := planread.Load(ctx, reader, namespace, name, selection)
+	return func() error { return planview.Render(stdout, whole, format) }, err
 }
 
 // migration prints what the operator stored about one PtahMigration: where it
@@ -403,6 +430,11 @@ log of what each statement did, and not a fresh reading of the database.
 
 -o sql prints the statements alone, with no review line, for a script or a
 diff.
+
+A plan a newer Ptah wrote can carry fields this plugin does not read. plan names
+them and prints no value of theirs. -o sql and -o json refuse such a plan, since
+a program would take what they print for the whole plan, and approve refuses it
+because an approval is a decision about the whole document.
 
 schema and migration each take -o text (the default) or json, plus the same
 -n, --kubeconfig, --context and --timeout flags. Neither prints SQL or a table

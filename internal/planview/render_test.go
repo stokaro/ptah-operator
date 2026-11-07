@@ -12,6 +12,100 @@ import (
 	"github.com/stokaro/ptah-operator/pkg/planread/planreadtest"
 )
 
+// loadForDisplay reads a plan a newer Ptah could have written, the way the plan
+// command does.
+func loadForDisplay(t *testing.T, statements []string) planread.DisplayPlan {
+	t.Helper()
+	lab := planreadtest.NewLab(t, "storefront")
+	lab.SetCurrent(t, lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t, statements), "v1"))
+	plan, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+	if err != nil {
+		t.Fatalf("LoadForDisplay() error = %v", err)
+	}
+	return plan
+}
+
+// The reader is told which fields went unread, by name, and is told to read the
+// plan whole before approving it. The statements read as they always do.
+func TestRenderTextNamesUnreadFieldsAndPrintsNoValue(t *testing.T) {
+	t.Parallel()
+	view := loadForDisplay(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"})
+
+	var rendered bytes.Buffer
+	if err := planview.RenderDisplay(&rendered, view); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
+	}
+
+	for _, want := range []string{
+		"Unread fields:  annotations, statements[].inputs (",
+		"read this plan with a plugin at the operator's version before you approve it",
+		"Statement 1 of 1: safe\nCREATE TABLE customers (id BIGINT PRIMARY KEY);\n",
+	} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Fatalf("the text output does not carry %q:\n%s", want, rendered.String())
+		}
+	}
+	if strings.Contains(rendered.String(), planreadtest.UnreadValue) {
+		t.Fatalf("the text output prints a value it did not read:\n%s", rendered.String())
+	}
+}
+
+// A plan with nothing unread has no such line, so the line says something when
+// it is there.
+func TestRenderTextHasNoUnreadLineForAPlanItReadsWhole(t *testing.T) {
+	t.Parallel()
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, _ := lab.Publish(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
+	lab.SetCurrent(t, plan)
+
+	var rendered bytes.Buffer
+	if err := planview.Render(&rendered, load(t, lab, planread.Current), planview.Text); err != nil {
+		t.Fatalf("Render(text) error = %v", err)
+	}
+	if strings.Contains(rendered.String(), "Unread") {
+		t.Fatalf("the text output speaks of unread fields on a plan it read whole:\n%s", rendered.String())
+	}
+}
+
+// A plan read whole prints one text through either read, which is what lets the
+// plan command take the display read for it and approve take Load.
+func TestRenderPrintsTheSameTextThroughEitherRead(t *testing.T) {
+	t.Parallel()
+	lab := planreadtest.NewLab(t, "storefront")
+	plan, _ := lab.Publish(t, []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}, "v1")
+	lab.SetCurrent(t, plan)
+	shown, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+	if err != nil {
+		t.Fatalf("LoadForDisplay() error = %v", err)
+	}
+
+	var whole, displayed bytes.Buffer
+	if err := planview.Render(&whole, load(t, lab, planread.Current), planview.Text); err != nil {
+		t.Fatalf("Render(text) error = %v", err)
+	}
+	if err := planview.RenderDisplay(&displayed, shown); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
+	}
+	if whole.Len() == 0 || whole.String() != displayed.String() {
+		t.Fatalf("the two reads print\n%s\nand\n%s", whole.String(), displayed.String())
+	}
+}
+
+// A raised severity still says whose each rating is when the plan has unread
+// fields, though the plan comes with no document to read Ptah's rating from.
+func TestRenderTextSaysWhoRatedAStatementOfAPlanWithUnreadFields(t *testing.T) {
+	t.Parallel()
+	view := loadForDisplay(t, []string{`ALTER TABLE "customers" ALTER COLUMN "email" DROP DEFAULT`})
+
+	var rendered bytes.Buffer
+	if err := planview.RenderDisplay(&rendered, view); err != nil {
+		t.Fatalf("RenderDisplay() error = %v", err)
+	}
+	if want := "destructive as this plugin reads it; Ptah rated it safe"; !strings.Contains(rendered.String(), want) {
+		t.Fatalf("the text output does not carry %q:\n%s", want, rendered.String())
+	}
+}
+
 // load reads a schema's plan the way the plugin does before rendering it.
 func load(t *testing.T, lab *planreadtest.Lab, selection planread.Selection) planread.Plan {
 	t.Helper()

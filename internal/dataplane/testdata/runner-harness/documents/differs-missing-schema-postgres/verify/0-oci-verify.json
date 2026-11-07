@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-missing-schema-postgres@sha256:2ec274b54a8eb072386050e7ad140682aad63dc8517d012fb6501300b66f41ff",
+  "digest": "sha256:2ec274b54a8eb072386050e7ad140682aad63dc8517d012fb6501300b66f41ff",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

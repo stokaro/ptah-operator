@@ -320,8 +320,13 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:d8fc6a4b0cb16c414d1137a7c0b98d29cab5eea704489758bf3564e34e8ade91",
-      "reason": "Name a whole-schema fault in the desired schema (#840). When drift or a Plan fails with no target failure kind, the runner already asks `schema validate` in a child with no URL and no credential. It now also reports that child's `schema:` line under the code desired_schema_invalid, when the failed command's own sentence ends with its words, and copies nothing from that sentence. No argument, field, retry or plan binding changes, and no child runs that did not run before. A manager of this protocol reads a result code as text and writes it with its message to the condition and the Event, as it does for desired_source_unreadable, so a manager of any release reads this frame, and protocol 1 stays."
+      "sourceDigest": "sha256:ea175652d66eec5018d8023e707e37d61952eeb6bcd4d66983ba393674a25d06",
+      "reason": "Add status.lastRun.targetIdentityReported and reword comments in api/v1alpha1, a package the runner links for its types (#804). No runner source file changes and the runner reads none of it: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:ad2ae44d405a96e04996a965d390a15764d17460c28a92b9050b70ce6d15839b",
+      "reason": "Reword the comment on SettledApplyAnnotation in api/v1alpha1, a package the runner links for its types (the review of #865). No code the runner runs changes: commands, payloads, result frames, delivery identity, SQL authority and retry limits are the same."
     }
   ]
 }

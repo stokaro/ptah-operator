@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-view-invoker-true-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-view-invoker-true-postgres@sha256:f109d073944f571f69d70c78746e6c107024397bf8c76bb868847d2885dc3acd",
+  "digest": "sha256:f109d073944f571f69d70c78746e6c107024397bf8c76bb868847d2885dc3acd",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

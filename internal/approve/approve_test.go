@@ -17,6 +17,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/approve"
+	"github.com/stokaro/ptah-operator/pkg/planread"
 	"github.com/stokaro/ptah-operator/pkg/planread/planreadtest"
 )
 
@@ -98,6 +99,36 @@ func TestLoadReadsTheVerifiedPlanAndTheIdentitiesAnApprovalCarries(t *testing.T)
 	if review.SchemaPlan == nil || len(review.SchemaPlan.Statements) != 1 ||
 		review.SchemaPlan.Statements[0].SQL != "ALTER TABLE orders DROP COLUMN legacy_note;" {
 		t.Fatalf("Load() did not carry the verified statements: %+v", review.SchemaPlan)
+	}
+}
+
+// An approval is a decision about the whole document. A plan with a field this
+// build does not read gives no review, so there is nothing to show a person and
+// nothing to bind an approval to.
+func TestLoadRefusesAPlanItCannotReadWhole(t *testing.T) {
+	t.Parallel()
+	lab, _ := waiting(t)
+	plan := lab.PublishDocument(t, planreadtest.DocumentWithUnreadFields(t,
+		[]string{"ALTER TABLE orders DROP COLUMN legacy_note;"}), "unread")
+	lab.SetCurrent(t, plan)
+
+	review, err := approve.Load(context.Background(), lab.Client(), approve.Schema, planreadtest.Namespace, "storefront")
+
+	if !errors.Is(err, planread.ErrUnsupported) {
+		t.Fatalf("Load() error = %v, want ErrUnsupported", err)
+	}
+	if !reflect.DeepEqual(review, approve.Review{}) {
+		t.Fatalf("Load() returned a review with its error: %+v", review)
+	}
+	hint := "kubectl ptah plan storefront -n " + planreadtest.Namespace
+	if !strings.Contains(err.Error(), hint) || strings.Contains(err.Error(), planreadtest.UnreadValue) {
+		t.Fatalf("the refusal does not say %q, or quotes a value: %v", hint, err)
+	}
+	// The same plan, through the read that shows it, reads: what stops the
+	// approval is the read approve takes, and not the plan.
+	shown, err := planread.LoadForDisplay(context.Background(), lab.Client(), planreadtest.Namespace, "storefront", planread.Current)
+	if err != nil || len(shown.UnreadFields) == 0 {
+		t.Fatalf("LoadForDisplay() = %v, %v; want the plan with its unread fields", shown.UnreadFields, err)
 	}
 }
 

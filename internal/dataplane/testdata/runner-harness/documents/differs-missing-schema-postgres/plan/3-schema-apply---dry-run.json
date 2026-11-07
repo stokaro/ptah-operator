@@ -1,0 +1,15 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_f44cfd5e8e10",
+  "plan_digest": "sha256:a177b36cb38a17ffa9924a6c68a50bc35f6aa7290d1adab9e07a0a44978e5ad3",
+  "units": [
+    {
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"differs_app\""
+    },
+    {
+      "sql": "CREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n)"
+    }
+  ]
+}

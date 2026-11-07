@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:3b155994f42494d9a99d0560d08efc623da396c3be9698692d8b6c657a491842",
+  "plan_path": "/work/ptah-plan-output-2628883863/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_6502b32dbd91",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:25b97e5bc7d25b1e012f5a98280f6cbb11bb687df83ec16d5681ee852f2b71e5",
+    "to_fingerprint": "sha256:696dfa8d5390a20d120c848ceab74c5626c21b27c698f92f84b9b9830db0a1aa",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_auto_increment_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL",
+        "severity": "warning",
+        "reason": "MODIFY or CHANGE ... NOT NULL fails when a row holds NULL; outside strict SQL mode MySQL and MariaDB rewrite the NULL to the type's zero value instead"
+      }
+    ]
+  }
+}

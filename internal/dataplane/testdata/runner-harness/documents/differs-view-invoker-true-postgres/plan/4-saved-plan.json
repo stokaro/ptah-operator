@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "name": "plan_a961534e70be",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:89c7ac2556bdb5e8aecb75717ad1ad4db033f8004a80a2aedfe3a803dce9e84f",
+  "to_fingerprint": "sha256:1400ced5135a912c432184b56ecb7a3d32985199510aeb2171409eb237cd2a5c",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=true)",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

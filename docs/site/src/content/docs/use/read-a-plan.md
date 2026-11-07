@@ -145,9 +145,9 @@ does not record is listed after them, marked `(read by this plugin, not
 recorded)`: the plugin and the manager that published the plan are different
 builds, and the manager did not hold the plan for it.
 
-`-o sql` prints the statements alone, in the order the plan holds them, each
-terminated once, with no line above them: it is the format a script reads and a
-reviewer diffs. Nothing is re-split on a semicolon: a statement may carry one
+`-o sql` prints the statements of a plan this plugin reads whole, in the order
+the plan holds them, each terminated once, with no line above them: it is the
+format a script reads and a reviewer diffs. Nothing is re-split on a semicolon: a statement may carry one
 inside a string, a comment or a function body.
 
 `-o json` prints the stored plan document byte for byte, so what you save still
@@ -157,6 +157,23 @@ Kubernetes object:
 ```sh
 kubectl ptah plan storefront --applied -n application -o json > plan.json
 ```
+
+A plan a newer Ptah wrote can carry fields this plugin does not read. `kubectl
+ptah plan` still shows it, under a line that names them, and prints no value of
+theirs:
+
+```text
+Unread fields:  annotations, statements[].inputs (a newer Ptah wrote them and this plugin does not read them; read this plan with a plugin at the operator's version before you approve it)
+```
+
+`-o sql` and `-o json` exit `1` on such a plan and print nothing. A program takes
+what they print for the whole plan, and a plan with an unread field can run
+differently from what its statements suggest, so a pipe into a database must not
+get them. `kubectl ptah approve` exits `1` too and approves nothing: an approval is
+a decision about the whole document, so move the plugin to the operator's version
+to approve this plan.
+[API compatibility](../../support/api-compatibility/#what-a-display-read-of-a-stored-plan-covers)
+says what this covers.
 
 Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
@@ -354,6 +371,10 @@ Pending:              1
 
 Last run:             Applied, started 2026-08-28T12:00:00Z, finished 2026-08-28T12:01:00Z
   Job:                ptah-m-apply-orders-6f1c2d3e4a5b6c7d, UID 0b7e6c1a-9d2f-4e3b-8a5c-1f2e3d4c5b6a
+  Operation:          sha256:...
+  Plan:               ptah-mplan-fedcba9876543210fedcba98, fingerprint sha256:...
+  Authorized:         approval orders-approve-2 (UID 7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f) by alice@example.com at 2026-08-28T11:59:00Z
+  Read back:          InSync at version 2, 2026-08-28T12:01:20Z
   Versions:           2
 
 Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
@@ -387,6 +408,13 @@ name apart from this one. A run an operator older than 0.2.10 recorded names non
 of the claim, the plan, the authorization or the reading, and a run dispatched by
 one and recorded after an upgrade names its approval without the approver: the
 view leaves out what the record does not hold.
+
+`-o json` also carries the database under `targetIdentityDigest`. It is the database
+the run reported only where `targetIdentityReported` is true. Where it is absent the
+run left no result to say so, and the digest is the database the plan was computed
+against, which the run may not have reached: it may have run nowhere, or against
+what its Secret held by then. No reading is recorded on such a run, so it has no
+`Read back` line.
 
 A run that ended `Partial` or `Unknown` is also recorded as unresolved, and the
 view prints that record as a block of its own, because it is a hold and not an

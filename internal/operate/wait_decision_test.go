@@ -11,12 +11,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/lifecyclejournal"
 	"github.com/stokaro/ptah-operator/internal/operate"
 )
 
 // The decision an approve --wait names: approval A of plan A.
 var decisionA = operate.Decision{
-	PlanName: "plan-a", PlanUID: "plan-a-uid", PlanFingerprint: "sha256:a",
+	PlanName: "plan-a", PlanUID: "plan-a-uid",
 	ApprovalName: "approve-a", ApprovalUID: "approve-a-uid",
 }
 
@@ -30,6 +31,8 @@ func run(outcome operatorv1alpha1.MigrationRunOutcome, operation, plan, approval
 	}
 	if approval != "" {
 		record.approval, record.approvalUID = approval, types.UID(approval+"-uid")
+	} else {
+		record.policy = true
 	}
 	return record
 }
@@ -45,7 +48,17 @@ func ended(outcome operatorv1alpha1.JournalOutcome, operation, plan, approval st
 	return operatorv1alpha1.JournalEntry{
 		Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(at(finished)), Outcome: outcome, OperationID: operation,
 		Plan: plan, PlanUID: types.UID(plan + "-uid"), PlanFingerprint: "sha256:" + strings.TrimPrefix(plan, "plan-"),
-		Approval: approval, ApprovalUID: types.UID(approval + "-uid"),
+		Authorization: operatorv1alpha1.MigrationRunAuthorizedByApproval,
+		Approval:      approval, ApprovalUID: types.UID(approval + "-uid"), JobName: "job-" + operation,
+	}
+}
+
+// heldEnd is the RunFinished entry the manager writes for a hold with no run beside
+// it, which names the plan and the Job and not what allowed the run.
+func heldEnd(outcome operatorv1alpha1.JournalOutcome, operation, plan, job string, finished int) operatorv1alpha1.JournalEntry {
+	return operatorv1alpha1.JournalEntry{
+		Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(at(finished)), Outcome: outcome, OperationID: operation,
+		Plan: plan, PlanUID: types.UID(plan + "-uid"), JobName: job,
 	}
 }
 
@@ -135,6 +148,26 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 				conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 7 is recorded dirty", 3)},
 			}},
 			wantStop: operate.StopNotConverged, wantMessage: "Revision 7 is recorded dirty",
+		},
+		{
+			// The Secret moved after the run: readings are of another database from
+			// here on, and a reading records itself on a run in the same write. No
+			// later document can verify this run, so a timeout would only hide that.
+			name: "a later reading that did not verify the run", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "VerifyingHistory", observedAt: at(0), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+				{phase: "InSync", observedAt: at(90), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+			},
+			wantStop: operate.StopNotProved, wantMessage: "a later reading did not verify it",
+		},
+		{
+			// A status time has whole seconds, so a reading in the second the run
+			// ended may be the one before it. The next reading is what says.
+			name: "a reading dated the second the run ended says nothing yet", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "InSync", observedAt: at(80), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+			},
+			wantTimeout: true, wantMessage: "the history read back after run job-op-a",
 		},
 
 		// The regression #804 reports: approval A admitted, A goes stale, B is
@@ -348,15 +381,6 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			docs:     []doc{{phase: "InSync", observedAt: at(90), lastRun: verified(run(applied, "op-a", "plan-a", "", 20), "InSync", 90)}},
 			wantStop: operate.StopOtherApproval, wantMessage: "plan plan-a ran under no approval",
 		},
-		{
-			name: "a plan with this UID and another fingerprint is another plan", since: atTheGate(nil),
-			docs: func() []doc {
-				other := verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)
-				other.fingerprint = "sha256:recomputed"
-				return []doc{{phase: "InSync", observedAt: at(90), lastRun: other}}
-			}(),
-			wantStop: operate.StopOtherPlanApplied, wantMessage: "plan plan-a ran, not plan-a",
-		},
 
 		// Unknown identity stays unknown.
 		{
@@ -374,6 +398,40 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 				journal: []operatorv1alpha1.JournalEntry{{Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(at(80)), Outcome: operatorv1alpha1.JournalSucceeded}},
 			}},
 			wantStop: operate.StopNotProved, wantMessage: "its record names no plan",
+		},
+		{
+			// A hold settled since it was brought back leaves only the entry it wrote.
+			name: "an entry that names this plan and not what allowed the run proves nothing", since: atTheGate(nil),
+			docs: []doc{{
+				phase: "InSync", observedAt: at(90), conditions: inSyncConditions(operate.FamilyMigration, 3),
+				journal: []operatorv1alpha1.JournalEntry{heldEnd("Unknown", "op-a", "plan-a", "job-a", 80)},
+			}},
+			wantStop: operate.StopNotProved, wantMessage: "names plan plan-a and no more than that",
+		},
+		{
+			name: "a record that names this plan and not what allowed the run proves nothing", since: atTheGate(nil),
+			docs: []doc{{
+				phase: "InSync", observedAt: at(90), conditions: inSyncConditions(operate.FamilyMigration, 3),
+				lastRun: &runDoc{outcome: applied, job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80), plan: "plan-a", planUID: "plan-a-uid"},
+			}},
+			wantStop: operate.StopNotProved, wantMessage: "names plan plan-a and no more than that",
+		},
+		{
+			// An operator before the UID wrote a hold's entry with the plan's name only.
+			name: "an entry that names this plan's name and no UID proves nothing", since: atTheGate(nil),
+			docs: []doc{{
+				phase: "InSync", observedAt: at(90), conditions: inSyncConditions(operate.FamilyMigration, 3),
+				journal: []operatorv1alpha1.JournalEntry{{Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(at(80)), Outcome: operatorv1alpha1.JournalUnknown, Plan: "plan-a"}},
+			}},
+			wantStop: operate.StopNotProved, wantMessage: "names plan plan-a and no more than that",
+		},
+		{
+			name: "an entry that names another plan's name and no UID is another plan", since: atTheGate(nil),
+			docs: []doc{{
+				phase: "InSync", observedAt: at(90), conditions: inSyncConditions(operate.FamilyMigration, 3),
+				journal: []operatorv1alpha1.JournalEntry{{Type: operatorv1alpha1.JournalRunFinished, At: metav1.NewTime(at(80)), Outcome: operatorv1alpha1.JournalUnknown, Plan: "plan-b"}},
+			}},
+			wantStop: operate.StopOtherPlanApplied, wantMessage: "plan plan-b ran, not plan-a",
 		},
 
 		// The other endings of this decision's run, named by the record and
@@ -403,15 +461,22 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			wantStop: operate.StopNothingApplied,
 		},
 
-		// A hold with no run beside it, as a restore brings back.
+		// A hold with no run beside it, as a restore brings back, and the entry the
+		// operator writes for it in the same status write.
 		{
 			name: "a hold on this plan", since: atTheGate(nil),
-			docs:     []doc{{phase: "Blocked", observedAt: at(0), unresolved: &unresolvedDoc{operationID: "op-a", outcome: partial, job: "job-a", plan: "plan-a", planUID: "plan-a-uid"}}},
+			docs: []doc{{
+				phase: "Blocked", observedAt: at(0), unresolved: &unresolvedDoc{operationID: "op-a", outcome: partial, job: "job-a", plan: "plan-a", planUID: "plan-a-uid"},
+				journal: []operatorv1alpha1.JournalEntry{heldEnd("Partial", "op-a", "plan-a", "job-a", 30)},
+			}},
 			wantStop: operate.StopUnresolved, wantMessage: "the run of plan plan-a (Job job-a) ended Partial",
 		},
 		{
 			name: "a hold on another plan", since: atTheGate(nil),
-			docs:     []doc{{phase: "Blocked", observedAt: at(0), unresolved: &unresolvedDoc{operationID: "op-b", outcome: partial, job: "job-b", plan: "plan-b", planUID: "plan-b-uid"}}},
+			docs: []doc{{
+				phase: "Blocked", observedAt: at(0), unresolved: &unresolvedDoc{operationID: "op-b", outcome: partial, job: "job-b", plan: "plan-b", planUID: "plan-b-uid"},
+				journal: []operatorv1alpha1.JournalEntry{heldEnd("Partial", "op-b", "plan-b", "job-b", 30)},
+			}},
 			wantStop: operate.StopPlanSuperseded, wantMessage: "plan plan-b ran and ended Partial, and plan plan-a did not run",
 		},
 
@@ -450,6 +515,40 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			name: "--plan with a run that names no plan", plan: "plan-a", since: atTheGate(nil),
 			docs:     []doc{{phase: "InSync", observedAt: at(90), lastRun: &runDoc{outcome: applied, job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}}},
 			wantStop: operate.StopNotProved,
+		},
+		{
+			// A claim from before the upgrade has a name and no fingerprint, so the
+			// name it holds says nothing about the fingerprint the wait named.
+			name: "--plan by fingerprint with a claim that copied none", plan: "sha256:a", since: atTheGate(nil),
+			docs: func() []doc {
+				record := verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)
+				record.fingerprint = ""
+				return []doc{{phase: "InSync", observedAt: at(90), lastRun: record}}
+			}(),
+			wantStop: operate.StopNotProved, wantMessage: "names plan plan-a and no fingerprint",
+		},
+		{
+			name: "--plan by name with a claim that copied no fingerprint", plan: "plan-a", since: atTheGate(nil),
+			docs: func() []doc {
+				record := verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)
+				record.fingerprint = ""
+				return []doc{{phase: "InSync", observedAt: at(90), lastRun: record}}
+			}(),
+			wantReads: 1,
+		},
+		{
+			name: "--plan by another name with a claim that copied no fingerprint", plan: "plan-b", since: atTheGate(nil),
+			docs: func() []doc {
+				record := verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)
+				record.fingerprint = ""
+				return []doc{{phase: "InSync", observedAt: at(90), lastRun: record}}
+			}(),
+			wantStop: operate.StopOtherPlanApplied, wantMessage: "plan plan-a ran, not plan-b",
+		},
+		{
+			name: "--plan by fingerprint with another plan's", plan: "sha256:b", since: atTheGate(nil),
+			docs:     []doc{{phase: "InSync", observedAt: at(90), lastRun: verified(run(applied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)}},
+			wantStop: operate.StopOtherPlanApplied, wantMessage: "plan plan-a ran, not sha256:b",
 		},
 	}
 	for _, row := range rows {
@@ -511,11 +610,109 @@ func TestWaitForADecisionWithNoApprovalUIDBindsThePlan(t *testing.T) {
 	result, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
 		Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
 		Since:    atTheGate(nil).object(operate.FamilyMigration),
-		Decision: &operate.Decision{PlanName: "plan-a", PlanUID: "plan-a-uid", PlanFingerprint: "sha256:a"},
+		Decision: &operate.Decision{PlanName: "plan-a", PlanUID: "plan-a-uid"},
 	})
 	if err != nil || result.Reads != 1 {
 		t.Fatalf("wait = %+v, %v", result, err)
 	}
+}
+
+// What a hold brought back by a restore writes, through the operator's own journal
+// code. It names the run and not what allowed it, so it does not say the run went
+// ahead with no approval.
+func TestWaitReadsTheEntryOfARestoredHold(t *testing.T) {
+	t.Parallel()
+
+	const job = "job-a"
+	held := doc{
+		phase: "Blocked", observedAt: at(0),
+		unresolved: &unresolvedDoc{operationID: "op-a", outcome: operatorv1alpha1.MigrationRunOutcomeUnknown, job: job, plan: "plan-a", planUID: "plan-a-uid"},
+	}
+	status := held.object(operate.FamilyMigration).(*operatorv1alpha1.PtahMigration).Status
+	entries := lifecyclejournal.MigrationEntries(&operatorv1alpha1.PtahMigrationStatus{}, &status, &operatorv1alpha1.LifecycleJournal{}, at(40))
+	if len(entries) != 1 || entries[0].Type != operatorv1alpha1.JournalRunFinished || entries[0].Authorization != "" {
+		t.Fatalf("the operator wrote %+v, want one RunFinished that names no authorization", entries)
+	}
+	for _, row := range []struct {
+		name        string
+		document    doc
+		wantStop    operate.StopReason
+		wantMessage string
+	}{
+		{"with the hold standing", doc{phase: "Blocked", observedAt: at(0), unresolved: held.unresolved, journal: entries},
+			operate.StopUnresolved, "the run of plan plan-a (Job job-a) ended Unknown"},
+		{"once the hold is settled", doc{phase: "InSync", observedAt: at(90), journal: entries, conditions: inSyncConditions(operate.FamilyMigration, 3)},
+			operate.StopNotProved, "names plan plan-a and no more than that, so nothing says whether approval approve-a allowed it"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			tl := &timeline{family: operate.FamilyMigration, docs: []doc{row.document}}
+			named := decisionA
+			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+				Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				Since: atTheGate(nil).object(operate.FamilyMigration), Decision: &named,
+			})
+			var stop *operate.StopError
+			if !errors.As(err, &stop) || stop.Reason != row.wantStop || !strings.Contains(stop.Message, row.wantMessage) {
+				t.Fatalf("err = %v, want reason %s naming %q", err, row.wantStop, row.wantMessage)
+			}
+			if strings.Contains(stop.Message, "under no approval") {
+				t.Fatalf("the wait said the run had no approval: %s", stop.Message)
+			}
+		})
+	}
+}
+
+// A wait narrowed to a plan says which run met it, since status.lastRun may name a
+// later one by the time it reads.
+func TestWaitForAPlanReportsTheRunThatMetIt(t *testing.T) {
+	t.Parallel()
+
+	own := verified(run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-a", "plan-a", "approve-a", 20), "InSync", 90)
+	later := verified(run(operatorv1alpha1.MigrationRunOutcomeApplied, "op-b", "plan-b", "approve-b", 200), "InSync", 300)
+	for _, row := range []struct {
+		name     string
+		document doc
+		want     *operate.RunReached
+	}{
+		{"still the last run", doc{phase: "InSync", observedAt: at(90), lastRun: own},
+			&operate.RunReached{Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobName: "job-op-a"}},
+		{"replaced by a later run", doc{
+			phase: "InSync", observedAt: at(300), lastRun: later,
+			journal: []operatorv1alpha1.JournalEntry{
+				ended("Succeeded", "op-a", "plan-a", "approve-a", 80), readBack("InSync", "op-a", "plan-a", 90),
+				ended("Succeeded", "op-b", "plan-b", "approve-b", 260), readBack("InSync", "op-b", "plan-b", 300),
+			},
+		}, &operate.RunReached{Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobName: "job-op-a", Replaced: true}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			tl := &timeline{family: operate.FamilyMigration, docs: []doc{row.document}}
+			named := decisionA
+			result, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+				Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				Since: atTheGate(nil).object(operate.FamilyMigration), Decision: &named,
+			})
+			if err != nil {
+				t.Fatalf("wait: %v", err)
+			}
+			if result.Run == nil || *result.Run != *row.want {
+				t.Fatalf("the wait reports run %+v, want %+v", result.Run, row.want)
+			}
+		})
+	}
+
+	t.Run("a wait for any run reports none", func(t *testing.T) {
+		t.Parallel()
+		tl := &timeline{family: operate.FamilyMigration, docs: []doc{{phase: "InSync", observedAt: at(90), lastRun: own}}}
+		result, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), operate.WaitOptions{
+			Target: operate.TargetApplied, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+			Since: atTheGate(nil).object(operate.FamilyMigration),
+		})
+		if err != nil || result.Run != nil {
+			t.Fatalf("wait = %+v, %v, want no run named", result, err)
+		}
+	})
 }
 
 func TestWaitRefusesADecisionItCannotHold(t *testing.T) {

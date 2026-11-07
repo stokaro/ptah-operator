@@ -3,9 +3,10 @@
 //
 // A plan here is published through the operator's own store, so it is chunked,
 // bound and committed the way the controller does it. Cases lists the stored
-// states a plan reader has to answer, each with the answer planread gives; a
-// program that reads plans through its own API runs the same cases and has to
-// give the same answers.
+// states a plan reader has to answer, each with the answer planread.Load gives,
+// and DisplayCases the same states with the answer planread.LoadForDisplay
+// gives; a program that reads plans through its own API runs the cases of the
+// read it uses and has to give the same answers.
 //
 // The objects carry the UIDs this package assigned and the bindings between
 // them depend on those UIDs, so they belong in a client that keeps them, such
@@ -290,6 +291,36 @@ func Document(t testing.TB, statements []string) []byte {
 		t.Fatal(err)
 	}
 	return document
+}
+
+// UnreadValue is what every added field of DocumentWithUnreadFields holds. A
+// reader that shows it has shown a value it did not read.
+const UnreadValue = "value-of-a-field-this-build-does-not-read"
+
+// UnreadFieldNames are the names a display read gives the fields
+// DocumentWithUnreadFields adds.
+func UnreadFieldNames() []string {
+	return []string{"annotations", "statements[].inputs"}
+}
+
+// DocumentWithUnreadFields is Document as a newer Ptah could write it: a field
+// added to the plan and to each statement, at the same format version. They are
+// the two fields the strict decoder keeps out of an Apply.
+func DocumentWithUnreadFields(t testing.TB, statements []string) []byte {
+	t.Helper()
+	var decoded map[string]any
+	if err := json.Unmarshal(Document(t, statements), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["annotations"] = map[string]any{"provider": UnreadValue}
+	for _, statement := range decoded["statements"].([]any) {
+		statement.(map[string]any)["inputs"] = []any{UnreadValue}
+	}
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 // FutureDocument is a plan document from a build that is not this one.

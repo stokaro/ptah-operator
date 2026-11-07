@@ -495,6 +495,11 @@ func writeReached(out io.Writer, result operate.Result) {
 		if ref.Family == operate.FamilySchema {
 			field("Applied", statusview.Clean(status.applied))
 		} else {
+			// The last run need not be the one this wait was for: a later run may have
+			// replaced it, and then it is found in the journal.
+			if run := result.Run; run != nil && run.Replaced {
+				field("Run", statusview.Clean(fmt.Sprintf("%s, Job %s", run.Outcome, run.JobName)))
+			}
 			field("Last run", statusview.Clean(status.lastRun))
 		}
 	}

@@ -460,9 +460,12 @@ type MigrationRunStatus struct {
 	// +optional
 	OperationID string `json:"operationID,omitempty"`
 
-	// PlanRef is the immutable plan the run carried out. It stays readable after
-	// the plan is gone, and the plan store reuses a byte-identical plan, so it
-	// says what was planned and not which execution this was: OperationID does.
+	// PlanRef is the immutable plan the run carried out. The plan store reuses a
+	// byte-identical plan, so it says what was planned and not which execution
+	// this was: OperationID does. It pins the plan, as the pruning guide lists: it
+	// outlives a plan somebody deleted, or a prune with a list of pins from before
+	// this field, and then names bytes nothing holds, which a retention audit
+	// reports as a missing plan.
 	// +optional
 	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
 	// PlanFingerprint is that plan's spec.fingerprint when the claim was written,
@@ -486,11 +489,17 @@ type MigrationRunStatus struct {
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// TargetIdentityDigest is the credential-free identity of the database the
-	// run reported it opened, or the one it was dispatched against where it
-	// reported none.
+	// run reported it opened, or the one the plan was computed against where it
+	// reported none. TargetIdentityReported says which.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	// +optional
 	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
+	// TargetIdentityReported is true when the run itself named that database.
+	// Otherwise the digest says what was planned and not what happened: a run that
+	// left no result may have run nowhere, or against whatever its Secret held by
+	// then.
+	// +optional
+	TargetIdentityReported bool `json:"targetIdentityReported,omitempty"`
 	// ExecutionBindingID is the execution epoch the claim was authorized under.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	// +optional
@@ -499,7 +508,8 @@ type MigrationRunStatus struct {
 	// Verification is the first reading of this run's database after the run
 	// ended. What a run claims and what the revision table holds are two
 	// statements, and this records the second. It is absent until that reading,
-	// and for a run a release without this field recorded.
+	// for a run that did not report its database, since no reading can then be
+	// said to be of it, and for a run a release without this field recorded.
 	// +optional
 	Verification *MigrationRunVerificationStatus `json:"verification,omitempty"`
 
