@@ -293,6 +293,9 @@ func (d docker) sweepExpired(logf func(string, ...any), now time.Time) {
 			continue
 		}
 		logf("clearing what the run %s left behind", record.Prefix)
+		if err := removeRunWork(record.Prefix); err != nil {
+			logf("remove the build directory of the run %s: %v", record.Prefix, err)
+		}
 		if err := d.removeRunObjects(record.Prefix); err != nil {
 			logf("clear the run %s: %v", record.Prefix, err)
 			continue
@@ -301,6 +304,27 @@ func (d docker) sweepExpired(logf func(string, ...any), now time.Time) {
 			logf("remove the record of the run %s: %v", record.Prefix, err)
 		}
 	}
+}
+
+// runWorkPattern is how a run's local build directory is named, with
+// os.MkdirTemp's random part after it.
+func runWorkPattern(prefix string) string {
+	return prefix + "-"
+}
+
+// removeRunWork removes a run's local build directories, which hold the keys
+// generated for it. On another machine than the one that ran it there are none.
+// ParseRunRecord admits no prefix with a pattern character in it.
+func removeRunWork(prefix string) error {
+	directories, err := filepath.Glob(filepath.Join(os.TempDir(), runWorkPattern(prefix)+"*"))
+	if err != nil {
+		return err
+	}
+	var removed []error
+	for _, directory := range directories {
+		removed = append(removed, os.RemoveAll(directory))
+	}
+	return errors.Join(removed...)
 }
 
 // runExpiry is when nothing of a run can still be in use: its binary panics at
@@ -549,6 +573,18 @@ func TestSweepClearsOnlyExpiredRecordsItCanRead(t *testing.T) {
 		`{"prefix":".*","expires":"2026-11-07T11:00:00Z"}`,
 		"not a record",
 	}, "\n") + "\n"})
+	// The build directories, as os.MkdirTemp names them, and one whose name only
+	// starts like the expired run's.
+	temporary := t.TempDir()
+	t.Setenv("TMPDIR", temporary)
+	builds := map[string]bool{
+		runWorkPattern("ptah-runner-harness-dead") + "123":  false,
+		runWorkPattern("ptah-runner-harness-live") + "456":  true,
+		runWorkPattern("ptah-runner-harness-deadx") + "789": true,
+	}
+	for directory := range builds {
+		writeTree(t, filepath.Join(temporary, directory, "keys", "token"), []byte("generated for the run"), 0o444)
+	}
 	var logged []string
 	docker{context: "stub"}.sweepExpired(func(format string, args ...any) {
 		logged = append(logged, fmt.Sprintf(format, args...))
@@ -560,6 +596,15 @@ func TestSweepClearsOnlyExpiredRecordsItCanRead(t *testing.T) {
 	}
 	if !slices.Contains(got, "--context stub image rm registry.invalid/ptah-runner-harness-dead") {
 		t.Fatalf("the sweep left the image the expired run pulled: %q", got)
+	}
+	for directory, kept := range builds {
+		_, err := os.Stat(filepath.Join(temporary, directory))
+		switch {
+		case kept && err != nil:
+			t.Errorf("the sweep removed %s, which it has no claim on: %v", directory, err)
+		case !kept && !errors.Is(err, os.ErrNotExist):
+			t.Errorf("the expired run's build directory %s is still there: %v", directory, err)
+		}
 	}
 	for _, call := range got {
 		if strings.Contains(call, "ptah-runner-harness-live") || strings.Contains(call, ".*") || strings.Contains(call, "not a record") {

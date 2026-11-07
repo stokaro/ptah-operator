@@ -183,7 +183,8 @@ removes the run's containers, volumes and images and its local build directory.
 It keeps looking for as long as a docker client may live, since the clients a run
 started outlive it, and removes the run's network last. That network carries the
 `operator.ptah.run/runner-harness` label, whose value records the run and when it
-expires, and a later run on the same daemon clears any expired record it finds.
+expires, and a later run on the same daemon clears any expired record it finds,
+along with the run's build directory when it runs on the same machine.
 Names start with `RUNNER_HARNESS_PREFIX`, or `ptah-runner-harness`, then a random
 part, so a run touches nothing of another run that is still alive.
 
