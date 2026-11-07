@@ -2141,16 +2141,19 @@ How long the log stays depends on whether anything paces the runs:
 | The Apply | Its Job keeps the log |
 | --- | --- |
 | A person approved it, and it failed or its outcome is unknown | 24 hours after the Job finishes |
-| A migration run under `apply: Always` that reported `Partial` or `Unknown`, or reported nothing, which leaves the resource `Blocked` | 24 hours after the Job finishes |
+| A migration run under `apply: Always` that stops the resource: it reported `Partial` or `Unknown`, it reported nothing, or it reported `Failed` and left a dirty revision row | 24 hours after the Job finishes |
 | Any other Apply no approval names, under `apply: Always`, that failed or whose outcome is unknown | 5 minutes |
 | It succeeded | 5 minutes |
 
 A retained Job holds a place in a namespace's Job quota, so the 24 hours go where Jobs
 cannot pile up. An approval needs a person each time. A migration run that reported
-`Partial` or `Unknown`, or nothing, stops the resource: it dispatches no Apply until
-a History reading or an acknowledgment settles
-[the run](#a-migration-run-nobody-accounted-for), and that is when a person has to read
-the database.
+`Partial` or `Unknown`, or nothing, stops the resource at once: it dispatches no Apply
+until a History reading or an acknowledgment settles
+[the run](#a-migration-run-nobody-accounted-for). A run that reported `Failed` at a
+statement leaves a [dirty revision row](../migrations/#what-the-history-says), so the
+reading that follows blocks the resource with `HistoryDirty`, and nothing runs until a
+person repairs the row. Each is when a person has to read the database, and each holds
+one Job.
 
 Nothing stops a schema that way. An uncertain Apply under `Always` goes to a proof, the
 proof plans again, and `Always` applies the new plan unless it needs an approval. A
@@ -2158,19 +2161,20 @@ failure that goes on holds one Job per cycle, about 1,400 to 2,900 Jobs a day pe
 resource at a 30 to 60 second cycle, and each run writes a fresh log, so every schema
 Apply no approval names keeps five minutes.
 
-A migration run that reported `Failed` keeps five minutes too. One that stopped before
-it selected a migration runs again after `failureRetryInterval`. One that failed at a
-statement leaves a [dirty revision row](../migrations/#what-the-history-says), so the
-reading that follows blocks the resource with `HistoryDirty` and nothing runs until a
-person repairs the row. That log still goes in five minutes, because the TTL is set
-from the run's outcome, before that reading.
+A migration run that reported `Failed` and left no such row keeps five minutes too,
+because nothing stops it. One that stopped before it selected a migration, as on a
+database it could not open, runs again after `failureRetryInterval`. One Ptah refused
+because the history moved after the plan ran nothing, and the next reading plans again.
 
 What the run reported decides, not why the resource stopped. A run that reported
 `Failed` or `Applied` and is blocked because the resource was edited during the run, or
-because it opened a database other than the planned one, keeps five minutes, and so
-does a run whose resource was suspended after it failed. Read the log in that time, or
-ship Pod logs somewhere that keeps them. A plan that changes privileges needs an
-approval under `Always` as well, and its Apply keeps the 24 hours.
+because it opened a database other than the planned one, keeps five minutes. So does a
+run that reported `Failed` when its log held no result frame, because the termination
+summary read in its place does not say whether the run left a row. Suspending a resource
+after a failure that repeats stops the next run and does not lengthen the last one's
+log. Read the log in that time, or ship Pod logs somewhere that keeps them. A plan that
+changes privileges needs an approval under `Always` as well, and its Apply keeps the 24
+hours.
 
 The `Applying` condition of a schema, `status.lastRun.message` of a migration and the
 Warning Event say where to read the log and for how long, from the TTL the Job holds:

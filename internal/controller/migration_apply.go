@@ -422,6 +422,10 @@ type migrationRunAccount struct {
 	// targetFailure is why the run could not open its target, when it stopped
 	// before selecting and the frame named a kind.
 	targetFailure error
+	// leftDirtyRevision is a run whose report holds the revision row it left, on
+	// which the History read that follows refuses. Only a frame's report can say
+	// so: a termination summary carries no such fact.
+	leftDirtyRevision bool
 	// openedTarget is a run whose report shows it reached the database. A
 	// termination summary cannot show that, so a run read from one leaves
 	// DatabaseReachable to the history read that follows.
@@ -526,6 +530,9 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
 		failure: migrationRunFailure(report.Failure),
+		// The run reads the revision table after it stops, so this is the row the
+		// next reading finds.
+		leftDirtyRevision: dirtyRevision(*report) != nil,
 	}
 	if report.StoppedBeforeSelecting() {
 		run.stoppedBeforeSelecting = true
@@ -565,7 +572,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 			return ctrl.Result{}, err
 		}
 	default:
-		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome)
+		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome, run.leftDirtyRevision)
 		if err := retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
 		}); err != nil {
@@ -592,7 +599,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		setMigrationTargetOpened(migration, "The Apply opened the database")
 	}
 	switch {
-	case jobclaim.MigrationRunBlocks(outcome):
+	case jobclaim.MigrationRunUnresolved(outcome):
 		recordUnresolvedMigrationRun(migration, operation, migration.Status.LastRun,
 			reportedTarget, r.now())
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
@@ -1067,7 +1074,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		// this Job by UID, which is every Apply that failed before its create
 		// was confirmed. So the failure is reported and the record is written.
 		approved := operation != nil && operation.ApprovalRef != nil
-		keepLog := jobclaim.MigrationRunKeepsLog(approved, r.reportedMigrationOutcome(ctx, job, operation))
+		// No report of a dirty revision reaches this path, so a run that reported
+		// Failed keeps the short TTL here whatever it left behind.
+		keepLog := jobclaim.MigrationRunKeepsLog(approved, r.reportedMigrationOutcome(ctx, job, operation), false)
 		if err := retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
 		}); err != nil {
@@ -1156,10 +1165,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 // reportedMigrationOutcome is the outcome this Job's Pod reported, read the way the
 // webhook reads it. This path blocks the resource whatever the run reported, because
 // something else may have stopped it: an edit of the resource, a changed component,
-// another database. Only what the run reported earns the long TTL, so an edit cannot,
-// and the manager does not ask for what admission would refuse. A read that fails
-// leaves the outcome unknown, and the webhook, which reads the Pods itself, answers
-// next.
+// another database. Only what the run reported earns the long TTL, so an edit cannot.
+// A read that fails leaves the outcome unknown, and the webhook, which reads the Pods
+// itself, answers next.
 func (r *MigrationReconciler) reportedMigrationOutcome(
 	ctx context.Context,
 	job *batchv1.Job,

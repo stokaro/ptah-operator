@@ -181,7 +181,7 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	// that left it. The Pod webhook holds an operator Job's Pod to the claim that
 	// names it, and these Jobs are no claim's, so the Pod is stored while its Job
 	// does not yet say whose it is. Nothing below reads the order.
-	finishedApplyOf := func(owners []metav1.OwnerReference, operationID, suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
+	finishedApplyOf := func(owners []metav1.OwnerReference, operationID string, status batchv1.JobStatus, suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
 		t.Helper()
 		built := fixture.job.DeepCopy()
 		built.Name = "ptah-apply-" + suffix + "-" + strings.TrimPrefix(built.Name, "ptah-resolve-")
@@ -221,7 +221,7 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		if err := admin.Update(ctx, job); err != nil {
 			t.Fatalf("give Job %s its owner: %v", job.Name, err)
 		}
-		job.Status = finished
+		job.Status = status
 		if err := admin.Status().Update(ctx, job); err != nil {
 			t.Fatalf("finish Job %s: %v", job.Name, err)
 		}
@@ -229,7 +229,7 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	}
 	finishedApply := func(suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
 		t.Helper()
-		return finishedApplyOf(fixture.job.OwnerReferences, fixture.job.Annotations[workload.AnnotationOperationID], suffix, summaryFor)
+		return finishedApplyOf(fixture.job.OwnerReferences, fixture.job.Annotations[workload.AnnotationOperationID], finished, suffix, summaryFor)
 	}
 	summary := func(result runner.Result) func(*batchv1.Job) string {
 		return func(job *batchv1.Job) string {
@@ -305,12 +305,12 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	// proof a row passed the outcome.
 	migration := createMigration(t, fixture.namespace, "ledger")
 	controller := true
-	claimedRun := func(suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
+	claimedRun := func(status batchv1.JobStatus, suffix string, summaryFor func(*batchv1.Job) string) *batchv1.Job {
 		t.Helper()
 		job := finishedApplyOf([]metav1.OwnerReference{{
 			APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigration", Name: migration.Name, UID: migration.UID,
 			Controller: &controller, BlockOwnerDeletion: &controller,
-		}}, digest("9"), suffix, summaryFor)
+		}}, digest("9"), status, suffix, summaryFor)
 		stored := &operatorv1alpha1.PtahMigration{}
 		if err := admin.Get(ctx, client.ObjectKeyFromObject(migration), stored); err != nil {
 			t.Fatalf("read PtahMigration %s: %v", migration.Name, err)
@@ -346,9 +346,17 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		}
 	}
 	const pastTheRun = "migration Job cleanup is outside the persisted operation claim"
-	t.Run("the long TTL on a migration run that reported Failed is refused", func(t *testing.T) {
-		refused := setTTL(claimedRun("run-failed", migrationRun(dataplane.MigrationOutcomeFailed)), 86400)
-		requireDenied(t, refused, controllerWriteWebhook, "no approval authorized this run and it reported Failed; it keeps 300 seconds")
+	// A Job Kubernetes failed, whose condition says nothing of what the run reported.
+	stopped := batchv1.JobStatus{
+		StartTime: &start, Failed: 1,
+		Conditions: []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, LastTransitionTime: finish},
+			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: finish},
+		},
+	}
+	t.Run("the long TTL on a migration run that reported Applied is refused whatever the Job's condition", func(t *testing.T) {
+		refused := setTTL(claimedRun(stopped, "run-stopped", migrationRun(dataplane.MigrationOutcomeApplied)), 86400)
+		requireDenied(t, refused, controllerWriteWebhook, "no approval authorized this run and it reported Applied; it keeps 300 seconds")
 		// The manager falls back to the short TTL on this class of error, so the claim
 		// settles even when it asked before the Pod's report arrived.
 		if !apierrors.IsForbidden(refused) && !apierrors.IsInvalid(refused) {
@@ -356,19 +364,25 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		}
 	})
 	t.Run("the long TTL on a migration run that reported Applied is refused", func(t *testing.T) {
-		requireDenied(t, setTTL(claimedRun("run-applied", migrationRun(dataplane.MigrationOutcomeApplied)), 86400),
+		requireDenied(t, setTTL(claimedRun(finished, "run-applied", migrationRun(dataplane.MigrationOutcomeApplied)), 86400),
 			controllerWriteWebhook, "this run reported success; it keeps 300 seconds")
 	})
+	// The summary cannot say whether a Failed run left a dirty revision, so admission
+	// takes the manager's word on it.
+	t.Run("the long TTL on a migration run that reported Failed passes the outcome", func(t *testing.T) {
+		requireDenied(t, setTTL(claimedRun(finished, "run-failed", migrationRun(dataplane.MigrationOutcomeFailed)), 86400),
+			controllerWriteWebhook, pastTheRun)
+	})
 	t.Run("the long TTL on a migration run that reported Partial passes the outcome", func(t *testing.T) {
-		requireDenied(t, setTTL(claimedRun("run-partial", migrationRun(dataplane.MigrationOutcomePartial)), 86400),
+		requireDenied(t, setTTL(claimedRun(finished, "run-partial", migrationRun(dataplane.MigrationOutcomePartial)), 86400),
 			controllerWriteWebhook, pastTheRun)
 	})
 	t.Run("the long TTL on a migration run that reported Unknown passes the outcome", func(t *testing.T) {
-		requireDenied(t, setTTL(claimedRun("run-unknown", migrationRun(dataplane.MigrationOutcomeUnknown)), 86400),
+		requireDenied(t, setTTL(claimedRun(finished, "run-unknown", migrationRun(dataplane.MigrationOutcomeUnknown)), 86400),
 			controllerWriteWebhook, pastTheRun)
 	})
 	t.Run("the long TTL on a migration run whose Pod is gone passes the outcome", func(t *testing.T) {
-		requireDenied(t, setTTL(claimedRun("run-collected", nil), 86400), controllerWriteWebhook, pastTheRun)
+		requireDenied(t, setTTL(claimedRun(finished, "run-collected", nil), 86400), controllerWriteWebhook, pastTheRun)
 	})
 }
 

@@ -100,6 +100,24 @@ func TestFailedApplyJobRetainedReadsTheTTL(t *testing.T) {
 	}
 }
 
+func TestFailedApplyLogReportsWantsOneLine(t *testing.T) {
+	t.Parallel()
+
+	if err := failedApplyLogReports([]byte("ptah-runner: started\n" + reportedErrorPrefix + "a refusal\n")); err != nil {
+		t.Errorf("one line: %v", err)
+	}
+	for name, log := range map[string]string{
+		"an empty log":                  "",
+		"no such line":                  "ptah-runner: started\n",
+		"two lines":                     reportedErrorPrefix + "one\n" + reportedErrorPrefix + "two\n",
+		"quoted, not a line of its own": "the log said " + reportedErrorPrefix + "one\n",
+	} {
+		if err := failedApplyLogReports([]byte(log)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
 func TestFinishedJobKeepsShortTTLReadsTheTTL(t *testing.T) {
 	t.Parallel()
 

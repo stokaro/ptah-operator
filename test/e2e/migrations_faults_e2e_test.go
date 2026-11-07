@@ -425,10 +425,6 @@ func (m *migrationRun) stoppedApplyProof() {
 	// Read the transport selected by this exact Job. Durable delivery writes
 	// no result frame to stdout; its receipt must carry the same run report.
 	job := m.readStopRowJob(pod, jobUID)
-	// Under Always a run that reported Failed keeps the five minutes, so a failure
-	// that repeats cannot hold a Job per cycle. The manager set this before it wrote
-	// the record the row waited for.
-	m.check(finishedJobKeepsShortTTL(job), "the stopped %s Apply reported Failed under Always", m.engine.name)
 	logs, err := m.stopRowLog(pod.Name)
 	if err != nil {
 		m.fatalf("the stopped %s Apply Pod's log could not be read: %v", m.engine.name, err)

@@ -25,12 +25,7 @@ const (
 // with the database's answer in it and not the statement Ptah appends after it. A
 // log with the answer and the statement fails, and so does one with neither.
 func failedApplyLogSays(log []byte) error {
-	var reported []string
-	for line := range strings.Lines(string(log)) {
-		if strings.HasPrefix(line, reportedErrorPrefix) {
-			reported = append(reported, strings.TrimSpace(line))
-		}
-	}
+	reported := reportedErrors(log)
 	switch {
 	case len(reported) != 1:
 		return fmt.Errorf("the Pod log holds %d reported errors, want 1", len(reported))
@@ -42,6 +37,25 @@ func failedApplyLogSays(log []byte) error {
 		return fmt.Errorf("the Pod log carries the name the statement declares, %q", refusedStatementIndex)
 	}
 	return nil
+}
+
+// failedApplyLogReports holds a Pod log to there being what the long TTL keeps it for:
+// the one line from the run. A row that does not know the database's words reads this.
+func failedApplyLogReports(log []byte) error {
+	if reported := reportedErrors(log); len(reported) != 1 {
+		return fmt.Errorf("the Pod log holds %d reported errors, want 1", len(reported))
+	}
+	return nil
+}
+
+func reportedErrors(log []byte) []string {
+	var reported []string
+	for line := range strings.Lines(string(log)) {
+		if strings.HasPrefix(line, reportedErrorPrefix) {
+			reported = append(reported, strings.TrimSpace(line))
+		}
+	}
+	return reported
 }
 
 // failedApplyPointerSays holds a message to where the log is and for how long,

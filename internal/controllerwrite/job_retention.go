@@ -24,8 +24,8 @@ const (
 // Job keeps FailedApplyRetentionTTLSeconds only when it is an Apply Job whose run
 // failed or whose outcome is unknown, because its Pod log is the one place that
 // holds what the database answered. validateCleanupTTLApproved then holds a schema's
-// to an Apply a person approved, and validateMigrationRunKeepsLog a migration's to
-// that or a run that stops its resource.
+// to an Apply a person approved, and validateMigrationRunMayKeepLog a migration's to
+// that or a run that did not report success.
 //
 // The Job alone cannot say which Apply this is. A runner that delivered its
 // frame exits zero, so a failed Apply usually leaves a Complete Job, and the
@@ -74,17 +74,17 @@ func validateCleanupTTLApproved(seconds int32, approved bool) error {
 	return nil
 }
 
-// validateMigrationRunKeepsLog holds a migration's long TTL to
-// jobclaim.MigrationRunKeepsLog: the claim names an approval, or the run's own Pod
-// reports an outcome that stops the resource.
+// validateMigrationRunMayKeepLog holds a migration's long TTL to
+// jobclaim.MigrationRunMayKeepLog: the claim names an approval, or the run's own Pod
+// did not report success. The manager's rule is finer, and jobclaim says why this one
+// is not.
 //
 // It reads the report whatever the Job's condition says, unlike the success check in
-// validateCleanupTTLChoice: a run that reported Failed may leave either condition, and
-// under `apply: Always` it does not earn the long TTL. It reads neither
-// spec.policy.apply nor the resource's phase or unresolved run, because an edit moves
-// the first and the manager writes the others after this. Silence reads as unknown,
-// as it does for the manager, which blocks the resource on such a run.
-func (v *Validator) validateMigrationRunKeepsLog(
+// validateCleanupTTLChoice. It reads neither spec.policy.apply nor the resource's phase
+// or unresolved run, because an edit moves the first and the manager writes the others
+// after this. Silence reads as unknown, as it does for the manager, which blocks the
+// resource on such a run.
+func (v *Validator) validateMigrationRunMayKeepLog(
 	ctx context.Context,
 	job *batchv1.Job,
 	seconds int32,
@@ -98,7 +98,7 @@ func (v *Validator) validateMigrationRunKeepsLog(
 		return internalf("read the Pods of Apply Job %s/%s: %v", job.Namespace, job.Name, err)
 	}
 	outcome := jobclaim.ReportedMigrationRun(pods, job.UID, operation.ID)
-	if jobclaim.MigrationRunBlocks(outcome) {
+	if jobclaim.MigrationRunMayKeepLog(outcome) {
 		return nil
 	}
 	return denyf("Job cleanup TTL %d is for an Apply a person approved or a migration run that stops its resource, "+
