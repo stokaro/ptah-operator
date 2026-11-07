@@ -663,12 +663,12 @@ spec:
 | `status.journal` | `object` | Journal is the bounded record of this schema's significant lifecycle events. |
 | `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before. |
 | `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest. |
-| `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment. |
+| `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
 | `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. A name can be used again by a later decision, so it does not say which object it was: ApprovalUID does. |
 | `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
-| `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval. |
+| `status.journal.entries[].approver` | `string` | Approver is the user admission stamped on that approval, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].at` | `string`, required | At is when the event happened. For an Apply, a run or a failed attempt it is when that ended. |
 | `status.journal.entries[].authorization` | `string`, one of `Approval`, `Policy` | Authorization is what allowed a PtahMigration's run. |
 | `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
@@ -684,7 +684,7 @@ spec:
 | `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
 | `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim a PtahMigration's RunFinished, Verified or RunAcknowledged entry concerns. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
-| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. |
+| `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. On a PtahMigration's Verified entry it is what the reading after the run found, and on a RunAcknowledged entry how the run that person settled ended. |
 | `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
 | `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run carried out, when the claim recorded it. |
 | `status.journal.entries[].planUID` | `string` | PlanUID is the UID of a PtahMigration's plan. |

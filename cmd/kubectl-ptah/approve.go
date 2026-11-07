@@ -301,7 +301,7 @@ func waitForApply(ctx context.Context, reader client.Reader, ref operate.Ref, re
 		options.Plan = review.PlanName
 	} else {
 		options.Decision = &operate.Decision{
-			PlanName: review.PlanName, PlanUID: review.PlanUID, PlanFingerprint: review.Fingerprint,
+			PlanName: review.PlanName, PlanUID: review.PlanUID,
 			ApprovalName: approval.GetName(), ApprovalUID: approval.GetUID(),
 		}
 	}

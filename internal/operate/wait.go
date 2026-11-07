@@ -128,11 +128,10 @@ type WaitOptions struct {
 // Decision is one approval of one plan, as a person reviewed it and admission
 // stored it.
 type Decision struct {
-	PlanName        string
-	PlanUID         types.UID
-	PlanFingerprint string
-	ApprovalName    string
-	ApprovalUID     types.UID
+	PlanName     string
+	PlanUID      types.UID
+	ApprovalName string
+	ApprovalUID  types.UID
 }
 
 // Result is the document that met the target.
@@ -147,6 +146,18 @@ type Result struct {
 	// Reads is how many times the resource was read.
 	Reads  int
 	Object client.Object
+	// Run is the run a wait narrowed to a plan ended on, which a later run may
+	// have replaced in Object's status.lastRun. It is nil for any other wait.
+	Run *RunReached
+}
+
+// RunReached is a migration run that met a wait for its plan.
+type RunReached struct {
+	Outcome operatorv1alpha1.MigrationRunOutcome
+	JobName string
+	// Replaced reports that a later run has taken its place in status.lastRun,
+	// and that only the journal still names it.
+	Replaced bool
 }
 
 // StopReason is why a wait ended without reaching its target.
@@ -181,9 +192,11 @@ const (
 	// StopPlanSuperseded is a migration whose named plan will not run: another
 	// plan took its place, or a reading found nothing left to apply.
 	StopPlanSuperseded StopReason = "PlanSuperseded"
-	// StopNotProved is a run that may be the one the wait named, with no record
-	// that says so: one that names no plan, or one whose reading afterwards is no
-	// longer recorded.
+	// StopNotProved is a run that may be the one the wait named, or that was and
+	// has no reading to show for it, with no record that says more: one that names
+	// no plan, one that names this plan and not what allowed it or not the
+	// fingerprint the wait named, one whose reading afterwards is no longer
+	// recorded, or one whose database moved before the next reading.
 	StopNotProved StopReason = "CompletionNotProved"
 	// StopNothingApplied is a migration run that found nothing to apply.
 	StopNothingApplied StopReason = "NothingApplied"
@@ -330,7 +343,7 @@ func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOption
 				return Result{
 					Ref: ref, Target: verdict.target(options.Target), Phase: current.phase,
 					Generation: current.generation, ObservedGeneration: current.observedGeneration,
-					ObservedAt: current.observedAt, Reads: reads, Object: current.object,
+					ObservedAt: current.observedAt, Reads: reads, Object: current.object, Run: verdict.run,
 				}, nil
 			}
 			waiting = verdict.waiting
@@ -430,6 +443,8 @@ type verdict struct {
 	// reached is the target a done verdict met, where the wait's own target
 	// names more than one (TargetPlanned).
 	reached Target
+	// run is the run a done verdict of a wait narrowed to a plan ended on.
+	run *RunReached
 }
 
 func (v verdict) target(asked Target) Target {
@@ -977,9 +992,10 @@ const (
 	// runOfAnotherPlan carried out another plan.
 	runOfAnotherPlan
 	// runOfAnotherApproval carried out the plan under another approval, or under
-	// none.
+	// the resource's policy.
 	runOfAnotherApproval
-	// runUnidentified names no plan, so nothing can say which it was.
+	// runUnidentified does not hold what the wait would have to compare, so nothing
+	// can say which it was.
 	runUnidentified
 )
 
@@ -996,15 +1012,30 @@ func (w *waiter) bindingOf(identity runIdentity) runBinding {
 		if identity.plan == plan || identity.fingerprint == plan {
 			return runIsBound
 		}
+		// A plan's name holds no colon, so this is a fingerprint, which a claim from
+		// before the upgrade did not copy. Its name says nothing about it.
+		if identity.fingerprint == "" && strings.HasPrefix(plan, "sha256:") {
+			return runUnidentified
+		}
+		return runOfAnotherPlan
+	}
+	if identity.planUID == "" {
+		// An entry from before the plan's UID was recorded, which names it only.
+		if identity.plan == decision.PlanName {
+			return runUnidentified
+		}
 		return runOfAnotherPlan
 	}
 	if identity.planUID != decision.PlanUID {
 		return runOfAnotherPlan
 	}
-	if identity.fingerprint != "" && decision.PlanFingerprint != "" && identity.fingerprint != decision.PlanFingerprint {
-		return runOfAnotherPlan
-	}
 	if decision.ApprovalUID != "" && identity.approvalUID != decision.ApprovalUID {
+		// Only a record that says Policy says no approval allowed the run. One that
+		// says nothing, as the entry of a hold a restore brought back does, may be
+		// this decision.
+		if identity.approvalUID == "" && identity.authorization != operatorv1alpha1.MigrationRunAuthorizedByPolicy {
+			return runUnidentified
+		}
 		return runOfAnotherApproval
 	}
 	return runIsBound
@@ -1046,13 +1077,11 @@ func (w *waiter) checkBoundRun(s snapshot) verdict {
 	if finished {
 		return w.anotherRunEnded(s, run.identity, fmt.Sprintf("the run (Job %s) ended %s", run.jobName, run.outcome))
 	}
-	if len(ended) > 0 {
-		entry := ended[0]
-		return w.anotherRunEnded(s, identityOfEntry(entry), fmt.Sprintf("a run ended %s", entry.Outcome))
-	}
+	// Before the journal's other ends: the write that brings a hold back with no
+	// run beside it also writes the hold's entry, and the hold says more.
 	if unresolved := s.unresolved; unresolved != nil &&
 		(b.unresolved == nil || b.unresolved.operationID != unresolved.operationID) {
-		identity := runIdentity{operationID: unresolved.operationID, plan: unresolved.plan, planUID: unresolved.planUID}
+		identity := runIdentity{plan: unresolved.plan, planUID: unresolved.planUID}
 		if w.bindingOf(identity) == runOfAnotherPlan {
 			return w.stop(s, StopPlanSuperseded, fmt.Sprintf("plan %s ran and ended %s, and plan %s did not run",
 				unresolved.plan, unresolved.outcome, w.boundPlan()))
@@ -1060,6 +1089,10 @@ func (w *waiter) checkBoundRun(s snapshot) verdict {
 		return w.stop(s, StopUnresolved, fmt.Sprintf("the run of plan %s (Job %s) ended %s: its effect on the "+
 			"database is not established, and nothing runs until a reading or a person accounts for it",
 			unresolved.plan, unresolved.jobName, unresolved.outcome))
+	}
+	if len(ended) > 0 {
+		entry := ended[0]
+		return w.anotherRunEnded(s, identityOfEntry(entry), fmt.Sprintf("a run ended %s", entry.Outcome))
 	}
 	if stop, superseded := w.planSuperseded(s); superseded {
 		return stop
@@ -1079,6 +1112,13 @@ func (w *waiter) boundRunEnded(s snapshot, run *runRecord) verdict {
 		return w.runDidNotApply(s, run)
 	}
 	if !run.verified {
+		// A reading records itself on the run in the status write that records the
+		// reading, so a later one with nothing recorded was of another database, and
+		// only that database's next reading is left to wait for, if it ever comes.
+		if s.observedAt.After(run.finishedAt) {
+			return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and a later reading "+
+				"did not verify it: it read another database, so no record says what the run's database holds", run.jobName))
+		}
 		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
 	}
 	if run.verification == operatorv1alpha1.MigrationRunVerifiedBlocked {
@@ -1092,7 +1132,7 @@ func (w *waiter) boundRunEnded(s snapshot, run *runRecord) verdict {
 	if v, ok := w.generationReached(s); !ok {
 		return v
 	}
-	return verdict{done: true}
+	return verdict{done: true, run: &RunReached{Outcome: run.outcome, JobName: run.jobName}}
 }
 
 // boundRunJournaled judges the run the wait names from its journal entry, once a
@@ -1120,7 +1160,10 @@ func (w *waiter) boundRunJournaled(s snapshot, ended operatorv1alpha1.JournalEnt
 			if v, ok := w.generationReached(s); !ok {
 				return v
 			}
-			return verdict{done: true}
+			// Only an entry that says Succeeded comes this far.
+			return verdict{done: true, run: &RunReached{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobName: ended.JobName, Replaced: true,
+			}}
 		}
 	}
 	return w.stop(s, StopNotProved, fmt.Sprintf("the run of plan %s recorded its migrations applied, a later run has "+
@@ -1132,8 +1175,16 @@ func (w *waiter) anotherRunEnded(s snapshot, identity runIdentity, ended string)
 	plan := w.boundPlan()
 	switch w.bindingOf(identity) {
 	case runUnidentified:
-		return w.stop(s, StopNotProved, fmt.Sprintf("%s and its record names no plan, so nothing says whether it was "+
-			"plan %s; an operator that predates run provenance writes such a record", ended, plan))
+		if identity.plan == "" && identity.planUID == "" {
+			return w.stop(s, StopNotProved, fmt.Sprintf("%s and its record names no plan, so nothing says whether it was "+
+				"plan %s; an operator that predates run provenance writes such a record", ended, plan))
+		}
+		if decision := w.options.Decision; decision != nil {
+			return w.stop(s, StopNotProved, fmt.Sprintf("%s and its record names plan %s and no more than that, so nothing "+
+				"says whether approval %s allowed it", ended, identity.plan, decision.ApprovalName))
+		}
+		return w.stop(s, StopNotProved, fmt.Sprintf("%s and its record names plan %s and no fingerprint, so nothing says "+
+			"whether it was %s; a claim from before the upgrade did not copy one", ended, identity.plan, plan))
 	case runOfAnotherApproval:
 		decision := w.options.Decision
 		under := "under no approval"

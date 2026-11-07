@@ -294,6 +294,12 @@ func (m *migrationRun) assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID
 	if !reread {
 		m.fatalf("%s never read its history again inside the window, so its refusal says nothing about a resource that is running", name)
 	}
+	// That reading was of the database the plan was computed against. The run's Job
+	// and its result are gone, so nothing says the run reached that database, and
+	// the record of the run says so rather than taking the reading as its proof.
+	if err := runTargetNotReported(m.migration(name).Status); err != nil {
+		m.fatalf("%s: the record of a run with no result: %v", name, err)
+	}
 	// The database is the claim. A replay would re-run the first migration,
 	// whose insert is not idempotent.
 	if m.uncertainWidgetRows() != "3" {

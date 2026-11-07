@@ -1,8 +1,12 @@
 package e2e
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+
+	"k8s.io/apimachinery/pkg/api/equality"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -27,8 +31,12 @@ func runIdentityRecorded(status ptahv1alpha1.PtahMigrationStatus, plan *ptahv1al
 		return fmt.Errorf("the run names fingerprint %q, not %q", run.PlanFingerprint, plan.Spec.Fingerprint)
 	case run.ArtifactDigest != plan.Spec.ArtifactDigest:
 		return fmt.Errorf("the run names artifact %q, not %q", run.ArtifactDigest, plan.Spec.ArtifactDigest)
+	case !equality.Semantic.DeepEqual(run.Source, plan.Spec.Source):
+		return fmt.Errorf("the run names source %+v, not %+v", run.Source, plan.Spec.Source)
 	case run.TargetIdentityDigest != plan.Spec.TargetIdentityDigest:
 		return fmt.Errorf("the run names database %q, not %q", run.TargetIdentityDigest, plan.Spec.TargetIdentityDigest)
+	case !run.TargetIdentityReported:
+		return errors.New("the record says the run did not report its database, and this run wrote a result")
 	case run.ExecutionBindingID != plan.Spec.ExecutionBindingID:
 		return fmt.Errorf("the run names execution binding %q, not %q", run.ExecutionBindingID, plan.Spec.ExecutionBindingID)
 	}
@@ -71,8 +79,10 @@ func runAllowedByPolicy(status ptahv1alpha1.PtahMigrationStatus) error {
 }
 
 // runVerifiedInSync is nil when the first reading after the run is recorded on it:
-// in sync, of the history status holds or an earlier one, and no earlier than the
-// run's end by the operator's own timestamps.
+// in sync, and of a history that holds what the run applied. Its time could not say
+// so: the operator stamps a reading when it harvests it, so one that read the
+// database before the run and was harvested after it dates after the run too. A
+// history read before the run cannot hold the versions the run went on to apply.
 func runVerifiedInSync(status ptahv1alpha1.PtahMigrationStatus) error {
 	run := status.LastRun
 	if run == nil || run.FinishedAt == nil || run.Verification == nil {
@@ -82,10 +92,32 @@ func runVerifiedInSync(status ptahv1alpha1.PtahMigrationStatus) error {
 	switch {
 	case verification.Result != ptahv1alpha1.MigrationRunVerifiedInSync:
 		return fmt.Errorf("the reading after the run found %q", verification.Result)
-	case verification.ObservedAt.Before(run.FinishedAt):
-		return fmt.Errorf("the reading is from %v, before the run ended at %v", verification.ObservedAt, run.FinishedAt)
 	case !operationIDForm.MatchString(verification.HistoryFingerprint):
 		return fmt.Errorf("the reading names history %q", verification.HistoryFingerprint)
+	case len(run.AppliedVersions) == 0:
+		return errors.New("the run records no versions applied, so nothing shows the reading followed it")
+	case slices.Max(run.AppliedVersions) > verification.CurrentVersion:
+		return fmt.Errorf("the reading stops at version %d, before version %d the run applied",
+			verification.CurrentVersion, slices.Max(run.AppliedVersions))
+	}
+	return nil
+}
+
+// runTargetNotReported is nil when status.lastRun says its run named no database:
+// the digest it holds is the planned one, marked as that, and no reading has been
+// taken as a statement about the run. Call it once a reading of that database has
+// landed, or a record with no reading on it says nothing.
+func runTargetNotReported(status ptahv1alpha1.PtahMigrationStatus) error {
+	run := status.LastRun
+	switch {
+	case run == nil:
+		return errors.New("there is no run")
+	case run.TargetIdentityReported:
+		return fmt.Errorf("the record says the run named database %q, and nothing it wrote was read", run.TargetIdentityDigest)
+	case !operationIDForm.MatchString(run.TargetIdentityDigest):
+		return fmt.Errorf("the record names planned database %q", run.TargetIdentityDigest)
+	case run.Verification != nil:
+		return fmt.Errorf("a reading verified a run that never said which database it reached: %+v", run.Verification)
 	}
 	return nil
 }
