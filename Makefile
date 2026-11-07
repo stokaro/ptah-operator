@@ -80,7 +80,13 @@ test-envtest:
 # daemon, named by DOCKER_CONTEXT, and fails rather than skips when it has none.
 # runner-harness-write regenerates the captures: a repin is that one command and
 # a reviewed diff. AGENTS.md says what the run holds.
-RUNNER_HARNESS_TEST = PTAH_REQUIRE_RUNNER_HARNESS=1 $(GO) test -count=1 -timeout=15m -parallel=8 -v -run '^TestRunnerAgainstThePinnedImage$$' ./test/runnerharness
+#
+# A run over SSH starts every container through a connection of its own. With 366
+# rows it took 22 minutes from a client at load 60 and more, against a few on
+# CI's own Docker, which names a shorter bound. A run that passes this one or is
+# killed leaves nothing behind: its janitor clears it.
+RUNNER_HARNESS_TIMEOUT ?= 60m
+RUNNER_HARNESS_TEST = PTAH_REQUIRE_RUNNER_HARNESS=1 $(GO) test -count=1 -timeout=$(RUNNER_HARNESS_TIMEOUT) -parallel=8 -v -run '^TestRunnerAgainstThePinnedImage$$' ./test/runnerharness
 
 runner-harness:
 	$(RUNNER_HARNESS_TEST)

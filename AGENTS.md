@@ -130,9 +130,11 @@ missing control plane fails it. A plain `go test ./...` without
 ## The runner harness
 
 `make runner-harness` runs the runner against the image `support/ptah.json` pins,
-without a cluster, in a few minutes. CI runs it once on every pull request and
-push to `master`, on the runner's own Docker; `DOCKER_CONTEXT` names the daemon
-anywhere else, and the variable has no default. It lives in `test/runnerharness`:
+without a cluster. CI runs it once on every pull request and push to `master`, on
+the runner's own Docker, in a few minutes; `DOCKER_CONTEXT` names the daemon
+anywhere else, and the variable has no default. Over SSH every container costs
+connections of its own, so a run from a loaded machine takes over twenty minutes
+and `RUNNER_HARNESS_TIMEOUT` is an hour unless set. It lives in `test/runnerharness`:
 
 - `Translate` turns the Job `internal/workload` builds for an operation into
   `docker run`: the user, the read-only root file system, the dropped capabilities,
@@ -161,6 +163,20 @@ has the procedure. `PTAH_REQUIRE_RUNNER_HARNESS=1`, which both targets set, make
 missing daemon or image a failure; a plain `go test ./...` skips the run and says
 why, and still holds the committed captures to the pin, the decoders and the
 declared set.
+
+A run removes what it made when it ends. A run that passes its timeout panics and
+a killed one stops where it stands, so neither runs a cleanup. Each run therefore
+starts a janitor: the test binary again, holding a pipe to the run, in a session
+of its own and adopted by init, so that killing the run's process group or its
+whole process tree leaves it running. If the pipe closes before the run says it
+cleared up, the janitor
+removes the run's containers, volumes and images and its local build directory.
+It keeps looking for as long as a docker client may live, since the clients a run
+started outlive it, and removes the run's network last. That network carries the
+`operator.ptah.run/runner-harness` label, whose value records the run and when it
+expires, and a later run on the same daemon clears any expired record it finds.
+Names start with `RUNNER_HARNESS_PREFIX`, or `ptah-runner-harness`, then a random
+part, so a run touches nothing of another run that is still alive.
 
 ## What a green master says
 

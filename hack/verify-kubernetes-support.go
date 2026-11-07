@@ -97,9 +97,13 @@ const (
 	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
 	ciRunnerHarnessTimeoutMinutes     = 20
-	ciLifecycleTimingsTimeoutMinutes  = 10
-	releaseQueueAPIMarginMinutes      = 5
-	releasePreflightOverheadMinutes   = 10
+	// ciRunnerHarnessGoTestTimeoutMinutes is the -timeout CI gives the harness.
+	// It stays inside the job's limit, so a stuck run prints its goroutines
+	// before the job is killed.
+	ciRunnerHarnessGoTestTimeoutMinutes = 15
+	ciLifecycleTimingsTimeoutMinutes    = 10
+	releaseQueueAPIMarginMinutes        = 5
+	releasePreflightOverheadMinutes     = 10
 	// The latest a CI run can end with every job at its limit, read off the
 	// needs in ci.yml. A lifecycle starts once the verification and the shared
 	// images are done, and the images wait for the support matrix. The gate
@@ -1463,8 +1467,9 @@ func verifyRunnerHarnessJob(path string, workflow workflowDocument) error {
 	if steps[3].If != "" || steps[3].Uses != "" || steps[3].Run != "make runner-harness" ||
 		steps[3].Shell != "bash" || steps[3].WorkingDirectory != "" || len(steps[3].With) != 0 ||
 		!equalStringMap(steps[3].Env, map[string]string{
-			"DOCKER_CONTEXT":     "default",
-			"RUNNER_HARNESS_OUT": "${{ runner.temp }}/runner-harness",
+			"DOCKER_CONTEXT":         "default",
+			"RUNNER_HARNESS_OUT":     "${{ runner.temp }}/runner-harness",
+			"RUNNER_HARNESS_TIMEOUT": fmt.Sprintf("%dm", ciRunnerHarnessGoTestTimeoutMinutes),
 		}) {
 		return fmt.Errorf("%s: %s must be the unconditional audited make runner-harness invocation on the runner's Docker", path, jobName)
 	}

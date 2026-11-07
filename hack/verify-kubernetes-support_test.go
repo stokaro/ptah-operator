@@ -592,6 +592,10 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "          DOCKER_CONTEXT: default\n",
 			new: "",
 		},
+		"runner harness with a bound past the job's limit": {
+			old: "          RUNNER_HARNESS_TIMEOUT: 15m\n",
+			new: "          RUNNER_HARNESS_TIMEOUT: 60m\n",
+		},
 		"runner harness without the captures of a failure": {
 			old: "        id: harness-captures\n        if: ${{ failure() }}\n",
 			new: "        id: harness-captures\n",

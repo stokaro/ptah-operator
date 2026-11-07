@@ -23,7 +23,8 @@ const (
 	// ImageVariable runs another executor image than the pin, to see what it
 	// breaks. It cannot write captures.
 	ImageVariable = "RUNNER_HARNESS_IMAGE"
-	// PrefixVariable names what the run creates. Unset, the name is random.
+	// PrefixVariable starts the name of everything the run creates, and a random
+	// part follows it. Unset, the names start with ptah-runner-harness.
 	PrefixVariable = "RUNNER_HARNESS_PREFIX"
 	// OutVariable keeps the fresh captures of a run in this directory.
 	OutVariable = "RUNNER_HARNESS_OUT"

@@ -19,6 +19,11 @@
 // values are volatile. Declared is the set of operations and commands the run is
 // counted against. Translate is the stand-in for the kubelet.
 //
+// A run removes what it made when it ends. One that passes its -timeout or is
+// killed cannot, so a second process it starts, the janitor, clears it from
+// outside. RunRecord is what a later run on the same daemon reads to clear a run
+// whose janitor could not finish.
+//
 // It does not replace kind. Admission, RBAC, the Job and Pod lifecycle,
 // NetworkPolicy and durable result delivery are proven there.
 package runnerharness
