@@ -28,7 +28,7 @@ func TestInlineResultRequiresProtocolAndLiveAdmission(t *testing.T) {
 			}
 			receipt, err := publishing.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload))
 			if fault != "none" {
-				requireDenied(t, err, controllerWriteWebhook, "immutable operation binding")
+				requireDenied(t, err, controllerWriteWebhook, "creation is not authorized for its operation")
 				if receipt != (resultstore.Receipt{}) {
 					t.Fatal("refused publication returned a receipt")
 				}

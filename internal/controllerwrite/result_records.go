@@ -89,10 +89,10 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 		// Foreground retirement may be the only persistent clock available in
 		// a terminating namespace. Even the garbage collector must retain this
 		// API finalizer until the full window and current pins permit deletion.
+		// What this update asks for is the deletion, so that is what it is told.
 		if err == nil && !old.DeletionTimestamp.IsZero() && len(old.Finalizers) == 1 &&
 			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 && v.ResultCleanup != nil {
-			err = v.ResultCleanup.AuthorizeDelete(ctx, old)
-			if _, isTime := resultretention.WindowEnd(err); isTime {
+			if err := v.ResultCleanup.AuthorizeDelete(ctx, old); err != nil {
 				return retentionDenial(old, err)
 			}
 		}
@@ -117,22 +117,31 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 				v.ResultCleanup.AuthorizeForegroundRetirement(ctx, old) == nil {
 				err = nil
 			}
-			if _, isTime := resultretention.WindowEnd(err); isTime || (err != nil && old.Spec.Type != "credential") {
-				return retentionDenial(old, err)
-			}
 		} else if old.Spec.Type == "credential" {
 			err = resultcredentials.ValidateRecordDelete(ctx, v.Reader, old)
 		} else {
 			return retentionDenial(old, nil)
 		}
+		if err != nil {
+			return retentionDenial(old, err)
+		}
 	default:
 		return denyf("unexpected result record operation")
 	}
 	if err != nil {
-		// Never include credential material or parser diagnostics in a response.
-		return denyf("result record write violates its immutable operation binding")
+		return resultWriteDenial("result record", req.Operation)
 	}
 	return nil
+}
+
+// resultWriteDenial words a refused create or update by what was refused. The
+// reason stays out of the response: it can hold credential material or a parser
+// diagnostic.
+func resultWriteDenial(subject string, operation admissionv1.Operation) error {
+	if operation == admissionv1.Create {
+		return denyf("%s creation is not authorized for its operation", subject)
+	}
+	return denyf("%s update violates its immutable operation binding", subject)
 }
 
 // retentionDenial words a refusal by the retention policy. Only a refusal about

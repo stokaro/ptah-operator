@@ -31,8 +31,10 @@ executor sends to PostgreSQL has to expect reads of `pg_catalog` in place of
 `information_schema`, and `kubectl ptah` and Ptah Console have to move with the
 operator. A script that matches the whole text
 of `result publication retention has not authorized deletion` has to match its
-start. A script that reads `status.target.inventory` has to expect a kind that
-is not a stem. Ptah Console up to 0.3.x misstates such a kind until
+start, and one that matches `immutable operation binding` to find a refused
+deletion has to match that text too: a credential record now says it, and that
+sentence is left to an update. A script that reads `status.target.inventory` has
+to expect a kind that is not a stem. Ptah Console up to 0.3.x misstates such a kind until
 [ptah-console#166](https://github.com/stokaro/ptah-console/issues/166) is fixed:
 it says a dropped extension's counts and findings disagree, and shows a changed
 policy at 100% coverage with its finding under other findings. A migration Apply

@@ -66,13 +66,16 @@ func (v *Validator) validateResultCredential(ctx context.Context, req admissionv
 		if old.UID == "" {
 			return denyf("result credential deletion has no persisted Secret identity")
 		}
-		err = resultcredentials.ValidateDelete(ctx, v.Reader, old)
+		if err := resultcredentials.ValidateDelete(ctx, v.Reader, old); err != nil {
+			// A namespace's deletion quotes this. The reason stays out of it, as
+			// resultWriteDenial says.
+			return denyf("result credential retention has not authorized deletion")
+		}
 	default:
 		return denyf("unexpected result credential operation")
 	}
 	if err != nil {
-		// Never include credential material or parser diagnostics in a response.
-		return denyf("result credential write violates its immutable operation binding")
+		return resultWriteDenial("result credential", req.Operation)
 	}
 	return nil
 }
