@@ -28,6 +28,16 @@ func stdinIsTerminal() bool {
 // connector opens the cluster for a command. Tests replace it.
 var connector = connect
 
+// fingerprintCommand names the command that shows a plan's fingerprint. kubectl
+// ptah plan reads a schema's plan and no other, and the text a migration prints
+// carries no fingerprint.
+func fingerprintCommand(family approve.Family, resource string) string {
+	if family == approve.Migration {
+		return fmt.Sprintf("kubectl ptah migration %s -o json shows it as plan.fingerprint", resource)
+	}
+	return fmt.Sprintf("kubectl ptah plan %s shows it", resource)
+}
+
 func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, interactive bool, stdout, stderr io.Writer) int {
 	flags := pflag.NewFlagSet("kubectl ptah approve", pflag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -123,7 +133,7 @@ func approveCommand(ctx context.Context, arguments []string, stdin io.Reader, in
 			return exitNotDone
 		}
 	} else if !interactive {
-		fmt.Fprintf(stderr, "kubectl-ptah: approve asks for a decision on a terminal. Without one, pass --plan-fingerprint with the fingerprint of the plan you reviewed (kubectl ptah plan %s shows it).\n", resource)
+		fmt.Fprintf(stderr, "kubectl-ptah: approve asks for a decision on a terminal. Without one, pass --plan-fingerprint with the fingerprint of the plan you reviewed (%s).\n", fingerprintCommand(family, resource))
 		return exitUsage
 	}
 	if !review.Open {

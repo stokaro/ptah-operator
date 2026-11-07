@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -377,6 +378,59 @@ func TestApproveWithoutATerminalNeedsTheReviewedFingerprint(t *testing.T) {
 	if code != exitOK || len(api.created) != 1 || strings.Contains(stdout, "ALTER TABLE") {
 		t.Fatalf("approve with the fingerprint = %d, %d creates, stdout %q, stderr %q", code, len(api.created), stdout, stderr)
 	}
+}
+
+// Without a terminal, approve says where the fingerprint is. Each family's row
+// runs the command the message names against the same plan, and finds the
+// fingerprint there: kubectl ptah plan reads a schema's plan and no other.
+func TestApproveWithoutATerminalNamesACommandThatShowsTheFingerprint(t *testing.T) {
+	t.Run("schema", func(t *testing.T) {
+		api, fingerprint := approvable(t, nil)
+
+		code, _, stderr := runApprove(t, api, "", false, "schema/storefront")
+
+		if code != exitUsage || !strings.Contains(stderr, "(kubectl ptah plan storefront shows it)") {
+			t.Fatalf("approve = %d, stderr %q", code, stderr)
+		}
+		if code, stdout, stderr := runPlan(t, api.Client, "storefront"); code != exitOK || !strings.Contains(stdout, fingerprint) {
+			t.Fatalf("the command it names = %d, stdout %q, stderr %q; want the fingerprint %s", code, stdout, stderr, fingerprint)
+		}
+	})
+	t.Run("migration", func(t *testing.T) {
+		server := newFakeAPIServer(t)
+		stored := server.namespaced["ptahmigrationplans/ptah-mplan-orders"].(*operatorv1alpha1.PtahMigrationPlan)
+		stored.Spec.ContractVersion = 1
+		named := server.namespaced["ptahmigrations/orders"].(*operatorv1alpha1.PtahMigration)
+		api := &admitting{Client: planreadtest.NewClient(t, named.DeepCopy(), stored.DeepCopy())}
+
+		code, _, stderr := runApproveWith(t, api, "application", strings.NewReader(""), false, "migration/orders")
+
+		const names = "(kubectl ptah migration orders -o json shows it as plan.fingerprint)"
+		if code != exitUsage || !strings.Contains(stderr, names) || strings.Contains(stderr, "kubectl ptah plan") {
+			t.Fatalf("approve = %d, stderr %q; want it to name %s", code, stderr, names)
+		}
+
+		if code, stdout, _ := runPlan(t, api.Client, "orders"); code != exitAbsent || stdout != "" {
+			t.Fatalf("kubectl ptah plan on a migration = %d, stdout %q; want it to have nothing to say", code, stdout)
+		}
+
+		var stdout, viewErr bytes.Buffer
+		arguments := []string{"migration", "orders", "-o", "json", "-n", "application", "--kubeconfig", writeKubeconfig(t, server.URL)}
+		if status := run(context.Background(), arguments, &stdout, &viewErr); status != exitOK {
+			t.Fatalf("the command it names = %d, stderr %q", status, viewErr.String())
+		}
+		var view struct {
+			Plan struct {
+				Fingerprint string `json:"fingerprint"`
+			} `json:"plan"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
+			t.Fatalf("the command it names printed %q: %v", stdout.String(), err)
+		}
+		if view.Plan.Fingerprint != stored.Spec.Fingerprint {
+			t.Fatalf("plan.fingerprint = %q, want %q", view.Plan.Fingerprint, stored.Spec.Fingerprint)
+		}
+	})
 }
 
 func TestApproveRefusesAFingerprintThatIsNotTheCurrentPlans(t *testing.T) {
