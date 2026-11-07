@@ -1031,13 +1031,16 @@ func runVerify(ctx context.Context, config Config, environment []string, inputs 
 		setResultError(&result, "child_exit", fmt.Errorf("ptah exited with code %d", verifyOutcome.exitCode), redactor, config.Diagnostics)
 		return result
 	}
-	if len(verifyOutcome.stderr.bytes()) != 0 {
+	report, decodeErr := dataplane.DecodeVerify(verifyOutcome.stdout.bytes())
+	// Ptah's refusal also writes its findings to standard error and exits 2.
+	// Anything else on standard error is not a verdict, and none of this text
+	// leaves the runner: the frame carries the requirement codes alone.
+	if stderr := verifyOutcome.stderr.bytes(); len(stderr) != 0 &&
+		(verifyOutcome.exitCode != 2 || string(stderr) != dataplane.VerifyRefusalDiagnostics(report)) {
 		setResultError(&result, "invalid_verification_output", errors.New("verification command emitted unexpected diagnostics"), redactor, config.Diagnostics)
 		return result
 	}
-
-	report, err := dataplane.DecodeVerify(verifyOutcome.stdout.bytes())
-	if err != nil {
+	if decodeErr != nil {
 		setResultError(&result, "invalid_verification_output", errors.New("verification output failed strict validation"), redactor, config.Diagnostics)
 		return result
 	}

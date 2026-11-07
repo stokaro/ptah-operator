@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migration-verify-refused:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migration-verify-refused@sha256:a1ff1bd38ad699e28dbd87ba09f2346b3ca6ff9b3602fefff3c690bf0afecebb",
+  "digest": "sha256:a1ff1bd38ad699e28dbd87ba09f2346b3ca6ff9b3602fefff3c690bf0afecebb",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}

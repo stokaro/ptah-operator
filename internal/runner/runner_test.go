@@ -2658,7 +2658,8 @@ func TestVerifyUnionsRequestedDigestPinRefusalWithNativeFindings(t *testing.T) {
 		`{"reference":%q,"digest":%q,"satisfied":["require_digest_pin"],"findings":[{"requirement":"require_signature","detail":"no signature is attached"}]}`,
 		resolved, digest,
 	)
-	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 2}}}
+	diagnostics := fmt.Sprintf("error: the artifact does not satisfy the verification policy (%s)\n  require_signature: no signature is attached\n", resolved)
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, stderr: diagnostics, exitCode: 2}}}
 	result := Run(context.Background(), Config{
 		Operation: OperationVerify,
 		Environment: withRunnerProtocol([]string{
@@ -2675,6 +2676,233 @@ func TestVerifyUnionsRequestedDigestPinRefusalWithNativeFindings(t *testing.T) {
 		!reflect.DeepEqual(result.VerificationRequirements, []string{"require_digest_pin", "require_signature"}) ||
 		result.ObservedArtifactType != "" || result.Stdout != "" || len(executor.calls) != 1 {
 		t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
+	}
+}
+
+// capturedVerify is what the pinned Ptah did for one harness row: its report,
+// what it wrote to standard error and its exit status. The capture masks the
+// artifact's digest on standard error, and the report names it.
+type capturedVerify struct {
+	stdout, stderr string
+	exit           int
+	report         dataplane.VerifyReport
+}
+
+func readCapturedVerify(t *testing.T, row string) capturedVerify {
+	t.Helper()
+	testdata := filepath.Join("..", "dataplane", "testdata")
+	data, err := os.ReadFile(filepath.Join(testdata, "runner-harness", "transcript.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transcript []struct {
+		Name     string `json:"name"`
+		Children []struct {
+			Exit   int    `json:"exit"`
+			Stderr string `json:"stderr"`
+			Stdout string `json:"stdout"`
+		} `json:"children"`
+	}
+	if err := json.Unmarshal(data, &transcript); err != nil {
+		t.Fatal(err)
+	}
+	for _, each := range transcript {
+		if each.Name != row {
+			continue
+		}
+		if len(each.Children) != 1 {
+			t.Fatalf("%s ran %d children, want the one verification", row, len(each.Children))
+		}
+		child := each.Children[0]
+		stdout, err := os.ReadFile(filepath.Join(testdata, child.Stdout))
+		if err != nil {
+			t.Fatal(err)
+		}
+		report, err := dataplane.DecodeVerify(stdout)
+		if err != nil {
+			t.Fatalf("%s: the captured report does not decode: %v", row, err)
+		}
+		return capturedVerify{
+			stdout: string(stdout), exit: child.Exit, report: report,
+			stderr: strings.ReplaceAll(child.Stderr, "<digest>", report.Digest),
+		}
+	}
+	t.Fatalf("the transcript has no row %s", row)
+	return capturedVerify{}
+}
+
+func runCapturedVerify(t *testing.T, captured capturedVerify, stdout, stderr string, exit int, limit int64) (Result, string) {
+	t.Helper()
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics bytes.Buffer
+	result := Run(context.Background(), Config{
+		Operation: OperationVerify, MaxResultBytes: limit, Diagnostics: &diagnostics,
+		Environment: withRunnerProtocol([]string{
+			envOperationID + "=verify-captured",
+			envRequestedReference + "=" + captured.report.Reference,
+			envResolvedReference + "=" + captured.report.Reference,
+			envVerificationPolicy + "=" + policyPath,
+			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
+		}),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: stdout, stderr: stderr, exitCode: exit}}},
+	})
+	return result, diagnostics.String()
+}
+
+// The refusal the pinned image wrote reaches the frame as a refusal, with the
+// requirements it named. Its words reach neither the frame nor the log.
+func TestVerifyTakesTheRefusalThePinnedPtahWrote(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		row  string
+		want []string
+	}{
+		{"schema-verify-refused/verify-other-type", []string{"artifact_types"}},
+		{"schema-verify-refused/verify-two-findings", []string{"artifact_types", "require_signature"}},
+		{"migration-verify-refused/verify-other-type", []string{"artifact_types"}},
+	} {
+		t.Run(test.row, func(t *testing.T) {
+			t.Parallel()
+			captured := readCapturedVerify(t, test.row)
+			if captured.exit != 2 || captured.stderr == "" {
+				t.Fatalf("the capture is not a refusal: exit %d, stderr %q", captured.exit, captured.stderr)
+			}
+
+			result, diagnostics := runCapturedVerify(t, captured, captured.stdout, captured.stderr, captured.exit, DefaultMaxResultBytes)
+
+			if result.Error == nil || result.Error.Code != "verification_refused" || result.ChildExitCode != 2 ||
+				result.ResolvedDigest != captured.report.Digest || result.VerificationPolicyDigest == "" ||
+				!reflect.DeepEqual(result.VerificationRequirements, test.want) || result.Stdout != "" {
+				t.Fatalf("Run() = %#v, want a refusal naming %v", result, test.want)
+			}
+			if _, err := MarshalFrame(result); err != nil {
+				t.Fatalf("the manager's protocol refuses the frame: %v", err)
+			}
+			encoded, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, finding := range captured.report.Findings {
+				if strings.Contains(string(encoded), finding.Detail) || strings.Contains(diagnostics, finding.Detail) {
+					t.Fatalf("the finding %q left the runner: result %s, diagnostics %q", finding.Detail, encoded, diagnostics)
+				}
+			}
+		})
+	}
+}
+
+// Each row is the captured refusal with one thing changed, and none of them is a
+// refusal: only the report's own findings on standard error, at exit status 2,
+// beside a report of this artifact, are read as one.
+func TestVerifyRefusesWhatIsNotTheRefusalPtahWrites(t *testing.T) {
+	t.Parallel()
+	captured := readCapturedVerify(t, "schema-verify-refused/verify-other-type")
+	// A report that accepts, and the text a refusal of it would have.
+	accepted := dataplane.VerifyReport{Reference: captured.report.Reference, Digest: captured.report.Digest}
+	acceptedStdout := fmt.Sprintf(`{"reference":%q,"digest":%q,"satisfied":[],"findings":[]}`, accepted.Reference, accepted.Digest)
+
+	otherDigest := "sha256:" + strings.Repeat("b", 64)
+	otherStdout := strings.ReplaceAll(captured.stdout, captured.report.Digest, otherDigest)
+	other := captured.report
+	other.Reference, other.Digest = strings.ReplaceAll(other.Reference, captured.report.Digest, otherDigest), otherDigest
+
+	for _, test := range []struct {
+		name        string
+		stdout      string
+		stderr      string
+		exit        int
+		limit       int64
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name: "a line more on standard error", stdout: captured.stdout, stderr: captured.stderr + "warning: something else\n", exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "a line before the refusal", stdout: captured.stdout, stderr: "warning: something else\n" + captured.stderr, exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "the sentence without the findings", stdout: captured.stdout,
+			stderr: dataplane.VerifyRefusalDiagnostics(dataplane.VerifyReport{Reference: captured.report.Reference}), exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "another finding than the report's", stdout: captured.stdout,
+			stderr: strings.ReplaceAll(captured.stderr, "artifact_types", "require_signature"), exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "another reference than the report's", stdout: captured.stdout,
+			stderr: strings.ReplaceAll(captured.stderr, captured.report.Digest, otherDigest), exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "a failure with no report", stdout: "", stderr: "error: read the verification policy: unsupported version 99\n", exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "a refusal's words with no report", stdout: "", stderr: captured.stderr, exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "a malformed report", stdout: `{"findings":[]}`, stderr: captured.stderr, exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "the refusal at exit status 0", stdout: captured.stdout, stderr: captured.stderr, exit: 0,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "a diagnostic beside an accepting report", stdout: acceptedStdout, stderr: "warning: something else\n", exit: 0,
+			wantCode: "invalid_verification_output", wantMessage: "unexpected diagnostics",
+		},
+		{
+			name: "findings and exit status 0, with nothing on standard error", stdout: captured.stdout, exit: 0,
+			wantCode: "invalid_verification_output", wantMessage: "contains policy findings",
+		},
+		{
+			name: "no findings at exit status 2, in the text such a report makes", stdout: acceptedStdout,
+			stderr: dataplane.VerifyRefusalDiagnostics(accepted), exit: 2,
+			wantCode: "invalid_verification_output", wantMessage: "contains no policy findings",
+		},
+		{
+			name: "a refusal of another artifact", stdout: otherStdout,
+			stderr: dataplane.VerifyRefusalDiagnostics(other), exit: 2,
+			wantCode: "stale_source", wantMessage: "no longer matches",
+		},
+		{
+			name: "an exit status a refusal does not have", stdout: captured.stdout, stderr: captured.stderr, exit: 1,
+			wantCode: "child_exit", wantMessage: "exited with code 1",
+		},
+		{
+			name: "a report cut at the limit", stdout: captured.stdout, stderr: captured.stderr, exit: 2, limit: 16,
+			wantCode: "output_truncated", wantMessage: "exceeded",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			limit := test.limit
+			if limit == 0 {
+				limit = DefaultMaxResultBytes
+			}
+
+			result, diagnostics := runCapturedVerify(t, captured, test.stdout, test.stderr, test.exit, limit)
+
+			if result.Error == nil || result.Error.Code != test.wantCode || !strings.Contains(result.Error.Message, test.wantMessage) {
+				t.Fatalf("Run() error = %+v, want %s naming %q", result.Error, test.wantCode, test.wantMessage)
+			}
+			if len(result.VerificationRequirements) != 0 {
+				t.Fatalf("a result that is no refusal names requirements: %v", result.VerificationRequirements)
+			}
+			if test.stderr != "" && strings.Contains(diagnostics, strings.TrimSpace(test.stderr)) {
+				t.Fatalf("standard error reached the log: %q", diagnostics)
+			}
+		})
 	}
 }
 
@@ -2718,6 +2946,8 @@ func TestNativeResolveAndVerifyTextNeverCrossesTheFrameBoundary(t *testing.T) {
 		`{"reference":%q,"digest":%q,"satisfied":[],"findings":[{"requirement":"require_signature","detail":%q}]}`,
 		resolved, digest, privateMarker,
 	)
+	refusalDiagnostics := fmt.Sprintf("error: the artifact does not satisfy the verification policy (%s)\n  require_signature: %s\n",
+		resolved, privateMarker)
 
 	tests := map[string]struct {
 		operation   Operation
@@ -2758,6 +2988,11 @@ func TestNativeResolveAndVerifyTextNeverCrossesTheFrameBoundary(t *testing.T) {
 		"verification refusal detail": {
 			operation: OperationVerify,
 			responses: []scriptedResponse{{stdout: refusal, exitCode: 2}},
+			wantError: "verification_refused", wantRefusal: true,
+		},
+		"verification refusal detail on standard error": {
+			operation: OperationVerify,
+			responses: []scriptedResponse{{stdout: refusal, stderr: refusalDiagnostics, exitCode: 2}},
 			wantError: "verification_refused", wantRefusal: true,
 		},
 	}

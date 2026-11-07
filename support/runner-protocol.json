@@ -302,6 +302,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:fe7cb2ef96fb1804dfd06bdfa5507df065a0d265c9abb4702fc55c5a9cb96d27",
       "reason": "Add the condition reason WaitingForDatabaseLock to the API package, which the runner imports for its types (#822). The manager sets it on a migration Apply that lost the realm Lease. The runner neither reads nor writes conditions, so what it accepts, enforces and returns is unchanged, a manager of any release reads its output as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a2d04b7f28e242576fc68d7c8fe1869551ad265977c3ccfa3808f9e4559c944d",
+      "reason": "Report Ptah's own policy refusal as a refusal (#806). `ptah oci verify` writes its report, the same findings on standard error, and exits 2, and the runner read that text as invalid_verification_output before it read the report. It now reads the report first and accepts standard error only when it is exactly what the report makes, at exit status 2. Everything else on standard error keeps that code and that message, and the text still reaches no frame or log. The frame this produces is one protocol 1 has always defined: verification_refused, childExitCode 2 and sorted requirement codes, which every manager of this protocol parses. No code, field, argument or retry limit changes, no refusal becomes an acceptance, and a plan or approval binds nothing a Verify refusal writes. Protocol 1 stays."
     }
   ]
 }

@@ -88,6 +88,13 @@ artifact_types:
   - application/vnd.stokaro.ptah.migrations.v1
 ```
 
+An artifact the policy refuses stops the migration at `Blocked`, before it reads
+the database: `ArtifactVerified` is `False` with the reason `PolicyRefused`, its
+message names each requirement the artifact did not meet, and an
+`ArtifactVerificationRefused` Event says the same. No plan outlives the refusal.
+The operator reads again from the artifact reference at `spec.interval`, so a new
+artifact or a policy edit is noticed then.
+
 A policy that also listed `application/vnd.stokaro.ptah.schema.v1` would let a
 schema artifact stand in for a migration directory at the same reference, so
 give a migration its own policy rather than reusing the schema one.

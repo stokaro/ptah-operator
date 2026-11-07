@@ -61,6 +61,7 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 		}
 		d.assertAuthenticatedHTTPSCustomCA(digestV1)
 		d.assertRequestedDigestPinRefusal(reference, digestV1, engine, secret)
+		d.assertNativePolicyRefusal(reference, digestV1, engine, secret)
 	}
 	leases := d.checkpointCoordinationLeases()
 	resource := schemaResource{name: schema, engine: engine, secret: secret, reference: reference, coordinationKey: key}

@@ -364,6 +364,24 @@ type PlanRowSet struct {
 	Columns []string `json:"columns"`
 }
 
+// VerifyRefusalDiagnostics is what `ptah oci verify` writes to standard error
+// when the policy refuses an artifact: the report's own findings, as one
+// sentence and a line for each, after the report on standard output and before
+// exit status 2. The harness row schema-verify-refused/verify-other-type holds
+// this text to the pinned image.
+//
+// The runner compares a verification's standard error with this and nothing
+// looser, so a line the report does not hold is not read as a refusal.
+func VerifyRefusalDiagnostics(report VerifyReport) string {
+	var text strings.Builder
+	fmt.Fprintf(&text, "error: the artifact does not satisfy the verification policy (%s)", report.Reference)
+	for _, finding := range report.Findings {
+		fmt.Fprintf(&text, "\n  %s: %s", finding.Requirement, finding.Detail)
+	}
+	text.WriteByte('\n')
+	return text.String()
+}
+
 func DecodeResolve(data []byte) (ResolveReport, error) {
 	var report ResolveReport
 	if err := decodeJSON(data, &report, false); err != nil {

@@ -916,6 +916,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s Job failed", operation.Type))
 	}
 	if result.Error != nil {
+		if operation.Type == operatorv1alpha1.MigrationOperationVerify && result.Error.Code == verificationRefusedCode {
+			return r.refuseMigrationArtifact(ctx, migration, job, result)
+		}
 		return r.retryMigrationOperation(ctx, migration, job,
 			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
 	}
@@ -1176,6 +1179,56 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			return ctrl.Result{}, err
 		}
 	}
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// refuseMigrationArtifact records an artifact its verification policy refused.
+// Another attempt reads the same answer from the same artifact and policy, so
+// the resource stops at Blocked with the requirements the policy named, and
+// starts the read-only chain again from resolution at its interval, when a moved
+// tag or a changed policy can give another. No plan outlives the refusal.
+//
+// The harvest compared the claim's inputs a moment ago, so a policy read here
+// that differs from the result's digest is a policy that just moved, and the
+// claim's retry reads it.
+func (r *MigrationReconciler) refuseMigrationArtifact(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	result runner.Result,
+) (ctrl.Result, error) {
+	binding, err := policy.ConfigMapBinding(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom)
+	if err != nil || migration.Status.Artifact == nil ||
+		!verificationRefusalHolds(result, migration.Status.Artifact.Digest, binding.Digest) {
+		return r.retryMigrationOperation(ctx, migration, job, errVerificationRefusalEvidence)
+	}
+	if err := r.markJobHarvested(ctx, job); err != nil {
+		return ctrl.Result{}, err
+	}
+	operation := migration.Status.ActiveOperation
+	before := migration.DeepCopy()
+	next := cycleDeadline(migration.Status.NextReconciliationTime, r.now(), migrationInterval(migration))
+	migration.Status.NextReconciliationTime = &next
+	migration.Status.ObservedGeneration = migration.Generation
+	migration.Status.Plan = nil
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+	message := bounded(fmt.Sprintf("Verification policy refused the artifact with %d finding(s): %s",
+		len(result.VerificationRequirements), strings.Join(result.VerificationRequirements, ", ")), 512)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonPolicyRefused, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonPolicyRefused, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonPolicyRefused, "Artifact verification policy must be satisfied before database access")
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonPolicyRefused, "Nothing runs while the verification policy refuses the artifact")
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonPolicyRefused, "No plan may be used for an artifact refused by policy")
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
+	r.event(migration, corev1.EventTypeWarning, "ArtifactVerificationRefused", "%s", message)
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 

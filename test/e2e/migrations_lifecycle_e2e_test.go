@@ -85,6 +85,7 @@ func (m *migrationRun) engineMigrations() {
 	m.isolatedNodeProof()
 	m.unknownLayerProof()
 	m.unreadableOCIFiles()
+	m.nativePolicyRefusalProof()
 	m.egressPolicyProof()
 	m.retargetBeforeDispatchProof()
 	m.rebuildDrill()

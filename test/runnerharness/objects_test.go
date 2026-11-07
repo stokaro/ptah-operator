@@ -510,13 +510,17 @@ func (m *migrationRun) resolve(name string) rowOutcome {
 	return outcome
 }
 
-func (m *migrationRun) verify(name string, policy []byte) rowOutcome {
+func (m *migrationRun) verify(name string, policy []byte, adjust ...func(*rowSpec)) rowOutcome {
 	m.t.Helper()
 	m.policy = policy
 	operation := m.operation(m.family+"/"+name, operatorv1alpha1.MigrationOperationVerify)
 	operation.Source = m.migration.Status.Artifact.DeepCopy()
 	job := m.build(operation, nil)
-	return m.l.runRow(m.t, m.row(name, runner.OperationVerify, job))
+	row := m.row(name, runner.OperationVerify, job)
+	for _, change := range adjust {
+		change(&row)
+	}
+	return m.l.runRow(m.t, row)
 }
 
 func (m *migrationRun) reads(row string, kind operatorv1alpha1.MigrationOperationType) operatorv1alpha1.MigrationOperationStatus {

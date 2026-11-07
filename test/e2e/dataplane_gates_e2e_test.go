@@ -13,6 +13,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -298,6 +299,58 @@ func (d *dataPlane) assertRequestedDigestPinRefusal(reference, digest, engine, s
 		reference, resolved)
 	d.suspend(schema, true)
 	d.waitForSchema(schema, "the digest-pin refusal fixture to suspend before its refresh interval",
+		func(s *ptahv1alpha1.PtahSchema) bool {
+			return s.Status.Phase == ptahv1alpha1.PhaseSuspended && s.Status.ActiveOperation == nil
+		})
+}
+
+// assertNativePolicyRefusal creates a schema under a policy Ptah itself refuses
+// the artifact by: its report, its findings on standard error, exit status 2. The
+// refusal has to read as the policy's, with the requirement it names, and
+// nothing reaches the database: one Resolve, one Verify, no Observe, Plan or
+// Apply.
+func (d *dataPlane) assertNativePolicyRefusal(reference, digest, engine, secret string) {
+	d.t.Helper()
+	const schema, key, policyName = "e2e-native-policy-refusal", "e2e/native-policy/refusal", "e2e-native-refusal-verification-policy"
+	policy, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", otherTypePolicyFile))
+	d.check(err, "read the verification policy Ptah refuses by")
+	d.mustCreate(map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap", "immutable": true,
+		"metadata": map[string]any{"namespace": d.in.TestNamespace, "name": policyName},
+		"data":     map[string]any{"policy.yaml": string(policy)},
+	})
+
+	d.logf("checking Ptah's own refusal of an artifact")
+	before := d.checkpointJobs(schema, "")
+	d.createSchemaResource(schemaResource{name: schema, engine: engine, secret: secret, reference: reference, coordinationKey: key, policy: policyName})
+	refused := d.waitForSchema(schema, "the artifact to be refused by Ptah's own verification", func(s *ptahv1alpha1.PtahSchema) bool {
+		return nativelyRefusedSchema(s) == nil
+	})
+	after := d.checkpointJobs(schema, "")
+	d.assertOneJobBetween(schema, "resolve", before, after)
+	d.assertOneJobBetween(schema, "verify", before, after)
+	for _, operation := range []string{"observe", "plan", "apply"} {
+		d.assertNoJobBetween(schema, operation, before, after)
+	}
+	verifyResult := d.captureOneNewJobResult(schema, "verify", before, &after)
+	if err := nativeRefusalResult(verifyResult, digest, sha256Digest(policy)); err != nil {
+		d.fatalf("%s did not carry Ptah's refusal through the frame: %v", schema, err)
+	}
+	var last error
+	deadline := time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		events := &corev1.EventList{}
+		d.mustList(events)
+		if last = nativeRefusalEvent(events.Items, refused.UID); last == nil {
+			break
+		}
+		d.sleep(time.Second)
+	}
+	if last != nil {
+		d.fatalf("%s has no Event naming what the policy refused: %v", schema, last)
+	}
+	d.suspend(schema, true)
+	d.waitForSchema(schema, "the native refusal fixture to suspend before its refresh interval",
 		func(s *ptahv1alpha1.PtahSchema) bool {
 			return s.Status.Phase == ptahv1alpha1.PhaseSuspended && s.Status.ActiveOperation == nil
 		})

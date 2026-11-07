@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -141,6 +142,198 @@ func TestMigrationVerifyRefusesAnArtifactOfAnotherType(t *testing.T) {
 	}
 	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != 2 {
 		t.Fatalf("active operation after the refusal = %#v", actual.Status.ActiveOperation)
+	}
+}
+
+// verifyingMigration is a migration whose Verify Job ended with result, and the
+// reconciler that will read it.
+func verifyingMigration(t *testing.T, result runner.Result) (*operatorv1alpha1.PtahMigration, *MigrationReconciler, client.WithWatch, *batchv1.Job) {
+	t.Helper()
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseVerifying
+	migration.Status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-previous", UID: "previous-plan-uid"}
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationVerify)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	result.ProtocolVersion, result.Operation, result.OperationID = runner.ProtocolVersion, runner.OperationVerify, operation.ID
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: migrationFrame(t, result)}, migration, job, pod, verificationPolicyConfigMap())
+	return migration, reconciler, api, job
+}
+
+func migrationVerificationPolicyDigest() string {
+	return fingerprint.DigestBytes([]byte(verificationPolicyConfigMap().Data["policy.yaml"]))
+}
+
+// A policy's refusal is an answer: the migration stops at Blocked with the
+// requirements it named, and the next read of it waits for the interval. Without
+// this a refused artifact retries as a failed read, and loses what was refused.
+func TestMigrationVerificationRefusalBlocksWithoutARetry(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		childExit    int
+		requirements []string
+	}{
+		{name: "Ptah's refusal", childExit: 2, requirements: []string{"artifact_types", "require_signature"}},
+		{name: "the runner's refusal of a requested tag", childExit: 0, requirements: []string{"require_digest_pin"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration, reconciler, api, job := verifyingMigration(t, runner.Result{
+				ChildExitCode: test.childExit, ResolvedDigest: testDigest,
+				VerificationRequirements: test.requirements, VerificationPolicyDigest: migrationVerificationPolicyDigest(),
+				Error: &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+			})
+			recorder := record.NewFakeRecorder(16)
+			reconciler.Recorder = recorder
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+
+			actual := readMigration(t, api, migration)
+			if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked || actual.Status.ActiveOperation != nil ||
+				actual.Status.Plan != nil || actual.Status.ObservedGeneration != migration.Generation {
+				t.Fatalf("status after the refusal: phase %s, claim %#v, plan %#v", actual.Status.Phase, actual.Status.ActiveOperation, actual.Status.Plan)
+			}
+			for _, want := range []struct {
+				conditionType string
+				status        metav1.ConditionStatus
+			}{
+				{operatorv1alpha1.ConditionMigrationArtifactVerified, metav1.ConditionFalse},
+				{operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue},
+				{operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse},
+				{operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse},
+				{operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse},
+			} {
+				condition := meta.FindStatusCondition(actual.Status.Conditions, want.conditionType)
+				if condition == nil || condition.Status != want.status || condition.Reason != string(operatorv1alpha1.ReasonPolicyRefused) {
+					t.Fatalf("%s = %#v, want %s for PolicyRefused", want.conditionType, condition, want.status)
+				}
+			}
+			verified := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+			event := findEvent(recorder, "Warning ArtifactVerificationRefused")
+			for _, requirement := range test.requirements {
+				if !strings.Contains(verified.Message, requirement) || !strings.Contains(event, requirement) {
+					t.Fatalf("the condition %q or the Event %q does not name %s", verified.Message, event, requirement)
+				}
+			}
+			harvested := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), harvested); err != nil {
+				t.Fatal(err)
+			}
+			if harvested.Spec.TTLSecondsAfterFinished == nil {
+				t.Fatal("the Job that refused the artifact was not marked for cleanup")
+			}
+
+			// The next read starts at the interval, not at the failure retry.
+			if actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.After(reconciler.now()) {
+				t.Fatalf("next read = %v, want one after %v", actual.Status.NextReconciliationTime, reconciler.now())
+			}
+			result, err := reconciler.Reconcile(context.Background(), migrationRequest(migration))
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if result.RequeueAfter <= statusPatchRequeue {
+				t.Fatalf("a blocked refusal asked for another pass after %s", result.RequeueAfter)
+			}
+			if again := readMigration(t, api, migration); again.Status.ActiveOperation != nil {
+				t.Fatalf("a blocked refusal claimed %#v before its interval", again.Status.ActiveOperation)
+			}
+		})
+	}
+}
+
+// A refusal that does not bind to the artifact and the policy of this claim is
+// not read as the policy's answer: the claim tries again.
+func TestMigrationVerificationRefusalHoldsToItsClaim(t *testing.T) {
+	t.Parallel()
+	refusal := func() runner.Result {
+		return runner.Result{
+			ChildExitCode: 2, ResolvedDigest: testDigest, VerificationRequirements: []string{"require_signature"},
+			VerificationPolicyDigest: migrationVerificationPolicyDigest(),
+			Error:                    &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*runner.Result)
+		want   string
+	}{
+		{"another artifact", func(r *runner.Result) { r.ResolvedDigest = "sha256:" + strings.Repeat("b", 64) }, "does not match the resolved artifact"},
+		{"another policy", func(r *runner.Result) { r.VerificationPolicyDigest = "sha256:" + strings.Repeat("c", 64) }, "does not match the resolved artifact"},
+		{"no policy", func(r *runner.Result) { r.VerificationPolicyDigest = "" }, "does not match the resolved artifact"},
+		{"a code that is no refusal", func(r *runner.Result) {
+			r.VerificationRequirements = nil
+			r.Error = &runner.ResultError{Code: "invalid_verification_output", Message: "verification command emitted unexpected diagnostics"}
+		}, "invalid_verification_output"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result := refusal()
+			test.change(&result)
+			migration, reconciler, api, _ := verifyingMigration(t, result)
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+
+			actual := readMigration(t, api, migration)
+			claim := actual.Status.ActiveOperation
+			if actual.Status.Phase == operatorv1alpha1.MigrationPhaseBlocked || claim == nil || claim.Attempt != 2 ||
+				claim.Type != operatorv1alpha1.MigrationOperationVerify {
+				t.Fatalf("phase %s, claim %#v, want Verify retried", actual.Status.Phase, claim)
+			}
+			progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || !strings.Contains(progressing.Message, test.want) {
+				t.Fatalf("Progressing = %#v, want it to name %q", progressing, test.want)
+			}
+		})
+	}
+}
+
+func TestVerificationRefusalHoldsToTheFrameAndTheClaim(t *testing.T) {
+	t.Parallel()
+	const policyDigest = "sha256:policy"
+	native := func() runner.Result {
+		return runner.Result{
+			ChildExitCode: 2, ResolvedDigest: testDigest, VerificationPolicyDigest: policyDigest,
+			VerificationRequirements: []string{"artifact_types"},
+		}
+	}
+	if !verificationRefusalHolds(native(), testDigest, policyDigest) {
+		t.Fatal("Ptah's refusal was not accepted")
+	}
+	digestPin := native()
+	digestPin.ChildExitCode, digestPin.VerificationRequirements = 0, []string{"require_digest_pin"}
+	if !verificationRefusalHolds(digestPin, testDigest, policyDigest) {
+		t.Fatal("the runner's refusal of a requested tag was not accepted")
+	}
+	for name, change := range map[string]func(*runner.Result){
+		"an exit status a refusal does not have": func(r *runner.Result) { r.ChildExitCode = 1 },
+		"exit status 0 for Ptah's findings":      func(r *runner.Result) { r.ChildExitCode = 0 },
+		"exit status 0 beside the digest pin": func(r *runner.Result) {
+			r.ChildExitCode, r.VerificationRequirements = 0, []string{"artifact_types", "require_digest_pin"}
+		},
+		"what the executor printed": func(r *runner.Result) { r.Stdout = "{}" },
+		"no requirements":           func(r *runner.Result) { r.VerificationRequirements = nil },
+		"another artifact":          func(r *runner.Result) { r.ResolvedDigest = "sha256:other" },
+		"another policy":            func(r *runner.Result) { r.VerificationPolicyDigest = "sha256:other" },
+		"no policy":                 func(r *runner.Result) { r.VerificationPolicyDigest = "" },
+	} {
+		result := native()
+		change(&result)
+		if verificationRefusalHolds(result, testDigest, policyDigest) {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	// A claim with no policy digest does not match a result with none.
+	empty := native()
+	empty.VerificationPolicyDigest = ""
+	if verificationRefusalHolds(empty, testDigest, "") {
+		t.Error("a refusal with no policy on either side was accepted")
 	}
 }
 

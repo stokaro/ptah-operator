@@ -869,6 +869,45 @@ func (m *migrationRun) unreadableOCIFiles() {
 	m.logf("PASS a %s migration from a registry said why its files could not be loaded: %s", m.engine.kind, message)
 }
 
+// nativePolicyRefusalProof reads the phase's artifact under a policy Ptah itself
+// refuses it by. The migration stops at Blocked before it reads the database, and
+// says which requirement the artifact did not meet, where it would otherwise
+// retry the read as a failure at its failure interval.
+func (m *migrationRun) nativePolicyRefusalProof() {
+	m.t.Helper()
+	name := "e2e-native-refusal-" + m.engine.name
+	secret := "e2e-" + m.engine.name + "-native-refusal-db"
+	policyName := "e2e-native-refusal-policy-" + m.engine.name
+	m.isolatedDatabase("ptah_e2e_native_refusal", secret)
+	policy, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", otherTypePolicyFile))
+	m.check(err, "read the verification policy Ptah refuses by")
+	m.check(m.apply(map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap", "immutable": true,
+		"metadata": map[string]any{"namespace": m.in.TestNamespace, "name": policyName},
+		"data":     map[string]any{migrationPolicyKey: string(policy)},
+	}), "apply the verification policy Ptah refuses by")
+	m.mustCreate(m.migrationDocument(migrationSpec{
+		name: name, secret: secret, reference: m.reference(""),
+		coordinationKey: "e2e/native-refusal/" + m.engine.name, apply: "OnApproval",
+		edit: func(spec map[string]any) {
+			spec["artifact"].(map[string]any)["verificationPolicyFrom"] = map[string]any{"name": policyName, "key": migrationPolicyKey}
+		},
+	}))
+	refused := m.waitForMigration(name, "the artifact to be refused by Ptah's own verification", time.Second,
+		func(current *ptahv1alpha1.PtahMigration) bool { return nativelyRefusedMigration(current) == nil })
+	var last error
+	if !m.miUntil(migrationPoll, func() bool {
+		events := &corev1.EventList{}
+		m.check(m.list(events), "read the Events of %s", name)
+		last = nativeRefusalEvent(events.Items, refused.UID)
+		return last == nil
+	}) {
+		m.fatalf("%s has no Event naming what the policy refused: %v", name, last)
+	}
+	m.finishFixture(name)
+	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact", m.engine.kind)
+}
+
 // publishUnknownLayerArtifact builds the artifact no product command builds:
 // the engine's migrations with a layer of the next version of the format. It
 // runs on the host, against the registry as the host reaches it.

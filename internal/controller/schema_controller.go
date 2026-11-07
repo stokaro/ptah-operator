@@ -1167,15 +1167,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	if result.Error != nil {
 		err := resultFailure(result.Error, operationURLSecret(operation.Target, schema.Spec.Target.URLFrom))
-		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == "verification_refused" {
-			localDigestPinRefusal := result.ChildExitCode == 0 && len(result.VerificationRequirements) == 1 &&
-				result.VerificationRequirements[0] == "require_digest_pin"
-			if result.Stdout != "" || (result.ChildExitCode != 2 && !localDigestPinRefusal) ||
-				len(result.VerificationRequirements) == 0 ||
-				result.ResolvedDigest != schema.Status.Source.Digest ||
-				result.VerificationPolicyDigest == "" || operation.VerificationPolicyUID == "" ||
-				result.VerificationPolicyDigest != operation.VerificationPolicyDigest {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("verification refusal evidence does not match the resolved artifact"))
+		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == verificationRefusedCode {
+			if !verificationRefusalHolds(result, schema.Status.Source.Digest, operation.VerificationPolicyDigest) ||
+				operation.VerificationPolicyUID == "" {
+				return r.retryOperation(ctx, schema, job, errVerificationRefusalEvidence)
 			}
 			if policyErr := r.verificationResultPolicyError(ctx, schema, result.VerificationPolicyDigest); policyErr != nil {
 				if err := r.markJobHarvested(ctx, job); err != nil {
@@ -1379,6 +1374,24 @@ func pendingProofPolicyBindingError(
 		return fmt.Errorf("post-apply proof policy or source snapshot is internally inconsistent")
 	}
 	return nil
+}
+
+// verificationRefusedCode is the result code of an artifact the verification
+// policy refused.
+const verificationRefusedCode = "verification_refused"
+
+var errVerificationRefusalEvidence = errors.New("verification refusal evidence does not match the resolved artifact")
+
+// verificationRefusalHolds holds a refusal to the artifact and the policy the
+// claim was made for: Ptah's own refusal at exit status 2, or the runner's of a
+// requested tag after Ptah accepted the digest, with the requirements it names
+// and no output of the artifact's.
+func verificationRefusalHolds(result runner.Result, resolvedDigest, policyDigest string) bool {
+	localDigestPinRefusal := result.ChildExitCode == 0 && len(result.VerificationRequirements) == 1 &&
+		result.VerificationRequirements[0] == "require_digest_pin"
+	return result.Stdout == "" && (result.ChildExitCode == 2 || localDigestPinRefusal) &&
+		len(result.VerificationRequirements) != 0 && result.ResolvedDigest == resolvedDigest &&
+		result.VerificationPolicyDigest != "" && result.VerificationPolicyDigest == policyDigest
 }
 
 func (r *SchemaReconciler) blockVerification(

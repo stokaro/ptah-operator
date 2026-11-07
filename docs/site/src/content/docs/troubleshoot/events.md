@@ -33,7 +33,7 @@ The log-loss window and summary fallback apply only to
 | `ApprovalRequired` | Normal | `PtahSchema` | The current immutable plan needs an approval before anything applies it. |
 | `ApprovalRevoked` | Warning | `PtahSchema` | The recorded approval became invalid before the Apply Job was created, so no Job was created. |
 | `ApprovalStale` | Warning | `PtahSchemaApproval` | This approval no longer matches the plan it was written for, and will not be consumed. |
-| `ArtifactVerificationRefused` | Warning | `PtahSchema` | Verification refused the resolved artifact, so no plan is produced from it. |
+| `ArtifactVerificationRefused` | Warning | `PtahSchema`, `PtahMigration` | Verification refused the resolved artifact, so no plan is produced from it. The message names the requirements the policy found unmet. |
 | `ExecutionBindingChanged` | Warning | `PtahSchema`, `PtahMigration` | The execution binding the evidence was produced under was retired: the executor image, the Ptah version, the runner protocol or the controller-state version changed. A schema closes the approval boundary and refreshes read-only; a migration discards the operation claim. A manager release that changes none of them records no such Event. |
 | `FailedApplyLogShortened` | Warning | `PtahSchema`, `PtahMigration` | Admission refused the 24 hours a failed Apply's Job was due, usually because the guard of the previous release is still installed, so the Job keeps its [Pod log](../../use/operations/#failed-apply-log) for five minutes. |
 | `LeaseContinuityLost` | Warning | `PtahSchema` | Database lock ownership was not continuous, so the result it covered is discarded and the proof restarts. |

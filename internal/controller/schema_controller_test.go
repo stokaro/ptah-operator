@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -1853,6 +1854,8 @@ func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
 				Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: string(policyBytes)},
 			}
 			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+			recorder := record.NewFakeRecorder(16)
+			reconciler.Recorder = recorder
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 			result, err := reconciler.Reconcile(context.Background(), request)
 			if err != nil {
@@ -1860,6 +1863,9 @@ func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
 			}
 			if result.RequeueAfter != 10*time.Minute {
 				t.Fatalf("requeue = %s, want ordinary 10m interval", result.RequeueAfter)
+			}
+			if event := findEvent(recorder, "Warning ArtifactVerificationRefused"); !strings.Contains(event, test.requirement) {
+				t.Fatalf("the Event %q does not name %s", event, test.requirement)
 			}
 			actual := &operatorv1alpha1.PtahSchema{}
 			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
