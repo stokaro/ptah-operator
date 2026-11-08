@@ -85,7 +85,7 @@ kubectl ptah plan storefront --applied -n application -o sql
 ## インストールと最初のスキーマ
 
 ガイドは専用のサイト [operator.ptah.run](https://operator.ptah.run/) にあります。
-インストール、チャートが推測を拒む 3 つの値、最初のスキーマの実例、設定、運用、
+インストール、インストールが固定するイメージと executor のバージョン、最初のスキーマの実例、設定、運用、
 セキュリティモデル、condition の reason、サポート期間を扱っています。
 
 ```sh

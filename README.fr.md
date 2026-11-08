@@ -95,7 +95,7 @@ décrit son installation et les droits RBAC requis dans le namespace.
 ## Installation et premier schéma
 
 Le guide se trouve sur [operator.ptah.run](https://operator.ptah.run/).
-Il couvre l’installation, les trois valeurs que le chart exige explicitement, un premier schéma complet, la configuration, l’exploitation,
+Il couvre l’installation, les images et la version de l’exécuteur qu’une installation fixe, un premier schéma complet, la configuration, l’exploitation,
 le modèle de sécurité, les motifs des Conditions et les périodes de support.
 
 ```sh
