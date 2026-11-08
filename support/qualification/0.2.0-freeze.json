@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-07T18:13:59.677388+00:00",
+  "frozenAt": "2026-11-08T04:27:40.502503+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "15299436178e8ef9172324a49975ec0acefd15040072cf9cfbb0e72271b2bbae"
+      "sha256": "7f2dc11bb0016f7e029c71754799acda04927d94e916e1a7718d988a60d41b94"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.9 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 84,
+  "revision": 85,
   "supersedes": {
-    "freezeCommit": "40b761f399ae45f3de17c85293a1607149b8fdcc",
-    "sha256": "a980e2199ab266ee48408f57c58bf6ecec2c8b6b267efeb420d7a064b2fc982a"
+    "freezeCommit": "7b18bafb3bd8bd0d20f1ee70128c1f47987c7d5b",
+    "sha256": "d7b9a9ec2c1706c644e419dbe99101120fc169ff94f07aa9b262d44791bab5a4"
   },
-  "revisionReason": "Move the executor pin to the Ptah v0.23.0 release image in support/ptah.json and the line naming it in the functional matrix, and describe on the databases page the MySQL read v0.23.0 refuses and the grants that end it. The baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Name in support/ptah.json the Added database lines run that evidences PostgreSQL 18.x at the Ptah v0.23.0 pin, run 42440618274, in place of the run at v0.22.0. The pin, the baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
 }
