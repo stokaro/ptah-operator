@@ -66,6 +66,14 @@ var (
 			replacement: "Digest: <digest>",
 		},
 		{
+			// Ptah resolves a row file named through /proc/self to the path of
+			// its own process, whose number depends on what the container
+			// started before it.
+			name:        "process id",
+			pattern:     regexp.MustCompile(`(/proc/)\d+/`),
+			replacement: "$1<pid>/",
+		},
+		{
 			// What Ptah's log lines on standard error are tagged with per run.
 			name:        "correlation id",
 			pattern:     regexp.MustCompile(`\bcorrelation_id=[0-9a-f]+\b`),
