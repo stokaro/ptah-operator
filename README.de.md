@@ -93,7 +93,7 @@ im jeweiligen Namespace.
 ## Installation und erstes Schema
 
 Die Anleitung steht auf [operator.ptah.run](https://operator.ptah.run/).
-Sie behandelt die Installation, die drei ausdrücklich anzugebenden Chart-Werte, ein vollständiges Schemabeispiel, Konfiguration, Betrieb,
+Sie behandelt die Installation, die Images und die Executor-Version, die eine Installation festlegt, ein vollständiges Schemabeispiel, Konfiguration, Betrieb,
 Sicherheitsmodell, Condition-Gründe und Supportzeiträume.
 
 ```sh

@@ -38,7 +38,12 @@ store first. A plan waiting for approval has to be approved again
 once the executor moves to Ptah v0.23.0, a database audit that lists what the
 executor sends to PostgreSQL has to expect reads of `pg_catalog` in place of
 `information_schema`, and `kubectl ptah` and Ptah Console have to move with the
-operator. A script that matches a sentence about a count of migrations in a
+operator. Every plan this release publishes carries `scope`, which Ptah Console 0.3.2 does not
+read yet, so it holds approval for each of them: approve with `kubectl ptah` from this
+release until the console release that moves to it
+([ptah-console#167](https://github.com/stokaro/ptah-console/issues/167)). Do not use
+Ptah Console 0.3.1 with this release, because it shows such a plan as unsupported and
+still offers Approve. A script that matches a sentence about a count of migrations in a
 status message has to expect the singular for one: `1 migration is pending`, not
 `1 migrations are pending`. A script that passes the output of `kubectl ptah approve --dry-run
 client` to `kubectl apply` has to pass `--name`, since the printed approval now

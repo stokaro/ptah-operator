@@ -89,8 +89,8 @@ installation and the namespace-scoped RBAC it needs.
 ## Install and first schema
 
 The guide lives on its own site: [operator.ptah.run](https://operator.ptah.run/).
-It carries installation, the three values the chart refuses to guess, a first
-worked schema, configuration, operations, the security model, the condition
+It carries installation, the images and executor version an installation pins, a
+first worked schema, configuration, operations, the security model, the condition
 reasons and the support windows.
 
 ```sh
