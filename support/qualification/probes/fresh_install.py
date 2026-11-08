@@ -203,6 +203,33 @@ def recorded_identity_findings(status, identities):
     return [f'{field} is {got}, and the release names {want}' for field, (got, want) in wanted.items() if got != want]
 
 
+# A MySQL authority section through v0.2.9 named these privileges in prose
+# and showed no statement.
+MYSQL_PRIVILEGES_THROUGH_V0_2_9 = ('SELECT', 'CREATE', 'ALTER', 'DROP', 'INDEX', 'REFERENCES')
+MYSQL_GRANT = re.compile(r"^GRANT ([A-Z_ ,]+) ON app\.\* TO 'ptah'@'%';$", re.M)
+
+
+def mysql_privileges(databases):
+    """The privileges the databases page grants its MySQL account.
+
+    The page shows one statement under MySQL authority. A page through v0.2.9
+    showed none and named the privileges in prose.
+    """
+    if not re.search(r'^## MySQL authority\s*$', databases, re.M):
+        raise ValueError('the databases page has no MySQL authority section')
+    try:
+        statements = blocks(databases, 'MySQL authority', language='sql')
+    except ValueError:
+        return MYSQL_PRIVILEGES_THROUGH_V0_2_9
+    grants = MYSQL_GRANT.findall(''.join(statements))
+    if len(grants) != 1:
+        raise ValueError(f'the MySQL authority section shows {len(grants)} grants to the account, not one')
+    privileges = tuple(privilege.strip() for privilege in grants[0].split(','))
+    if not privileges or any(not re.fullmatch(r'[A-Z_]+(?: [A-Z_]+)?', privilege) for privilege in privileges):
+        raise ValueError(f'the MySQL authority grant lists something that is not a privilege: {grants[0]!r}')
+    return privileges
+
+
 def upgrade_command(install, operations):
     """The release's installation command as the operations guide upgrades:
     with the flag it names for an upgrade that changes the manager image."""
@@ -311,8 +338,27 @@ class Walkthrough:
         return subprocess.run(['git', '-C', str(ROOT), 'show', f'{self.source}:docs/site/src/content/docs/{page}'],
                               check=True, capture_output=True, text=True).stdout
 
+    def grant_mysql(self):
+        """Give the application account what this release's databases page
+        grants. GRANT adds to what the account holds, so an upgrade drill runs
+        it again for the target, as the release notes ask before an upgrade."""
+        privileges = mysql_privileges(self.docs('support/databases.md'))
+        self.admin_sql('mysql', f"GRANT {', '.join(privileges)} ON application.* TO 'application'@'%';\n")
+        self.transcript.record(step='grant-mysql', tag=self.tag, source='support/databases.md#mysql-authority',
+                               privileges=list(privileges))
+
     def kubectl(self, *args, stdin=None, check=True):
         return subprocess.run(['kubectl', *args], input=stdin, capture_output=True, text=True, check=check, env=self.env)
+
+    def resolve_source(self):
+        """Read the release commit of the tag being installed; the guide's
+        pages are read at it."""
+        source = subprocess.run(['gh', 'api', f'repos/stokaro/ptah-operator/commits/{self.tag}', '--jq', '.sha'],
+                                check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+        if not re.fullmatch(r'[0-9a-f]{40}', source):
+            raise ValueError('the release tag resolves to no commit')
+        self.source = source
+        return source
 
     def verify_and_install(self, upgrade=False):
         """Run the release guide's verification and installation verbatim.
@@ -320,11 +366,7 @@ class Walkthrough:
         As an upgrade, the installation carries the one flag the operations
         guide adds to an upgrade that changes the manager image.
         """
-        source = subprocess.run(['gh', 'api', f'repos/stokaro/ptah-operator/commits/{self.tag}', '--jq', '.sha'],
-                                check=True, capture_output=True, text=True, env=self.env).stdout.strip()
-        if not re.fullmatch(r'[0-9a-f]{40}', source):
-            raise ValueError('the release tag resolves to no commit')
-        self.source = source
+        source = self.resolve_source()
         releases = self.docs('support/releases.md')
         verify = ''.join(blocks(releases, 'Verify before installation'))
         self.from_registry = installs_from_registry(releases, self.engine, self.predecessor)
@@ -483,8 +525,8 @@ class Walkthrough:
                                    "\\c application\n"
                                    "GRANT USAGE, CREATE ON SCHEMA public TO application;\n")
             return f'postgres://application:{password}@postgres.{self.fixtures}.svc.cluster.local:5432/application?sslmode=disable'
-        self.admin_sql(engine, f"CREATE DATABASE application;\nCREATE USER 'application'@'%' IDENTIFIED BY '{password}';\n"
-                               "GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES ON application.* TO 'application'@'%';\n")
+        self.admin_sql(engine, f"CREATE DATABASE application;\nCREATE USER 'application'@'%' IDENTIFIED BY '{password}';\n")
+        self.grant_mysql()
         return f'mysql://application:{password}@tcp(mysql.{self.fixtures}.svc.cluster.local:3306)/application'
 
     def publish(self, engine):
@@ -745,6 +787,12 @@ class Walkthrough:
                                applied=before[0]['status']['applied'], epoch=before[0]['status']['executionBinding']['epoch'],
                                plans=before[1])
         self.tag = target
+        if self.engine == 'mysql':
+            # The target's release notes ask for its databases page's grant
+            # before the upgrade: a narrower account fails every Observe once
+            # the executor moves.
+            self.resolve_source()
+            self.grant_mysql()
         identities = self.verify_and_install(upgrade=True)
         if identities['image'] == installed['image']:
             raise ValueError('the predecessor and the target run the same manager image; the drill measures an upgrade that changes it')

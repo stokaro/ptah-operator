@@ -6,8 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from fresh_install import (SERVERS, Transcript, blocks, converged_after, fixture_deployment, runtime_findings,
-                           starts_from_a_configmap, substitute, upgrade_command)
+from fresh_install import (MYSQL_PRIVILEGES_THROUGH_V0_2_9, SERVERS, Transcript, blocks, converged_after, fixture_deployment,
+                           mysql_privileges, runtime_findings, starts_from_a_configmap, substitute, upgrade_command)
 
 DOCS = Path(__file__).resolve().parents[3] / 'docs/site/src/content/docs'
 
@@ -255,6 +255,30 @@ class PublishedGuideTest(unittest.TestCase):
         stops = blocks(page, 'It stops, and waits for you')
         self.assertEqual(len(stops), 3)
         self.assertTrue(any('kubectl ptah approve schema/application -n application' in block for block in stops))
+
+    def test_the_mysql_account_gets_the_one_grant_the_databases_page_shows(self):
+        self.assertEqual(mysql_privileges(self.read('support/databases.md')),
+                         ('SELECT', 'CREATE', 'ALTER', 'DROP', 'INDEX', 'REFERENCES', 'TRIGGER', 'EXECUTE', 'SHOW VIEW'))
+
+    def test_a_databases_page_through_v0_2_9_grants_what_its_prose_named(self):
+        # An upgrade drill creates the account from the predecessor's page.
+        predecessor = ('## MySQL authority\n\nUse a dedicated account scoped to the one managed database. A typical\n'
+                       'table-and-index schema needs `SELECT`, `CREATE`, `ALTER`, `DROP`, `INDEX`, and `REFERENCES`.\n\n'
+                       '## Next\n\n```sql\nGRANT SELECT ON app.* TO \'ptah\'@\'%\';\n```\n')
+        self.assertEqual(mysql_privileges(predecessor), MYSQL_PRIVILEGES_THROUGH_V0_2_9)
+
+    def test_a_databases_page_the_grant_cannot_be_read_from_is_refused(self):
+        page = self.read('support/databases.md')
+        grant = "GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON app.* TO 'ptah'@'%';\n"
+        self.assertEqual(page.count(grant), 1)
+        for name, mutated in (
+            ('a renamed section', page.replace('## MySQL authority\n', '## MySQL privileges\n')),
+            ('a second grant', page.replace(grant, grant + grant)),
+            ('a grant to another account', page.replace(grant, grant.replace("'ptah'", "'app'"))),
+            ('something that is not a privilege', page.replace(grant, grant.replace('SHOW VIEW', 'SHOW VIEW ALL TABLES'))),
+        ):
+            with self.subTest(name), self.assertRaises(ValueError):
+                mysql_privileges(mutated)
 
     def test_a_guide_through_v0_2_9_still_reads_as_starting_from_an_artifact(self):
         # An upgrade drill reads the predecessor's guide at its own commit: its
