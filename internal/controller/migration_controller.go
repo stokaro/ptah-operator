@@ -916,7 +916,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			withLastPodReport(errors.New(unaccountedMigrationJobReason(cause)),
 				migrationPodReport(migration, lost)), "")
 	case mutationlifecycle.VerdictRetry:
-		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
+		// A replaced or disowned Job is not the claim's, so the claim owes it no
+		// cleanup TTL, and the controller-write webhook would refuse one: it
+		// admits a TTL only on a stopped Job the claim names by UID and owns
+		// exactly. Asking anyway failed every pass before the retry was written.
+		return r.retryMigrationOperation(ctx, migration, nil, errors.New(retriedMigrationJobReason(cause)))
 	}
 	if result, settled, err := r.holdMigrationJobToItsClaim(ctx, migration, job); settled || err != nil {
 		return result, err
