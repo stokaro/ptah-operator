@@ -7,6 +7,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -219,6 +220,40 @@ func recordedApprovalWinsOverADueRead(t *testing.T, deadline *metav1.Time) {
 	}
 }
 
+// replacePolicyOnPlanRead is the API reader of a pass during which a person
+// replaces the verification policy object: after the pass held the verified
+// source to the policy, and while it reads the plan, so the plan is held to
+// the replacement.
+type replacePolicyOnPlanRead struct {
+	client.Reader
+	api       client.Client
+	selector  *corev1.ConfigMapKeySelector
+	namespace string
+	replaced  bool
+}
+
+func (r *replacePolicyOnPlanRead) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if _, plan := object.(*operatorv1alpha1.PtahSchemaPlan); plan && !r.replaced {
+		r.replaced = true
+		old := &corev1.ConfigMap{}
+		if err := r.api.Get(ctx, client.ObjectKey{Namespace: r.namespace, Name: r.selector.Name}, old); err != nil {
+			return err
+		}
+		if err := r.api.Delete(ctx, old); err != nil {
+			return err
+		}
+		immutable := true
+		if err := r.api.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: r.namespace, Name: r.selector.Name, UID: "replaced-policy-uid"},
+			Immutable:  &immutable,
+			Data:       map[string]string{r.selector.Key: "replaced-policy"},
+		}); err != nil {
+			return err
+		}
+	}
+	return r.Reader.Get(ctx, key, object, options...)
+}
+
 // Only an approval the controller recorded for the current plan wins over a
 // due read. Without one the read runs as it did before an approval could win:
 // the pass claims Resolve, and no Apply is claimed on the way.
@@ -228,6 +263,9 @@ func TestADueReadRunsWithoutARecordedApprovalOfThePlan(t *testing.T) {
 	for _, row := range []struct {
 		name   string
 		decide func(*testing.T, client.Client, *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval
+		// arrange, when set, changes what the reconciler reads during the
+		// passes.
+		arrange func(*testing.T, *SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema)
 	}{
 		{
 			name: "no approval",
@@ -274,17 +312,59 @@ func TestADueReadRunsWithoutARecordedApprovalOfThePlan(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			// The controller recorded the approval, and then the plan object
+			// was deleted. An approval of a plan that is not current
+			// authorizes nothing, so it holds back no read.
+			name: "a recorded approval of a plan that is gone",
+			decide: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval {
+				t.Helper()
+				approval := recordTheApproval(t, api, schema, plan)
+				ctx := context.Background()
+				if err := api.Delete(ctx, plan); err != nil {
+					t.Fatal(err)
+				}
+				if err := api.Get(ctx, client.ObjectKeyFromObject(plan), &operatorv1alpha1.PtahSchemaPlan{}); !apierrors.IsNotFound(err) {
+					t.Fatalf("read the deleted plan: %v, want it gone", err)
+				}
+				return approval
+			},
+		},
+		{
+			// The controller recorded the approval, and the verification
+			// policy the plan was accepted under is replaced while the pass
+			// runs. The plan's source authority no longer holds, so neither
+			// does the approval of it.
+			name:   "a recorded approval of a plan whose verification policy was replaced",
+			decide: recordTheApproval,
+			arrange: func(t *testing.T, reconciler *SchemaReconciler, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+				t.Helper()
+				if schema.Spec.Desired.VerificationPolicyFrom == nil {
+					t.Fatal("the schema names no verification policy to replace")
+				}
+				reconciler.APIReader = &replacePolicyOnPlanRead{
+					Reader: reconciler.APIReader, api: api,
+					selector: schema.Spec.Desired.VerificationPolicyFrom, namespace: schema.Namespace,
+				}
+			},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
 			deadline := metav1.NewTime(dueReadDeadline)
 			reconciler, api, schema, approval := waitingWithADueRead(t, &deadline, row.decide)
+			if row.arrange != nil {
+				row.arrange(t, reconciler, api, schema)
+			}
 
 			var operation *operatorv1alpha1.ActiveOperationStatus
 			for pass := 1; pass <= 3 && operation == nil; pass++ {
 				reconcileDueReadPass(t, reconciler, schema, "a pass with the read due")
 				operation = safetyGetSchema(t, api, schema).Status.ActiveOperation
+			}
+			if replacing, ok := reconciler.APIReader.(*replacePolicyOnPlanRead); ok && !replacing.replaced {
+				t.Fatal("no pass read the plan, so the verification policy was never replaced and the row says nothing about a replaced one")
 			}
 			if operation == nil || operation.Type != operatorv1alpha1.OperationResolve {
 				t.Fatalf("with the read due the controller claimed %s, want the Resolve that starts the read", claimedType(operation))

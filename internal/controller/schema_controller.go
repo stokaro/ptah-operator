@@ -2093,14 +2093,28 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 	if schema.Status.Plan == nil {
 		return r.claim(ctx, schema, operatorv1alpha1.OperationObserve)
 	}
+	// reconcile sends a resource here with its refresh deadline due only when
+	// an approval is recorded, so that the Apply the approval authorizes runs
+	// before the read. Where the approval cannot authorize one, because the plan
+	// stopped being current or its source authority no longer holds, it wins
+	// nothing: the read the deadline owes runs on this pass, as it did before a
+	// recorded approval could win, and its Observe retires the plan and the
+	// approval. Going through Observing or Verifying instead would skip the
+	// Resolve and move the next one an interval later.
 	plan, err := r.currentPlan(ctx, schema)
 	if err != nil {
+		if due(schema.Status.NextReconciliationTime, r.now()) {
+			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+		}
 		return r.applyBecameStale(ctx, schema, err)
 	}
 	if err := r.ensureCurrentExecutionBinding(schema, plan); err != nil {
 		return r.executionBindingChanged(ctx, schema, err)
 	}
 	if err := r.planPolicyError(ctx, schema, plan); err != nil {
+		if due(schema.Status.NextReconciliationTime, r.now()) {
+			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+		}
 		return r.verificationPolicyChanged(ctx, schema, err)
 	}
 	if plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
