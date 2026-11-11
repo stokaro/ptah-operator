@@ -192,8 +192,9 @@ RBAC on approval objects will, because nothing is approving anything.
 
 What `Always` does not waive is a change of authority. A schema plan that
 grants or revokes a privilege, changes a role or its members, hands an object
-to another owner, creates, alters or drops a row-security policy, or makes code
-run with its owner's rights waits for an approval under `Always` as under
+to another owner, creates, alters or drops a row-security policy, makes code
+run with its owner's rights, or changes the rights an existing PostgreSQL view
+reads with waits for an approval under `Always` as under
 `OnApproval`, and a destructive plan still needs `allowDestructive` as well.
 Whoever can push the artifact's tag can still change the schema unattended; the
 changes of authority the operator can read in it wait for a person. The
