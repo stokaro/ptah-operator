@@ -27,7 +27,13 @@ and asks for a new one. A dashboard or an alert that reads
 `ptah_operator_plans_total` or
 `ptah_operator_approvals_total{outcome="required"}` for `family="schema"`, or a
 script that counts `ApprovalRequired` Events, has to expect one count for each
-plan rather than one for each read of a plan waiting for approval.
+plan rather than one for each read of a plan waiting for approval. A script or
+an alert that matches the text of a `MigrationJobCleanupDeferred` Event has to
+match `has no cleanup scheduled, so it stays until it is deleted by hand or
+with its owner` in place of `keeps its own deadline because its cleanup could
+not be scheduled`, and has to expect no such Event for a Job its claim names by
+UID while that Job is still running. A migration Job an earlier release left
+without a TTL stays until you delete it.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -53,6 +59,17 @@ plan rather than one for each read of a plan waiting for approval.
   `OnApproval`. [Events](../../troubleshoot/events/) lists the cases. Migrations
   keep the plan they wait on in status through a read, so their counters did not
   move.
+- **A migration Job left running by an unknown run is collected.** A migration
+  Apply whose outcome went `Unknown` while its Job was still running, as when a
+  release changed the executor or the Job under it, kept its Job until the
+  resource was deleted, and the Job held a place in a `count/jobs.batch` quota.
+  So did a Job that had finished when the database lock changed hands under its
+  run. Where the claim recorded the Job's UID, the Job now takes its cleanup TTL
+  by the rule every migration run keeps its Pod log by, once it stops, and the
+  Warning that said a running Job's cleanup could not be scheduled is gone. A Job
+  whose claim never recorded its UID still stays, and a
+  `MigrationJobCleanupDeferred` Warning now names it with `its claim never
+  recorded the Job's UID`.
 
 ## 0.2.10
 
