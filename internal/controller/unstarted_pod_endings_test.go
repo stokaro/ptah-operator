@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -586,44 +587,92 @@ func unstartedSchemaApply(t *testing.T) (
 ) {
 	t.Helper()
 
-	ctx := context.Background()
-	builder := workloadBuilderForMigrations()
-	run := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder, recorded: true}, builder)
-	reconciler, api, schema, job := run.reconciler, run.api, run.schema, run.job
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), UID: "unstarted-pod-uid",
-			Labels: maps.Clone(job.Spec.Template.Labels), Annotations: maps.Clone(job.Spec.Template.Annotations),
-			OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
-		},
-		Spec: *job.Spec.Template.Spec.DeepCopy(),
-	}
-	waitingOnASecret(pod)
-	if err := api.Create(ctx, pod.DeepCopy()); err != nil {
-		t.Fatal(err)
-	}
-	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
-	reconcileOnce := func() {
+	run := unstartedSchemaApplyRun(t)
+	return run.api, run.schema, run.job, run.pod, run.said, func() {
 		t.Helper()
-		if _, err := reconciler.Reconcile(ctx, request); err != nil {
-			t.Fatalf("Reconcile() error = %v", err)
-		}
+		run.reconcileOnce(t)
 	}
+}
 
-	reconcileOnce()
-	ready := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReady)
-	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
-		!strings.Contains(ready.Message, missingSecretText) {
-		t.Fatalf("Ready while the Pod waits = %#v, want PodConfigurationError naming the Secret, "+
-			"or nothing below has words to keep", ready)
+// unstartedSchema is a schema Apply after the pass that reported why its Pod
+// is not running, with what the rows that end it need.
+type unstartedSchema struct {
+	reconciler *SchemaReconciler
+	api        client.Client
+	recorder   *record.FakeRecorder
+	schema     *operatorv1alpha1.PtahSchema
+	job        *batchv1.Job
+	// pod is the Pod the kubelet cannot start, and nil when the API server
+	// refused to create one.
+	pod *corev1.Pod
+	// said is what Ready said about the Pod.
+	said string
+}
+
+func (run unstartedSchema) reconcileOnce(t *testing.T) {
+	t.Helper()
+	if _, err := run.reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run.schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
 	}
-	return api, schema, job, pod, ready.Message, reconcileOnce
+}
+
+// unstartedSchemaApplyRun is unstartedSchemaApply with the reconciler and an
+// Event recorder.
+func unstartedSchemaApplyRun(t *testing.T) unstartedSchema {
+	t.Helper()
+
+	return schemaApplyUnderReport(t, func(api client.Client, job *batchv1.Job) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), UID: "unstarted-pod-uid",
+				Labels: maps.Clone(job.Spec.Template.Labels), Annotations: maps.Clone(job.Spec.Template.Annotations),
+				OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+			},
+			Spec: *job.Spec.Template.Spec.DeepCopy(),
+		}
+		waitingOnASecret(pod)
+		if err := api.Create(context.Background(), pod.DeepCopy()); err != nil {
+			t.Fatal(err)
+		}
+		return pod
+	}, operatorv1alpha1.ReasonPodConfigurationError, missingSecretText)
+}
+
+// schemaApplyUnderReport dispatches a schema Apply, lets stand return the Pod the
+// Job stands with, and runs the pass that reports it. It fails unless Ready
+// then carries reason with words in its message.
+func schemaApplyUnderReport(
+	t *testing.T,
+	stand func(api client.Client, job *batchv1.Job) *corev1.Pod,
+	reason operatorv1alpha1.ConditionReason,
+	words string,
+) unstartedSchema {
+	t.Helper()
+
+	builder := workloadBuilderForMigrations()
+	dispatched := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder, recorded: true}, builder)
+	run := unstartedSchema{
+		reconciler: dispatched.reconciler, api: dispatched.api, recorder: record.NewFakeRecorder(256),
+		schema: dispatched.schema, job: dispatched.job,
+	}
+	run.reconciler.Recorder = run.recorder
+	run.pod = stand(run.api, run.job)
+
+	run.reconcileOnce(t)
+	ready := meta.FindStatusCondition(safetyGetSchema(t, run.api, run.schema).Status.Conditions, operatorv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != string(reason) || !strings.Contains(ready.Message, words) {
+		t.Fatalf("Ready while the Pod is not running = %#v, want %s with %q, "+
+			"or nothing below has words to keep", ready, reason, words)
+	}
+	run.said = ready.Message
+	return run
 }
 
 // settledSchemaFailure is what a schema keeps once its claim is gone. It fails
 // unless the Apply's outcome was recorded as unknown, and returns
-// ReconciliationFailed: the ApplyOutcomeUnknown Event is fixed text, so this
-// condition is the one place the words stay until the next result.
+// ReconciliationFailed, which carries the sentence that says how the Apply
+// ended as well as the words; the ApplyOutcomeUnknown Event carries the words
+// alone (rarer_apply_endings_test.go).
 func settledSchemaFailure(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) *metav1.Condition {
 	t.Helper()
 
@@ -726,49 +775,61 @@ func TestASchemaApplyWhosePodRanToTheEndRepeatsNoStaleReport(t *testing.T) {
 	for _, row := range []struct {
 		name  string
 		ended string
-		end   func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job)
+		end   func(t *testing.T, run unstartedSchema)
+		// passes is how many passes the ending takes to leave the record.
+		passes int
 	}{
 		{
-			name: "its inputs changed", ended: "operation inputs changed while the Job was running",
-			end: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
-				edited := safetyGetSchema(t, api, schema)
+			name: "its inputs changed", ended: "operation inputs changed while the Job was running", passes: 1,
+			end: func(t *testing.T, run unstartedSchema) {
+				edited := safetyGetSchema(t, run.api, run.schema)
 				edited.Spec.Target.URLFrom.Name = "application-database-fixed"
 				edited.Generation++
-				if err := api.Update(context.Background(), edited); err != nil {
+				if err := run.api.Update(context.Background(), edited); err != nil {
 					t.Fatal(err)
 				}
 			},
 		},
 		{
-			name: "its Job lost its owner", ended: "dispatched Apply Job lost schema ownership",
-			end: func(t *testing.T, api client.Client, _ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
-				disowned(t, api, job)
+			name: "its Job lost its owner", ended: "dispatched Apply Job lost schema ownership", passes: 1,
+			end: func(t *testing.T, run unstartedSchema) {
+				disowned(t, run.api, run.job)
 			},
 		},
 		{
-			name: "an execution component changed", ended: "execution binding changed after Apply dispatch",
-			end: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
-				moved := safetyGetSchema(t, api, schema)
+			name: "an execution component changed", ended: "execution binding changed after Apply dispatch", passes: 1,
+			end: func(t *testing.T, run unstartedSchema) {
+				moved := safetyGetSchema(t, run.api, run.schema)
 				moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
-				if err := api.Status().Update(context.Background(), moved); err != nil {
+				if err := run.api.Status().Update(context.Background(), moved); err != nil {
 					t.Fatal(err)
 				}
+			},
+		},
+		{
+			// One pass records the lost continuity and keeps Ready's report,
+			// and the next ends the Apply from the Job it reads then.
+			name: "its database Lease changed hands", ended: "database lock continuity was lost during Apply", passes: 2,
+			end: func(t *testing.T, run unstartedSchema) {
+				databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
 			},
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			api, schema, job, pod, said, reconcileOnce := unstartedSchemaApply(t)
-			ranToSuccess(t, api, job, pod)
-			row.end(t, api, schema, job)
-			reconcileOnce()
+			run := unstartedSchemaApplyRun(t)
+			ranToSuccess(t, run.api, run.job, run.pod)
+			row.end(t, run)
+			for range row.passes {
+				run.reconcileOnce(t)
+			}
 
-			failed := settledSchemaFailure(t, api, schema)
+			failed := settledSchemaFailure(t, run.api, run.schema)
 			if !strings.Contains(failed.Message, row.ended) {
 				t.Fatalf("ReconciliationFailed = %q, want the sentence this ending writes, %q", failed.Message, row.ended)
 			}
-			if strings.Contains(failed.Message, said) {
+			if strings.Contains(failed.Message, run.said) {
 				t.Fatalf("ReconciliationFailed = %q repeats a report the Job's success proved out of date", failed.Message)
 			}
 		})
@@ -782,6 +843,10 @@ func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 	reported := &metav1.Condition{
 		Reason:  string(operatorv1alpha1.ReasonPodConfigurationError),
 		Message: "Job " + job + " cannot start its Pod: " + missingSecretText,
+	}
+	refused := &metav1.Condition{
+		Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
+		Message: "Job " + job + " cannot create its Pod; the API server refused it: pods \"x\" is forbidden",
 	}
 	ended := errors.New("the operation inputs changed while the Job was running")
 	for _, row := range []struct {
@@ -802,12 +867,21 @@ func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 			want: ended.Error(),
 		},
 		{
-			name: "a Pod admission refused",
+			name:   "a Pod the API server refused to create",
+			report: lastPodReport{jobName: job, reported: refused},
+			want:   ended.Error() + lastReportedBefore + refused.Message,
+		},
+		{
+			name: "another reason in the same words",
 			report: lastPodReport{jobName: job, reported: &metav1.Condition{
-				Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
-				Message: "Job " + job + " cannot create its Pod; the API server refused it: pods \"x\" is forbidden",
+				Reason: string(operatorv1alpha1.ReasonLeaseContinuityLost), Message: reported.Message,
 			}},
 			want: ended.Error(),
+		},
+		{
+			name:   "a refusal the claim's Job ran past",
+			report: lastPodReport{reported: refused, jobName: job, ran: true},
+			want:   ended.Error(),
 		},
 		{
 			name:   "a report about a Job whose name the claim's begins",
@@ -822,6 +896,28 @@ func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 		{
 			name:   "a Pod the claim's Job ran to success since",
 			report: lastPodReport{reported: reported, jobName: job, ran: true},
+			want:   ended.Error(),
+		},
+		{
+			name:   "a refusal the claim's Job counts a Pod past",
+			report: lastPodReport{reported: refused, jobName: job, created: true},
+			want:   ended.Error(),
+		},
+		{
+			// The kubelet's words are about a Pod that was created, so a count
+			// of Pods does not take them out of date.
+			name:   "the kubelet's words about a Pod the claim's Job counts",
+			report: lastPodReport{reported: reported, jobName: job, created: true},
+			want:   ended.Error() + lastReportedBefore + reported.Message,
+		},
+		{
+			name:   "the kubelet's words and a Pod the ending read started",
+			report: lastPodReport{reported: reported, jobName: job, started: true},
+			want:   ended.Error(),
+		},
+		{
+			name:   "a refusal and a Pod the ending read started",
+			report: lastPodReport{reported: refused, jobName: job, started: true},
 			want:   ended.Error(),
 		},
 	} {
@@ -871,6 +967,115 @@ func TestClaimJobRanTakesOnlyTheClaimsJobsSuccess(t *testing.T) {
 			t.Parallel()
 			if got := claimJobRan(row.job, row.recorded); got != row.want {
 				t.Fatalf("claimJobRan() = %t, want %t", got, row.want)
+			}
+		})
+	}
+}
+
+// A Job the API server refused every Pod counts none, in any field. Each count
+// a Job keeps is a Pod that was created.
+func TestClaimJobCreatedPodTakesAnyPodTheClaimsJobCounts(t *testing.T) {
+	t.Parallel()
+
+	const recorded = types.UID("claim-job-uid")
+	jobWith := func(uid types.UID, status batchv1.JobStatus) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ptah-m-apply-orders", UID: uid}, Status: status}
+	}
+	none, one := int32(0), int32(1)
+	for _, row := range []struct {
+		name     string
+		job      *batchv1.Job
+		recorded types.UID
+		want     bool
+	}{
+		{name: "no Job", recorded: recorded},
+		{
+			name: "the claim's Job that never had a Pod, past its deadline", recorded: recorded,
+			job: jobWith(recorded, batchv1.JobStatus{Terminating: &none, Conditions: []batchv1.JobCondition{{
+				Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded,
+			}}, UncountedTerminatedPods: &batchv1.UncountedTerminatedPods{}}),
+		},
+		{name: "an active Pod", job: jobWith(recorded, batchv1.JobStatus{Active: 1}), recorded: recorded, want: true},
+		{name: "a failed Pod", job: jobWith(recorded, batchv1.JobStatus{Failed: 1}), recorded: recorded, want: true},
+		{name: "a succeeded Pod", job: jobWith(recorded, batchv1.JobStatus{Succeeded: 1}), recorded: recorded, want: true},
+		{name: "a terminating Pod", job: jobWith(recorded, batchv1.JobStatus{Terminating: &one}), recorded: recorded, want: true},
+		{
+			name: "a failed Pod not yet counted", recorded: recorded, want: true,
+			job: jobWith(recorded, batchv1.JobStatus{UncountedTerminatedPods: &batchv1.UncountedTerminatedPods{Failed: []types.UID{"pod-uid"}}}),
+		},
+		{
+			name: "a succeeded Pod not yet counted", recorded: recorded, want: true,
+			job: jobWith(recorded, batchv1.JobStatus{UncountedTerminatedPods: &batchv1.UncountedTerminatedPods{Succeeded: []types.UID{"pod-uid"}}}),
+		},
+		{name: "a replacement that counts a Pod", job: jobWith("replacement-job-uid", batchv1.JobStatus{Failed: 1}), recorded: recorded},
+		{name: "a Job that counts a Pod and no UID on record", job: jobWith("some-job-uid", batchv1.JobStatus{Active: 1})},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if got := claimJobCreatedPod(row.job, row.recorded); got != row.want {
+				t.Fatalf("claimJobCreatedPod() = %t, want %t", got, row.want)
+			}
+		})
+	}
+}
+
+// Only the executor's own state says it started, and ContainerStatusUnknown
+// says nothing either way. Every listed Pod counts, not only the first eight
+// whose UIDs are kept.
+func TestPodEvidenceSaysWhetherAnyExecutorStarted(t *testing.T) {
+	t.Parallel()
+
+	withExecutor := func(name string, state corev1.ContainerState) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name + "-uid")},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{
+				{Name: "sidecar", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+				{Name: executorContainerName, State: state},
+			}},
+		}
+	}
+	waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: createContainerConfigError, Message: missingSecretText}}
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	terminated := func(reason string, code int32) corev1.ContainerState {
+		return corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: reason, ExitCode: code}}
+	}
+	waitingPods := func(count int) []*corev1.Pod {
+		pods := make([]*corev1.Pod, 0, count)
+		for index := range count {
+			pods = append(pods, withExecutor(fmt.Sprintf("waiting-%d", index), waiting))
+		}
+		return pods
+	}
+	for _, row := range []struct {
+		name string
+		pods []*corev1.Pod
+		want bool
+	}{
+		{name: "no Pod"},
+		{name: "an executor waiting on a Secret and a running sidecar", pods: waitingPods(1)},
+		{name: "a Pod with no executor status", pods: []*corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "new", UID: "new-uid"}}}},
+		{name: "an executor the kubelet lost track of", pods: []*corev1.Pod{withExecutor("lost", terminated("ContainerStatusUnknown", 137))}},
+		{name: "a running executor", pods: []*corev1.Pod{withExecutor("running", running)}, want: true},
+		{name: "an executor that failed", pods: []*corev1.Pod{withExecutor("failed", terminated("Error", 1))}, want: true},
+		{name: "an executor that completed", pods: []*corev1.Pod{withExecutor("completed", terminated("Completed", 0))}, want: true},
+		{
+			name: "a second Pod that started after a first one waiting",
+			pods: append(waitingPods(1), withExecutor("running", running)), want: true,
+		},
+		{
+			name: "a ninth Pod that started after eight waiting",
+			pods: append(waitingPods(8), withExecutor("running", running)), want: true,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			evidence := podIdentityEvidence(row.pods)
+			if evidence.ExecutorStarted != row.want {
+				t.Fatalf("ExecutorStarted = %t, want %t", evidence.ExecutorStarted, row.want)
+			}
+			if want := min(len(row.pods), 8); len(evidence.PodUIDs) != want || evidence.PodCount != int32(len(row.pods)) {
+				t.Fatalf("evidence kept %d UIDs of %d Pods, want %d of %d",
+					len(evidence.PodUIDs), evidence.PodCount, want, len(row.pods))
 			}
 		})
 	}

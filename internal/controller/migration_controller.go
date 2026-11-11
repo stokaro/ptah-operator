@@ -494,8 +494,9 @@ func (r *MigrationReconciler) reportDiscardedUnresolvedRun(
 		job = "no Job this claim recorded"
 	}
 	r.event(migration, corev1.EventTypeWarning, "UnresolvedRunDiscarded",
-		"Deleting this resource discards the record of a %s run nobody accounted for: %s, plan %s, database %s",
-		unresolved.Outcome, job, unresolved.PlanRef.Name, bounded(unresolved.TargetIdentityDigest, 80))
+		"Deleting this resource discards the record of a %s run nobody accounted for: %s, plan %s, database %s%s",
+		unresolved.Outcome, job, unresolved.PlanRef.Name, bounded(unresolved.TargetIdentityDigest, 80),
+		r.discardedRunJobGoes(ctx, migration, unresolved))
 	ctrl.LoggerFrom(ctx).Info(
 		"deleting a migration discards an unresolved run",
 		"outcome", unresolved.Outcome,
@@ -503,6 +504,28 @@ func (r *MigrationReconciler) reportDiscardedUnresolvedRun(
 		"job", unresolved.JobName,
 		"targetIdentityDigest", unresolved.TargetIdentityDigest,
 	)
+}
+
+// discardedRunJobGoes says that the Job a discarded run ran as goes with the
+// resource, and its Pod log with it, when it still stands and does
+// (migrationJobGoesWithResource). An earlier MigrationRunUncertain Event may point
+// at that log for a day; this is the last word on it. A Job under the name with
+// another UID is a later run's, and a read that fails says nothing.
+func (r *MigrationReconciler) discardedRunJobGoes(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	unresolved *operatorv1alpha1.UnresolvedMigrationRunStatus,
+) string {
+	if unresolved.JobName == "" || unresolved.JobUID == "" {
+		return ""
+	}
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: unresolved.JobName}
+	if err := r.directReader().Get(ctx, key, job); err != nil || job.UID != unresolved.JobUID ||
+		!migrationJobGoesWithResource(migration, job) {
+		return ""
+	}
+	return ". The Job and its Pod log are deleted with the PtahMigration"
 }
 
 // dispatchedMigrationApplyJob returns the Job this Apply claim dispatched, and
@@ -984,7 +1007,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			if mutationlifecycle.HarvestFailure(
 				mutationlifecycle.FaultPodMultiplicity, mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
-				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
+				return r.finishUncertainMigrationApply(ctx, migration, job,
+					withLastPodReport(err, migrationPodReport(migration, job).withPodsRead(evidence)), "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
@@ -1103,7 +1127,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 		if err := validateMigrationJobEnvelope(job, migration); err != nil {
 			if mutating {
 				result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-					fmt.Errorf("dispatched Apply Job is not its claim's: %w", err), "")
+					withLastPodReport(fmt.Errorf("dispatched Apply Job is not its claim's: %w", err),
+						migrationPodReport(migration, job)), "")
 				return result, true, settleErr
 			}
 			result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
@@ -1116,7 +1141,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	if err != nil {
 		if mutating {
 			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("rebuild immutable Apply Job intent: %w", err), "")
+				withLastPodReport(fmt.Errorf("rebuild immutable Apply Job intent: %w", err),
+					migrationPodReport(migration, job)), "")
 			return result, true, settleErr
 		}
 		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
@@ -1126,7 +1152,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	if err := validateAdoptedMigrationJobIntent(job, expected, migration); err != nil {
 		if mutating {
 			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("dispatched Apply Job intent changed: %w", err), "")
+				withLastPodReport(fmt.Errorf("dispatched Apply Job intent changed: %w", err),
+					migrationPodReport(migration, job)), "")
 			return result, true, settleErr
 		}
 		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
@@ -2175,6 +2202,11 @@ func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.
 	if err != nil {
 		return "", err
 	}
+	return initBoundaryOf(pods), nil
+}
+
+// initBoundaryOf is failedInitBoundary over Pods already listed.
+func initBoundaryOf(pods []*corev1.Pod) string {
 	for _, pod := range pods {
 		for _, status := range pod.Status.InitContainerStatuses {
 			terminated := status.State.Terminated
@@ -2184,10 +2216,10 @@ func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.
 			return fmt.Sprintf(
 				"the %s step exited %d, so the run never started",
 				status.Name, terminated.ExitCode,
-			), nil
+			)
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // retryMigrationOperation advances to a fresh attempt with a fresh

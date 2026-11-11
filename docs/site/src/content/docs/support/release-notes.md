@@ -59,9 +59,15 @@ in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
-An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too, including one a suspension leaves running. A `PtahSchema` records the
-same Warning under the new reason `SchemaJobCleanupDeferred`.
+An alert on `MigrationJobCleanupDeferred` can now fire for a read-only
+migration Job too, including one a suspension leaves running. A `PtahSchema`
+records the same Warning under the new reason `SchemaJobCleanupDeferred`. A
+script that reads the `kubectl logs` command out of the
+`MigrationRunUncertain` Event of a `PtahMigration` deleted with the default
+propagation finds none there now. A script or an alert that matches the whole
+text of a `PtahSchema`'s `ApplyOutcomeUnknown` Event has to expect
+`; last reported before that:` and what the schema last reported after it, on
+an Apply whose Pod never ran.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -169,6 +175,24 @@ same Warning under the new reason `SchemaJobCleanupDeferred`.
   added when the claim's own Job reports a Pod that succeeded.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
   has the messages.
+- **More endings keep why the Pod never ran.** The same words now follow an Apply
+  whose Job stopped being its claim's after the inputs moved, whose claim could not
+  build its Job again because its plan was deleted, whose Job a newer release
+  builds differently, whose Job left more than one Pod, or whose Pod does not match
+  what its claim built. On the last two, a Pod that shows its executor started
+  leaves the words out. A Pod the API server refused to create is covered as well:
+  an Apply or a read still refused at its Job's deadline recorded only `result
+  frame not found`, and now carries the refusal after it and points at no Pod log;
+  a refusal the Job got past by creating a Pod is left out. A `PtahSchema` Apply
+  keeps the words when its database Lease changed hands, where the write that
+  records the lost Lease used to replace them, and when the schema is deleted while
+  its Apply runs. Its `ApplyOutcomeUnknown` Event now carries
+  them, which is what stays of a deleted schema, and a deleted schema looks at the
+  Pod while it waits for it, as a deleted `PtahMigration` does.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  lists each of these endings, and
+  [Execution](../../reference/execution/#meshes-and-policy-engines) says what a
+  refused Job records.
 - **A slow Job-write webhook no longer spends an approval.** A dispatch gave
   its mark, create, read-back and record 15 seconds, while the chart gives the
   manager's Job-write webhook 30. A webhook slower than 15 seconds made the
@@ -206,34 +230,6 @@ same Warning under the new reason `SchemaJobCleanupDeferred`.
   later than before, and a manager that restarts in that time waits again. A
   claim that recorded its Job's UID, and a resource being deleted, do not
   wait.
-- **More read-only Jobs are collected when their claim lets go.** Several
-  read-only claims let go of the Job under their name and left it with no TTL:
-  a `PtahSchema` claim that could not confirm its Job, as after a release that
-  changed the Job, a claim of either family discarded because its resource was
-  suspended, and a migration claim retired because an execution component
-  changed. Admission admits the TTL only on a finished Job the active claim
-  names by UID, so the Job and its Pod stayed until the resource was deleted,
-  and nothing named them. A `PtahSchema` claim that could not confirm its Job,
-  and a migration claim a rotation retires, now wait for a Job they can confirm
-  to stop, by the bound the next entry gives, and give it the five minutes a
-  harvested Job gets. `Ready` names the Job while a `PtahSchema` claim waits.
-  A claim that never recorded the Job's UID records it first. Suspension
-  prevents new operations but does not stop one already running, and a TTL only
-  removes a Job that has finished, so a suspended claim does not wait, including
-  one a migration rotation was holding: a Job that has finished gets its TTL as
-  the claim goes, and a Warning names one still running, which stays until it is
-  deleted. A TTL write that fails for any reason but a refusal fails the pass
-  and keeps the claim, so the next pass asks again. A new
-  `SchemaJobCleanupDeferred` Warning Event names a Job a `PtahSchema` claim
-  leaves with no TTL. A `PtahSchema` claim a binding change retires already
-  waited for its Job; a TTL write admission refuses there no longer fails the
-  pass, and a Warning names the Job. A `PtahSchema` Plan whose database lock
-  epoch moved while its Job ran waited for that Job with no bound, renewing the
-  Lease, and failed every pass on a refused TTL write. It now waits by the same
-  bound, and a Warning names a Job it leaves. A migration being deleted records
-  the UID of an Apply Job its claim never recorded before it asks for that
-  Job's TTL, and a Job deleted before that TTL was asked for is no longer named
-  by a Warning.
 - **A refused read-only migration Job is collected.** A read-only migration
   claim that could not confirm the Job under its name, as after a release that
   changed the Job, ran again under a new attempt and left that Job with no TTL,
@@ -255,6 +251,45 @@ same Warning under the new reason `SchemaJobCleanupDeferred`.
   by UID or does not own, so every pass failed on the refusal, and the read never
   ran again. The claim now moves to a new attempt at once, as a schema claim
   does, and writes nothing to that Job.
+- **A deleted migration no longer points at a log it takes with it.** A
+  `PtahMigration` deleted while its Apply waited records the run `Unknown`, and
+  its `MigrationRunUncertain` Warning Event said the Pod log stayed for 24 hours
+  and gave the `kubectl logs` command. The next pass releases the resource, and
+  the garbage collector deletes the Job and its Pod with it, so the command found
+  nothing. The Event now names the Job and says the Job and its Pod are deleted
+  with the resource, and `UnresolvedRunDiscarded` says the same while the Job
+  stands. A `FailedApplyLogShortened` Event no longer fires for such a Job. To keep
+  the log, follow it with `kubectl logs -f` from before the delete, as
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
+- **More read-only Jobs are collected when their claim lets go.** Several
+  read-only claims let go of the Job under their name and left it with no TTL:
+  a `PtahSchema` claim that could not confirm its Job, as after a release that
+  changed the Job, a claim of either family discarded because its resource was
+  suspended, and a migration claim retired because an execution component
+  changed. Admission admits the TTL only on a finished Job the active claim
+  names by UID, so the Job and its Pod stayed until the resource was deleted,
+  and nothing named them. A `PtahSchema` claim that could not confirm its Job,
+  and a migration claim a rotation retires, now wait for a Job they can confirm
+  to stop, by the bound the entry on a refused read-only migration Job gives,
+  and give it the five minutes a harvested Job gets. `Ready` names the Job while
+  a `PtahSchema` claim waits.
+  A claim that never recorded the Job's UID records it first. Suspension
+  prevents new operations but does not stop one already running, and a TTL only
+  removes a Job that has finished, so a suspended claim does not wait, including
+  one a migration rotation was holding: a Job that has finished gets its TTL as
+  the claim goes, and a Warning names one still running, which stays until it is
+  deleted. A TTL write that fails for any reason but a refusal fails the pass
+  and keeps the claim, so the next pass asks again. A new
+  `SchemaJobCleanupDeferred` Warning Event names a Job a `PtahSchema` claim
+  leaves with no TTL. A `PtahSchema` claim a binding change retires already
+  waited for its Job; a TTL write admission refuses there no longer fails the
+  pass, and a Warning names the Job. A `PtahSchema` Plan whose database lock
+  epoch moved while its Job ran waited for that Job with no bound, renewing the
+  Lease, and failed every pass on a refused TTL write. It now waits by the same
+  bound, and a Warning names a Job it leaves. A migration being deleted records
+  the UID of an Apply Job its claim never recorded before it asks for that
+  Job's TTL, and a Job deleted before that TTL was asked for is no longer named
+  by a Warning.
 
 ## 0.2.10
 
