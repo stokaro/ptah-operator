@@ -16,6 +16,25 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.11
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. A dashboard or an alert that reads `ptah_operator_plans_total`
+or `ptah_operator_approvals_total{outcome="required"}` for `family="schema"`,
+or a script that counts `ApprovalRequired` Events, has to expect one count for
+each plan rather than one for each read of a plan waiting for approval. Nothing
+else.
+
+- **A waiting plan counted once.** A scheduled read of a schema clears the plan
+  it waits on and publishes the same plan again when the database has not
+  changed. The plan counter, the required-approval counter and the
+  `ApprovalRequired` Event took that plan for a new one, so a plan waiting for a
+  day under a short interval was counted, and announced, once for each read.
+  They now follow the plan's `PlanPublished` entry in `status.journal`, and the
+  same plan asks again only when its requirement comes back after something
+  withdrew it, as [Events](../../troubleshoot/events/) says. Migrations keep the
+  plan they wait on in status through a read, so their counters did not move.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

@@ -2149,9 +2149,14 @@ apply wants; add `family="migration"` to ask about one.
   detected drift from in-sync observations. It carries no family: a migration
   reads its own recorded history rather than observing the live database.
 - `ptah_operator_plans_total{family,engine,destructive}` counts published
-  immutable plans. `destructive` is the schema planner's conservative
-  classification; a migration plan reports `unknown`, because nothing examines
-  hand-written migrations for data loss.
+  immutable plans. A schema counts a plan on the status write that records its
+  publication in `status.journal`, so a scheduled read that clears the plan the
+  schema waits on and publishes it again counts nothing, and the same plan
+  counts again only once an Apply ran it or another plan took its place. A
+  migration keeps the plan it waits on in status through its reads, and counts
+  a plan its status did not name before. `destructive` is the schema planner's
+  conservative classification; a migration plan reports `unknown`, because
+  nothing examines hand-written migrations for data loss.
 - `ptah_operator_approvals_total{family,outcome}` counts approval transitions.
   `required` is a plan that asked for a decision, `accepted` is a decision the
   controller consumed at the dispatch boundary, and `stale` is an approval the
@@ -2159,7 +2164,12 @@ apply wants; add `family="migration"` to ask about one.
   being current, the verification policy refused the artifact, or a run spent
   another approval of the same migration plan. A policy
   of `Always` waives the requirement and counts nothing, except for a schema
-  plan that changes privileges, which still asks and counts as `required`.
+  plan that changes privileges, which still asks and counts as `required`. A
+  schema counts `required` with each `ApprovalRequired` Event: once when a plan
+  that asks for an approval is published, and again for the same plan only when
+  its requirement comes back after something withdrew it, which
+  [Events](../../troubleshoot/events/) lists. A migration counts it each time its
+  `ApprovalRequired` condition becomes `True`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
   uncertain, and stale Apply transitions. A migration run that ended `Partial`
   or `Unknown` is `uncertain`: neither may be retried, and both leave a record

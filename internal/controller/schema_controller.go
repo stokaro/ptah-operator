@@ -4091,8 +4091,17 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 
 // observeStatusTransitions reports what a stored status write changed, given the
 // journal entries that write recorded.
+//
+// A plan is new to the write that records its publication in the journal.
+// status.plan goes nil on every read of the database, and the next Plan
+// publishes the same plan again when nothing changed, so a plan told apart by
+// comparing the two statuses was counted, and announced as needing an
+// approval, once per read. The journal names the plan it is waiting on across
+// those writes.
 func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema, recorded []operatorv1alpha1.JournalEntry) {
-	newPlan := planChanged(before.Status.Plan, after.Status.Plan)
+	newPlan := slices.ContainsFunc(recorded, func(entry operatorv1alpha1.JournalEntry) bool {
+		return entry.Type == operatorv1alpha1.JournalPlanPublished
+	})
 	if newPlan && after.Status.Plan != nil && r.Telemetry != nil {
 		r.Telemetry.ObservePlan(telemetry.FamilySchema, after.Spec.Target.Engine,
 			telemetry.DestructivePlan(after.Status.Plan.Destructive))
@@ -4137,13 +4146,6 @@ func (r *SchemaReconciler) observeOperation(operation *operatorv1alpha1.ActiveOp
 	}
 	r.Telemetry.ObserveOperation(telemetry.FamilySchema, telemetry.OperationForSchema(operation.Type),
 		outcome, r.now().Sub(operation.StartedAt.Time))
-}
-
-func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
-	if after == nil {
-		return false
-	}
-	return before == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
 }
 
 func approvalChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
