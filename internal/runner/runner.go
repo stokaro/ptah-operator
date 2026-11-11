@@ -147,12 +147,8 @@ func Run(ctx context.Context, config Config) Result {
 			setResultError(&result, "coordination_binding_mismatch", errors.New("database coordination realm changed after planning"), redactor, config.Diagnostics)
 			return result
 		}
-		if !validProtocolDigest(inputs.ExpectedTargetDigest) {
-			setResultError(&result, "missing_target_binding", errors.New("expected target identity digest is required"), redactor, config.Diagnostics)
-			return result
-		}
-		if result.TargetIdentityDigest != inputs.ExpectedTargetDigest {
-			setResultError(&result, "target_binding_mismatch", errors.New("database target identity changed after planning"), redactor, config.Diagnostics)
+		if code, err := targetBindingRefusal(result.TargetIdentityDigest, inputs.ExpectedTargetDigest); err != nil {
+			setResultError(&result, code, err, redactor, config.Diagnostics)
 			return result
 		}
 		if config.Operation == OperationMigrationApply {
@@ -202,6 +198,21 @@ func Run(ctx context.Context, config Config) Result {
 			return result
 		}
 		mutationExecutionDeadline = executionNotAfter
+	}
+	// A read that names the target it is for reads no other. The schema
+	// controller names it on the reads that prove an Apply, whose answer
+	// counts only from the target the Apply was planned for: a read of another
+	// would log in where nothing was approved, with the credentials of a
+	// target nobody planned for, and say nothing about the Apply. The refusal
+	// is the Apply's own, and the frame names the digest the URL gave, which
+	// is what the controller stops on. A read with no expected target is how a
+	// new target is learned, so it is not bound, and a Job built before the
+	// input existed runs as it did.
+	if !config.Operation.Mutating() && operationNeedsDatabase(config.Operation) && inputs.ExpectedTargetDigest != "" {
+		if code, err := targetBindingRefusal(result.TargetIdentityDigest, inputs.ExpectedTargetDigest); err != nil {
+			setResultError(&result, code, err, redactor, config.Diagnostics)
+			return result
+		}
 	}
 	// How long a stopped child may take is part of the same authority. The
 	// deadlines above say when the child has to be stopped; the grace says how
@@ -1593,6 +1604,19 @@ func sanitizedCapturedText(content []byte, redactor Redactor, truncated bool, li
 
 func outputWasTruncated(result *Result) bool {
 	return result.Truncation != nil
+}
+
+// targetBindingRefusal is the refusal of a database operation bound to an
+// expected target: the error code and the error, or an empty code and nil when
+// the URL names the target expected.
+func targetBindingRefusal(observed, expected string) (string, error) {
+	if !validProtocolDigest(expected) {
+		return "missing_target_binding", errors.New("expected target identity digest is required")
+	}
+	if observed != expected {
+		return "target_binding_mismatch", errors.New("database target identity changed after planning")
+	}
+	return "", nil
 }
 
 func operationNeedsDatabase(operation Operation) bool {

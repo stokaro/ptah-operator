@@ -65,6 +65,36 @@ func TestFreshApprovalWaitsForObservedConvergence(t *testing.T) {
 	}
 }
 
+func TestProofReadClaimed(t *testing.T) {
+	t.Parallel()
+	fresh := func() *ptahv1alpha1.PtahSchema {
+		schema := ftActiveSchema(ptahv1alpha1.OperationObserve)
+		schema.Status.ActiveOperation.ID = "observe-proof"
+		schema.Status.PendingObservation = &ptahv1alpha1.PendingObservationStatus{ApplyOperationID: "apply-original"}
+		return schema
+	}
+	accepts := func(r *ptahv1alpha1.PtahSchema) bool { return proofReadClaimed(r, "apply-original") }
+	ftRefusesEach(t, fresh, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"nothing active", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation = nil }},
+		{"no proof owed", func(r *ptahv1alpha1.PtahSchema) { r.Status.PendingObservation = nil }},
+		{"the proof of another Apply", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.PendingObservation.ApplyOperationID = "another-apply"
+		}},
+		{"the Apply itself", func(r *ptahv1alpha1.PtahSchema) {
+			r.Status.ActiveOperation.Type, r.Status.ActiveOperation.ID = ptahv1alpha1.OperationApply, "apply-original"
+		}},
+		{"an Apply", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.Type = ptahv1alpha1.OperationApply }},
+		{"no Job named", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.JobName = "" }},
+		{"no Job bound", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.JobUID = "" }},
+	})
+	ftAcceptsEach(t, fresh, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"a Plan proves it too", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.Type = ptahv1alpha1.OperationPlan }},
+	})
+	if proofReadClaimed(fresh(), "") {
+		t.Fatal("accepted a proof read of no Apply")
+	}
+}
+
 func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 	t.Parallel()
 	refusal := "the URL Secret holds another target: kubectl annotate ptahschema x -n y " +

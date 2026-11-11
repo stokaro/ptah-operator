@@ -135,9 +135,9 @@ The operator rolls nothing back. Each branch has its own recovery, and
   `ApplyOutcomeUnknown`, and the plan is never replayed. A fresh read-only
   observation comes before anything else. If it finds no change the schema is
   `InSync`, with reason `ConvergedAfterUnknownOutcome`; otherwise it plans
-  again. An observation that reads another target than the plan's stops the
-  resource, `Blocked`, until [a person ends
-  it](../../use/recovery/#a-schema-whose-target-moved).
+  again. That observation is bound to the plan's target: one whose URL names
+  another is refused before it connects, and the resource stops, `Blocked`,
+  until [a person ends it](../../use/recovery/#a-schema-whose-target-moved).
 - **Migration, `Failed`.** [`status.lastRun`](../../use/migrations/#what-the-run-reports)
   says how far the run got. A migration that failed at a statement leaves a
   dirty revision row, and the history read that follows holds the resource
@@ -444,7 +444,8 @@ A realm refusal is taken again at least once a minute instead, and the pipeline
 starts once it ends. An unsupported engine waits for an edit, because the engine
 is in the spec. A proof whose target moved keeps its claim: only its own read runs, at
 `spec.execution.failureRetryInterval`, until the first target is back or a person
-settles it.
+settles it. The runner refuses each of those reads before it connects to the moved
+target.
 
 ### Suspended, and losing a lock
 
