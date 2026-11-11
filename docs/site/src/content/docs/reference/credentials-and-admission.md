@@ -283,7 +283,12 @@ Apply in the same position, approved while the Secret was gone, reports
 found; last reported before that:` and the same words, though its container never
 started. It observes the database, publishes the same plan again and asks for a new
 approval. An Apply whose Secret returned before the deadline went on under the
-approval it had.
+approval it had. A `PtahMigration` Apply in that position is a run nobody
+accounted for: `status.lastRun` records outcome `Unknown`, and its message keeps
+`read the Apply result: ptah runner result frame not found; last reported before
+that:` and the same words after the Pod and its Job are gone. The resource stops
+at `Blocked`, `ApplyOutcomeUnknown`, with the same message until the next history
+reading rewrites it.
 
 Those words are the last report and not a reading taken at the end. The Secret can
 arrive and the Pod can start and die without a result between two looks, and the

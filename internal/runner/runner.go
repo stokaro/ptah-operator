@@ -626,7 +626,7 @@ func runPlan(
 		if err != nil {
 			return CommandSpec{}, err
 		}
-		spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_PROTECTED_TABLES")
+		spec.Env = environmentWithout(childEnvironment(environment), "PTAH_PROTECTED_TABLES")
 		for _, selector := range planExcludes {
 			spec.Args = append(spec.Args, "--exclude="+selector)
 		}
@@ -703,7 +703,6 @@ func runPlan(
 		childEnvironment(environment),
 		envSchemaFile,
 		"PTAH_DEV_URL",
-		"PTAH_EXCLUDE",
 		"PTAH_PROTECTED_TABLES",
 	)
 	if err := ensureNoCredentialsInArguments(validationSpec.Args, environmentMap(environment)); err != nil {
@@ -974,7 +973,7 @@ func planProtectedTables(environment []string) ([]string, error) {
 var protectedTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$`)
 
 func planExcludeSelectors(environment []string) ([]string, error) {
-	selectors, err := decodeEnvironmentList(environmentMap(environment)["PTAH_EXCLUDE"])
+	selectors, err := decodeEnvironmentList(environmentMap(environment)[ptahExcludeEnvironment])
 	if err != nil {
 		return nil, errors.New("PTAH_EXCLUDE is not a valid encoded selector list")
 	}
@@ -1145,12 +1144,10 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		return result
 	}
 	// Exclusions belong to the managed planning scope, and an Observe reads the
-	// raw target: Plan performs the authoritative scoped classification. Since
-	// Ptah v0.23.0 the drift command takes --exclude and --include and reads
-	// them from PTAH_EXCLUDE and PTAH_INCLUDE, so both leave its environment.
-	// The operator sets no PTAH_INCLUDE, and removing it keeps a variable added
-	// to the Job later from narrowing what the Observe reports.
-	driftSpec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_INCLUDE")
+	// raw target: Plan performs the authoritative scoped classification. The
+	// drift command passes no selector, and childEnvironment removes both
+	// selector variables from it as from every child.
+	driftSpec.Env = childEnvironment(environment)
 	driftOutcome := executeCommand(ctx, config, driftSpec)
 	// The raw structural diff may contain arbitrary schema literals. Validate
 	// it in-process, but never copy it into the framed Pod log result.

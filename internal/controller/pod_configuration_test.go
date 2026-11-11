@@ -650,6 +650,54 @@ func TestAFailureSaysItsPodReportIsTheLastOne(t *testing.T) {
 	})
 }
 
+// A migration Apply whose log held no frame is a run nobody accounted for, and
+// its record is what a person reads once the Pod is gone. It keeps what the
+// resource last reported about the Pod, worded as that, the way a read's failure
+// and a schema Apply's do.
+func TestAnUnreadMigrationApplyKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	const lastReported = "ptah runner result frame not found; last reported before that: "
+	for _, row := range []struct {
+		name    string
+		podLeft bool
+	}{
+		{name: "past its Job's deadline, with the Pod gone"},
+		{name: "with a Pod that started between two looks", podLeft: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan := awaitingApprovalFixture(t)
+			operation := applyClaimFor(t, migration, plan)
+			approvedClaim(operation, plan)
+			said := "Job " + operation.JobName + " cannot start its Pod: " + missingSecretText
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonPodConfigurationError, said)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobFailed)
+			objects := []client.Object{migration, plan, job, verificationPolicyConfigMap()}
+			if row.podLeft {
+				podStarted(t, pod)
+				objects = append(objects, pod)
+			}
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{content: []byte("no frame here\n")}, objects...)
+			holdMigrationApplyLease(t, reconciler, api, migration)
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			stored := readMigration(t, api, migration)
+			run := stored.Status.LastRun
+			if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown || !strings.Contains(run.Message, lastReported+said) {
+				t.Fatalf("last run = %#v, want an unknown outcome whose message carries %q", run, lastReported+said)
+			}
+			blocked := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if blocked == nil || blocked.Status != metav1.ConditionTrue || !strings.Contains(blocked.Message, lastReported+said) {
+				t.Fatalf("Blocked = %#v, want %q", blocked, lastReported+said)
+			}
+		})
+	}
+}
+
 // podStarted makes pod one whose container ran and ended, which is what a kubelet
 // leaves after the Secret arrived and the process died without a result frame.
 func podStarted(t *testing.T, pod *corev1.Pod) {

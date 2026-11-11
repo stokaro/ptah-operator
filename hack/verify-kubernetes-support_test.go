@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -916,13 +917,30 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 	if err := verifyUpdateWorkflow(path); err != nil {
 		t.Fatalf("verifyUpdateWorkflow(valid) error = %v", err)
 	}
+	const (
+		appToken    = "${{ steps.app-token.outputs.token }}"
+		publishEnv  = "          GH_TOKEN: " + appToken + "\n"
+		patchStep   = "          git apply --index \"$patch_file\"\n"
+		summaryTail = "            \"$pr_number\" \"$pushed_sha\" \"$support_branch\" >> \"$GITHUB_STEP_SUMMARY\"\n"
+		dispatchJob = "\n  dispatch:\n    name: Dispatch and verify exact-SHA checks\n    needs: [prepare, propose]\n" +
+			"    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    permissions:\n      actions: write\n      contents: read\n" +
+			"    steps:\n      - name: Dispatch exact-SHA checks\n        id: dispatch-evidence\n        env:\n" +
+			"          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n        shell: bash\n        run: |\n" +
+			"          gh workflow run ci.yml --ref automation/kubernetes-support-window\n" +
+			"          gh workflow run release.yml --ref automation/kubernetes-support-window\n"
+	)
 	tests := map[string]struct {
 		old string
 		new string
+		// then is a second replacement, for a row that needs two places.
+		then [2]string
+		// want is part of the refusal, for a row whose point is the rule that
+		// refuses it. A row without one only has to be refused.
+		want string
 	}{
 		"skipped preparation job": {
 			old: "  prepare:\n    name: Discover and validate maintained Kubernetes minors\n",
-			new: "  prepare:\n    name: Discover and validate maintained Kubernetes minors\n    if: ${{ false }}\n",
+			new: "  prepare:\n    name: Discover and validate maintained Kubernetes minors\n    if: false\n",
 		},
 		"stale discovery documentation path": {
 			old: "' M " + docsPath + "'",
@@ -946,15 +964,7 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 		},
 		"skipped delivery job": {
 			old: "    if: needs.prepare.outputs.changed == 'true'\n",
-			new: "    if: ${{ false }}\n",
-		},
-		"combined proposal and dispatch authority": {
-			old: "    permissions:\n      contents: write\n      pull-requests: write\n    outputs:\n",
-			new: "    permissions:\n      actions: write\n      contents: write\n      pull-requests: write\n    outputs:\n",
-		},
-		"dispatch content write authority": {
-			old: "    permissions:\n      actions: write\n      contents: read\n      pull-requests: read\n    steps:\n",
-			new: "    permissions:\n      actions: write\n      contents: write\n      pull-requests: read\n    steps:\n",
+			new: "    if: false\n",
 		},
 		"no-op discovery": {
 			old: "          go run ./hack/updatekubernetessupport\n",
@@ -998,15 +1008,7 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 		},
 		"skipped delivery step": {
 			old: "        id: support-window-pr\n",
-			new: "        id: support-window-pr\n        if: ${{ false }}\n",
-		},
-		"skipped dispatch evidence": {
-			old: "        id: dispatch-evidence\n",
-			new: "        id: dispatch-evidence\n        if: ${{ false }}\n",
-		},
-		"unbound pushed SHA": {
-			old: "      pushed-sha: ${{ steps.support-window-pr.outputs.pushed-sha }}\n",
-			new: "      pushed-sha: ${{ github.sha }}\n",
+			new: "        id: support-window-pr\n        if: false\n",
 		},
 		"unqualified pull request lookup": {
 			old: "            -f head=\"$repository_owner:$support_branch\" \\\n",
@@ -1032,37 +1034,310 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 			old: "              --arg sha \"$pushed_sha\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == false and\n                .headRepository.nameWithOwner == $repo\n",
 			new: "              --arg sha \"$pushed_sha\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == false and\n                .headRepository.nameWithOwner != $repo\n",
 		},
-		"dispatch cross-repository flag": {
-			old: "              --arg sha \"$EXPECTED_SHA\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == false and\n",
-			new: "              --arg sha \"$EXPECTED_SHA\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == true and\n",
-		},
-		"dispatch head repository": {
-			old: "              --arg sha \"$EXPECTED_SHA\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == false and\n                .headRepository.nameWithOwner == $repo\n",
-			new: "              --arg sha \"$EXPECTED_SHA\" '\n                .state == \"OPEN\" and\n                .baseRefName == $base and\n                .headRefName == $head and\n                .headRefOid == $sha and\n                .isCrossRepository == false and\n                .headRepository.nameWithOwner != $repo\n",
-		},
-		"dispatched run SHA": {
-			old: "              -f head_sha=\"$EXPECTED_SHA\" \\\n              -f per_page=100)\"\n            before_ids=",
-			new: "              -f per_page=100 \\\n              -f per_page=100)\"\n            before_ids=",
-		},
-		"CI dispatch": {
-			old: "          require_dispatched_run ci.yml\n",
-			new: "          true # CI dispatch omitted\n",
-		},
-		"release dispatch": {
-			old: "          require_dispatched_run release.yml\n",
-			new: "          true # Release dispatch omitted\n",
-		},
 		"continue on error": {
 			old: "        id: support-window-pr\n",
 			new: "        id: support-window-pr\n        continue-on-error: true\n",
+		},
+		"pull request opened with the workflow token": {
+			old:  publishEnv,
+			new:  "          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n",
+			want: `"secrets.GITHUB_TOKEN": got 2, want 1`,
+		},
+		"workflow token through the github context": {
+			old:  publishEnv,
+			new:  "          GH_TOKEN: ${{ github.token }}\n",
+			want: `"github.token": got 1, want 0`,
+		},
+		"whole github context": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' '${{ toJSON(github) }}' > \"$RUNNER_TEMP/github\"\n",
+			want: `"toJSON(github)": got 1, want 0`,
+		},
+		"workflow token in another letter case": {
+			old:  publishEnv,
+			new:  "          GH_TOKEN: ${{ Secrets.GITHUB_TOKEN }}\n",
+			want: `"Secrets.GITHUB_TOKEN": got 1, want 0`,
+		},
+		"workflow token beside the App token": {
+			old:  publishEnv,
+			new:  publishEnv + "          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n",
+			want: `"secrets.GITHUB_TOKEN": got 2, want 1`,
+		},
+		"proposal writes with the workflow token": {
+			old:  "    permissions:\n      contents: read\n    steps:\n",
+			new:  "    permissions:\n      contents: write\n      pull-requests: write\n    steps:\n",
+			want: "propose permissions must be contents: read only",
+		},
+		"proposal exports its delivery": {
+			old:  "    permissions:\n      contents: read\n    steps:\n",
+			new:  "    permissions:\n      contents: read\n    outputs:\n      pushed-sha: recorded\n    steps:\n",
+			want: "exports nothing",
+		},
+		"App token handed to the patch step": {
+			old:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}\n",
+			new:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}\n          GH_TOKEN: " + appToken + "\n",
+			want: `"steps.app-token.outputs.token": got 2, want 1`,
+		},
+		"App token written into a run script": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' \"" + appToken + "\" > \"$RUNNER_TEMP/token\"\n",
+			want: `"steps.app-token.outputs.token": got 2, want 1`,
+		},
+		"App token read by index": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' \"${{ steps['app-token'].outputs.token }}\" > \"$RUNNER_TEMP/token\"\n",
+			want: `"steps['app-token'].outputs.token": got 1, want 0`,
+		},
+		"App key handed to the publishing step": {
+			old:  "          BASE_SHA: ${{ needs.prepare.outputs.base-sha }}\n",
+			new:  "          BASE_SHA: ${{ needs.prepare.outputs.base-sha }}\n          APP_KEY: ${{ secrets.CAPABILITY_MATRIX_APP_KEY }}\n",
+			want: `"secrets.CAPABILITY_MATRIX_APP_KEY": got 2, want 1`,
+		},
+		"App key read by index": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' \"${{ secrets['CAPABILITY_MATRIX_APP_KEY'] }}\" > \"$RUNNER_TEMP/key\"\n",
+			want: `"secrets['CAPABILITY_MATRIX_APP_KEY']": got 1, want 0`,
+		},
+		"App key read by index with a space": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' \"${{ secrets ['CAPABILITY_MATRIX_APP_KEY'] }}\" > \"$RUNNER_TEMP/key\"\n",
+			want: `"secrets ['CAPABILITY_MATRIX_APP_KEY']": got 1, want 0`,
+		},
+		"App id reused through a YAML alias": {
+			old:  "          client-id: ${{ vars.CAPABILITY_MATRIX_APP_ID }}\n",
+			new:  "          client-id: &app-id ${{ vars.CAPABILITY_MATRIX_APP_ID }}\n",
+			then: [2]string{publishEnv, publishEnv + "          APP_ID: *app-id\n"},
+			want: `"vars.CAPABILITY_MATRIX_APP_ID": got 2, want 1`,
+		},
+		"every secret": {
+			old:  patchStep,
+			new:  patchStep + "          printf '%s' '${{ toJSON(secrets) }}' > \"$RUNNER_TEMP/secrets\"\n",
+			want: `"toJSON(secrets)": got 1, want 0`,
+		},
+		"every secret behind a YAML escape": {
+			old:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}\n",
+			new:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}\n          LEAK: \"\\x24{{ toJSON(secrets) }}\"\n",
+			want: `"toJSON(secrets)": got 1, want 0`,
+		},
+		"another secret": {
+			old:  "          BASE_SHA: ${{ needs.prepare.outputs.base-sha }}\n",
+			new:  "          BASE_SHA: ${{ needs.prepare.outputs.base-sha }}\n          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}\n",
+			want: `"secrets.RELEASE_TOKEN": got 1, want 0`,
+		},
+		"unterminated expression": {
+			old:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}\n",
+			new:  "          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256\n",
+			want: "has an unterminated expression",
+		},
+		"token widened through the environment": {
+			old:  patchStep,
+			new:  patchStep + "          echo 'INPUT_PERMISSION-ISSUES=write' >> \"$GITHUB_ENV\"\n",
+			want: "no step may set the environment of a later one",
+		},
+		"publishing tools replaced through the path": {
+			old:  patchStep,
+			new:  patchStep + "          echo \"$RUNNER_TEMP/bin\" >> \"$GITHUB_PATH\"\n",
+			want: "no step may change the path of a later one",
+		},
+		"credential guard handed the App key": {
+			old:  "          APP_KEY_CONFIGURED: ${{ secrets.CAPABILITY_MATRIX_APP_KEY != '' }}\n",
+			new:  "          APP_KEY_CONFIGURED: ${{ secrets.CAPABILITY_MATRIX_APP_KEY }}\n",
+			want: `"secrets.CAPABILITY_MATRIX_APP_KEY": got 2, want 1`,
+		},
+		"skipped credential guard": {
+			old:  "        id: app-credentials\n",
+			new:  "        id: app-credentials\n        if: false\n",
+			want: `step "app-credentials" must be an unconditional audited bash invocation`,
+		},
+		"credential guard that never refuses": {
+			old:  "          if [[ \"$APP_ID_CONFIGURED\" == true && \"$APP_KEY_CONFIGURED\" == true ]]; then\n",
+			new:  "          if true; then\n",
+			want: "missing scheduled support-window marker",
+		},
+		"token minted only on a schedule": {
+			old:  "        id: app-token\n",
+			new:  "        id: app-token\n        if: github.event_name == 'schedule'\n",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"token for every repository in the installation": {
+			old:  "          repositories: ${{ github.event.repository.name }}\n",
+			new:  "          owner: stokaro\n",
+			want: `"github.event.repository.name": got 0, want 1`,
+		},
+		"token for a second repository": {
+			old:  "          repositories: ${{ github.event.repository.name }}\n",
+			new:  "          repositories: ${{ github.event.repository.name }},ptah\n",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"token with every installation permission": {
+			old:  "          permission-contents: write\n          permission-pull-requests: write\n",
+			new:  "",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"token with issues write": {
+			old:  "          permission-pull-requests: write\n",
+			new:  "          permission-pull-requests: write\n          permission-issues: write\n",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"token kept past the job": {
+			old:  "          permission-pull-requests: write\n",
+			new:  "          permission-pull-requests: write\n          skip-token-revoke: true\n",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"unpinned token action": {
+			old:  "        uses: " + createAppTokenAction + " # v3.3.0\n",
+			new:  "        uses: actions/create-github-app-token@v3\n",
+			want: `step "app-token" must be the unconditional audited action invocation`,
+		},
+		"dispatch from the proposal": {
+			old:  summaryTail,
+			new:  summaryTail + "          gh workflow run ci.yml --ref \"$support_branch\"\n",
+			want: "a dispatch would start a second matrix",
+		},
+		"dispatch through the API": {
+			old:  summaryTail,
+			new:  summaryTail + "          gh api --method POST \"repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/dispatches\" -f ref=\"$support_branch\"\n",
+			want: "a dispatch would start a second matrix",
+		},
+		"dispatch job restored": {
+			old:  summaryTail,
+			new:  summaryTail + dispatchJob,
+			want: "a dispatch would start a second matrix",
+		},
+		"third job": {
+			old:  summaryTail,
+			new:  summaryTail + "\n  notify:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+			want: "must contain only prepare and propose jobs",
 		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			path := writeMutatedWorkflow(t, workflow, test.old, test.new)
-			if err := verifyUpdateWorkflowSemanticsAtPath(path); err == nil {
+			mutated := replaceWorkflowOnce(t, workflow, test.old, test.new)
+			if test.then[0] != "" {
+				mutated = replaceWorkflowOnce(t, mutated, test.then[0], test.then[1])
+			}
+			err := verifyUpdateWorkflowSemanticsAtPath(writeTestWorkflow(t, mutated))
+			if err == nil {
 				t.Fatal("verifyUpdateWorkflowSemantics() accepted a critical mutation")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyUpdateWorkflowSemantics() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestVerifyUpdateWorkflowRejectsRearrangedDelivery holds the audit to
+// mutations that move or remove whole steps rather than edit one line.
+func TestVerifyUpdateWorkflowRejectsRearrangedDelivery(t *testing.T) {
+	t.Parallel()
+
+	workflow := readTestWorkflow(t, filepath.Join("..", updateWorkflowPath))
+	const (
+		checkout = "      - name: Check out the exact validated base\n"
+		patch    = "      - name: Validate and apply the prepared patch\n"
+		publish  = "      - name: Open or update the support-window pull request\n"
+	)
+	guard := workflowSection(t, workflow, "      # Without the App's credentials", checkout)
+	mint := workflowSection(t, workflow, "      # Minted after the patch is validated", publish)
+	tests := map[string]struct {
+		mutate func(t *testing.T, workflow string) string
+		want   string
+	}{
+		// The propose job as it stood before the App: no guard, no token
+		// step, write permissions, and the workflow token for the push and
+		// the pull request. The refusal has to name the workflow token rather
+		// than a step that went missing with it.
+		"the workflow-token proposal the App replaced": {
+			mutate: func(t *testing.T, workflow string) string {
+				workflow = replaceWorkflowOnce(t, workflow, guard, "")
+				workflow = replaceWorkflowOnce(t, workflow, mint, "")
+				workflow = replaceWorkflowOnce(t, workflow,
+					"          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n",
+					"          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n")
+				return replaceWorkflowOnce(t, workflow,
+					"    permissions:\n      contents: read\n    steps:\n",
+					"    permissions:\n      contents: write\n      pull-requests: write\n    steps:\n")
+			},
+			want: `"secrets.GITHUB_TOKEN": got 2, want 1`,
+		},
+		"token minted before the patch is validated": {
+			mutate: func(t *testing.T, workflow string) string {
+				workflow = replaceWorkflowOnce(t, workflow, mint, "")
+				return replaceWorkflowOnce(t, workflow, patch, mint+patch)
+			},
+			want: `step 3 has id "app-token", want "apply-bundle"`,
+		},
+		"credential guard after the token is minted": {
+			mutate: func(t *testing.T, workflow string) string {
+				workflow = replaceWorkflowOnce(t, workflow, guard, "")
+				return replaceWorkflowOnce(t, workflow, publish, guard+publish)
+			},
+			want: `step 1 has id "checkout", want "app-credentials"`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := writeTestWorkflow(t, test.mutate(t, workflow))
+			err := verifyUpdateWorkflowSemanticsAtPath(path)
+			if err == nil {
+				t.Fatal("verifyUpdateWorkflowSemantics() accepted a rearranged delivery")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyUpdateWorkflowSemantics() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestSupportUpdaterRefusesMissingAppCredentials runs the guard the propose
+// job starts with. It sees whether the App id and key are set, and has to let
+// the run go on only when both are, naming both when it stops it.
+func TestSupportUpdaterRefusesMissingAppCredentials(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", updateWorkflowPath)
+	workflow, _, err := readWorkflow(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := requireWorkflowStep(path, "propose", workflow.Jobs["propose"], "app-credentials")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]struct {
+		id, key string
+		admit   bool
+	}{
+		"both set":         {id: "true", key: "true", admit: true},
+		"variable missing": {id: "false", key: "true"},
+		"secret missing":   {id: "true", key: "false"},
+		"both missing":     {id: "false", key: "false"},
+		"nothing rendered": {id: "", key: ""},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			command := exec.Command("bash", "-c", step.Run)
+			command.Env = append(os.Environ(),
+				"APP_ID_CONFIGURED="+test.id,
+				"APP_KEY_CONFIGURED="+test.key)
+			output, err := command.CombinedOutput()
+			if test.admit {
+				if err != nil || len(output) != 0 {
+					t.Fatalf("guard refused configured credentials: %v\n%s", err, output)
+				}
+				return
+			}
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+				t.Fatalf("guard error = %v, want exit status 1\n%s", err, output)
+			}
+			for _, want := range []string{"CAPABILITY_MATRIX_APP_ID", "CAPABILITY_MATRIX_APP_KEY", "No pull request is opened"} {
+				if !strings.Contains(string(output), want) {
+					t.Fatalf("guard output does not name %q:\n%s", want, output)
+				}
 			}
 		})
 	}
@@ -1422,12 +1697,37 @@ func verifyUpdateWorkflowSemanticsAtPath(path string) error {
 
 func writeMutatedWorkflow(t *testing.T, workflow, old, replacement string) string {
 	t.Helper()
+	return writeTestWorkflow(t, replaceWorkflowOnce(t, workflow, old, replacement))
+}
+
+func replaceWorkflowOnce(t *testing.T, workflow, old, replacement string) string {
+	t.Helper()
 	if count := strings.Count(workflow, old); count != 1 {
 		t.Fatalf("workflow fixture contains %d instances of %q, want 1", count, old)
 	}
+	return strings.Replace(workflow, old, replacement, 1)
+}
+
+// workflowSection returns the text from the start of from up to the start of
+// to, each of which has to occur exactly once.
+func workflowSection(t *testing.T, workflow, from, to string) string {
+	t.Helper()
+	for _, marker := range []string{from, to} {
+		if count := strings.Count(workflow, marker); count != 1 {
+			t.Fatalf("workflow fixture contains %d instances of %q, want 1", count, marker)
+		}
+	}
+	start, end := strings.Index(workflow, from), strings.Index(workflow, to)
+	if end <= start {
+		t.Fatalf("workflow fixture has %q before %q", to, from)
+	}
+	return workflow[start:end]
+}
+
+func writeTestWorkflow(t *testing.T, contents string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "workflow.yml")
-	mutated := strings.Replace(workflow, old, replacement, 1)
-	if err := os.WriteFile(path, []byte(mutated), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
