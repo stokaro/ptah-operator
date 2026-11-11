@@ -152,6 +152,14 @@ that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
   wrote the resource while admission ran, such as an annotation, a label or
   `kubectl ptah refresh`: the write made the withdrawal conflict, and the Apply
   ended `Unknown` with its approval spent.
+- **A webhook's 500 denial keeps the approval.** The manager's Job-write
+  webhook answers a read it could not make with code 500, and the API server
+  keeps that code on the webhook's denial. The dispatcher read every 500 other
+  than a failed webhook call as an outcome nobody established, so it retired
+  the Apply as `Unknown` with its approval spent, although nothing had been
+  stored. An answer that reads `admission webhook "..." denied the request` is
+  now a refusal whatever its code: the dispatch is withdrawn and the next pass
+  makes the create again.
 - **A Job another manager is still creating is waited for.** After a node
   pause two managers act at once until the old leader's lease runs out, and one
   of them could read the other's dispatch mark before that manager's Job create

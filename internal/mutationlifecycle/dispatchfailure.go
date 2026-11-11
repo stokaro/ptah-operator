@@ -3,6 +3,7 @@ package mutationlifecycle
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -85,17 +86,27 @@ const (
 // refusal. An admission webhook it could not call, with failurePolicy Fail, is
 // one: the 0.2.1 and 0.2.2 restart bursts replaced every manager, which
 // removed every endpoint of the manager's own Job-write webhook while the
-// stopping leader was dispatching. Every other server error, a timeout among
-// them, may come after the write and stays unknown.
+// stopping leader was dispatching. A webhook's own denial is one too, whatever
+// code it carries: admission runs before storage, and the API server keeps the
+// code the webhook answered with. The manager's Job-write webhook answers a
+// read it could not make with 500, so a denial told apart by its code read as
+// unknown and spent the approval (#979). Every other server error, a timeout
+// among them, may come after the write and stays unknown.
 func ClassifyCreate(err error) CreateAnswer {
-	if apierrors.IsAlreadyExists(err) {
-		return AnswerNameTaken
-	}
 	var status apierrors.APIStatus
 	if !errors.As(err, &status) {
 		return AnswerUnknown
 	}
-	switch s := status.Status(); s.Code {
+	s := status.Status()
+	// Before the name: a webhook that answers AlreadyExists still answered
+	// before anything was stored.
+	if webhookDenied(s.Message) {
+		return AnswerRefused
+	}
+	if apierrors.IsAlreadyExists(err) {
+		return AnswerNameTaken
+	}
+	switch s.Code {
 	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
 		http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusRequestEntityTooLarge,
 		http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity, http.StatusTooManyRequests:
@@ -106,6 +117,20 @@ func ClassifyCreate(err error) CreateAnswer {
 		}
 	}
 	return AnswerUnknown
+}
+
+// webhookDenial is the message the API server gives a webhook's denial:
+// ToStatusErr in k8s.io/apiserver/pkg/admission/plugin/webhook/errors prefixes
+// the webhook's own message, or its reason, with the webhook's name, or ends
+// the prefix with "without explanation" when it gave neither. A webhook's name
+// is a DNS subdomain, so %q quotes it without escapes.
+var webhookDenial = regexp.MustCompile(`^admission webhook "[^"\\]+" denied the request(: | without explanation$)`)
+
+// webhookDenied recognizes the status the API server builds from a webhook's
+// own refusal. The status is the webhook's, with its code raised to 400 when
+// it was lower, so only the message says whose answer it is.
+func webhookDenied(message string) bool {
+	return webhookDenial.MatchString(message)
 }
 
 // webhookCallFailed recognizes the error the API server's admission

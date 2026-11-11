@@ -278,14 +278,17 @@ dispatch beside a Job that may already be running SQL.
 The one exception is a create the API server refused before storing it:
 authentication, authorization, validation or admission turned it away, or
 priority and fairness shed it. A webhook that fails closed and cannot be
-called is such a refusal. Nothing stands under the reserved name, so the claim
-withdraws its marker and is back where a process that stopped between spending
-its approval and marking leaves it; the next pass makes the create under the
-approval already spent. A timeout or any other server error may follow the
-write and stays uncertain. `mutationlifecycle.ClassifyCreate` decides which
-answer a failed create gave. Replacing every manager at once is when this
-happens: the replaced managers' webhook endpoints go first, and a leader not
-yet told to stop can still be dispatching.
+called is such a refusal, and so is a webhook's own denial whatever code it
+carries: the Job-write webhook answers a read it could not make with 500, and
+the API server keeps that code on `admission webhook "..." denied the
+request`. Nothing stands under the reserved name, so the claim withdraws its
+marker and is back where a process that stopped between spending its approval
+and marking leaves it; the next pass makes the create under the approval
+already spent. A timeout or any other server error may follow the write and
+stays uncertain. `mutationlifecycle.ClassifyCreate` decides which answer a
+failed create gave. Replacing every manager at once is when this happens: the
+replaced managers' webhook endpoints go first, and a leader not yet told to
+stop can still be dispatching.
 
 The withdrawal is a status write from the version the marker was written at,
 and admission can take the webhook's whole timeout, in which a person or a
