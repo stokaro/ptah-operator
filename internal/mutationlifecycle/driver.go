@@ -261,8 +261,9 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 			// From the mark on, a create the shutdown interrupted would be an
 			// outcome nobody established, which only a person can clear. The
 			// mark, create, read-back and record take milliseconds, so they run
-			// to the end on a context the shutdown does not cancel.
-			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchCriticalSection)
+			// to the end on a context the shutdown does not cancel. The create
+			// has to stay on it: MissingJobGrace is measured against its end.
+			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), DispatchCriticalSection)
 			defer cancel()
 			stepCtx = critical
 		}
@@ -273,10 +274,15 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 	return pass.result, pass.err
 }
 
-// dispatchCriticalSection bounds the mark-to-record steps once they no longer
+// DispatchCriticalSection bounds the mark-to-record steps once they no longer
 // follow the reconcile's cancellation. It is shorter than the manager's
 // graceful shutdown, so a stopping manager still finishes them and exits.
-const dispatchCriticalSection = 15 * time.Second
+//
+// It also bounds the create. The client abandons the create when this context
+// ends, and that cancels the request on the API server, so admission does not
+// run on past it. MissingJobGrace, how long another manager waits for a marked
+// claim's Job before calling it lost, is this bound plus a margin.
+const DispatchCriticalSection = 15 * time.Second
 
 type dispatchPass struct {
 	family   Family

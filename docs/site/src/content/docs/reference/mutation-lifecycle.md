@@ -215,6 +215,32 @@ the create leaves a claim that says a Job may exist. The next pass either finds
 it and adopts its UID, or finds nothing and declares the outcome unknown. It
 never creates the Job a second time.
 
+Finding nothing under a fresh marker is not yet a lost Job. After a node pause
+two managers act at once until the old leader's lease runs out, and one of them
+can read the other's marker before that manager's create lands. So a pass over
+an active claim that finds it marked, with no recorded Job UID and no Job,
+waits `mutationlifecycle.MissingJobGrace`, 20 seconds, before it declares the
+outcome unknown.
+
+Admission alone may take longer than that, since the chart gives the Job-write
+webhook up to 30 seconds. But the dispatching manager's client abandons its
+create once its mark-to-record steps have run 15 seconds, and that cancels the
+request on the API server; the other 5 seconds cover the cancellation arriving
+and a storage write already in flight. The Job-write webhook also reads the
+claim uncached, so a create whose admission runs after the claim was retired is
+refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
+leaves the API server to finish the request on its own bounds. That case fails
+closed: a Job stored under a retired claim runs no Pod, because Pod admission
+refuses a Pod whose claim is no longer active.
+
+The wait is measured on the reading manager's own clock, from the first time
+it saw that claim so, because the marker carries no time and another manager's
+clock is not this one's. It is kept in memory, so a restarted manager waits
+again, which only delays a verdict that fails closed. A claim that recorded its
+Job's UID saw the create return, and its missing Job is unknown at once. A
+resource being deleted does not wait either: the Job-write webhook refuses a
+create for an owner being deleted.
+
 The approval is spent before the marker, in both families, so every marked
 claim's approval is already spent ([The dispatch sequence](#the-dispatch-sequence)
 says why that order). Consumption is evidence that a decision was spent, not
@@ -517,7 +543,7 @@ next pass cannot tell" would be a defect; none of them is.
 | `admissionSnapshot` | Nothing; the pass returns deliberately | No Job can exist yet. The next pass rebuilds the Job and refuses a template whose digest disagrees |
 | A schema plan's projection ConfigMaps | The `dispatchStarted` write | Projections with no Job to mount them. The next pass reads them back, finds them matching and goes on; they are owned by the plan and go with it |
 | The approval's `Consumed` condition, for a mutating claim | The `dispatchStarted` write | An approval spent with nothing marked. The same claim dispatches on the next pass under the approval it spent; a claim retired instead leaves the approval spent, which authorizes nothing |
-| `dispatchStarted` | The one permitted create | A claim that says a Job may exist, with its approval already spent. The next pass adopts the Job it finds, or declares the outcome unknown; it never creates again |
+| `dispatchStarted` | The one permitted create | A claim that says a Job may exist, with its approval already spent. The next pass adopts the Job it finds, or declares the outcome unknown: for an active claim once the Job has stayed missing for `MissingJobGrace`, for a resource being deleted at once. It never creates again |
 | `jobUID` | An Event and the telemetry | Covered by the marker above: the next pass finds the Job under the reserved name and adopts its UID once `jobclaim.Match` holds it to the claim |
 | The Job's cleanup TTL | The outcome status patch | A Job carrying a TTL under a live claim. The next pass re-reads the same terminal Job and reaches the same verdict |
 | The outcome patch: the claim cleared, the record written and the release it owes staged, together | For a migration, the Lease release. For a schema, the proof, under the same Lease | Either a live claim or a retained record, never both and never neither. Which one decides whether the next pass supervises or proves |
