@@ -2462,6 +2462,10 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	if !evidence.Trusted {
 		return evidence, nil
 	}
+	if executorLogsLost([]*corev1.Pod{selected}) {
+		evidence.LogLost = lostExecutorLog(selected)
+		return evidence, nil
+	}
 	if r.Logs == nil {
 		return evidence, errors.New("pod log reader is not configured")
 	}

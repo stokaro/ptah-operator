@@ -339,19 +339,27 @@ showed its executor run and stop, and `Apply executor termination is not proven
 during deletion` when the Job stopped otherwise. A container terminated with
 reason `ContainerStatusUnknown` shows neither a run nor a stop: the kubelet gives
 that reason to a container that was still waiting when it stopped the Pod, as it
-does at the Job's deadline to one blocked on a missing Secret. The status goes
-with the resource, and the `ApplyOutcomeUnknown` Event is what stays: `Apply
+does at the Job's deadline to one blocked on a missing Secret, and to one the
+container runtime stopped reporting while it ran. The status goes with the
+resource, and the `ApplyOutcomeUnknown` Event is what stays: `Apply
 outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the
 database:` and the sentence, followed by `; last reported before that:` and the
-words unless a Pod the ending listed showed its executor start.
+words unless a Pod the ending listed showed its executor start. A live
+`PtahSchema` reads such a container the same way, and reads the database only
+once the Apply's execution deadline and its grace period have passed. With
+`resultDelivery.enabled=false` it asks for no log and takes the log as gone, so
+it records `apply result is uncertain: the result log is gone: the kubelet ended
+container "ptah" of Pod <pod> with ContainerStatusUnknown and serves no log for
+it` and the words.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded, and a refusal is not
 added once that Job counts a Pod in any state, since the API server created one
 after all. On the endings for more than one Pod, for a Pod that does not match
-its claim, and for a lost database Lease, and on every ending of a deleted
-`PtahSchema`, nothing is added when a Pod the ending read shows its executor
-running or terminated, as a Pod that got its Secret and then lost its node does
+its claim and for a lost database Lease, on a `PtahSchema`'s endings for a
+missing Job and for inputs that changed while the Job ran, and on every ending
+of a deleted `PtahSchema`, nothing is added when a Pod the ending read shows its
+executor running or terminated, as a Pod that got its Secret and then lost its node does
 while its replacement waits; `ContainerStatusUnknown` shows neither. A Pod can
 still start after the last look and fail without a result, and the failure reads
 the same. The
