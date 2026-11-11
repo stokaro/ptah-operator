@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -953,4 +954,68 @@ func TestAMigrationClaimThatOwesItsBindingKeepsItWhenTheSourceMoves(t *testing.T
 			t.Fatalf("a dispatched attempt gave way before its Pods were known to have stopped: %q, %v", reason, err)
 		}
 	})
+}
+
+// A failed migration read gives way only where its retried attempt would be
+// dispatched, and dispatch is reached only where no Job stands under the name the
+// attempt reserved. So the give-way, which discards the claim without asking a
+// Job for anything, never meets a Job of its own: a Job that stands under the
+// name, as when the status write recording its UID was lost, goes to supervision
+// first, and the claim adopts it as it adopts any Job of its own. The first row
+// is the same attempt with no Job, which does give way, so the second cannot pass
+// on a give-way that never had its reasons.
+func TestAFailedMigrationReadGivesWayOnlyWhereNoJobStandsUnderItsName(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	for _, row := range []struct {
+		name string
+		// standing leaves the attempt's Job under its name.
+		standing bool
+	}{
+		{name: "no Job under the attempt's name"},
+		{name: "a Job under the attempt's name whose UID was not recorded", standing: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			due := metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC))
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
+				dispatcher: current,
+				claim:      func(operation *operatorv1alpha1.MigrationOperationStatus) { operation.RetryNotBefore = &due },
+			})
+			run.migration.Status.NextReconciliationTime = &due
+			reconciler, api := run.reconciler(t, current)
+			recorder := record.NewFakeRecorder(64)
+			reconciler.Recorder = recorder
+			if reason, err := reconciler.failedMigrationReadGivesWay(ctx, readMigration(t, api, run.migration)); err != nil ||
+				reason != failedReadIntervalEnded {
+				t.Fatalf("the failed read owes no give-way (%q, %v), so the row measures nothing", reason, err)
+			}
+			if !row.standing {
+				for _, object := range []client.Object{run.pod, run.job} {
+					if err := api.Delete(ctx, object); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			actual := reconcileMigration(t, reconciler, api, run.migration)
+			events := migrationEvents(recorder)
+			gaveWay := slices.ContainsFunc(events, func(event string) bool {
+				return strings.HasPrefix(event, corev1.EventTypeNormal+" ReadRestarted ")
+			})
+			if !row.standing {
+				if actual.Status.ActiveOperation != nil || !gaveWay {
+					t.Fatalf("the failed read with no Job did not give way: operation %#v", actual.Status.ActiveOperation)
+				}
+				return
+			}
+			if gaveWay {
+				t.Fatalf("the failed read gave way over the Job under its name: %q", events)
+			}
+			assertAdopted(t, api, run)
+		})
+	}
 }

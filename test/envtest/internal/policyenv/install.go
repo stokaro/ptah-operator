@@ -153,6 +153,9 @@ func fixtureRBAC() []client.Object {
 				Resources: []string{"ptahschemas", "ptahmigrations", "ptahschemaplans", "ptahmigrationplans"},
 				Verbs:     []string{"get", "create", "update", "patch"},
 			},
+			// Deletion, so that the chart's orphan-deletion guard is what
+			// refuses an orphaning one.
+			{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas", "ptahmigrations"}, Verbs: []string{"delete"}},
 			// Status, and the acknowledgment a person writes. RBAC admits the
 			// status writes so that the chart's status guard is what refuses
 			// them.

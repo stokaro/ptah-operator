@@ -190,6 +190,10 @@ app.kubernetes.io/component: metrics
 {{- printf "ptah-operator-unresolved-run-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.orphanDeletionGuardPolicyName" -}}
+{{- printf "ptah-operator-orphan-deletion-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.applyPolicyGuardPolicyName" -}}
 {{- printf "ptah-operator-apply-policy-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}

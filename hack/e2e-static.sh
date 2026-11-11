@@ -2400,10 +2400,11 @@ hook_service_account_name=$(awk '
 [ "$(grep -Fc -- \
 	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-# The release keeps ten admission policies -- seven on the manager's own
-# writes, the apply-policy guard, and the two that keep status and the copy of
-# an unresolved run the manager's -- and each is an ordinary release object: no
-# hook annotation, no keep policy and no parameter. Their
+# The release keeps eleven admission policies -- seven on the manager's own
+# writes, the apply-policy guard, the two that keep status and the copy of an
+# unresolved run the manager's, and the one that refuses an orphaning deletion
+# -- and each is an ordinary release object: no hook annotation, no keep policy
+# and no parameter. Their
 # names carry the release's own digest and nothing that changes between its
 # upgrades, so an upgrade updates each in place and the uninstall deletes it.
 controller_guard_policy_names() {
@@ -2414,12 +2415,12 @@ controller_guard_policy_names() {
     ' "$1" | sort
 }
 controller_guard_names=$(controller_guard_policy_names "$CRD_FULL_RENDER")
-[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 10 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly ten admission policies' >&2
+[ "$(printf '%s\n' "$controller_guard_names" | grep -c .)" -eq 11 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly eleven admission policies' >&2
 	exit 1
 }
-[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 10 ] || {
-	printf '%s\n' 'e2e static: the release does not render exactly ten admission policy bindings' >&2
+[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$CRD_FULL_RENDER")" -eq 11 ] || {
+	printf '%s\n' 'e2e static: the release does not render exactly eleven admission policy bindings' >&2
 	exit 1
 }
 for controller_guard_family in \
@@ -2432,7 +2433,8 @@ for controller_guard_family in \
 	migration-plan-write-guard \
 	apply-policy-guard \
 	status-write-guard \
-	unresolved-run-guard; do
+	unresolved-run-guard \
+	orphan-deletion-guard; do
 	[ "$(printf '%s\n' "$controller_guard_names" |
 		grep -Ec "^ptah-operator-${controller_guard_family}-[0-9a-f]{12}\$")" -eq 1 ] || {
 		printf 'e2e static: the release does not render one %s policy\n' "$controller_guard_family" >&2
@@ -2461,6 +2463,7 @@ controller_guard_successor_names=$(helm template ptah-e2e "$ROOT_DIR/charts/ptah
 	--show-only templates/controller-object-guard.yaml \
 	--show-only templates/apply-policy-guard.yaml \
 	--show-only templates/manager-state-guard.yaml \
+	--show-only templates/orphan-deletion-guard.yaml \
 	$crd_render_args \
 	--set-string image.digest=sha256:3333333333333333333333333333333333333333333333333333333333333333 |
 	controller_guard_policy_names /dev/stdin)
@@ -2501,11 +2504,11 @@ grep -F -- 'expression: "[\"platform:apply-policy\", \"system:serviceaccounts:fl
 	printf '%s\n' 'e2e static: the exempt groups an installer names do not reach the apply-policy guard' >&2
 	exit 1
 }
-# Off, the release renders the other nine policies and no trace of this one,
+# Off, the release renders the other ten policies and no trace of this one,
 # so an upgrade that turns it off removes it.
-[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 9 ] &&
-	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 9 ] || {
-	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the other nine policies' >&2
+[ "$(controller_guard_policy_names "$APPLY_POLICY_GUARD_OFF_RENDER" | grep -c .)" -eq 10 ] &&
+	[ "$(grep -Fxc 'kind: ValidatingAdmissionPolicyBinding' "$APPLY_POLICY_GUARD_OFF_RENDER")" -eq 10 ] || {
+	printf '%s\n' 'e2e static: turning the apply-policy guard off does not leave exactly the other ten policies' >&2
 	exit 1
 }
 if grep -F 'apply-policy-guard' "$APPLY_POLICY_GUARD_OFF_RENDER" >/dev/null; then

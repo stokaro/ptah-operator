@@ -1491,7 +1491,9 @@ one to end and the operator's reading afterwards.
 
 While a `PtahSchema` owes the proof of an Apply, suspension starts no proof
 Job and drops a proof claim whose Job was not created; a proof Observe already
-running ends, and the Plan that completes the proof waits for resume. The
+running ends, and the Plan that completes the proof waits for resume. A proof
+read whose Job this release cannot confirm, as after an upgrade that changed
+the Job, waits for that Job to stop and gives it its cleanup TTL. The
 schema retains and renews the Apply's database-realm Lease meanwhile. This
 deliberately blocks later mutations in the same realm until the resource is
 resumed and the read-only proof completes, or until the resource is deleted.
@@ -1516,8 +1518,9 @@ its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
 the claim names, so a read Job that had finished gets its TTL as the claim is
 dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
 Warning Event names one still running, which stays until it is deleted. A read
-a `PtahMigration` holds while an execution component changes is dropped the
-same way once the resource is suspended, rather than waited for.
+either kind holds while an execution component changes, and a `PtahSchema` Plan
+whose database lock epoch moved, is dropped the same way once the resource is
+suspended, rather than waited for, unless it serves a proof.
 Running one again sends nothing when the field already holds the value.
 With `--wait`, suspend stays until the operator reports the resource
 `Suspended` with nothing in flight, and resume until the resource is back in
@@ -1619,6 +1622,39 @@ A forced delete removes the Pod object and nothing else. On a node that is only
 cut off, the container can still be running and still write to the database, so
 confirm that the machine is gone, for example that its VM was terminated, before
 you run it. The Job then finishes, and the deletion goes on as above.
+
+`kubectl delete --cascade=orphan` is refused. An orphaning deletion makes the
+garbage collector take the resource's owner reference off every dependent
+before it lets the resource go. The `PtahResultRecord` objects each operation
+leaves are dependents, and admission keeps their owner references as they were
+written, for the garbage collector too, so the `orphan` finalizer would never
+come off and the resource would stay `Terminating`. The chart's admission
+policy refuses `propagationPolicy: Orphan` and `orphanDependents: true` on a
+`PtahSchema` or a `PtahMigration` for every caller, a cluster administrator
+included, and its message names the default propagation, `Background`. A
+resource that already carries the `orphan` finalizer is also refused a deletion
+that names no propagation, because the API server would honor the finalizer.
+`kubectl delete` names `Background` unless `--cascade` says otherwise, and a
+named propagation takes the finalizer off in the same write, so a plain
+`kubectl delete` goes through. That is also how to release a resource an
+orphaning deletion left `Terminating` before the policy was installed: delete
+it again with `kubectl delete`, or delete its namespace. The namespace
+controller names `Background` too, so the policy does not refuse a namespace
+deletion, and its deletion takes the finalizer off as well. The policy runs in
+the API server and asks the manager nothing, so it refuses no deletion because
+the manager is down.
+
+Such a deletion has already taken the owner reference off every dependent
+admission let it change: the Jobs, the plans and the source snapshots. They
+stay after the resource goes, and the result records of a Job that stays are
+kept with it. List them, and delete the ones that have no owner reference:
+
+```sh
+kubectl get jobs,configmaps,ptahmigrationplans -n application \
+  -l operator.ptah.run/migration=orders
+kubectl get jobs,configmaps,ptahschemaplans -n application \
+  -l operator.ptah.run/schema=storefront
+```
 
 ### Deleting a namespace {#delete-namespace}
 

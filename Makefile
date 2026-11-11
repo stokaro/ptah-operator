@@ -216,6 +216,7 @@ verify-source: fmt-check lint-workflows generate manifests chart-policies verify
 		charts/ptah-operator/templates/controller-object-guard.yaml \
 		charts/ptah-operator/templates/controller-write-guard.yaml \
 		charts/ptah-operator/templates/manager-state-guard.yaml \
+		charts/ptah-operator/templates/orphan-deletion-guard.yaml \
 		charts/ptah-operator/templates/certificate-secret-guard.yaml
 
 verify-crd-schema-history: manifests

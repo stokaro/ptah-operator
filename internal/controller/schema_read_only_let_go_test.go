@@ -78,6 +78,11 @@ func schemaOperationDispatchedBy(
 			IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
 		}
 	}
+	if shape.proof {
+		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+		schema.Status.PendingObservation = safetyPostApplyObserveSchema(t).Status.PendingObservation
+		schema.Status.PendingObservation.PlanRequired = operationType == operatorv1alpha1.OperationPlan
+	}
 	bindActiveInput(t, schema)
 	operation := schema.Status.ActiveOperation
 	operation.DispatchStarted = schemaClaimHoldsLock(schema)
@@ -826,14 +831,102 @@ func TestASuspendedReadOnlySchemaClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *te
 	}
 }
 
+// TestASuspendedProofReadWaitsForTheJobItRefused is the Observe that proves an
+// Apply, over the running Job its release cannot rebuild, when the resource is
+// suspended. Proof outranks suspension, so suspension does not discard the claim,
+// and the claim waits for the Job it refused to stop, renewing the Apply's Lease,
+// as it would on a resource that is not suspended. Once the Job stops it gets the
+// TTL a harvested read-only Job gets before the claim moves to its next attempt.
+// Letting go at once left that Job with no cleanup, running beside the proof read
+// the resume starts.
+func TestASuspendedProofReadWaitsForTheJobItRefused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	schema, reconciler, api := builtProofFixture(t, operatorv1alpha1.OperationObserve)
+	job := reconcileUntilJobNamed(t, reconciler, api, schema, schema.Status.ActiveOperation.JobName)
+	dispatched := storedSchemaOf(t, api, schema).Status.ActiveOperation
+	if dispatched == nil || dispatched.JobUID != job.UID {
+		t.Fatalf("the proof read did not record the Job it dispatched: %#v", dispatched)
+	}
+	started := metav1.NewTime(reconciler.now().Add(-time.Minute))
+	job.Status.StartTime = &started
+	job.Status.Active = 1
+	if err := api.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	suspended := storedSchemaOf(t, api, schema)
+	suspended.Spec.Suspend = true
+	if err := api.Update(ctx, suspended); err != nil {
+		t.Fatal(err)
+	}
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+	reconciler.Jobs = unrebuildableJobs{reconciler.Jobs.(workload.Builder)}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(ctx, request)
+	if err != nil {
+		t.Fatalf("Reconcile() over the refused Job: %v", err)
+	}
+	waiting := storedSchemaOf(t, api, schema)
+	if !equality.Semantic.DeepEqual(waiting.Status.ActiveOperation, dispatched) || waiting.Status.PendingObservation == nil {
+		t.Fatalf("the suspended proof read did not stay over the Job it refused: operation %#v, proof %#v",
+			waiting.Status.ActiveOperation, waiting.Status.PendingObservation)
+	}
+	if result.RequeueAfter != 5*time.Second {
+		t.Fatalf("the waiting proof read asked for its next pass after %s, want the 5s a Lease holder renews in", result.RequeueAfter)
+	}
+	ready := meta.FindStatusCondition(waiting.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if want := "Waiting for Job " + job.Name +
+		", which this release cannot confirm, to stop before the Observe operation runs again"; ready == nil || ready.Message != want {
+		t.Fatalf("Ready = %#v, want it saying %q", ready, want)
+	}
+	if proofLeaseHolder(t, reconciler, api) == "" {
+		t.Fatal("the waiting proof read released the Apply's Lease")
+	}
+	if got := storedTTL(t, api, job); got != nil {
+		t.Fatalf("the running Job's TTL = %d, want none while it runs", *got)
+	}
+
+	finished := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), finished); err != nil {
+		t.Fatal(err)
+	}
+	finished.Status.Active = 0
+	finished.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(ctx, finished); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatalf("Reconcile() after the Job stopped: %v", err)
+	}
+	if got := storedTTL(t, api, job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the stopped Job's TTL = %s, want the %d seconds a harvested read-only Job gets",
+			ttlText(got), jobclaim.CleanupTTLSeconds)
+	}
+	if next := storedSchemaOf(t, api, schema).Status.ActiveOperation; next == nil ||
+		next.Attempt != dispatched.Attempt+1 || next.JobName == dispatched.JobName {
+		t.Fatalf("operation = %#v, want the proof read moved to attempt %d under a new name", next, dispatched.Attempt+1)
+	}
+	if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, job.Name, "") {
+		t.Fatalf("the Job that got its TTL is named as staying: %q", events)
+	}
+}
+
 // TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound is a Plan whose
 // realm Lease epoch moved while its Job ran (LeaseContinuityLost). Its result is
 // discarded, but the claim first waits for the Job to stop, renewing the Lease,
-// since the Job's Pod may still reach the database. It waits no longer than
+// since the Job's Pod may still reach the database. It waits by the rule every
+// read-only claim waiting for its Job keeps. It waits no longer than
 // jobStopBound, dated from what the built Job carries: a Job past its deadline
 // carries only FailureTarget until every Pod has terminated, and would otherwise
-// hold the realm forever. At the bound the claim is discarded with its Lease
-// handed back, and a Warning names the Job, which has no TTL.
+// hold the realm forever. It does not wait at all for a suspended resource,
+// unless the claim proves an Apply, which outranks suspension. A resource being
+// deleted waits by the bound alone, suspended or not, as deletion waits on the
+// running Job of every claim that holds the lock. A claim that stops waiting is
+// discarded with its Lease handed back, and a Warning names the Job, which has
+// no TTL.
 func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	t.Parallel()
 
@@ -841,19 +934,40 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	for _, row := range []struct {
 		name string
 		// past dates the pass at the Job's stop bound rather than a second
-		// before it.
-		past bool
+		// before it, suspend suspends the resource, proof makes the claim the
+		// Plan that proves an Apply, and deleting deletes the resource first.
+		past, suspend, proof, deleting bool
+		// stays is what the Warning says of the Job the claim stops waiting
+		// for, or empty where the claim waits on.
+		stays string
 	}{
 		{name: "inside its stop bound"},
-		{name: "at its stop bound", past: true},
+		{name: "at its stop bound", past: true, stays: "the Job did not stop by its own deadline"},
+		{name: "suspended inside its stop bound", suspend: true, stays: notWaited},
+		{name: "suspended while it proves an Apply", suspend: true, proof: true},
+		{name: "suspended and being deleted inside its stop bound", suspend: true, deleting: true},
+		{
+			name: "being deleted at its stop bound", past: true, deleting: true,
+			stays: "the Job did not stop by its own deadline",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
-			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{dispatcher: current, recorded: true})
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan,
+				runShape{dispatcher: current, recorded: true, proof: row.proof})
 			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
+			run.schema.Spec.Suspend = row.suspend
 			reconciler, api, recorder := run.reconciler(t, current)
+			if row.deleting {
+				if err := api.Delete(ctx, run.schema.DeepCopy()); err != nil {
+					t.Fatal(err)
+				}
+				if deleting := safetyGetSchema(t, api, run.schema); deleting.DeletionTimestamp == nil {
+					t.Fatal("the resource is not being deleted, so the row measures nothing about deletion")
+				}
+			}
 			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
 			if holder == "" {
 				t.Fatal("the running Plan's claim holds no Lease, so nothing below measures one")
@@ -870,9 +984,17 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile(): %v", err)
 			}
-			got := safetyGetSchema(t, api, run.schema)
+			// A deletion that lets go of the claim also lets go of the resource.
+			got := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.schema), got); err != nil &&
+				!(row.deleting && row.stays != "" && apierrors.IsNotFound(err)) {
+				t.Fatal(err)
+			}
 			events := migrationEvents(recorder)
-			if !row.past {
+			if ttl := storedTTL(t, api, run.job); ttl != nil {
+				t.Fatalf("the running Job's TTL = %d, want none", *ttl)
+			}
+			if row.stays == "" {
 				if got.Status.ActiveOperation == nil || result.RequeueAfter != maxLockContentionPoll {
 					t.Fatalf("the claim did not wait for its running Job: result %#v, operation %#v",
 						result, got.Status.ActiveOperation)
@@ -886,17 +1008,13 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 				return
 			}
 			if got.Status.ActiveOperation != nil {
-				t.Fatalf("the claim waited past its Job's stop bound, %s: %#v", stopBy, got.Status.ActiveOperation)
+				t.Fatalf("the claim waited for its running Job, whose stop bound is %s: %#v", stopBy, got.Status.ActiveOperation)
 			}
 			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
 				t.Fatalf("the discarded claim's Lease is still held by %q", leased)
 			}
-			if ttl := storedTTL(t, api, run.job); ttl != nil {
-				t.Fatalf("the running Job's TTL = %d, want none", *ttl)
-			}
-			const stays = "the Job did not stop by its own deadline"
-			if !schemaCleanupDeferredFor(events, run.job.Name, stays) {
-				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, stays)
+			if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
 			}
 		})
 	}

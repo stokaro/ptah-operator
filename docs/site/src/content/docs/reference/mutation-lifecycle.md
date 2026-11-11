@@ -376,23 +376,36 @@ terminated, and a Pod on a node that is gone may never terminate.
 Every read-only claim that lets go of its Job settles it by that one rule,
 `releaseReadOnlyJob`, in both families: one that runs again past a Job it
 refused, one that suspension discards, and a migration's claim that an
-execution-binding change retires. None of them waits for a Job while the
-resource is suspended. A `PtahSchema` claim that a binding change retires is
-kept under the retired epoch until its Job stops, as a Plan's claim has to be
-to hold its Lease, and gets its TTL then. A Plan whose database lock epoch
-moved while its Job ran waits for the Job, renewing the Lease, by the same
-bound (`jobStopOverdue`) before its result is discarded.
+execution-binding change retires. A `PtahSchema` claim that a binding change
+retires is kept under the retired epoch until its Job stops, as a Plan's claim
+has to be to hold its Lease, renews that Lease while it waits, and gets its TTL
+then. A Plan whose database lock epoch moved while its Job ran waits for the
+Job, renewing the Lease, before its result is discarded. Every one of these
+waits keeps the same rule (`stopWaitingForJob`): no longer than the bound above
+(`jobStopOverdue`), and not at all while the resource is suspended. A
+`PtahSchema` claim that serves post-apply proof waits under a suspension too
+(`schemaClaimMayWait`): proof outranks suspension, so suspension does not
+discard that claim, and the proof keeps renewing its Lease anyway. So does the
+lost-epoch Plan of a resource being deleted, as deletion waits on the running
+Job of every claim that holds the lock. A claim that stops waiting names the
+Job it leaves running in a Warning Event.
 
 Suspension prevents new operations. It does not necessarily stop one that is
 already running: nothing deletes a running Job or its Pod, and a cleanup TTL
 removes a Job only once it has finished. Suspension cannot discard a dispatched
 mutating claim in either family. A resource suspended mid-Apply keeps its claim
-and keeps renewing the Lease. A read-only claim is discarded at once, because
+and keeps renewing the Lease. A read-only claim that serves no proof is
+discarded at once, because
 suspension is the stop button: it gives a Job that has finished its TTL first,
 and a Warning Event names one still running, which runs until it stops by
-itself or reaches its deadline and then stays until it is deleted. A
-migration's claim that an execution-binding change was holding over its Job is
-let go of the same way.
+itself or reaches its deadline and then stays until it is deleted. A claim that
+an execution-binding change was holding over its Job, in either family, and a
+`PtahSchema` Plan whose database lock epoch moved, are let go of the same way.
+The read that proves a `PtahSchema` Apply is not discarded, because post-apply
+proof outranks suspension ([Suspended, and losing a
+lock](../reconciliation/#suspended-and-losing-a-lock)). It runs its Job to the
+end, and one whose Job it cannot confirm waits for that Job to stop and gives it
+its TTL before it reads again.
 
 For a migration, suspending is also a spec edit, and the generation it bumps is
 one of the inputs `migrationInputFingerprint` digests. So the pass that finds
@@ -563,7 +576,11 @@ leaves `status.plan` in that write, so the plan status names always belongs to
 the current epoch. A read-only claim stays in `status.activeOperation` until a
 Job of this resource under the recorded name has stopped, whether or not the
 controller can prove that Job's envelope, so a Plan's Lease is not handed back
-while its Pod can still reach the database. The claim is then retired, and the
+while its Pod can still reach the database, and it renews the Lease it holds on
+every pass while it waits. It stays no longer than the Job's
+stop bound, and not at all once the resource is suspended unless it serves a
+proof, by the rule every read-only wait keeps, and a Warning Event names a Job
+it leaves running. The claim is then retired, and the
 Job gets its cleanup TTL only when its envelope carries the retired epoch and
 the claim's admission snapshot. A dispatched Apply, or an outcome-unknown Apply
 of the retired epoch that no pass harvested, stays in
@@ -579,9 +596,11 @@ Each obligation is removed as it is met, and the record with its last one. No
 condition reason and no phase takes part in any of these decisions, so a later
 refusal that rewrites a reason changes nothing. No other rotation starts while
 the record is present, so it always describes exactly one retired epoch. A
-rotation that arrives meanwhile waits for the Job the record names: at most
-that Job's own deadline for a read-only claim, and for an Apply no longer than
-the proof, which waits for the same Job, would have waited anyway.
+rotation that arrives meanwhile waits for the Job the record names: for a
+read-only claim no longer than that Job's deadline, the grace of its Pods and
+30 seconds, or not at all once the resource is suspended unless the claim
+serves a proof, and for an Apply no longer than the proof, which waits for the
+same Job, would have waited anyway.
 
 Proof that completes after its plan's epoch was retired sweeps that plan's
 approvals once more in the same pass, for an approval admitted before the Apply
@@ -682,7 +701,8 @@ neither being given a branch that leaves a plan standing.
 An execution-binding rotation leaves a record for a schema and none for a
 migration. A migration moves the epoch only in the write that retires what is
 left, and holds that write back while a read-only claim's Job runs. A schema
-keeps a read-only claim until its Job stops, and keeps the retired plan
+keeps a read-only claim until its Job stops or reaches its stop bound, and not
+at all once suspended unless the claim serves a proof, and keeps the retired plan
 and the retired Apply's Job named until they are tidied, so it carries
 `status.pendingBindingRetirement` until they are.
 [Retire an execution binding](#retire-an-execution-binding) says what each
