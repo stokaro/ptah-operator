@@ -356,33 +356,132 @@ func replacedBySucceededJob(t *testing.T, api client.Client, job *batchv1.Job) {
 	}
 }
 
-// A Pod that starts after the last look and runs the Apply to the end leaves
-// the words standing on Progressing, since no look came between. The claim's
-// own Job says the Pod ran, and the record does not repeat a report that the
-// run proved out of date.
-func TestAMigrationApplyWhosePodRanBeforeItsInputsChangedRepeatsNoStaleReport(t *testing.T) {
-	t.Parallel()
+// disowned is a person removing the owner reference from the claim's Job. It
+// is still the claim's Job by UID.
+func disowned(t *testing.T, api client.Client, job *batchv1.Job) {
+	t.Helper()
 
 	ctx := context.Background()
-	reconciler, api, _, migration, job, pod, said := unstartedMigrationApply(t)
-
-	// The Secret store synced and the Pod ran; meanwhile a person changed a
-	// setting the run's inputs include.
-	edited := readMigration(t, api, migration)
-	edited.Spec.Execution.ConnectTimeout = metav1.Duration{Duration: 45 * time.Second}
-	edited.Generation++
-	if err := api.Update(ctx, edited); err != nil {
+	stored := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
 		t.Fatal(err)
 	}
-	ranToSuccess(t, api, job, pod)
-	reconcileMigration(t, reconciler, api, migration)
-
-	run := settledMigrationRun(t, api, migration)
-	if !strings.Contains(run.Message, "the operation inputs changed while the Job was running") {
-		t.Fatalf("last run message = %q, want the sentence a change of inputs writes", run.Message)
+	stored.OwnerReferences = nil
+	if err := api.Update(ctx, stored); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(run.Message, said) {
-		t.Fatalf("last run message = %q repeats a report the Job's success proved out of date", run.Message)
+}
+
+// databaseLeasesGone is the database Lease lapsing or a person deleting it.
+// The renewal that follows creates another under a new epoch.
+func databaseLeasesGone(t *testing.T, api client.Client, namespace string) {
+	t.Helper()
+
+	ctx := context.Background()
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(ctx, leases, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) == 0 {
+		t.Fatal("no database Lease exists, so removing it proves nothing")
+	}
+	for index := range leases.Items {
+		if err := api.Delete(ctx, &leases.Items[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A Pod that starts after the last look and runs the Apply to the end leaves
+// the words standing on Progressing, since no look came between. Every ending
+// that holds the claim's own Job finds that it ran, and the record does not
+// repeat a report the run proved out of date.
+func TestAMigrationApplyWhosePodRanToTheEndRepeatsNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		ended string
+		end   func(t *testing.T, reconciler *MigrationReconciler, api client.Client, migration *operatorv1alpha1.PtahMigration, job *batchv1.Job)
+		// passes is how many passes the ending takes to leave the record.
+		passes  int
+		deleted bool
+	}{
+		{
+			name: "its inputs changed", ended: "the operation inputs changed while the Job was running", passes: 1,
+			end: func(t *testing.T, _ *MigrationReconciler, api client.Client, migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				edited := readMigration(t, api, migration)
+				edited.Spec.Execution.ConnectTimeout = metav1.Duration{Duration: 45 * time.Second}
+				edited.Generation++
+				if err := api.Update(context.Background(), edited); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "its Job lost its owner", ended: "the dispatched Apply Job lost its owner", passes: 1,
+			end: func(t *testing.T, _ *MigrationReconciler, api client.Client, _ *operatorv1alpha1.PtahMigration, job *batchv1.Job) {
+				disowned(t, api, job)
+			},
+		},
+		{
+			name: "an execution component changed", ended: "an execution component changed while the Apply was dispatched", passes: 1,
+			end: func(t *testing.T, _ *MigrationReconciler, api client.Client, migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				moved := readMigration(t, api, migration)
+				moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+				if err := api.Status().Update(context.Background(), moved); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			// One pass records the lost continuity, and the next ends the Apply.
+			name: "its database Lease changed hands", ended: "the database lock epoch changed under the dispatched run", passes: 2,
+			end: func(t *testing.T, reconciler *MigrationReconciler, api client.Client, _ *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				databaseLeasesGone(t, api, reconciler.LockNamespace)
+			},
+		},
+		{
+			// One pass records the run, and the next lets the resource go.
+			name: "the resource was deleted", ended: "the PtahMigration was deleted while a dispatched Apply was in flight",
+			passes: 2, deleted: true,
+			end: func(t *testing.T, _ *MigrationReconciler, api client.Client, migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
+				if err := api.Delete(context.Background(), readMigration(t, api, migration)); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			reconciler, api, recorder, migration, job, pod, said := unstartedMigrationApply(t)
+			ranToSuccess(t, api, job, pod)
+			row.end(t, reconciler, api, migration, job)
+			for range row.passes {
+				if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+			}
+
+			var record string
+			if row.deleted {
+				gone := &operatorv1alpha1.PtahMigration{}
+				if err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone); !apierrors.IsNotFound(err) {
+					t.Fatalf("the deletion did not complete, so this is not what stays: error %v, finalizers %#v", err, gone.Finalizers)
+				}
+				record = findEvent(recorder, corev1.EventTypeWarning+" MigrationRunUncertain ")
+			} else {
+				record = settledMigrationRun(t, api, migration).Message
+			}
+			if !strings.Contains(record, row.ended) {
+				t.Fatalf("record = %q, want the sentence this ending writes, %q", record, row.ended)
+			}
+			if strings.Contains(record, said) {
+				t.Fatalf("record = %q repeats a report the Job's success proved out of date", record)
+			}
+		})
 	}
 }
 
@@ -415,21 +514,9 @@ func TestAMigrationApplyWhoseJobWasReplacedKeepsWhyItsPodNeverStarted(t *testing
 func TestAMigrationApplyThatLostItsDatabaseLockKeepsWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
 	reconciler, api, _, migration, job, pod, said := unstartedMigrationApply(t)
 
-	leases := &coordinationv1.LeaseList{}
-	if err := api.List(ctx, leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
-		t.Fatal(err)
-	}
-	if len(leases.Items) == 0 {
-		t.Fatal("no database Lease exists, so removing it proves nothing")
-	}
-	for index := range leases.Items {
-		if err := api.Delete(ctx, &leases.Items[index]); err != nil {
-			t.Fatal(err)
-		}
-	}
+	databaseLeasesGone(t, api, reconciler.LockNamespace)
 	if stored := reconcileMigration(t, reconciler, api, migration); stored.Status.ActiveOperation == nil ||
 		!stored.Status.ActiveOperation.LeaseContinuityLost || stored.Status.UnresolvedRun != nil {
 		t.Fatalf("the renewal did not record the lost continuity, or settled the run itself: claim %#v, unresolved %#v",
@@ -629,6 +716,62 @@ func TestASchemaApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *testing
 	failed := settledSchemaFailure(t, api, schema)
 	if want := "execution binding changed after Apply dispatch" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
 		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
+	}
+}
+
+// TestAMigrationApplyWhosePodRanToTheEndRepeatsNoStaleReport for a schema.
+func TestASchemaApplyWhosePodRanToTheEndRepeatsNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		ended string
+		end   func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job)
+	}{
+		{
+			name: "its inputs changed", ended: "operation inputs changed while the Job was running",
+			end: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				edited := safetyGetSchema(t, api, schema)
+				edited.Spec.Target.URLFrom.Name = "application-database-fixed"
+				edited.Generation++
+				if err := api.Update(context.Background(), edited); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "its Job lost its owner", ended: "dispatched Apply Job lost schema ownership",
+			end: func(t *testing.T, api client.Client, _ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				disowned(t, api, job)
+			},
+		},
+		{
+			name: "an execution component changed", ended: "execution binding changed after Apply dispatch",
+			end: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				moved := safetyGetSchema(t, api, schema)
+				moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+				if err := api.Status().Update(context.Background(), moved); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			api, schema, job, pod, said, reconcileOnce := unstartedSchemaApply(t)
+			ranToSuccess(t, api, job, pod)
+			row.end(t, api, schema, job)
+			reconcileOnce()
+
+			failed := settledSchemaFailure(t, api, schema)
+			if !strings.Contains(failed.Message, row.ended) {
+				t.Fatalf("ReconciliationFailed = %q, want the sentence this ending writes, %q", failed.Message, row.ended)
+			}
+			if strings.Contains(failed.Message, said) {
+				t.Fatalf("ReconciliationFailed = %q repeats a report the Job's success proved out of date", failed.Message)
+			}
+		})
 	}
 }
 
