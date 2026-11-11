@@ -333,6 +333,15 @@ func TestMissingDispatchedApplyJobForcesObservationWithoutRecreation(t *testing.
 			schema.Status.ActiveOperation.JobUID = test.jobUID
 			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
 			reconciler.Locks = targetlock.New(api, api, nil)
+			if test.jobUID == "" {
+				// Another manager may still be landing the create the mark
+				// covers, so the Job is lost only once the grace has passed.
+				clock := &safetyClock{now: reconciler.now()}
+				reconciler.Clock = clock.Now
+				waitOutMissingJobGrace(t, clock, func() (ctrl.Result, error) {
+					return reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+				})
+			}
 
 			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
 			if err != nil {
