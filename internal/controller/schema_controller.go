@@ -1209,7 +1209,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// dispatch was possible, every Apply error requires read-only proof.
 			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
 		}
-		if operation.Type == operatorv1alpha1.OperationPlan && planReadTheTarget(result.Error.Code) {
+		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
 		}
 		return r.retryOperation(ctx, schema, job, err)
