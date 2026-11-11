@@ -130,20 +130,25 @@ func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batch
 // promises only what the reading allows, and is empty when there is nothing to read
 // or no time to promise.
 func failedApplyLogPointer(job *batchv1.Job, reading applyLogReading) string {
-	if job == nil || job.Spec.TTLSecondsAfterFinished == nil {
-		return ""
-	}
-	var subject string
-	switch reading {
-	case applyLogHoldsReport:
-		subject = "What Ptah reported"
-	case applyLogUnread:
-		subject = "Anything the run wrote"
-	default:
+	subject := applyLogSubject(reading)
+	if job == nil || job.Spec.TTLSecondsAfterFinished == nil || subject == "" {
 		return ""
 	}
 	return fmt.Sprintf("%s is in the Pod log for %s after the Job finishes: kubectl logs -n %s job/%s -c %s",
 		subject, retentionWords(*job.Spec.TTLSecondsAfterFinished), job.Namespace, job.Name, executorContainerName)
+}
+
+// applyLogSubject names what the reading says the Pod log holds, and is empty
+// when it holds nothing to read.
+func applyLogSubject(reading applyLogReading) string {
+	switch reading {
+	case applyLogHoldsReport:
+		return "What Ptah reported"
+	case applyLogUnread:
+		return "Anything the run wrote"
+	default:
+		return ""
+	}
 }
 
 // withLogPointer appends the pointer to a sentence, when there is one.
