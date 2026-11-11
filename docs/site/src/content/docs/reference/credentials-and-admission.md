@@ -326,8 +326,9 @@ resource looks at an Apply's Pod every 5 seconds, also while a deleted
 start, and a Pod that starts later does not change the record. A `PtahMigration`
 records the run and keeps its claim until the Pod stops when its Job went while the
 Pod stood, when an execution component changed and when its Lease changed hands. A
-`PtahSchema` records every ending and goes on to observation at once. So check
-whether the Secret exists now before you change it.
+`PtahSchema` records every ending at once and reads the database again once the
+Apply's deadline has passed. So check whether the Secret exists now before you
+change it.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 

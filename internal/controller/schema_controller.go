@@ -2571,13 +2571,15 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 	}
 	// The Job is read only to ask whether its Pod ran since the last look. The
 	// finisher still gets none: the retired-Job record the rotation writes
-	// schedules its cleanup once it stops.
+	// schedules its cleanup once it stops. A read that fails does not hold the
+	// retirement back: the words then stay as the last report, which is what
+	// they were before the read.
 	job := &batchv1.Job{}
-	switch err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job); {
-	case apierrors.IsNotFound(err):
+	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job); err != nil {
+		if !apierrors.IsNotFound(err) {
+			ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job to ask whether its Pod ran", "job", operation.JobName, "error", err.Error())
+		}
 		job = nil
-	case err != nil:
-		return ctrl.Result{}, fmt.Errorf("read the dispatched Apply Job: %w", err)
 	}
 	evidence := podIdentityEvidence(pods)
 	return r.finishUncertainApplyWithEvidenceAndBinding(
