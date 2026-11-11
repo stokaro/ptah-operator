@@ -54,7 +54,7 @@ retired execution binding made the last evidence historical.
 | --- | --- |
 | `Accepted` | True when the approval exactly matches the current immutable plan. False when it does not, carrying the reason it was refused. |
 | `Consumed` | True when the exact plan was committed to one Apply Job dispatch. An approval is consumed once and is never reused. |
-| `Stale` | True when the plan this approval was written for is no longer current, so it will not be consumed. False while the approved plan is current. |
+| `Stale` | True when the plan this approval was written for is no longer current, so it will not be consumed. An approval an Apply already consumed is marked too, by the read after that Apply, so `Consumed` says which of the two it is. False while the approved plan is current. |
 
 ## PtahMigrationApproval
 

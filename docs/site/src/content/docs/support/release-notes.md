@@ -39,7 +39,14 @@ in the verification policy's refusal of the artifact now gets exit status 8
 with `PolicyRefused`, where it ran to the timeout and exited 7. The resource
 may have been refused already, or in sync until a tag moved. A refusal from
 before the request does not stop the wait; only the refusal the requested read
-ends in does.
+ends in does. A script that approves a schema plan again once its approval goes
+`Stale`, or an alert on
+`ptah_operator_approvals_total{family="schema",outcome="stale"}`, has to expect
+an approval recorded before the interval ended to be consumed by an Apply and
+then marked `Stale` by the proof after it, as every applied approval is, rather
+than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
+plan approved just before its interval ended now takes one approval and counts
+one `stale` outcome, where it took two of each.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -76,6 +83,15 @@ ends in does.
   whose claim never recorded its UID still stays, and a
   `MigrationJobCleanupDeferred` Warning now names it with `its claim never
   recorded the Job's UID`.
+- **A recorded approval wins over a due read.** An approval the operator had
+  recorded in `status.plan.approval` when the interval ended was spent by the
+  read that followed: the read's observation marked it `Stale` although the
+  plan did not change, and the same plan waited for a second approval. The
+  Apply it authorizes now runs first, and the read-only proof after the Apply
+  reads the database. An automatic Apply under `apply: Always` and an approval
+  not yet recorded still wait for the read. A read requested on a schema with
+  a recorded approval follows its Apply too, and the `ReadRequested` Event now
+  says so.
 
 ## 0.2.10
 

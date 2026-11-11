@@ -1139,12 +1139,16 @@ the plan's privilege changes are why.
 `ReadyToApply`, `AwaitingApproval`, and `Blocked` all retain a read-only refresh
 deadline so the cadence survives controller restarts. A resource `Blocked` with
 `TargetIdentityChanged` retains a proof to read instead, at its failure retry
-interval. An eligible Apply can be
-reserved immediately before that deadline; once it is due, a fresh resolution
-and observation take priority over automatic policy or approval consumption.
-After policy and, when required, the exact recorded approval pass final
-validation, the controller captures one timestamp, checks it against that
-deadline, and stores the same value as the Apply operation's start time. That
+interval. Once that deadline is due, a fresh resolution and observation take
+priority over an automatic Apply and over an approval the controller has not
+yet recorded on the plan. An approval already recorded for the current plan
+takes priority over the due read instead, because the read would mark it
+stale even when the plan did not change. The Apply it authorizes runs, and
+the read-only proof after it reads the database; Ptah refuses to apply a plan
+the database moved away from in the meantime. After policy and, when
+required, the exact recorded approval pass final validation, the controller
+captures one timestamp and stores it as the Apply operation's start time. An
+automatic Apply first checks that timestamp against the deadline. That
 durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
@@ -1371,8 +1375,12 @@ approval, or `Blocked`: read-only verification, observation, and planning
 continue, the same immutable plan returns as current when its inputs are
 unchanged, and no `Apply` Job is created during the refresh. A moved tag or
 database drift observed by a due refresh therefore invalidates stale plan or
-approval evidence before mutation can begin. A resource `Blocked` with
-`TargetIdentityChanged` is the exception: it resolves no source until [its proof
+approval evidence before mutation can begin. An approval the controller already
+recorded for the current plan is an exception: the Apply it authorizes runs
+first, with the plan built from the digest resolved before, and the source is
+resolved again one interval after the proof that follows the Apply. A tag that
+moved in the meantime is seen then. A resource `Blocked` with
+`TargetIdentityChanged` is another: it resolves no source until [its proof
 ends](../recovery/#a-schema-whose-target-moved).
 
 Native verification always inspects the resolved digest. When the selected
