@@ -1164,7 +1164,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				mutationlifecycle.FaultPodMultiplicity, schemaOperation(operation).Mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainApplyWithEvidence(ctx, schema, job,
-					withLastPodReport(failure, schemaPodReport(schema, job)), evidence.PodUIDs, evidence.PodCount, true)
+					withLastPodReport(failure, schemaPodReport(schema, job).withPodsRead(evidence)),
+					evidence.PodUIDs, evidence.PodCount, true)
 			}
 			return r.retryOperation(ctx, schema, job, failure)
 		}
@@ -3559,6 +3560,10 @@ type terminalEvidence struct {
 	// again (readResultLog). It stands in for the parse error of a log that
 	// holds no frame.
 	LogLost *resultLogLost
+	// ExecutorStarted is set when any listed Pod's executor shows it started
+	// (executorStarted), whether or not that Pod is the one a result is read
+	// from.
+	ExecutorStarted bool
 }
 
 func (r *SchemaReconciler) collectTerminalPodEvidence(
@@ -3662,14 +3667,31 @@ func podsOwnedByJob(
 func podIdentityEvidence(pods []*corev1.Pod) terminalEvidence {
 	evidence := terminalEvidence{PodCount: int32(len(pods))}
 	for _, pod := range pods {
-		if len(evidence.PodUIDs) == 8 {
-			break
-		}
-		if pod.UID != "" {
+		evidence.ExecutorStarted = evidence.ExecutorStarted || executorStarted(pod)
+		if len(evidence.PodUIDs) < 8 && pod.UID != "" {
 			evidence.PodUIDs = append(evidence.PodUIDs, pod.UID)
 		}
 	}
 	return evidence
+}
+
+// executorStarted is a Pod whose executor container is running or terminated.
+// ContainerStatusUnknown is the one terminated state that says nothing about a
+// start: the kubelet writes it when it ends a Pod and has no status for the
+// container, and it does so for a container that was still waiting, as one
+// blocked on a missing Secret is, as well as for one that ran.
+func executorStarted(pod *corev1.Pod) bool {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != executorContainerName {
+			continue
+		}
+		if status.State.Running != nil {
+			return true
+		}
+		terminated := status.State.Terminated
+		return terminated != nil && terminated.Reason != "ContainerStatusUnknown"
+	}
+	return false
 }
 
 func mergePodEvidence(pending *operatorv1alpha1.PendingObservationStatus, current terminalEvidence) bool {
@@ -3952,12 +3974,14 @@ func (r *SchemaReconciler) acquireActiveLock(
 	}
 	if continuityLost {
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "The operation result is invalid because the database lock epoch changed")
-		// Ready keeps a report about the claim's Pod: the next pass settles
-		// the claim (recoverLeaseContinuity), and an Apply's record carries the
-		// report from Ready. A PtahMigration keeps it the same way, on
-		// Progressing, which its continuity write does not touch. InSync and
-		// the Event below say the lock changed.
-		if !schemaPodReport(schema, nil).standing() {
+		// Ready keeps a report about a mutating claim's Pod: the next pass
+		// settles the claim (recoverLeaseContinuity), and an Apply's record
+		// carries the report from Ready. A PtahMigration keeps it the same
+		// way, on Progressing, which its continuity write does not touch. A
+		// read-only claim's report goes: the pass that waits on a read-only
+		// Job does not look at its Pod again, so the words would outlive what
+		// they describe. InSync and the Event below say the lock changed.
+		if !schemaOperation(operation).Mutating || !schemaPodReport(schema, nil).standing() {
 			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after lock continuity was lost")
 		}
 	}

@@ -930,7 +930,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 				mutationlifecycle.FaultPodMultiplicity, mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
 				return r.finishUncertainMigrationApply(ctx, migration, job,
-					withLastPodReport(err, migrationPodReport(migration, job)), "")
+					withLastPodReport(err, migrationPodReport(migration, job).withPodsRead(evidence)), "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
@@ -2168,6 +2168,11 @@ func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.
 	if err != nil {
 		return "", err
 	}
+	return initBoundaryOf(pods), nil
+}
+
+// initBoundaryOf is failedInitBoundary over Pods already listed.
+func initBoundaryOf(pods []*corev1.Pod) string {
 	for _, pod := range pods {
 		for _, status := range pod.Status.InitContainerStatuses {
 			terminated := status.State.Terminated
@@ -2177,10 +2182,10 @@ func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.
 			return fmt.Sprintf(
 				"the %s step exited %d, so the run never started",
 				status.Name, terminated.ExitCode,
-			), nil
+			)
 		}
 	}
-	return "", nil
+	return ""
 }
 
 // retryMigrationOperation advances to a fresh attempt with a fresh

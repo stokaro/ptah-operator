@@ -290,7 +290,10 @@ A Job still refused at its deadline fails with no Pod, and the run ends with no
 result. The failure it records keeps the refusal after it as what was last
 reported: `ptah runner result frame not found; last reported before that: Job
 <the Job> cannot create its Pod; the API server refused it:` and the API server's
-text. An Apply that ends another way first keeps it the same way, on the endings
+text. With no Pod there is no log, so neither the record nor the Event points at
+one. A refusal the Job got past is not carried: once the Job counts a Pod, in any
+state, the failure is about that Pod. An Apply that ends another way first keeps
+it the same way, on the endings
 [Before the Secret exists](../credentials-and-admission/#external-secret-stores-not-synced)
 lists for the kubelet's words.
 

@@ -311,10 +311,12 @@ An Apply of either kind keeps them too when its Job stopped being its claim's
 after the inputs moved, as when someone relabeled it (`dispatched Apply Job is not
 its claim's`), when its claim could not build its Job again, as when its plan was
 deleted (`rebuild immutable Apply Job intent`), when a newer release builds the Job
-differently (`dispatched Apply Job intent changed`), and when its Job left more
+differently (`dispatched Apply Job intent changed`), when its Job left more
 than one Pod, as when a Pod stands Terminating on a node that stopped answering
 (`terminal Job has multiple executor Pods` on a `PtahMigration`, `Job produced
-multiple executor Pods` on a `PtahSchema`).
+multiple executor Pods` on a `PtahSchema`), and when the Pod its Job left does
+not match the Pod its claim built (`terminal Job pod does not match immutable
+intent`).
 
 A `PtahSchema` keeps the words in the message of `ReconciliationFailed`, reason
 `ApplyOutcomeUnknown`, until the next result rewrites it, and in its
@@ -325,16 +327,26 @@ missing and will not be recreated`, `dispatched Apply Job was replaced`,
 `dispatched Apply Job lost schema ownership`, `execution binding changed after
 Apply dispatch` and `database lock continuity was lost during Apply`, each followed
 by `; last reported before that:` and the words. The write that records a lost
-Lease leaves `Ready` as it was while `Ready` holds the words, and says the lock
-changed in `InSync` and in a `LeaseContinuityLost` Event. A `PtahSchema` deleted
-while its Apply runs waits for it, and records `dispatched Apply Job identity was
-lost during deletion` when its Job went, or `Apply executor termination is not
-proven during deletion` when the Job stopped and no Pod showed its executor end.
-The status goes with the resource, and the Event is what stays. When a Pod does
-show the executor ended, the deletion discards the claim and records nothing.
+Lease leaves an Apply's `Ready` as it was while `Ready` holds the words, and says
+the lock changed in `InSync` and in a `LeaseContinuityLost` Event. A read that
+loses its Lease does not keep them: nothing looks at its Pod again before its Job
+stops, so `Ready` says the lock changed. A `PtahSchema` deleted while its Apply
+runs waits for it, and records `dispatched Apply Job identity was lost during
+deletion` when its Job went, or `Apply executor termination is not proven during
+deletion` when the Job stopped and no Pod showed its executor end. The status goes
+with the resource, and the Event is what stays. When the Job's one Pod shows its
+executor terminated, the deletion discards the claim and records nothing, and
+that includes an executor that never started: when the kubelet stops a Pod whose
+container is still waiting, it marks the container terminated with reason
+`ContainerStatusUnknown`.
 
 Those words are the last report and not a reading taken at the end. Nothing is
-added when the claim's own Job reports a Pod that succeeded. A Pod can still start
+added when the claim's own Job reports a Pod that succeeded, and a refusal is not
+added once that Job counts a Pod in any state, since the API server created one
+after all. On the endings for more than one Pod and for a Pod that does not match
+its claim, nothing is added when a Pod the ending read shows its executor running
+or terminated, as a Pod that got its Secret and then lost its node does while its
+replacement waits; `ContainerStatusUnknown` shows neither. A Pod can still start
 after the last look and fail without a result, and the failure reads the same. The
 resource looks at an Apply's Pod every 5 seconds, also while a deleted resource
 waits for it. Some endings are recorded while the Pod can still start, and a Pod

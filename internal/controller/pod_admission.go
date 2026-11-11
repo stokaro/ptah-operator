@@ -194,6 +194,13 @@ type lastPodReport struct {
 	// ran is a Job with the claim's UID that reports a succeeded Pod or
 	// Complete: the Pod started after the last look, and the report is wrong.
 	ran bool
+	// created is a Job with the claim's UID that counts a Pod in any state.
+	// The API server created a Pod after all, so a refusal is out of date. It
+	// says nothing of the kubelet's words, which are about a Pod that exists.
+	created bool
+	// started is a Pod the ending read whose executor shows it started
+	// (withPodsRead): the report is out of date whatever it says.
+	started bool
 }
 
 // migrationPodReport is a migration's report about its claim's Pod. job is the
@@ -208,6 +215,7 @@ func migrationPodReport(migration *operatorv1alpha1.PtahMigration, job *batchv1.
 		reported: meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing),
 		jobName:  operation.JobName,
 		ran:      claimJobRan(job, operation.JobUID),
+		created:  claimJobCreatedPod(job, operation.JobUID),
 	}
 }
 
@@ -221,7 +229,16 @@ func schemaPodReport(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) last
 		reported: meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady),
 		jobName:  operation.JobName,
 		ran:      claimJobRan(job, operation.JobUID),
+		created:  claimJobCreatedPod(job, operation.JobUID),
 	}
+}
+
+// withPodsRead is the report once the ending has listed the Job's Pods. A Pod
+// whose executor shows it started took the report out of date between two looks,
+// as a Pod that ran and lost its node does while a second Pod waits on a Secret.
+func (report lastPodReport) withPodsRead(evidence terminalEvidence) lastPodReport {
+	report.started = evidence.ExecutorStarted
+	return report
 }
 
 // claimJobRan is a Job that is the claim's own and has run a Pod to success.
@@ -231,6 +248,21 @@ func schemaPodReport(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) last
 // failed, whether or not that Pod ever started.
 func claimJobRan(job *batchv1.Job, recorded types.UID) bool {
 	return job != nil && job.UID == recorded && (job.Status.Succeeded > 0 || jobSucceeded(job))
+}
+
+// claimJobCreatedPod is a Job that is the claim's own and counts a Pod in any
+// state: active, failed, succeeded, terminating, or terminated and not yet
+// counted. A Pod the API server never created is in none of them, so any of
+// them is direct evidence that one was.
+func claimJobCreatedPod(job *batchv1.Job, recorded types.UID) bool {
+	if job == nil || job.UID != recorded {
+		return false
+	}
+	status := job.Status
+	uncounted := status.UncountedTerminatedPods
+	return status.Active > 0 || status.Failed > 0 || status.Succeeded > 0 ||
+		(status.Terminating != nil && *status.Terminating > 0) ||
+		(uncounted != nil && len(uncounted.Succeeded)+len(uncounted.Failed) > 0)
 }
 
 // withUnstartedPod adds what the resource last reported about a Pod that could
@@ -261,15 +293,18 @@ func withUnstartedPod(failure error, report lastPodReport) error {
 // deadline ends a Job whose Pod was never created, the run then ends with no
 // result frame, and the API server's text is the only thing that says why. It
 // is the cluster's own text, bounded and stripped of control characters, and it
-// is already in the condition and in the PodAdmissionRefused Event.
+// is already in the condition and in the PodAdmissionRefused Event. It stops
+// standing once the Job counts a Pod: the refusal lifted between two looks.
 func (report lastPodReport) standing() bool {
 	reported := report.reported
 	if reported == nil || !strings.HasPrefix(reported.Message, "Job "+report.jobName+" ") {
 		return false
 	}
 	switch operatorv1alpha1.ConditionReason(reported.Reason) {
-	case operatorv1alpha1.ReasonPodConfigurationError, operatorv1alpha1.ReasonPodAdmissionRefused:
+	case operatorv1alpha1.ReasonPodConfigurationError:
 		return true
+	case operatorv1alpha1.ReasonPodAdmissionRefused:
+		return !report.created
 	}
 	return false
 }
@@ -301,9 +336,10 @@ func (e *lastPodReportError) Unwrap() error { return e.failure }
 // No result was read on those paths, so the words are worded as the last
 // report, as withUnstartedPod's are. Nothing is added when the report is about
 // another Job, when a look found the Pod running and took the condition off
-// the report, or when the claim's Job says a Pod succeeded after the last look.
+// the report, when the claim's Job says a Pod succeeded after the last look, or
+// when a Pod the ending read shows its executor started.
 func withLastPodReport(failure error, report lastPodReport) error {
-	if !report.standing() || report.ran {
+	if !report.standing() || report.ran || report.started {
 		return failure
 	}
 	return &lastPodReportError{failure: failure, reported: report.reported.Message}

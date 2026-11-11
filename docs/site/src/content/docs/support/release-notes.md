@@ -224,12 +224,15 @@ the schema last reported after it, on an Apply whose Pod never ran.
 - **More endings keep why the Pod never ran.** The same words now follow an Apply
   whose Job stopped being its claim's after the inputs moved, whose claim could not
   build its Job again because its plan was deleted, whose Job a newer release
-  builds differently, or whose Job left more than one Pod. A Pod the API server
-  refused to create is covered as well: an Apply or a read still refused at its
-  Job's deadline recorded only `result frame not found`, and now carries the
-  refusal after it. A `PtahSchema` keeps the words when its database Lease changed
-  hands, where the write that records the lost Lease used to replace them, and when
-  it is deleted while its Apply runs. Its `ApplyOutcomeUnknown` Event now carries
+  builds differently, whose Job left more than one Pod, or whose Pod does not match
+  what its claim built. On the last two, a Pod that shows its executor started
+  leaves the words out. A Pod the API server refused to create is covered as well:
+  an Apply or a read still refused at its Job's deadline recorded only `result
+  frame not found`, and now carries the refusal after it and points at no Pod log;
+  a refusal the Job got past by creating a Pod is left out. A `PtahSchema` Apply
+  keeps the words when its database Lease changed hands, where the write that
+  records the lost Lease used to replace them, and when the schema is deleted while
+  its Apply runs. Its `ApplyOutcomeUnknown` Event now carries
   them, which is what stays of a deleted schema, and a deleted schema looks at the
   Pod while it waits for it, as a deleted `PtahMigration` does.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)

@@ -206,11 +206,12 @@ func TestTheLogPointerSaysOnlyWhatTheReadingAllows(t *testing.T) {
 
 // TestAFailureSaysWhatItsLogHolds reads the choke point. A result's code decides,
 // because the runner writes Ptah's sentence for two codes and no others; a failure
-// with no result may have written anything, unless an init container ended the Pod.
+// with no result may have written anything, unless the Job has no Pod or an init
+// container ended the Pod.
 func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 	t.Parallel()
 
-	failedInit := func(job *batchv1.Job) *corev1.Pod {
+	jobPod := func(job *batchv1.Job, initExit int32) *corev1.Pod {
 		controller := true
 		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -220,7 +221,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 				}},
 			},
 			Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
-				Name: "fetch-migrations", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2}},
+				Name: "fetch-migrations", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: initExit}},
 			}}},
 		}
 	}
@@ -231,6 +232,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		name    string
 		failure error
 		noJob   bool
+		noPod   bool
 		initEnd bool
 		want    applyLogReading
 	}{
@@ -244,14 +246,23 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "no result", failure: errors.New("apply result is uncertain"), want: applyLogUnread},
 		{name: "no result and no Job", failure: errors.New("apply result is uncertain"), noJob: true, want: applyLogSaysNothing},
 		{name: "no result and a failed init container", failure: errors.New("apply result is uncertain"), initEnd: true, want: applyLogSaysNothing},
+		{
+			name: "no result and no Pod, as a Job admission refused until its deadline has", noPod: true,
+			failure: errors.New("Job ptah-apply-1 failed: DeadlineExceeded: Job was active longer than specified deadline"),
+			want:    applyLogSaysNothing,
+		},
 		{name: "no failure to read, as a retired Apply has", want: applyLogUnread},
+		{name: "no failure to read and no Pod", noPod: true, want: applyLogSaysNothing},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			job := finishedJob(nil)
 			builder := fake.NewClientBuilder().WithScheme(jobAndPodScheme(t))
-			if test.initEnd {
-				builder = builder.WithObjects(failedInit(job))
+			switch {
+			case test.initEnd:
+				builder = builder.WithObjects(jobPod(job, 2))
+			case !test.noPod:
+				builder = builder.WithObjects(jobPod(job, 0))
 			}
 			reader := builder.Build()
 			if test.noJob {

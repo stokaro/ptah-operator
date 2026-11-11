@@ -10,10 +10,12 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -669,4 +671,360 @@ func TestAnUncertainApplyEventCarriesTheLastPodReport(t *testing.T) {
 			}
 		})
 	}
+}
+
+// failingPodLooks refuses the Pod and Event lists a look at a Pod reads.
+type failingPodLooks struct{ client.Reader }
+
+func (r failingPodLooks) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	switch list.(type) {
+	case *corev1.PodList, *corev1.EventList:
+		return errors.New("the API server did not answer the list")
+	}
+	return r.Reader.List(ctx, list, opts...)
+}
+
+// databaseLeaseVersions is every database Lease by name and resourceVersion,
+// which a renewal moves.
+func databaseLeaseVersions(t *testing.T, api client.Client, namespace string) string {
+	t.Helper()
+
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(context.Background(), leases, client.InNamespace(namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) == 0 {
+		t.Fatal("no database Lease exists, so a renewal cannot be seen")
+	}
+	versions := make([]string, 0, len(leases.Items))
+	for _, lease := range leases.Items {
+		versions = append(versions, lease.Name+"@"+lease.ResourceVersion)
+	}
+	return strings.Join(versions, ",")
+}
+
+// The deletion wait renews the database Lease and looks at the Pod. A look that
+// fails is logged and leaves the wait as it was: returned, it would back the
+// pass off, and the Lease the wait renews could lapse under a running Apply.
+func TestADeletedSchemasFailedLookKeepsTheWait(t *testing.T) {
+	t.Parallel()
+
+	run := unstartedSchemaApplyRun(t)
+	deleteSchemaWhileItsApplyRuns(t, run)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run.schema)}
+	base := run.reconciler.now()
+	pass := func(at time.Duration) {
+		t.Helper()
+		run.reconciler.Clock = func() time.Time { return base.Add(at) }
+		result, err := run.reconciler.Reconcile(context.Background(), request)
+		if err != nil || result.RequeueAfter != 5*time.Second {
+			t.Fatalf("the deletion wait = %+v, %v, want the 5s wait and no error", result, err)
+		}
+	}
+
+	before := databaseLeaseVersions(t, run.api, run.reconciler.LockNamespace)
+	pass(3 * time.Second)
+	renewed := databaseLeaseVersions(t, run.api, run.reconciler.LockNamespace)
+	if renewed == before {
+		t.Fatalf("the wait did not renew the Lease (%s), so a look that stops the renewal would go unseen", renewed)
+	}
+
+	run.reconciler.APIReader = failingPodLooks{Reader: run.api}
+	pass(6 * time.Second)
+	if after := databaseLeaseVersions(t, run.api, run.reconciler.LockNamespace); after == renewed {
+		t.Fatalf("the pass whose look failed did not renew the Lease: %s", after)
+	}
+	stored := safetyGetSchema(t, run.api, run.schema)
+	if stored.Status.ActiveOperation == nil {
+		t.Fatal("the pass whose look failed dropped the claim")
+	}
+	if ready := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil || ready.Message != run.said {
+		t.Fatalf("Ready after the failed look = %#v, want the last report %q standing", ready, run.said)
+	}
+}
+
+// The write that records a lost Lease replaces Ready when Ready holds no report
+// the ending will carry: an Apply whose Pod a look found started.
+func TestASchemaApplyLosingItsLeaseWithNoReportSaysTheLockChanged(t *testing.T) {
+	t.Parallel()
+
+	run := unstartedSchemaApplyRun(t)
+	startedAfterAll(t, run.api, run.job, run.pod)
+	run.reconcileOnce(t)
+	if ready := meta.FindStatusCondition(safetyGetSchema(t, run.api, run.schema).Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+		ready.Reason != string(operatorv1alpha1.ReasonOperationInProgress) {
+		t.Fatalf("Ready after the look at the Pod that started = %#v, want OperationInProgress", ready)
+	}
+
+	databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
+	run.reconcileOnce(t)
+
+	recorded := safetyGetSchema(t, run.api, run.schema)
+	if operation := recorded.Status.ActiveOperation; operation == nil || !operation.LeaseContinuityLost {
+		t.Fatalf("the pass did not record the lost continuity: claim %#v", operation)
+	}
+	if ready := meta.FindStatusCondition(recorded.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+		ready.Reason != string(operatorv1alpha1.ReasonLeaseContinuityLost) {
+		t.Fatalf("Ready after the lost Lease = %#v, want LeaseContinuityLost", ready)
+	}
+}
+
+// A read-only claim's report does not stand through a lost Lease: the pass that
+// waits for a read-only Job does not look at its Pod again, so the words would
+// stay after the Pod started. The write says the lock changed instead.
+func TestAPlanLosingItsLeaseDropsReadysReport(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	schema := safetyLockedOperationSchema(operatorv1alpha1.OperationPlan)
+	operation := schema.Status.ActiveOperation
+	operation.JobName = "ptah-plan-orders"
+	operation.JobUID = "plan-job-uid"
+	controller := true
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Namespace: schema.Namespace, Name: operation.JobName, UID: operation.JobUID,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchema",
+			Name: schema.Name, UID: schema.UID, Controller: &controller,
+		}},
+	}, Status: batchv1.JobStatus{Active: 1}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), UID: "plan-pod-uid",
+		Labels:          map[string]string{batchv1.ControllerUidLabel: string(job.UID)},
+		OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+	}}
+	waitingOnASecret(pod)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job, pod)
+
+	if err := reconciler.reportPodAdmission(ctx, safetyGetSchema(t, api, schema), job); err != nil {
+		t.Fatalf("reportPodAdmission() = %v", err)
+	}
+	if ready := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+		ready.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) {
+		t.Fatalf("Ready while the Plan's Pod waits = %#v, want the kubelet's words, or the Lease has no report to drop", ready)
+	}
+
+	databaseLeasesGone(t, api, reconciler.LockNamespace)
+	if _, _, err := reconciler.acquireOperationLock(ctx, safetyGetSchema(t, api, schema)); err != nil {
+		t.Fatalf("acquireOperationLock() = %v", err)
+	}
+	recorded := safetyGetSchema(t, api, schema)
+	if operation := recorded.Status.ActiveOperation; operation == nil || !operation.LeaseContinuityLost {
+		t.Fatalf("the lock did not record the lost continuity: claim %#v", operation)
+	}
+	if ready := meta.FindStatusCondition(recorded.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+		ready.Reason != string(operatorv1alpha1.ReasonLeaseContinuityLost) {
+		t.Fatalf("Ready after the Plan lost its Lease = %#v, want LeaseContinuityLost", ready)
+	}
+}
+
+// A deleted schema's Job that a person disowned after its Pod ran to the end
+// loses its identity, and the ending reads the Job it found: the claim's own,
+// counting a succeeded Pod, so the report is out of date.
+func TestADeletedSchemaWhoseDisownedJobRanRepeatsNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	run := unstartedSchemaApplyRun(t)
+	deleteSchemaWhileItsApplyRuns(t, run)
+	ranToSuccess(t, run.api, run.job, run.pod)
+	disowned(t, run.api, run.job)
+	run.reconcileOnce(t)
+
+	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
+	}
+	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "dispatched Apply Job identity was lost during deletion") ||
+		strings.Contains(failed.Message, run.said) {
+		t.Fatalf("ReconciliationFailed = %q, want the identity sentence without the report the Job's success proved out of date", failed.Message)
+	}
+}
+
+// createdAfterAll is a refusal that lifted between two looks: the Job's Pod
+// was created, its executor ran and failed, and the Job used up its backoff
+// limit. pod is the Pod the Job controller would have made from the template.
+func createdAfterAll(t *testing.T, api client.Client, job *batchv1.Job, pod *corev1.Pod) {
+	t.Helper()
+
+	created := pod.DeepCopy()
+	created.ResourceVersion = ""
+	created.Name = generatedTerminalPodName(job.Name, "ghi56")
+	created.UID = "created-after-all-pod-uid"
+	created.Status = corev1.PodStatus{}
+	if err := api.Create(context.Background(), created); err != nil {
+		t.Fatal(err)
+	}
+	endedWithoutAResult(t, api, job, created)
+}
+
+// A refusal is out of date once the Job counts a Pod: the API server created
+// one after all. The Pod ran and failed without a result between two looks, so
+// the condition still holds the refusal, and the record must not repeat it.
+func TestARefusalTheJobsPodOutlivedIsNotRepeated(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a PtahSchema", func(t *testing.T) {
+		t.Parallel()
+
+		run := schemaApplyUnderReport(t, func(api client.Client, job *batchv1.Job) *corev1.Pod {
+			refusedPodCreation(t, api, job, nil, metav1.Now())
+			return nil
+		}, operatorv1alpha1.ReasonPodAdmissionRefused, "denied request")
+		createdAfterAll(t, run.api, run.job, terminalPodForJob(run.job))
+		run.reconcileOnce(t)
+
+		failed := settledSchemaFailure(t, run.api, run.schema)
+		if !strings.Contains(failed.Message, "apply result is uncertain: "+frameNotFound) || strings.Contains(failed.Message, lastReportedBefore) {
+			t.Fatalf("ReconciliationFailed = %q, want the missing result without the refusal the Pod outlived", failed.Message)
+		}
+		if event := settledSchemaEvent(t, run.recorder); strings.Contains(event, lastReportedBefore) {
+			t.Fatalf("ApplyOutcomeUnknown = %q repeats the refusal the Pod outlived", event)
+		}
+	})
+	t.Run("a PtahMigration", func(t *testing.T) {
+		t.Parallel()
+
+		var template *corev1.Pod
+		run := migrationApplyUnderReport(t, func(t *testing.T, run *unstartedMigration) {
+			t.Helper()
+			template = run.pod.DeepCopy()
+			refusedPodCreation(t, run.api, run.job, run.pod, metav1.NewTime(run.reconciler.now()))
+			run.pod = nil
+		}, operatorv1alpha1.ReasonPodAdmissionRefused, "denied request")
+		createdAfterAll(t, run.api, run.job, template)
+
+		record := run.settle(t, 3)
+		if !strings.Contains(record.Message, "read the Apply result: "+frameNotFound) || strings.Contains(record.Message, lastReportedBefore) {
+			t.Fatalf("last run message = %q, want the missing result without the refusal the Pod outlived", record.Message)
+		}
+	})
+}
+
+// firstPodStarted leaves the Job's first Pod with its executor in state: it got
+// the Secret and started, and its node then stopped answering, so it stands
+// with the last status the kubelet wrote.
+func firstPodStarted(t *testing.T, api client.Client, pod *corev1.Pod, state corev1.ContainerState) {
+	t.Helper()
+
+	stored := &corev1.Pod{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(pod), stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Status = corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: executorContainerName, State: state,
+	}}}
+	if err := api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two Pods whose result cannot be attributed: the first started between two
+// looks, may have run DDL, and lost its node, and the second waits on the
+// Secret the first was once refused. The report is about the first Pod's wait,
+// which ended, so the record does not repeat it. ContainerStatusUnknown says
+// nothing about a start, and the report stands.
+func TestTwoPodsOneOfWhichStartedRepeatNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		state corev1.ContainerState
+		kept  bool
+	}{
+		{name: "the first executor running", state: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+		{
+			name:  "the first executor failed",
+			state: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
+		},
+		{
+			name: "the first executor lost to the kubelet", kept: true,
+			state: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "ContainerStatusUnknown"}},
+		},
+	} {
+		check := func(t *testing.T, message, said string) {
+			t.Helper()
+			if kept := strings.Contains(message, lastReportedBefore+said); kept != row.kept {
+				t.Fatalf("the record = %q, carries the report: %t, want %t", message, kept, row.kept)
+			}
+		}
+		t.Run("a PtahSchema with "+row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := unstartedSchemaApplyRun(t)
+			firstPodStarted(t, run.api, run.pod, row.state)
+			aSecondPod(t, run.api, run.job, run.pod)
+			run.reconcileOnce(t)
+
+			failed := settledSchemaFailure(t, run.api, run.schema)
+			if !strings.Contains(failed.Message, "Job produced multiple executor Pods") {
+				t.Fatalf("ReconciliationFailed = %q, want the multiplicity sentence", failed.Message)
+			}
+			check(t, failed.Message, run.said)
+		})
+		t.Run("a PtahMigration with "+row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := unstartedMigrationApplyRun(t)
+			firstPodStarted(t, run.api, run.pod, row.state)
+			aSecondPod(t, run.api, run.job, run.pod)
+			if stored := reconcileMigration(t, run.reconciler, run.api, run.migration); stored.Status.UnresolvedRun == nil {
+				t.Fatalf("the ending did not record the run: claim %#v", stored.Status.ActiveOperation)
+			}
+			podsGone(t, run.api, run.job)
+
+			record := run.settle(t, 3)
+			if !strings.Contains(record.Message, errTerminalPodMultiplicity.Error()) {
+				t.Fatalf("last run message = %q, want the multiplicity sentence", record.Message)
+			}
+			check(t, record.Message, run.said)
+		})
+	}
+}
+
+// An Apply the API server refused a Pod until the Job's deadline has no Pod
+// log, so neither record points at one.
+func TestARefusedApplyPointsAtNoPodLog(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a PtahSchema", func(t *testing.T) {
+		t.Parallel()
+
+		run := schemaApplyUnderReport(t, func(api client.Client, job *batchv1.Job) *corev1.Pod {
+			refusedPodCreation(t, api, job, nil, metav1.Now())
+			return nil
+		}, operatorv1alpha1.ReasonPodAdmissionRefused, "denied request")
+		pastTheDeadlineWithoutAPod(t, run.api, run.job)
+		deadline := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation.ExecutionNotAfter.Add(time.Second)
+		run.reconciler.Clock = func() time.Time { return deadline }
+		run.reconcileOnce(t)
+
+		event := settledSchemaEvent(t, run.recorder)
+		if !strings.Contains(event, lastReportedBefore+run.said) {
+			t.Fatalf("ApplyOutcomeUnknown = %q, want the refusal, or this is not the refused Apply's Event", event)
+		}
+		if strings.Contains(event, "Pod log") || strings.Contains(event, "kubectl logs") {
+			t.Fatalf("ApplyOutcomeUnknown = %q points at the log of a Pod that never existed", event)
+		}
+		if failed := settledSchemaFailure(t, run.api, run.schema); strings.Contains(failed.Message, "kubectl logs") {
+			t.Fatalf("ReconciliationFailed = %q points at the log of a Pod that never existed", failed.Message)
+		}
+	})
+	t.Run("a PtahMigration", func(t *testing.T) {
+		t.Parallel()
+
+		run := migrationApplyUnderReport(t, func(t *testing.T, run *unstartedMigration) {
+			t.Helper()
+			refusedPodCreation(t, run.api, run.job, run.pod, metav1.NewTime(run.reconciler.now()))
+			run.pod = nil
+		}, operatorv1alpha1.ReasonPodAdmissionRefused, "denied request")
+		pastTheDeadlineWithoutAPod(t, run.api, run.job)
+
+		record := run.settle(t, 3)
+		if !strings.Contains(record.Message, lastReportedBefore+run.said) {
+			t.Fatalf("last run message = %q, want the refusal, or this is not the refused Apply's record", record.Message)
+		}
+		if event := findEvent(run.recorder, corev1.EventTypeWarning+" MigrationRunUncertain "); event == "" ||
+			strings.Contains(event, "Pod log") || strings.Contains(event, "kubectl logs") {
+			t.Fatalf("MigrationRunUncertain = %q, want one that points at no Pod log", event)
+		}
+	})
 }
