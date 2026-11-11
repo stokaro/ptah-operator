@@ -24,6 +24,11 @@ the API refuses one, in a terminating namespace or under a full ResourceQuota,
 the manager deletes the attempt's intent and credential records in the
 foreground instead, and their API-assigned deletion time starts the window.
 
+A record's owner references are immutable as well, for every writer, the
+garbage collector included, so a deletion that would orphan a record from its
+owner could never finish. Admission refuses such a deletion: `--cascade=orphan`
+on a `PtahSchema`, a `PtahMigration` or a record.
+
 A payload chunk has the following shape. Its publication intent supplies the
 binding, index, byte length, and digest. Reading a chunk alone does not establish
 that a complete result was accepted.

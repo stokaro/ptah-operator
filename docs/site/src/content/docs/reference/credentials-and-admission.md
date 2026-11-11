@@ -427,8 +427,6 @@ So, for a rotation on this path:
 
 ## Admission
 
-## Admission
-
 The manager's own writes pass through two independent fail-closed layers.
 
 **Typed policies**, one per kind and verb, reject objects outside their narrow
@@ -469,6 +467,24 @@ accounted for. The second refuses anyone but the manager a change to the
 the copy of that record a restore that drops status keeps. The policy over
 `PtahSchema` and `PtahMigration` updates lets the manager move that one
 annotation on a migration, and nothing else it did not move before.
+
+**A deletion that would orphan dependents** of a `PtahSchema` or a
+`PtahMigration` is refused by one more policy, from everyone. The garbage
+collector would have to take the resource's owner reference off the
+`PtahResultRecord` objects it owns, the controller-write webhook refuses that
+change to a record whoever makes it, and the resource would stay `Terminating`.
+The policy decides the way the API server's registry does: `orphanDependents`
+when the request sets it, then `propagationPolicy`, and for a request that names
+neither, the `orphan` finalizer the resource carries. A deletion that names
+`Background` or `Foreground` is admitted, and the API server takes that
+finalizer off in the same write. It is a ValidatingAdmissionPolicy and not a
+webhook because it needs nothing outside the request: behind a webhook under
+`failurePolicy: Fail`, every deletion of the two kinds, a namespace's included,
+would fail while the manager is down. The webhook already refuses an orphaning
+deletion of a record and of a result credential Secret, which it judges for
+other reasons. [Suspension and
+deletion](../../use/operations/#suspension-and-deletion) says what to run
+instead.
 
 A Job carries an annotation envelope that admission checks as a set: eight
 annotations, including the manager image, revision and controller-state

@@ -67,27 +67,31 @@ script that reads the `kubectl logs` command out of the
 propagation finds none there now. A script or an alert that matches the whole
 text of a `PtahSchema`'s `ApplyOutcomeUnknown` Event has to expect
 `; last reported before that:` and what the schema last reported after it, on
-an Apply whose Pod never ran, and on a deleted schema `the PtahSchema is being
-deleted, so nothing will observe the database:` and how the Apply ended in place
-of `observing database state`. A deleted schema whose Apply's executor ran and
-stopped now records that Apply: an alert on
+an Apply whose Pod never ran, and on a deleted schema
+`the PtahSchema is being deleted, so nothing will observe the database:` and
+how the Apply ended in place of `observing database state`. A deleted schema
+whose Apply's executor ran and stopped now records that Apply: an alert on
 `ptah_operator_applies_total{family="schema",outcome="uncertain"}` or on
-`ptah_operator_failures_total{family="schema",stage="apply"}` counts it once, and
-`ptah_operator_operation_duration_seconds` records it with `outcome="uncertain"`
-where it recorded `canceled`. Such records count in
+`ptah_operator_failures_total{family="schema",stage="apply"}` counts it once,
+and `ptah_operator_operation_duration_seconds` records it with
+`outcome="uncertain"` where it recorded `canceled`. Such records count in
 `ptah_operator_unresolved_attempts` until the deleted schema goes, so
 `PtahOperatorUnresolvedApply`, which is critical and has no pending period, can
 fire for a schema deleted while its Apply runs: for about 30 seconds past the
-Apply's deadline when its Pod never started, and for a pass when its executor ran
-and stopped. `kubectl ptah suspend --wait` on a `PtahSchema` no longer waits
-for the Job of a read that an execution-binding change retired or whose
+Apply's deadline when its Pod never started, and for a pass when its executor
+ran and stopped. `kubectl ptah suspend --wait` on a `PtahSchema` no longer
+waits for the Job of a read that an execution-binding change retired or whose
 database lock epoch moved, unless the read serves a post-apply proof: the
 resource reports `Suspended` while that Job may still run, and a
 `SchemaJobCleanupDeferred` Warning names the Job. On a schema whose proof read
 runs a Job this release cannot confirm, it now waits for that Job to stop, up
 to 60 seconds past the Job's deadline, which can outlast the five-minute
-default of `--wait-timeout`. 0.2.10 retried such a read at once without
-waiting for its Job.
+default of `--wait-timeout`. 0.2.10 retried such a read at once without waiting
+for its Job. A script or a GitOps tool that deletes a `PtahSchema` or a
+`PtahMigration` with `--cascade=orphan`, `propagationPolicy: Orphan` or
+`orphanDependents: true`, or deletes one that carries the `orphan` finalizer
+without naming a propagation, is now refused and has to name `Background`, the
+default.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -345,6 +349,22 @@ waiting for its Job.
   that Job by the same bound and gives it its TTL before it reads again.
   [Suspended, and losing a lock](../../reference/reconciliation/#suspended-and-losing-a-lock)
   says what a suspended resource still waits for.
+- **An orphaning deletion is refused.** `kubectl delete --cascade=orphan` on a
+  `PtahSchema` or a `PtahMigration` left the resource `Terminating`: the garbage
+  collector has to take the resource's owner reference off each dependent before
+  the orphan finalizer comes off, and the controller-write webhook refuses that
+  change to the `PtahResultRecord` objects the resource owns. A new admission
+  policy refuses such a deletion instead, `propagationPolicy: Orphan` and
+  `orphanDependents: true` alike, and a deletion that names no propagation of a
+  resource that carries the `orphan` finalizer, which the API server would
+  honor. Its message names `Background`, the default propagation. It runs in the
+  API server, so it refuses no deletion because the manager is down, and the
+  namespace controller, which names `Background`, is not refused. A resource an
+  orphaning deletion left `Terminating` before the upgrade stays so until it is
+  deleted again with `kubectl delete`, or its namespace is deleted, either of
+  which takes the `orphan` finalizer off. The dependents that deletion already
+  freed stay behind, as
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
 
 ## 0.2.10
 

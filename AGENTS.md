@@ -473,7 +473,9 @@ The chart's ValidatingAdmissionPolicies are written once, in Go:
 `internal/crdupgrade/controller_object_guard.go` and
 `controller_write_guard.go` hold the seven guards on the manager's own writes,
 `manager_state_guard.go` the two that keep status and a migration's
-unresolved-run copy the manager's alone, and
+unresolved-run copy the manager's alone, `orphan_deletion_guard.go` the one
+that refuses a deletion that would orphan a `PtahSchema`'s or a
+`PtahMigration`'s dependents, and
 `internal/certrotation/secret_create_guard.go` the certificate rotator's Secret
 CREATE guard. `hack/chartpolicies` generates the chart templates from them,
 with the release values left as Helm expressions, and `verify-source` refuses
