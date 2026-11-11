@@ -69,6 +69,12 @@ const (
 	VerdictAdopt JobVerdict = "adopt"
 	// VerdictSupervise: the Job is this claim's and the claim names it.
 	VerdictSupervise JobVerdict = "supervise"
+	// VerdictAwait: a mutating claim is marked, names no Job and finds none,
+	// and this process has not yet watched that state for MissingJobGrace.
+	// Another manager may have marked it and not yet landed its create, so the
+	// pass comes back later instead of calling the Job lost. VerdictFor never
+	// gives it; MissingJobs.Verdict does.
+	VerdictAwait JobVerdict = "await"
 )
 
 // VerdictFor decides what a pass does about the Job it looked for.

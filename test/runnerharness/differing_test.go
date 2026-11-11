@@ -211,15 +211,16 @@ func differingRows() []differingRow {
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
-		// The manager's privilege reading raises only the option's removal, so this
-		// plan runs unattended under apply: Always, and the view's readers start to
-		// need their own rights on the table.
+		// The view's readers start to need their own rights on the table, so the
+		// manager raises the option's arrival as it raises its removal, and this
+		// plan waits for an approval under apply: Always.
 		{
 			name: "view-invoker-true", engine: enginePostgres, declared: "view-invoker-true-postgresql.sql",
 			seed: []string{notes, plain},
 			want: differingReading{
 				findings:   []string{"views_modified"},
 				statements: []string{`ALTER VIEW "differs_notes_view" SET (security_invoker=true)`},
+				privileges: []string{"SecurityDefiner"},
 			},
 		},
 		// MySQL reads a view's SQL SECURITY nowhere: the reader leaves it out and a

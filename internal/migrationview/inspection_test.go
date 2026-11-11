@@ -56,14 +56,14 @@ func TestLoadReadsTheUnresolvedRunAndTheLastRunsJob(t *testing.T) {
 
 // A hold always names a database, and the record of its run says whether anybody
 // reported it. A hold beside no such record does not say which it is.
-func TestRenderTextSaysWhenAHoldsDatabaseIsAssumed(t *testing.T) {
+func TestRenderTextSaysWhenAHoldsDatabaseComesFromItsPlan(t *testing.T) {
 	t.Parallel()
 
-	const assumed = "assumed: the run named none"
+	const fromPlan = "of its plan: the run named none"
 	for _, row := range []struct {
-		name    string
-		mutate  func(*operatorv1alpha1.PtahMigrationStatus)
-		assumed bool
+		name     string
+		mutate   func(*operatorv1alpha1.PtahMigrationStatus)
+		fromPlan bool
 	}{
 		{"its run named none", func(status *operatorv1alpha1.PtahMigrationStatus) {
 			status.LastRun.OperationID = status.UnresolvedRun.OperationID
@@ -90,8 +90,8 @@ func TestRenderTextSaysWhenAHoldsDatabaseIsAssumed(t *testing.T) {
 			if !strings.Contains(text, held.Status.UnresolvedRun.TargetIdentityDigest+" (target identity digest") {
 				t.Fatalf("the block does not name the database:\n%s", text)
 			}
-			if strings.Contains(text, assumed) != row.assumed {
-				t.Fatalf("assumed = %t, want %t:\n%s", strings.Contains(text, assumed), row.assumed, text)
+			if strings.Contains(text, fromPlan) != row.fromPlan {
+				t.Fatalf("from its plan = %t, want %t:\n%s", strings.Contains(text, fromPlan), row.fromPlan, text)
 			}
 		})
 	}
@@ -130,14 +130,14 @@ func TestRenderTextKeepsTheLastRunApartFromTheUnresolvedHold(t *testing.T) {
 		}
 	}
 	// The guidance is prose wrapped to the terminal, so it is read as words.
-	// Reads go on while the record stands; the database is where to start
-	// looking, not proof; and the acknowledgment takes the UID and operation
+	// Reads go on while the record stands; the database is the only one the
+	// run can have changed; and the acknowledgment takes the UID and operation
 	// printed here.
 	prose := strings.Join(strings.Fields(text), " ")
 	for _, want := range []string{
 		"While this record stands no plan is published and no Apply is dispatched; resolve, verify and the history read go on.",
-		"where to start looking, not proof of where the run went.",
-		"A reader who inspects the wrong database finds nothing wrong and settles a record that was telling the truth.",
+		"The runner starts nothing against a database other than its plan's, so the run changed this one or none.",
+		"A reader who inspects another database, such as a replica or a restored copy, finds nothing wrong and settles a record that was telling the truth.",
 		"settle it with a PtahMigrationRunAcknowledgment naming migration UID migration-uid and the operation above.",
 		`The operations guide has the procedure, under "A migration run nobody accounted for".`,
 	} {

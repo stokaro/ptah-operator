@@ -601,7 +601,8 @@ policy holds (a schema plan that is destructive while allowDestructive is
 false, or any plan under apply Never), once the operator has planned it again
 after the wait began, and one for in-sync, approval or applied on an artifact
 the verification policy refuses. A run that applied before such a refusal ends
-the wait with CompletionNotProved, naming the run.
+the wait with CompletionNotProved, naming the run. A wait for read stops on a
+refusal the read it asked for ended in, and not on one from before it.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

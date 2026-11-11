@@ -20,6 +20,16 @@ func schemaRetargetRefused(result runner.Result, previous string) bool {
 		result.ChildExitCode == -1 && !result.MutationStarted && !result.Uncertain && result.Truncation == nil
 }
 
+// proofReadClaimed is a schema whose read-only proof of the dispatched Apply has
+// claimed its Job: an Observe or a Plan, bound to a Job, while the proof owed to
+// that Apply is still pending.
+func proofReadClaimed(resource *ptahv1alpha1.PtahSchema, applyOperationID string) bool {
+	active, pending := resource.Status.ActiveOperation, resource.Status.PendingObservation
+	return applyOperationID != "" && active != nil && pending != nil && pending.ApplyOperationID == applyOperationID &&
+		(active.Type == ptahv1alpha1.OperationObserve || active.Type == ptahv1alpha1.OperationPlan) &&
+		active.ID != "" && active.ID != applyOperationID && active.JobName != "" && active.JobUID != ""
+}
+
 // A read of another target cannot settle the dispatched Apply's outcome. The
 // controller must keep the original proof binding and stop, naming the refusal
 // and what ends it, even while it goes on reading.

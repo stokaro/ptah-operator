@@ -171,6 +171,10 @@ type SchemaReconciler struct {
 	// the order mutationlifecycle writes down; tests swap two of its steps to
 	// show which boundary each of them holds.
 	dispatch mutationlifecycle.Driver
+	// missingJobs is when this process first found each marked Apply with no
+	// Job; mutationlifecycle.MissingJobGrace is measured on it. It is made on
+	// first use, by missingJobsOf.
+	missingJobs *mutationlifecycle.MissingJobs
 }
 
 func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -818,6 +822,8 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		}
 		job := &batchv1.Job{}
 		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
+		// A deleting schema does not wait MissingJobGrace for a missing Job:
+		// the Job-write webhook refuses a create for an owner being deleted.
 		dispatchedApplyUnknown := schemaOperation(operation).Mutating &&
 			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))
@@ -980,7 +986,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	key := types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
-		if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
+		verdict, _, wait := r.jobVerdict(schema, mutationlifecycle.JobClaim{
+			Mutating:        schemaOperation(operation).Mutating,
+			DispatchStarted: operation.DispatchStarted,
+			RecordedJobUID:  string(operation.JobUID),
+		})
+		switch verdict {
+		case mutationlifecycle.VerdictAwait:
+			return awaitMarkedCreate(ctx, operation.JobName, wait), nil
+		case mutationlifecycle.VerdictUnaccounted:
 			acquired, requeue, lockErr := r.acquireApplyLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -1007,7 +1021,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	// The same decision both families make about the Job under a reserved
 	// name, with the wording each one owes its reader kept here.
-	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
+	verdict, cause, _ := r.jobVerdict(schema, mutationlifecycle.JobClaim{
 		Mutating:        schemaOperation(operation).Mutating,
 		DispatchStarted: operation.DispatchStarted,
 		RecordedJobUID:  string(operation.JobUID),
@@ -1183,9 +1197,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
 	}
-	// Ahead of the child's own error: the runner names the target before the
-	// child starts, and a login that cannot connect reads no more of what the
-	// Apply did than one that can.
+	// Ahead of the result's own error: the runner names the target before the
+	// child starts. A proof's read is bound to its plan's target, so the runner
+	// refuses one whose URL names another with target_binding_mismatch, and that
+	// refusal has to stop the proof rather than fail it as an ordinary read.
 	if schemaClaimServesProof(schema) && proofReadAnotherTarget(schema.Status.PendingObservation, result.TargetIdentityDigest) {
 		if proofSettlementAsked(schema, result.TargetIdentityDigest) {
 			return r.settleProofOnMovedTarget(ctx, schema, job)
@@ -1220,7 +1235,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// dispatch was possible, every Apply error requires read-only proof.
 			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
 		}
-		if operation.Type == operatorv1alpha1.OperationPlan && planReadTheTarget(result.Error.Code) {
+		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
 		}
 		return r.retryOperation(ctx, schema, job, err)
@@ -4131,8 +4146,17 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 
 // observeStatusTransitions reports what a stored status write changed, given the
 // journal entries that write recorded.
+//
+// A plan is new to the write that records its publication in the journal.
+// status.plan goes nil on every read of the database, and the next Plan
+// publishes the same plan again when nothing changed, so a plan told apart by
+// comparing the two statuses was counted, and announced as needing an
+// approval, once per read. The journal names the plan it is waiting on across
+// those writes.
 func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema, recorded []operatorv1alpha1.JournalEntry) {
-	newPlan := planChanged(before.Status.Plan, after.Status.Plan)
+	newPlan := slices.ContainsFunc(recorded, func(entry operatorv1alpha1.JournalEntry) bool {
+		return entry.Type == operatorv1alpha1.JournalPlanPublished
+	})
 	if newPlan && after.Status.Plan != nil && r.Telemetry != nil {
 		r.Telemetry.ObservePlan(telemetry.FamilySchema, after.Spec.Target.Engine,
 			telemetry.DestructivePlan(after.Status.Plan.Destructive))
@@ -4177,13 +4201,6 @@ func (r *SchemaReconciler) observeOperation(operation *operatorv1alpha1.ActiveOp
 	}
 	r.Telemetry.ObserveOperation(telemetry.FamilySchema, telemetry.OperationForSchema(operation.Type),
 		outcome, r.now().Sub(operation.StartedAt.Time))
-}
-
-func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
-	if after == nil {
-		return false
-	}
-	return before == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
 }
 
 func approvalChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
@@ -4233,6 +4250,16 @@ func (r *SchemaReconciler) cachedReader() client.Reader {
 		return r.CachedReader
 	}
 	return r.Client
+}
+
+// jobVerdict is mutationlifecycle.VerdictFor for the schema's active claim,
+// with the wait for a create another manager may still be landing.
+func (r *SchemaReconciler) jobVerdict(
+	schema *operatorv1alpha1.PtahSchema,
+	claim mutationlifecycle.JobClaim,
+) (mutationlifecycle.JobVerdict, mutationlifecycle.JobCause, time.Duration) {
+	return missingJobsOf(&r.missingJobs).Verdict(client.ObjectKeyFromObject(schema),
+		schema.Status.ActiveOperation.ID, claim, monotonicNow(r.Clock))
 }
 
 func (r *SchemaReconciler) now() time.Time {

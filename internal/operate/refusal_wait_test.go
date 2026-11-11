@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -244,7 +245,9 @@ func TestWaitStopsOnARefusalThatHolds(t *testing.T) {
 	}
 }
 
-// A wait for a read or a suspension asks something a refusal does not answer.
+// A wait for a suspension asks something a refusal does not answer. A wait for a
+// read is answered only by a refusal its own read ended in, and the one it finds
+// when it begins is older (TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn).
 func TestARefusalDoesNotStopAWaitForAReadOrASuspension(t *testing.T) {
 	t.Parallel()
 	for _, family := range []operate.Family{operate.FamilySchema, operate.FamilyMigration} {
@@ -271,6 +274,258 @@ func TestARefusalDoesNotStopAWaitForAReadOrASuspension(t *testing.T) {
 				t.Fatalf("wait for suspension = %v, want it reached", err)
 			}
 		})
+	}
+}
+
+// refusedAt is a resource at rest in Blocked on a refusal stamped at: a schema by
+// its status.source.resolvedAt, which the Resolve before the refusal wrote, and a
+// migration by the lastTransitionTime of ArtifactVerified, which the refusal wrote.
+// A schema's ArtifactVerified keeps the time it went False, as the controller
+// leaves it from Pending to PolicyRefused.
+func refusedAt(family operate.Family, at time.Time) doc {
+	d := doc{phase: "Blocked", observedAt: t0, conditions: refused(family, 3)}
+	stamp(&d, family, at)
+	return d
+}
+
+// stamp dates the refusal d records, or the Resolve a schema's next refusal will
+// be stamped by, at at.
+func stamp(d *doc, family operate.Family, at time.Time) {
+	if family == operate.FamilySchema {
+		d.resolvedAt = at
+		return
+	}
+	for index := range d.conditions {
+		if d.conditions[index].Type == operatorv1alpha1.ConditionArtifactVerified {
+			d.conditions[index].LastTransitionTime = metav1.NewTime(at)
+		}
+	}
+}
+
+// A wait for a read stops on a refusal the read its request asked for ended in:
+// ArtifactVerified False with PolicyRefused under a stamp other than the one on the
+// document the request is dated by. That document is the baseline when it rests,
+// and otherwise the one in which the operator takes the request. The stamp is
+// compared and never ordered, here or against the request's own instant, which the
+// client's clock chose: the rows date refusals before the request, after it, and
+// before the refusal they replace, as managers whose clocks disagree do.
+func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
+	t.Parallel()
+
+	// The request is at(5). A refusal stamped earlier or later is not, for that,
+	// older or newer than it.
+	before, inFlight, after := at(-600), at(-60), at(120)
+	asked := func(d doc) doc {
+		d.annotation = request
+		return d
+	}
+	taken := func(d doc) doc {
+		d.annotation, d.lastRead = request, request
+		return d
+	}
+	// resolving is the claim of a read, with the refusal it found still recorded.
+	resolving := func(family operate.Family, refusal time.Time) doc {
+		d := refusedAt(family, refusal)
+		d.phase, d.operation = "Resolving", "Resolve"
+		return d
+	}
+	// verifying is the harvest of a Resolve at resolvedAt: a schema's
+	// ArtifactVerified False with Pending, a migration's Unknown.
+	verifying := func(family operate.Family, resolvedAt time.Time) doc {
+		d := doc{phase: "Verifying", observedAt: t0, conditions: resolvedAgain(family)}
+		stamp(&d, family, resolvedAt)
+		return d
+	}
+	// accepted is a resource at rest in sync on an artifact the policy accepted.
+	accepted := func(family operate.Family) doc {
+		d := doc{phase: "InSync", observedAt: t0, conditions: []metav1.Condition{
+			condition(operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, "PolicySatisfied",
+				"The resolved artifact satisfied its verification policy", 3),
+		}}
+		stamp(&d, family, before)
+		return d
+	}
+	// takenNewer is d after the operator took a newer request, otherRequest.
+	takenNewer := func(d doc) doc {
+		d.annotation, d.lastRead = otherRequest, otherRequest
+		return d
+	}
+	for _, row := range []struct {
+		name string
+		// since is the baseline; nil makes the first read the baseline, as
+		// kubectl ptah wait --for read does.
+		since func(operate.Family) client.Object
+		docs  func(operate.Family) []doc
+		// wantStop is the read the wait stops at, and wantDone the read it is
+		// done at. Zero for both expects a timeout.
+		wantStop, wantDone int
+	}{
+		{
+			name:  "the read the request started ended in a refusal",
+			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				return []doc{
+					taken(refusedAt(family, before)),
+					taken(resolving(family, before)),
+					taken(verifying(family, after)),
+					taken(refusedAt(family, after)),
+				}
+			},
+			wantStop: 4,
+		},
+		{
+			name:     "that refusal before the wait's first read",
+			since:    func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
+			docs:     func(family operate.Family) []doc { return []doc{taken(refusedAt(family, after))} },
+			wantStop: 1,
+		},
+		{
+			name:     "that refusal dated before the request by the operator's clock",
+			since:    func(family operate.Family) client.Object { return asked(refusedAt(family, at(-600))).object(family) },
+			docs:     func(family operate.Family) []doc { return []doc{taken(refusedAt(family, at(-300)))} },
+			wantStop: 1,
+		},
+		{
+			name:     "that refusal dated before the one it replaced, by another manager's clock",
+			since:    func(family operate.Family) client.Object { return asked(refusedAt(family, at(-600))).object(family) },
+			docs:     func(family operate.Family) []doc { return []doc{taken(refusedAt(family, at(-1200)))} },
+			wantStop: 1,
+		},
+		{
+			name:  "a refusal from before the request: the operator took it and has not claimed the read",
+			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
+			docs:  func(family operate.Family) []doc { return []doc{taken(refusedAt(family, before))} },
+		},
+		{
+			name:  "a refusal from before the request, dated after it by the operator's clock",
+			since: func(family operate.Family) client.Object { return asked(refusedAt(family, at(600))).object(family) },
+			docs:  func(family operate.Family) []doc { return []doc{taken(refusedAt(family, at(600)))} },
+		},
+		{
+			// kubectl ptah wait --for read begun while that read verifies: a
+			// schema's ArtifactVerified is already False, with Pending, under
+			// the stamp the refusal will carry.
+			name: "a wait begun while the read the request started verifies",
+			docs: func(family operate.Family) []doc {
+				return []doc{taken(verifying(family, after)), taken(refusedAt(family, after))}
+			},
+			wantStop: 2,
+		},
+		{
+			name: "a wait begun after the operator took the request finds the refusal standing",
+			docs: func(family operate.Family) []doc { return []doc{taken(refusedAt(family, before))} },
+		},
+		{
+			name: "and stops on the refusal of a later read",
+			docs: func(family operate.Family) []doc {
+				return []doc{taken(refusedAt(family, before)), taken(resolving(family, before)), taken(refusedAt(family, after))}
+			},
+			wantStop: 3,
+		},
+		{
+			name:  "a read under way when the request was written ends in a refusal that does not count",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				return []doc{
+					asked(verifying(family, inFlight)),
+					asked(refusedAt(family, inFlight)),
+					taken(refusedAt(family, inFlight)),
+				}
+			},
+		},
+		{
+			name:  "the read the operator starts after it does",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				return []doc{
+					asked(verifying(family, inFlight)),
+					asked(refusedAt(family, inFlight)),
+					taken(refusedAt(family, inFlight)),
+					taken(resolving(family, inFlight)),
+					taken(verifying(family, after)),
+					taken(refusedAt(family, after)),
+				}
+			},
+			wantStop: 6,
+		},
+		{
+			// It cannot tell the read under way from the one the request
+			// started, so it waits for one after both.
+			name:  "the first answered document already shows a read under way at the request ended",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs:  func(family operate.Family) []doc { return []doc{taken(refusedAt(family, inFlight))} },
+		},
+		{
+			// The operator takes a newer request on the pass after the rest the
+			// read ended in, milliseconds later, so a poll can miss that rest
+			// and find the newer read's refusal beside this read's reading.
+			name:  "the read the request started ended with a reading, and a newer request's read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(accepted(family)).object(family) },
+			docs: func(family operate.Family) []doc {
+				// claimed is the claim of a Resolve on the accepted artifact, beside
+				// the reading at observedAt and a schema's Resolve at resolvedAt.
+				claimed := func(observedAt, resolvedAt time.Time) doc {
+					d := accepted(family)
+					d.phase, d.operation, d.observedAt = "Resolving", "Resolve", observedAt
+					stamp(&d, family, resolvedAt)
+					return d
+				}
+				newerRefused := refusedAt(family, at(150))
+				newerRefused.observedAt = at(30)
+				return []doc{taken(claimed(t0, before)), takenNewer(claimed(at(30), after)), takenNewer(newerRefused)}
+			},
+			wantDone: 3,
+		},
+		{
+			name:  "a refusal while a newer request waits for the operator",
+			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				newer := taken(refusedAt(family, after))
+				newer.annotation = otherRequest
+				return []doc{newer}
+			},
+		},
+		{
+			name:  "a spec edited since the refusal",
+			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				edited := taken(refusedAt(family, after))
+				edited.generation, edited.observedGeneration = 4, 3
+				return []doc{edited}
+			},
+		},
+	} {
+		for _, family := range []operate.Family{operate.FamilySchema, operate.FamilyMigration} {
+			t.Run(row.name+"/"+string(family), func(t *testing.T) {
+				t.Parallel()
+
+				tl := &timeline{family: family, docs: row.docs(family)}
+				options := operate.WaitOptions{
+					Target: operate.TargetRead, ReadRequest: request, Timeout: timeout, Interval: interval, Clock: newStepClock(),
+				}
+				if row.since != nil {
+					options.Since = row.since(family)
+				}
+				_, err := operate.Wait(context.Background(), tl.reader(t), refOf(family), options)
+
+				var stop *operate.StopError
+				var timedOut *operate.TimeoutError
+				switch {
+				case row.wantDone > 0:
+					if err != nil || tl.readCount() != row.wantDone {
+						t.Fatalf("err = %v after %d reads, want the read done at read %d", err, tl.readCount(), row.wantDone)
+					}
+				case row.wantStop > 0:
+					if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyRefused || stop.Phase != "Blocked" ||
+						stop.Target != operate.TargetRead || tl.readCount() != row.wantStop || !strings.Contains(stop.Message, refusalMessage) {
+						t.Fatalf("err = %v after %d reads, want a %s stop at read %d naming %q",
+							err, tl.readCount(), operate.StopPolicyRefused, row.wantStop, refusalMessage)
+					}
+				case !errors.As(err, &timedOut):
+					t.Fatalf("err = %v after %d reads, want a timeout", err, tl.readCount())
+				}
+			})
+		}
 	}
 }
 

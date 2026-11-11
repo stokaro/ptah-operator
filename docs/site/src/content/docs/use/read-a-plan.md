@@ -444,9 +444,10 @@ Unresolved run:       Unknown, recorded 2026-09-30T06:30:43Z
   While this record stands no plan is published and no Apply is dispatched;
   resolve, verify and the history read go on.
   The database is the one the run named or, where it named none, the one its
-  plan was computed against: where to start looking, not proof of where the
-  run went. A reader who inspects the wrong database finds nothing wrong and
-  settles a record that was telling the truth.
+  plan was computed against. The runner starts nothing against a database
+  other than its plan's, so the run changed this one or none. A reader who
+  inspects another database, such as a replica or a restored copy, finds
+  nothing wrong and settles a record that was telling the truth.
   Establish what the run did there first. A history read of that database that
   finds nothing of the artifact left to apply clears the record by itself. If
   the database is accounted for and still has work pending, settle it with a
@@ -458,9 +459,10 @@ Unresolved run:       Unknown, recorded 2026-09-30T06:30:43Z
 
 It names the attempt, the Job, the plan the run was carrying out and the
 database it addressed. That database is the one the run named or, where it
-named none, the one its plan was computed against, so it is where to start
-looking rather than proof of where the run went. The `Database` line says
-`assumed` where the record of that same run names none. A resource that is suspended,
+named none, the one its plan was computed against. It is the only database the
+run can have changed, because the runner refuses an Apply whose URL names
+another target before Ptah starts. The `Database` line says `of its plan`
+where the record of that same run names none. A resource that is suspended,
 or refused for its engine or its realm, never reaches the history read that
 would clear the record, and the block says so; an acknowledgment still settles
 it. The block ends with what the operations guide says to do:

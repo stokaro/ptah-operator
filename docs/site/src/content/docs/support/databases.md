@@ -146,6 +146,14 @@ The report also covers every schema the URL covers. With a URL that pins no
 drift, and the command warns on standard error that the plan drops it. Pin
 `search_path` in the URL to leave other schemas out.
 
+A pinned `search_path` limits what is read, not what the declaration creates. An
+artifact that declares a table in a schema the URL leaves out plans `CREATE
+SCHEMA IF NOT EXISTS` for that schema. The statement only adds, so under `apply:
+Always` it runs without an approval, and for the login this page describes it
+fails with `permission denied for database` and an unknown outcome. Set `apply:
+OnApproval` for an artifact that can name schemas of its own, or give it a login
+that may create them.
+
 The plan drops what the declaration leaves out, and reading an object does not
 give the login the authority to do that. For the login this page describes, a `DROP`
 of a table, a view or a function another role owns fails with `must be owner of

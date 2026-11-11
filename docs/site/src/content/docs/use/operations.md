@@ -1880,9 +1880,25 @@ The wait reads the refusal from `ArtifactVerified`, `False` with
 two reads in a row. No reading dates it, so a refusal that stands when the wait
 begins stops it too. An older one does not: a spec edited since, a read request
 the operator has not taken, a read under way, or an artifact that passed since
-leaves the wait running, whatever `Ready` or `Blocked` still says. To see whether a
-policy edit helps, ask for a read first: `kubectl ptah refresh --wait` is not stopped
-by the refusal it may end, and its timeout names the refusal if it stands.
+leaves the wait running, whatever `Ready` or `Blocked` still says.
+
+To see whether a policy edit helps, ask for a read with `kubectl ptah refresh
+--wait`. The refusal that stands when you ask does not stop it. If the read it
+asked for ends in a refusal again, the wait stops with `PolicyRefused` and the
+requirements, as `kubectl ptah wait --for read` does. If it ends with a reading,
+the wait is done, even when a read on a newer request has been refused by the time
+the wait looks again. A refusal from before the request, or from a read that was
+already under way when it was written, leaves the wait running until the read the
+request starts ends; if that read does not end before the timeout, the timeout
+names the refusal if the resource still shows it.
+
+The wait tells the two apart by a stamp the operator writes with each refusal. For
+a schema it is `status.source.resolvedAt`, which the Resolve of each read writes;
+for a migration it is the `lastTransitionTime` of `ArtifactVerified`, which the
+refusal writes. The wait compares that stamp with the one the resource carried when
+the wait began, or when the operator took the request if a read was under way at
+first. It never compares it with the time of the request, which your clock wrote
+and not the operator's.
 
 A resource its database realm blocks keeps a wait running: another resource's
 change or an administrator's grant ends that refusal, not a change to this
@@ -1916,21 +1932,33 @@ by name and UID wherever the manager established that one existed, and the Job
 and its logs may be gone by then, which is why the record carries their
 identity rather than pointing at them. A run that reported `Partial` or `Unknown`,
 or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
-finishes, under `apply: Always` as under an approval, and `status.lastRun.message`
-says how to read it.
+finishes, under `apply: Always` as under an approval, where the claim recorded the
+Job's UID. `status.lastRun.message` says how to read it when the Job had finished
+by the time the run was recorded. A Job still running then takes its TTL once it
+stops, and the message names no log. A claim that never recorded the UID leaves the
+Job with no TTL: it stays until it is deleted, and a `MigrationJobCleanupDeferred`
+Warning Event names it.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
-say. A readable result frame reports the database the executor opened, and that
-is the one the run reached; so does the summary the runner wrote into its Pod's
-termination message, where it was read in place of a log that was gone. Without
-either -- an Apply whose create was never confirmed, a Pod that wrote nothing a
-reader could use -- the record falls back
-to the database the plan was computed against, which is the last one this
-resource read. The record does not say which of the two it is, and the Secret
-behind a reference can rotate between a reading and a run, so treat the digest
-as where to start looking rather than as a statement of where the run went.
-Establish that before repairing anything: a reader who inspects the wrong
-database finds nothing wrong and clears a record that was telling the truth.
+say. A readable result frame reports the database the Pod's URL named, and so
+does the summary the runner wrote into its Pod's termination message, where it
+was read in place of a log that was gone. Without either -- an Apply whose
+create was never confirmed, a Pod that wrote nothing a reader could use -- the
+record falls back to the database the plan was computed against, which is the
+last one this resource read. The runner refuses an Apply whose URL names
+another target than its plan's before Ptah starts, so a run whose frame names
+another one changed nothing, and the planned database is the only one a run
+can have changed. A Secret that rotated only its password still names the same
+database. The identity is the route the URL describes: the login, the host, the
+port, the database and the parameters that are not a credential or a
+connection setting, such as a timeout or MySQL's `checkConnLiveness` and
+`maxAllowedPacket`. A host name that now resolves to another server is the same
+identity. What stops a run there is only the approved sequence the Apply
+carries: Ptah compares it with what it selects under the migration lock, so a
+server whose pending migrations are the approved ones runs them. Read that
+database before repairing anything: a reader who inspects another, such as a
+replica or a restored copy, finds nothing wrong and clears a record that was
+telling the truth.
 
 `jobName` and `jobUID` are empty on one of those records as well: a create
 whose outcome the API server never confirmed. The name that claim reserved is
@@ -2157,9 +2185,14 @@ apply wants; add `family="migration"` to ask about one.
   detected drift from in-sync observations. It carries no family: a migration
   reads its own recorded history rather than observing the live database.
 - `ptah_operator_plans_total{family,engine,destructive}` counts published
-  immutable plans. `destructive` is the schema planner's conservative
-  classification; a migration plan reports `unknown`, because nothing examines
-  hand-written migrations for data loss.
+  immutable plans. A schema counts a plan on the status write that records its
+  publication in `status.journal`, so a scheduled read that clears the plan the
+  schema waits on and publishes it again counts nothing, and the same plan
+  counts again only once an Apply ran it or another plan took its place. A
+  migration keeps the plan it waits on in status through its reads, and counts
+  a plan its status did not name before. `destructive` is the schema planner's
+  conservative classification; a migration plan reports `unknown`, because
+  nothing examines hand-written migrations for data loss.
 - `ptah_operator_approvals_total{family,outcome}` counts approval transitions.
   `required` is a plan that asked for a decision, `accepted` is a decision the
   controller consumed at the dispatch boundary, and `stale` is an approval the
@@ -2167,7 +2200,13 @@ apply wants; add `family="migration"` to ask about one.
   being current, the verification policy refused the artifact, or a run spent
   another approval of the same migration plan. A policy
   of `Always` waives the requirement and counts nothing, except for a schema
-  plan that changes privileges, which still asks and counts as `required`.
+  plan that changes privileges, which still asks and counts as `required`. A
+  schema counts `required` with each `ApprovalRequired` Event: once when a plan
+  that asks for an approval is published, and once each time a plan already
+  published starts asking, after something withdrew its requirement or after an
+  edit of `spec.policy.apply`, which [Events](../../troubleshoot/events/) lists.
+  A migration counts it each time its `ApprovalRequired` condition becomes
+  `True`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
   uncertain, and stale Apply transitions. A migration run that ended `Partial`
   or `Unknown` is `uncertain`: neither may be retried, and both leave a record
@@ -2310,10 +2349,20 @@ status points at none. A run whose result nobody read, because its frame was los
 its Job ran more than one Pod, says `Anything the run wrote is in the Pod log`. An
 execution binding change during a running Apply retires the claim with no Job to name,
 so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
-stopped. When admission refuses the 24 hours, as the guard of the previous release
-does after a Helm upgrade that failed once the manager rolled out, the Job keeps five
-minutes, and a `FailedApplyLogShortened` Warning Event and a line in the manager's log
-say so.
+stopped. A migration Apply whose outcome went `Unknown` while its Job was still
+running, as when a release changed the executor or the Job under it or the database
+lock changed hands, is recorded before admission lets the Job take a TTL, so its
+`status.lastRun.message` names no log. Where the claim recorded the Job's UID, the
+manager patches the Job's TTL by the table above once the Job stops, just before
+the write that retires the claim, and `kubectl logs` reads the Job
+`status.lastRun.jobName` names for as long as that TTL keeps it. Where the claim
+never recorded the UID, as when the manager stopped between creating the Job and
+recording it, admission admits no TTL: the Job stays until it is deleted, and a
+`MigrationJobCleanupDeferred` Warning Event names it when the claim goes. When
+admission refuses the 24 hours, as the guard of the previous release does after a
+Helm upgrade that failed once the manager rolled out, the Job keeps five minutes,
+and a `FailedApplyLogShortened` Warning Event and a line in the manager's log say
+so.
 
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
 Pod's log with it sooner, and deleting the resource collects the Job with it. A
