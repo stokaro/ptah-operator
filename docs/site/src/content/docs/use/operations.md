@@ -1932,12 +1932,12 @@ by name and UID wherever the manager established that one existed, and the Job
 and its logs may be gone by then, which is why the record carries their
 identity rather than pointing at them. A run that reported `Partial` or `Unknown`,
 or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
-finishes, under `apply: Always` as under an approval, where the claim recorded the
-Job's UID. `status.lastRun.message` says how to read it when the Job had finished
-by the time the run was recorded. A Job still running then takes its TTL once it
-stops, and the message names no log. A claim that never recorded the UID leaves the
-Job with no TTL: it stays until it is deleted, and a `MigrationJobCleanupDeferred`
-Warning Event names it.
+finishes, under `apply: Always` as under an approval. A claim that never recorded
+the Job's UID, as when the manager stopped between creating the Job and recording
+it, records it before the TTL is asked for, so its Job keeps the log the same way.
+`status.lastRun.message` says how to read it when the Job had finished by the time
+the run was recorded. A Job still running then takes its TTL once it stops, and the
+message names no log.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the Pod's URL named, and so
@@ -2352,12 +2352,13 @@ so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
 stopped. A migration Apply whose outcome went `Unknown` while its Job was still
 running, as when a release changed the executor or the Job under it or the database
 lock changed hands, is recorded before admission lets the Job take a TTL, so its
-`status.lastRun.message` names no log. Where the claim recorded the Job's UID, the
-manager patches the Job's TTL by the table above once the Job stops, just before
-the write that retires the claim, and `kubectl logs` reads the Job
-`status.lastRun.jobName` names for as long as that TTL keeps it. Where the claim
-never recorded the UID, as when the manager stopped between creating the Job and
-recording it, admission admits no TTL: the Job stays until it is deleted, and a
+`status.lastRun.message` names no log. The manager patches the Job's TTL by the
+table above once the Job stops, just before the write that retires the claim, and
+`kubectl logs` reads the Job `status.lastRun.jobName` names for as long as that TTL
+keeps it. Admission admits the TTL only on the Job a claim names by UID, so a claim
+that never recorded the UID, as when the manager stopped between creating the Job
+and recording it, records it before the TTL is asked for. Where
+admission refuses the TTL, the Job stays until it is deleted, and a
 `MigrationJobCleanupDeferred` Warning Event names it when the claim goes. When
 admission refuses the 24 hours, as the guard of the previous release does after a
 Helm upgrade that failed once the manager rolled out, the Job keeps five minutes,

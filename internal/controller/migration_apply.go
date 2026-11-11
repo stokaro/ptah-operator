@@ -1090,9 +1090,11 @@ func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
 // is retried, because the claim is what makes the next attempt possible. A read of
 // the Job that fails holds it the same way.
 //
-// A claim that never recorded its Job's UID cannot ask for the TTL, so the Job
-// stays, and a Warning says so (unrecordedMigrationJobStays). Recording the UID
-// first, the step adoption takes, is left to #970.
+// A claim that never recorded its Job's UID records it first (adoptMigrationJob),
+// since admission admits the TTL only on the Job a claim names by UID. The pass that
+// recorded the run unknown does that for a claim it keeps, so a claim reaches here
+// without one where an earlier release kept it, or where the Job under the name is
+// not this resource's. A write of the UID that fails holds the claim too.
 //
 // A deleting resource needs no TTL: the garbage collector takes the Job with its
 // owner, and a TTL write that kept failing would hold the finalizer.
@@ -1113,8 +1115,16 @@ func (r *MigrationReconciler) scheduleStoppedMigrationJobCleanup(
 		return fmt.Errorf("read the stopped Apply Job: %w", err)
 	}
 	if operation.JobUID == "" {
-		r.unrecordedMigrationJobStays(migration, operation, job)
-		return nil
+		adopted, err := r.adoptMigrationJob(ctx, migration, job)
+		if err != nil {
+			return fmt.Errorf("record the stopped Apply Job: %w", err)
+		}
+		if !adopted {
+			// Another resource's Job holds the name, and admission would refuse
+			// its TTL.
+			return nil
+		}
+		operation = migration.Status.ActiveOperation
 	}
 	if job.UID != operation.JobUID {
 		// The name holds a later Job, and admission would refuse its TTL.
@@ -1150,52 +1160,6 @@ func (r *MigrationReconciler) scheduleUnaccountedMigrationJobCleanup(
 	return retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 		r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
 	})
-}
-
-// errNoRecordedJobUID is why a Job its claim never recorded gets no cleanup TTL.
-var errNoRecordedJobUID = errors.New(
-	"its claim never recorded the Job's UID, and admission admits a cleanup only on the Job a claim names by UID")
-
-// unrecordedMigrationJobStays says that the Job under the name a claim reserved
-// gets no cleanup TTL, where the claim never recorded the Job's UID, as when the
-// pass that created the Job stopped before it recorded the create. A Job this
-// resource does not own exactly is not one its claim created, and one that
-// already carries a TTL is collected by it, so neither is named.
-func (r *MigrationReconciler) unrecordedMigrationJobStays(
-	migration *operatorv1alpha1.PtahMigration,
-	operation *operatorv1alpha1.MigrationOperationStatus,
-	job *batchv1.Job,
-) {
-	if job.Spec.TTLSecondsAfterFinished != nil ||
-		!exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahMigration",
-			migration.Name, migration.UID) {
-		return
-	}
-	r.migrationJobCleanupNotScheduled(migration, operation, job, errNoRecordedJobUID)
-}
-
-// warnUnrecordedMigrationJob reads the Job under the name a claim reserved and
-// says it stays (unrecordedMigrationJobStays), for a caller that holds no Job.
-// The Warning is reporting, and the record written beside it is the point, so a
-// read that fails is logged and skipped.
-func (r *MigrationReconciler) warnUnrecordedMigrationJob(
-	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
-	operation *operatorv1alpha1.MigrationOperationStatus,
-) {
-	if operation == nil || operation.JobName == "" {
-		return
-	}
-	job := &batchv1.Job{}
-	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
-	if err := r.directReader().Get(ctx, key, job); err != nil {
-		if !apierrors.IsNotFound(err) {
-			ctrl.LoggerFrom(ctx).Info("could not read the Job the claim reserved a name for",
-				"job", operation.JobName, "error", err.Error())
-		}
-		return
-	}
-	r.unrecordedMigrationJobStays(migration, operation, job)
 }
 
 // migrationJobCleanupNotScheduled says that a Job will not be collected by a TTL.
@@ -1315,8 +1279,65 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	failure error,
 	reportedTarget string,
 ) (ctrl.Result, error) {
-	mayStillWrite := r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, job)
+	job, unread, err := r.adoptUnrecordedApplyJob(ctx, migration, job)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	mayStillWrite := unread ||
+		r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, job)
 	return r.retireUncertainMigrationApply(ctx, migration, job, failure, reportedTarget, mayStillWrite)
+}
+
+// adoptUnrecordedApplyJob records the Job an Apply claim dispatched before the run
+// is recorded unknown, where the claim never recorded its UID, and returns the Job
+// the rest of the pass settles: the one it recorded, or job as it was handed in. It
+// reports unread where it could not read the name the claim reserved.
+//
+// The claim that never recorded a UID is one whose pass created the Job and
+// stopped, or lost the create's answer, before it wrote the UID; a release that
+// moved the executor then meets the claim before any pass has adopted the Job. With
+// the UID recorded, the Job is settled by the rule a recorded one is. A finished
+// Job takes its cleanup TTL in this pass and the run names its log. A running one
+// keeps the claim, and the pass that retires it once the Job has stopped schedules
+// the TTL (scheduleStoppedMigrationJobCleanup). Without it, admission admits no TTL
+// on the Job, which stays until it is deleted by hand or with its owner.
+//
+// A Job this resource does not own exactly is not adopted (adoptMigrationJob). A
+// read that fails adopts nothing and records the run all the same, and the caller
+// keeps the claim and its Lease, as it does for any read that cannot say whether
+// the Job may still write (dispatchedApplyMayStillWrite). The pass that retires the
+// claim records the UID then. A write that fails fails the pass before anything
+// else is recorded, so the retry finds the claim as it was.
+func (r *MigrationReconciler) adoptUnrecordedApplyJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (settled *batchv1.Job, unread bool, err error) {
+	operation := migration.Status.ActiveOperation
+	if operation.JobUID != "" {
+		return job, false, nil
+	}
+	standing := job
+	if standing == nil {
+		standing = &batchv1.Job{}
+		key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+		switch readErr := r.directReader().Get(ctx, key, standing); {
+		case apierrors.IsNotFound(readErr):
+			return nil, false, nil
+		case readErr != nil:
+			ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job to record it",
+				"job", operation.JobName, "error", readErr.Error())
+			return nil, true, nil
+		}
+	}
+	adopted, writeErr := r.adoptMigrationJob(ctx, migration, standing)
+	if writeErr != nil {
+		return nil, false, fmt.Errorf("record the dispatched Apply Job: %w", writeErr)
+	}
+	if adopted {
+		return standing, false, nil
+	}
+	return job, false, nil
 }
 
 // retireUncertainMigrationApply is finishUncertainMigrationApply for a caller
@@ -1338,8 +1359,11 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		// and process -- the exact replay this path exists to refuse.
 		//
 		// The guard refuses the cleanup patch whenever the claim does not name
-		// this Job by UID, which is every Apply that failed before its create
-		// was confirmed. So the failure is reported and the record is written.
+		// this Job by UID. finishUncertainMigrationApply has recorded the UID of
+		// the Job a claim dispatched (adoptUnrecordedApplyJob), so that is a Job
+		// this resource does not own exactly, a later Job under the name, or the
+		// Job of a deleting resource, which the garbage collector takes with its
+		// owner. So the failure is reported and the record is written.
 		//
 		// It refuses it on a Job that has not finished as well. Where the claim
 		// names this Job and stays because the Job may still write, the pass
@@ -1356,10 +1380,6 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, failure)); pointer != "" {
 			failure = fmt.Errorf("%w. %s", failure, pointer)
 		}
-	} else if operation.JobUID == "" && !mayStillWrite {
-		// The claim goes in this write, and it never recorded the Job its
-		// dispatch may have created, so no later pass can name that Job.
-		r.warnUnrecordedMigrationJob(ctx, migration, operation)
 	}
 	before := migration.DeepCopy()
 	finishedAt := metav1.NewTime(r.now())

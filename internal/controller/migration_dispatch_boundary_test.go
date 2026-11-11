@@ -73,7 +73,9 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 			reconciler.Client = fault
 
 			// Repeated passes must preserve the reserved workload identity and
-			// wait for it, even when the create never confirmed its UID.
+			// wait for it, even when the create never confirmed its UID. The
+			// claim records the UID of the Job the create left under its name,
+			// which is the one its dispatch created, and binds to nothing else.
 			var actual *operatorv1alpha1.PtahMigration
 			for range 4 {
 				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
@@ -81,9 +83,18 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 				}
 				actual = readMigration(t, api, migration)
 			}
+			standing := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKey{Namespace: migration.Namespace, Name: operation.JobName}, standing); err != nil {
+				t.Fatalf("read the Job the create left under the reserved name: %v", err)
+			}
+			if standing.UID == "" {
+				t.Fatal("the Job the create left has no UID, so naming it proves nothing")
+			}
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.ID != operation.ID ||
-				actual.Status.ActiveOperation.JobName != operation.JobName || actual.Status.ActiveOperation.JobUID != "" {
-				t.Fatalf("an unconfirmed running Apply lost or rebound its reserved claim: %#v", actual.Status.ActiveOperation)
+				actual.Status.ActiveOperation.JobName != operation.JobName ||
+				actual.Status.ActiveOperation.JobUID != standing.UID {
+				t.Fatalf("an unconfirmed running Apply lost or rebound its reserved claim, or did not name the Job %q under it: %#v",
+					standing.UID, actual.Status.ActiveOperation)
 			}
 			if actual.Status.LastRun == nil ||
 				actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {

@@ -227,14 +227,22 @@ func assertAdopted(t *testing.T, api client.Client, run dispatchedRun) {
 // settles a Job it cannot confirm, for the reason want names: an Apply is
 // recorded as outcome unknown, retaining its running claim, and a read-only claim moves to
 // a new attempt under a new name, leaving the Job as it found it.
+//
+// The retained Apply claim is the one it was, and names the Job by UID: a claim
+// that never recorded the UID records it before the run is settled, since the Job
+// under the name it reserved is the one its dispatch created, and admission admits
+// that Job's cleanup only by UID.
 func assertRefused(t *testing.T, api client.Client, run dispatchedRun, want string) {
 	t.Helper()
 
 	claimed := run.migration.Status.ActiveOperation
 	actual := readMigration(t, api, run.migration)
 	if migrationOperation(claimed).Mutating {
-		if !equality.Semantic.DeepEqual(actual.Status.ActiveOperation, claimed) {
-			t.Fatalf("an unknown running Apply lost or changed its original claim: operation=%#v", actual.Status.ActiveOperation)
+		kept := claimed.DeepCopy()
+		kept.JobUID = run.job.UID
+		if !equality.Semantic.DeepEqual(actual.Status.ActiveOperation, kept) {
+			t.Fatalf("an unknown running Apply lost or changed its original claim, or did not name Job %q: operation=%#v",
+				run.job.UID, actual.Status.ActiveOperation)
 		}
 		last := actual.Status.LastRun
 		if last == nil || last.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
