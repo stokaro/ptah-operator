@@ -321,25 +321,3 @@ func TestConcurrentPublicationsPassAdmission(t *testing.T) {
 		}
 	}
 }
-
-func TestUnindexedPersistedPublicationRemainsReadableAndRetryable(t *testing.T) {
-	s, records := publishedRecords(t)
-	payload, before, err := s.Load(t.Context(), binding())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range records {
-		delete(r.Labels, LabelAttempt)
-		if err := s.Client.Update(t.Context(), r); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, after, err := s.Load(t.Context(), binding())
-	if err != nil || before != after || !bytes.Equal(got, payload) {
-		t.Fatalf("legacy readback: %v", err)
-	}
-	retry, err := s.Publish(t.Context(), binding(), payload, digest(payload))
-	if err != nil || retry != before {
-		t.Fatalf("legacy retry changed receipt: %v", err)
-	}
-}

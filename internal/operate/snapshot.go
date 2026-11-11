@@ -48,6 +48,9 @@ type snapshot struct {
 	conditions      []metav1.Condition
 	plan            *planRecord
 	history         bool
+	// historyDatabase is the database a migration's status.history was read
+	// from (targetIdentityDigest), empty for a schema.
+	historyDatabase string
 	applied         *appliedRecord
 	lastRun         *runRecord
 	unresolved      *unresolvedRecord
@@ -84,7 +87,13 @@ type runRecord struct {
 	finishedAt time.Time
 	message    string
 	identity   runIdentity
-	// verified is the first reading of the database after the run, and
+	// operationID is the Apply claim that ran. A record an operator older than
+	// 0.2.10 wrote has none, and the operator records no reading on such a run
+	// (recordMigrationRunVerification in internal/controller).
+	operationID string
+	// database is the database the run's result named (targetIdentityDigest).
+	database string
+	// verified is the first reading of the run's database after the run, and
 	// verification what it found.
 	verified     bool
 	verification operatorv1alpha1.MigrationRunVerificationResult
@@ -231,6 +240,7 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 	}
 	if history := status.History; history != nil {
 		s.observedAt = history.ObservedAt.Time
+		s.historyDatabase = history.TargetIdentityDigest
 	}
 	if operation := status.ActiveOperation; operation != nil {
 		s.operation = string(operation.Type)
@@ -249,7 +259,7 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 			outcome: run.Outcome, jobName: run.JobName, jobUID: run.JobUID,
 			startedAt: run.StartedAt.Time, finished: run.FinishedAt != nil,
 			finishedAt: timeOf(run.FinishedAt), message: run.Message, identity: identityOfRun(run),
-			verified: run.Verification != nil,
+			operationID: run.OperationID, database: run.TargetIdentityDigest, verified: run.Verification != nil,
 		}
 		if run.Verification != nil {
 			s.lastRun.verification = run.Verification.Result

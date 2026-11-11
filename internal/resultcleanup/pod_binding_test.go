@@ -27,7 +27,7 @@ func TestPublicPodBindingRetainsActiveAuthorityAndCollectsAfterWindow(t *testing
 	}
 	p := Policy{Reader: c, Window: time.Hour, Now: func() time.Time { return c.now }}
 	c.admission = &p
-	collector, err := New(c, p, nil)
+	collector, err := New(c, p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -33,14 +34,24 @@ type observedClient struct {
 	failAt       int
 	after        bool
 	failCreate   bool
+	refuseCreate func(client.Object) error
 	beforeDelete func(client.Object)
 	admission    *Policy
+	// foreground lists the records whose foreground deletion admission
+	// admitted; loseForeground loses the response to each one.
+	foreground     []string
+	loseForeground bool
 }
 
 func (c *observedClient) Create(ctx context.Context, o client.Object, opts ...client.CreateOption) error {
 	c.creates++
 	if c.failCreate {
 		return errWrite
+	}
+	if c.refuseCreate != nil {
+		if err := c.refuseCreate(o); err != nil {
+			return err
+		}
 	}
 	o.SetUID(types.UID(fmt.Sprintf("record-%d", c.creates)))
 	o.SetCreationTimestamp(metav1.NewTime(c.now))
@@ -67,7 +78,26 @@ func (c *observedClient) Delete(ctx context.Context, o client.Object, opts ...cl
 		return apierrors.NewConflict(api.GroupVersion.WithResource("ptahresultrecords").GroupResource(), stored.Name, errors.New("delete precondition failed"))
 	}
 	if err := c.admission.AuthorizeDelete(ctx, stored); err != nil {
-		return err
+		// The controller-write webhook also admits the start of a foreground
+		// retirement; test/envtest/webhook holds the real one to the same verdict.
+		if options.PropagationPolicy == nil || *options.PropagationPolicy != metav1.DeletePropagationForeground ||
+			c.admission.AuthorizeForegroundRetirement(ctx, stored) != nil {
+			return err
+		}
+		// The API server keeps the object, stamps its deletion, and holds it
+		// with the foreground finalizer for the garbage collector.
+		c.foreground = append(c.foreground, stored.Spec.Type)
+		stored.Finalizers = []string{metav1.FinalizerDeleteDependents}
+		if err := c.Client.Update(ctx, stored); err != nil {
+			return err
+		}
+		if err := c.Client.Delete(ctx, stored); err != nil {
+			return err
+		}
+		if c.loseForeground {
+			return errWrite
+		}
+		return nil
 	}
 	c.deletes = append(c.deletes, stored.Spec.Type)
 	fail := c.failAt == len(c.deletes)
@@ -129,7 +159,7 @@ func (f cleanupFixture) retire(t *testing.T) {
 func (f cleanupFixture) collector(t *testing.T) *Collector {
 	t.Helper()
 	f.c.admission = &f.p
-	c, err := New(f.c, f.p, nil)
+	c, err := New(f.c, f.p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +387,7 @@ func testIntentDefersCredential(t *testing.T, retainedAttempts int) {
 	reader := &cleanupReadCounter{Reader: c}
 	p := Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return c.now }}
 	c.admission = &p
-	collector, err := New(c, p, nil)
+	collector, err := New(c, p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,32 +626,67 @@ func TestForegroundRetirementPreservesPinsAndWindow(t *testing.T) {
 	}
 }
 
-func TestLegacyChildrenAndOrphanCleanup(t *testing.T) {
-	for _, orphan := range []bool{false, true} {
-		t.Run(fmt.Sprint(orphan), func(t *testing.T) {
-			f := fixture(t)
-			f.retire(t)
-			for _, r := range remaining(t, f.c) {
-				if r.Spec.Type == "retired" {
-					continue
-				}
-				delete(r.Labels, resultstore.LabelAttempt)
-				if err := f.c.Update(t.Context(), &r); err != nil {
-					t.Fatal(err)
-				}
-				if orphan && r.Spec.Type == "intent" {
-					if err := f.c.Client.Delete(t.Context(), &r); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			if err := f.collector(t).Step(t.Context()); err != nil {
+// The attempt index finds an attempt's children without their intent, so a
+// restore that dropped the intent still has them collected under the
+// retirement.
+func TestOrphanedChildrenAreCollectedUnderTheirRetirement(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	for _, r := range remaining(t, f.c) {
+		if r.Spec.Type == "intent" {
+			if err := f.c.Client.Delete(t.Context(), &r); err != nil {
 				t.Fatal(err)
 			}
-			if len(remaining(t, f.c)) != 0 {
-				t.Fatal("legacy or orphan records remain")
+		}
+	}
+	if err := f.collector(t).Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := remaining(t, f.c); len(got) != 0 {
+		t.Fatalf("%d orphaned records remain", len(got))
+	}
+}
+
+// unindexedNamespace answers a listing of children without the attempt index
+// as a namespace holding more of them than any bounded scan reads: every page
+// has a child of another attempt and another page after it.
+type unindexedNamespace struct {
+	client.Reader
+	listings int
+}
+
+func (r *unindexedNamespace) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	options := (&client.ListOptions{}).ApplyOptions(opts)
+	if options.LabelSelector != nil {
+		requirements, _ := options.LabelSelector.Requirements()
+		for _, requirement := range requirements {
+			if requirement.Key() == resultstore.LabelAttempt && requirement.Operator() == selection.DoesNotExist {
+				r.listings++
+				metadata := list.(*metav1.PartialObjectMetadataList)
+				metadata.Items = []metav1.PartialObjectMetadata{{ObjectMeta: metav1.ObjectMeta{Namespace: options.Namespace, Name: fmt.Sprintf("unindexed-%d", r.listings),
+					OwnerReferences: []metav1.OwnerReference{{Kind: "PtahResultRecord", Name: "another-attempt", UID: "another-intent"}}}}}
+				metadata.Continue = "more"
+				return nil
 			}
-		})
+		}
+	}
+	return r.Reader.List(ctx, list, opts...)
+}
+
+// No release wrote a child without the attempt index, and admission refuses
+// one, so an attempt's children are read through that index alone. A scan of
+// the unindexed children beside it refused every attempt's cleanup in a
+// namespace holding more of them than sixteen pages of 128 (#928).
+func TestUnindexedRecordsInTheNamespaceDoNotStopCleanup(t *testing.T) {
+	f := fixture(t)
+	f.retire(t)
+	reader := &unindexedNamespace{Reader: f.c}
+	f.p.Reader = reader
+	if err := f.collector(t).Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := remaining(t, f.c); len(got) != 0 || reader.listings != 0 {
+		t.Fatalf("%d records remain after %d listings of children without the attempt index", len(got), reader.listings)
 	}
 }
 
@@ -629,7 +694,7 @@ func TestCleanupMetricsContainOnlyBoundedLabels(t *testing.T) {
 	f := fixture(t)
 	reg := prometheus.NewRegistry()
 	f.c.admission = &f.p
-	c, err := New(f.c, f.p, reg)
+	c, err := New(f.c, f.p, reg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

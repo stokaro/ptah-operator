@@ -29,6 +29,7 @@ func run(outcome operatorv1alpha1.MigrationRunOutcome, operation, plan, approval
 		outcome: outcome, job: "job-" + operation, jobUID: types.UID("job-" + operation + "-uid"),
 		startedAt: at(start), finishedAt: at(start + 60),
 		operationID: operation, plan: plan, planUID: types.UID(plan + "-uid"), fingerprint: "sha256:" + strings.TrimPrefix(plan, "plan-"),
+		database: databaseA,
 	}
 	if approval != "" {
 		record.approval, record.approvalUID = approval, types.UID(approval+"-uid")
@@ -309,9 +310,28 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			name: "a later reading that did not verify the run", since: atTheGate(nil),
 			docs: []doc{
 				{phase: "VerifyingHistory", observedAt: at(0), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
-				{phase: "InSync", observedAt: at(90), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+				{phase: "InSync", observedAt: at(90), historyDatabase: databaseB, lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
 			},
 			wantStop: operate.StopNotProved, wantMessage: "a later reading did not verify it",
+		},
+		{
+			// The run ended at 80 by the clock of the manager that harvested it, and
+			// the manager that read the other database afterwards dated that reading
+			// 70. The database the history names says the reading came later.
+			name: "a later reading of another database, dated before the run by another manager's clock", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "InSync", observedAt: at(70), historyDatabase: databaseB, lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+			},
+			wantStop: operate.StopNotProved, wantMessage: "a later reading did not verify it",
+		},
+		{
+			// A read under way after that reading may be of the run's database again,
+			// as when the Secret moved back, and would verify the run.
+			name: "a reading of another database with a read under way says nothing yet", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "Resolving", operation: "Resolve", observedAt: at(90), historyDatabase: databaseB, lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+			},
+			wantTimeout: true, wantMessage: "the history read back after run job-op-a",
 		},
 		{
 			// A failover to a manager whose clock is behind: status.history is from
@@ -325,9 +345,27 @@ func TestWaitForADecisionIsTheRunThatCarriedItOut(t *testing.T) {
 			wantReads: 2,
 		},
 		{
-			// A status time has whole seconds, so a reading in the second the run
-			// ended may be the one before it. The next reading is what says.
-			name: "a reading dated the second the run ended says nothing yet", since: atTheGate(nil),
+			// Suspension drops the read back, and the resource rests on the reading
+			// from before the run, which the manager that read it dated after the
+			// run's end by its own clock. No reading produced this document.
+			name: "a reading from before the run, at rest in Suspended and dated after it by another manager's clock", since: atTheGate(nil),
+			docs: []doc{
+				{phase: "Suspended", suspend: true, observedAt: at(90), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
+			},
+			wantTimeout: true, wantMessage: "the history read back after run job-op-a; now phase Suspended",
+		},
+		{
+			// A realm block before the read back rests the same way.
+			name: "a reading from before the run, at rest where the realm blocks it and dated after it by another manager's clock", since: atTheGate(nil),
+			docs: []doc{{
+				phase: "Blocked", observedAt: at(90), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20),
+				conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "RealmConflict", "This database realm is claimed by 2 resources", 3)},
+			}},
+			wantTimeout: true, wantMessage: "the history read back after run job-op-a; now phase Blocked",
+		},
+		{
+			// The same reading in the second the run ended: no date decides it.
+			name: "a reading from before the run, dated the second the run ended", since: atTheGate(nil),
 			docs: []doc{
 				{phase: "InSync", observedAt: at(80), lastRun: run(applied, "op-a", "plan-a", "approve-a", 20)},
 			},

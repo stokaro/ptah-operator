@@ -2,6 +2,7 @@ package operate_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -79,10 +80,13 @@ type doc struct {
 	resolvedAt time.Time
 	plan       *planDoc
 	noHistory  bool
-	applied    *appliedDoc
-	lastRun    *runDoc
-	unresolved *unresolvedDoc
-	journal    []operatorv1alpha1.JournalEntry
+	// historyDatabase is the database a migration's status.history was read from:
+	// databaseA when empty.
+	historyDatabase string
+	applied         *appliedDoc
+	lastRun         *runDoc
+	unresolved      *unresolvedDoc
+	journal         []operatorv1alpha1.JournalEntry
 }
 
 type planDoc struct {
@@ -117,10 +121,20 @@ type runDoc struct {
 	approvalUID types.UID
 	// policy is a record that says the resource's policy allowed the run. A record
 	// with neither this nor an approval says nothing about what did.
-	policy       bool
+	policy bool
+	// database is the database the run's result named. The operator takes a run
+	// only from the database its history was read from, so a record from this
+	// release names the history's: databaseA, unless a row says otherwise.
+	database     string
 	verification operatorv1alpha1.MigrationRunVerificationResult
 	verifiedAt   time.Time
 }
+
+// The databases a migration's readings and runs name, by targetIdentityDigest.
+var (
+	databaseA = "sha256:" + strings.Repeat("a", 64)
+	databaseB = "sha256:" + strings.Repeat("b", 64)
+)
 
 type unresolvedDoc struct {
 	operationID string
@@ -214,7 +228,13 @@ func (d doc) object(family operate.Family) client.Object {
 	status.Conditions = d.conditions
 	status.Journal = journal
 	if !d.observedAt.IsZero() && !d.noHistory {
-		status.History = &operatorv1alpha1.MigrationHistoryStatus{ObservedAt: metav1.NewTime(d.observedAt), ContractVersion: 1}
+		database := d.historyDatabase
+		if database == "" {
+			database = databaseA
+		}
+		status.History = &operatorv1alpha1.MigrationHistoryStatus{
+			ObservedAt: metav1.NewTime(d.observedAt), ContractVersion: 1, TargetIdentityDigest: database,
+		}
 	}
 	if d.operation != "" {
 		status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
@@ -234,7 +254,7 @@ func (d doc) object(family operate.Family) client.Object {
 	if r := d.lastRun; r != nil {
 		status.LastRun = &operatorv1alpha1.MigrationRunStatus{
 			Outcome: r.outcome, JobName: r.job, JobUID: r.jobUID, StartedAt: metav1.NewTime(r.startedAt), Message: r.message,
-			OperationID: r.operationID, PlanFingerprint: r.fingerprint,
+			OperationID: r.operationID, PlanFingerprint: r.fingerprint, TargetIdentityDigest: r.database,
 		}
 		if !r.finishedAt.IsZero() {
 			finished := metav1.NewTime(r.finishedAt)

@@ -19,7 +19,10 @@ A `retired` record binds a completed or abandoned attempt to the exact credentia
 or publication intent that proved its identity. Its API-assigned creation time
 starts the retention window. It prevents issuing credentials or publishing more
 results for that attempt; it does not erase an acknowledged result or override
-the resource's recovery pins. These records are created by the manager.
+the resource's recovery pins. These records are created by the manager. Where
+the API refuses one, in a terminating namespace or under a full ResourceQuota,
+the manager deletes the attempt's intent and credential records in the
+foreground instead, and their API-assigned deletion time starts the window.
 
 A payload chunk has the following shape. Its publication intent supplies the
 binding, index, byte length, and digest. Reading a chunk alone does not establish

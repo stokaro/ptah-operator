@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,12 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	eventrecord "k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -42,7 +48,7 @@ func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 	}
 	p := cleanupPolicy()
 	p.Reader = namespaceReader{store.Reader, f.namespace}
-	c, err := resultcleanup.New(store.Client, p, nil)
+	c, err := resultcleanup.New(store.Client, p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +84,7 @@ func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 	defer cleanupClockOffset.Store(0)
 	p = cleanupPolicy()
 	p.Reader = namespaceReader{store.Reader, f.namespace}
-	c, err = resultcleanup.New(store.Client, p, nil)
+	c, err = resultcleanup.New(store.Client, p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +115,207 @@ func TestResultCollectorInTerminatingNamespace(t *testing.T) {
 	if len(list.Items) != 0 {
 		t.Fatalf("foreground completion left %d records", len(list.Items))
 	}
+}
+
+// A ResourceQuota on result records that is full refuses the record that
+// retires an attempt in a live namespace, and nothing could be collected
+// without one, so the quota stayed full for good (#928). The collector starts
+// the window with a foreground deletion instead, and the deletionTimestamp the
+// API server stamps is the clock every later refusal names. The API server's
+// quota admission and the chart's webhook decide here. Envtest runs no garbage
+// collector, so the finalizer removal it would send is submitted by hand, in
+// dependency order, as in the terminating namespace above.
+func TestResultCollectorUnderAFullQuota(t *testing.T) {
+	f, identity, store := publicationFixture(t, true)
+	payload := chunkedPublicationPayload(t, identity)
+	if _, err := store.Publish(t.Context(), identity.Binding, payload, publicationDigest(payload)); err != nil {
+		t.Fatal(err)
+	}
+	f.schema.Status.ActiveOperation = nil
+	writeStatus(t, f.schema)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: f.namespace, Name: identity.Binding.JobName}}
+	if err := admin.Delete(t.Context(), job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+		t.Fatal(err)
+	}
+	records := func() []api.PtahResultRecord {
+		t.Helper()
+		list := &api.PtahResultRecordList{}
+		if err := store.Reader.List(t.Context(), list, client.InNamespace(f.namespace)); err != nil {
+			t.Fatal(err)
+		}
+		return list.Items
+	}
+	published := records()
+	if len(published) != 4 {
+		t.Fatalf("the fixture published %d records, want an intent, a chunk, a completion and a credential", len(published))
+	}
+	intentName, _ := resultstore.Name(identity.Binding)
+	var intent, newest *api.PtahResultRecord
+	for i := range published {
+		if published[i].Name == intentName {
+			intent = &published[i]
+		}
+		if newest == nil || published[i].CreationTimestamp.After(newest.CreationTimestamp.Time) {
+			newest = &published[i]
+		}
+	}
+	if intent == nil {
+		t.Fatalf("no intent %s among the published records", intentName)
+	}
+	fillQuota(t, f.namespace, "results", len(published))
+	retirement, err := resultretention.Record(identity.Binding, resultretention.Source{Name: intent.Name, UID: intent.UID, Type: "intent"}, resultretention.MinimumWindow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitQuotaRefusal(t, store.Client, retirement, "results")
+
+	// Creation and deletion timestamps have one-second precision. Two seconds
+	// apart, a window measured from the deletion ends at another instant than
+	// one measured from the creation.
+	time.Sleep(time.Until(newest.CreationTimestamp.Add(2 * time.Second)))
+	broadcaster := eventrecord.NewBroadcaster()
+	t.Cleanup(broadcaster.Shutdown)
+	broadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubernetes.NewForConfigOrDie(plane.Config).CoreV1().Events("")})
+	p := cleanupPolicy()
+	p.Reader = namespaceReader{store.Reader, f.namespace}
+	c, err := resultcleanup.New(store.Client, p, nil, broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "ptah-result-collector"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{"intent", "credential"} {
+		if err := c.Step(t.Context()); err != nil {
+			t.Fatalf("retire the %s under a full quota: %v", root, err)
+		}
+	}
+	retained := records()
+	if len(retained) != len(published) {
+		t.Fatalf("%d records after retirement under a full quota, want the %d published", len(retained), len(published))
+	}
+	deletions := map[string]time.Time{}
+	for _, record := range retained {
+		if record.Spec.Type == "retired" {
+			t.Fatalf("the quota admitted the retirement record %s", record.Name)
+		}
+		if record.Spec.Type != "intent" && record.Spec.Type != "credential" {
+			continue
+		}
+		if record.DeletionTimestamp.IsZero() || !slices.Equal(record.Finalizers, []string{metav1.FinalizerDeleteDependents}) {
+			t.Fatalf("the %s was not retired by a foreground deletion: deletion=%v finalizers=%v", record.Spec.Type, record.DeletionTimestamp, record.Finalizers)
+		}
+		if !record.DeletionTimestamp.After(record.CreationTimestamp.Add(time.Second)) {
+			t.Fatalf("the %s was deleted at %v and created at %v, too close to tell their windows apart", record.Spec.Type, record.DeletionTimestamp, record.CreationTimestamp)
+		}
+		deletions[record.Spec.Type] = record.DeletionTimestamp.Time
+	}
+	if len(deletions) != 2 {
+		t.Fatalf("found the deleting roots %v, want the intent and the credential", deletions)
+	}
+	defer cleanupClockOffset.Store(0)
+	for _, record := range retained {
+		// Past the window that runs from the record's creation and inside the
+		// one that runs from the API server's deletion of its root.
+		root := deletions[record.Spec.Type]
+		if record.Spec.Type != "credential" {
+			root = deletions["intent"]
+		}
+		cleanupClockOffset.Store(int64(time.Until(record.CreationTimestamp.Add(resultretention.MinimumWindow + time.Second))))
+		want := "record " + record.Name + " cannot be deleted before " + root.Add(resultretention.MinimumWindow).UTC().Format(time.RFC3339)
+		requireDenied(t, admin.Delete(t.Context(), &record, client.DryRunAll), controllerWriteWebhook, want)
+		if !record.DeletionTimestamp.IsZero() {
+			withoutFence := record.DeepCopy()
+			withoutFence.Finalizers = nil
+			requireDenied(t, admin.Update(t.Context(), withoutFence, client.DryRunAll), controllerWriteWebhook, want)
+		}
+	}
+	awaitQuotaEvents(t, f.schema, "ResourceQuota results refused", 2)
+
+	cleanupClockOffset.Store(int64(2 * time.Hour))
+	c, err = resultcleanup.New(store.Client, p, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	roots := records()
+	if len(roots) != 2 {
+		t.Fatalf("expected only the two foreground roots after member collection: %d", len(roots))
+	}
+	for _, kind := range []string{"intent", "credential"} {
+		for _, record := range roots {
+			if record.Spec.Type == kind {
+				record.Finalizers = nil
+				if err := admin.Update(t.Context(), &record); err != nil {
+					t.Fatalf("eligible %s finalizer: %v", kind, err)
+				}
+			}
+		}
+	}
+	if left := records(); len(left) != 0 {
+		t.Fatalf("foreground completion under a full quota left %d records", len(left))
+	}
+}
+
+// fillQuota installs a ResourceQuota on result records already at its limit.
+// Envtest runs no quota controller, which counts usage on a real cluster, so
+// the status it would write is written here: hard and used both at count.
+func fillQuota(t *testing.T, namespace, name string, count int) {
+	t.Helper()
+	hard := corev1.ResourceList{"count/ptahresultrecords.operator.ptah.run": *resource.NewQuantity(int64(count), resource.DecimalSI)}
+	quota := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}, Spec: corev1.ResourceQuotaSpec{Hard: hard}}
+	if err := admin.Create(t.Context(), quota); err != nil {
+		t.Fatal(err)
+	}
+	quota.Status = corev1.ResourceQuotaStatus{Hard: hard, Used: hard}
+	if err := admin.Status().Update(t.Context(), quota); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// awaitQuotaRefusal waits until quota admission, which reads quotas through an
+// informer, refuses the retirement the collector will send, as a dry run.
+func awaitQuotaRefusal(t *testing.T, writer client.Client, retirement *api.PtahResultRecord, quota string) {
+	t.Helper()
+	want := "exceeded quota: " + quota
+	var err error
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		err = writer.Create(t.Context(), retirement.DeepCopy(), client.DryRunAll)
+		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), want) {
+			return
+		}
+	}
+	t.Fatalf("a dry-run CREATE of %s still answered %v after 30 seconds, want a 403 with %q", retirement.Name, err, want)
+}
+
+// quotaExceededReason is the reason the troubleshooting page lists for a
+// retirement a quota refused.
+const quotaExceededReason = "ResultRetirementQuotaExceeded"
+
+// awaitQuotaEvents waits for count Warning Events on the resource that say
+// text. The broadcaster writes them asynchronously.
+func awaitQuotaEvents(t *testing.T, subject client.Object, text string, count int) {
+	t.Helper()
+	var seen []string
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		events := &corev1.EventList{}
+		if err := admin.List(t.Context(), events, client.InNamespace(subject.GetNamespace())); err != nil {
+			t.Fatal(err)
+		}
+		seen = seen[:0]
+		matched := 0
+		for _, event := range events.Items {
+			seen = append(seen, event.Type+" "+event.Reason+" "+event.InvolvedObject.Kind+"/"+event.InvolvedObject.Name+": "+event.Message)
+			if event.Type == corev1.EventTypeWarning && event.Reason == quotaExceededReason &&
+				event.InvolvedObject.Kind == "PtahSchema" && event.InvolvedObject.Name == subject.GetName() && event.InvolvedObject.UID == subject.GetUID() &&
+				strings.Contains(event.Message, text) {
+				matched++
+			}
+		}
+		if matched >= count {
+			return
+		}
+	}
+	t.Fatalf("after 30 seconds the namespace holds no %d Warning %s Events on PtahSchema %s saying %q; it holds %q", count, quotaExceededReason, subject.GetName(), text, seen)
 }
 
 // windowDenial is the refusal of a record still inside its own window.
@@ -214,7 +421,7 @@ func testResultCollectorThroughAPIAdmission(t *testing.T, inline, deliveryOff bo
 	p.Reader = namespaceReader{store.Reader, f.namespace}
 	step := func() {
 		t.Helper()
-		c, err := resultcleanup.New(store.Client, p, nil)
+		c, err := resultcleanup.New(store.Client, p, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,7 +482,7 @@ func testResultCollectorThroughAPIAdmission(t *testing.T, inline, deliveryOff bo
 		f.schema.Status.ActiveOperation = op
 		writeStatus(t, f.schema)
 	}}
-	collector, err := resultcleanup.New(writer, p, nil)
+	collector, err := resultcleanup.New(writer, p, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

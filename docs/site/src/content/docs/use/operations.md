@@ -1610,7 +1610,8 @@ kubectl get ptahresultrecords -n <namespace> --sort-by=.metadata.creationTimesta
 
 The last record can go an hour after the newest time in either column. `DELETING`
 is set where nothing had recorded the attempt as finished when the namespace's
-deletion began. A terminating namespace refuses the `retired` record that would
+deletion began, or where [a full quota](#result-record-quota) refused that record
+earlier. A terminating namespace refuses the `retired` record that would
 start the window, so the manager starts it with a foreground deletion of the
 record instead, and the hour runs from that time. A namespace deleted in the
 middle of an operation therefore waits about an hour from its deletion, however
@@ -1711,6 +1712,46 @@ you keep. Records in other namespaces lose their protection at once, and those
 whose resource is gone can be removed by garbage collection before the next
 install.
 
+### A quota on result records {#result-record-quota}
+
+A ResourceQuota on `count/ptahresultrecords.operator.ptah.run` counts every record
+an operation leaves: the credential that delivered its result, the result, which is
+one record up to 256 KiB and more above that, and the `retired` record the manager
+writes once nothing pins the result. The records stay while the operation's Job
+does and at least an hour after retirement, so the quota has to hold the records of
+every operation in that span.
+
+Leave room in the quota for one `retired` record per operation. The manager writes it
+after the operation's own records, so a quota sized to exactly what operations publish
+is full at the moment each one has to be retired.
+
+When the quota refuses a `retired` record, the manager starts the window the way it
+does in [a terminating namespace](#delete-namespace): it deletes the operation's result
+and credential records in the foreground, and the hour runs from their `DELETING`
+time. It records `ResultRetirementQuotaExceeded` Warning Events on the `PtahSchema`
+or `PtahMigration` the operation belongs to, one for the result and one for the
+credential, and each names the quota and quotes the usage the API server reported:
+
+```sh
+kubectl events -n <namespace> --for ptahschema/<name> --types=Warning
+kubectl describe resourcequota -n <namespace> <quota>
+```
+
+Once the hour has passed, the collector removes the result's other records, and
+garbage collection removes the two deleting ones. Nothing is lost, and nothing goes
+sooner than it would have.
+
+While the operation's Job still exists, a foreground deletion cannot start the window
+either, because the Job could still deliver. The manager tries again after 30 seconds,
+doubling up to every 5 minutes, and each Warning says it retries. Free room in the
+quota, or delete the finished Job once you have read its log, and the next attempt
+goes through.
+
+A quota with no room refuses an operation's own records too: its credential, with a
+`ResultCredentialFailed` Warning Event, and its result, which then cannot be stored.
+[A Job finished but its result is unavailable](../../troubleshoot/conditions/#a-job-finished-but-its-result-is-unavailable)
+says what follows.
+
 ## Failure recovery
 
 - Read-only Resolve, Verify, Observe, and Plan failures retry after the bounded
@@ -1789,7 +1830,7 @@ kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
 | --- | --- |
 | `in-sync` | the resource rests in sync at the generation it had when the wait began, from a reading of the database that began after the wait did |
 | `approval` | a plan waits for an approval, with none recorded on it yet, at the generation the resource had when the wait began; a plan already waiting counts |
-| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows it to one plan, by name or fingerprint, and another plan's run ends the wait |
+| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it, for a migration the reading of the run's database it records on the run as `status.lastRun.verification`; one that ended before does not count, even when that reading ends after; `--plan` narrows it to one plan, by name or fingerprint, and another plan's run ends the wait |
 | `suspended` | the operator reports the resource `Suspended` for that generation, with nothing in flight; a schema still owing the proof of an Apply reaches it, since that proof starts no Job until resume |
 | `read` | the read a `kubectl ptah refresh` asked for has ended; `--read-request` names the request |
 
@@ -1813,7 +1854,7 @@ reads those rather than the order or the time of what happened.
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest, or a run spent that other approval, which leaves this one `Stale` |
 | `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it, or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it: the run has no `verification` and `status.history.targetIdentityDigest` names another database than the run's. Or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -1900,6 +1941,28 @@ the wait began, or when the operator took the request if a read was under way at
 first. It never compares it with the time of the request, which your clock wrote
 and not the operator's.
 
+A wait does not put two of the operator's times in order either, except on a run
+an older operator recorded. The manager that holds the lease writes them, and
+after a failover the next manager's clock can be behind or ahead of the one
+before, so a later reading can carry an earlier time. A wait counts a reading by
+its stamp, `status.target.lastObservedAt` for a schema and
+`status.history.observedAt` for a migration: a stamp other than the one the
+resource carried when the wait began, or when the operator took the request, is a
+reading recorded since, whatever its time. Two readings stamped with the same
+second, which another manager's clock can do to readings minutes apart, look
+like one, which can only make a wait longer.
+
+A migration run is decided by its own record. The reading that confirms it
+records itself on the run, as `status.lastRun.verification`, in the same status
+write, so `wait --for applied`, `--plan` and `approve --wait` end at that record,
+in `Planning` when the reading found more migrations pending. Until a reading
+records itself there, a history of the run's database is the reading from before
+the run, and a resource that rests `Suspended` or `Blocked` by its realm keeps the
+wait running. A history of another database, once the resource rests, is a
+reading that cannot verify the run, and the wait stops with `CompletionNotProved`. A run that an operator older
+than 0.2.10 recorded carries no `operationID` and gets no `verification`, so
+`wait --for applied` still dates its reading by the run's `finishedAt`.
+
 A resource its database realm blocks keeps a wait running: another resource's
 change or an administrator's grant ends that refusal, not a change to this
 one, and a timeout names it.
@@ -1932,12 +1995,14 @@ by name and UID wherever the manager established that one existed, and the Job
 and its logs may be gone by then, which is why the record carries their
 identity rather than pointing at them. A run that reported `Partial` or `Unknown`,
 or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
-finishes, under `apply: Always` as under an approval, where the claim recorded the
-Job's UID. `status.lastRun.message` says how to read it when the Job had finished
-by the time the run was recorded. A Job still running then takes its TTL once it
-stops, and the message names no log. A claim that never recorded the UID leaves the
-Job with no TTL: it stays until it is deleted, and a `MigrationJobCleanupDeferred`
-Warning Event names it.
+finishes, under `apply: Always` as under an approval. A claim that never recorded
+the Job's UID, as when the manager stopped between creating the Job and recording
+it, records it before the TTL is asked for, so its Job keeps the log the same way,
+and a run recorded before the claim could read the Job's name names the Job then. A
+Job under the reserved name that the claim does not fix, such as one under another
+execution epoch, is never recorded, and stays with no TTL. `status.lastRun.message`
+says how to read it when the Job had finished by the time the run was recorded. A
+Job still running then takes its TTL once it stops, and the message names no log.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the Pod's URL named, and so
@@ -2352,13 +2417,17 @@ so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
 stopped. A migration Apply whose outcome went `Unknown` while its Job was still
 running, as when a release changed the executor or the Job under it or the database
 lock changed hands, is recorded before admission lets the Job take a TTL, so its
-`status.lastRun.message` names no log. Where the claim recorded the Job's UID, the
-manager patches the Job's TTL by the table above once the Job stops, just before
-the write that retires the claim, and `kubectl logs` reads the Job
-`status.lastRun.jobName` names for as long as that TTL keeps it. Where the claim
-never recorded the UID, as when the manager stopped between creating the Job and
-recording it, admission admits no TTL: the Job stays until it is deleted, and a
-`MigrationJobCleanupDeferred` Warning Event names it when the claim goes. When
+`status.lastRun.message` names no log. The manager patches the Job's TTL by the
+table above once the Job stops, just before the write that retires the claim, and
+`kubectl logs` reads the Job `status.lastRun.jobName` names for as long as that TTL
+keeps it. Admission admits the TTL only on the Job a claim names by UID, so a claim
+that never recorded the UID, as when the manager stopped between creating the Job
+and recording it, records it before the TTL is asked for, where the Job is the one
+the claim fixes, and `status.lastRun.jobName` names it from then on. A Job that is
+not, such as one under another execution epoch, is never recorded. Where admission
+refuses the TTL, or the claim does not record the Job, the Job stays until it is
+deleted, and a `MigrationJobCleanupDeferred` Warning Event names it when the claim
+goes. When
 admission refuses the 24 hours, as the guard of the previous release does after a
 Helm upgrade that failed once the manager rolled out, the Job keeps five minutes,
 and a `FailedApplyLogShortened` Warning Event and a line in the manager's log say

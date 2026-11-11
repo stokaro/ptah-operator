@@ -32,7 +32,12 @@ an alert that matches the text of a `MigrationJobCleanupDeferred` Event has to
 match `has no cleanup scheduled, so it stays until it is deleted by hand or
 with its owner` in place of `keeps its own deadline because its cleanup could
 not be scheduled`, and has to expect no such Event for a Job its claim names by
-UID while that Job is still running. A migration Job an earlier release left
+UID while that Job is still running. A claim that never recorded its Job's UID
+now records it before the TTL is asked for, so such a Job gets no such Event
+either where admission admits the TTL. A dashboard or an alert on
+`ptah_operator_applies_total{family="migration",outcome="started"}` has to expect
+a count for an Apply whose Job's UID is recorded only as its run goes `Unknown`,
+once for each such run. A migration Job an earlier release left
 without a TTL stays until you delete it. A script that runs `kubectl ptah
 refresh --wait` or `kubectl ptah wait --for read` on a resource whose read ends
 in the verification policy's refusal of the artifact now gets exit status 8
@@ -46,7 +51,12 @@ an approval recorded before the interval ended to be consumed by an Apply and
 then marked `Stale` by the proof after it, as every applied approval is, rather
 than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
-one `stale` outcome, where it took two of each.
+one `stale` outcome, where it took two of each. A script that acts on the exit
+status of a `kubectl ptah` wait on a migration run has to expect the statuses
+the bullet on waits under two managers' clocks lists. A namespace with a
+ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
+in it for one `retired` record per operation, as [A quota on result
+records](../../use/operations/#result-record-quota) says.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -79,10 +89,21 @@ one `stale` outcome, where it took two of each.
   So did a Job that had finished when the database lock changed hands under its
   run. Where the claim recorded the Job's UID, the Job now takes its cleanup TTL
   by the rule every migration run keeps its Pod log by, once it stops, and the
-  Warning that said a running Job's cleanup could not be scheduled is gone. A Job
-  whose claim never recorded its UID still stays, and a
-  `MigrationJobCleanupDeferred` Warning now names it with `its claim never
-  recorded the Job's UID`.
+  Warning that said a running Job's cleanup could not be scheduled is gone.
+- **A migration Job its claim never recorded is collected too.** A migration
+  Apply claim that never recorded its Job's UID, as when the manager stopped
+  between creating the Job and recording it, left the Job without a cleanup TTL
+  once its run went `Unknown`, because admission admits that TTL only on the Job
+  a claim names by UID. The claim now records the UID of the Job under the name
+  it reserved, where the resource owns that Job and the Job is the one the claim
+  fixes, before the TTL is asked for, and the Job takes its TTL by the same rule.
+  A run recorded `Unknown` before the claim could read that name names the Job
+  when the claim records it. A Job the claim does not fix, such as one under
+  another execution epoch, is never recorded, and a `MigrationJobCleanupDeferred`
+  Warning names it when the claim goes. A TTL write that meets a newer version of
+  the Job, as when the Job controller has just written its status, keeps the
+  claim for the next pass, which asks again, where it used to leave the Job with
+  no TTL.
 - **A recorded approval wins over a due read.** An approval the operator had
   recorded in `status.plan.approval` when the interval ended was spent by the
   read that followed: the read's observation marked it `Stale` although the
@@ -92,6 +113,41 @@ one `stale` outcome, where it took two of each.
   not yet recorded still wait for the read. A read requested on a schema with
   a recorded approval follows its Apply too, and the `ReadRequested` Event now
   says so.
+- **Waits under two managers' clocks.** After a leader failover the manager that
+  writes a resource's status can run a clock behind or ahead of the one before
+  it, and some waits put times the two had written in order. A wait now counts a
+  reading by a new stamp and decides a migration run by the reading the operator
+  records on it, `status.lastRun.verification`. So
+  `kubectl ptah wait migration/... --for applied` now exits 8 with
+  `CompletionNotProved` when the reading after the run was of another database,
+  where it exited 0, or 7 at its timeout under skew. It also ends at the
+  read-back itself, which is in `Planning` when the read-back found more
+  migrations pending. Under skew it keeps waiting where it exited 0 on a
+  migration suspended before the history was read back, or 8 with
+  `NotConverged` on one its realm blocked, and exits 0 where it timed out with 7
+  on a read-back dated before the run's end.
+  `kubectl ptah approve migration/... --wait` and `wait --for applied --plan`
+  keep waiting under skew where they exited 8 with `CompletionNotProved` on a
+  migration suspended or blocked by its realm before the read-back, and exit 8 with
+  `CompletionNotProved` where they timed out after a reading of another database
+  dated before the run's end. A wait for `in-sync`, `approval` or `read`, and the
+  `--wait` of `refresh`, `resume` and `set-source`, exits 0 under skew where it
+  timed out on a reading dated before the one before it. With one clock as
+  well, `wait --for applied` now goes by the run's record when the resource
+  moves on before the next poll: it exits 0 where it exited 8 with
+  `NotConverged` on a resource blocked after a read-back that found it in sync
+  or pending, and 8 with `NotConverged` where it exited 0 after a read-back that
+  was blocked. A run that an operator older than 0.2.10 recorded carries no
+  verification, so `wait --for applied` still dates its reading by the run's
+  end.
+- **Result cleanup under a full quota.** A quota that refused the `retired` record
+  stopped cleanup in a live namespace: the collector asked again every 30 seconds,
+  nothing started the retention window, and the operation's records stayed. Once the
+  operation's Job is gone, the collector now starts the window with a foreground
+  deletion of the result and credential records, as it already did in a terminating
+  namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
+  Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
+  Job exists, the collector retries with backoff up to every 5 minutes.
 - **The kubelet's words stay on an Apply whose Pod never started.** An Apply
   whose Secret or key is missing reports the kubelet's words while it waits. A
   `PtahMigration` Apply past its Job's deadline then recorded only `result frame

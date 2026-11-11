@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"maps"
 	"reflect"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -183,15 +182,8 @@ func canonicalRecord(data []byte, value any) bool {
 
 // Server bookkeeping is not caller-controlled publication metadata.
 func recordShape(got, want *api.PtahResultRecord) bool {
-	labels := want.Labels
-	// Previously persisted development records have no attempt index. They
-	// stay immutable and readable; new CREATEs require the index above.
-	if got.UID != "" && got.Labels[LabelAttempt] == "" {
-		labels = maps.Clone(labels)
-		delete(labels, LabelAttempt)
-	}
 	return got.Namespace == want.Namespace && got.Name == want.Name && got.GenerateName == "" && len(got.Annotations) == 0 && len(got.Finalizers) == 0 &&
-		reflect.DeepEqual(got.Labels, labels) && reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) && got.Spec.Type == want.Spec.Type
+		reflect.DeepEqual(got.Labels, want.Labels) && reflect.DeepEqual(got.OwnerReferences, want.OwnerReferences) && got.Spec.Type == want.Spec.Type
 }
 
 // ValidateRecordUpdate preserves both immutable bytes and their ownership.
