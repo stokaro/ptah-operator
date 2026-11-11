@@ -304,7 +304,7 @@ func TestAnUncertainRetirementWithNoJobKeepsWhatItsClaimKnew(t *testing.T) {
 	if run.TargetIdentityDigest != "" {
 		t.Fatalf("target = %q, and nothing ran that could have named one", run.TargetIdentityDigest)
 	}
-	// The hold still needs somewhere to start looking.
+	// The hold names the only database the run can have changed.
 	if hold := held.Status.UnresolvedRun; hold == nil || hold.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
 		t.Fatalf("hold = %#v, want the database its plan was computed against", hold)
 	}
@@ -322,9 +322,9 @@ func migrationHistoryInSync() dataplane.MigrationStatusReport {
 	}
 }
 
-// A run that named no database may have run nowhere, or against what its Secret
-// held by then. A clean reading of the planned database settles the hold, by the rule
-// that has always settled it, and says nothing about the run.
+// A run that named no database reported nothing about what it did. A clean
+// reading of the planned database settles the hold, by the rule that has always
+// settled it, and says nothing about the run.
 func TestAReadingDoesNotVerifyARunThatNamedNoDatabase(t *testing.T) {
 	t.Parallel()
 
@@ -533,6 +533,45 @@ func TestARunThatRefusedBeforeStartingNamesWhatItsSecretHeld(t *testing.T) {
 	read, _ := readMigrationHistory(t, named, migrationHistoryInSync())
 	if read.Status.LastRun.Verification == nil || read.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
 		t.Fatalf("a reading of the database the run named: %#v", read.Status.LastRun)
+	}
+}
+
+// A run that reported nothing names no database, and its hold names the one its
+// plan was computed against. That is the only database the run can have changed:
+// the runner refuses an Apply whose URL names another target before Ptah starts
+// (target_binding_mismatch). So a reading of the planned database settles the
+// hold, and a reading of another one, after the Secret moved, does not.
+func TestAHoldWhoseRunNamedNoDatabaseSettlesOnlyOnThePlannedOne(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	applyClaimFor(t, migration, plan)
+	planned := migration.Status.History.TargetIdentityDigest
+	moved := "sha256:" + strings.Repeat("b", 64)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	held := readMigration(t, api, migration)
+	if run := held.Status.LastRun; run == nil || run.TargetIdentityDigest != "" {
+		t.Fatalf("last run = %#v, want one that names no database", run)
+	}
+	if hold := held.Status.UnresolvedRun; hold == nil || hold.TargetIdentityDigest != planned {
+		t.Fatalf("hold = %#v, want it naming the planned database %q", hold, planned)
+	}
+
+	elsewhere := held.DeepCopy()
+	elsewhere.Status.History.TargetIdentityDigest = moved
+	other, _ := readMigrationHistory(t, elsewhere, migrationHistoryInSync())
+	if other.Status.UnresolvedRun == nil {
+		t.Fatal("a reading of another database settled the hold")
+	}
+
+	read, _ := readMigrationHistory(t, held, migrationHistoryInSync())
+	if read.Status.UnresolvedRun != nil {
+		t.Fatalf("a reading of the planned database left the hold: %#v", read.Status.UnresolvedRun)
 	}
 }
 

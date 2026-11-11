@@ -18,11 +18,112 @@ out of silence.
 
 ## 0.2.11
 
-**Before you upgrade.** Nothing has to change. A namespace with a ResourceQuota on
-`count/ptahresultrecords.operator.ptah.run` should leave room in it for one `retired`
-record per operation, as [A quota on result records](../../use/operations/#result-record-quota)
-says.
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Under `apply: Always`, a plan that changes an existing
+PostgreSQL view's `security_invoker`, or changes the definition of a view that
+states it, now waits for an approval bound to it. A plan published before the
+upgrade that holds such a statement and waits for an approval is planned again
+and asks for a new one. A dashboard or an alert that reads
+`ptah_operator_plans_total` or
+`ptah_operator_approvals_total{outcome="required"}` for `family="schema"`, or a
+script that counts `ApprovalRequired` Events, has to expect one count for each
+plan rather than one for each read of a plan waiting for approval. A script or
+an alert that matches the text of a `MigrationJobCleanupDeferred` Event has to
+match `has no cleanup scheduled, so it stays until it is deleted by hand or
+with its owner` in place of `keeps its own deadline because its cleanup could
+not be scheduled`, and has to expect no such Event for a Job its claim names by
+UID while that Job is still running. A migration Job an earlier release left
+without a TTL stays until you delete it. A script that runs `kubectl ptah
+refresh --wait` or `kubectl ptah wait --for read` on a resource whose read ends
+in the verification policy's refusal of the artifact now gets exit status 8
+with `PolicyRefused`, where it ran to the timeout and exited 7. The resource
+may have been refused already, or in sync until a tag moved. A refusal from
+before the request does not stop the wait; only the refusal the requested read
+ends in does. A script that approves a schema plan again once its approval goes
+`Stale`, or an alert on
+`ptah_operator_approvals_total{family="schema",outcome="stale"}`, has to expect
+an approval recorded before the interval ended to be consumed by an Apply and
+then marked `Stale` by the proof after it, as every applied approval is, rather
+than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
+plan approved just before its interval ended now takes one approval and counts
+one `stale` outcome, where it took two of each. A script that acts on the exit
+status of a `kubectl ptah` wait on a migration run has to expect the statuses
+the bullet on waits under two managers' clocks lists. A namespace with a
+ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
+in it for one `retired` record per operation, as [A quota on result
+records](../../use/operations/#result-record-quota) says.
 
+- **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
+  (security_invoker=true)` ran unattended under `apply: Always`, and the view's
+  readers then needed rights of their own on the tables it reads, so a read that
+  worked could start failing. The operator now records `SecurityDefiner` for
+  `security_invoker` set to any value or reset by `ALTER VIEW` or
+  `CREATE OR REPLACE VIEW`. It read only `false` and `off` before, so a value
+  Ptah wrote as `0` or `no` ran unattended as well. Ptah restates a view's
+  options when its definition changes, so such a change waits too, as a
+  `CREATE OR REPLACE FUNCTION` does. `CREATE VIEW` is read as before. A
+  `CREATE SCHEMA` for a schema the URL leaves out still runs unattended;
+  [Databases and privileges](../databases/#postgresql) says what it does under
+  the documented login.
+- **A waiting plan counted once.** A scheduled read of a schema clears the plan
+  it waits on and publishes the same plan again when the database has not
+  changed. The plan counter, the required-approval counter and the
+  `ApprovalRequired` Event took that plan for a new one, so a plan waiting for a
+  day under a short interval was counted, and announced, once for each read.
+  They now follow the plan's `PlanPublished` entry in `status.journal`. A plan
+  already published still records an `ApprovalRequired` Event, and counts as
+  `required`, each time it starts asking: after something withdrew its
+  requirement, or after an edit of `spec.policy.apply` such as `Never` to
+  `OnApproval`. [Events](../../troubleshoot/events/) lists the cases. Migrations
+  keep the plan they wait on in status through a read, so their counters did not
+  move.
+- **A migration Job left running by an unknown run is collected.** A migration
+  Apply whose outcome went `Unknown` while its Job was still running, as when a
+  release changed the executor or the Job under it, kept its Job until the
+  resource was deleted, and the Job held a place in a `count/jobs.batch` quota.
+  So did a Job that had finished when the database lock changed hands under its
+  run. Where the claim recorded the Job's UID, the Job now takes its cleanup TTL
+  by the rule every migration run keeps its Pod log by, once it stops, and the
+  Warning that said a running Job's cleanup could not be scheduled is gone. A Job
+  whose claim never recorded its UID still stays, and a
+  `MigrationJobCleanupDeferred` Warning now names it with `its claim never
+  recorded the Job's UID`.
+- **A recorded approval wins over a due read.** An approval the operator had
+  recorded in `status.plan.approval` when the interval ended was spent by the
+  read that followed: the read's observation marked it `Stale` although the
+  plan did not change, and the same plan waited for a second approval. The
+  Apply it authorizes now runs first, and the read-only proof after the Apply
+  reads the database. An automatic Apply under `apply: Always` and an approval
+  not yet recorded still wait for the read. A read requested on a schema with
+  a recorded approval follows its Apply too, and the `ReadRequested` Event now
+  says so.
+- **Waits under two managers' clocks.** After a leader failover the manager that
+  writes a resource's status can run a clock behind or ahead of the one before
+  it, and some waits put times the two had written in order. A wait now counts a
+  reading by a new stamp and decides a migration run by the reading the operator
+  records on it, `status.lastRun.verification`. So
+  `kubectl ptah wait migration/... --for applied` now exits 8 with
+  `CompletionNotProved` when the reading after the run was of another database,
+  where it exited 0, or 7 at its timeout under skew. It also ends at the
+  read-back itself, which is in `Planning` when the read-back found more
+  migrations pending. Under skew it keeps waiting where it exited 0 on a
+  migration suspended before the history was read back, or 8 with
+  `NotConverged` on one its realm blocked, and exits 0 where it timed out with 7
+  on a read-back dated before the run's end.
+  `kubectl ptah approve migration/... --wait` and `wait --for applied --plan`
+  keep waiting under skew where they exited 8 with `CompletionNotProved` on a
+  migration suspended or blocked by its realm before the read-back, and exit 8 with
+  `CompletionNotProved` where they timed out after a reading of another database
+  dated before the run's end. A wait for `in-sync`, `approval` or `read`, and the
+  `--wait` of `refresh`, `resume` and `set-source`, exits 0 under skew where it
+  timed out on a reading dated before the one before it. With one clock as
+  well, `wait --for applied` now goes by the run's record when the resource
+  moves on before the next poll: it exits 0 where it exited 8 with
+  `NotConverged` on a resource blocked after a read-back that found it in sync
+  or pending, and 8 with `NotConverged` where it exited 0 after a read-back that
+  was blocked. A run that an operator older than 0.2.10 recorded carries no
+  verification, so `wait --for applied` still dates its reading by the run's
+  end.
 - **Result cleanup under a full quota.** A quota that refused the `retired` record
   stopped cleanup in a live namespace: the collector asked again every 30 seconds,
   nothing started the retention window, and the operation's records stayed. Once the

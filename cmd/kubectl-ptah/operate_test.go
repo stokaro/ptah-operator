@@ -784,6 +784,99 @@ func TestWaitStopsOnAPolicyRefusalThatHolds(t *testing.T) {
 	}
 }
 
+// refresh --wait on an artifact the verification policy refuses. The read it asked
+// for ends in the policy's refusal again, under a stamp the refusal it began on did
+// not carry -- a schema's status.source.resolvedAt, a migration's lastTransitionTime
+// on ArtifactVerified -- and the wait stops with exit status 8. A request the
+// operator took whose read has not ended leaves the wait to its timeout, which
+// names the refusal it began on.
+func TestRefreshWaitStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
+	const message = "Verification policy refused the artifact with 1 finding(s): require_signature"
+	earlier, later := metav1.NewTime(observedAt.Add(-time.Hour)), metav1.NewTime(readAgainAt)
+	stamp := func(object client.Object, at metav1.Time) {
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.Source.ResolvedAt = &at
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.Conditions[0].LastTransitionTime = at
+		}
+	}
+	refusedOn := func(family string, at metav1.Time) client.Object {
+		object := resting(family)
+		conditions := []metav1.Condition{
+			{Type: operatorv1alpha1.ConditionArtifactVerified, Status: metav1.ConditionFalse, Reason: "PolicyRefused",
+				Message: message, ObservedGeneration: 4, LastTransitionTime: earlier},
+			{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: "PolicyRefused",
+				Message: "Artifact verification policy must be satisfied before database access", ObservedGeneration: 4},
+		}
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.Phase, typed.Status.Conditions = operatorv1alpha1.PhaseBlocked, conditions
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.Phase, typed.Status.Conditions = operatorv1alpha1.MigrationPhaseBlocked, conditions
+		}
+		stamp(object, at)
+		return object
+	}
+	// takes is the operator taking the request, and claimsTheRead the claim of
+	// the read it starts.
+	takes := func(object client.Object) {
+		token := operatorv1alpha1.ReadRequestToken(object.GetAnnotations()[operatorv1alpha1.ReadRequestAnnotation])
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.LastReadRequest = token
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.LastReadRequest = token
+		}
+	}
+	claimsTheRead := func(object client.Object) {
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.Phase = operatorv1alpha1.PhaseResolving
+			typed.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", ID: "read", JobName: "job"}
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.Phase = operatorv1alpha1.MigrationPhaseResolving
+			typed.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "Resolve", ID: "read", JobName: "job", Attempt: 1}
+		}
+	}
+	refusesAgain := func(object client.Object) {
+		switch typed := object.(type) {
+		case *operatorv1alpha1.PtahSchema:
+			typed.Status.Phase, typed.Status.ActiveOperation = operatorv1alpha1.PhaseBlocked, nil
+		case *operatorv1alpha1.PtahMigration:
+			typed.Status.Phase, typed.Status.ActiveOperation = operatorv1alpha1.MigrationPhaseBlocked, nil
+		}
+		stamp(object, later)
+	}
+	for _, family := range []string{"schema", "migration"} {
+		t.Run(family, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				api := newCluster(t, refusedOn(family, earlier))
+				api.then(func(object client.Object) { takes(object); claimsTheRead(object) }, refusesAgain)
+
+				code, stdout, stderr := runCommand(t, api, "refresh", family+"/storefront", "--wait")
+
+				if code != exitWillNotReach {
+					t.Fatalf("refresh --wait on a read that ended in a refusal = %d, stdout %q, stderr %q", code, stdout, stderr)
+				}
+				requireSays(t, "the stop", stderr, "will not reach read: PolicyRefused.", "Phase:       Blocked",
+					"Why:         "+message, "shows where it stands.")
+			})
+			synctest.Test(t, func(t *testing.T) {
+				api := newCluster(t, refusedOn(family, earlier))
+				api.then(takes)
+
+				code, stdout, stderr := runCommand(t, api, "refresh", family+"/storefront", "--wait", "--wait-timeout", "1m")
+
+				if code != exitTimedOut {
+					t.Fatalf("refresh --wait on the refusal it began on = %d, stdout %q, stderr %q", code, stdout, stderr)
+				}
+				requireSays(t, "the timeout", stderr, "did not reach read within 1m0s.", "PolicyRefused")
+			})
+		})
+	}
+}
+
 // With -o json stdout carries the resource the wait ended on and nothing
 // else, as kubectl prints one.
 func TestWaitPrintsTheResourceItEndedOn(t *testing.T) {

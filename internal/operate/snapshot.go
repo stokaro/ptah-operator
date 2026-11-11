@@ -48,11 +48,18 @@ type snapshot struct {
 	conditions      []metav1.Condition
 	plan            *planRecord
 	history         bool
+	// historyDatabase is the database a migration's status.history was read
+	// from (targetIdentityDigest), empty for a schema.
+	historyDatabase string
 	applied         *appliedRecord
 	lastRun         *runRecord
 	unresolved      *unresolvedRecord
 	journal         *operatorv1alpha1.LifecycleJournal
 	object          client.Object
+
+	// refusal stamps the verification policy's refusal ArtifactVerified records,
+	// and is absent when it records none (refusalStamp).
+	refusal refusalStamp
 }
 
 type planRecord struct {
@@ -80,7 +87,13 @@ type runRecord struct {
 	finishedAt time.Time
 	message    string
 	identity   runIdentity
-	// verified is the first reading of the database after the run, and
+	// operationID is the Apply claim that ran. A record an operator older than
+	// 0.2.10 wrote has none, and the operator records no reading on such a run
+	// (recordMigrationRunVerification in internal/controller).
+	operationID string
+	// database is the database the run's result named (targetIdentityDigest).
+	database string
+	// verified is the first reading of the run's database after the run, and
 	// verification what it found.
 	verified     bool
 	verification operatorv1alpha1.MigrationRunVerificationResult
@@ -97,6 +110,54 @@ type runIdentity struct {
 	authorization operatorv1alpha1.MigrationRunAuthorizationKind
 	approval      string
 	approvalUID   types.UID
+}
+
+// refusalStamp tells one refusal of the artifact by the verification policy from
+// another: two documents carry the same stamp while they show the same refusal,
+// and different ones once a read that began after the first ended in a refusal of
+// its own. Stamps are compared for equality between two documents and never
+// ordered, so no instant is weighed against one that another clock wrote.
+//
+// A schema's stamp is status.source.resolvedAt, which the harvest of every Resolve
+// writes from the clock of the manager that harvested it. The same harvest takes
+// ArtifactVerified off PolicyRefused, to Pending for an OCI artifact and away for
+// a Git or ConfigMap source, which no policy verifies. Only the Verify after it
+// writes PolicyRefused (consumeResult and blockVerification in
+// internal/controller), so a refusal beside a resolvedAt the first document did
+// not show came from a read that Resolve began. ArtifactVerified cannot say it on
+// its own: it stays False from Pending to PolicyRefused, and so keeps its
+// lastTransitionTime.
+//
+// A migration's stamp is the lastTransitionTime of ArtifactVerified. The harvest
+// of every Resolve takes the condition to Unknown and the refusal takes it back to
+// False, so the time is the refusal's own, from the clock of the manager that
+// harvested the Verify (refuseMigrationArtifact). A migration records no time of
+// its Resolve.
+//
+// Two refusals stamped within one second carry the same stamp, whichever
+// managers' clocks wrote them. That can only make a wait last longer. Between one
+// refusal and the next a read runs two Jobs, a Resolve and a Verify, and that
+// takes longer than a second.
+type refusalStamp struct {
+	present bool
+	at      time.Time
+}
+
+func (r refusalStamp) same(other refusalStamp) bool {
+	return r.present == other.present && r.at.Equal(other.at)
+}
+
+// refusalOf stamps the refusal conditions record. resolvedAt is a schema's
+// status.source.resolvedAt, and nil for a migration.
+func refusalOf(family Family, conditions []metav1.Condition, resolvedAt *metav1.Time) refusalStamp {
+	verified := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionArtifactVerified)
+	if verified == nil || verified.Status != metav1.ConditionFalse || verified.Reason != string(operatorv1alpha1.ReasonPolicyRefused) {
+		return refusalStamp{}
+	}
+	if family == FamilyMigration {
+		return refusalStamp{present: true, at: verified.LastTransitionTime.Time}
+	}
+	return refusalStamp{present: true, at: timeOf(resolvedAt)}
 }
 
 // unresolvedRecord is a migration's status.unresolvedRun.
@@ -134,6 +195,7 @@ func schemaSnapshot(schema *operatorv1alpha1.PtahSchema) snapshot {
 		readRequest:        schema.Annotations[operatorv1alpha1.ReadRequestAnnotation],
 		lastReadRequest:    status.LastReadRequest,
 		conditions:         status.Conditions,
+		refusal:            refusalOf(FamilySchema, status.Conditions, status.Source.ResolvedAt),
 		journal:            status.Journal,
 		object:             schema,
 	}
@@ -171,12 +233,14 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 		readRequest:        migration.Annotations[operatorv1alpha1.ReadRequestAnnotation],
 		lastReadRequest:    status.LastReadRequest,
 		conditions:         status.Conditions,
+		refusal:            refusalOf(FamilyMigration, status.Conditions, nil),
 		history:            status.History != nil,
 		journal:            status.Journal,
 		object:             migration,
 	}
 	if history := status.History; history != nil {
 		s.observedAt = history.ObservedAt.Time
+		s.historyDatabase = history.TargetIdentityDigest
 	}
 	if operation := status.ActiveOperation; operation != nil {
 		s.operation = string(operation.Type)
@@ -195,7 +259,7 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 			outcome: run.Outcome, jobName: run.JobName, jobUID: run.JobUID,
 			startedAt: run.StartedAt.Time, finished: run.FinishedAt != nil,
 			finishedAt: timeOf(run.FinishedAt), message: run.Message, identity: identityOfRun(run),
-			verified: run.Verification != nil,
+			operationID: run.OperationID, database: run.TargetIdentityDigest, verified: run.Verification != nil,
 		}
 		if run.Verification != nil {
 			s.lastRun.verification = run.Verification.Result

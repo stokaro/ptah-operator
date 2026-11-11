@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-11T11:49:14.034737+00:00",
+  "frozenAt": "2026-11-11T13:25:14.708504+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "8457afef38197fc05e340bc78cb55b7369229dffb5c66108a88ed30a121c0c77"
+      "sha256": "5030dbd0e70e5b657700ef329c662b2e8debd67b02f4ec3d33a42d3aa3df407f"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.10 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 87,
+  "revision": 88,
   "supersedes": {
-    "freezeCommit": "6ace518af281a8d48290dda3ec7e124f5a95d46f",
-    "sha256": "0f0d11edb34e8ad86411bb55b88ffed235fa66576543d5685875fa21111bd772"
+    "freezeCommit": "ce2e6ab555701028d13ca7521a316391e969660f",
+    "sha256": "855b79542b8cea8f111da497e902cae510505224db0c2f617eccca44aa275b9c"
   },
-  "revisionReason": "Refresh lastVerified in support/kubernetes.json to 2026-11-10, the date the scheduled support-window discovery last verified the window. The supported minors, the kind release and every node image digest are unchanged, as are phases, cells, platforms, the profile and its targets."
+  "revisionReason": "Record the databases page after it says that a pinned search_path limits what is read, not what the declaration creates, and what CREATE SCHEMA for a schema the URL leaves out does under the documented login (#897). Phases, cells, platforms, the profile and its targets are unchanged."
 }

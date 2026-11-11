@@ -360,7 +360,27 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:a3c9ab494533271cc82fd9928da1a492f3974a93a6fb9a45db0d056eebb01d55",
+      "sourceDigest": "sha256:d1cab57683d02340ef5017166bf722b7bf8f17193efca121d7e085ba0ac0b654",
+      "reason": "Remove PTAH_EXCLUDE and PTAH_INCLUDE from every Ptah child the runner starts (#943). Ptah v0.23.0 binds both to --exclude and --include on schema drift and PTAH_EXCLUDE to --exclude on schema plan, and schema apply --plan refuses either. Before this change the Observe and the plan reads already removed what would narrow them, and a selector reaching the Plan's validation or the Apply made Ptah refuse it. Both variables now leave every child, so a selector reaches Ptah only as an argument the runner built. The operator sets PTAH_EXCLUDE only for a Plan, and the runner still decodes it and passes each selector as an argument. No argument, field, retry or plan binding changes and no child runs that did not run before, so a manager of any release reads this runner's frames as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:3b1e52c522b93670a43b1715ae63704d571716a1816db038b654d977e920f17f",
+      "reason": "Reword the doc comment of UnresolvedMigrationRunStatus.TargetIdentityDigest in the API package, which the runner imports for its types (#926): the planned database a hold falls back to is the only one a run can have changed, because the runner refuses an Apply on another target before Ptah starts. No constant, type or field changes, and the runner neither reads nor writes the record, so what it accepts, enforces and returns is unchanged and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f0bc20d50289a60abbfe977a8088808348279d4aa9cecf0d82434acbcc5e906c",
+      "reason": "Bind the reads that prove a schema Apply to its plan's target (#893). A read-only database operation that carries PTAH_EXPECTED_TARGET_IDENTITY_DIGEST is refused before the child starts unless the URL's target identity matches, under the Apply's codes target_binding_mismatch and missing_target_binding, and the result names the URL's digest. A read without it runs as before, so a Job any released manager built is unchanged; the manager sets it only on the Observe and Plan that prove an Apply. The refusal is an error frame every protocol-1 manager's validator accepts for a read, and a v0.2.10 manager stops a proof on it as on any read of another target. A manager harvests a read only when its own builder rebuilds the Job, so one without this change retries such a Job rather than reading its frame. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:2dd57fe2afdf3f01d0cf7e4b57e5cb06e40b3a3c944194c699299eb77b678e1e",
+      "reason": "Raise a PostgreSQL view's security_invoker in either direction (#897). The only changes in packages the runner links are the privilege reading in internal/dataplane and the SecurityDefiner doc comments there and in the API package. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is unchanged. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b60e45ab3d4aa8115dcb912496652ff8de5c0a5c6696080d495cde700d9aeb35",
       "reason": "Stop reading a stored result record without the attempt label as the publication it would be with one (#928). The change is in internal/resultstore, which the runner links for the delivery receipt and binding types; the comparison runs in the manager's receiver and collector, and no release wrote such a record. Commands, payloads, result frames, delivery identity and SQL authority are the same, a manager of any release reads this runner's output as it read the last one, and protocol 1 stays."
     }
   ]

@@ -64,7 +64,25 @@ func (f *faultRun) targetSecretChanges() {
 		}
 		f.assertColumn(engine, database, "fault_token", 0)
 		f.assertColumn(engine, other, "fault_token", 0)
+		// The proof the refused Apply owes is a read, and the runner refuses it
+		// against the substituted target before the executor starts, so that
+		// server sees nothing from the proof Pod either (#893).
+		f.startReadBarrier()
 		f.mustResumeStatusWrites("restore status writes after the target-binding refusal")
+		proof := f.waitForSchema(name, "the post-Apply proof read claimed behind the scheduling barrier", func(resource *ptahv1alpha1.PtahSchema) bool {
+			return proofReadClaimed(resource, operationID)
+		}).Status.ActiveOperation
+		proofJob, proofUID := proof.JobName, string(proof.JobUID)
+		f.assertReadBlocked(proofUID, "the post-Apply proof read of the substituted target")
+		f.pauseStatusWrites()
+		beforeProof := audit.snapshot()
+		f.stopReadBarrier()
+		proofRead := f.captureExactJobResult(proofJob, proofUID, strings.ToLower(string(proof.Type)))
+		if !schemaRetargetRefused(proofRead.result, old.Spec.TargetIdentityDigest) {
+			f.fatalf("%s read the substituted target as the proof of its Apply", name)
+		}
+		audit.assertRecords(beforeProof, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": proofJob}, proofUID), false)
+		f.mustResumeStatusWrites("restore status writes after the refused proof read")
 		f.waitForSchema(name, "the substituted target to be refused as post-Apply proof", func(resource *ptahv1alpha1.PtahSchema) bool {
 			return retargetProofRefused(resource, ptahv1alpha1.PendingObservationOutcomeUnknown, operationID, jobUID, old.Spec.TargetIdentityDigest)
 		})

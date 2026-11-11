@@ -580,20 +580,43 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 ) (ctrl.Result, bool, error) {
-	operation := migration.Status.ActiveOperation
-	var job *batchv1.Job
-	if operation.JobUID != "" {
-		candidate := &batchv1.Job{}
-		key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
-		if err := r.directReader().Get(ctx, key, candidate); err == nil && candidate.UID == operation.JobUID {
-			job = candidate
-		} else if err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, true, fmt.Errorf("read the dispatched Apply Job: %w", err)
-		}
+	job, err := r.recordedMigrationApplyJob(ctx, migration)
+	if err != nil {
+		return ctrl.Result{}, true, err
 	}
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
 		errors.New("an execution component changed while the Apply was dispatched"), "")
 	return result, true, err
+}
+
+// recordedMigrationApplyJob reads the Job the active claim recorded by UID, for
+// a pass that settles the claim without supervising its Job. It is nil when the
+// claim recorded no UID or the name it reserved holds no Job with that UID.
+//
+// Handing the Job on is what lets the settling pass schedule its cleanup TTL
+// while the claim still names it, the one moment admission accepts it. A
+// finished Job gets it in that pass; a running one keeps the claim, and the
+// pass that retires the claim once the Job has stopped schedules it.
+func (r *MigrationReconciler) recordedMigrationApplyJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (*batchv1.Job, error) {
+	operation := migration.Status.ActiveOperation
+	if operation.JobUID == "" {
+		return nil, nil
+	}
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+	switch err := r.directReader().Get(ctx, key, job); {
+	case apierrors.IsNotFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("read the dispatched Apply Job: %w", err)
+	}
+	if job.UID != operation.JobUID {
+		return nil, nil
+	}
+	return job, nil
 }
 
 // rejectUnsupportedStoredControllerState is the first check after the direct
@@ -760,7 +783,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	if operation.LeaseContinuityLost {
-		return r.finishUncertainMigrationApply(ctx, migration, nil,
+		job, err := r.recordedMigrationApplyJob(ctx, migration)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.finishUncertainMigrationApply(ctx, migration, job,
 			errors.New("the database lock epoch changed under the dispatched run"), "")
 	}
 	kind := migrationOperation(operation)
@@ -977,10 +1004,16 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // A Job the claim cannot confirm is settled by the asymmetry every lost Job
 // is. A mutating claim's Job may already be running SQL, so the run is
 // recorded as outcome unknown, naming the Job, and nothing is dispatched
-// beside it. A read-only claim moves to a new attempt under a new name. The
-// Job it leaves keeps its own deadline and gets no cleanup TTL here: the
+// beside it. Where the claim recorded the Job's UID, the Job gets its cleanup
+// TTL once it stops, before the claim goes (scheduleStoppedMigrationJobCleanup):
+// the webhook holds a terminal Job to what its claim fixes without a rebuild, so
+// a Job another release built gets it, and one that fails that match is refused
+// and reported. Where the claim recorded none, the Job stays and a Warning says
+// so (#970). A read-only claim moves to a new attempt under a new name. The Job
+// it leaves runs to its own deadline and gets no cleanup TTL here: the
 // controller-write webhook judges that TTL by the same matcher, and a refusal
-// would hold the retry behind it.
+// would hold the retry behind it. Once that Job finishes, it stays until it is
+// deleted by hand or with its owner (#971).
 //
 // A release that changes the Job or its Pod template therefore cannot adopt a
 // run its predecessor dispatched: a running Apply is recorded unknown, and a

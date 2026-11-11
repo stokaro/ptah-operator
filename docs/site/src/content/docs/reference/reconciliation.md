@@ -135,9 +135,9 @@ The operator rolls nothing back. Each branch has its own recovery, and
   `ApplyOutcomeUnknown`, and the plan is never replayed. A fresh read-only
   observation comes before anything else. If it finds no change the schema is
   `InSync`, with reason `ConvergedAfterUnknownOutcome`; otherwise it plans
-  again. An observation that reads another target than the plan's stops the
-  resource, `Blocked`, until [a person ends
-  it](../../use/recovery/#a-schema-whose-target-moved).
+  again. That observation is bound to the plan's target: one whose URL names
+  another is refused before it connects, and the resource stops, `Blocked`,
+  until [a person ends it](../../use/recovery/#a-schema-whose-target-moved).
 - **Migration, `Failed`.** [`status.lastRun`](../../use/migrations/#what-the-run-reports)
   says how far the run got. A migration that failed at a statement leaves a
   dirty revision row, and the history read that follows holds the resource
@@ -240,7 +240,7 @@ flowchart LR
   ready --> readyRefreshes["<b>Resolving</b><br/>The interval ended first"]
   ready --> readyStale["<b>Observing</b><br/>The plan went stale"]
   approval --> approved["<b>Applying</b><br/>The exact approval exists"]
-  approval --> approvalRefreshes["<b>Resolving</b><br/>The interval ended first"]
+  approval --> approvalRefreshes["<b>Resolving</b><br/>The interval ended before<br/>an approval was recorded"]
   approval --> approvalStale["<b>Observing</b><br/>The plan went stale"]
   applying --> applyEnded["<b>VerifyingConvergence</b><br/>The Job ended or was lost,<br/>whatever it reported"]
   applying --> applyWithdrawn["<b>Observing, Verifying,</b><br/><b>AwaitingApproval,</b><br/><b>Pending or Suspended</b><br/>What the claim rests on<br/>moved before any Job<br/>existed"]
@@ -307,7 +307,10 @@ where a discarded claim leaves a resource for one pass, not where it begins.
 A finished Apply Job never reaches `Failed`, whatever it reported. Every Apply
 error is an outcome nobody established, so the read-only proof comes next.
 `AwaitingApproval` goes straight to `Applying`: `ReadyToApply` is only for a plan
-that needs no approval. A read that failed [gives way](#a-read-that-keeps-failing)
+that needs no approval. With an approval the controller recorded for the
+current plan, the resource goes to `Applying` even once the interval has ended,
+and the proof after the Apply reads the database. An interval that ends before
+an approval is recorded starts the read first. A read that failed [gives way](#a-read-that-keeps-failing)
 to a new `Resolve` in the cases that section lists. A proof that read another
 target [stops until a person ends it](../../use/recovery/#a-schema-whose-target-moved).
 
@@ -444,7 +447,8 @@ A realm refusal is taken again at least once a minute instead, and the pipeline
 starts once it ends. An unsupported engine waits for an edit, because the engine
 is in the spec. A proof whose target moved keeps its claim: only its own read runs, at
 `spec.execution.failureRetryInterval`, until the first target is back or a person
-settles it.
+settles it. The runner refuses each of those reads before it connects to the moved
+target.
 
 ### Suspended, and losing a lock
 
@@ -635,7 +639,11 @@ kubectl annotate ptahmigration orders \
 annotation, with a value later than any the resource holds and than the last
 one `status.lastReadRequest` answered, so a second request a moment after the
 first is not taken for an answered one. With `--wait` it waits for the read
-the request starts, under the rules below.
+the request starts, under the rules below, and stops with `PolicyRefused` when
+that read ends in the verification policy's refusal of the artifact. It knows
+that read's reading by a new stamp in `status.history.observedAt` or
+`status.target.lastObservedAt`, and does not order it against the reading before:
+a manager whose clock is behind the previous one's dates a later reading earlier.
 
 A value `status.lastReadRequest` does not record as answered is answered once
 no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,
@@ -644,7 +652,9 @@ in `status.lastReadRequest`, moves `nextReconciliationTime` to now and writes a
 `ReadRequested` Event, and the next pass starts the read the interval would
 have started: Resolve, then Observe for a schema or the history read for a
 migration. A plan that waits for approval is kept unless the new reading
-retires it, as at any interval.
+retires it, as at any interval. A schema plan whose approval the controller has
+already recorded is applied first, as at the interval, and the proof after its
+Apply is the read.
 
 A resource `Blocked` because its engine is not supported (`UnsupportedEngine`)
 or because its database realm does not admit it (`RealmConflict`,
@@ -714,7 +724,7 @@ and the finished Jobs it keeps for five minutes, or 24 hours after
 
 | Entry | Written when |
 | --- | --- |
-| `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. On a schema, `approvalRequired` says the plan asked for a person's approval when it was published, and `replaced` names the plan it took the place of, when a person could approve that plan or had approved it and it never ran. That is the record of what a [`PlanStale`](../../troubleshoot/events/) Warning reports, since the Event [can be lost](../../troubleshoot/events/#an-event-can-be-lost). |
+| `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. On a schema, `approvalRequired` says the plan asked for a person's approval when it was published, and `replaced` names the plan it took the place of, when a person could approve that plan or had approved it and it never ran. That is the record of what a [`PlanStale`](../../troubleshoot/events/) Warning reports, since the Event [can be lost](../../troubleshoot/events/#an-event-can-be-lost). A schema counts a plan in `ptah_operator_plans_total` on the write that records this entry, and a plan that asks for an approval when it is published has its `ApprovalRequired` Event in the same write. A plan that starts asking later, as after an edit of `spec.policy.apply`, has its Event with no entry, and `approvalRequired` keeps what the plan asked when it was published: [Events](../../troubleshoot/events/) lists when. |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, or the one a migration's Apply claim names, with the approver admission stamped. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
 | `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run named: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that named none writes no such entry. |
@@ -768,15 +778,18 @@ run ends, with the source, the database and the execution binding it ran under, 
 `verification`, the first reading after it. The claim is written before the Job and
 outlives the Job, the plan and the approval, so none of them has to exist for the
 record to be true. A later run replaces `lastRun`, and the journal is what still
-names the one before it.
+names the one before it. `verification` is written in the status write that
+records the reading, so `kubectl ptah wait --for applied` and `approve --wait` go
+by it rather than by comparing the reading's time with `finishedAt`, which two
+managers' clocks may have written.
 
 The database is the one thing the claim cannot vouch for, so `targetIdentityDigest`
 is what the run's result named and nothing else. That is the database it opened,
 unless it refused before its child started because its Secret had moved, and then it
 is the one the Secret held, which the run did not touch. A run that left no result
-names none, since the Secret may have moved or the run may never have started, and
-its `status.unresolvedRun` names the planned database instead, as somewhere to start
-looking. A reading verifies only a run that named the database it read, so that run
+names none, and its `status.unresolvedRun` names the planned database instead: the
+runner starts nothing against another, so that is the only database the run can
+have changed. A reading verifies only a run that named the database it read, so that run
 gets no `verification` and no `Verified` entry. A clean reading of the planned
 database still settles its hold.
 
