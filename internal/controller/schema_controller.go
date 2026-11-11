@@ -2196,8 +2196,8 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 // approvalPrecedesRead reports whether a due read waits for the Apply of an
 // approval: the resource waits on its plan, and status.plan records an
 // approval of it. It says nothing about whether that approval still
-// authorizes the plan: reconcileApproval decides that, and claims the read
-// when it does not.
+// authorizes the plan: reconcileApproval decides that, and once it finds that
+// the approval does not, the read runs on that pass or the next.
 func approvalPrecedesRead(schema *operatorv1alpha1.PtahSchema) bool {
 	return (schema.Status.Phase == operatorv1alpha1.PhaseReadyToApply ||
 		schema.Status.Phase == operatorv1alpha1.PhaseAwaitingApproval) &&
