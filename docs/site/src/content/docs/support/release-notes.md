@@ -219,6 +219,13 @@ Job too.
   refuse, such as one under another execution epoch or one whose claim never
   recorded its UID, is left at once, and so is one that has not finished by then.
   A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
+- **A read-only migration claim over another Job runs again.** A read-only
+  migration claim whose Job under its reserved name had been replaced, or was no
+  longer owned by the resource, asked for that Job's cleanup TTL before it moved
+  to a new attempt. Admission refuses that TTL on a Job the claim does not name
+  by UID or does not own, so every pass failed on the refusal, and the read never
+  ran again. The claim now moves to a new attempt at once, as a schema claim
+  does, and writes nothing to that Job.
 
 ## 0.2.10
 
