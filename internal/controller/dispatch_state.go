@@ -2,9 +2,12 @@ package controller
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -84,3 +87,42 @@ func (podAdmission) Digest(template *corev1.PodTemplateSpec) (string, error) {
 }
 
 var _ mutationlifecycle.Admission = podAdmission{}
+
+// missingJobsMade guards making a reconciler's MissingJobs on first use, for
+// the reason resultLogFailuresMade gives.
+var missingJobsMade sync.Mutex
+
+func missingJobsOf(field **mutationlifecycle.MissingJobs) *mutationlifecycle.MissingJobs {
+	missingJobsMade.Lock()
+	defer missingJobsMade.Unlock()
+	if *field == nil {
+		*field = &mutationlifecycle.MissingJobs{}
+	}
+	return *field
+}
+
+// monotonicNow reads clock, or time.Now when clock is nil, for a span this
+// process measures between two of its own readings. It keeps time.Now's
+// monotonic reading, which UTC would drop, so a step of the wall clock does
+// not shorten the span.
+func monotonicNow(clock func() time.Time) time.Time {
+	if clock != nil {
+		return clock()
+	}
+	return time.Now()
+}
+
+// awaitMarkedCreate ends a pass that found a marked Apply with no recorded Job
+// and no Job before mutationlifecycle.MissingJobGrace has passed. Another
+// manager may have marked it and still be creating the Job, so nothing is
+// written and nothing is retired: the pass comes back when the grace ends, or
+// sooner, when the Job's create wakes the owner.
+//
+// It ends the pass before the realm Lease is renewed. The wait acts on
+// nothing, and a manager that marked the claim renewed the Lease just before,
+// for far longer than the grace.
+func awaitMarkedCreate(ctx context.Context, jobName string, wait time.Duration) ctrl.Result {
+	ctrl.LoggerFrom(ctx).Info("the marked Apply has no Job yet; waiting for a create another manager may still be making",
+		"job", jobName, "wait", wait)
+	return ctrl.Result{RequeueAfter: wait}
+}

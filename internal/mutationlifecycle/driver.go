@@ -262,7 +262,7 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 			// outcome nobody established, which only a person can clear. The
 			// mark, create, read-back and record take milliseconds, so they run
 			// to the end on a context the shutdown does not cancel.
-			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), dispatchCriticalSection)
+			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), DispatchCriticalSection)
 			defer cancel()
 			stepCtx = critical
 		}
@@ -273,10 +273,12 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 	return pass.result, pass.err
 }
 
-// dispatchCriticalSection bounds the mark-to-record steps once they no longer
+// DispatchCriticalSection bounds the mark-to-record steps once they no longer
 // follow the reconcile's cancellation. It is shorter than the manager's
-// graceful shutdown, so a stopping manager still finishes them and exits.
-const dispatchCriticalSection = 15 * time.Second
+// graceful shutdown, so a stopping manager still finishes them and exits. It
+// is also how long after its mark a dispatching manager may still send its
+// create, which is what MissingJobGrace is measured against.
+const DispatchCriticalSection = 15 * time.Second
 
 type dispatchPass struct {
 	family   Family

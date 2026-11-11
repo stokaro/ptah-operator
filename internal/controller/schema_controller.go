@@ -171,6 +171,10 @@ type SchemaReconciler struct {
 	// the order mutationlifecycle writes down; tests swap two of its steps to
 	// show which boundary each of them holds.
 	dispatch mutationlifecycle.Driver
+	// missingJobs is when this process first found each marked Apply with no
+	// Job; mutationlifecycle.MissingJobGrace is measured on it. It is made on
+	// first use, by missingJobsOf.
+	missingJobs *mutationlifecycle.MissingJobs
 }
 
 func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -969,7 +973,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	key := types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
-		if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
+		verdict, _, wait := r.jobVerdict(schema, mutationlifecycle.JobClaim{
+			Mutating:        schemaOperation(operation).Mutating,
+			DispatchStarted: operation.DispatchStarted,
+			RecordedJobUID:  string(operation.JobUID),
+		})
+		switch verdict {
+		case mutationlifecycle.VerdictAwait:
+			return awaitMarkedCreate(ctx, operation.JobName, wait), nil
+		case mutationlifecycle.VerdictUnaccounted:
 			acquired, requeue, lockErr := r.acquireApplyLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -996,7 +1008,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	// The same decision both families make about the Job under a reserved
 	// name, with the wording each one owes its reader kept here.
-	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
+	verdict, cause, _ := r.jobVerdict(schema, mutationlifecycle.JobClaim{
 		Mutating:        schemaOperation(operation).Mutating,
 		DispatchStarted: operation.DispatchStarted,
 		RecordedJobUID:  string(operation.JobUID),
@@ -4193,6 +4205,16 @@ func (r *SchemaReconciler) cachedReader() client.Reader {
 		return r.CachedReader
 	}
 	return r.Client
+}
+
+// jobVerdict is mutationlifecycle.VerdictFor for the schema's active claim,
+// with the wait for a create another manager may still be landing.
+func (r *SchemaReconciler) jobVerdict(
+	schema *operatorv1alpha1.PtahSchema,
+	claim mutationlifecycle.JobClaim,
+) (mutationlifecycle.JobVerdict, mutationlifecycle.JobCause, time.Duration) {
+	return missingJobsOf(&r.missingJobs).Verdict(client.ObjectKeyFromObject(schema),
+		schema.Status.ActiveOperation.ID, claim, monotonicNow(r.Clock))
 }
 
 func (r *SchemaReconciler) now() time.Time {

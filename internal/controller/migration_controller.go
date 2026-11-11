@@ -125,6 +125,10 @@ type MigrationReconciler struct {
 	// the order mutationlifecycle writes down; tests swap two of its steps to
 	// show which boundary each of them holds.
 	dispatch mutationlifecycle.Driver
+	// missingJobs is when this process first found each marked Apply with no
+	// Job; mutationlifecycle.MissingJobGrace is measured on it. It is made on
+	// first use, by missingJobsOf.
+	missingJobs *mutationlifecycle.MissingJobs
 }
 
 func (r *MigrationReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -771,17 +775,21 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
 			errors.New("reconciliation was suspended while the operation ran"))
 	}
-	verdict, cause := mutationlifecycle.VerdictFor(mutationlifecycle.JobClaim{
-		Mutating:        mutating,
-		DispatchStarted: operation.DispatchStarted,
-		RecordedJobUID:  string(operation.JobUID),
-		Found:           found,
-		FoundJobUID:     string(job.UID),
-		OwnedExactly: found && exactControllerOwner(job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID),
-	})
-	if verdict == mutationlifecycle.VerdictDispatch {
+	verdict, cause, wait := missingJobsOf(&r.missingJobs).Verdict(client.ObjectKeyFromObject(migration), operation.ID,
+		mutationlifecycle.JobClaim{
+			Mutating:        mutating,
+			DispatchStarted: operation.DispatchStarted,
+			RecordedJobUID:  string(operation.JobUID),
+			Found:           found,
+			FoundJobUID:     string(job.UID),
+			OwnedExactly: found && exactControllerOwner(job.OwnerReferences,
+				operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID),
+		}, monotonicNow(r.Clock))
+	switch verdict {
+	case mutationlifecycle.VerdictDispatch:
 		return r.dispatch.Dispatch(ctx, &migrationDispatch{r: r, migration: migration})
+	case mutationlifecycle.VerdictAwait:
+		return awaitMarkedCreate(ctx, operation.JobName, wait), nil
 	}
 	// Every other verdict is about a Job that may be running under the realm
 	// the claim holds, so the Lease is renewed before the pass acts on it.

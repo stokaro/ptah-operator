@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -338,8 +339,14 @@ func TestMigrationApplyIsNeverRecreatedOnceDispatched(t *testing.T) {
 	operation.JobUID = ""
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
 	holdMigrationApplyLease(t, reconciler, api, migration)
+	clock := &safetyClock{now: reconciler.now()}
+	reconciler.Clock = clock.Now
+	pass := func() (ctrl.Result, error) {
+		return reconciler.Reconcile(context.Background(), migrationRequest(migration))
+	}
+	waitOutMissingJobGrace(t, clock, pass)
 
-	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+	if _, err := pass(); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 	actual := readMigration(t, api, migration)
@@ -1594,7 +1601,11 @@ func TestAnUncertainRunNamesNoJobWhenTheClaimRecordedNone(t *testing.T) {
 	operation.JobUID = ""
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
 	holdMigrationApplyLease(t, reconciler, api, migration)
-	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+	clock := &safetyClock{now: reconciler.now()}
+	reconciler.Clock = clock.Now
+	pass := func() (ctrl.Result, error) { return reconciler.Reconcile(ctx, migrationRequest(migration)) }
+	waitOutMissingJobGrace(t, clock, pass)
+	if _, err := pass(); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 
