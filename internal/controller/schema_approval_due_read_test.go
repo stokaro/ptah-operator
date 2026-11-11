@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -40,16 +41,28 @@ func waitingWithADueRead(
 ) (*SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaApproval) {
 	t.Helper()
 
+	reconciler, api, schema, approval := waitingForApproval(t, deadline, decide)
+	if now := reconciler.now(); !now.Equal(dueReadClock) || !due(deadline, now) {
+		t.Fatalf("the reconciler clock reads %s and the deadline is %v: the read is not due, so nothing below is about it",
+			now, deadline)
+	}
+	return reconciler, api, schema, approval
+}
+
+// waitingForApproval is waitingWithADueRead for any refresh deadline.
+func waitingForApproval(
+	t *testing.T,
+	deadline *metav1.Time,
+	decide func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval,
+) (*SchemaReconciler, client.Client, *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaApproval) {
+	t.Helper()
+
 	ctx := context.Background()
 	schema, plan, policyConfig := safetyReadyToApplyFixture(t)
 	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
 	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
 	schema.Status.NextReconciliationTime = deadline.DeepCopy()
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
-	if now := reconciler.now(); !now.Equal(dueReadClock) || !due(deadline, now) {
-		t.Fatalf("the reconciler clock reads %s and the deadline is %v: the read is not due, so nothing below is about it",
-			now, deadline)
-	}
 	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "apply-job-uid"}
 	reconciler.Plans = planstore.Store{Client: &planUIDAssigningClient{Client: api}, Reader: api}
 	reconciler.Locks = targetlock.New(api, api, nil)
@@ -371,6 +384,71 @@ func TestADueReadRunsWithoutARecordedApprovalOfThePlan(t *testing.T) {
 			}
 			if approval != nil {
 				safetyAssertApprovalNotAuthorized(t, api, approval)
+			}
+		})
+	}
+}
+
+// A read request brings the interval's read forward, so a recorded approval
+// wins over it as it wins over the interval: the next pass claims the Apply,
+// and the read is the proof after it. The Event that answers the request says
+// so rather than that the read starts now. Without a recorded approval the
+// read does start now, and the Event says that.
+func TestAReadRequestFollowsTheApplyOfARecordedApproval(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		decide  func(*testing.T, client.Client, *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval
+		message string
+		claim   operatorv1alpha1.OperationType
+	}{
+		{
+			name:    "a recorded approval",
+			decide:  recordTheApproval,
+			message: "A read was requested; it follows the Apply the recorded approval authorizes",
+			claim:   operatorv1alpha1.OperationApply,
+		},
+		{
+			name: "no approval",
+			decide: func(*testing.T, client.Client, *operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval {
+				return nil
+			},
+			message: "A read was requested; it starts now",
+			claim:   operatorv1alpha1.OperationResolve,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			later := metav1.NewTime(dueReadClock.Add(time.Hour))
+			reconciler, api, schema, _ := waitingForApproval(t, &later, row.decide)
+			recorder := record.NewFakeRecorder(16)
+			reconciler.Recorder = recorder
+			requested := safetyGetSchema(t, api, schema)
+			requested.Annotations = map[string]string{operatorv1alpha1.ReadRequestAnnotation: requestedAt}
+			if err := api.Update(ctx, requested); err != nil {
+				t.Fatalf("request a read: %v", err)
+			}
+
+			reconcileDueReadPass(t, reconciler, schema, "the pass that answers the request")
+			answered := safetyGetSchema(t, api, schema)
+			if answered.Status.LastReadRequest != requestedAt || answered.Status.ActiveOperation != nil ||
+				answered.Status.NextReconciliationTime == nil || !answered.Status.NextReconciliationTime.Time.Equal(dueReadClock) {
+				t.Fatalf("after the request: lastReadRequest %q, claim %s, next read %v, want it answered and the read brought forward to %s",
+					answered.Status.LastReadRequest, claimedType(answered.Status.ActiveOperation),
+					answered.Status.NextReconciliationTime, dueReadClock)
+			}
+			event := findEvent(recorder, corev1.EventTypeNormal+" ReadRequested")
+			if want := corev1.EventTypeNormal + " ReadRequested " + row.message; event != want {
+				t.Fatalf("ReadRequested Event = %q, want %q", event, want)
+			}
+
+			reconcileDueReadPass(t, reconciler, schema, "the pass after the answer")
+			claimed := safetyGetSchema(t, api, schema).Status.ActiveOperation
+			if claimed == nil || claimed.Type != row.claim {
+				t.Fatalf("the pass after the answer claimed %s, want %s, which the Event named", claimedType(claimed), row.claim)
 			}
 		})
 	}

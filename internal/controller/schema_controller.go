@@ -314,7 +314,7 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	case operatorv1alpha1.PhasePlanning:
 		return r.claim(ctx, schema, operatorv1alpha1.OperationPlan)
 	case operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseAwaitingApproval:
-		if due(schema.Status.NextReconciliationTime, now) && !approvalRecorded(schema) {
+		if due(schema.Status.NextReconciliationTime, now) && !approvalPrecedesRead(schema) {
 			// Refresh the complete evidence chain before an automatic Apply and
 			// before an approval is recorded. This keeps an expired plan from
 			// racing a moved tag or database drift the read would find.
@@ -380,6 +380,10 @@ func (r *SchemaReconciler) answerReadRequest(
 	case !request.instant:
 		r.event(schema, corev1.EventTypeWarning, "ReadRequestInvalid",
 			"%s is %q, which is not an RFC 3339 instant; no read was started", operatorv1alpha1.ReadRequestAnnotation, request.token)
+	case scheduled && approvalPrecedesRead(schema):
+		// The read was brought forward, and the next pass claims the Apply
+		// first, as at the interval: the read is the proof after it.
+		r.event(schema, corev1.EventTypeNormal, "ReadRequested", "A read was requested; it follows the Apply the recorded approval authorizes")
 	case scheduled:
 		r.event(schema, corev1.EventTypeNormal, "ReadRequested", "A read was requested; it starts now")
 	}
@@ -2189,11 +2193,15 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 	return r.claimAt(ctx, schema, operatorv1alpha1.OperationApply, claimedAt)
 }
 
-// approvalRecorded reports whether status.plan records an approval. It says
-// nothing about whether that approval still authorizes the plan:
-// reconcileApproval decides that.
-func approvalRecorded(schema *operatorv1alpha1.PtahSchema) bool {
-	return schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
+// approvalPrecedesRead reports whether a due read waits for the Apply of an
+// approval: the resource waits on its plan, and status.plan records an
+// approval of it. It says nothing about whether that approval still
+// authorizes the plan: reconcileApproval decides that, and claims the read
+// when it does not.
+func approvalPrecedesRead(schema *operatorv1alpha1.PtahSchema) bool {
+	return (schema.Status.Phase == operatorv1alpha1.PhaseReadyToApply ||
+		schema.Status.Phase == operatorv1alpha1.PhaseAwaitingApproval) &&
+		schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 }
 
 func (r *SchemaReconciler) claim(ctx context.Context, schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (ctrl.Result, error) {
