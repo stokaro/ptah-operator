@@ -84,9 +84,18 @@ var databaseReachableReasons = map[dataplane.TargetFailureKind]operatorv1alpha1.
 // is another Plan with no Observe before it, and a refusal that repeats would keep
 // an old reason for as long as it repeats. invalid_plan_output is not one of these:
 // the runner also writes it for a child that never reached the target.
+//
+// desired_schema_invalid is one: the runner writes it only where the Plan's own
+// sentence ends with the fault, and Ptah reaches that sentence by comparing the
+// desired schema with the one it read, or by refusing a declaration once it has
+// planned. desired_source_unreadable is not. Ptah pings the database before it
+// parses the file, so a parse error does come after a reply, but the runner also
+// writes the code when the Plan failed in a way no target failure kind names and
+// the file would not have parsed either. A server that drops the connection is
+// such a failure, and Ptah v0.23.0 names no kind for it on either engine.
 func planReadTheTarget(code string) bool {
 	switch code {
-	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed":
+	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed", runner.CodeDesiredSchemaInvalid:
 		return true
 	}
 	return false

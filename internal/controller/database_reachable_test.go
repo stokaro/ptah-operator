@@ -144,6 +144,10 @@ func failuresWithNoKind() map[string]*runner.ResultError {
 		"a code that resembles a kind":   {Code: "Database_Unreachable", Message: "ptah exited with code 2"},
 		"a kind outside the vocabulary":  {Code: "quota_exhausted", Message: frameText},
 		"an output the operator refused": {Code: "invalid_plan_output", Message: "plan command did not complete successfully"},
+		// The runner writes it for a Plan that failed in a way no kind names
+		// and whose file would not parse, such as one whose server dropped
+		// the connection.
+		"a file that does not parse": {Code: runner.CodeDesiredSourceUnreadable, Message: "error parsing schema file: schema.sql:2:1: expected column name"},
 	}
 }
 
@@ -811,6 +815,8 @@ func plansThatReadTheTarget() map[string]*runner.ResultError {
 		"two reads that differ":           {Code: "unstable_plan", Message: "consecutive plan reads did not return identical bytes"},
 		"a plan that holds a credential":  {Code: "credential_leak", Message: "plan output contains a protected credential or URL password"},
 		"a plan that could not be sealed": {Code: "plan_seal_failed", Message: "seal the plan"},
+		"a schema invalid as a whole": {Code: runner.CodeDesiredSchemaInvalid,
+			Message: `schema.sql: invalid foreign key: field "other" references unknown table "nope"`},
 	}
 }
 
