@@ -289,21 +289,27 @@ func TestARefusedReadOnlyJobAdmissionWouldNotCollectIsNamed(t *testing.T) {
 
 // TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer is the write itself. A
 // refusal says admission will not collect the Job however often it is asked, so
-// the claim moves on and a Warning names the Job. Any other failure may pass, so
-// the pass fails with the claim kept, and the next pass asks again.
+// the claim moves on and a Warning names the Job. A Job deleted since the pass
+// read it needs no TTL, so the claim moves on and nothing is named. Any other
+// failure may pass, so the pass fails with the claim kept, and the next pass
+// asks again.
 func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 	t.Parallel()
 
 	current := workloadBuilderForMigrations()
 	predecessor := managerOnlyPredecessor(current)
 	refused := apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal"))
+	gone := apierrors.NewNotFound(batchv1.Resource("jobs"), "")
 	for _, row := range []struct {
 		name   string
 		answer error
 		// retried is whether the pass the write failed in moved the claim on.
 		retried bool
+		// stays is what the Warning says, or empty where there must be none.
+		stays string
 	}{
-		{name: "refused", answer: refused, retried: true},
+		{name: "refused", answer: refused, retried: true, stays: "injected refusal"},
+		{name: "deleted since it was read", answer: gone, retried: true},
 		{name: "lost", answer: errors.New("connection reset by peer")},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -345,13 +351,20 @@ func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 			}
 			if row.retried {
 				if err != nil {
-					t.Fatalf("Reconcile() error = %v, want a refused TTL not to fail the pass", err)
+					t.Fatalf("Reconcile() error = %v, want the answer not to fail the pass", err)
 				}
 				if operation == nil || operation.Attempt != claimed.Attempt+1 {
 					t.Fatalf("operation = %#v, want the claim moved to attempt %d", operation, claimed.Attempt+1)
 				}
-				if events := migrationEvents(recorder); !cleanupDeferredFor(events, run.job.Name, "injected refusal") {
-					t.Fatalf("Events = %q, want a Warning that Job %q stays because admission refused its TTL", events, run.job.Name)
+				events := migrationEvents(recorder)
+				if row.stays == "" {
+					if cleanupDeferredFor(events, run.job.Name, "") {
+						t.Fatalf("a Job that is gone is named as staying: %q", events)
+					}
+					return
+				}
+				if !cleanupDeferredFor(events, run.job.Name, row.stays) {
+					t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
 				}
 				return
 			}
