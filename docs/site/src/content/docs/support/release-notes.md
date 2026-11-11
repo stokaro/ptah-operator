@@ -16,6 +16,22 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.11
+
+**Before you upgrade.** Nothing has to change. A namespace with a ResourceQuota on
+`count/ptahresultrecords.operator.ptah.run` should leave room in it for one `retired`
+record per operation, as [A quota on result records](../../use/operations/#result-record-quota)
+says.
+
+- **Result cleanup under a full quota.** A quota that refused the `retired` record
+  stopped cleanup in a live namespace: the collector asked again every 30 seconds,
+  nothing started the retention window, and the operation's records stayed. Once the
+  operation's Job is gone, the collector now starts the window with a foreground
+  deletion of the result and credential records, as it already did in a terminating
+  namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
+  Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
+  Job exists, the collector retries with backoff up to every 5 minutes.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
