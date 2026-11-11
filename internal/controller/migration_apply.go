@@ -814,18 +814,18 @@ func recordUnresolvedMigrationRun(
 
 // migrationRunTarget is the database a hold on a run names.
 //
-// Which database to name is the whole point of the record, so the run's own account
-// of it wins. A result frame names the target its Secret held, and that is not
-// always the one the plan was computed against: Secret content can rotate between
-// the history reading and the Apply. Recording the planned database instead would
-// let a clean reading of it settle a run that never touched it, while a reading of
-// the database that was touched could not match what was stored.
+// The run's own account wins. A result frame names the target the Pod's Secret
+// held, and the runner refuses an Apply whose target is not its plan's before
+// Ptah starts (target_binding_mismatch). So a frame that names another target
+// than the plan's reports a refusal that changed nothing, and the hold names
+// where that refusal looked, which is the database a person would go and read.
 //
 // With no frame, or one that named no target or something the status schema would
-// refuse, the best that is known is the database the plan was computed against,
-// which is the last history this resource read. A hold needs somewhere to start
-// looking. The run's own record does not take that value: it says what was planned
-// and not what happened.
+// refuse, the hold names the database the plan was computed against, which is the
+// last history this resource read. By the same refusal it is the only database the
+// run can have changed, so a clean reading of it says what the run did, and a
+// reading of another one settles nothing. The run's own record does not take that
+// value: it says what the run reported, and the run reported nothing.
 func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarget string) string {
 	if sha256Digest.MatchString(reportedTarget) {
 		return reportedTarget

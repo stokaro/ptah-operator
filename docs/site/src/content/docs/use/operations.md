@@ -1912,17 +1912,23 @@ finishes, under `apply: Always` as under an approval, and `status.lastRun.messag
 says how to read it.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
-say. A readable result frame reports the database the executor opened, and that
-is the one the run reached; so does the summary the runner wrote into its Pod's
-termination message, where it was read in place of a log that was gone. Without
-either -- an Apply whose create was never confirmed, a Pod that wrote nothing a
-reader could use -- the record falls back
-to the database the plan was computed against, which is the last one this
-resource read. The record does not say which of the two it is, and the Secret
-behind a reference can rotate between a reading and a run, so treat the digest
-as where to start looking rather than as a statement of where the run went.
-Establish that before repairing anything: a reader who inspects the wrong
-database finds nothing wrong and clears a record that was telling the truth.
+say. A readable result frame reports the database the Pod's URL named, and so
+does the summary the runner wrote into its Pod's termination message, where it
+was read in place of a log that was gone. Without either -- an Apply whose
+create was never confirmed, a Pod that wrote nothing a reader could use -- the
+record falls back to the database the plan was computed against, which is the
+last one this resource read. Either way the record names the only database the
+run can have changed. The runner refuses an Apply whose URL names another
+target than its plan's before Ptah starts, so a run whose frame names another
+one changed nothing, and a Secret that rotated only its password still names
+the same database. The identity is the route the URL describes: the login, the
+host, the port, the database and the parameters that are not a credential or a
+timeout. A host name that now resolves to another server is the same identity,
+and what stops a run there is the history fingerprint the Apply carries, which
+Ptah compares under the migration lock before it runs anything. Read that
+database before repairing anything: a reader who inspects another, such as a
+replica or a restored copy, finds nothing wrong and clears a record that was
+telling the truth.
 
 `jobName` and `jobUID` are empty on one of those records as well: a create
 whose outcome the API server never confirmed. The name that claim reserved is

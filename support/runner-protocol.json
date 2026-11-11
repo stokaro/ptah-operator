@@ -357,6 +357,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:f2ffdf87693ce3b419782671d15bc1f049710ec4b048c7cd24297d2a7f28f0be",
       "reason": "Pin Ptah v0.23.0 (#848). The only change in a package the runner links is a comment in internal/dataplane that drops the drift read-ahead now that the pin carries those categories; commands, payloads, delivery identity and SQL authority are the same. Protocol 1 stays. With this executor the runner can write the frames #936 added, a commit failure and error.unseenObjects. A manager without #936 refuses either as malformed, which the counter rule keeps under the same number, and a v0.2.9 manager does not reach them: it harvests a Job only when its own execution binding rebuilds it, and the binding names the Ptah version and the executor image, which differ, so it records a dispatched Apply as Unknown and runs a read again."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:76af623c01c9adb5771f4b7b4c7604052500752440ab890b69993371d1c78260",
+      "reason": "Reword the doc comment of UnresolvedMigrationRunStatus.TargetIdentityDigest in the API package, which the runner imports for its types (#926): the planned database a hold falls back to is the only one a run can have changed, because the runner refuses an Apply on another target before Ptah starts. No constant, type or field changes, and the runner neither reads nor writes the record, so what it accepts, enforces and returns is unchanged and protocol 1 stays."
     }
   ]
 }
