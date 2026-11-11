@@ -362,6 +362,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:d1cab57683d02340ef5017166bf722b7bf8f17193efca121d7e085ba0ac0b654",
       "reason": "Remove PTAH_EXCLUDE and PTAH_INCLUDE from every Ptah child the runner starts (#943). Ptah v0.23.0 binds both to --exclude and --include on schema drift and PTAH_EXCLUDE to --exclude on schema plan, and schema apply --plan refuses either. Before this change the Observe and the plan reads already removed what would narrow them, and a selector reaching the Plan's validation or the Apply made Ptah refuse it. Both variables now leave every child, so a selector reaches Ptah only as an argument the runner built. The operator sets PTAH_EXCLUDE only for a Plan, and the runner still decodes it and passes each selector as an argument. No argument, field, retry or plan binding changes and no child runs that did not run before, so a manager of any release reads this runner's frames as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:3b1e52c522b93670a43b1715ae63704d571716a1816db038b654d977e920f17f",
+      "reason": "Reword the doc comment of UnresolvedMigrationRunStatus.TargetIdentityDigest in the API package, which the runner imports for its types (#926): the planned database a hold falls back to is the only one a run can have changed, because the runner refuses an Apply on another target before Ptah starts. No constant, type or field changes, and the runner neither reads nor writes the record, so what it accepts, enforces and returns is unchanged and protocol 1 stays."
     }
   ]
 }

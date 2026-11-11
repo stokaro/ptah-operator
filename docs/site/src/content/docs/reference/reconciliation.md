@@ -774,9 +774,9 @@ The database is the one thing the claim cannot vouch for, so `targetIdentityDige
 is what the run's result named and nothing else. That is the database it opened,
 unless it refused before its child started because its Secret had moved, and then it
 is the one the Secret held, which the run did not touch. A run that left no result
-names none, since the Secret may have moved or the run may never have started, and
-its `status.unresolvedRun` names the planned database instead, as somewhere to start
-looking. A reading verifies only a run that named the database it read, so that run
+names none, and its `status.unresolvedRun` names the planned database instead: the
+runner starts nothing against another, so that is the only database the run can
+have changed. A reading verifies only a run that named the database it read, so that run
 gets no `verification` and no `Verified` entry. A clean reading of the planned
 database still settles its hold.
 
