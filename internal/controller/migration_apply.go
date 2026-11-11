@@ -625,7 +625,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 		})); err != nil {
 			return ctrl.Result{}, err
 		}
-		message = withLogPointer(message, job, run.log)
+		message = withLogPointer(message, job, servedLogReading(ctx, r.directReader(), job, run.log))
 	}
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()

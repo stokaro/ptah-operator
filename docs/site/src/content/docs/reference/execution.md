@@ -180,6 +180,8 @@ deleted node and a node that stays away all take the log while the Pod object,
 and the termination summary in its status, remain. The API server says so
 plainly for a deleted node (a NotFound for the Node) and for a container the
 kubelet can no longer serve (a BadRequest), and such a log is given up at once.
+An executor the kubelet ended with reason `ContainerStatusUnknown` has no
+container left to serve, so its log is given up without a read.
 A failure that may pass -- a kubelet it cannot reach, a read that ran out of
 time, a kubelet that does not know the Pod yet -- is given up once reads of that
 log have failed for two whole read budgets, two minutes, as this process

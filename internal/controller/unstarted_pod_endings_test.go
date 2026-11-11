@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // An Apply whose Pod the kubelet cannot start ends in one of several ways before
@@ -649,13 +650,31 @@ func schemaApplyUnderReport(
 ) unstartedSchema {
 	t.Helper()
 
-	builder := workloadBuilderForMigrations()
+	return schemaApplyUnderReportBy(t, workloadBuilderForMigrations(), nil, stand, reason, words)
+}
+
+// schemaApplyUnderReportBy is schemaApplyUnderReport with the Job built by
+// builder, and configure, when there is one, setting the reconciler up before
+// its first pass.
+func schemaApplyUnderReportBy(
+	t *testing.T,
+	builder workload.Builder,
+	configure func(*SchemaReconciler),
+	stand func(api client.Client, job *batchv1.Job) *corev1.Pod,
+	reason operatorv1alpha1.ConditionReason,
+	words string,
+) unstartedSchema {
+	t.Helper()
+
 	dispatched := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder, recorded: true}, builder)
 	run := unstartedSchema{
 		reconciler: dispatched.reconciler, api: dispatched.api, recorder: record.NewFakeRecorder(256),
 		schema: dispatched.schema, job: dispatched.job,
 	}
 	run.reconciler.Recorder = run.recorder
+	if configure != nil {
+		configure(run.reconciler)
+	}
 	run.pod = stand(run.api, run.job)
 
 	run.reconcileOnce(t)

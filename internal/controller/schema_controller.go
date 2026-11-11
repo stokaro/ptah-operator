@@ -149,7 +149,11 @@ type SchemaReconciler struct {
 	// it is still waiting on; resultLogLossWindow is measured on it. It is made
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
-	Jobs       JobBuilder
+	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
+	// deletion waits for is due. It is made on first use, by
+	// stuckPodWarningsOf.
+	stuckPods *stuckPodWarnings
+	Jobs      JobBuilder
 	// SealKey is this manager process's key pair. The Plan Job builder is
 	// given its public half; this reconciler opens the Plan payload sealed
 	// to it. The private half is never persisted, so a process that
@@ -770,8 +774,19 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) (bool, error) {
+	active, _, err := r.applyPodsActive(ctx, schema, pending)
+	return active, err
+}
+
+// applyPodsActive is possibleApplyPodActive with the Pods it listed, which
+// are none when the record names no Job UID.
+func (r *SchemaReconciler) applyPodsActive(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) (bool, []*corev1.Pod, error) {
 	if pending == nil || pending.ApplyOperationID == "" {
-		return false, fmt.Errorf("pending observation lacks an Apply operation identity")
+		return false, nil, fmt.Errorf("pending observation lacks an Apply operation identity")
 	}
 	// A retirement record that names this Apply's Job holds the proof back
 	// until the Job is accounted for: its UID adopted or given up on, and its
@@ -782,33 +797,33 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 		if !retired {
 			// An uncertain create is protected by the immutable ObserveAfter
 			// horizon instead of Pod discovery.
-			return false, nil
+			return false, nil, nil
 		}
-		return true, r.adoptRetiredApplyJobUID(ctx, schema, pending)
+		return true, nil, r.adoptRetiredApplyJobUID(ctx, schema, pending)
 	}
 	if pending.ApplyJobName == "" {
-		return false, fmt.Errorf("pending observation has a Job UID without its immutable name")
+		return false, nil, fmt.Errorf("pending observation has a Job UID without its immutable name")
 	}
 	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, pending.ApplyJobName, pending.ApplyJobUID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	evidence := podIdentityEvidence(pods)
 	before := schema.DeepCopy()
 	if mergePodEvidence(pending, evidence) {
 		if err := r.patchStatus(ctx, before, schema); err != nil {
-			return false, err
+			return false, pods, err
 		}
 	}
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-			return true, nil
+			return true, pods, nil
 		}
 	}
 	if retired {
-		return true, r.cleanupRetiredApplyJob(ctx, schema, pending)
+		return true, pods, r.cleanupRetiredApplyJob(ctx, schema, pending)
 	}
-	return false, nil
+	return false, pods, nil
 }
 
 func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -856,6 +871,13 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 					ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
 				}
 			}
+			// A Pod on a node that is gone keeps this wait going with no
+			// bound, so a person is told which Pod it is. A list that fails
+			// warns about nothing, for the reason the look above is not
+			// returned.
+			if err := r.warnStuckPods(ctx, schema, job); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
+			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
@@ -875,7 +897,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			if err == nil {
 				reported = job
 			}
-			return r.finishUncertainApplyWithReport(ctx, schema, nil,
+			return r.finishUncertainApplyWithReport(ctx, schema, nil, nil,
 				applyEndingSentence("dispatched Apply Job identity was lost during deletion"), schemaPodReport(schema, reported))
 		}
 		if schemaOperation(operation).Mutating && err == nil {
@@ -922,9 +944,17 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		if !acquired {
 			return ctrl.Result{RequeueAfter: requeue}, nil
 		}
-		activePod, err := r.possibleApplyPodActive(ctx, schema, pending)
+		activePod, pods, err := r.applyPodsActive(ctx, schema, pending)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if activePod {
+			// A Pod on a node that is gone keeps this wait going with no
+			// bound, as it does the claim's wait above, so a person is told
+			// which Pod it is.
+			if err := r.warnStuckApplyPods(ctx, schema, pending, pods); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
+			}
 		}
 		if activePod || until(pending.ObserveAfter, r.now()) > 0 {
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
@@ -1025,8 +1055,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if !acquired {
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
-			return r.finishUncertainApply(ctx, schema, nil, withLastPodReport(
-				errors.New("dispatched Apply Job is missing and will not be recreated"), schemaPodReport(schema, nil)))
+			return r.finishUncertainApplyWithReport(ctx, schema, nil, nil,
+				errors.New("dispatched Apply Job is missing and will not be recreated"), schemaPodReport(schema, nil))
 		}
 		return r.dispatch.Dispatch(ctx, &schemaDispatch{r: r, schema: schema})
 	}
@@ -1140,7 +1170,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// its formerly exact inputs became stale. Never classify that case
 			// like an undispatched read-only operation: force fresh observation
 			// before any later plan can run.
-			return r.finishUncertainApply(ctx, schema, job, withLastPodReport(currentErr, schemaPodReport(schema, job)))
+			return r.finishUncertainApplyWithReport(ctx, schema, job, job, currentErr, schemaPodReport(schema, job))
 		}
 		if err := r.harvestJob(ctx, schema, job); err != nil {
 			return ctrl.Result{}, err
@@ -1185,6 +1215,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return ctrl.Result{}, err
 	}
 	result, parseErr := evidence.parseResult(schemaOperation(operation).Runner, operation.ID)
+	// An Apply that ends uncertain here waits for its execution horizon unless
+	// the one Pod's executor ran and stopped. A durable result proves neither:
+	// it can be read after the Pod is gone, or from a Pod whose executor the
+	// kubelet lost.
+	waitForHorizon := !evidence.Stopped
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -1198,7 +1233,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// proof meets the same runner and is refused the same way, which
 			// names the cause where a reader looks.
 			return r.finishUncertainApplyWithEvidence(ctx, schema, job,
-				fmt.Errorf("apply result is uncertain: %w", refusal), evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
+				fmt.Errorf("apply result is uncertain: %w", refusal), evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
 		return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonRunnerProtocolMismatch, refusal, nil)
 	}
@@ -1213,7 +1248,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			failure = withUnstartedPod(failure, schemaPodReport(schema, job))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
-				evidence.PodUIDs, evidence.PodCount, !evidence.Trusted,
+				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
 			)
 		}
 		if parseErr != nil {
@@ -1263,7 +1298,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// start a Job workload more than once, so no child-side pre-mutation
 			// claim can prove that every attempt stayed pre-mutation. Once Job
 			// dispatch was possible, every Apply error requires read-only proof.
-			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, !evidence.Trusted)
+			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
 		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
@@ -1278,7 +1313,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			result.TargetIdentityDigest != schema.Status.Plan.TargetIdentityDigest {
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply target identity changed after approval"),
-				evidence.PodUIDs, evidence.PodCount, !evidence.Trusted,
+				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
 			)
 		}
 	}
@@ -1317,10 +1352,16 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 			reported = job
 		}
 		report := schemaPodReport(schema, reported)
+		// A claim that never recorded its Job's UID has its Pods listed under
+		// the honest Job, which a deleted schema's finisher is not given.
+		var listed *batchv1.Job
+		if honestJob {
+			listed = job
+		}
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
-		return r.finishUncertainApplyWithReport(ctx, schema, job,
+		return r.finishUncertainApplyWithReport(ctx, schema, job, listed,
 			applyEndingSentence("database lock continuity was lost during Apply"), report)
 	}
 	// A read under a lost epoch is discarded, but its Job is still the claim's,
@@ -2582,17 +2623,24 @@ func (r *SchemaReconciler) retryOperationReporting(
 }
 
 func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
-	return r.finishUncertainApplyWithReport(ctx, schema, job, failure, lastPodReport{})
+	return r.finishUncertainApplyWithReport(ctx, schema, job, job, failure, lastPodReport{})
 }
 
 // finishUncertainApplyWithReport is finishUncertainApply for an ending that
 // carries the schema's last Pod report. The report is decided once the Job's
 // Pods are listed (withPodsRead), so a Pod that started since the last look
 // takes it off, as it does on the endings that read the terminal Pod.
+//
+// The Pods are listed by the Job UID the claim recorded. A claim that recorded
+// none has them listed under listed: the Job the ending found under the claim's
+// name and holds to be the claim's, or nil. It is apart from job because a
+// deleted schema's finisher is not given the Job, while its Pods are still the
+// ones that may have started.
 func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
+	listed *batchv1.Job,
 	ending error,
 	report lastPodReport,
 ) (ctrl.Result, error) {
@@ -2603,9 +2651,9 @@ func (r *SchemaReconciler) finishUncertainApplyWithReport(
 		jobName = operation.JobName
 		jobUID = operation.JobUID
 	}
-	if jobUID == "" && job != nil {
-		jobName = job.Name
-		jobUID = job.UID
+	if jobUID == "" && listed != nil {
+		jobName = listed.Name
+		jobUID = listed.UID
 	}
 	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, jobName, jobUID)
 	if err != nil {
@@ -3593,13 +3641,19 @@ type terminalEvidence struct {
 	// a container that never terminated wrote none.
 	TerminationMessage string
 	// LogLost is set, and Logs empty, when the executor's log will not be read
-	// again (readResultLog). It stands in for the parse error of a log that
-	// holds no frame.
+	// again (readResultLog), or not at all because the kubelet lost the
+	// executor (lostExecutorLog). It stands in for the parse error of a log
+	// that holds no frame.
 	LogLost *resultLogLost
 	// ExecutorStarted is set when any listed Pod's executor shows it started
 	// (executorStarted), whether or not that Pod is the one a result is read
 	// from.
 	ExecutorStarted bool
+	// Stopped is set when the one Pod a result may be read from shows its
+	// executor ran and stopped (executorRanAndStopped). Trusted without it is a
+	// ContainerStatusUnknown termination: the kubelet recorded no container, so
+	// it serves no log for it, and the termination proves no stop.
+	Stopped bool
 }
 
 func (r *SchemaReconciler) collectTerminalPodEvidence(
@@ -3653,6 +3707,7 @@ func collectTerminalPodEvidence(
 		if status.Name == executorContainerName && status.State.Terminated != nil {
 			evidence.Trusted = true
 			evidence.TerminationMessage = status.State.Terminated.Message
+			evidence.Stopped = executorRanAndStopped(evidence, selected)
 			return evidence, selected, nil
 		}
 	}
@@ -3811,6 +3866,15 @@ func (r *SchemaReconciler) terminalLogs(
 		// A failed init container means the executor has no log stream. Treat it
 		// as a missing frame so read-only operations retry and apply remains
 		// uncertain, instead of looping forever on pod/log BadRequest.
+		return evidence, nil
+	}
+	if executorLogsLost([]*corev1.Pod{selected}) {
+		// The kubelet recorded no container for this executor, so its log is
+		// gone without a read: nothing arrives in it later, a read-only
+		// operation retries at once, and an Apply is uncertain. The termination
+		// proves no stop, so an Apply waits for its horizon (waitForHorizon in
+		// reconcileActive).
+		evidence.LogLost = lostExecutorLog(selected)
 		return evidence, nil
 	}
 	if r.Logs == nil {
