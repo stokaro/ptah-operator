@@ -1,6 +1,7 @@
 package resultcleanup
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"slices"
@@ -9,11 +10,15 @@ import (
 	"time"
 
 	api "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/resultcredentials"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
+	"github.com/stokaro/ptah-operator/internal/resultretention"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -343,5 +348,169 @@ func TestAnInterruptedForegroundRetirementFinishesOnTheNextPass(t *testing.T) {
 	left := remaining(t, f.c)
 	if len(left) != 1 || left[0].Spec.Type != "intent" || left[0].DeletionTimestamp.IsZero() {
 		t.Fatalf("%d records remain, want the deleting intent alone for the garbage collector", len(left))
+	}
+}
+
+// The backoff table is bounded like the retry hints. Once it is full, a newly
+// refused root waits the ordinary thirty seconds and takes no entry, so its
+// wait does not grow either.
+func TestAFullBackoffTableTakesNoNewRoot(t *testing.T) {
+	f := fixture(t)
+	f.f.Job.ResourceVersion = ""
+	if err := f.c.Client.Create(t.Context(), f.f.Job); err != nil {
+		t.Fatal(err)
+	}
+	f.c.refuseCreate = refuseRetirement(func(name string) error { return quotaRefused("results", name) })
+	c := f.collectorWith(t, &eventLog{})
+	for i := range maxRetryHints {
+		c.backoff[retryHintKey{uid: types.UID(fmt.Sprintf("refused-%d", i))}] = quotaRetryMax
+	}
+	intent := f.intent(t)
+	key := hintKey(intent)
+	for attempt := 1; attempt <= 2; attempt++ {
+		c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}}
+		if err := c.Step(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.next[key].Sub(f.c.now); got != quotaRetryFirst {
+			t.Fatalf("refusal %d beside a full table: the root waits %v, want %v", attempt, got, quotaRetryFirst)
+		}
+		if delay, found := c.backoff[key]; found || len(c.backoff) != maxRetryHints {
+			t.Fatalf("refusal %d beside a full table: the root stored %v (stored=%v) and the table holds %d entries, want no entry and %d",
+				attempt, delay, found, len(c.backoff), maxRetryHints)
+		}
+		f.c.now = c.next[key]
+	}
+	if f.c.foreground != nil {
+		t.Fatalf("foreground deletions of %v while the Job exists", f.c.foreground)
+	}
+}
+
+// A full quota can refuse every root on a page, and each fallback is one DELETE
+// against the step's budget. A step starts at most maxDeletesPerStep of them.
+// The next root waits at the front of the page with no Event and no backoff,
+// because nothing refused it yet, and the next step starts it.
+func TestAFullQuotaStartsOneBudgetOfFallbacksPerStep(t *testing.T) {
+	f := fixture(t)
+	b := f.f.Identity.Binding
+	store := resultstore.Store{Client: f.c, Reader: f.c}
+	for i := range maxDeletesPerStep {
+		attempt := b
+		attempt.OperationID = fmt.Sprintf("%s-%d", b.OperationID, i)
+		attempt.JobName = fmt.Sprintf("%s-%d", b.JobName, i)
+		attempt.JobUID = types.UID(fmt.Sprintf("job-%d", i))
+		payload := fmt.Appendf(nil, "outcome %d", i)
+		if _, err := store.Publish(t.Context(), attempt, payload, fmt.Sprintf("sha256:%x", sha256.Sum256(payload))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.c.refuseCreate = refuseRetirement(func(name string) error { return quotaRefused("results", name) })
+	events := &eventLog{}
+	c := f.collectorWith(t, events)
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.foreground) != maxDeletesPerStep || len(events.events) != maxDeletesPerStep {
+		t.Fatalf("one step started %d foreground retirements and recorded %d Events, want %d of each",
+			len(f.c.foreground), len(events.events), maxDeletesPerStep)
+	}
+	for _, e := range events.events {
+		requireQuotaEvent(t, f, e, "started from a foreground deletion")
+	}
+	var waiting []api.PtahResultRecord
+	for _, record := range remaining(t, f.c) {
+		if record.Spec.Type == "intent" && record.DeletionTimestamp.IsZero() {
+			waiting = append(waiting, record)
+		}
+	}
+	if len(waiting) != 1 {
+		t.Fatalf("%d intents are not deleting after the first step, want the one the budget left", len(waiting))
+	}
+	if len(c.pending) == 0 || c.pending[0].UID != waiting[0].UID {
+		t.Fatalf("the intent the budget left is not at the front of the page: %d pending", len(c.pending))
+	}
+	if len(c.backoff) != 0 {
+		t.Fatalf("the backoff table holds %d entries after fallbacks that all started", len(c.backoff))
+	}
+
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.c.foreground) != maxDeletesPerStep+1 || len(events.events) != maxDeletesPerStep+1 {
+		t.Fatalf("the next step brought the foreground retirements to %d and the Events to %d, want %d of each",
+			len(f.c.foreground), len(events.events), maxDeletesPerStep+1)
+	}
+	requireQuotaEvent(t, f, events.events[maxDeletesPerStep], "started from a foreground deletion")
+	left := &api.PtahResultRecord{}
+	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(&waiting[0]), left); err != nil || left.DeletionTimestamp.IsZero() {
+		t.Fatalf("the intent the budget left is not deleting after the next step: %v", err)
+	}
+}
+
+// An attempt's result and its credential share one retirement record. Both
+// back off while the Job exists. Once the quota has room, the result's pass
+// stores the record and defers the credential to the record's deadline, so the
+// credential does not come back to its refusal. The collection that removes
+// both roots at that deadline drops the credential's backoff with it.
+func TestCollectingAnAttemptDropsItsSiblingsBackoff(t *testing.T) {
+	f := fixture(t)
+	f.f.Job.ResourceVersion = ""
+	if err := f.c.Client.Create(t.Context(), f.f.Job); err != nil {
+		t.Fatal(err)
+	}
+	b := f.f.Identity.Binding
+	// Ensure persists the credential before it checks live authority, which
+	// this consumed operation no longer has, so only the record matters here.
+	_, _ = (resultcredentials.PodBindings{Writer: f.c, Reader: f.c}).Ensure(t.Context(), f.f.Identity)
+	credential := &api.PtahResultRecord{}
+	if err := f.c.Get(t.Context(), client.ObjectKey{Namespace: b.Namespace, Name: jobconfig.CredentialName(b.UID, b.OperationID, b.JobName)}, credential); err != nil {
+		t.Fatal(err)
+	}
+	f.c.refuseCreate = refuseRetirement(func(name string) error { return quotaRefused("results", name) })
+	c := f.collectorWith(t, &eventLog{})
+	intent := f.intent(t)
+	intentKey, credentialKey := hintKey(intent), hintKey(credential)
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}, {ObjectMeta: credential.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []retryHintKey{intentKey, credentialKey} {
+		if _, found := c.backoff[key]; !found {
+			t.Fatalf("root %+v holds no backoff after its refused fallback", key)
+		}
+	}
+
+	f.c.refuseCreate = nil
+	f.c.now = c.next[intentKey]
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	name, _ := resultretention.Name(b)
+	marker := &api.PtahResultRecord{}
+	if err := f.c.Get(t.Context(), client.ObjectKey{Namespace: b.Namespace, Name: name}, marker); err != nil {
+		t.Fatal(err)
+	}
+	deadline := marker.CreationTimestamp.Add(f.p.Window)
+	if !c.next[credentialKey].Equal(deadline) {
+		t.Fatalf("the credential is deferred until %v, want the retirement deadline %v", c.next[credentialKey], deadline)
+	}
+	if _, found := c.backoff[credentialKey]; !found {
+		t.Fatal("the credential lost its backoff before the collection, so this cannot show the collection drops it")
+	}
+
+	if err := f.c.Client.Delete(t.Context(), f.f.Job); err != nil {
+		t.Fatal(err)
+	}
+	f.c.now = deadline
+	c.pending = []metav1.PartialObjectMetadata{{ObjectMeta: intent.ObjectMeta}}
+	if err := c.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.c.Get(t.Context(), client.ObjectKeyFromObject(credential), &api.PtahResultRecord{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the credential was not collected with its attempt: %v; %d records remain", err, len(remaining(t, f.c)))
+	}
+	if delay, found := c.backoff[credentialKey]; found {
+		t.Fatalf("the collected credential keeps a %v backoff", delay)
 	}
 }

@@ -1720,9 +1720,9 @@ is full at the moment each one has to be retired.
 When the quota refuses a `retired` record, the manager starts the window the way it
 does in [a terminating namespace](#delete-namespace): it deletes the operation's result
 and credential records in the foreground, and the hour runs from their `DELETING`
-time. It records a `ResultRetirementQuotaExceeded` Warning Event on the `PtahSchema`
-or `PtahMigration` the operation belongs to, and the Event names the quota and quotes
-the usage the API server reported:
+time. It records `ResultRetirementQuotaExceeded` Warning Events on the `PtahSchema`
+or `PtahMigration` the operation belongs to, one for the result and one for the
+credential, and each names the quota and quotes the usage the API server reported:
 
 ```sh
 kubectl events -n <namespace> --for ptahschema/<name> --types=Warning
@@ -1735,7 +1735,7 @@ sooner than it would have.
 
 While the operation's Job still exists, a foreground deletion cannot start the window
 either, because the Job could still deliver. The manager tries again after 30 seconds,
-doubling up to every 5 minutes, and the Warning says it retries. Free room in the
+doubling up to every 5 minutes, and each Warning says it retries. Free room in the
 quota, or delete the finished Job once you have read its log, and the next attempt
 goes through.
 

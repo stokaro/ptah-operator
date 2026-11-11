@@ -67,7 +67,9 @@ type Collector struct {
 	next         map[retryHintKey]time.Time
 	// backoff is the delay a root last waited after a full ResourceQuota
 	// refused its retirement and the foreground fallback could not start.
-	// It shares the retry hints' bound and, like them, authorizes nothing.
+	// process takes a root's entry at the start of each pass, and only another
+	// refused fallback stores it again. It shares the retry hints' bound and,
+	// like them, authorizes nothing.
 	backoff      map[retryHintKey]time.Duration
 	operations   *prometheus.CounterVec
 	deleteBudget *int // Set only during the serial Step call.
@@ -222,10 +224,14 @@ func (c *Collector) deferUntil(key retryHintKey, next time.Time) {
 
 func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetadata) (time.Time, error) {
 	retry := c.policy.now().Add(30 * time.Second)
+	// A backoff lasts one refusal. Every outcome of this pass but another
+	// refused fallback forgets it, and that one stores it again, doubled.
+	key := hintKey(&meta)
+	waited := c.backoff[key]
+	delete(c.backoff, key)
 	record := &api.PtahResultRecord{}
 	if err := c.policy.Reader.Get(ctx, client.ObjectKeyFromObject(&meta), record); err != nil {
 		if apierrors.IsNotFound(err) {
-			delete(c.backoff, hintKey(&meta))
 			return retry, nil
 		}
 		c.observe("retire", err)
@@ -248,8 +254,6 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 	}
 	if apierrors.IsNotFound(err) && record.Spec.Type != "retired" {
 		if !record.DeletionTimestamp.IsZero() {
-			// A deleting root never comes back to its retirement CREATE.
-			delete(c.backoff, hintKey(&meta))
 			if _, err := c.policy.foregroundBinding(ctx, record); err != nil {
 				// The API server's deletionTimestamp fixes when this window
 				// ends, and no later reading can bring that closer. Wait for it
@@ -279,12 +283,11 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 		}
 		c.observe("retire", err)
 		if quota, full := exceededQuota(err); full {
-			return c.retireInForeground(ctx, meta, record, b, &quota)
+			return c.retireInForeground(ctx, key, waited, record, b, &quota)
 		}
 		if apierrors.HasStatusCause(err, corev1.NamespaceTerminatingCause) {
-			return c.retireInForeground(ctx, meta, record, b, nil)
+			return c.retireInForeground(ctx, key, waited, record, b, nil)
 		}
-		delete(c.backoff, hintKey(&meta))
 	}
 	if err != nil {
 		return retry, err
@@ -321,28 +324,34 @@ func (c *Collector) process(ctx context.Context, meta metav1.PartialObjectMetada
 // its finalizer until AuthorizeDelete permits destroying the bytes, so an
 // interrupted fallback leaves either the root as it was, which the next pass
 // retires again, or a deleting root, which the next pass collects once its
-// window ends. quota is nil for a terminating namespace.
-func (c *Collector) retireInForeground(ctx context.Context, meta metav1.PartialObjectMetadata, record *api.PtahResultRecord, b resultstore.Binding, quota *quotaRefusal) (time.Time, error) {
+// window ends. quota is nil for a terminating namespace. waited is the backoff
+// the root's previous refusal set, which process has already taken from the
+// table.
+func (c *Collector) retireInForeground(ctx context.Context, key retryHintKey, waited time.Duration, record *api.PtahResultRecord, b resultstore.Binding, quota *quotaRefusal) (time.Time, error) {
 	retry := c.policy.now().Add(30 * time.Second)
 	err := c.policy.AuthorizeForegroundRetirement(ctx, record)
 	if err == nil {
+		// Step checks its budget before each root, and nothing on the way here
+		// deletes, so this DELETE always has budget and never answers
+		// errDeleteBudget. TestAFullQuotaStartsOneBudgetOfFallbacksPerStep
+		// fails if a root starts spending more than this one DELETE.
 		err = c.deleteRecord(ctx, record, &client.DeleteOptions{
 			Preconditions:     &metav1.Preconditions{UID: &record.UID, ResourceVersion: &record.ResourceVersion},
 			PropagationPolicy: ptr.To(metav1.DeletePropagationForeground),
 		})
 	}
 	c.observe("retire", err)
-	if quota == nil || errors.Is(err, errDeleteBudget) {
+	if quota == nil {
 		return retry, err
 	}
 	c.warnQuota(b, record.Name, *quota, err == nil)
-	key := hintKey(&meta)
 	if err == nil {
-		delete(c.backoff, key)
 		return retry, nil
 	}
-	delay := min(max(2*c.backoff[key], quotaRetryFirst), quotaRetryMax)
-	if _, found := c.backoff[key]; found || len(c.backoff) < maxRetryHints {
+	delay := min(max(2*waited, quotaRetryFirst), quotaRetryMax)
+	// The table shares the retry hints' bound. A root that held an entry has
+	// room for it again: process removed it at the start of this pass.
+	if len(c.backoff) < maxRetryHints {
 		c.backoff[key] = delay
 	}
 	return c.policy.now().Add(delay), err
@@ -359,8 +368,12 @@ type quotaRefusal struct {
 // exceededQuota reads which ResourceQuota refused a CREATE. The quota admission
 // plugin says so only in the message of its 403, as admission.NewForbidden
 // wraps "exceeded quota: <name>, requested: ..., used: ..., limited: ..." in
-// k8s.io/apiserver/pkg/admission/plugin/resourcequota. Any other refusal,
-// a webhook's included, names no quota.
+// k8s.io/apiserver/pkg/admission/plugin/resourcequota. The API server does not
+// wrap a webhook's denial this way: it reports `admission webhook "<name>"
+// denied the request: ...`. A webhook whose own message quotes these words
+// could still match, and that would only start a foreground deletion that
+// admission grants or refuses on its own terms, under an Event that names the
+// wrong quota.
 func exceededQuota(err error) (quotaRefusal, bool) {
 	var status apierrors.APIStatus
 	if !apierrors.IsForbidden(err) || !errors.As(err, &status) {
@@ -476,6 +489,8 @@ func (c *Collector) removeMetadata(ctx context.Context, meta metav1.ObjectMeta) 
 	if err := c.deleteRecord(ctx, record, options); err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
+	// collect also removes the attempt's other root, which can still hold the
+	// backoff of a refusal its sibling's retirement record has since answered.
 	delete(c.backoff, hintKey(&meta))
 	// The same metadata page may still contain this root's retirement entry.
 	// Deferring that exact UID avoids a redundant NotFound read. These bounded
