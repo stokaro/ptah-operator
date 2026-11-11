@@ -290,6 +290,21 @@ that:` and the same words after the Pod and its Job are gone. The resource stops
 at `Blocked`, `ApplyOutcomeUnknown`, with the same message until the next history
 reading rewrites it.
 
+An Apply that ends another way before anything reads its result keeps the same
+words after the sentence that says how it ended. Pointing `urlFrom` at the Secret
+that exists is one: it changes the inputs the Apply was decided from, and the Job
+keeps the Pod it made, which still names the old Secret. Past the deadline a
+`PtahMigration` records `the operation inputs changed while the Job was running;
+last reported before that:` and the words in `status.lastRun`, and a `PtahSchema`
+reports `ApplyOutcomeUnknown` with `operation inputs changed while the Job was
+running; last reported before that:` and the words. A `PtahMigration` Apply keeps
+them the same way when its Job was deleted (`the dispatched Apply Job is missing
+and will not be recreated`) and when a release changed an execution component
+under it (`an execution component changed while the Apply was dispatched`). A
+`PtahMigration` deleted while its Apply waited takes its status with it, and its
+`MigrationRunUncertain` Warning Event carries `the PtahMigration was deleted while
+a dispatched Apply was in flight; last reported before that:` and the words.
+
 Those words are the last report and not a reading taken at the end. The Secret can
 arrive and the Pod can start and die without a result between two looks, and the
 failure reads the same, so check whether the Secret exists now before you change it.

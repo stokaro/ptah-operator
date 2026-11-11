@@ -92,6 +92,19 @@ one `stale` outcome, where it took two of each.
   not yet recorded still wait for the read. A read requested on a schema with
   a recorded approval follows its Apply too, and the `ReadRequested` Event now
   says so.
+- **The kubelet's words stay on an Apply whose Pod never started.** An Apply
+  whose Secret or key is missing reports the kubelet's words while it waits. A
+  `PtahMigration` Apply past its Job's deadline then recorded only `result frame
+  not found`, and an Apply that ended another way before its result was read
+  recorded only how it ended: its inputs changed, as when `urlFrom` is pointed at
+  the Secret that exists, or, on a `PtahMigration`, its Job was deleted, a
+  release changed an execution component under it, or the resource was deleted.
+  Those records now carry the words after that sentence, as what was last
+  reported: `status.lastRun` and `Blocked` on a `PtahMigration`, and
+  `ReconciliationFailed` on a `PtahSchema`. A deleted `PtahMigration` keeps them
+  in its `MigrationRunUncertain` Warning Event.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  has the messages.
 
 ## 0.2.10
 

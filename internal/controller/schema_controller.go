@@ -1112,7 +1112,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// its formerly exact inputs became stale. Never classify that case
 			// like an undispatched read-only operation: force fresh observation
 			// before any later plan can run.
-			return r.finishUncertainApply(ctx, schema, job, currentErr)
+			return r.finishUncertainApply(ctx, schema, job, withLastPodReport(currentErr,
+				meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)))
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err

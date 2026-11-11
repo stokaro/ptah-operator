@@ -413,8 +413,15 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// names the epoch goes in this write and every other resource on
 				// that database would wait out the full lease for a run this pass
 				// watched stop.
+				//
+				// The resource and this record go on the next pass, and the
+				// MigrationRunUncertain Event outlives them, so the failure
+				// carries what the kubelet last said about a Pod that never
+				// started.
 				if _, err := r.retireUncertainMigrationApply(ctx, migration, job,
-					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), "", false); err != nil {
+					withLastPodReport(errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"),
+						meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)),
+					"", false); err != nil {
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -585,7 +592,8 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 		return ctrl.Result{}, true, err
 	}
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
-		errors.New("an execution component changed while the Apply was dispatched"), "")
+		withLastPodReport(errors.New("an execution component changed while the Apply was dispatched"),
+			meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
 	return result, true, err
 }
 
@@ -843,7 +851,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			lost = job
 		}
 		return r.finishUncertainMigrationApply(ctx, migration, lost,
-			errors.New(unaccountedMigrationJobReason(cause)), "")
+			withLastPodReport(errors.New(unaccountedMigrationJobReason(cause)),
+				meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
 	case mutationlifecycle.VerdictRetry:
 		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
 	}
@@ -896,7 +905,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		) == mutationlifecycle.DispositionUnaccounted {
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
-			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr, "")
+			return r.finishUncertainMigrationApply(ctx, migration, job, withLastPodReport(currentErr,
+				meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err

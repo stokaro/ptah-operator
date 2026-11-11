@@ -191,8 +191,25 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 // its waiting state at all, so a Secret that arrived and a Pod that then started
 // and died without a result can fall between two looks.
 func withUnstartedPod(failure error, reported *metav1.Condition) error {
-	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
-		!errors.Is(failure, runner.ErrFrameNotFound) {
+	if !errors.Is(failure, runner.ErrFrameNotFound) {
+		return failure
+	}
+	return withLastPodReport(failure, reported)
+}
+
+// withLastPodReport adds the same words to a failure that ended an Apply before
+// anything read its result: its inputs changed, its Job went, an execution
+// component changed under it, or the resource was deleted. Such a failure says
+// what ended the run and nothing about why its Pod never started, and by then
+// the Pod is usually gone. A person who fixes urlFrom after reading
+// `secret "x" not found` changes the inputs, and the record would say only that.
+//
+// No result was read on those paths, so nothing says the Pod started after the
+// last look either, and the words are worded as the last report, as
+// withUnstartedPod's are. A Pod that a look found started has taken the
+// condition off PodConfigurationError, and then nothing is added.
+func withLastPodReport(failure error, reported *metav1.Condition) error {
+	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) {
 		return failure
 	}
 	return fmt.Errorf("%w; last reported before that: %s", failure, reported.Message)
