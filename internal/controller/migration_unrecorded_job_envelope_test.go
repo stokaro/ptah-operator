@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -257,18 +258,30 @@ func TestAFailedWriteOfAnAdoptedUIDFailsThePass(t *testing.T) {
 // controller wrote the Job's status between the read and the patch. Admission admits
 // the TTL only while the claim names the Job, so the claim stays, and the database
 // with it, for the pass that retires it, which asks again. A deleting resource does
-// not wait for it: the garbage collector takes the Job with its owner.
+// not wait for it: the garbage collector takes the Job with its owner. Nor does a
+// claim over a later Job under its name, whose TTL admission refuses whatever the
+// next pass reads: the claim goes, and a Warning names the Job.
 func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 	t.Parallel()
 
+	current := workloadBuilderForMigrations()
 	for _, row := range []struct {
 		name     string
 		way      func() unknownWhileRunning
 		deleting bool
+		// replaced is a claim that recorded another Job's UID, so the Job under
+		// its name is a later one.
+		replaced bool
 	}{
 		{name: "a claim that recorded the Job", way: executorRolledOut},
 		{name: "a claim that never recorded the Job", way: func() unknownWhileRunning { return executorRolledOut().unrecorded() }},
 		{name: "a deleting resource", way: executorRolledOut, deleting: true},
+		{
+			name: "a later Job under the claim's name", replaced: true,
+			way: func() unknownWhileRunning {
+				return unknownWhileRunning{shape: runShape{dispatcher: current, recorded: true}, next: current}
+			},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -276,6 +289,9 @@ func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 
 			way := row.way()
 			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, way.shape)
+			if row.replaced {
+				run.migration.Status.ActiveOperation.JobUID = "the-recorded-job-uid"
+			}
 			reconciler, api := run.reconciler(t, way.next)
 			conflicts := 0
 			reconciler.Client = interceptor.NewClient(admittedJobWrites(api, way.next), interceptor.Funcs{
@@ -297,7 +313,8 @@ func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 				}
 			}
 
-			if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+			result, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+			if err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			if conflicts != 1 {
@@ -307,9 +324,13 @@ func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 			if first.Status.UnresolvedRun == nil || first.Status.UnresolvedRun.OperationID != run.migration.Status.ActiveOperation.ID {
 				t.Fatalf("unresolved run = %#v, want the stopped Apply's run recorded", first.Status.UnresolvedRun)
 			}
-			if row.deleting {
+			if row.deleting || row.replaced {
 				if first.Status.ActiveOperation != nil {
-					t.Fatalf("the deleting resource kept the claim for a TTL it does not need: %#v", first.Status.ActiveOperation)
+					t.Fatalf("the claim was kept for a TTL nothing would admit or need: %#v", first.Status.ActiveOperation)
+				}
+				named := cleanupDeferredEvents(migrationEvents(recorder), run.job.Name)
+				if len(named) != 1 || !strings.Contains(named[0], "the object has been modified") {
+					t.Fatalf("Events naming Job %q = %q, want one Warning that the conflict left it with no TTL", run.job.Name, named)
 				}
 				return
 			}
@@ -319,6 +340,12 @@ func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 			assertDatabaseStillHeld(t, reconciler, api)
 			if named := cleanupDeferredEvents(migrationEvents(recorder), run.job.Name); len(named) != 0 {
 				t.Fatalf("a conflict named the Job as staying: %q", named)
+			}
+			// Nothing about the stopped Job will change again to wake the resource,
+			// so the pass asks for the next one itself, and soon: the claim holds
+			// the database until then.
+			if result.RequeueAfter <= 0 || result.RequeueAfter > 5*time.Second {
+				t.Fatalf("the pass that kept the claim asks for the next one after %s, want within 5s", result.RequeueAfter)
 			}
 			reconciler.Recorder = record.NewFakeRecorder(64)
 
