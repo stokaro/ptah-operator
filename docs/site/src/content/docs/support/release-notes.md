@@ -221,6 +221,13 @@ propagation finds none there now.
   refuse, such as one under another execution epoch or one whose claim never
   recorded its UID, is left at once, and so is one that has not finished by then.
   A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
+- **A read-only migration claim over another Job runs again.** A read-only
+  migration claim whose Job under its reserved name had been replaced, or was no
+  longer owned by the resource, asked for that Job's cleanup TTL before it moved
+  to a new attempt. Admission refuses that TTL on a Job the claim does not name
+  by UID or does not own, so every pass failed on the refusal, and the read never
+  ran again. The claim now moves to a new attempt at once, as a schema claim
+  does, and writes nothing to that Job.
 - **A deleted migration no longer points at a log it takes with it.** A
   `PtahMigration` deleted while its Apply waited records the run `Unknown`, and
   its `MigrationRunUncertain` Warning Event said the Pod log stayed for 24 hours
