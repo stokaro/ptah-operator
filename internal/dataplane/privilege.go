@@ -29,7 +29,8 @@ const (
 	PrivilegeRowSecurityPolicy = "RowSecurityPolicy"
 	// PrivilegeSecurityDefiner is code set to run with its owner's rights
 	// rather than its caller's. A MySQL or MariaDB routine does that unless it
-	// says SQL SECURITY INVOKER, so a routine that names no mode counts.
+	// says SQL SECURITY INVOKER, so a routine that names no mode counts. A
+	// change to the rights an existing PostgreSQL view reads with counts too.
 	PrivilegeSecurityDefiner = "SecurityDefiner"
 	// PrivilegeDefiner is a MySQL DEFINER clause, which names the account a
 	// view, routine, trigger or event runs as.

@@ -137,6 +137,19 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 			want:      []string{"SecurityDefiner"},
 		},
 		{
+			// Ptah writes a view whose body changed this way with the options
+			// the declaration states, whether or not they changed, and the
+			// statement cannot say which.
+			name: "view body changed, invoker rights restated", dialect: "postgres",
+			statement: "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name, created_at FROM differs_notes",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "new view with its owner's rights spelled off", dialect: "postgres",
+			statement: "CREATE VIEW \"public\".\"v_orders\" WITH (security_invoker=off) AS\nSELECT id FROM public.orders",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
 			name: "new view with its owner's rights", dialect: "postgres",
 			statement: "CREATE VIEW \"public\".\"v_orders\" WITH (security_invoker=false) AS\nSELECT id FROM public.orders",
 			want:      []string{"SecurityDefiner"},

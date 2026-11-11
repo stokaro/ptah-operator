@@ -18,8 +18,11 @@ out of silence.
 
 ## 0.2.11
 
-**Before you upgrade.** Under `apply: Always`, a plan that gives an existing
-PostgreSQL view invoker rights now waits for an approval bound to it.
+**Before you upgrade.** Under `apply: Always`, a plan that changes an existing
+PostgreSQL view's `security_invoker`, or changes the definition of a view that
+states it, now waits for an approval bound to it. A plan published before the
+upgrade that holds such a statement and waits for an approval is planned again
+and asks for a new one.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -27,8 +30,9 @@ PostgreSQL view invoker rights now waits for an approval bound to it.
   worked could start failing. The operator now records `SecurityDefiner` for
   `security_invoker` set to any value or reset by `ALTER VIEW` or
   `CREATE OR REPLACE VIEW`. It read only `false` and `off` before, so a value
-  Ptah wrote as `0` or `no` ran unattended as well. `CREATE VIEW` is read as
-  before. A `CREATE SCHEMA` for a schema the URL leaves out still runs
+  Ptah wrote as `0` or `no` ran unattended as well. Ptah restates a view's
+  options when its definition changes, so such a change waits too, as a
+  `CREATE OR REPLACE FUNCTION` does. `CREATE VIEW` is read as before. A `CREATE SCHEMA` for a schema the URL leaves out still runs
   unattended; [Databases and privileges](../databases/#postgresql) says what it
   does under the documented login.
 

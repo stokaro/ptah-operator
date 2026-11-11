@@ -157,7 +157,7 @@ waived it would be the same `Always` again.
 | `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings; `SET ROLE` and `SET SESSION AUTHORIZATION`, which change who the rest of the Apply runs as |
 | `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
 | `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
-| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, and a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`; a PostgreSQL view's `security_invoker` set to any value or reset by `ALTER VIEW` or `CREATE OR REPLACE VIEW`, and set to `false` or `off` by `CREATE VIEW` |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, and a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`; a PostgreSQL view's `security_invoker` named by `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, whatever its value, or reset, and set to `false` or `off` by `CREATE VIEW` |
 | `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
 | `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
 
@@ -202,9 +202,16 @@ A PostgreSQL view's `security_invoker` is raised in either direction on a view
 that may already have readers. With the owner's rights they read what the owner
 can; with invoker rights each of them needs rights of their own on the tables
 the view reads, so a read that worked can start failing. The reading takes no
-value from `ALTER VIEW` or `CREATE OR REPLACE VIEW`, so `0`, `no` or a quoted
-`'false'` is raised the same as `true`. A view `CREATE VIEW` makes has no
-readers yet, and is raised only when it runs with its owner's rights.
+value from `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, so `0`, `no`
+or a quoted `'false'` is raised the same as `true`. A view `CREATE VIEW` makes
+has no readers yet, and is raised only when it states `false` or `off`.
+
+A statement does not say what value the view held before, so a restated option
+reads like a changed one. Ptah writes a view whose definition changed as
+`CREATE OR REPLACE VIEW` with every option the declaration states. Under
+`Always`, a plan that changes the definition of a view that states
+`security_invoker` therefore waits for an approval even when the option keeps
+its value, the same trade the reading makes for `CREATE OR REPLACE FUNCTION`.
 
 The class only adds. Ptah's plan document has no field for it and a document
 that tried to supply one is refused, a statement Ptah rated `safe` is raised all
@@ -222,6 +229,9 @@ What it cannot see:
   `SQL SECURITY`, runs as its definer. Ptah writes no `SQL SECURITY` clause on a
   MySQL view, so no MySQL view is raised.
 - SQL built at run time, such as a `DO` block that `EXECUTE`s a string.
+- A `CREATE OR REPLACE VIEW` that leaves `security_invoker` out, which clears
+  it. Ptah refuses such a plan unless the schema states the option, so the
+  reading does not look for it.
 - `CREATE EXTENSION`, whose install script runs with whatever rights the
   extension asks for.
 - A `PtahMigration`. Its plan is a sequence of files the operator does not
