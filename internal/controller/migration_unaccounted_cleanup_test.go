@@ -443,6 +443,60 @@ func TestAClaimThatNeverRecordedAFinishedJobSchedulesItsCleanupBeforeItGoes(t *t
 	}
 }
 
+// TestAFailedWriteOfTheUIDRecordsNoRun is the write that records an unrecorded
+// claim's Job failing in the pass that would record the run unknown. The pass
+// fails before it records anything else, so the retry finds the claim as it was
+// and records the UID, the run and the TTL in order.
+func TestAFailedWriteOfTheUIDRecordsNoRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	way := executorRolledOut().unrecorded()
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, way.shape)
+	reconciler, api := run.reconciler(t, way.next)
+	failures := 0
+	reconciler.Client = interceptor.NewClient(admittedJobWrites(api, way.next), interceptor.Funcs{
+		SubResourcePatch: func(
+			ctx context.Context, writer client.Client, subResource string, object client.Object, patch client.Patch,
+			options ...client.SubResourcePatchOption,
+		) error {
+			if migration, ok := object.(*operatorv1alpha1.PtahMigration); ok && failures == 0 &&
+				migration.Status.ActiveOperation != nil && migration.Status.ActiveOperation.JobUID != "" {
+				failures++
+				return apierrors.NewConflict(operatorv1alpha1.GroupVersion.WithResource("ptahmigrations").GroupResource(),
+					migration.Name, errors.New("the object has been modified"))
+			}
+			return writer.SubResource(subResource).Patch(ctx, object, patch, options...)
+		},
+	})
+	stopMigrationWorkload(t, api, run, "")
+
+	_, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+	if failures == 0 {
+		t.Fatal("no write of the UID reached the injected failure, so this row proved nothing")
+	}
+	if err == nil {
+		t.Fatal("Reconcile() returned no error, want the failed write of the UID to fail the pass")
+	}
+	current := readMigration(t, api, run.migration)
+	if current.Status.ActiveOperation == nil || current.Status.ActiveOperation.JobUID != "" ||
+		current.Status.LastRun != nil || current.Status.UnresolvedRun != nil {
+		t.Fatalf("the failed pass recorded something: claim=%#v lastRun=%#v unresolved=%#v",
+			current.Status.ActiveOperation, current.Status.LastRun, current.Status.UnresolvedRun)
+	}
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v on the pass after the failure", err)
+	}
+	settled := readMigration(t, api, run.migration)
+	if settled.Status.ActiveOperation != nil || settled.Status.UnresolvedRun == nil {
+		t.Fatalf("the retried pass did not record the run and let the claim go: claim=%#v unresolved=%#v",
+			settled.Status.ActiveOperation, settled.Status.UnresolvedRun)
+	}
+	if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
+		t.Fatalf("the finished Job's TTL = %s after the retried pass, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
+	}
+}
+
 // TestAnUnrecordedClaimRecordsOnlyAJobItsResourceOwns is a Job another
 // PtahMigration owns standing under the name an unrecorded claim reserved. It is
 // not the Job this claim's dispatch created, so the claim records no UID, and the
