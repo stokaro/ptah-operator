@@ -1009,11 +1009,14 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // the webhook holds a terminal Job to what its claim fixes without a rebuild, so
 // a Job another release built gets it, and one that fails that match is refused
 // and reported. Where the claim recorded none, the Job stays and a Warning says
-// so (#970). A read-only claim moves to a new attempt under a new name. The Job
-// it leaves runs to its own deadline and gets no cleanup TTL here: the
-// controller-write webhook judges that TTL by the same matcher, and a refusal
-// would hold the retry behind it. Once that Job finishes, it stays until it is
-// deleted by hand or with its owner (#971).
+// so (#970).
+//
+// A read-only claim moves to a new attempt under a new name, and the Job it
+// refused gets the cleanup TTL a harvested read-only Job gets, once it stops
+// (retryPastRefusedMigrationJob). The claim is what lets admission accept that
+// TTL, so the claim stays until the Job stops, as it would for a Job it
+// supervised. A Job whose TTL admission would refuse is left at once, and a
+// Warning names it.
 //
 // A release that changes the Job or its Pod template therefore cannot adopt a
 // run its predecessor dispatched: a running Apply is recorded unknown, and a
@@ -1033,7 +1036,7 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 					fmt.Errorf("dispatched Apply Job is not its claim's: %w", err), "")
 				return result, true, settleErr
 			}
-			result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+			result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
 				fmt.Errorf("active Job is not its claim's: %w", err))
 			return result, true, settleErr
 		}
@@ -1046,7 +1049,7 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 				fmt.Errorf("rebuild immutable Apply Job intent: %w", err), "")
 			return result, true, settleErr
 		}
-		result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
 			fmt.Errorf("rebuild immutable Job intent: %w", err))
 		return result, true, settleErr
 	}
@@ -1056,11 +1059,70 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 				fmt.Errorf("dispatched Apply Job intent changed: %w", err), "")
 			return result, true, settleErr
 		}
-		result, settleErr := r.retryMigrationOperation(ctx, migration, nil,
+		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
 			fmt.Errorf("active Job intent changed: %w", err))
 		return result, true, settleErr
 	}
 	return ctrl.Result{}, false, nil
+}
+
+// retryPastRefusedMigrationJob moves a read-only claim to its next attempt past
+// the Job holdMigrationJobToItsClaim refused, and gives that Job the cleanup TTL
+// a harvested read-only Job gets (markJobHarvested).
+//
+// The controller-write webhook admits a migration Job's cleanup TTL only once
+// the Job has finished, and only on the Job the active claim names by UID, held
+// to what the claim fixes without a rebuild (validateMigrationJobEnvelope is
+// the same match). Once the claim moves on, no claim names the Job, and its
+// cleanup cannot be scheduled again. So a Job admission would accept keeps the
+// claim until it stops, as a Job the claim supervised would: the wait ends at
+// the Job's own deadline, and a read-only claim holds no Lease while it waits.
+//
+// A Job admission would refuse is left at once, because waiting for it would
+// hold the retry for nothing: one whose UID the claim never recorded, and one
+// outside what the claim fixes. A Warning names it
+// (migrationJobCleanupNotScheduled), and so does a refusal of the TTL write
+// itself, which does not hold the claim either. Any other failure of that write
+// fails the pass, and the next pass asks again. A Job that already carries a
+// TTL is collected by it.
+func (r *MigrationReconciler) retryPastRefusedMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	failure error,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	if job.Spec.TTLSecondsAfterFinished == nil {
+		switch refused := refusedMigrationJobCleanup(migration, job); {
+		case refused != nil:
+			r.migrationJobCleanupNotScheduled(migration, operation, job, refused)
+		case !jobTerminal(job):
+			return ctrl.Result{RequeueAfter: activeJobPollInterval(false)}, nil
+		default:
+			switch err := r.markJobHarvested(ctx, job); {
+			case err == nil, apierrors.IsNotFound(err):
+			case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
+				r.migrationJobCleanupNotScheduled(migration, operation, job, err)
+			default:
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	return r.retryMigrationOperation(ctx, migration, nil, failure)
+}
+
+// refusedMigrationJobCleanup says why admission would refuse the cleanup TTL of
+// the Job under the active claim's name, from what the controller can see, or
+// returns nil.
+func refusedMigrationJobCleanup(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) error {
+	if migration.Status.ActiveOperation.JobUID == "" {
+		return errors.New("its claim never recorded the Job's UID, " +
+			"and admission admits a cleanup only on the Job a claim names by UID")
+	}
+	if err := validateMigrationJobEnvelope(job, migration); err != nil {
+		return fmt.Errorf("admission admits a cleanup only on a Job its claim fixes: %w", err)
+	}
+	return nil
 }
 
 // expectedMigrationJob is the Job the active claim builds now: the plan an

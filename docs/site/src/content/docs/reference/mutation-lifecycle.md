@@ -332,7 +332,9 @@ or its Pod template cannot confirm them: a running `PtahSchema` or
 else is applied until that run is accounted for; a running read-only Job is
 run again. A migration Apply whose plan was deleted while it ran is
 recorded `Unknown` the same way, because its Job cannot be rebuilt without the
-plan it runs.
+plan it runs. A migration's read-only claim runs again once the Job it refused
+has stopped, where admission admits that Job's cleanup TTL, so the Job gets the
+TTL first (`retryPastRefusedMigrationJob`).
 
 Suspension cannot discard a dispatched mutating claim in either family. A
 resource suspended mid-Apply keeps its claim and keeps renewing the Lease.

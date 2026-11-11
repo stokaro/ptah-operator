@@ -51,7 +51,8 @@ status of a `kubectl ptah` wait on a migration run has to expect the statuses
 the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
 in it for one `retired` record per operation, as [A quota on result
-records](../../use/operations/#result-record-quota) says.
+records](../../use/operations/#result-record-quota) says. An alert on
+`MigrationJobCleanupDeferred` can now fire for a read-only migration Job too.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -132,6 +133,17 @@ records](../../use/operations/#result-record-quota) says.
   namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
   Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
   Job exists, the collector retries with backoff up to every 5 minutes.
+- **A refused read-only migration Job is collected.** A read-only migration
+  claim that could not confirm the Job under its name, as after a release that
+  changed the Job, ran again under a new attempt and left that Job with no TTL,
+  so the Job and its Pod stayed until the resource was deleted, and nothing named
+  them. Admission admits the TTL only on a finished Job the active claim names by
+  UID. Where the claim recorded the Job's UID and the Job is the one the claim
+  fixes, the claim now waits for the Job to stop, as it waits for a Job it
+  supervises, and gives it the five minutes a harvested Job gets before it runs
+  again. A Job admission would refuse, such as one under another execution epoch
+  or one whose claim never recorded its UID, is left at once, and a
+  `MigrationJobCleanupDeferred` Warning Event names it.
 
 ## 0.2.10
 
