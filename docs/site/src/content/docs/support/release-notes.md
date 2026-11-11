@@ -19,10 +19,12 @@ out of silence.
 ## 0.2.11
 
 **Before you upgrade.** A script that runs `kubectl ptah refresh --wait` or
-`kubectl ptah wait --for read` on a resource whose verification policy refuses
-the artifact now gets exit status 8 with `PolicyRefused` once the read it asked
-for ends in that refusal, where it ran to the timeout and exited 7. A refusal
-from before the request still leaves the wait to its timeout.
+`kubectl ptah wait --for read` on a resource whose read ends in the
+verification policy's refusal of the artifact now gets exit status 8 with
+`PolicyRefused`, where it ran to the timeout and exited 7. The resource may
+have been refused already, or in sync until a tag moved. A refusal from before
+the request does not stop the wait; only the refusal the requested read ends in
+does.
 
 ## 0.2.10
 

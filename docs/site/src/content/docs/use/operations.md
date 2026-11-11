@@ -1877,9 +1877,12 @@ leaves the wait running, whatever `Ready` or `Blocked` still says.
 To see whether a policy edit helps, ask for a read with `kubectl ptah refresh
 --wait`. The refusal that stands when you ask does not stop it. If the read it
 asked for ends in a refusal again, the wait stops with `PolicyRefused` and the
-requirements, as `kubectl ptah wait --for read` does. A refusal from before the
-request, or from a read that was already under way when it was written, leaves the
-wait running, and the timeout names that refusal.
+requirements, as `kubectl ptah wait --for read` does. If it ends with a reading,
+the wait is done, even when a read on a newer request has been refused by the time
+the wait looks again. A refusal from before the request, or from a read that was
+already under way when it was written, leaves the wait running until the read the
+request starts ends; if that read does not end before the timeout, the timeout
+names the refusal.
 
 The wait tells the two apart by a stamp the operator writes with each refusal. For
 a schema it is `status.source.resolvedAt`, which the Resolve of each read writes;
