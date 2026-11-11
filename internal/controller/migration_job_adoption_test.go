@@ -233,14 +233,38 @@ func assertAdopted(t *testing.T, api client.Client, run dispatchedRun) {
 // a new attempt under a new name, leaving the Job as it found it. That is a
 // read-only claim whose Job admission would not collect; one whose Job it would
 // waits for the Job to stop (assertRefusedOnceStopped).
+//
+// The retained Apply claim is the one it was, and names the Job by UID: a claim
+// that never recorded the UID records it before the run is settled, where the Job
+// under the name it reserved is the one the claim fixes without a rebuild, since
+// admission admits that Job's cleanup only by UID. assertRefusedOutsideItsClaim
+// is the same assertion for a Job that is not.
 func assertRefused(t *testing.T, api client.Client, run dispatchedRun, want string) {
+	t.Helper()
+	assertRefusedRecording(t, api, run, want, true)
+}
+
+// assertRefusedOutsideItsClaim is assertRefused for a Job outside what the claim
+// fixes, such as one under another epoch: an Apply claim records no UID it had
+// not recorded, because recording it would make the Job the claim's.
+func assertRefusedOutsideItsClaim(t *testing.T, api client.Client, run dispatchedRun, want string) {
+	t.Helper()
+	assertRefusedRecording(t, api, run, want, false)
+}
+
+func assertRefusedRecording(t *testing.T, api client.Client, run dispatchedRun, want string, recordsJob bool) {
 	t.Helper()
 
 	claimed := run.migration.Status.ActiveOperation
 	actual := readMigration(t, api, run.migration)
 	if migrationOperation(claimed).Mutating {
-		if !equality.Semantic.DeepEqual(actual.Status.ActiveOperation, claimed) {
-			t.Fatalf("an unknown running Apply lost or changed its original claim: operation=%#v", actual.Status.ActiveOperation)
+		kept := claimed.DeepCopy()
+		if recordsJob {
+			kept.JobUID = run.job.UID
+		}
+		if !equality.Semantic.DeepEqual(actual.Status.ActiveOperation, kept) {
+			t.Fatalf("an unknown running Apply lost or changed its original claim, or names Job UID other than %q: operation=%#v",
+				kept.JobUID, actual.Status.ActiveOperation)
 		}
 		last := actual.Status.LastRun
 		if last == nil || last.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
@@ -378,7 +402,7 @@ func TestAMigrationRefusesAJobUnderAnotherEpoch(t *testing.T) {
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			assertRefused(t, api, run, "another execution epoch than its claim")
+			assertRefusedOutsideItsClaim(t, api, run, "another execution epoch than its claim")
 		})
 	}
 }
@@ -410,7 +434,7 @@ func TestAMigrationRefusesAJobWhosePodTemplateIsNotItsSnapshots(t *testing.T) {
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			assertRefused(t, api, run, "does not match the persisted admission snapshot")
+			assertRefusedOutsideItsClaim(t, api, run, "does not match the persisted admission snapshot")
 		})
 	}
 }
@@ -471,7 +495,10 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 		name  string
 		shape runShape
 		moved bool
-		want  string
+		// outside is a Job outside what the claim fixes, whose UID the claim
+		// does not record.
+		outside bool
+		want    string
 	}{
 		{
 			name:  "adopting a Job another release built",
@@ -484,16 +511,18 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 			want:  "dispatched Apply Job intent changed",
 		},
 		{
-			name:  "adopting a Job under another epoch after the inputs moved",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch},
-			moved: true,
-			want:  "dispatched Apply Job is not its claim's",
+			name:    "adopting a Job under another epoch after the inputs moved",
+			shape:   runShape{dispatcher: current, alter: underAnotherEpoch},
+			moved:   true,
+			outside: true,
+			want:    "dispatched Apply Job is not its claim's",
 		},
 		{
-			name:  "supervising a Job under another epoch after the inputs moved",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
-			moved: true,
-			want:  "dispatched Apply Job is not its claim's",
+			name:    "supervising a Job under another epoch after the inputs moved",
+			shape:   runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			moved:   true,
+			outside: true,
+			want:    "dispatched Apply Job is not its claim's",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -532,7 +561,7 @@ func TestAnUnconfirmableMigrationApplyIsNeverDispatchedAgain(t *testing.T) {
 					t.Fatalf("Reconcile() pass %d error = %v", pass, err)
 				}
 				if pass == 0 {
-					assertRefused(t, api, run, row.want)
+					assertRefusedRecording(t, api, run, row.want, !row.outside)
 				}
 			}
 			if unresolved := readMigration(t, api, run.migration).Status.UnresolvedRun; unresolved == nil ||
