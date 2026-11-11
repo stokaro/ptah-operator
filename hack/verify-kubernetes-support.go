@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"reflect"
 	"regexp"
@@ -71,6 +72,12 @@ const (
 	// and what a release renders are the same program.
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
 	helmVersion     = "v4.3.1"
+
+	// The action that mints the support updater's ptah-automation token, at
+	// v3.3.0, and the organization variable and secret it reads.
+	createAppTokenAction = "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
+	automationAppIDVar   = "vars.CAPABILITY_MATRIX_APP_ID"
+	automationAppKey     = "secrets.CAPABILITY_MATRIX_APP_KEY"
 
 	ciSupportMatrixTimeoutMinutes = 10
 	// The verify job outlasts both go test timeouts plus what runs before and
@@ -1630,6 +1637,9 @@ func verifyUpdateWorkflow(path string) error {
 }
 
 func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
+	if err := verifyUpdaterCredentialReach(path, contents); err != nil {
+		return err
+	}
 	required := []string{
 		"' M " + docsPath + "'",
 		"'M  " + docsPath + "'",
@@ -1638,10 +1648,8 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		"git add \\\n            " + manifestPath + " \\\n            " + chartPath + " \\\n            " + docsPath + "\n",
 		"permissions:\n  contents: read",
 		"needs: [prepare]",
-		"needs: [prepare, propose]",
-		"actions: write",
-		"contents: write",
-		"pull-requests: write",
+		"if [[ \"$APP_ID_CONFIGURED\" == true && \"$APP_KEY_CONFIGURED\" == true ]]; then\n            exit 0\n          fi\n",
+		"gh auth setup-git",
 		"go run ./hack/updatekubernetessupport",
 		"go test ./hack ./hack/updatekubernetessupport",
 		"go run ./hack/verify-kubernetes-support.go -output=proposal -now \"$today\"",
@@ -1668,28 +1676,14 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		".headRefOid == $sha",
 		".isCrossRepository == false",
 		".headRepository.nameWithOwner == $repo",
-		"actions/workflows/$workflow_file/runs",
-		"-f branch=\"$SUPPORT_BRANCH\"",
-		"-f event=workflow_dispatch",
-		"-f head_sha=\"$EXPECTED_SHA\"",
-		".event == \"workflow_dispatch\"",
-		".head_branch == $branch",
-		".head_sha == $sha",
-		"$before_ids | index($id)",
-		"require_dispatched_run ci.yml",
-		"require_dispatched_run release.yml",
 	}
-	// A binding the workflow states more than once has to hold at every place
-	// it appears: the proposal reads the pull request twice and the dispatch
-	// lists runs twice, and weakening one copy would leave a presence check
-	// satisfied by the other. The discover step reports a change exactly once.
+	// Each binding is stated exactly once. A second copy would let a presence
+	// check pass on whichever copy stayed strict while the other weakened.
 	repeatedBindings := []struct {
 		marker string
 		count  int
 	}{
-		{".headRefOid == $sha", 2},
-		{".head_sha == $sha", 2},
-		{"-f head_sha=\"$EXPECTED_SHA\"", 2},
+		{".headRefOid == $sha", 1},
 		{"'changed=true'", 1},
 	}
 	for _, binding := range repeatedBindings {
@@ -1703,9 +1697,9 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		}
 	}
 	for marker, expected := range map[string]int{
-		"--json state,baseRefName,headRefName,headRefOid,isCrossRepository,headRepository": 2,
-		".isCrossRepository == false":                                        2,
-		".headRepository.nameWithOwner == $repo":                             2,
+		"--json state,baseRefName,headRefName,headRefOid,isCrossRepository,headRepository": 1,
+		".isCrossRepository == false":                                        1,
+		".headRepository.nameWithOwner == $repo":                             1,
 		"git status --porcelain=v1 --untracked-files=all > \"$status_file\"": 2,
 		"41898282+github-actions[bot]@users.noreply.github.com":              3,
 	} {
@@ -1743,8 +1737,8 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!bool" || cancelInProgress.Value != "false" {
 		return fmt.Errorf("%s: support updater must serialize deliveries without canceling an active run", path)
 	}
-	if len(workflow.Jobs) != 3 {
-		return fmt.Errorf("%s: support updater must contain only prepare, propose, and dispatch jobs", path)
+	if len(workflow.Jobs) != 2 {
+		return fmt.Errorf("%s: support updater must contain only prepare and propose jobs; the App's pull request starts CI and Release itself", path)
 	}
 
 	prepare, err := requireWorkflowJob(path, workflow, "prepare")
@@ -1813,32 +1807,30 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		propose.If != "needs.prepare.outputs.changed == 'true'" ||
 		!equalStringSet(propose.Needs, []string{"prepare"}) || propose.RunsOn != "ubuntu-latest" ||
 		propose.TimeoutMinutes != 10 || propose.Environment != "" ||
-		len(propose.Env) != 0 || len(propose.Defaults) != 0 {
-		return fmt.Errorf("%s: propose must consume only a changed, successful prepare result in a 10-minute job", path)
+		len(propose.Env) != 0 || len(propose.Defaults) != 0 || len(propose.Outputs) != 0 {
+		return fmt.Errorf("%s: propose must consume only a changed, successful prepare result in a 10-minute job that exports nothing", path)
 	}
-	if !equalStringMap(propose.Permissions, map[string]string{
-		"contents":      "write",
-		"pull-requests": "write",
-	}) {
-		return fmt.Errorf("%s: propose permissions must contain only contents and pull-requests write", path)
-	}
-	if !equalStringMap(propose.Outputs, map[string]string{
-		"pr-number":      "${{ steps.support-window-pr.outputs.pr-number }}",
-		"pushed-sha":     "${{ steps.support-window-pr.outputs.pushed-sha }}",
-		"support-branch": "${{ steps.support-window-pr.outputs.support-branch }}",
-	}) {
-		return fmt.Errorf("%s: propose outputs must bind exactly to the revalidated pull request delivery", path)
+	// The workflow token only checks the base out. Writing goes through the
+	// App token, so a write permission here would be authority nothing uses.
+	if !equalStringMap(propose.Permissions, map[string]string{"contents": "read"}) {
+		return fmt.Errorf("%s: propose permissions must be contents: read only; the App token pushes and opens the pull request", path)
 	}
 	if err := verifyNoContinueOnError(path, "propose", propose); err != nil {
 		return err
 	}
 	proposeSteps, err := requireWorkflowStepOrder(path, "propose", propose, []string{
-		"checkout", "apply-bundle", "support-window-pr",
+		"app-credentials", "checkout", "apply-bundle", "app-token", "support-window-pr",
 	})
 	if err != nil {
 		return err
 	}
-	if err := verifyUpdaterActionStep(path, "propose", proposeSteps[0],
+	if err := verifyUpdaterRunStep(path, "propose", proposeSteps[0], map[string]string{
+		"APP_ID_CONFIGURED":  "${{ " + automationAppIDVar + " != '' }}",
+		"APP_KEY_CONFIGURED": "${{ " + automationAppKey + " != '' }}",
+	}); err != nil {
+		return err
+	}
+	if err := verifyUpdaterActionStep(path, "propose", proposeSteps[1],
 		"actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
 		map[string]string{
 			"ref":                 "${{ needs.prepare.outputs.base-sha }}",
@@ -1847,57 +1839,157 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		}); err != nil {
 		return err
 	}
-	if err := verifyUpdaterRunStep(path, "propose", proposeSteps[1], map[string]string{
+	if err := verifyUpdaterRunStep(path, "propose", proposeSteps[2], map[string]string{
 		"EXPECTED_BASE_SHA": "${{ needs.prepare.outputs.base-sha }}",
 		"PATCH_BASE64":      "${{ needs.prepare.outputs.patch-base64 }}",
 		"PATCH_SHA256":      "${{ needs.prepare.outputs.patch-sha256 }}",
 	}); err != nil {
 		return err
 	}
-	if err := verifyUpdaterRunStep(path, "propose", proposeSteps[2], map[string]string{
+	// This repository only, and only the two permissions the next step uses.
+	// Without the permission inputs the token would carry every permission the
+	// installation has, and without repositories its target would be whatever
+	// the action defaults to.
+	if err := verifyUpdaterActionStep(path, "propose", proposeSteps[3], createAppTokenAction,
+		map[string]string{
+			"client-id":                "${{ " + automationAppIDVar + " }}",
+			"private-key":              "${{ " + automationAppKey + " }}",
+			"repositories":             "${{ github.event.repository.name }}",
+			"permission-contents":      "write",
+			"permission-pull-requests": "write",
+		}); err != nil {
+		return err
+	}
+	if err := verifyUpdaterRunStep(path, "propose", proposeSteps[4], map[string]string{
 		"BASE_BRANCH": "${{ github.event.repository.default_branch }}",
 		"BASE_SHA":    "${{ needs.prepare.outputs.base-sha }}",
-		"GH_TOKEN":    "${{ secrets.GITHUB_TOKEN }}",
-	}); err != nil {
-		return err
-	}
-
-	dispatch, err := requireWorkflowJob(path, workflow, "dispatch")
-	if err != nil {
-		return err
-	}
-	if dispatch.Name != "Dispatch and verify exact-SHA checks" ||
-		dispatch.If != "needs.prepare.outputs.changed == 'true' && needs.propose.result == 'success'" ||
-		!equalStringSet(dispatch.Needs, []string{"prepare", "propose"}) || dispatch.RunsOn != "ubuntu-latest" ||
-		dispatch.TimeoutMinutes != 10 || dispatch.Environment != "" ||
-		len(dispatch.Env) != 0 || len(dispatch.Defaults) != 0 || len(dispatch.Outputs) != 0 {
-		return fmt.Errorf("%s: dispatch must consume only a successful exact proposal in a 10-minute job", path)
-	}
-	if !equalStringMap(dispatch.Permissions, map[string]string{
-		"actions":       "write",
-		"contents":      "read",
-		"pull-requests": "read",
-	}) {
-		return fmt.Errorf("%s: dispatch permissions must contain only actions write plus contents and pull-requests read", path)
-	}
-	if err := verifyNoContinueOnError(path, "dispatch", dispatch); err != nil {
-		return err
-	}
-	dispatchSteps, err := requireWorkflowStepOrder(path, "dispatch", dispatch, []string{"dispatch-evidence"})
-	if err != nil {
-		return err
-	}
-	if err := verifyUpdaterRunStep(path, "dispatch", dispatchSteps[0], map[string]string{
-		"BASE_BRANCH":        "${{ github.event.repository.default_branch }}",
-		"EXPECTED_BASE_SHA":  "${{ needs.prepare.outputs.base-sha }}",
-		"EXPECTED_PR_NUMBER": "${{ needs.propose.outputs.pr-number }}",
-		"EXPECTED_SHA":       "${{ needs.propose.outputs.pushed-sha }}",
-		"GH_TOKEN":           "${{ secrets.GITHUB_TOKEN }}",
-		"SUPPORT_BRANCH":     "${{ needs.propose.outputs.support-branch }}",
+		"GH_TOKEN":    "${{ steps.app-token.outputs.token }}",
 	}); err != nil {
 		return err
 	}
 	return nil
+}
+
+// verifyUpdaterCredentialReach holds what the support updater can read. The
+// step checks hold each step's env and inputs exactly, but an expression
+// written into a run script is in neither, and a context such as secrets or
+// github can be read whole, by index or with toJSON. So every expression in
+// the file is held to an exact list instead of a list of spellings to refuse:
+// the workflow token is named once, for discovery, which reads release
+// metadata (the checkouts use it implicitly and keep no credential); the App
+// id and key reach the guard, as whether they are set, and the step that mints
+// the token; the token reaches the one step that pushes the branch and talks to
+// the pull request.
+//
+// The expressions are read from the parsed document, so a YAML escape or an
+// alias cannot hide one, and a comment that quotes one does not count. An if
+// condition needs no braces and is not in the list; the job and step checks
+// hold every if exactly.
+//
+// No step may write GITHUB_ENV or GITHUB_PATH. The token action reads its
+// permission inputs from the environment, so an earlier step that exported
+// INPUT_PERMISSION-ISSUES would widen the token without touching its inputs,
+// and a directory put on the path could stand in for the git or gh that the
+// publishing step runs with the token.
+func verifyUpdaterCredentialReach(path string, contents []byte) error {
+	const dispatch = "the App's pull request starts CI and Release itself; a dispatch would start a second matrix"
+	for _, reach := range []struct {
+		marker string
+		reason string
+	}{
+		{"gh workflow run", dispatch},
+		{"/dispatches", dispatch},
+		{"GITHUB_ENV", "no step may set the environment of a later one; the token action reads its permissions from it"},
+		{"GITHUB_PATH", "no step may change the path of a later one; the publishing step runs git and gh with the App token"},
+	} {
+		if count := bytes.Count(contents, []byte(reach.marker)); count != 0 {
+			return fmt.Errorf("%s: %s: %q appears %d times", path, reach.reason, reach.marker, count)
+		}
+	}
+	got, err := workflowExpressions(path, contents)
+	if err != nil {
+		return err
+	}
+	want := updaterExpressions()
+	if maps.Equal(got, want) {
+		return nil
+	}
+	keys := slices.Collect(maps.Keys(got))
+	for expression := range want {
+		if _, ok := got[expression]; !ok {
+			keys = append(keys, expression)
+		}
+	}
+	slices.Sort(keys)
+	var drift []string
+	for _, expression := range keys {
+		if got[expression] != want[expression] {
+			drift = append(drift, fmt.Sprintf("%q: got %d, want %d", expression, got[expression], want[expression]))
+		}
+	}
+	return fmt.Errorf("%s: the support updater's expressions must be exactly the audited set, so no step reads a credential it is not given: %s",
+		path, strings.Join(drift, "; "))
+}
+
+// updaterExpressions is every expression the support updater writes, by its
+// text inside the braces, with how many times it appears.
+func updaterExpressions() map[string]int {
+	return map[string]int{
+		"github.event.repository.default_branch": 2,
+		"github.event.repository.name":           1,
+		"needs.prepare.outputs.base-sha":         3,
+		"needs.prepare.outputs.patch-base64":     1,
+		"needs.prepare.outputs.patch-sha256":     1,
+		"steps.bundle.outputs.changed":           1,
+		"steps.bundle.outputs.base-sha":          1,
+		"steps.bundle.outputs.patch-base64":      1,
+		"steps.bundle.outputs.patch-sha256":      1,
+		"secrets.GITHUB_TOKEN":                   1,
+		automationAppIDVar + " != ''":            1,
+		automationAppKey + " != ''":              1,
+		automationAppIDVar:                       1,
+		automationAppKey:                         1,
+		"steps.app-token.outputs.token":          1,
+	}
+}
+
+// workflowExpressions counts the ${{ }} expressions in every scalar of a
+// parsed workflow, by their trimmed inner text. An alias counts once for each
+// place it is used, as it does for the runner.
+func workflowExpressions(path string, contents []byte) (map[string]int, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	expressions := make(map[string]int)
+	var walk func(node *yaml.Node) error
+	walk = func(node *yaml.Node) error {
+		if node.Kind == yaml.AliasNode {
+			return walk(node.Alias)
+		}
+		for rest := node.Value; node.Kind == yaml.ScalarNode; {
+			_, after, found := strings.Cut(rest, "${{")
+			if !found {
+				break
+			}
+			inner, remainder, closed := strings.Cut(after, "}}")
+			if !closed {
+				return fmt.Errorf("%s: line %d has an unterminated expression", path, node.Line)
+			}
+			expressions[strings.TrimSpace(inner)]++
+			rest = remainder
+		}
+		for _, child := range node.Content {
+			if err := walk(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(&document); err != nil {
+		return nil, err
+	}
+	return expressions, nil
 }
 
 func verifyReleaseWorkflow(path string) error {
