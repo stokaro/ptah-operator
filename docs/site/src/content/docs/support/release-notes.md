@@ -16,6 +16,27 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.11
+
+**Before you upgrade.** A script or an alert that matches the text of a
+`MigrationJobCleanupDeferred` Event has to match `has no cleanup scheduled, so it
+stays until it is deleted by hand or with its owner` in place of `keeps its own
+deadline because its cleanup could not be scheduled`, and has to expect no such
+Event for a Job its claim names by UID while that Job is still running. A
+migration Job an earlier release left without a TTL stays until you delete it.
+
+- **A migration Job left running by an unknown run is collected.** A migration
+  Apply whose outcome went `Unknown` while its Job was still running, as when a
+  release changed the executor or the Job under it, kept its Job until the
+  resource was deleted, and the Job held a place in a `count/jobs.batch` quota.
+  So did a Job that had finished when the database lock changed hands under its
+  run. Where the claim recorded the Job's UID, the Job now takes its cleanup TTL
+  by the rule every migration run keeps its Pod log by, once it stops, and the
+  Warning that said a running Job's cleanup could not be scheduled is gone. A Job
+  whose claim never recorded its UID still stays, and a
+  `MigrationJobCleanupDeferred` Warning now names it with `its claim never
+  recorded the Job's UID`.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
