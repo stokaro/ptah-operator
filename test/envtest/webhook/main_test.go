@@ -430,7 +430,7 @@ func serveManagerHandlers() (func(), error) {
 	}
 	resultCleanup := cleanupPolicy()
 	controllerWriteValidator = &controllerwrite.Validator{
-		Reader: admin, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer, ResultCleanup: &resultCleanup,
+		Reader: unreadableOwners{Reader: admin}, Jobs: manager.builder(), ManagerUsername: manager.username, ResultCredentials: resultCredentialIssuer, ResultCleanup: &resultCleanup,
 	}
 	server.Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
 		Validator: controllerWriteValidator,

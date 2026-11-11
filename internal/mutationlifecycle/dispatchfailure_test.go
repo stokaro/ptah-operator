@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	webhookerrors "k8s.io/apiserver/pkg/admission/plugin/webhook/errors"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 )
@@ -168,6 +172,23 @@ func webhookUnreachable() error {
 		`Post "https://ptah-operator-webhook.ptah-system.svc:443/validate-operator-controller-write?timeout=10s": no endpoints available`))
 }
 
+// webhookTimedOut is the API server's answer when the Job-write webhook did not
+// answer within its timeoutSeconds: the dispatcher's call error, as
+// apierrors.NewInternalError wraps it.
+func webhookTimedOut() error {
+	return apierrors.NewInternalError(fmt.Errorf(`failed calling webhook "vcontrollerwrite.operator.ptah.run": failed to call webhook: ` +
+		`Post "https://ptah-operator-webhook.ptah-system.svc:443/validate-operator-controller-write?timeout=30s": context deadline exceeded`))
+}
+
+// jobWriteWebhookDenied is the API server's answer when the manager's Job-write
+// webhook refuses a create with code: the response controller-runtime builds
+// for it, passed through the API server's own ToStatusErr, as the validating
+// dispatcher does with every webhook that does not allow a request.
+func jobWriteWebhookDenied(code int32, message string) error {
+	response := admission.Errored(code, errors.New(message))
+	return webhookerrors.ToStatusErr("vcontrollerwrite.operator.ptah.run", response.Result)
+}
+
 // What each failed create proves. A refusal has to be an answer the API
 // server gives before it writes; everything that can follow the write, or
 // says nothing at all, stays unknown.
@@ -182,7 +203,24 @@ func TestWhatAFailedCreateProves(t *testing.T) {
 	}{
 		{"an unreachable webhook that fails closed", webhookUnreachable(), mutationlifecycle.AnswerRefused},
 		{"the same, wrapped by the caller", fmt.Errorf("create Apply Job: %w", webhookUnreachable()), mutationlifecycle.AnswerRefused},
+		// What the API server answers when the Job-write webhook takes longer
+		// than its timeoutSeconds. DispatchCriticalSection waits for this
+		// answer rather than giving up first (#973).
+		{"a webhook that fails closed and did not answer in time", webhookTimedOut(), mutationlifecycle.AnswerRefused},
 		{"a webhook denial", apierrors.NewForbidden(jobs, "apply", errors.New("admission webhook denied the request")), mutationlifecycle.AnswerRefused},
+		// The Job-write webhook answers a read it could not make with 500,
+		// and the API server keeps that code on its denial (#979).
+		{"the Job-write webhook's 500", jobWriteWebhookDenied(http.StatusInternalServerError,
+			`directly read PtahMigration team-a/orders: etcdserver: request timed out`), mutationlifecycle.AnswerRefused},
+		{"the Job-write webhook's 500, wrapped by the caller", fmt.Errorf("create Apply Job: %w", jobWriteWebhookDenied(http.StatusInternalServerError,
+			`directly read PtahMigration team-a/orders: etcdserver: request timed out`)), mutationlifecycle.AnswerRefused},
+		{"a webhook's 503", jobWriteWebhookDenied(http.StatusServiceUnavailable, "the claim cannot be read yet"), mutationlifecycle.AnswerRefused},
+		{"a webhook's denial that names an existing object", &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusConflict, Reason: metav1.StatusReasonAlreadyExists,
+			Message: `admission webhook "vcontrollerwrite.operator.ptah.run" denied the request: a Job already runs for this claim`,
+		}}, mutationlifecycle.AnswerRefused},
+		{"a webhook's denial without explanation", webhookerrors.ToStatusErr("vcontrollerwrite.operator.ptah.run",
+			&metav1.Status{Code: http.StatusInternalServerError}), mutationlifecycle.AnswerRefused},
 		{"an invalid Job", apierrors.NewInvalid(schema.GroupKind{Group: "batch", Kind: "Job"}, "apply", nil), mutationlifecycle.AnswerRefused},
 		{"a missing namespace", apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, "team-a"), mutationlifecycle.AnswerRefused},
 		{"shed by priority and fairness", apierrors.NewTooManyRequests("too many requests", 1), mutationlifecycle.AnswerRefused},
@@ -190,6 +228,18 @@ func TestWhatAFailedCreateProves(t *testing.T) {
 		{"a server timeout", apierrors.NewServerTimeout(jobs, "create", 1), mutationlifecycle.AnswerUnknown},
 		{"a gateway timeout", apierrors.NewTimeoutError("request did not complete", 1), mutationlifecycle.AnswerUnknown},
 		{"an internal error from storage", apierrors.NewInternalError(errors.New("etcdserver: request timed out")), mutationlifecycle.AnswerUnknown},
+		// The denial's words after a storage failure's own prefix are not a
+		// denial: only the message the API server starts with one is.
+		{"a storage error quoting a denial", apierrors.NewInternalError(errors.New(
+			`etcdserver: admission webhook "vcontrollerwrite.operator.ptah.run" denied the request: x`)), mutationlifecycle.AnswerUnknown},
+		{"a 500 that continues the denial's words", &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusInternalServerError,
+			Message: `admission webhook "vcontrollerwrite.operator.ptah.run" denied the requested change`,
+		}}, mutationlifecycle.AnswerUnknown},
+		{"a 500 that only names a webhook", &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusInternalServerError,
+			Message: `admission webhook "vcontrollerwrite.operator.ptah.run" is not reachable`,
+		}}, mutationlifecycle.AnswerUnknown},
 		{"a webhook named only in the message", apierrors.NewInternalError(errors.New(`storage after failed calling webhook "x"`)), mutationlifecycle.AnswerUnknown},
 		{"service unavailable", apierrors.NewServiceUnavailable("unavailable"), mutationlifecycle.AnswerUnknown},
 		{"a conflict that is not the name", apierrors.NewConflict(jobs, "apply", errors.New("conflict")), mutationlifecycle.AnswerUnknown},

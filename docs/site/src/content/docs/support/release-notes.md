@@ -56,8 +56,11 @@ status of a `kubectl ptah` wait on a migration run has to expect the statuses
 the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
 in it for one `retired` record per operation, as [A quota on result
-records](../../use/operations/#result-record-quota) says. An alert on
-`MigrationJobCleanupDeferred` can now fire for a read-only migration Job too.
+records](../../use/operations/#result-record-quota) says.
+The manager Pod now asks for a 60-second termination grace period, so a policy
+that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
+An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
+Job too.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -149,6 +152,59 @@ records](../../use/operations/#result-record-quota) says. An alert on
   namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
   Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
   Job exists, the collector retries with backoff up to every 5 minutes.
+- **The kubelet's words stay on an Apply whose Pod never started.** An Apply
+  whose Secret or key is missing reports the kubelet's words while it waits. A
+  `PtahMigration` Apply past its Job's deadline then recorded only `result frame
+  not found`, and an Apply that ended another way before its result was read
+  recorded only how it ended: its inputs changed, as when `urlFrom` is pointed at
+  the Secret that exists, its Job was deleted, replaced or left without its
+  owner, a release changed an execution component under it, or, on a
+  `PtahMigration`, its database Lease changed hands or the resource was deleted.
+  Those records now carry the words after that sentence, as what was last
+  reported: `status.lastRun` and `Blocked` on a `PtahMigration`, and
+  `ReconciliationFailed` on a `PtahSchema`. A deleted `PtahMigration` keeps them
+  in its `MigrationRunUncertain` Warning Event, and now looks at the Pod while
+  it waits for it, so a Pod that starts in that wait takes them off. Nothing is
+  added when the claim's own Job reports a Pod that succeeded.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  has the messages.
+- **A slow Job-write webhook no longer spends an approval.** A dispatch gave
+  its mark, create, read-back and record 15 seconds, while the chart gives the
+  manager's Job-write webhook 30. A webhook slower than 15 seconds made the
+  manager give up on its own create, which reads as an outcome nobody
+  established, so a single manager retired the Apply as `Unknown` and the
+  approval was spent. The dispatch now waits 40 seconds, so the API server
+  answers first: the Job is created, or the create is refused and the
+  dispatch is withdrawn with the approval kept. The write that withdraws or
+  retires the claim no longer runs on the ended context, so it lands at once
+  instead of on a later pass. A stopping manager now takes up to 50 seconds to
+  finish such a dispatch, and its Pod's termination grace period is 60
+  seconds, up from Kubernetes' default 30. `webhook.controllerWriteTimeoutSeconds`
+  is unchanged. While the webhook does not answer, each attempt holds the
+  family's one reconcile worker for those 30 seconds, and the family's other
+  resources wait behind it. A refused create is now withdrawn when something
+  wrote the resource while admission ran, such as an annotation, a label or
+  `kubectl ptah refresh`: the write made the withdrawal conflict, and the Apply
+  ended `Unknown` with its approval spent.
+- **A webhook's 500 denial keeps the approval.** The manager's Job-write
+  webhook answers a read it could not make with code 500, and the API server
+  keeps that code on the webhook's denial. The dispatcher read every 500 other
+  than a failed webhook call as an outcome nobody established, so it retired
+  the Apply as `Unknown` with its approval spent, although nothing had been
+  stored. An answer that reads `admission webhook "..." denied the request` is
+  now a refusal whatever its code: the dispatch is withdrawn and the next pass
+  makes the create again.
+- **A Job another manager is still creating is waited for.** After a node
+  pause two managers act at once until the old leader's lease runs out, and one
+  of them could read the other's dispatch mark before that manager's Job create
+  landed. It found no Job and retired the Apply as `Unknown` at once, with the
+  approval spent. A manager that finds a mutating claim marked, with no Job UID
+  recorded and no Job, now writes nothing for 55 seconds from the first time it
+  saw it so, and calls the Job lost only after that. An Apply whose manager
+  died between its mark and its create therefore goes `Unknown` up to a minute
+  later than before, and a manager that restarts in that time waits again. A
+  claim that recorded its Job's UID, and a resource being deleted, do not
+  wait.
 - **A refused read-only migration Job is collected.** A read-only migration
   claim that could not confirm the Job under its name, as after a release that
   changed the Job, ran again under a new attempt and left that Job with no TTL,

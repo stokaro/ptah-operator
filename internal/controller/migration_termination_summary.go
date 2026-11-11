@@ -7,7 +7,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -89,7 +88,7 @@ func (r *MigrationReconciler) settleUnreadMigrationApply(
 	if !standsIn {
 		return r.finishUncertainMigrationApply(ctx, migration, job,
 			withUnstartedPod(fmt.Errorf("read the Apply result: %w", parseErr),
-				meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
+				migrationPodReport(migration, job)), "")
 	}
 	return r.settleMigrationApply(ctx, migration, job, summaryMigrationApply(summary))
 }

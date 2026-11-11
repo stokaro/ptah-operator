@@ -118,7 +118,7 @@ reader of a converged schema can see exactly what produced it.
 | `webhook` |  | The admission webhook server inside the manager, which is what refuses an approval that does not name an exact plan. |
 | `webhook.port` | `9443` | Port the manager serves admission on. |
 | `webhook.timeoutSeconds` | `5` | Timeout the API server applies to the fast admission paths. |
-| `webhook.controllerWriteTimeoutSeconds` | `30` | The manager-write validator may read one schema, one plan, and up to 16 immutable plan projections of 512 KiB each. Kubernetes caps admission timeouts at 30 seconds; keep this fail-closed path at that bound independently of the fast paths. |
+| `webhook.controllerWriteTimeoutSeconds` | `30` | The manager-write validator may read one schema, one plan, and up to 16 immutable plan projections of 512 KiB each. Kubernetes caps admission timeouts at 30 seconds; keep this fail-closed path at that bound independently of the fast paths. A dispatch waits 40 seconds for the answer to its Job create, so the API server answers inside that wait. |
 | `webhook.existingSecret` | `""` | Name of a pre-provisioned kubernetes.io/tls Secret. The Secret must also contain ca.crt. Set caBundle to render the chart without cluster lookup. |
 | `webhook.caBundle` | `""` | PEM-encoded CA certificate for existingSecret. Leave empty during a connected Helm install to read ca.crt from that Secret. |
 | `certificateRotation` |  | The serving certificates the webhook presents, and the component that issues and replaces them without anybody holding a private key. |

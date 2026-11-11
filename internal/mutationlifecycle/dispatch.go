@@ -3,8 +3,9 @@ package mutationlifecycle
 // DispatchState is what a claim records about whether its Job may exist.
 //
 // Either field alone is enough. DispatchStarted is written before the one
-// permitted create and is never cleared for a mutating claim, so it is the
-// statement that a create may have committed even when no response came back.
+// permitted create, and a mutating claim clears it only after the API server
+// refused that create before storing it (WithdrawMark), so it is the statement
+// that a create may have committed even when no response came back.
 // A Job UID is only ever written after a create returned, so a claim carrying
 // one has certainly dispatched. No state holds a UID without DispatchStarted.
 type DispatchState struct {
