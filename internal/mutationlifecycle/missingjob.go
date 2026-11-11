@@ -30,14 +30,21 @@ import (
 // MissingJobGrace is how long this process watches a marked mutating claim
 // with no recorded Job UID find its Job missing before it calls the Job lost.
 //
-// Admission alone may take longer than the grace: the chart gives the
-// Job-write webhook up to 30 seconds. What keeps a create from landing after
-// the grace is below, and a change to any of it has to answer for this bound:
+// What keeps a create from landing after the grace is below, and a change to
+// any of it has to answer for this bound:
 //
 //   - The dispatching manager runs its create on the context Driver.Dispatch
-//     ends at DispatchCriticalSection. Its client abandons the create there,
-//     and that cancels the request on the API server. createLandingMargin
-//     covers the cancellation arriving and a storage write already in flight.
+//     ends at DispatchCriticalSection. That outlasts the chart's Job-write
+//     webhook timeout, so the API server normally answers first. A client
+//     that gives up there anyway cancels the request on the API server.
+//   - A refused create withdraws the mark on a context of its own, which ends
+//     by DispatchStopBound after the mark was written. The grace runs from the
+//     reader's own first sighting of the mark, which comes after the mark, and
+//     is longer than that bound, so a reader does not retire a claim whose
+//     mark is about to be taken back, which would spend an approval no Job
+//     used.
+//   - createLandingMargin covers a cancellation arriving and a storage write
+//     already in flight.
 //   - The Job-write webhook in internal/controllerwrite reads the claim
 //     uncached and refuses a create once the claim is retired or its owner is
 //     deleting. A create whose admission runs after the claim was retired is
@@ -48,10 +55,11 @@ import (
 // fails closed: a Job stored under a retired claim runs no Pod, because Pod
 // admission (internal/podintent) refuses a Pod whose claim is no longer
 // active.
-const MissingJobGrace = DispatchCriticalSection + createLandingMargin
+const MissingJobGrace = DispatchStopBound + createLandingMargin
 
 // createLandingMargin is the time the API server may still take to act on the
-// cancellation of a create abandoned at DispatchCriticalSection, or to finish
+// cancellation of a request abandoned at its bound, the create at
+// DispatchCriticalSection or the withdrawal at DispatchStopBound, or to finish
 // a storage write that was already under way when it arrived. That takes
 // milliseconds when the cluster is healthy. Five seconds is long next to it,
 // and short next to a spent approval, which costs a person the time to approve

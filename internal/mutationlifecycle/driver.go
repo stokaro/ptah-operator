@@ -196,7 +196,8 @@ type Family interface {
 	// the same boundary.
 	Mark(ctx context.Context) error
 	// Withdraw clears the dispatch marker after the API server refused the
-	// claim's one create before storing it.
+	// claim's one create before storing it. Both families implement it with
+	// WithdrawMark, which owns what a conflict means.
 	Withdraw(ctx context.Context) error
 	// Create creates the Job.
 	Create(ctx context.Context, job *batchv1.Job) error
@@ -260,9 +261,9 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 			}
 			// From the mark on, a create the shutdown interrupted would be an
 			// outcome nobody established, which only a person can clear. The
-			// mark, create, read-back and record take milliseconds, so they run
-			// to the end on a context the shutdown does not cancel. The create
-			// has to stay on it: MissingJobGrace is measured against its end.
+			// mark, create, read-back and record run to the end on a context
+			// the shutdown does not cancel. The create has to stay on it:
+			// MissingJobGrace counts on no create outliving this context.
 			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), DispatchCriticalSection)
 			defer cancel()
 			stepCtx = critical
@@ -275,14 +276,89 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 }
 
 // DispatchCriticalSection bounds the mark-to-record steps once they no longer
-// follow the reconcile's cancellation. It is shorter than the manager's
-// graceful shutdown, so a stopping manager still finishes them and exits.
+// follow the reconcile's cancellation.
 //
-// It also bounds the create. The client abandons the create when this context
-// ends, and that cancels the request on the API server, so admission does not
-// run on past it. MissingJobGrace, how long another manager waits for a marked
-// claim's Job before calling it lost, is this bound plus a margin.
-const DispatchCriticalSection = 15 * time.Second
+// It has to outlast the create's admission. The chart gives the manager's
+// Job-write webhook webhook.controllerWriteTimeoutSeconds, 30 seconds, the
+// most Kubernetes allows, and inside it the API server answers the create: it
+// stores the Job, or it refuses the create because the webhook refused it or
+// did not answer in time. Either answer settles the claim. A client that gives
+// up first has no answer, so the create reads as unknown and the claim is
+// retired with its approval spent, although the server was about to say what
+// happened (#973). TestTheCriticalSectionOutlastsJobWriteAdmission holds this
+// bound above every timeout the chart accepts.
+//
+// Forty seconds is enough because the API server bounds a create on its own:
+// apiserver's create handler gives the request at most 34 seconds
+// (requestTimeoutUpperBound in k8s.io/apiserver/pkg/endpoints/handlers), and
+// the webhook's 30 seconds run inside them. The server has answered by then,
+// so a longer section waits for nothing.
+//
+// It also bounds the create from the other side. The client abandons the
+// create when this context ends, and that cancels the request on the API
+// server, so admission does not run on past it. MissingJobGrace, how long
+// another manager waits for a marked claim's Job before calling it lost, is
+// DispatchStopBound, this section and the write after it, plus a margin.
+//
+// A dispatch holds a worker for that long. Each family's controller runs one
+// reconcile worker, the default of the pinned controller-runtime, so the
+// family's other resources wait behind a dispatch for up to DispatchStopBound.
+// A Job-write webhook that does not answer holds the worker for its whole
+// timeout on every attempt. The refused create is tried again at the per-item
+// backoff, which starts at 5 milliseconds and doubles, so it reaches the
+// webhook's 30 seconds only after about a dozen attempts, and each of them
+// holds the worker for 30 seconds. That is the cost of waiting for the answer
+// instead of spending the approval.
+const DispatchCriticalSection = jobWriteAdmissionTimeout + dispatchStepsAllowance
+
+// jobWriteAdmissionTimeout is the longest the API server waits for the
+// manager's Job-write webhook: the chart's webhook.controllerWriteTimeoutSeconds.
+const jobWriteAdmissionTimeout = 30 * time.Second
+
+// dispatchStepsAllowance is what the critical section gives the rest of its
+// work besides that wait: the mark, the create's handling outside the webhook
+// and its storage write, the read-back and the record. Each is one request,
+// which takes milliseconds while the API server is healthy.
+const dispatchStepsAllowance = 10 * time.Second
+
+// settleTimeout bounds the write that settles a create's answer: the
+// withdrawal of the mark after a refusal, or the retirement of a claim whose
+// create answered nothing that proves where the Job stands. The answer may
+// arrive as the critical section ends, or the client may have given up on it
+// there, so that write runs on a context of its own. On the ended one it would
+// fail: a refused create would keep its mark and spend its approval, and an
+// unaccounted claim would wait MissingJobGrace on the next pass before it is
+// retired.
+//
+// Ten seconds assumes requests that no admission webhook holds. The withdrawal
+// is that: a status write, and the re-read and status write WithdrawMark makes
+// after a conflict. No webhook the chart installs matches a status subresource;
+// the ValidatingAdmissionPolicy that does runs inside the API server. A
+// retirement is not always. A migration's retirement first writes the
+// unresolved-run annotation on the PtahMigration itself, which the
+// mmigrationwriter webhook admits within webhook.timeoutSeconds (5 seconds by
+// default, up to 30), and a retirement over a Job read back asks for that Job's
+// cleanup TTL through the Job-write webhook. When those outlast this bound the
+// retirement fails, and a later pass retires the claim with the same verdict,
+// after MissingJobGrace when no Job stands: the approval is spent on that path
+// either way, so only the time to the verdict moves. A withdrawal that failed
+// would change the verdict, which is why it is the write this bound is sized
+// for.
+const settleTimeout = 10 * time.Second
+
+// DispatchStopBound is the longest a dispatch that has begun may still run
+// once the manager starts stopping: the critical section, then the write that
+// settles the create's answer. The manager's graceful shutdown waits this
+// long, so a stopping manager finishes a dispatch it began and then exits.
+const DispatchStopBound = DispatchCriticalSection + settleTimeout
+
+// settling returns the context the write that settles a create's answer runs
+// on. It keeps ctx's values, such as the logger, and none of its deadline or
+// cancellation: ctx is the critical section's, which may have ended with the
+// answer.
+func settling(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+}
 
 type dispatchPass struct {
 	family   Family
@@ -399,13 +475,17 @@ func (p *dispatchPass) create(ctx context.Context, claim Claim) Outcome {
 			// Including AlreadyExists. A Job standing under the name the claim
 			// reserved may be one this claim created on a pass whose answer
 			// was lost, and retrying would dispatch beside it.
-			return Stop(p.family.Unaccounted(ctx, nil,
+			return Stop(p.unaccounted(ctx, nil,
 				fmt.Errorf("the %s Job create result is uncertain: %w", claim.Type, err)))
 		case DispositionWithdraw:
 			// The API server refused the create before storing it, so no Job
-			// stands under the name. A withdrawal that does not land leaves
-			// the mark, and the next pass retires the claim as it always has.
-			if withdrawErr := p.family.Withdraw(ctx); withdrawErr != nil {
+			// stands under the name. The family withdraws through
+			// WithdrawMark, which writes again after a conflict. A withdrawal
+			// that still does not land leaves the mark, and the claim is
+			// retired once MissingJobGrace has passed.
+			settle, cancel := settling(ctx)
+			defer cancel()
+			if withdrawErr := p.family.Withdraw(settle); withdrawErr != nil {
 				return Stop(reconcile.Result{}, fmt.Errorf(
 					"withdraw the %s dispatch after its create was refused: %w", claim.Type, errors.Join(withdrawErr, err)))
 			}
@@ -427,7 +507,7 @@ func (p *dispatchPass) confirm(ctx context.Context, claim Claim) Outcome {
 	read, err := p.family.Confirm(ctx, p.created)
 	if err != nil {
 		if DispatchFailure(StageConfirm, claim.Mutating, AnswerUnknown) == DispositionUnaccounted {
-			return Stop(p.family.Unaccounted(ctx, nil,
+			return Stop(p.unaccounted(ctx, nil,
 				fmt.Errorf("cannot confirm the dispatched %s Job: %w", claim.Type, err)))
 		}
 		// The boundary is already durable, so the next pass re-enters through
@@ -439,12 +519,20 @@ func (p *dispatchPass) confirm(ctx context.Context, claim Claim) Outcome {
 		if DispatchFailure(StageIntent, claim.Mutating, AnswerUnknown) == DispositionUnaccounted {
 			// The Job exists by now and its executor may already be opening the
 			// database, so the claim is not free to walk away from it.
-			return Stop(p.family.Unaccounted(ctx, read, failure))
+			return Stop(p.unaccounted(ctx, read, failure))
 		}
 		return Stop(p.family.Retry(ctx, failure))
 	}
 	p.created = read
 	return Proceed()
+}
+
+// unaccounted retires the claim as an outcome nobody established, on the
+// context settling gives it.
+func (p *dispatchPass) unaccounted(ctx context.Context, job *batchv1.Job, failure error) (reconcile.Result, error) {
+	settle, cancel := settling(ctx)
+	defer cancel()
+	return p.family.Unaccounted(settle, job, failure)
 }
 
 func (p *dispatchPass) record(ctx context.Context) Outcome {

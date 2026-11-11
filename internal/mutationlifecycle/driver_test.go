@@ -5,6 +5,8 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -364,5 +366,104 @@ func TestAStoppingManagerStillWithdrawsARefusedDispatch(t *testing.T) {
 	}
 	if !family.withdrawAlive || slices.Contains(family.calls, "unaccounted") {
 		t.Fatalf("a stopping manager could not take back its refused dispatch: %v", family.calls)
+	}
+}
+
+// lateAnswerTrace is a create that has no answer before the critical section
+// ends: the client gives up on it there, or the API server's answer arrives
+// just then. It writes down when the create ended and what context the write
+// that settles its answer ran on.
+type lateAnswerTrace struct {
+	familyTrace
+	answer         func(ctx context.Context) error
+	createEnded    time.Time
+	settledAt      time.Time
+	settleDeadline time.Time
+	settleBounded  bool
+	settleErr      error
+}
+
+func (f *lateAnswerTrace) Create(ctx context.Context, _ *batchv1.Job) error {
+	f.calls = append(f.calls, "create")
+	<-ctx.Done()
+	f.createEnded = time.Now()
+	return f.answer(ctx)
+}
+
+// settle is a status write: on a context that has ended it fails before it is
+// sent, as the API client's does.
+func (f *lateAnswerTrace) settle(ctx context.Context, name string) error {
+	f.calls = append(f.calls, name)
+	f.settledAt = time.Now()
+	f.settleDeadline, f.settleBounded = ctx.Deadline()
+	f.settleErr = ctx.Err()
+	return f.settleErr
+}
+
+func (f *lateAnswerTrace) Withdraw(ctx context.Context) error { return f.settle(ctx, "withdraw") }
+
+func (f *lateAnswerTrace) Unaccounted(ctx context.Context, _ *batchv1.Job, _ error) (reconcile.Result, error) {
+	return reconcile.Result{}, f.settle(ctx, "unaccounted")
+}
+
+// A create that outlived the critical section was retired as unaccounted on
+// the context that had just ended, so the retirement failed, and the next pass
+// waited MissingJobGrace before it retired the claim (#973). A refusal that
+// arrived as the section ended was no better off: its withdrawal failed the
+// same way, the mark stayed, and the approval was spent. The write that
+// settles a create's answer now runs on a context of its own, which the
+// critical section's end does not touch and which ends on its own bound.
+func TestTheWriteThatSettlesACreateOutlivesTheCriticalSection(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name   string
+		answer func(context.Context) error
+		settle string
+	}{
+		{
+			// The create may have been stored, so the claim is retired.
+			name:   "the client gave up on the create",
+			answer: func(ctx context.Context) error { return ctx.Err() },
+			settle: "unaccounted",
+		},
+		{
+			// Nothing was stored, so the mark is taken back.
+			name:   "the refusal arrived as the section ended",
+			answer: func(context.Context) error { return webhookTimedOut() },
+			settle: "withdraw",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			synctest.Test(t, func(t *testing.T) {
+				family := &lateAnswerTrace{familyTrace: familyTrace{claim: mutatingClaim()}, answer: row.answer}
+				started := time.Now()
+				_, err := (mutationlifecycle.Driver{}).Dispatch(context.Background(), family)
+
+				want := []string{"authorize", "lease", "stage", "build", "consume", "mark", "create", row.settle}
+				if !slices.Equal(family.calls, want) {
+					t.Fatalf("the family was asked %v, want %v (Dispatch error %v)", family.calls, want, err)
+				}
+				if ended := family.createEnded.Sub(started); ended != mutationlifecycle.DispatchCriticalSection {
+					t.Fatalf("the create ended %s after the dispatch began, want the critical section's end at %s",
+						ended, mutationlifecycle.DispatchCriticalSection)
+				}
+				if family.settleErr != nil {
+					t.Fatalf("the %s write ran on a context that had ended (%v), so it never landed", row.settle, family.settleErr)
+				}
+				// Its own bound is the part of the stop bound the critical
+				// section leaves, measured from the write.
+				bound := mutationlifecycle.DispatchStopBound - mutationlifecycle.DispatchCriticalSection
+				if !family.settleBounded || !family.settleDeadline.Equal(family.settledAt.Add(bound)) {
+					t.Fatalf("the %s write's context ends at %v (bounded %t), want %s after the write began at %v",
+						row.settle, family.settleDeadline, family.settleBounded, bound, family.settledAt)
+				}
+				if row.settle == "unaccounted" && err != nil {
+					t.Fatalf("Dispatch() error = %v, want the claim retired", err)
+				}
+			})
+		})
 	}
 }

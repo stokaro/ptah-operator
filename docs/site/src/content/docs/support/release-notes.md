@@ -57,6 +57,8 @@ the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
 in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
+The manager Pod now asks for a 60-second termination grace period, so a policy
+that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -164,6 +166,43 @@ records](../../use/operations/#result-record-quota) says.
   added when the claim's own Job reports a Pod that succeeded.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
   has the messages.
+- **A slow Job-write webhook no longer spends an approval.** A dispatch gave
+  its mark, create, read-back and record 15 seconds, while the chart gives the
+  manager's Job-write webhook 30. A webhook slower than 15 seconds made the
+  manager give up on its own create, which reads as an outcome nobody
+  established, so a single manager retired the Apply as `Unknown` and the
+  approval was spent. The dispatch now waits 40 seconds, so the API server
+  answers first: the Job is created, or the create is refused and the
+  dispatch is withdrawn with the approval kept. The write that withdraws or
+  retires the claim no longer runs on the ended context, so it lands at once
+  instead of on a later pass. A stopping manager now takes up to 50 seconds to
+  finish such a dispatch, and its Pod's termination grace period is 60
+  seconds, up from Kubernetes' default 30. `webhook.controllerWriteTimeoutSeconds`
+  is unchanged. While the webhook does not answer, each attempt holds the
+  family's one reconcile worker for those 30 seconds, and the family's other
+  resources wait behind it. A refused create is now withdrawn when something
+  wrote the resource while admission ran, such as an annotation, a label or
+  `kubectl ptah refresh`: the write made the withdrawal conflict, and the Apply
+  ended `Unknown` with its approval spent.
+- **A webhook's 500 denial keeps the approval.** The manager's Job-write
+  webhook answers a read it could not make with code 500, and the API server
+  keeps that code on the webhook's denial. The dispatcher read every 500 other
+  than a failed webhook call as an outcome nobody established, so it retired
+  the Apply as `Unknown` with its approval spent, although nothing had been
+  stored. An answer that reads `admission webhook "..." denied the request` is
+  now a refusal whatever its code: the dispatch is withdrawn and the next pass
+  makes the create again.
+- **A Job another manager is still creating is waited for.** After a node
+  pause two managers act at once until the old leader's lease runs out, and one
+  of them could read the other's dispatch mark before that manager's Job create
+  landed. It found no Job and retired the Apply as `Unknown` at once, with the
+  approval spent. A manager that finds a mutating claim marked, with no Job UID
+  recorded and no Job, now writes nothing for 55 seconds from the first time it
+  saw it so, and calls the Job lost only after that. An Apply whose manager
+  died between its mark and its create therefore goes `Unknown` up to a minute
+  later than before, and a manager that restarts in that time waits again. A
+  claim that recorded its Job's UID, and a resource being deleted, do not
+  wait.
 
 ## 0.2.10
 
