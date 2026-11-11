@@ -27,7 +27,10 @@ const (
 	// EnvExpectedPlanContentDigest binds apply to exact reconstructed bytes.
 	EnvExpectedPlanContentDigest = "PTAH_EXPECTED_PLAN_CONTENT_DIGEST"
 	// EnvExpectedTargetIdentityDigest binds apply to the credential-free target
-	// route identity observed before the plan was created and approved.
+	// route identity observed before the plan was created and approved. A
+	// read-only database operation that carries it is bound the same way: the
+	// reads that prove a schema Apply carry the digest of that Apply's plan.
+	// It is optional on a read, and a read without it reads any target.
 	EnvExpectedTargetIdentityDigest = "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST"
 	// EnvCoordinationDigest binds every database operation to a user-declared
 	// physical database realm without exposing its plaintext coordination key.
@@ -222,10 +225,26 @@ func environmentWithout(environment []string, excludedKeys ...string) []string {
 // every child rather than left to disagree with the flag.
 const ptahJSONEnvironment = "PTAH_JSON"
 
+// Ptah reads a flag a command declares from its PTAH_ variable. Ptah v0.23.0
+// binds PTAH_EXCLUDE and PTAH_INCLUDE to --exclude and --include on schema
+// drift and PTAH_EXCLUDE to --exclude on schema plan, and schema apply --plan
+// refuses either. The runner passes the selectors a command should obey as
+// arguments it builds itself, and the operator's PTAH_EXCLUDE is an encoded
+// list Ptah does not read the same way. So both are removed from every child:
+// a selector reaches Ptah only as an argument the runner built, and one that a
+// later Ptah starts reading cannot narrow a command with nothing in status
+// saying so.
+const (
+	ptahExcludeEnvironment = "PTAH_EXCLUDE"
+	ptahIncludeEnvironment = "PTAH_INCLUDE"
+)
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(
 		environment,
 		ptahJSONEnvironment,
+		ptahExcludeEnvironment,
+		ptahIncludeEnvironment,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,

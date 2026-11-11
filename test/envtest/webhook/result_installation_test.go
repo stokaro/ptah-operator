@@ -70,6 +70,12 @@ func TestResultChartRBACAndTrustBootstrap(t *testing.T) {
 	if installed < 10 || len(managerArgs) == 0 || len(rotatorArgs) == 0 {
 		t.Fatal("chart installation examined no complete runtime")
 	}
+	// A review sent before the authorizer has seen the chart's RBAC answers for
+	// less than the chart grants: an allowed row fails, and a refused row
+	// passes on a grant that has not arrived.
+	if err := plane.AwaitRBAC(t.Context(), release.Namespace); err != nil {
+		t.Fatal(err)
+	}
 	flags := func(args []string) map[string]string {
 		m := map[string]string{}
 		for _, arg := range args {

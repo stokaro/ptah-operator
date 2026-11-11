@@ -147,12 +147,8 @@ func Run(ctx context.Context, config Config) Result {
 			setResultError(&result, "coordination_binding_mismatch", errors.New("database coordination realm changed after planning"), redactor, config.Diagnostics)
 			return result
 		}
-		if !validProtocolDigest(inputs.ExpectedTargetDigest) {
-			setResultError(&result, "missing_target_binding", errors.New("expected target identity digest is required"), redactor, config.Diagnostics)
-			return result
-		}
-		if result.TargetIdentityDigest != inputs.ExpectedTargetDigest {
-			setResultError(&result, "target_binding_mismatch", errors.New("database target identity changed after planning"), redactor, config.Diagnostics)
+		if code, err := targetBindingRefusal(result.TargetIdentityDigest, inputs.ExpectedTargetDigest); err != nil {
+			setResultError(&result, code, err, redactor, config.Diagnostics)
 			return result
 		}
 		if config.Operation == OperationMigrationApply {
@@ -202,6 +198,21 @@ func Run(ctx context.Context, config Config) Result {
 			return result
 		}
 		mutationExecutionDeadline = executionNotAfter
+	}
+	// A read that names the target it is for reads no other. The schema
+	// controller names it on the reads that prove an Apply, whose answer
+	// counts only from the target the Apply was planned for: a read of another
+	// would log in where nothing was approved, with the credentials of a
+	// target nobody planned for, and say nothing about the Apply. The refusal
+	// is the Apply's own, and the frame names the digest the URL gave, which
+	// is what the controller stops on. A read with no expected target is how a
+	// new target is learned, so it is not bound, and a Job built before the
+	// input existed runs as it did.
+	if !config.Operation.Mutating() && operationNeedsDatabase(config.Operation) && inputs.ExpectedTargetDigest != "" {
+		if code, err := targetBindingRefusal(result.TargetIdentityDigest, inputs.ExpectedTargetDigest); err != nil {
+			setResultError(&result, code, err, redactor, config.Diagnostics)
+			return result
+		}
 	}
 	// How long a stopped child may take is part of the same authority. The
 	// deadlines above say when the child has to be stopped; the grace says how
@@ -615,7 +626,7 @@ func runPlan(
 		if err != nil {
 			return CommandSpec{}, err
 		}
-		spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_PROTECTED_TABLES")
+		spec.Env = environmentWithout(childEnvironment(environment), "PTAH_PROTECTED_TABLES")
 		for _, selector := range planExcludes {
 			spec.Args = append(spec.Args, "--exclude="+selector)
 		}
@@ -692,7 +703,6 @@ func runPlan(
 		childEnvironment(environment),
 		envSchemaFile,
 		"PTAH_DEV_URL",
-		"PTAH_EXCLUDE",
 		"PTAH_PROTECTED_TABLES",
 	)
 	if err := ensureNoCredentialsInArguments(validationSpec.Args, environmentMap(environment)); err != nil {
@@ -963,7 +973,7 @@ func planProtectedTables(environment []string) ([]string, error) {
 var protectedTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$`)
 
 func planExcludeSelectors(environment []string) ([]string, error) {
-	selectors, err := decodeEnvironmentList(environmentMap(environment)["PTAH_EXCLUDE"])
+	selectors, err := decodeEnvironmentList(environmentMap(environment)[ptahExcludeEnvironment])
 	if err != nil {
 		return nil, errors.New("PTAH_EXCLUDE is not a valid encoded selector list")
 	}
@@ -1134,12 +1144,10 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		return result
 	}
 	// Exclusions belong to the managed planning scope, and an Observe reads the
-	// raw target: Plan performs the authoritative scoped classification. Since
-	// Ptah v0.23.0 the drift command takes --exclude and --include and reads
-	// them from PTAH_EXCLUDE and PTAH_INCLUDE, so both leave its environment.
-	// The operator sets no PTAH_INCLUDE, and removing it keeps a variable added
-	// to the Job later from narrowing what the Observe reports.
-	driftSpec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_INCLUDE")
+	// raw target: Plan performs the authoritative scoped classification. The
+	// drift command passes no selector, and childEnvironment removes both
+	// selector variables from it as from every child.
+	driftSpec.Env = childEnvironment(environment)
 	driftOutcome := executeCommand(ctx, config, driftSpec)
 	// The raw structural diff may contain arbitrary schema literals. Validate
 	// it in-process, but never copy it into the framed Pod log result.
@@ -1596,6 +1604,19 @@ func sanitizedCapturedText(content []byte, redactor Redactor, truncated bool, li
 
 func outputWasTruncated(result *Result) bool {
 	return result.Truncation != nil
+}
+
+// targetBindingRefusal is the refusal of a database operation bound to an
+// expected target: the error code and the error, or an empty code and nil when
+// the URL names the target expected.
+func targetBindingRefusal(observed, expected string) (string, error) {
+	if !validProtocolDigest(expected) {
+		return "missing_target_binding", errors.New("expected target identity digest is required")
+	}
+	if observed != expected {
+		return "target_binding_mismatch", errors.New("database target identity changed after planning")
+	}
+	return "", nil
 }
 
 func operationNeedsDatabase(operation Operation) bool {
