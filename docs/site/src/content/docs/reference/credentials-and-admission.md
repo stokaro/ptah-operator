@@ -332,22 +332,29 @@ the lock changed in `InSync` and in a `LeaseContinuityLost` Event. A read that
 loses its Lease does not keep them: nothing looks at its Pod again before its Job
 stops, so `Ready` says the lock changed. A `PtahSchema` deleted while its Apply
 runs waits for it, and records `dispatched Apply Job identity was lost during
-deletion` when its Job went, or `Apply executor termination is not proven during
-deletion` when the Job stopped and no Pod showed its executor end. The status goes
-with the resource, and the Event is what stays. When the Job's one Pod shows its
-executor terminated, the deletion discards the claim and records nothing, and
-that includes an executor that never started: when the kubelet stops a Pod whose
-container is still waiting, it marks the container terminated with reason
-`ContainerStatusUnknown`.
+deletion` when its Job went, `database lock continuity was lost during Apply` when
+its database Lease changed hands while it waited, `Apply executor ended and its
+result was not read during deletion` when the Job stopped and the Job's one Pod
+showed its executor run and stop, and `Apply executor termination is not proven
+during deletion` when the Job stopped otherwise. A container terminated with
+reason `ContainerStatusUnknown` shows neither a run nor a stop: the kubelet gives
+that reason to a container that was still waiting when it stopped the Pod, as it
+does at the Job's deadline to one blocked on a missing Secret. The status goes
+with the resource, and the `ApplyOutcomeUnknown` Event is what stays: `Apply
+outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the
+database:` and the sentence, followed by `; last reported before that:` and the
+words unless a Pod the ending listed showed its executor start.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded, and a refusal is not
 added once that Job counts a Pod in any state, since the API server created one
-after all. On the endings for more than one Pod and for a Pod that does not match
-its claim, nothing is added when a Pod the ending read shows its executor running
-or terminated, as a Pod that got its Secret and then lost its node does while its
-replacement waits; `ContainerStatusUnknown` shows neither. A Pod can still start
-after the last look and fail without a result, and the failure reads the same. The
+after all. On the endings for more than one Pod, for a Pod that does not match
+its claim, and for a lost database Lease, and on every ending of a deleted
+`PtahSchema`, nothing is added when a Pod the ending read shows its executor
+running or terminated, as a Pod that got its Secret and then lost its node does
+while its replacement waits; `ContainerStatusUnknown` shows neither. A Pod can
+still start after the last look and fail without a result, and the failure reads
+the same. The
 resource looks at an Apply's Pod every 5 seconds, also while a deleted resource
 waits for it. Some endings are recorded while the Pod can still start, and a Pod
 that starts later does not change the record. A `PtahMigration` records the run
