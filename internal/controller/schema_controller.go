@@ -1037,9 +1037,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	// dispatched read-only operation: the Job keeps its own deadline, and its
 	// Pods can no longer claim an operation this schema no longer has. The claim
 	// first settles at once what it owes the Job, since it is what lets admission
-	// accept the Job's cleanup TTL. A claim of a suspended resource never waits
-	// (letGoOfReadOnlySchemaJob), so it has no words for a wait. Post-apply proof
-	// is excluded because that work outranks suspension by design.
+	// accept the Job's cleanup TTL. A claim of a suspended resource that serves no
+	// proof never waits (schemaClaimMayWait), so it has no words for a wait.
+	// Post-apply proof is excluded because that work outranks suspension by design.
 	if schema.Spec.Suspend && schema.Status.PendingObservation == nil && isReadOnlyOperation(operation) {
 		if _, _, err := r.letGoOfReadOnlySchemaJob(ctx, schema, job, ""); err != nil {
 			return ctrl.Result{}, err
@@ -1321,16 +1321,17 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	}
 	// A read under a lost epoch is discarded, but its Job is still the claim's,
 	// and its Pod may still reach the database, so the claim keeps renewing the
-	// Lease until the Job stops. It waits no longer than jobStopBound, as every
-	// read-only claim waiting for its Job does: past it, a Job that carries only
-	// FailureTarget would hold the realm forever (jobStopOverdue).
+	// Lease until the Job stops. It waits by the rule every read-only claim
+	// waiting for its Job keeps (stopWaitingForJob): not at all for a suspended
+	// resource, and no longer than jobStopBound, past which a Job that carries
+	// only FailureTarget would hold the realm forever.
 	switch {
 	case honestJob && !jobTerminal(job):
-		overdue := jobStopOverdue(job, r.now())
-		if overdue == nil {
+		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema))
+		if stop == nil {
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
-		r.schemaJobCleanupNotScheduled(schema, operation, job, overdue)
+		r.schemaJobCleanupNotScheduled(schema, operation, job, stop)
 	case honestJob && schema.DeletionTimestamp == nil:
 		if err := settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
 			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)

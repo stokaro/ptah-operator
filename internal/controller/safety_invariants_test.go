@@ -1818,6 +1818,11 @@ func TestPolicyReplacementCannotProduceInSyncFromNoChangePlan(t *testing.T) {
 	if condition := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified); condition == nil || condition.Reason != "PolicyChanged" {
 		t.Fatalf("ArtifactVerified condition = %#v, want PolicyChanged", condition)
 	}
+	// The Plan's claim is discarded, and the finished Job gets its cleanup TTL
+	// first: once no claim names it, admission admits no TTL for it.
+	if ttl := jobTTL(t, api, job); ttl == nil || *ttl != jobCleanupTTLSeconds {
+		t.Fatalf("the discarded Plan's Job cleanup TTL = %v, want %d", ttl, jobCleanupTTLSeconds)
+	}
 }
 
 func TestPendingProofCompletesBeforeAChangedPolicyTakesEffect(t *testing.T) {

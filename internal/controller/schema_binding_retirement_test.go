@@ -21,6 +21,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -476,6 +477,204 @@ func declarePodMetadata(
 	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
 }
 
+// retiredRead is a PtahSchema whose running read-only claim a rotation kept under
+// the retired epoch, and the reconciler that rotated it.
+type retiredRead struct {
+	schema     *operatorv1alpha1.PtahSchema
+	job        *batchv1.Job
+	retained   *operatorv1alpha1.ActiveOperationStatus
+	logs       *safetyCountingLogs
+	reconciler *SchemaReconciler
+	api        client.Client
+	recorder   *record.FakeRecorder
+	request    ctrl.Request
+	// holder holds the realm Lease the claim keeps, and rolloutEpoch is the
+	// epoch the rotation installed.
+	holder, rolloutEpoch string
+}
+
+// retiredReadShape is what rotateOverARunningRead stands up.
+type retiredReadShape struct {
+	// declare gives the resource declared Pod metadata, which its Job carries.
+	declare bool
+	// proof makes the claim the Observe that proves an Apply, under the Lease
+	// the Apply took, where it is otherwise a Plan under a Lease of its own.
+	proof bool
+}
+
+// retiredReadStarted is when the Job of every retired read started: a minute
+// before the clock fakeReconciler gives the reconciler.
+var retiredReadStarted = metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC))
+
+// rotateOverARunningRead stands up a running read-only claim whose Job started at
+// retiredReadStarted with the deadline a built Job carries, takes the pass that
+// rotates the execution binding over it, and fails unless the rotation kept the
+// claim, recorded its Job, and left its Lease held.
+func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
+	t.Helper()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	if shape.declare {
+		schema.Spec.Execution.PodMetadata = &operatorv1alpha1.PodMetadataSpec{
+			Labels:      map[string]operatorv1alpha1.PodLabelValue{"acme.example/team": "platform"},
+			Annotations: map[string]operatorv1alpha1.PodAnnotationValue{"sidecar.istio.io/inject": "false"},
+		}
+	}
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		RequestedReference: schema.Spec.Desired.OCIRef,
+		ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
+		Digest:             testDigest, ArtifactType: "application/vnd.stokaro.ptah.schema.v1", Verified: true,
+		VerificationPolicyUID: testPolicyUID, VerificationPolicyDigest: testDigest,
+	}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		Engine: schema.Spec.Target.Engine, CoordinationDigest: testCoordinationDigest,
+		IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
+	}
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationPlan, ID: "retired-running-plan", JobUID: "job-uid",
+		StartedAt: metav1.Now(), Attempt: 1,
+	}
+	if shape.proof {
+		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+		schema.Status.PendingObservation = safetyPostApplyObserveSchema(t).Status.PendingObservation
+		schema.Status.ActiveOperation.Type = operatorv1alpha1.OperationObserve
+		schema.Status.ActiveOperation.ID = "retired-running-proof"
+	}
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
+	if shape.declare {
+		declarePodMetadata(t, schema, job, schema.Status.ActiveOperation)
+	}
+	job.Spec.ActiveDeadlineSeconds = ptr(int64(900))
+	job.Status.StartTime = &retiredReadStarted
+	job.Status.Conditions = nil
+	pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
+	retiredEpoch := schema.Status.ExecutionBinding.Epoch
+	retained := schema.Status.ActiveOperation.DeepCopy()
+	logs := &safetyCountingLogs{content: []byte("a retired read's result must not be read")}
+	reconciler, api := fakeReconciler(t, logs, schema, job, pod)
+	reconciler.Jobs = rotatedJobs
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
+	if holder == "" {
+		t.Fatal("the running read's claim holds no Lease, so nothing measures one")
+	}
+
+	reconcileRetirementPass(t, reconciler, request, "rotate over a running read")
+	rotated := safetyGetSchema(t, api, schema)
+	rolloutEpoch := rotated.Status.ExecutionBinding.Epoch
+	if rolloutEpoch == retiredEpoch || rotated.Status.ActiveOperation == nil ||
+		rotated.Status.ActiveOperation.ID != retained.ID || rotated.Status.PendingLockRelease != nil {
+		t.Fatalf("rotation did not keep the running read-only claim: %#v", rotated.Status)
+	}
+	wantRetirement(t, rotated, &operatorv1alpha1.BindingRetirementStatus{
+		RetiredEpoch: retiredEpoch,
+		Job: &operatorv1alpha1.RetiredJobStatus{
+			Operation: retained.Type, Name: retained.JobName, UID: retained.JobUID,
+		},
+	})
+	if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != holder {
+		t.Fatalf("the rotation handed the running read's Lease to %q, want it kept by %q", got, holder)
+	}
+	return retiredRead{
+		schema: schema, job: job, retained: retained, logs: logs,
+		reconciler: reconciler, api: api, recorder: recorder, request: request,
+		holder: holder, rolloutEpoch: rolloutEpoch,
+	}
+}
+
+// A rotation keeps a read-only claim over a running Job for as long as the Job
+// may still reach the database, by the rule every read-only claim waiting for its
+// Job keeps: no longer than the Job's own deadline, the grace its Pods are given
+// and 30 seconds of slack, dated from the Job's own start, and not at all while
+// the resource is suspended. A Job past its deadline carries only FailureTarget
+// until every Pod has terminated, and a Pod on a node that is gone may never
+// terminate, so a wait with no bound would hold the realm forever. A claim that
+// stops waiting is retired with its Lease handed back and the record cleared,
+// and a Warning names the Job, which has no TTL. The Observe that proves an Apply
+// waits under a suspension too, as proof outranks suspension.
+func TestARetiredReadOnlyClaimWaitsForItsJobOnlyUntilItStops(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		shape retiredReadShape
+		// past dates the pass at the Job's stop bound rather than a second
+		// before it, and suspend suspends the resource first.
+		past, suspend bool
+		// stays is what the Warning says of the Job the claim stops waiting
+		// for, or empty where the claim waits on.
+		stays string
+	}{
+		{name: "inside its stop bound"},
+		{name: "at its stop bound", past: true, stays: "the Job did not stop by its own deadline"},
+		{name: "suspended inside its stop bound", suspend: true, stays: notWaited},
+		{name: "suspended while it proves an Apply", shape: retiredReadShape{proof: true}, suspend: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := rotateOverARunningRead(t, row.shape)
+			reconciler, api := run.reconciler, run.api
+			stopBy := jobStopBound(run.job)
+			if want := retiredReadStarted.Add(900*time.Second + 60*time.Second); !stopBy.Equal(want) {
+				t.Fatalf("the Job's stop bound = %s, want %s from its start, deadline, grace and slack", stopBy, want)
+			}
+			clock := &safetyClock{now: stopBy.Add(-time.Second)}
+			if row.past {
+				clock.now = stopBy
+			}
+			reconciler.Clock = clock.Now
+			reconciler.Locks = targetlock.New(api, api, clock)
+			if row.suspend {
+				suspended := safetyGetSchema(t, api, run.schema)
+				suspended.Spec.Suspend = true
+				if err := api.Update(context.Background(), suspended); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result := reconcileRetirementPass(t, reconciler, run.request, "decide whether to wait for the running Job")
+			got := safetyGetSchema(t, api, run.schema)
+			events := migrationEvents(run.recorder)
+			if ttl := jobTTL(t, api, run.job); ttl != nil {
+				t.Fatalf("the running retired Job's TTL = %d, want none", *ttl)
+			}
+			if run.logs.reads != 0 {
+				t.Fatalf("the retired read's result was read %d times", run.logs.reads)
+			}
+			if row.stays == "" {
+				if got.Status.ActiveOperation == nil || got.Status.ActiveOperation.ID != run.retained.ID ||
+					got.Status.PendingBindingRetirement == nil || result.RequeueAfter != maxLockContentionPoll {
+					t.Fatalf("the retired claim did not wait for its running Job: result %#v, status %#v", result, got.Status)
+				}
+				if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != run.holder {
+					t.Fatalf("the waiting claim's Lease is held by %q, want %q", leased, run.holder)
+				}
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job the claim still waits for is named as staying: %q", events)
+				}
+				return
+			}
+			if got.Status.ActiveOperation != nil || got.Status.PendingBindingRetirement != nil ||
+				got.Status.PendingLockRelease != nil || got.Status.ExecutionBinding.Epoch != run.rolloutEpoch {
+				t.Fatalf("the retired claim was not retired with its record cleared: %#v", got.Status)
+			}
+			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
+				t.Fatalf("the retired claim's Lease is still held by %q", leased)
+			}
+			if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
+			}
+		})
+	}
+}
+
 // A rotation keeps a read-only claim whose Job may still reach the database,
 // and the claim goes on holding the Lease it took until that Job stops,
 // whatever the controller can prove about the Job's envelope. Only then is the
@@ -530,63 +729,10 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 
-			schema := schemaFixture()
-			schema.Finalizers = []string{activeOperationFinalizer}
-			if row.declare {
-				schema.Spec.Execution.PodMetadata = &operatorv1alpha1.PodMetadataSpec{
-					Labels:      map[string]operatorv1alpha1.PodLabelValue{"acme.example/team": "platform"},
-					Annotations: map[string]operatorv1alpha1.PodAnnotationValue{"sidecar.istio.io/inject": "false"},
-				}
-			}
-			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
-				RequestedReference: schema.Spec.Desired.OCIRef,
-				ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
-				Digest:             testDigest, ArtifactType: "application/vnd.stokaro.ptah.schema.v1", Verified: true,
-				VerificationPolicyUID: testPolicyUID, VerificationPolicyDigest: testDigest,
-			}
-			schema.Status.Target = operatorv1alpha1.TargetStatus{
-				Engine: schema.Spec.Target.Engine, CoordinationDigest: testCoordinationDigest,
-				IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
-			}
-			schema.Status.Phase = operatorv1alpha1.PhasePlanning
-			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-				Type: operatorv1alpha1.OperationPlan, ID: "retired-running-plan", JobUID: "job-uid",
-				StartedAt: metav1.Now(), Attempt: 1,
-			}
-			bindActiveInput(t, schema)
-			job, pod := terminalWorkload(schema, batchv1.JobComplete)
-			bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
-			if row.declare {
-				declarePodMetadata(t, schema, job, schema.Status.ActiveOperation)
-			}
-			job.Status.Conditions = nil
-			pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
-			retiredEpoch := schema.Status.ExecutionBinding.Epoch
-			retained := schema.Status.ActiveOperation.DeepCopy()
-			logs := &safetyCountingLogs{content: []byte("a retired Plan result must not be read")}
-			reconciler, api := fakeReconciler(t, logs, schema, job, pod)
-			reconciler.Jobs = rotatedJobs
-			recorder := record.NewFakeRecorder(64)
-			reconciler.Recorder = recorder
-			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
-			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
-			if holder == "" {
-				t.Fatal("the running Plan's claim holds no Lease, so nothing below measures one")
-			}
-
-			reconcileRetirementPass(t, reconciler, request, "rotate over a running Plan")
-			rotated := safetyGetSchema(t, api, schema)
-			rolloutEpoch := rotated.Status.ExecutionBinding.Epoch
-			if rolloutEpoch == retiredEpoch || rotated.Status.ActiveOperation == nil ||
-				rotated.Status.ActiveOperation.ID != retained.ID || rotated.Status.PendingLockRelease != nil {
-				t.Fatalf("rotation did not keep the running read-only claim: %#v", rotated.Status)
-			}
-			wantRetirement(t, rotated, &operatorv1alpha1.BindingRetirementStatus{
-				RetiredEpoch: retiredEpoch,
-				Job: &operatorv1alpha1.RetiredJobStatus{
-					Operation: operatorv1alpha1.OperationPlan, Name: retained.JobName, UID: retained.JobUID,
-				},
-			})
+			run := rotateOverARunningRead(t, retiredReadShape{declare: row.declare})
+			schema, job, retained, logs := run.schema, run.job, run.retained, run.logs
+			reconciler, api, recorder, request := run.reconciler, run.api, run.recorder, run.request
+			holder, rolloutEpoch := run.holder, run.rolloutEpoch
 
 			rewriteRetirementVerdicts(t, api, schema, row.breakRecord)
 			result := reconcileRetirementPass(t, reconciler, request, "wait for the running Plan Job")

@@ -231,8 +231,16 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 		// The claim is what holds a Plan's Lease while its Pod can still reach
 		// the database, so it waits for a Job of this resource under the
 		// recorded name to stop, whether or not the envelope below would let
-		// the controller touch it.
-		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+		// the controller touch it. It waits by the rule every read-only claim
+		// keeps: not at all for a suspended resource, and no longer than the
+		// Job's stop bound, past which a Job that carries only FailureTarget
+		// would hold the realm forever. A Job left running is named, since the
+		// claim is the last thing that could have collected it.
+		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema))
+		if stop == nil {
+			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+		}
+		r.schemaJobCleanupNotScheduled(schema, operation, job, stop)
 	case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
 		if err := settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
 			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
@@ -274,7 +282,8 @@ func retiredJobIsTheClaims(
 // under the name the record holds -- its UID the recorded one, or none
 // recorded yet -- and has not reached a terminal condition. It asks nothing
 // about the envelope: a Job whose envelope the controller cannot prove is
-// never touched, but it can still be running.
+// never touched, but it can still be running. How long the claim waits for
+// such a Job is stopWaitingForJob's decision.
 func retiredJobMayStillRun(
 	schema *operatorv1alpha1.PtahSchema,
 	retired *operatorv1alpha1.RetiredJobStatus,

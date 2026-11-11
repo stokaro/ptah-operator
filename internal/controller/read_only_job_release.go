@@ -61,9 +61,10 @@ const (
 // of it: suspension is the stop button. Such a claim settles at once what it can.
 // A finished Job gets its TTL, and a Warning names a running one, which admission
 // will not let any claim collect once this one is gone. It records no UID for a
-// Job it cannot collect anyway.
+// Job it cannot collect anyway. A PtahSchema claim that serves post-apply proof
+// is the exception (schemaClaimMayWait), since that work outranks suspension.
 //
-// The wait ends by jobStopBound (jobStopOverdue).
+// The wait ends by jobStopBound (stopWaitingForJob).
 func releaseReadOnlyJob(
 	job *batchv1.Job,
 	verdict mutationlifecycle.JobVerdict,
@@ -80,17 +81,36 @@ func releaseReadOnlyJob(
 		return leaveReadOnlyJobUncollected,
 			fmt.Errorf("admission admits a cleanup only on a Job its claim fixes: %w", envelope)
 	case !mayWait && !jobTerminal(job):
-		return leaveReadOnlyJobUncollected, errors.New(
-			"a suspended claim does not wait for its Job to stop, and admission admits a cleanup only on a Job that has finished")
+		return leaveReadOnlyJobUncollected, errSuspendedClaimDoesNotWait
 	case verdict == mutationlifecycle.VerdictAdopt:
 		return recordReadOnlyJob, nil
 	case jobTerminal(job):
 		return collectReadOnlyJob, nil
 	}
-	if overdue := jobStopOverdue(job, now); overdue != nil {
-		return leaveReadOnlyJobUncollected, overdue
+	if stop := stopWaitingForJob(job, now, mayWait); stop != nil {
+		return leaveReadOnlyJobUncollected, stop
 	}
 	return waitForReadOnlyJob, nil
+}
+
+// errSuspendedClaimDoesNotWait is why a claim of a suspended resource leaves the
+// running Job under its name without a cleanup.
+var errSuspendedClaimDoesNotWait = errors.New(
+	"a suspended claim does not wait for its Job to stop, and admission admits a cleanup only on a Job that has finished")
+
+// stopWaitingForJob is why a read-only claim over a running Job it owes a cleanup
+// stops waiting for that Job and lets go of it, or nil while it may wait on. It is
+// the rule every such wait keeps in either family, releaseReadOnlyJob's and the
+// two a PtahSchema keeps over the Lease its claim holds: the wait of a claim an
+// execution-binding change retired (cleanupRetiredReadOnlyJob) and the wait of a
+// claim whose Lease epoch moved (recoverLeaseContinuity). A claim that may not
+// wait, one of a suspended resource, does not wait at all, and no claim waits past
+// the Job's stop bound (jobStopOverdue).
+func stopWaitingForJob(job *batchv1.Job, now time.Time, mayWait bool) error {
+	if !mayWait {
+		return errSuspendedClaimDoesNotWait
+	}
+	return jobStopOverdue(job, now)
 }
 
 // jobStopOverdue is why a claim stops waiting for a running Job it owes a

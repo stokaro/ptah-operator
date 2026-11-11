@@ -455,15 +455,21 @@ target.
 `spec.suspend` prevents new Jobs. A Job already applying is still observed to a
 terminal result, because abandoning it would leave the database in a state
 nothing recorded. So is a read that serves a proof, and the proof keeps the
-Lease until it ends. Any other read under way is dropped, and the status write
-that drops it stages the release of any Lease it holds. The read's Job gets its
-cleanup TTL first where it has finished; a Warning Event names one still
-running, which no claim can collect once this one is gone.
+Lease until it ends. A proof read whose Job this release cannot confirm waits
+for that Job to stop, as it would on a resource that is not suspended, and
+gives it its cleanup TTL before it reads again. Any other read under way is
+dropped, and the status write that drops it stages the release of any Lease it
+holds. The read's Job gets its cleanup TTL first where it has finished; a
+Warning Event names one still running, which no claim can collect once this one
+is gone.
 
 `leaseContinuityLost` is set before any result can be harvested when the
 persisted epoch no longer owns an uninterrupted lock interval. A result
 produced across an epoch change is discarded rather than read: the lock it held
-was somebody else's by then.
+was somebody else's by then. The read waits for its Job to stop first, renewing
+the Lease, no longer than the Job's deadline, the grace of its Pods and 30
+seconds, and not at all once the resource is suspended unless it serves a
+proof.
 
 ## The migration lifecycle
 
