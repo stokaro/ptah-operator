@@ -47,7 +47,8 @@ type PlanChunkReference struct {
 //     row security switched off or unforced on a table.
 //   - SecurityDefiner: code set to run with its owner's rights rather than its
 //     caller's, which a MySQL or MariaDB routine does unless it says SQL
-//     SECURITY INVOKER.
+//     SECURITY INVOKER, or a change to the rights an existing PostgreSQL view
+//     reads with.
 //   - Definer: a MySQL DEFINER clause naming the account a view, routine,
 //     trigger or event runs as.
 //   - FunctionReplacement: CREATE OR REPLACE of a function or procedure, which

@@ -90,6 +90,9 @@ type ResultCredentialValidator interface {
 
 // Validator checks requests using uncached API reads. Reader must be the
 // manager's direct API reader, never its informer cache.
+// mutationlifecycle.MissingJobGrace relies on that read: a Job create is
+// refused once another manager has retired its claim, not once a cache has
+// caught up.
 type Validator struct {
 	Reader          client.Reader
 	Jobs            JobBuilder

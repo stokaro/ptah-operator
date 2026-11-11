@@ -194,7 +194,7 @@ func authorizationText(authorization *operatorv1alpha1.MigrationRunAuthorization
 //
 // gate is what stops the resource before the history read that would clear
 // the record, or empty when nothing the status shows does. last is the last run,
-// which says whether the hold's database was named or assumed.
+// which says whether the hold's database was named or is its plan's.
 func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *UnresolvedRunView, last *RunView) {
 	if run == nil {
 		return
@@ -221,9 +221,9 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 		"While this record stands no plan is published and no Apply is dispatched; " +
 			"resolve, verify and the history read go on.",
 		"The database is the one the run named or, where it named none, " +
-			"the one its plan was computed against: where to start looking, not proof of where the run went. " +
-			"A reader who inspects the wrong database finds nothing wrong and settles a record that was " +
-			"telling the truth.",
+			"the one its plan was computed against. The runner starts nothing against a database other than " +
+			"its plan's, so the run changed this one or none. A reader who inspects another database, such as " +
+			"a replica or a restored copy, finds nothing wrong and settles a record that was telling the truth.",
 		"Establish what the run did there first. A history read of that database that finds nothing " +
 			"of the artifact left to apply clears the record by itself. If the database is accounted " +
 			"for and still has work pending, settle it with a PtahMigrationRunAcknowledgment naming " +
@@ -239,12 +239,12 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 	}
 }
 
-// holdDatabaseText says which database a hold names, and that it is assumed when
+// holdDatabaseText says which database a hold names, and that it is its plan's when
 // the record of that same run names none. A hold beside no record of its run, or one
 // a release before that field recorded, does not say which it is, so neither does this.
 func holdDatabaseText(run *UnresolvedRunView, last *RunView) string {
 	if last != nil && last.OperationID == run.OperationID && last.TargetIdentityDigest == "" {
-		return run.TargetIdentityDigest + " (target identity digest, assumed: the run named none, and its plan was computed against this one)"
+		return run.TargetIdentityDigest + " (target identity digest of its plan: the run named none, and the runner starts nothing against another)"
 	}
 	return run.TargetIdentityDigest + " (target identity digest)"
 }

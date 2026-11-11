@@ -144,6 +144,10 @@ func failuresWithNoKind() map[string]*runner.ResultError {
 		"a code that resembles a kind":   {Code: "Database_Unreachable", Message: "ptah exited with code 2"},
 		"a kind outside the vocabulary":  {Code: "quota_exhausted", Message: frameText},
 		"an output the operator refused": {Code: "invalid_plan_output", Message: "plan command did not complete successfully"},
+		// The runner writes it for a Plan that failed in a way no kind names
+		// and whose file would not parse, such as one whose server dropped
+		// the connection.
+		"a file that does not parse": {Code: runner.CodeDesiredSourceUnreadable, Message: "error parsing schema file: schema.sql:2:1: expected column name"},
 	}
 }
 
@@ -811,6 +815,8 @@ func plansThatReadTheTarget() map[string]*runner.ResultError {
 		"two reads that differ":           {Code: "unstable_plan", Message: "consecutive plan reads did not return identical bytes"},
 		"a plan that holds a credential":  {Code: "credential_leak", Message: "plan output contains a protected credential or URL password"},
 		"a plan that could not be sealed": {Code: "plan_seal_failed", Message: "seal the plan"},
+		"a schema invalid as a whole": {Code: runner.CodeDesiredSchemaInvalid,
+			Message: `schema.sql: invalid foreign key: field "other" references unknown table "nope"`},
 	}
 }
 
@@ -893,8 +899,36 @@ func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 	}
 }
 
-// Those codes speak for a Plan. On another operation, which the runner never
-// writes them for, they say nothing about the target.
+// An Observe compares the declaration with what it read, as a Plan does, so a
+// declaration that cannot be compared says the Observe read the target. It
+// usually stops there, before any Plan runs (#924).
+func TestAnObserveThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
+	t.Parallel()
+	previous := previousReachability()["a target that refused"]
+	failure := plansThatReadTheTarget()["a schema invalid as a whole"]
+	observed := 0
+	for _, path := range targetOpeningSchemaPaths() {
+		if path.operation != runner.OperationObserve {
+			continue
+		}
+		observed++
+		t.Run(path.name, func(t *testing.T) {
+			t.Parallel()
+			_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
+			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
+			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
+				failed := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReconciliationFailed)
+				return failed != nil && failed.Status == metav1.ConditionTrue && strings.HasPrefix(failed.Message, failure.Code+": ")
+			})
+		})
+	}
+	if observed != 2 {
+		t.Fatalf("examined %d Observe paths, want the ordinary one and the proof", observed)
+	}
+}
+
+// The rest of those codes speak for a Plan alone. On another operation, which
+// the runner never writes them for, they say nothing about the target.
 func TestThoseCodesSpeakOnlyForAPlan(t *testing.T) {
 	t.Parallel()
 	previous := previousReachability()["a target that refused"]
@@ -903,6 +937,9 @@ func TestThoseCodesSpeakOnlyForAPlan(t *testing.T) {
 			continue
 		}
 		for name, failure := range plansThatReadTheTarget() {
+			if path.operation == runner.OperationObserve && failure.Code == runner.CodeDesiredSchemaInvalid {
+				continue
+			}
 			t.Run(path.name+"/"+name, func(t *testing.T) {
 				t.Parallel()
 				_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
