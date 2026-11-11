@@ -222,10 +222,26 @@ func environmentWithout(environment []string, excludedKeys ...string) []string {
 // every child rather than left to disagree with the flag.
 const ptahJSONEnvironment = "PTAH_JSON"
 
+// Ptah reads a flag a command declares from its PTAH_ variable. Ptah v0.23.0
+// binds PTAH_EXCLUDE and PTAH_INCLUDE to --exclude and --include on schema
+// drift and PTAH_EXCLUDE to --exclude on schema plan, and schema apply --plan
+// refuses either. The runner passes the selectors a command should obey as
+// arguments it builds itself, and the operator's PTAH_EXCLUDE is an encoded
+// list Ptah does not read the same way. So both are removed from every child:
+// a selector reaches Ptah only as an argument the runner built, and one that a
+// later Ptah starts reading cannot narrow a command with nothing in status
+// saying so.
+const (
+	ptahExcludeEnvironment = "PTAH_EXCLUDE"
+	ptahIncludeEnvironment = "PTAH_INCLUDE"
+)
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(
 		environment,
 		ptahJSONEnvironment,
+		ptahExcludeEnvironment,
+		ptahIncludeEnvironment,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,
