@@ -1556,9 +1556,12 @@ statements. So `kubectl delete ptahmigration` blocks while the dispatched Job
 is unfinished or a Pod it owns has not stopped. Once nothing can write, a claim
 that dispatched something records the run `Unknown`, because nothing read what
 it did; a claim that only reserved a Job name records nothing, because nothing
-ran. Both hand the database Lease back and then release the resource. A
-read-only operation is not waited on: its Job reads and reports, and deletion
-discards the claim and goes.
+ran. Both hand the database Lease back and then release the resource, and the
+garbage collector deletes the Job and its Pod with it. The Pod log goes with the
+Pod, so read it before you delete the resource if you need it:
+`kubectl logs -n <namespace> job/<name> -c ptah`, where `<name>` is
+`status.activeOperation.jobName`. A read-only operation is not waited on: its
+Job reads and reports, and deletion discards the claim and goes.
 
 Use the default propagation. `kubectl delete --cascade=foreground` asks
 Kubernetes to remove the resource's dependents before the resource, and the
@@ -2445,7 +2448,14 @@ and a `FailedApplyLogShortened` Warning Event and a line in the manager's log sa
 so.
 
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
-Pod's log with it sooner, and deleting the resource collects the Job with it. A
+Pod's log with it sooner, and deleting the resource collects the Job with it. So the
+`MigrationRunUncertain` Warning Event of a `PtahMigration` deleted while its Apply
+waited names the Job and says the Job and its Pod are deleted with the resource, in
+place of the `kubectl logs` command. A deletion with `--cascade=orphan` leaves the
+Job behind. The Event then points at its log when the manager gave the Job its TTL
+before the garbage collector took the owner reference off; otherwise admission
+refuses the TTL, and a `MigrationJobCleanupDeferred` Warning Event names the Job,
+which stays until it is deleted. A
 retained Job counts toward a `count/jobs.batch` quota, and a full quota stops every
 operation in the namespace, because each one needs a Job. Once you have read a finished
 Job's log, `kubectl delete job -n <namespace> <job>` frees the quota and takes the Pod

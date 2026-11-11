@@ -1400,6 +1400,37 @@ func unrecordedMigrationJobRefusal(migration *operatorv1alpha1.PtahMigration, jo
 	return nil
 }
 
+// migrationApplyLogPointer is failedApplyLogPointer for a migration's Apply Job,
+// which a deletion takes with the resource.
+//
+// The resource controls its Job, and the Job its Pods. Once the finalizer comes
+// off, the garbage collector deletes the Job and its Pod with the PtahMigration,
+// and the log goes with the Pod. The TTL is still asked for, but it does not
+// keep the Job past its owner. So a deleted resource's record says the log goes,
+// rather than where to read it for a day.
+//
+// That holds only for a Job the garbage collector deletes with this resource. A
+// deletion that orphans dependents takes the owner reference off the Job, and
+// the resource carries the orphan finalizer until it has. Such a Job outlives
+// the resource for its TTL, so it gets the usual pointer, which is empty when
+// admission refused it a TTL.
+func migrationApplyLogPointer(
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	reading applyLogReading,
+) string {
+	if migration.DeletionTimestamp == nil || job == nil || !metav1.IsControlledBy(job, migration) ||
+		slices.Contains(migration.Finalizers, metav1.FinalizerOrphanDependents) {
+		return failedApplyLogPointer(job, reading)
+	}
+	subject := applyLogSubject(reading)
+	if subject == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s is in the Pod log of Job %s, and the Job and its Pod are deleted with the PtahMigration",
+		subject, job.Name)
+}
+
 // retireUncertainMigrationApply is finishUncertainMigrationApply for a caller
 // that already knows whether anything the claim dispatched can still write.
 func (r *MigrationReconciler) retireUncertainMigrationApply(
@@ -1459,7 +1490,7 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 				r.migrationJobCleanupNotScheduled(migration, operation, job, err)
 			}
 		}
-		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, failure)); pointer != "" {
+		if pointer := migrationApplyLogPointer(migration, job, failedApplyLogReading(ctx, r.directReader(), job, failure)); pointer != "" {
 			failure = fmt.Errorf("%w. %s", failure, pointer)
 		}
 	}

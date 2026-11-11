@@ -60,7 +60,8 @@ records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too.
+Job too. A script that reads the `kubectl logs` command out of the
+`MigrationRunUncertain` Event of a deleted `PtahMigration` finds none there now.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -219,6 +220,16 @@ Job too.
   refuse, such as one under another execution epoch or one whose claim never
   recorded its UID, is left at once, and so is one that has not finished by then.
   A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
+- **A deleted migration no longer points at a log it takes with it.** A
+  `PtahMigration` deleted while its Apply waited records the run `Unknown`, and
+  its `MigrationRunUncertain` Warning Event said the Pod log stayed for 24 hours
+  and gave the `kubectl logs` command. The next pass releases the resource, and
+  the garbage collector deletes the Job and its Pod with it, so the command found
+  nothing. The Event now names the Job and says the Job and its Pod are deleted
+  with the resource. A Job that outlives the resource, as under
+  `kubectl delete --cascade=orphan`, keeps the pointer where it has a TTL. Read the
+  log before you delete the resource if you need it, as
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
 
 ## 0.2.10
 
