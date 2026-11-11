@@ -1607,12 +1607,14 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 and it is a statement that nothing is executing against that database any more.
 
 A deleted `PtahSchema` waits the same way for an Apply, a Plan or the Observe
-that proves an Apply, and says which Pod it waits for. Once the Job is past its
-own deadline, the termination grace its Pods are given and 30 seconds more, a
+that proves an Apply, and for the Pod of an Apply that ended while it still ran,
+and says which Pod it waits for. Once the Job is past its own deadline, the
+termination grace its Pods are given and 30 seconds more, a
 `PodStuckTerminating` Warning Event names each Pod of the Job that is being
-deleted and has not stopped, with its node. It comes again 30 seconds later,
-then twice as long after each time, up to every 5 minutes. Once the node is
-known to be gone, delete the Pod without waiting for its kubelet:
+deleted, is past its own grace period and has not stopped, with its node. It
+comes again 30 seconds later, then twice as long after each time, up to every 5
+minutes. Once the node is known to be gone, delete the Pod without waiting for
+its kubelet:
 
 ```sh
 kubectl delete pod -n <namespace> <pod> --force --grace-period=0

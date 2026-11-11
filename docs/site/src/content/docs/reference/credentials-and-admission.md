@@ -345,10 +345,12 @@ resource, and the `ApplyOutcomeUnknown` Event is what stays: `Apply
 outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the
 database:` and the sentence, followed by `; last reported before that:` and the
 words unless a Pod the ending listed showed its executor start. A live
-`PtahSchema` reads such a container the same way: it asks for no log, records
-`apply result is uncertain: ptah runner result frame not found` and the words,
-and reads the database only once the Apply's execution deadline and its grace
-period have passed.
+`PtahSchema` reads such a container the same way, and reads the database only
+once the Apply's execution deadline and its grace period have passed. With
+`resultDelivery.enabled=false` it asks for no log and takes the log as gone, so
+it records `apply result is uncertain: the result log is gone: the kubelet ended
+container "ptah" of Pod <pod> with ContainerStatusUnknown and serves no log for
+it` and the words.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded, and a refusal is not

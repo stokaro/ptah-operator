@@ -15,11 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // A live PtahSchema decides how its Apply ended from the executor's own state,
@@ -27,16 +30,88 @@ import (
 // with no container ID, for an executor it has no status for: one that never
 // started, when the Pod is stopped, and one the container runtime stopped
 // reporting while it ran. It serves no log for either and the termination
-// proves no stop, so the harvest asks for no log, waits for the Apply's
-// horizon, and points at no Pod log. The fake client runs no Job controller and
-// no kubelet, so each row writes the state a supported cluster leaves.
+// proves no stop, so the harvest asks for no log, takes it as gone at once,
+// waits for the Apply's horizon, and points at no Pod log. The fake client runs
+// no Job controller and no kubelet, so each row writes the state a supported
+// cluster leaves.
 
 const (
 	outcomeUnknownEvent    = "Warning ApplyOutcomeUnknown Apply outcome is uncertain; observing database state"
 	outcomeUnknownApplying = "Apply outcome is uncertain; only read-only observation is permitted"
 	unreadApplyResult      = "apply result is uncertain: ptah runner result frame not found"
 	unreadLogPointer       = ". Anything the run wrote is in the Pod log for "
+	// durableReceiver is the endpoint a ready installation gives the builder,
+	// which makes the Jobs it builds deliver their result durably.
+	durableReceiver = "https://receiver.operator.svc:9444"
 )
+
+// lostExecutorLogText is what a harvest says of the log of pod's executor
+// once the kubelet lost it (lostExecutorLog).
+func lostExecutorLogText(pod *corev1.Pod) string {
+	return `the result log is gone: the kubelet ended container "ptah" of Pod ` + pod.Name +
+		" with ContainerStatusUnknown and serves no log for it"
+}
+
+// datedJobEnd dates job's terminal condition at, as the Job controller stamps it
+// when it marks the Job. A frame that may still arrive holds a harvest for
+// frameArrivalWindow from then (awaitFrameArrival).
+func datedJobEnd(t *testing.T, api client.Client, job *batchv1.Job, at time.Time) {
+	t.Helper()
+
+	stored := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), stored); err != nil {
+		t.Fatal(err)
+	}
+	dated := 0
+	for index := range stored.Status.Conditions {
+		condition := &stored.Status.Conditions[index]
+		if condition.Type == batchv1.JobFailed || condition.Type == batchv1.JobComplete {
+			condition.LastTransitionTime = metav1.NewTime(at)
+			dated++
+		}
+	}
+	if dated != 1 {
+		t.Fatalf("the Job carries %d terminal conditions, want the one to date", dated)
+	}
+	if err := api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// publishedResults answers a poll as the result store does for the one Pod of
+// the run it serves: with value when that Pod published it, and with
+// ErrIncomplete when it published nothing.
+type publishedResults struct {
+	pod   *corev1.Pod
+	value *runner.Result
+}
+
+func (p *publishedResults) Poll(_ context.Context, request resultconsumer.Request) (resultconsumer.Result, error) {
+	if p.value == nil {
+		return resultconsumer.Result{}, resultstore.ErrIncomplete
+	}
+	binding := resultstore.Binding{
+		Namespace: request.Namespace, Kind: request.Kind, Name: request.Name, UID: request.UID,
+		Generation: request.Generation, ExecutionBindingID: request.ExecutionBindingID,
+		InputFingerprint: request.InputFingerprint, Operation: request.Operation, OperationID: request.OperationID,
+		JobName: request.JobName, JobUID: request.JobUID, PodName: p.pod.Name, PodUID: p.pod.UID,
+	}
+	name, err := resultstore.Name(binding)
+	if err != nil {
+		return resultconsumer.Result{}, err
+	}
+	return resultconsumer.Result{
+		Binding: binding, Receipt: resultstore.Receipt{Name: name, UID: "receipt-uid", Digest: testDigest, Size: 1},
+		Value: *p.value,
+	}, nil
+}
+
+// durableBuilder builds Jobs that deliver their result durably.
+func durableBuilder() workload.Builder {
+	builder := workloadBuilderForMigrations()
+	builder.ResultEndpoint = durableReceiver
+	return builder
+}
 
 // countedLogs answers every pod/log read with err, or with content when err is
 // nil, and counts the reads.
@@ -122,6 +197,9 @@ func applyHorizon(operation *operatorv1alpha1.ActiveOperationStatus) metav1.Time
 	return metav1.NewTime(operation.ExecutionNotAfter.Add(time.Duration(operation.TerminationGracePeriodSeconds) * time.Second))
 }
 
+// Each row's Job finished at the pass that reads it. A log the API server
+// serves may still receive its frame, so that pass waits for it; the log of an
+// executor the kubelet lost receives nothing, so the Apply ends at once.
 func TestALiveApplyWhoseExecutorTheKubeletLostWaitsAndPointsAtNoLog(t *testing.T) {
 	t.Parallel()
 
@@ -135,8 +213,8 @@ func TestALiveApplyWhoseExecutorTheKubeletLostWaitsAndPointsAtNoLog(t *testing.T
 		// standing when the Apply ends.
 		reported bool
 		// stopped is an executor whose termination proves it ran and stopped:
-		// its log is read, the proof does not wait, and the Event points at
-		// the log.
+		// its log is read, the frame is waited for, the proof does not wait,
+		// and the Event points at the log.
 		stopped bool
 	}{
 		{
@@ -171,9 +249,20 @@ func TestALiveApplyWhoseExecutorTheKubeletLostWaitsAndPointsAtNoLog(t *testing.T
 			claim := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
 			horizon := applyHorizon(claim)
 			row.end(t, run)
+			datedJobEnd(t, run.api, run.job, run.reconciler.now())
 			run.reconcileOnce(t)
+			if row.stopped {
+				if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.ActiveOperation == nil {
+					t.Fatal("the harvest did not wait for a frame that may still arrive, so the rows that end at once prove nothing")
+				}
+				datedJobEnd(t, run.api, run.job, run.reconciler.now().Add(-frameArrivalWindow))
+				run.reconcileOnce(t)
+			}
 
 			wantFailure, wantEvent := unreadApplyResult, outcomeUnknownEvent
+			if !row.stopped {
+				wantFailure = "apply result is uncertain: " + lostExecutorLogText(run.pod)
+			}
 			if row.reported {
 				wantFailure += lastReportedBefore + run.said
 				wantEvent += lastReportedBefore + run.said
@@ -204,8 +293,193 @@ func TestALiveApplyWhoseExecutorTheKubeletLostWaitsAndPointsAtNoLog(t *testing.T
 			case !row.stopped && (pending.ObserveAfter == nil || !pending.ObserveAfter.Equal(&horizon)):
 				t.Errorf("the proof waits until %v, want %s, the Apply's execution horizon and its grace", pending.ObserveAfter, horizon)
 			}
-			if reads, want := row.logs.count(), map[bool]int{true: 1, false: 0}[row.stopped]; reads != want {
-				t.Errorf("the harvest read the executor's log %d times, want %d", reads, want)
+			switch reads := row.logs.count(); {
+			case row.stopped && reads == 0:
+				t.Error("the harvest read no log of an executor that exited, so the rows that read none prove nothing")
+			case !row.stopped && reads != 0:
+				t.Errorf("the harvest read the log of an executor the kubelet lost %d times, want none", reads)
+			}
+		})
+	}
+}
+
+// A read-only operation whose executor the kubelet lost is retried at once: its
+// log is gone without a read, and nothing arrives in it later. On master the
+// kubelet's refusal of the read said the same, at the cost of the read. The
+// control row is an executor that exited, whose log may still receive its
+// frame, so the pass that finds none waits for it.
+func TestAReadWhoseExecutorTheKubeletLostRetriesAtOnce(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	for _, row := range []struct {
+		name  string
+		state corev1.ContainerStateTerminated
+		logs  *countedLogs
+		lost  bool
+	}{
+		{
+			name: "an executor the kubelet lost", lost: true,
+			state: corev1.ContainerStateTerminated{ExitCode: 137, Reason: "ContainerStatusUnknown", Message: lostKubeletContainer},
+			logs:  &countedLogs{err: kubeletRefusesALostContainer()},
+		},
+		{
+			name:  "an executor that exited with an error",
+			state: corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"},
+			logs:  &countedLogs{content: []byte("connection reset by peer\n")},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationResolve, runShape{dispatcher: current, recorded: true})
+			// The Pod the Job controller makes, so the harvest attributes the
+			// result to it rather than refusing its intent.
+			run.pod = terminalPodForJob(run.job)
+			reconciler, api, _ := run.reconciler(t, current)
+			reconciler.Logs = row.logs
+			pod := &corev1.Pod{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
+				t.Fatal(err)
+			}
+			pod.Status = corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{
+				Name: executorContainerName, State: corev1.ContainerState{Terminated: row.state.DeepCopy()},
+			}}}
+			if err := api.Status().Update(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			job := &batchv1.Job{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.job), job); err != nil {
+				t.Fatal(err)
+			}
+			job.Status.Active, job.Status.Failed = 0, 1
+			job.Status.Conditions = []batchv1.JobCondition{{
+				Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonBackoffLimitExceeded,
+				LastTransitionTime: metav1.NewTime(reconciler.now()),
+			}}
+			if err := api.Status().Update(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			stored := safetyGetSchema(t, api, run.schema)
+			operation := stored.Status.ActiveOperation
+			reads := row.logs.count()
+			if !row.lost {
+				if operation == nil || operation.Attempt != 1 || reads == 0 {
+					t.Fatalf("the pass did not read and wait for a frame that may still arrive: operation %#v, %d reads, "+
+						"so the row that retries at once proves nothing", operation, reads)
+				}
+				return
+			}
+			if operation == nil || operation.Attempt != 2 {
+				t.Fatalf("the Resolve was not retried at once: %#v", operation)
+			}
+			failed := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+			if want := "read Resolve result: " + lostExecutorLogText(pod); failed == nil || failed.Message != want {
+				t.Errorf("ReconciliationFailed = %#v, want %q", failed, want)
+			}
+			if reads != 0 {
+				t.Errorf("the harvest read the log of an executor the kubelet lost %d times, want none", reads)
+			}
+		})
+	}
+}
+
+// durableSchemaApplyRun is admittedUnstartedSchemaApplyRun with the Job built
+// for durable delivery: the reconciler issues the Pod its credential and reads
+// the result from results, and must not ask for the Pod log.
+func durableSchemaApplyRun(t *testing.T, results *publishedResults) unstartedSchema {
+	t.Helper()
+
+	run := admittedUnstartedSchemaApplyRunBy(t, durableBuilder(), func(r *SchemaReconciler) {
+		r.ResultCredentials = &issuanceProbe{}
+		r.Results = results
+		r.Logs = forbiddenResultLogs{t}
+	})
+	if !durableDeliveryRequested(run.job) {
+		t.Fatal("the Job delivers its result through its log, so nothing below reads a durable result")
+	}
+	results.pod = run.pod
+	return run
+}
+
+// A durable result needs no log. An Apply whose executor the kubelet lost ends
+// on what the store holds and waits for its horizon, since the termination
+// proves no stop, whether or not the Pod published a result before the kubelet
+// lost it. It points at no Pod log. The control row is an executor that exited,
+// whose log the API server serves.
+//
+// A lost executor fails its Pod and so its Job, and a schema harvest reads no
+// result code from a Job that did not complete, so the coded failure these
+// results carry reaches no reading of the log here. The migration family's
+// harvest settles from the result whatever the Job's status, and its rows
+// read it (TestADurableMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog).
+func TestADurableApplyWhoseExecutorTheKubeletLostWaitsAndPointsAtNoLog(t *testing.T) {
+	t.Parallel()
+
+	const unsuccessful = "apply result is uncertain: Apply Job did not complete successfully"
+	failure := &runner.ResultError{Code: "apply_failed", Message: "the statement failed"}
+	lost := func(t *testing.T, run unstartedSchema) {
+		startedAndLookedAt(t, run)
+		lostWhileItRan(t, run.api, run.job, run.pod)
+	}
+	for _, row := range []struct {
+		name string
+		end  func(t *testing.T, run unstartedSchema)
+		// published is the runner's error in the result the Pod published,
+		// and nil for a Pod that published nothing.
+		published *runner.ResultError
+		// stopped is an executor whose termination proves it ran and stopped.
+		stopped bool
+		failure string
+		// pointer is what Applying says of the Pod log after its sentence.
+		pointer string
+	}{
+		{name: "an executor the kubelet lost, which published nothing", end: lost, failure: unreadApplyResult},
+		{name: "an executor the kubelet lost, which published a failure", end: lost, published: failure, failure: unsuccessful},
+		{
+			name: "an executor that exited with an error, which published a failure", published: failure, stopped: true,
+			end: func(t *testing.T, run unstartedSchema) {
+				startedAndLookedAt(t, run)
+				endedWithoutAResult(t, run.api, run.job, run.pod)
+			},
+			failure: unsuccessful, pointer: unreadLogPointer,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			results := &publishedResults{}
+			run := durableSchemaApplyRun(t, results)
+			claim := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
+			horizon := applyHorizon(claim)
+			if row.published != nil {
+				results.value = &runner.Result{
+					ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationApply, OperationID: claim.ID,
+					ChildExitCode: 1, MutationStarted: true, Error: row.published,
+				}
+			}
+			row.end(t, run)
+			run.reconcileOnce(t)
+
+			if failed := settledSchemaFailure(t, run.api, run.schema); failed.Message != row.failure {
+				t.Errorf("ReconciliationFailed = %q, want %q", failed.Message, row.failure)
+			}
+			settled := safetyGetSchema(t, run.api, run.schema)
+			applying := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionApplying)
+			want := outcomeUnknownApplying + row.pointer
+			if applying == nil || !strings.HasPrefix(applying.Message, want) || row.pointer == "" && applying.Message != want {
+				t.Errorf("Applying = %#v, want %q", applying, want)
+			}
+			switch pending := settled.Status.PendingObservation; {
+			case row.stopped && pending.ObserveAfter != nil:
+				t.Errorf("the proof waits until %s for an executor that stopped", pending.ObserveAfter)
+			case !row.stopped && (pending.ObserveAfter == nil || !pending.ObserveAfter.Equal(&horizon)):
+				t.Errorf("the proof waits until %v, want %s, the Apply's execution horizon and its grace", pending.ObserveAfter, horizon)
 			}
 		})
 	}
@@ -394,7 +668,8 @@ func TestAMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
 	for _, row := range []struct {
 		name string
 		end  func(t *testing.T, run unstartedMigration)
-		// pointed is a record whose message points at the executor's log.
+		// pointed is a record whose message points at the executor's log,
+		// which is the log the harvest reads.
 		pointed bool
 	}{
 		{
@@ -424,8 +699,19 @@ func TestAMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
 			t.Parallel()
 
 			run := unstartedMigrationApplyRun(t)
+			logs := &countedLogs{err: kubeletRefusesALostContainer()}
+			if row.pointed {
+				logs = &countedLogs{content: []byte("connection reset by peer\n")}
+			}
+			run.reconciler.Logs = logs
 			row.end(t, run)
 			record := run.settle(t, 3)
+			switch reads := logs.count(); {
+			case row.pointed && reads == 0:
+				t.Error("the harvest read no log of an executor that exited, so the rows that read none prove nothing")
+			case !row.pointed && reads != 0:
+				t.Errorf("the harvest read the log of an executor the kubelet lost %d times, want none", reads)
+			}
 			event := findEvent(run.recorder, "Warning MigrationRunUncertain ")
 			if event == "" {
 				t.Fatal("no MigrationRunUncertain Event was recorded")
@@ -437,6 +723,104 @@ func TestAMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
 				if logs := strings.Contains(text, "kubectl logs"); logs != row.pointed {
 					t.Errorf("%s = %q, names kubectl logs: %t, want %t", subject, text, logs, row.pointed)
 				}
+			}
+		})
+	}
+}
+
+// durableMigrationApplyRun is unstartedMigrationApplyRun with the Job built for
+// durable delivery: the reconciler issues the Pod its credential and reads the
+// result from results, and must not ask for the Pod log.
+func durableMigrationApplyRun(t *testing.T, results *publishedResults) unstartedMigration {
+	t.Helper()
+
+	run := unstartedMigrationApplyRunBy(t, durableBuilder(), func(r *MigrationReconciler) {
+		r.ResultCredentials = &issuanceProbe{}
+		r.Results = results
+		r.Logs = forbiddenResultLogs{t}
+	})
+	if !durableDeliveryRequested(run.job) {
+		t.Fatal("the Job delivers its result through its log, so nothing below reads a durable result")
+	}
+	results.pod = run.pod
+	return run
+}
+
+// A migration's durable result outlives the Pod log too. A run whose executor
+// the kubelet lost points at no Pod log, whether its result reported the run
+// or only a failure, as every reading of a log is asked first whether the API
+// server serves it (servedLogReading). The control rows are an executor that
+// exited, whose log holds what Ptah reported.
+func TestADurableMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
+	t.Parallel()
+
+	const pointer = "What Ptah reported is in the Pod log for "
+	lost := func(t *testing.T, run unstartedMigration) {
+		firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+		reconcileMigration(t, run.reconciler, run.api, run.migration)
+		lostWhileItRan(t, run.api, run.job, run.pod)
+	}
+	exited := func(t *testing.T, run unstartedMigration) {
+		firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+		reconcileMigration(t, run.reconciler, run.api, run.migration)
+		endedWithoutAResult(t, run.api, run.job, run.pod)
+	}
+	for _, row := range []struct {
+		name string
+		end  func(t *testing.T, run unstartedMigration)
+		// reported is a result that reports the run, rather than only the
+		// failure that ended it.
+		reported bool
+		pointed  bool
+	}{
+		{name: "a failure from an executor the kubelet lost", end: lost},
+		{name: "a report from an executor the kubelet lost", end: lost, reported: true},
+		{name: "a failure from an executor that exited", end: exited, pointed: true},
+		{name: "a report from an executor that exited", end: exited, reported: true, pointed: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			results := &publishedResults{}
+			run := durableMigrationApplyRun(t, results)
+			stored := readMigration(t, run.api, run.migration)
+			operation := stored.Status.ActiveOperation
+			result := runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply, OperationID: operation.ID,
+				ChildExitCode: 1, MutationStarted: true,
+				CoordinationDigest: operation.CoordinationDigest, TargetIdentityDigest: stored.Status.History.TargetIdentityDigest,
+				Error: &runner.ResultError{Code: "apply_failed", Message: "the statement failed"},
+			}
+			if row.reported {
+				result.Error = &runner.ResultError{Code: "child_exit", Message: "ptah exited with code 1"}
+				result.MigrationRun = &dataplane.MigrationRunReport{
+					ContractVersion: dataplane.SupportedMigrationRunContract, Direction: "up", Outcome: dataplane.MigrationOutcomeFailed,
+				}
+			}
+			results.value = &result
+			row.end(t, run)
+			for range 3 {
+				if reconcileMigration(t, run.reconciler, run.api, run.migration).Status.ActiveOperation == nil {
+					break
+				}
+			}
+			settled := readMigration(t, run.api, run.migration)
+			if settled.Status.ActiveOperation != nil || settled.Status.LastRun == nil {
+				t.Fatalf("the run was not recorded: claim %#v, last run %#v", settled.Status.ActiveOperation, settled.Status.LastRun)
+			}
+			wantOutcome := operatorv1alpha1.MigrationRunOutcomeUnknown
+			if row.reported {
+				wantOutcome = operatorv1alpha1.MigrationRunOutcomeFailed
+			}
+			record := settled.Status.LastRun
+			if record.Outcome != wantOutcome {
+				t.Fatalf("the run was recorded %s, want %s, the ending the result decides: %q", record.Outcome, wantOutcome, record.Message)
+			}
+			if pointed := strings.Contains(record.Message, pointer); pointed != row.pointed {
+				t.Errorf("status.lastRun.message = %q, points at the Pod log: %t, want %t", record.Message, pointed, row.pointed)
+			}
+			if logs := strings.Contains(record.Message, "kubectl logs"); logs != row.pointed {
+				t.Errorf("status.lastRun.message = %q, names kubectl logs: %t, want %t", record.Message, logs, row.pointed)
 			}
 		})
 	}

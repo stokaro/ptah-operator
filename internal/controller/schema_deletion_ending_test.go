@@ -15,6 +15,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // A deleted PtahSchema waits for its running Apply and then ends it (#989).
@@ -42,7 +43,15 @@ const (
 func admittedUnstartedSchemaApplyRun(t *testing.T) unstartedSchema {
 	t.Helper()
 
-	return schemaApplyUnderReport(t, func(api client.Client, job *batchv1.Job) *corev1.Pod {
+	return admittedUnstartedSchemaApplyRunBy(t, workloadBuilderForMigrations(), nil)
+}
+
+// admittedUnstartedSchemaApplyRunBy is admittedUnstartedSchemaApplyRun with the
+// Job built by builder and the reconciler set up by configure.
+func admittedUnstartedSchemaApplyRunBy(t *testing.T, builder workload.Builder, configure func(*SchemaReconciler)) unstartedSchema {
+	t.Helper()
+
+	return schemaApplyUnderReportBy(t, builder, configure, func(api client.Client, job *batchv1.Job) *corev1.Pod {
 		pod := terminalPodForJob(job)
 		waitingOnASecret(pod)
 		if err := api.Create(context.Background(), pod.DeepCopy()); err != nil {

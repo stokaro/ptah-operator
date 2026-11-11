@@ -3,12 +3,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -25,7 +27,13 @@ import (
 // It warns only once the Job is past jobStopBound, its own deadline plus the
 // grace its Pods are given and the slack, when the Job controller has already
 // deleted every Pod it was going to stop. Before that the Job may still stop
-// by itself, and nothing is listed.
+// by itself, and nothing is listed. A Pod deleted later, or with a longer grace
+// than its template's, is named only once its own grace has run out
+// (podStuckTerminating).
+//
+// The deletion that waits on the Apply a pending observation names, after the
+// claim was retired, has no bound either while that Pod stays, so it names the
+// Pod the same way (warnStuckApplyPods).
 //
 // The Warning goes through the Event recorder, whose spam filter gives each
 // object a burst of 25 Events of a type and then one every five minutes, so a
@@ -96,10 +104,12 @@ func (w *stuckPodWarnings) due(pod types.UID, now time.Time) bool {
 	return true
 }
 
-// podStuckTerminating is a Pod the API server is deleting and that has not
-// stopped: the kubelet has not reported it Succeeded or Failed.
-func podStuckTerminating(pod *corev1.Pod) bool {
-	return pod.DeletionTimestamp != nil &&
+// podStuckTerminating is a Pod the API server is deleting whose grace period
+// has run out by now and that has not stopped: the kubelet has not reported it
+// Succeeded or Failed. A Pod's deletionTimestamp is the instant its grace ends,
+// so before it the Pod is still being stopped.
+func podStuckTerminating(pod *corev1.Pod, now time.Time) bool {
+	return pod.DeletionTimestamp != nil && !now.Before(pod.DeletionTimestamp.Time) &&
 		pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed
 }
 
@@ -129,11 +139,43 @@ func (r *SchemaReconciler) warnStuckPods(ctx context.Context, schema *operatorv1
 	if err != nil {
 		return err
 	}
+	r.warnAboutStuckPods(schema, job, pods, now)
+	return nil
+}
+
+// warnStuckApplyPods is warnStuckPods for the Apply Job a pending observation
+// names, over the Pods the wait already listed for it. The Job is read only
+// when one of them is stuck, directly as the claim's wait reads its Job, and a
+// Job that is gone, or is not the one the record names, bounds nothing, so
+// nothing is said.
+func (r *SchemaReconciler) warnStuckApplyPods(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+	pods []*corev1.Pod,
+) error {
+	now := r.now()
+	if !slices.ContainsFunc(pods, func(pod *corev1.Pod) bool { return podStuckTerminating(pod, now) }) {
+		return nil
+	}
+	job := &batchv1.Job{}
+	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: pending.ApplyJobName}, job); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if job.UID != pending.ApplyJobUID || jobStopOverdue(job, now) == nil {
+		return nil
+	}
+	r.warnAboutStuckPods(schema, job, pods, now)
+	return nil
+}
+
+// warnAboutStuckPods records the Warning about each of job's pods that is stuck
+// terminating at now, at most as often as stuckPodWarnings allows.
+func (r *SchemaReconciler) warnAboutStuckPods(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, pods []*corev1.Pod, now time.Time) {
 	warnings := stuckPodWarningsOf(&r.stuckPods)
 	for _, pod := range pods {
-		if podStuckTerminating(pod) && warnings.due(pod.UID, now) {
+		if podStuckTerminating(pod, now) && warnings.due(pod.UID, now) {
 			r.event(schema, corev1.EventTypeWarning, "PodStuckTerminating", "%s", stuckPodWarningText(job, pod))
 		}
 	}
-	return nil
 }

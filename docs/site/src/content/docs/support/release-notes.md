@@ -92,14 +92,17 @@ for its Job. A script or a GitOps tool that deletes a `PtahSchema` or a
 `orphanDependents: true`, or deletes one that carries the `orphan` finalizer
 without naming a propagation, is now refused and has to name `Background`, the
 default. A live `PtahSchema` whose Apply's executor the kubelet ended with
-reason `ContainerStatusUnknown` now counts there until the Apply's execution
-deadline and grace period have passed and a reading follows, and its
-`ReconciliationFailed` says
-`apply result is uncertain: ptah runner result frame not found` in place of
-`the result log is gone`. A script that reads the `kubectl logs` command out of
-an `ApplyOutcomeUnknown` or `MigrationRunUncertain` Event, `Applying` or
-`status.lastRun.message` finds none where every executor of the Job ended that
-way, and an alert on Warning Events can see the new reason `PodStuckTerminating`.
+reason `ContainerStatusUnknown` now counts in
+`ptah_operator_unresolved_attempts`, and can fire `PtahOperatorUnresolvedApply`,
+until the Apply's execution deadline and grace period have passed and a reading
+follows. With `resultDelivery.enabled=false`, the failure either family records
+for such an executor still says `the result log is gone:`, now followed by the
+container and the Pod the kubelet lost rather than the refusal of a
+log read. A script that reads the `kubectl logs` command out of an
+`ApplyOutcomeUnknown`, `MigrationRunUncertain` or `MigrationRunFinished` Event,
+`Applying` or `status.lastRun.message` finds none where every executor of the Job
+ended that way, and an alert on Warning Events can see the new reason
+`PodStuckTerminating`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -377,19 +380,23 @@ way, and an alert on Warning Events can see the new reason `PodStuckTerminating`
   an executor it has no status for the reason `ContainerStatusUnknown`: one that
   never started, when the Job's deadline stops its Pod, and one the container
   runtime stopped reporting while it ran. A live `PtahSchema` took that for a
-  stop. It asked for the executor's log, which the kubelet refuses for such a
-  container, recorded the outcome as unknown and read the database at once,
-  while the container could still be running. It now asks for no log and reads
-  the database only once the Apply's execution deadline and its grace period
-  have passed, as a deleted schema does. Neither family points at the Pod log of
+  stop: it recorded the outcome as unknown and read the database at once, while
+  the container could still be running. It now reads the database only once the
+  Apply's execution deadline and its grace period have passed, as a deleted
+  schema does. With `resultDelivery.enabled=false`, neither family asks for such
+  an executor's log, which the kubelet refuses; the log is taken as gone, so no
+  pass waits for a frame to arrive in it. Neither family points at the Pod log of
   a Job whose every executor ended that way, since `kubectl logs` cannot read
-  one. The live endings for a missing Job and for inputs that changed while the
-  Job ran leave out the last report when a Pod of the Job shows its executor
-  started, and a deleted schema whose claim never recorded its Job's UID reads
-  that Job's Pods when its Lease changes hands. A deleted `PtahSchema` that waits
-  on a Pod stuck terminating on a node that is gone said nothing about it. A
+  one, even where a delivered result says what Ptah wrote there. The live
+  endings for a missing Job and for inputs that changed while the Job ran leave
+  out the last report when a Pod of the Job shows its executor started, and a
+  deleted schema whose claim never recorded its Job's UID reads that Job's Pods
+  when its Lease changes hands. A deleted `PtahSchema` that waits on a Pod stuck
+  terminating on a node that is gone said nothing about it. A
   `PodStuckTerminating` Warning Event now names the Pod, its node and the forced
-  delete that ends the wait, and
+  delete that ends the wait once the Pod's own grace period has run out,
+  whether the deletion waits for its claim's Job or for the Pod of an Apply that
+  has already ended, and
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
   when to run it.
 

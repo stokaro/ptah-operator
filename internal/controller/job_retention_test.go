@@ -273,6 +273,17 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "no failure to read, as a retired Apply has", want: applyLogUnread},
 		{name: "no failure to read and an executor the kubelet lost", executors: []string{lost}, want: applyLogSaysNothing},
 		{name: "no failure to read and no Pod", noPod: true, want: applyLogSaysNothing},
+		// A durable result is read whatever became of the log the runner also
+		// wrote it to, so a coded failure asks the Job's Pods as well.
+		{name: "an outcome that is unknown from an executor the kubelet lost", failure: coded("apply_outcome_unknown"), executors: []string{lost}, want: applyLogSaysNothing},
+		{name: "a failure before any statement from an executor the kubelet lost", failure: coded("apply_failed"), executors: []string{lost}, want: applyLogSaysNothing},
+		{name: "a failure before any statement, one executor lost and one that exited", failure: coded("apply_failed"), executors: []string{lost, "Error"}, want: applyLogHoldsReport},
+		{name: "a failure before any statement from an executor that exited", failure: coded("apply_failed"), executors: []string{"Error"}, want: applyLogHoldsReport},
+		{name: "a refusal from an executor the kubelet lost", failure: coded("apply_refused"), executors: []string{lost}, want: applyLogSaysNothing},
+		// A durable result is read after its Pod is gone as well. Pods that are
+		// gone say nothing about the log they had.
+		{name: "an outcome that is unknown and no Pod", failure: coded("apply_outcome_unknown"), noPod: true, want: applyLogHoldsReport},
+		{name: "an outcome that is unknown and no Job", failure: coded("apply_outcome_unknown"), noJob: true, want: applyLogHoldsReport},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -305,6 +316,19 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			},
 		}).Build()
 		if got := failedApplyLogReading(context.Background(), reader, finishedJob(nil), errors.New("uncertain")); got != applyLogSaysNothing {
+			t.Fatalf("failedApplyLogReading() = %v", got)
+		}
+	})
+	// The Pods of a coded failure are asked only whether the kubelet lost
+	// them, and a list that fails does not say so.
+	t.Run("Pods that cannot be read leave a coded failure's reading", func(t *testing.T) {
+		t.Parallel()
+		reader := fake.NewClientBuilder().WithScheme(jobAndPodScheme(t)).WithInterceptorFuncs(interceptor.Funcs{
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errors.New("the API server did not answer")
+			},
+		}).Build()
+		if got := failedApplyLogReading(context.Background(), reader, finishedJob(nil), coded("apply_failed")); got != applyLogHoldsReport {
 			t.Fatalf("failedApplyLogReading() = %v", got)
 		}
 	})

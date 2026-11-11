@@ -90,7 +90,22 @@ func migrationApplyUnderReport(
 ) unstartedMigration {
 	t.Helper()
 
-	builder := workloadBuilderForMigrations()
+	return migrationApplyUnderReportBy(t, workloadBuilderForMigrations(), nil, stand, reason, words)
+}
+
+// migrationApplyUnderReportBy is migrationApplyUnderReport with the Job built by
+// builder, and configure, when there is one, setting the reconciler up before
+// its first pass.
+func migrationApplyUnderReportBy(
+	t *testing.T,
+	builder workload.Builder,
+	configure func(*MigrationReconciler),
+	stand func(t *testing.T, run *unstartedMigration),
+	reason operatorv1alpha1.ConditionReason,
+	words string,
+) unstartedMigration {
+	t.Helper()
+
 	dispatched := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, runShape{dispatcher: builder, recorded: true})
 	reconciler, api := dispatched.reconciler(t, builder)
 	run := unstartedMigration{
@@ -98,6 +113,9 @@ func migrationApplyUnderReport(
 		migration: dispatched.migration, plan: dispatched.plan, job: dispatched.job, pod: dispatched.pod,
 	}
 	reconciler.Recorder = run.recorder
+	if configure != nil {
+		configure(reconciler)
+	}
 	stand(t, &run)
 
 	stored := reconcileMigration(t, reconciler, api, run.migration)
@@ -118,7 +136,15 @@ func migrationApplyUnderReport(
 func unstartedMigrationApplyRun(t *testing.T) unstartedMigration {
 	t.Helper()
 
-	return migrationApplyUnderReport(t, func(t *testing.T, run *unstartedMigration) {
+	return unstartedMigrationApplyRunBy(t, workloadBuilderForMigrations(), nil)
+}
+
+// unstartedMigrationApplyRunBy is unstartedMigrationApplyRun with the Job built
+// by builder and the reconciler set up by configure.
+func unstartedMigrationApplyRunBy(t *testing.T, builder workload.Builder, configure func(*MigrationReconciler)) unstartedMigration {
+	t.Helper()
+
+	return migrationApplyUnderReportBy(t, builder, configure, func(t *testing.T, run *unstartedMigration) {
 		t.Helper()
 		stored := &corev1.Pod{}
 		if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), stored); err != nil {

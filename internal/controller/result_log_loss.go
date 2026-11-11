@@ -79,6 +79,15 @@ func (e *resultLogLost) Error() string {
 
 func (e *resultLogLost) Unwrap() []error { return []error{runner.ErrFrameNotFound, e.cause} }
 
+// lostExecutorLog is the log of an executor the kubelet ended with
+// ContainerStatusUnknown (executorStatusLost), gone without a read: the kubelet
+// answers a read of it with 400, which classifyResultLogError would call gone.
+func lostExecutorLog(pod *corev1.Pod) *resultLogLost {
+	return &resultLogLost{cause: fmt.Errorf(
+		"the kubelet ended container %q of Pod %s with ContainerStatusUnknown and serves no log for it",
+		executorContainerName, pod.Name)}
+}
+
 // resultLogFailure is what a failed result log read says about the log.
 type resultLogFailure int
 

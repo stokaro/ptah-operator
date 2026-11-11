@@ -774,8 +774,19 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) (bool, error) {
+	active, _, err := r.applyPodsActive(ctx, schema, pending)
+	return active, err
+}
+
+// applyPodsActive is possibleApplyPodActive with the Pods it listed, which
+// are none when the record names no Job UID.
+func (r *SchemaReconciler) applyPodsActive(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) (bool, []*corev1.Pod, error) {
 	if pending == nil || pending.ApplyOperationID == "" {
-		return false, fmt.Errorf("pending observation lacks an Apply operation identity")
+		return false, nil, fmt.Errorf("pending observation lacks an Apply operation identity")
 	}
 	// A retirement record that names this Apply's Job holds the proof back
 	// until the Job is accounted for: its UID adopted or given up on, and its
@@ -786,33 +797,33 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 		if !retired {
 			// An uncertain create is protected by the immutable ObserveAfter
 			// horizon instead of Pod discovery.
-			return false, nil
+			return false, nil, nil
 		}
-		return true, r.adoptRetiredApplyJobUID(ctx, schema, pending)
+		return true, nil, r.adoptRetiredApplyJobUID(ctx, schema, pending)
 	}
 	if pending.ApplyJobName == "" {
-		return false, fmt.Errorf("pending observation has a Job UID without its immutable name")
+		return false, nil, fmt.Errorf("pending observation has a Job UID without its immutable name")
 	}
 	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, pending.ApplyJobName, pending.ApplyJobUID)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	evidence := podIdentityEvidence(pods)
 	before := schema.DeepCopy()
 	if mergePodEvidence(pending, evidence) {
 		if err := r.patchStatus(ctx, before, schema); err != nil {
-			return false, err
+			return false, pods, err
 		}
 	}
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-			return true, nil
+			return true, pods, nil
 		}
 	}
 	if retired {
-		return true, r.cleanupRetiredApplyJob(ctx, schema, pending)
+		return true, pods, r.cleanupRetiredApplyJob(ctx, schema, pending)
 	}
-	return false, nil
+	return false, pods, nil
 }
 
 func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -933,9 +944,17 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		if !acquired {
 			return ctrl.Result{RequeueAfter: requeue}, nil
 		}
-		activePod, err := r.possibleApplyPodActive(ctx, schema, pending)
+		activePod, pods, err := r.applyPodsActive(ctx, schema, pending)
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if activePod {
+			// A Pod on a node that is gone keeps this wait going with no
+			// bound, as it does the claim's wait above, so a person is told
+			// which Pod it is.
+			if err := r.warnStuckApplyPods(ctx, schema, pending, pods); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
+			}
 		}
 		if activePod || until(pending.ObserveAfter, r.now()) > 0 {
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
@@ -3619,8 +3638,9 @@ type terminalEvidence struct {
 	// a container that never terminated wrote none.
 	TerminationMessage string
 	// LogLost is set, and Logs empty, when the executor's log will not be read
-	// again (readResultLog). It stands in for the parse error of a log that
-	// holds no frame.
+	// again (readResultLog), or not at all because the kubelet lost the
+	// executor (lostExecutorLog). It stands in for the parse error of a log
+	// that holds no frame.
 	LogLost *resultLogLost
 	// ExecutorStarted is set when any listed Pod's executor shows it started
 	// (executorStarted), whether or not that Pod is the one a result is read
@@ -3839,14 +3859,19 @@ func (r *SchemaReconciler) terminalLogs(
 		// frame after the grace period.
 		return evidence, nil
 	}
-	if !evidence.Stopped {
-		// A failed init container means the executor has no log stream, and so
-		// does an executor the kubelet ended with ContainerStatusUnknown: it
-		// recorded no container, and it answers a log read for one with 400.
-		// Treat either as a missing frame so read-only operations retry and
-		// apply remains uncertain, instead of looping forever on pod/log
-		// BadRequest. Neither proves the executor stopped, so an Apply waits
-		// for its horizon (waitForHorizon in reconcileActive).
+	if !evidence.Trusted {
+		// A failed init container means the executor has no log stream. Treat it
+		// as a missing frame so read-only operations retry and apply remains
+		// uncertain, instead of looping forever on pod/log BadRequest.
+		return evidence, nil
+	}
+	if executorLogsLost([]*corev1.Pod{selected}) {
+		// The kubelet recorded no container for this executor, so its log is
+		// gone without a read: nothing arrives in it later, a read-only
+		// operation retries at once, and an Apply is uncertain. The termination
+		// proves no stop, so an Apply waits for its horizon (waitForHorizon in
+		// reconcileActive).
+		evidence.LogLost = lostExecutorLog(selected)
 		return evidence, nil
 	}
 	if r.Logs == nil {
