@@ -1882,7 +1882,7 @@ the wait is done, even when a read on a newer request has been refused by the ti
 the wait looks again. A refusal from before the request, or from a read that was
 already under way when it was written, leaves the wait running until the read the
 request starts ends; if that read does not end before the timeout, the timeout
-names the refusal.
+names the refusal if the resource still shows it.
 
 The wait tells the two apart by a stamp the operator writes with each refusal. For
 a schema it is `status.source.resolvedAt`, which the Resolve of each read writes;
