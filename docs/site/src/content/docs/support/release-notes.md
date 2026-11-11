@@ -59,10 +59,13 @@ in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
-An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too. A script that reads the `kubectl logs` command out of the
+An alert on `MigrationJobCleanupDeferred` can now fire for a read-only
+migration Job too. A script that reads the `kubectl logs` command out of the
 `MigrationRunUncertain` Event of a `PtahMigration` deleted with the default
-propagation finds none there now.
+propagation finds none there now. A script or an alert that matches the whole
+text of a `PtahSchema`'s `ApplyOutcomeUnknown` Event has to expect
+`; last reported before that:` and what the schema last reported after it, on
+an Apply whose Pod never ran.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -170,6 +173,24 @@ propagation finds none there now.
   added when the claim's own Job reports a Pod that succeeded.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
   has the messages.
+- **More endings keep why the Pod never ran.** The same words now follow an Apply
+  whose Job stopped being its claim's after the inputs moved, whose claim could not
+  build its Job again because its plan was deleted, whose Job a newer release
+  builds differently, whose Job left more than one Pod, or whose Pod does not match
+  what its claim built. On the last two, a Pod that shows its executor started
+  leaves the words out. A Pod the API server refused to create is covered as well:
+  an Apply or a read still refused at its Job's deadline recorded only `result
+  frame not found`, and now carries the refusal after it and points at no Pod log;
+  a refusal the Job got past by creating a Pod is left out. A `PtahSchema` Apply
+  keeps the words when its database Lease changed hands, where the write that
+  records the lost Lease used to replace them, and when the schema is deleted while
+  its Apply runs. Its `ApplyOutcomeUnknown` Event now carries
+  them, which is what stays of a deleted schema, and a deleted schema looks at the
+  Pod while it waits for it, as a deleted `PtahMigration` does.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  lists each of these endings, and
+  [Execution](../../reference/execution/#meshes-and-policy-engines) says what a
+  refused Job records.
 - **A slow Job-write webhook no longer spends an approval.** A dispatch gave
   its mark, create, read-back and record 15 seconds, while the chart gives the
   manager's Job-write webhook 30. A webhook slower than 15 seconds made the

@@ -59,13 +59,22 @@ func (e *targetFailureError) Error() string {
 // keeps as much of the sentence as any failure Event. Every other Apply error
 // keeps the fixed text, because what it holds may quote the runner. Either way the
 // outcome stays unknown: one Pod's report does not speak for its Job.
+//
+// What the schema last reported about a Pod that never ran follows, when the
+// failure carries it (withLastPodReport). That is the condition's own message,
+// the kubelet's or the API server's words about names, and on a deleted schema
+// this Event is the only place it is left.
 func uncertainApplyEvent(failure error) string {
-	const fixed = "Apply outcome is uncertain; observing database state"
+	text := "Apply outcome is uncertain; observing database state"
 	var target *targetFailureError
 	if errors.As(failure, &target) {
-		return fixed + ": " + bounded(target.Error(), 512)
+		text += ": " + bounded(target.Error(), 512)
 	}
-	return fixed
+	var report *lastPodReportError
+	if errors.As(failure, &report) {
+		text += "; last reported before that: " + bounded(report.reported, 512)
+	}
+	return text
 }
 
 // databaseReachableReasons is the reason DatabaseReachable carries for each

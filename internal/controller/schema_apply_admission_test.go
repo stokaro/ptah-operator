@@ -121,7 +121,8 @@ func TestARetiredApplySaysWhereItsLogIs(t *testing.T) {
 				RetiredEpoch: schema.Status.PendingObservation.Plan.ExecutionBindingID,
 				Job:          &operatorv1alpha1.RetiredJobStatus{Operation: operatorv1alpha1.OperationApply, Name: job.Name},
 			}
-			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+			// The Job ran its Pod: a Job with none has no log to point at.
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job, terminalPodForJob(job))
 			reconciler.Client = admittedJobWrites(api.(client.WithWatch), refusingJobBuilder{})
 			recorder := record.NewFakeRecorder(32)
 			reconciler.Recorder = recorder

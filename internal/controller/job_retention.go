@@ -76,8 +76,9 @@ func retainFailedApplyJob(
 type applyLogReading int
 
 const (
-	// applyLogSaysNothing is a run whose sentence is whole in status, or one whose
-	// operation container never started, so a person has nothing to read there.
+	// applyLogSaysNothing is a run whose sentence is whole in status, one whose
+	// operation container never started, or one with no Pod to read a log from,
+	// so a person has nothing to read there.
 	applyLogSaysNothing applyLogReading = iota
 	// applyLogHoldsReport is a run the runner wrote Ptah's sentence for.
 	applyLogHoldsReport
@@ -97,8 +98,9 @@ func (e resultCodeError) Error() string { return e.message }
 
 // failedApplyLogReading reads what a schema Apply's failure says of its log, or a
 // migration's when no report of the run was read. A failure with no result behind
-// it may have written anything, unless an init container ended the Pod first: then
-// there is no operation container to ask for a log.
+// it may have written anything, unless the Job has no Pod, as one admission refused
+// until its deadline has, or an init container ended the Pod first: then there is
+// no operation container to ask for a log.
 func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, failure error) applyLogReading {
 	// A target the run could not open has its sentence whole in status.
 	var target *targetFailureError
@@ -115,8 +117,8 @@ func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batch
 	if job == nil {
 		return applyLogSaysNothing
 	}
-	boundary, err := failedInitBoundary(ctx, reader, job)
-	if err != nil || boundary != "" {
+	pods, err := podsOwnedByJob(ctx, reader, job.Namespace, job.Name, job.UID)
+	if err != nil || len(pods) == 0 || initBoundaryOf(pods) != "" {
 		return applyLogSaysNothing
 	}
 	return applyLogUnread
