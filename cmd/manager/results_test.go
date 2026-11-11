@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	crmanager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -21,6 +23,7 @@ type recordingHost struct {
 	apiReader client.Reader
 	refuse    error
 	added     []crmanager.Runnable
+	recorders []string
 }
 
 func newRecordingHost() *recordingHost {
@@ -30,6 +33,11 @@ func newRecordingHost() *recordingHost {
 
 func (h *recordingHost) GetClient() client.Client    { return h.client }
 func (h *recordingHost) GetAPIReader() client.Reader { return h.apiReader }
+
+func (h *recordingHost) GetEventRecorderFor(name string) record.EventRecorder {
+	h.recorders = append(h.recorders, name)
+	return record.NewFakeRecorder(1)
+}
 
 func (h *recordingHost) Add(runnable crmanager.Runnable) error {
 	if h.refuse != nil {
@@ -63,6 +71,11 @@ func TestTheManagerRunsRetentionWhateverDeliverySays(t *testing.T) {
 			}
 			if _, ok := host.added[0].(*resultcleanup.Collector); !ok {
 				t.Fatalf("added a %T to the manager, want a *resultcleanup.Collector", host.added[0])
+			}
+			// The collector's Events are how a namespace whose quota refuses a
+			// retirement says why. Without a recorder it says nothing.
+			if !slices.Equal(host.recorders, []string{resultCollectorEventSource}) {
+				t.Fatalf("asked the manager for event recorders %q, want one for %q", host.recorders, resultCollectorEventSource)
 			}
 			policy := validator.ResultCleanup
 			if policy == nil {

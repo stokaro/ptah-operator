@@ -77,7 +77,7 @@ func TestCollectorUsesListedVersionsForDeletion(t *testing.T) {
 				}
 			}
 			policy := resultcleanup.Policy{Reader: reader, Window: time.Hour, Now: func() time.Time { return marker.CreationTimestamp.Add(2 * time.Hour) }}
-			collector, err := resultcleanup.New(api, policy, nil)
+			collector, err := resultcleanup.New(api, policy, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,7 @@ func TestCollectorUsesListedVersionsForDeletion(t *testing.T) {
 					t.Fatalf("stale collection removed evidence: %d records remain, want 5", len(list.Items))
 				}
 				// A new scan can collect the current versions after a conflict.
-				fresh, err := resultcleanup.New(api, policy, nil)
+				fresh, err := resultcleanup.New(api, policy, nil, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

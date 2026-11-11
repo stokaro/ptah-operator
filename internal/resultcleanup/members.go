@@ -26,47 +26,28 @@ func metadataList() *metav1.PartialObjectMetadataList {
 	return list
 }
 
-// Members uses the immutable attempt index for new records. The bounded legacy
-// scan considers only unindexed children, a set new publications cannot grow.
-// An incomplete scan refuses cleanup rather than assuming an empty collection.
+// members lists an attempt's chunks and completion through the attempt index.
+// Every record carries it: admission refuses a publication without one. One
+// bounded page holds them all, so an incomplete listing, or a member of the
+// index another attempt owns, refuses cleanup rather than assuming an empty
+// collection.
 func (p Policy) members(ctx context.Context, b resultstore.Binding) ([]metav1.PartialObjectMetadata, error) {
 	name, err := resultstore.Name(b)
 	if err != nil {
 		return nil, err
 	}
-	roles := selector(resultstore.LabelRecord, selection.In, "chunk", "complete")
-	var found []metav1.PartialObjectMetadata
-	for _, legacy := range []bool{false, true} {
-		index := selector(resultstore.LabelAttempt, selection.Equals, resultstore.AttemptLabel(name))
-		pages := 1
-		if legacy {
-			index = selector(resultstore.LabelAttempt, selection.DoesNotExist)
-			pages = 16
-		}
-		requirements, _ := index.Requirements()
-		query := roles.Add(requirements...)
-		continuation := ""
-		for page := 0; page < pages; page++ {
-			list := metadataList()
-			if err := p.Reader.List(ctx, list, &client.ListOptions{Namespace: b.Namespace, LabelSelector: query, Limit: 128, Continue: continuation}); err != nil {
-				return nil, err
-			}
-			for _, member := range list.Items {
-				if len(member.OwnerReferences) == 1 && member.OwnerReferences[0].Name == name && member.OwnerReferences[0].Kind == "PtahResultRecord" {
-					found = append(found, member)
-					if len(found) > 128 {
-						return nil, ErrRetained
-					}
-				} else if !legacy {
-					return nil, ErrRetained
-				}
-			}
-			continuation = list.Continue
-			if continuation == "" {
-				break
-			}
-		}
-		if continuation != "" {
+	index, _ := selector(resultstore.LabelAttempt, selection.Equals, resultstore.AttemptLabel(name)).Requirements()
+	query := selector(resultstore.LabelRecord, selection.In, "chunk", "complete").Add(index...)
+	list := metadataList()
+	if err := p.Reader.List(ctx, list, &client.ListOptions{Namespace: b.Namespace, LabelSelector: query, Limit: 128}); err != nil {
+		return nil, err
+	}
+	found := list.Items
+	if list.Continue != "" || len(found) > 128 {
+		return nil, ErrRetained
+	}
+	for _, member := range found {
+		if len(member.OwnerReferences) != 1 || member.OwnerReferences[0].Name != name || member.OwnerReferences[0].Kind != "PtahResultRecord" {
 			return nil, ErrRetained
 		}
 	}

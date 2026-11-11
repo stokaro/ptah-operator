@@ -1610,7 +1610,8 @@ kubectl get ptahresultrecords -n <namespace> --sort-by=.metadata.creationTimesta
 
 The last record can go an hour after the newest time in either column. `DELETING`
 is set where nothing had recorded the attempt as finished when the namespace's
-deletion began. A terminating namespace refuses the `retired` record that would
+deletion began, or where [a full quota](#result-record-quota) refused that record
+earlier. A terminating namespace refuses the `retired` record that would
 start the window, so the manager starts it with a foreground deletion of the
 record instead, and the hour runs from that time. A namespace deleted in the
 middle of an operation therefore waits about an hour from its deletion, however
@@ -1710,6 +1711,46 @@ next install, which is why this is a path for a lab and not for an installation
 you keep. Records in other namespaces lose their protection at once, and those
 whose resource is gone can be removed by garbage collection before the next
 install.
+
+### A quota on result records {#result-record-quota}
+
+A ResourceQuota on `count/ptahresultrecords.operator.ptah.run` counts every record
+an operation leaves: the credential that delivered its result, the result, which is
+one record up to 256 KiB and more above that, and the `retired` record the manager
+writes once nothing pins the result. The records stay while the operation's Job
+does and at least an hour after retirement, so the quota has to hold the records of
+every operation in that span.
+
+Leave room in the quota for one `retired` record per operation. The manager writes it
+after the operation's own records, so a quota sized to exactly what operations publish
+is full at the moment each one has to be retired.
+
+When the quota refuses a `retired` record, the manager starts the window the way it
+does in [a terminating namespace](#delete-namespace): it deletes the operation's result
+and credential records in the foreground, and the hour runs from their `DELETING`
+time. It records `ResultRetirementQuotaExceeded` Warning Events on the `PtahSchema`
+or `PtahMigration` the operation belongs to, one for the result and one for the
+credential, and each names the quota and quotes the usage the API server reported:
+
+```sh
+kubectl events -n <namespace> --for ptahschema/<name> --types=Warning
+kubectl describe resourcequota -n <namespace> <quota>
+```
+
+Once the hour has passed, the collector removes the result's other records, and
+garbage collection removes the two deleting ones. Nothing is lost, and nothing goes
+sooner than it would have.
+
+While the operation's Job still exists, a foreground deletion cannot start the window
+either, because the Job could still deliver. The manager tries again after 30 seconds,
+doubling up to every 5 minutes, and each Warning says it retries. Free room in the
+quota, or delete the finished Job once you have read its log, and the next attempt
+goes through.
+
+A quota with no room refuses an operation's own records too: its credential, with a
+`ResultCredentialFailed` Warning Event, and its result, which then cannot be stored.
+[A Job finished but its result is unavailable](../../troubleshoot/conditions/#a-job-finished-but-its-result-is-unavailable)
+says what follows.
 
 ## Failure recovery
 

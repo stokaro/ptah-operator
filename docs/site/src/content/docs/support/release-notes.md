@@ -48,7 +48,10 @@ than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
 one `stale` outcome, where it took two of each. A script that acts on the exit
 status of a `kubectl ptah` wait on a migration run has to expect the statuses
-the bullet on waits under two managers' clocks lists.
+the bullet on waits under two managers' clocks lists. A namespace with a
+ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
+in it for one `retired` record per operation, as [A quota on result
+records](../../use/operations/#result-record-quota) says.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -121,6 +124,14 @@ the bullet on waits under two managers' clocks lists.
   was blocked. A run that an operator older than 0.2.10 recorded carries no
   verification, so `wait --for applied` still dates its reading by the run's
   end.
+- **Result cleanup under a full quota.** A quota that refused the `retired` record
+  stopped cleanup in a live namespace: the collector asked again every 30 seconds,
+  nothing started the retention window, and the operation's records stayed. Once the
+  operation's Job is gone, the collector now starts the window with a foreground
+  deletion of the result and credential records, as it already did in a terminating
+  namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
+  Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
+  Job exists, the collector retries with backoff up to every 5 minutes.
 
 ## 0.2.10
 
