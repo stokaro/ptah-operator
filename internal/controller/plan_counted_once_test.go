@@ -96,18 +96,27 @@ func (w *scheduledWalk) claimed(operation operatorv1alpha1.OperationType) *opera
 }
 
 // scheduledRead moves the clock past the deadline the waiting plan persisted and
-// answers each claim the controller makes until it publishes a plan again: a
-// Resolve and a Verify of the same artifact, an Observe, and a Plan of document.
-// It returns the name of the plan that read published.
+// reads the database again. It returns the name of the plan that read published.
 func (w *scheduledWalk) scheduledRead(document []byte) string {
 	w.t.Helper()
-	ctx := context.Background()
 	waiting := w.stored()
 	if waiting.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval || waiting.Status.NextReconciliationTime == nil {
 		w.t.Fatalf("phase %s with deadline %v, want a plan waiting until a deadline", waiting.Status.Phase, waiting.Status.NextReconciliationTime)
 	}
 	w.clock.now = waiting.Status.NextReconciliationTime.Add(time.Second)
+	published := w.refresh(document)
+	if published.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
+		w.t.Fatalf("the read ended in phase %s with plan %s, want a plan awaiting approval", published.Status.Phase, published.Status.Plan.Name)
+	}
+	return published.Status.Plan.Name
+}
 
+// refresh answers each claim the controller makes until it publishes a plan
+// again: a Resolve and a Verify of the same artifact, an Observe, and a Plan of
+// document. It returns what the Plan stored.
+func (w *scheduledWalk) refresh(document []byte) *operatorv1alpha1.PtahSchema {
+	w.t.Helper()
+	ctx := context.Background()
 	if _, err := w.reconciler.consumeResult(ctx, w.claimed(operatorv1alpha1.OperationResolve), nil, runner.Result{
 		Operation: runner.OperationResolve, ResolvedDigest: testDigest,
 		ResolvedReference: "oci://registry.example/team/schema@" + testDigest,
@@ -141,10 +150,10 @@ func (w *scheduledWalk) scheduledRead(document []byte) string {
 		w.t.Fatalf("harvest Plan: %v", err)
 	}
 	published := w.stored()
-	if published.Status.Plan == nil || published.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
-		w.t.Fatalf("the read ended in phase %s with plan %+v, want a plan awaiting approval", published.Status.Phase, published.Status.Plan)
+	if published.Status.Plan == nil {
+		w.t.Fatalf("the read ended in phase %s with no plan", published.Status.Phase)
 	}
-	return published.Status.Plan.Name
+	return published
 }
 
 // assertCounted holds the walk to the plans it published and the times a plan
@@ -268,5 +277,51 @@ func TestTheSamePlanAsksAgainOnlyWhenItsRequirementCameBack(t *testing.T) {
 			}
 			walk.assertCounted("the plan back", 1, 2)
 		})
+	}
+}
+
+// spec.policy.apply is not part of the policy a plan is computed under, so the
+// read after an edit of it publishes the plan already in status under the same
+// name, and the journal records nothing. A plan that starts asking for an
+// approval there is still a person being asked, each time it starts.
+func TestAnApplyPolicyEditAsksForThePlanAlreadyPublished(t *testing.T) {
+	t.Parallel()
+
+	walk := newScheduledWalk(t)
+	setApply := func(apply operatorv1alpha1.ApplyPolicy) {
+		t.Helper()
+		edited := walk.stored()
+		edited.Spec.Policy.Apply = apply
+		// The fake client does not manage the generation the controller reads a
+		// spec edit from.
+		edited.Generation++
+		if err := walk.api.Update(context.Background(), edited); err != nil {
+			t.Fatalf("set apply %s: %v", apply, err)
+		}
+	}
+	document := safetyPlanDocument(t, "observed-state")
+	setApply(operatorv1alpha1.ApplyPolicyNever)
+	first := walk.publish("plan-1", document)
+	if first.Status.Phase != operatorv1alpha1.PhaseBlocked {
+		t.Fatalf("the plan under Never left phase %s, want Blocked", first.Status.Phase)
+	}
+	walk.assertCounted("the plan under Never", 1, 0)
+
+	for _, step := range []struct {
+		apply operatorv1alpha1.ApplyPolicy
+		phase operatorv1alpha1.ReconciliationPhase
+		asked int
+	}{
+		{apply: operatorv1alpha1.ApplyPolicyOnApproval, phase: operatorv1alpha1.PhaseAwaitingApproval, asked: 1},
+		{apply: operatorv1alpha1.ApplyPolicyNever, phase: operatorv1alpha1.PhaseBlocked, asked: 1},
+		{apply: operatorv1alpha1.ApplyPolicyOnApproval, phase: operatorv1alpha1.PhaseAwaitingApproval, asked: 2},
+	} {
+		setApply(step.apply)
+		published := walk.refresh(document)
+		if published.Status.Plan.Name != first.Status.Plan.Name || published.Status.Phase != step.phase {
+			t.Fatalf("the read after apply %s published %s in phase %s, want %s in phase %s",
+				step.apply, published.Status.Plan.Name, published.Status.Phase, first.Status.Plan.Name, step.phase)
+		}
+		walk.assertCounted(fmt.Sprintf("apply %s, asked %d", step.apply, step.asked), 1, step.asked)
 	}
 }

@@ -30,10 +30,13 @@ else.
   changed. The plan counter, the required-approval counter and the
   `ApprovalRequired` Event took that plan for a new one, so a plan waiting for a
   day under a short interval was counted, and announced, once for each read.
-  They now follow the plan's `PlanPublished` entry in `status.journal`, and the
-  same plan asks again only when its requirement comes back after something
-  withdrew it, as [Events](../../troubleshoot/events/) says. Migrations keep the
-  plan they wait on in status through a read, so their counters did not move.
+  They now follow the plan's `PlanPublished` entry in `status.journal`. A plan
+  already published still records an `ApprovalRequired` Event, and counts as
+  `required`, each time it starts asking: after something withdrew its
+  requirement, or after an edit of `spec.policy.apply` such as `Never` to
+  `OnApproval`. [Events](../../troubleshoot/events/) lists the cases. Migrations
+  keep the plan they wait on in status through a read, so their counters did not
+  move.
 
 ## 0.2.10
 

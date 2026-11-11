@@ -2166,10 +2166,11 @@ apply wants; add `family="migration"` to ask about one.
   of `Always` waives the requirement and counts nothing, except for a schema
   plan that changes privileges, which still asks and counts as `required`. A
   schema counts `required` with each `ApprovalRequired` Event: once when a plan
-  that asks for an approval is published, and again for the same plan only when
-  its requirement comes back after something withdrew it, which
-  [Events](../../troubleshoot/events/) lists. A migration counts it each time its
-  `ApprovalRequired` condition becomes `True`.
+  that asks for an approval is published, and once each time a plan already
+  published starts asking, after something withdrew its requirement or after an
+  edit of `spec.policy.apply`, which [Events](../../troubleshoot/events/) lists.
+  A migration counts it each time its `ApprovalRequired` condition becomes
+  `True`.
 - `ptah_operator_applies_total{family,outcome}` counts started, completed,
   uncertain, and stale Apply transitions. A migration run that ended `Partial`
   or `Unknown` is `uncertain`: neither may be retried, and both leave a record
