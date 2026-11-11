@@ -177,8 +177,11 @@ func pastTheDeadlineWithoutAPod(t *testing.T, api client.Client, job *batchv1.Jo
 
 // aSecondPod is a replacement the Job controller made for a Pod that did not
 // go: the first stands Terminating on a node that stopped answering, and the
-// second waits on the same Secret. The Job then fails at its deadline with both
-// still there, which is a Job whose result cannot be attributed to one Pod.
+// second waits on the same Secret. The Job then reads Failed at its deadline
+// with both still there, which is a Job whose result cannot be attributed to
+// one Pod. A supported cluster marks the Job Failed only once its Pods have
+// stopped, so the state is the fake client's; the rows that use it hold the
+// multiplicity refusal defensively.
 func aSecondPod(t *testing.T, api client.Client, job *batchv1.Job, pod *corev1.Pod) {
 	t.Helper()
 
@@ -638,25 +641,38 @@ func TestAnUncertainApplyEventCarriesTheLastPodReport(t *testing.T) {
 		Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
 		Message: "Job " + job + " cannot create its Pod; the API server refused it: " + strings.Repeat("r", 1000),
 	}}
-	// ended is a plain error in a deletion ending's words: the Event keys on
-	// the type, so it keeps the fixed text.
+	// ended is a plain error in an ending's words, and sentence the same words
+	// as the operator's sentence. The deletion decides the opening, and only
+	// the sentence is quoted after it.
 	ended := errors.New("dispatched Apply Job identity was lost during deletion")
-	deleted := deletedApplyEnding(ended.Error())
-	deletedText := "Apply outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the database: " + ended.Error()
+	sentence := applyEndingSentence(ended.Error())
+	const deleting = "Apply outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the database"
+	deletedText := deleting + ": " + ended.Error()
 	for _, row := range []struct {
-		name    string
-		failure error
-		want    string
+		name     string
+		failure  error
+		deleting bool
+		want     string
 	}{
 		{name: "no report", failure: ended, want: fixed},
-		{name: "a deleted schema's ending", failure: deleted, want: deletedText},
+		{name: "a sentence on a schema that is not being deleted", failure: sentence, want: fixed},
 		{
-			name: "a deleted schema's ending and a report", failure: withLastPodReport(deleted, report),
+			name: "a sentence and a report on a schema that is not being deleted", failure: withLastPodReport(sentence, report),
+			want: fixed + lastReportedBefore + report.reported.Message,
+		},
+		{name: "a deleted schema's ending", failure: sentence, deleting: true, want: deletedText},
+		{name: "a deleted schema's ending in a plain error", failure: ended, deleting: true, want: deleting},
+		{
+			name: "a deleted schema's ending in a plain error and a report", failure: withLastPodReport(ended, report), deleting: true,
+			want: deleting + lastReportedBefore + report.reported.Message,
+		},
+		{
+			name: "a deleted schema's ending and a report", failure: withLastPodReport(sentence, report), deleting: true,
 			want: deletedText + lastReportedBefore + report.reported.Message,
 		},
 		{
-			name: "a deleted schema's ending under another wrap", failure: fmt.Errorf("while settling: %w", withLastPodReport(deleted, report)),
-			want: deletedText + lastReportedBefore + report.reported.Message,
+			name: "a deleted schema's ending under another wrap", failure: fmt.Errorf("while settling: %w", withLastPodReport(sentence, report)),
+			deleting: true, want: deletedText + lastReportedBefore + report.reported.Message,
 		},
 		{
 			name: "a report", failure: withLastPodReport(ended, report),
@@ -679,7 +695,7 @@ func TestAnUncertainApplyEventCarriesTheLastPodReport(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			if got := uncertainApplyEvent(row.failure); got != row.want {
+			if got := uncertainApplyEvent(row.failure, row.deleting); got != row.want {
 				t.Fatalf("uncertainApplyEvent() = %q, want %q", got, row.want)
 			}
 		})

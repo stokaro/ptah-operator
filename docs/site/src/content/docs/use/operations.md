@@ -2511,7 +2511,9 @@ that sent statements and lost the connection reads the same once its proof finds
 the database closed. Only the completed proof settles the record. The
 `ApplyOutcomeUnknown` Event carries the sentence when the Apply's own Pod reported
 it could not open the target, and the fixed text otherwise, followed by what the
-schema last reported about a Pod that never ran when there is such a report.
+schema last reported about a Pod that never ran when there is such a report. A
+schema being deleted counts here too, from the moment its deletion records the
+Apply's outcome as unknown until the resource goes.
 
 The leader reads both resource families and both plan kinds directly from the
 API server once per scrape, sharing those results across the unresolved,
@@ -2549,7 +2551,13 @@ kubectl get ptahschemas -A -o json |
 A migration named there is
 [a run nobody accounted for](#a-migration-run-nobody-accounted-for) and waits
 for a person. A schema named there settles itself once its horizon passes and
-a reading of the database confirms convergence.
+a reading of the database confirms convergence. A schema named there that is
+being deleted reads nothing: it goes, and its record with it, once no Pod of
+its Apply's Job is still running and, unless that Job's one Pod showed its
+executor run and stop, once the Apply's execution deadline and its grace period
+have passed. That is about 30 seconds after the deadline for an Apply whose Pod
+never started, so a deletion at that deadline can fire
+`PtahOperatorUnresolvedApply`.
 
 #### The chart's rules {#unresolved-rules}
 

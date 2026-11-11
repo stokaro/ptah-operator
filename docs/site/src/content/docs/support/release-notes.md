@@ -74,7 +74,12 @@ stopped now records that Apply: an alert on
 `ptah_operator_applies_total{family="schema",outcome="uncertain"}` or on
 `ptah_operator_failures_total{family="schema",stage="apply"}` counts it once, and
 `ptah_operator_operation_duration_seconds` records it with `outcome="uncertain"`
-where it recorded `canceled`.
+where it recorded `canceled`. Such records count in
+`ptah_operator_unresolved_attempts` until the deleted schema goes, so
+`PtahOperatorUnresolvedApply`, which is critical and has no pending period, can
+fire for a schema deleted while its Apply runs: for about 30 seconds past the
+Apply's deadline when its Pod never started, and for a pass when its executor ran
+and stopped.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -193,9 +198,11 @@ where it recorded `canceled`.
   report, and holds the database until the Apply's execution deadline and its
   grace period have passed. An executor that ran and stopped is recorded as well,
   since nothing read its result, and the database goes back without that wait.
-  Every such ending leaves an `ApplyOutcomeUnknown` Warning Event that says the
-  schema is being deleted and how the Apply ended, as a deleted `PtahMigration`
-  leaves `MigrationRunUncertain`.
+  Every Apply ending of a deleted schema, including a database Lease that changed
+  hands while it waited, leaves an `ApplyOutcomeUnknown` Warning Event that says
+  the schema is being deleted and how the Apply ended, as a deleted
+  `PtahMigration` leaves `MigrationRunUncertain`. A Pod that started since the
+  last look leaves the last report out of the Lease and lost-Job endings too.
 - **More endings keep why the Pod never ran.** The same words now follow an Apply
   whose Job stopped being its claim's after the inputs moved, whose claim could not
   build its Job again because its plan was deleted, whose Job a newer release
