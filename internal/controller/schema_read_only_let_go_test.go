@@ -700,10 +700,12 @@ func refusingJobTTL(writer client.WithWatch, answer error) client.WithWatch {
 }
 
 // TestARefusedSchemaJobTTLWriteIsSettledByItsAnswer is the TTL write a read-only
-// PtahSchema claim makes before it lets go of a stopped Job, when admission
-// refuses it: Forbidden from the controller-write webhook, or Invalid from a
-// ValidatingAdmissionPolicy. A refusal says admission will not collect the Job
-// however often it is asked, so the claim moves on, and a Warning names the Job.
+// PtahSchema claim makes before it lets go of a stopped Job. A refusal, Forbidden
+// from the controller-write webhook or Invalid from a ValidatingAdmissionPolicy,
+// says admission will not collect the Job however often it is asked, so the claim
+// moves on, and a Warning names the Job. A Job deleted since the pass read it
+// needs no TTL, so the claim moves on and nothing is named. Any other failure may
+// pass, so the pass fails with the claim kept, and the next pass asks again.
 func TestARefusedSchemaJobTTLWriteIsSettledByItsAnswer(t *testing.T) {
 	t.Parallel()
 
@@ -712,20 +714,25 @@ func TestARefusedSchemaJobTTLWriteIsSettledByItsAnswer(t *testing.T) {
 	for _, row := range []struct {
 		name   string
 		answer error
-		stays  string
+		// retried is whether the pass the write failed in moved the claim on.
+		retried bool
+		// stays is what the Warning says, or empty where there must be none.
+		stays string
 	}{
 		{
-			name:   "refused",
-			answer: apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal")),
-			stays:  "injected refusal",
+			name:    "refused",
+			answer:  apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal")),
+			retried: true, stays: "injected refusal",
 		},
 		{
 			name: "refused by a policy",
 			answer: apierrors.NewInvalid(batchv1.SchemeGroupVersion.WithKind("Job").GroupKind(), "", field.ErrorList{
 				field.Forbidden(field.NewPath("spec", "ttlSecondsAfterFinished"), "injected policy refusal"),
 			}),
-			stays: "injected policy refusal",
+			retried: true, stays: "injected policy refusal",
 		},
+		{name: "deleted since it was read", answer: apierrors.NewNotFound(batchv1.Resource("jobs"), ""), retried: true},
+		{name: "lost", answer: errors.New("connection reset by peer")},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -736,13 +743,214 @@ func TestARefusedSchemaJobTTLWriteIsSettledByItsAnswer(t *testing.T) {
 			finishSchemaRead(t, api, run)
 			reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.answer)
 
+			_, err := reconciler.Reconcile(ctx, run.request())
+			claimed := run.schema.Status.ActiveOperation
+			operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
+			if row.retried {
+				if err != nil {
+					t.Fatalf("Reconcile(): %v, want the answer not to fail the pass", err)
+				}
+				if operation == nil || operation.Attempt != claimed.Attempt+1 {
+					t.Fatalf("operation = %#v, want the claim moved to attempt %d", operation, claimed.Attempt+1)
+				}
+				events := migrationEvents(recorder)
+				if row.stays == "" {
+					if schemaCleanupDeferredFor(events, run.job.Name, "") {
+						t.Fatalf("a Job that is gone is named as staying: %q", events)
+					}
+					return
+				}
+				if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
+					t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
+				}
+				return
+			}
+			if !errors.Is(err, row.answer) {
+				t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+			}
+			if !equality.Semantic.DeepEqual(operation, claimed) {
+				t.Fatalf("a lost TTL write moved the claim on: operation=%#v", operation)
+			}
 			if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+				t.Fatalf("Reconcile() after the lost write: %v", err)
+			}
+			if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+				t.Fatalf("the stopped Job's TTL = %s after the next pass, want %d", ttlText(got), jobclaim.CleanupTTLSeconds)
+			}
+			if next := safetyGetSchema(t, api, run.schema).Status.ActiveOperation; next == nil ||
+				next.Attempt != claimed.Attempt+1 {
+				t.Fatalf("operation = %#v after the next pass, want the claim moved to attempt %d", next, claimed.Attempt+1)
+			}
+			if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, run.job.Name, "") {
+				t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+			}
+		})
+	}
+}
+
+// TestASuspendedReadOnlySchemaClaimKeepsAFinishedJobWhoseTTLWriteIsLost is a
+// suspended PtahSchema whose read-only claim asks for the finished Job's TTL, and
+// the write fails with an answer that may pass. Discarding the claim then would
+// leave the Job with no TTL for good, since no claim would name it again, so the
+// pass fails with the claim kept, and the next pass asks again and lets go.
+func TestASuspendedReadOnlySchemaClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	current := workloadBuilderForMigrations()
+	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true})
+	run.schema.Spec.Suspend = true
+	reconciler, api, recorder := run.reconciler(t, current)
+	finishSchemaRead(t, api, run)
+	lost := errors.New("connection reset by peer")
+	reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), lost)
+
+	if _, err := reconciler.Reconcile(ctx, run.request()); !errors.Is(err, lost) {
+		t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+	}
+	if kept := safetyGetSchema(t, api, run.schema).Status.ActiveOperation; !equality.Semantic.DeepEqual(
+		kept, run.schema.Status.ActiveOperation) {
+		t.Fatalf("a lost TTL write let the suspended claim go: operation=%#v", kept)
+	}
+	if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+		t.Fatalf("Reconcile() after the lost write: %v", err)
+	}
+	if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the finished Job's TTL = %s after the next pass, want %d", ttlText(got), jobclaim.CleanupTTLSeconds)
+	}
+	if operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation; operation != nil {
+		t.Fatalf("the suspended claim stayed once its Job had its TTL: %#v", operation)
+	}
+	if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, run.job.Name, "") {
+		t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+	}
+}
+
+// TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound is a Plan whose
+// realm Lease epoch moved while its Job ran (LeaseContinuityLost). Its result is
+// discarded, but the claim first waits for the Job to stop, renewing the Lease,
+// since the Job's Pod may still reach the database. It waits no longer than
+// jobStopBound, dated from what the built Job carries: a Job past its deadline
+// carries only FailureTarget until every Pod has terminated, and would otherwise
+// hold the realm forever. At the bound the claim is discarded with its Lease
+// handed back, and a Warning names the Job, which has no TTL.
+func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	for _, row := range []struct {
+		name string
+		// past dates the pass at the Job's stop bound rather than a second
+		// before it.
+		past bool
+	}{
+		{name: "inside its stop bound"},
+		{name: "at its stop bound", past: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{dispatcher: current, recorded: true})
+			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
+			reconciler, api, recorder := run.reconciler(t, current)
+			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
+			if holder == "" {
+				t.Fatal("the running Plan's claim holds no Lease, so nothing below measures one")
+			}
+			stopBy := jobStopBound(run.job)
+			clock := &safetyClock{now: stopBy.Add(-time.Second)}
+			if row.past {
+				clock.now = stopBy
+			}
+			reconciler.Clock = clock.Now
+			reconciler.Locks = targetlock.New(api, api, clock)
+
+			result, err := reconciler.Reconcile(ctx, run.request())
+			if err != nil {
+				t.Fatalf("Reconcile(): %v", err)
+			}
+			got := safetyGetSchema(t, api, run.schema)
+			events := migrationEvents(recorder)
+			if !row.past {
+				if got.Status.ActiveOperation == nil || result.RequeueAfter != maxLockContentionPoll {
+					t.Fatalf("the claim did not wait for its running Job: result %#v, operation %#v",
+						result, got.Status.ActiveOperation)
+				}
+				if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != holder {
+					t.Fatalf("the waiting claim's Lease is held by %q, want %q", leased, holder)
+				}
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job the claim still waits for is named as staying: %q", events)
+				}
+				return
+			}
+			if got.Status.ActiveOperation != nil {
+				t.Fatalf("the claim waited past its Job's stop bound, %s: %#v", stopBy, got.Status.ActiveOperation)
+			}
+			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
+				t.Fatalf("the discarded claim's Lease is still held by %q", leased)
+			}
+			if ttl := storedTTL(t, api, run.job); ttl != nil {
+				t.Fatalf("the running Job's TTL = %d, want none", *ttl)
+			}
+			const stays = "the Job did not stop by its own deadline"
+			if !schemaCleanupDeferredFor(events, run.job.Name, stays) {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, stays)
+			}
+		})
+	}
+}
+
+// TestAReadUnderALostLeaseSettlesItsJobsTTLWriteByItsAnswer is a Plan whose realm
+// Lease epoch moved, over a Job that has stopped, when the Job's TTL write fails.
+// A refusal says admission will not collect the Job however often it is asked, so
+// the claim is discarded as it would have been, and a Warning names the Job. Any
+// other failure may pass, so the pass fails with the claim kept.
+func TestAReadUnderALostLeaseSettlesItsJobsTTLWriteByItsAnswer(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	for _, row := range []struct {
+		name   string
+		answer error
+		// discarded is whether the pass the write failed in discarded the claim.
+		discarded bool
+		stays     string
+	}{
+		{
+			name:      "refused",
+			answer:    apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal")),
+			discarded: true, stays: "injected refusal",
+		},
+		{name: "lost", answer: errors.New("connection reset by peer")},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{dispatcher: current, recorded: true})
+			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
+			reconciler, api, recorder := run.reconciler(t, current)
+			finishSchemaRead(t, api, run)
+			reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.answer)
+
+			_, err := reconciler.Reconcile(ctx, run.request())
+			operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
+			if !row.discarded {
+				if !errors.Is(err, row.answer) {
+					t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+				}
+				if operation == nil || operation.ID != run.schema.Status.ActiveOperation.ID {
+					t.Fatalf("a lost TTL write discarded the claim: operation=%#v", operation)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("Reconcile(): %v, want the refusal not to fail the pass", err)
 			}
-			claimed := run.schema.Status.ActiveOperation
-			if operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation; operation == nil ||
-				operation.Attempt != claimed.Attempt+1 {
-				t.Fatalf("operation = %#v, want the claim moved to attempt %d", operation, claimed.Attempt+1)
+			if operation != nil {
+				t.Fatalf("the claim stayed over a Job admission will not collect: %#v", operation)
 			}
 			if events := migrationEvents(recorder); !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
 				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)

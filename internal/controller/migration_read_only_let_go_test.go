@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -241,12 +242,54 @@ func TestASuspendedReadOnlyClaimGoesAtOnceWhereItOwesItsJobNothingItCanGive(t *t
 	}
 }
 
+// TestASuspendedReadOnlyClaimKeepsAFinishedJobWhoseTTLWriteIsLost is a suspended
+// resource whose read-only claim asks for the finished Job's TTL, and the write
+// fails with an answer that may pass. Discarding the claim then would leave the
+// Job with no TTL for good, since no claim would name it again, so the pass fails
+// with the claim kept, and the next pass asks again and lets go.
+func TestASuspendedReadOnlyClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	current := workloadBuilderForMigrations()
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+	run.migration.Spec.Suspend = true
+	reconciler, api := run.reconciler(t, current)
+	finishMigrationJob(t, api, run, batchv1.JobComplete)
+	lost := errors.New("connection reset by peer")
+	reconciler.Client = refusingJobTTL(admittedJobWrites(api, current), lost)
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); !errors.Is(err, lost) {
+		t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+	}
+	if kept := readMigration(t, api, run.migration).Status.ActiveOperation; !equality.Semantic.DeepEqual(
+		kept, run.migration.Status.ActiveOperation) {
+		t.Fatalf("a lost TTL write let the suspended claim go: operation=%#v", kept)
+	}
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() after the lost write: %v", err)
+	}
+	if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the finished Job's TTL = %s after the next pass, want %d", ttlText(got), jobclaim.CleanupTTLSeconds)
+	}
+	if operation := readMigration(t, api, run.migration).Status.ActiveOperation; operation != nil {
+		t.Fatalf("the suspended claim stayed once its Job had its TTL: %#v", operation)
+	}
+	if events := migrationEvents(recorder); cleanupDeferredFor(events, run.job.Name, "") {
+		t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+	}
+}
+
 // TestARotationCollectsTheReadOnlyJobItsClaimLeaves is a read-only claim over a
 // running Job when an execution component changes. The rotation waits, under the
 // binding status still records, for the Job to stop, and says why in Progressing;
 // the pass that sees it stopped gives it its TTL and installs the new binding with
 // the claim retired. A Job admission would refuse a TTL does not hold the
-// rotation, and a Warning names it.
+// rotation, and a Warning names it. Neither does the Job of a suspended resource:
+// the rotation lets go of it at once, as the suspension would. A read of the Job
+// that fails fails the pass, with the claim and the binding where they were.
 func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 	t.Parallel()
 
@@ -320,6 +363,81 @@ func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 		const stays = "the Job runs under another execution epoch than its claim"
 		if events := migrationEvents(recorder); !cleanupDeferredFor(events, run.job.Name, stays) {
 			t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, stays)
+		}
+	})
+
+	// The rotation runs before the pass that discards a suspended claim, so a
+	// rotation that went on waiting would hold the suspension until the Job
+	// stopped, and kubectl ptah suspend --wait would time out.
+	t.Run("a suspension while the rotation waits", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+
+		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+		reconciler, api := run.reconciler(t, next)
+		admitted := admittedJobWrites(api, next)
+		reconciler.Client = admitted
+		recorder := record.NewFakeRecorder(64)
+		reconciler.Recorder = recorder
+
+		if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+			t.Fatalf("Reconcile() before the suspension: %v", err)
+		}
+		assertWaitSaidOnce(t, reconciler, api, run, retiredJobWait(run))
+
+		suspendMigration(t, api, run)
+		var recordings, jobPatches int
+		reconciler.Client = countingMigrationWrites(admitted, &recordings, &jobPatches)
+		if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+			t.Fatalf("Reconcile() after the suspension: %v", err)
+		}
+		rotated := readMigration(t, api, run.migration)
+		if rotated.Status.ActiveOperation != nil || rotated.Status.ExecutionBinding.ExecutorImage != next.ExecutorImage {
+			t.Fatalf("the rotation went on waiting for the running Job of a suspended resource: claim=%#v binding=%q",
+				rotated.Status.ActiveOperation, rotated.Status.ExecutionBinding.ExecutorImage)
+		}
+		if jobPatches != 0 {
+			t.Fatalf("%d writes reached the running Job, want none", jobPatches)
+		}
+		if got := storedTTL(t, api, run.job); got != nil {
+			t.Fatalf("the running Job's TTL = %d, want none", *got)
+		}
+		if events := migrationEvents(recorder); !cleanupDeferredFor(events, run.job.Name, notWaited) {
+			t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, notWaited)
+		}
+	})
+
+	t.Run("a read of the Job that fails", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+
+		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+		reconciler, api := run.reconciler(t, next)
+		reconciler.Client = admittedJobWrites(api, next)
+		lost := errors.New("connection reset by peer")
+		reconciler.APIReader = interceptor.NewClient(api, interceptor.Funcs{
+			Get: func(
+				ctx context.Context,
+				reader client.WithWatch,
+				key client.ObjectKey,
+				object client.Object,
+				options ...client.GetOption,
+			) error {
+				if _, isJob := object.(*batchv1.Job); isJob && key.Name == run.job.Name {
+					return lost
+				}
+				return reader.Get(ctx, key, object, options...)
+			},
+		})
+
+		if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); !errors.Is(err, lost) {
+			t.Fatalf("Reconcile() error = %v, want the failed read of the Job, so the next pass reads it again", err)
+		}
+		kept := readMigration(t, api, run.migration)
+		if !equality.Semantic.DeepEqual(kept.Status.ActiveOperation, run.migration.Status.ActiveOperation) ||
+			kept.Status.ExecutionBinding.ExecutorImage != current.ExecutorImage {
+			t.Fatalf("a failed read of the Job retired its claim: claim=%#v binding=%q",
+				kept.Status.ActiveOperation, kept.Status.ExecutionBinding.ExecutorImage)
 		}
 	})
 }

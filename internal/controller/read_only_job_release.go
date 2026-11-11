@@ -36,8 +36,8 @@ const (
 	// leaveReadOnlyJobUncollected lets go of a Job whose TTL admission would
 	// refuse, and a Warning names it: one an unrecorded claim may not record,
 	// one outside what the claim fixes, and one that has not finished by
-	// jobStopBound. Waiting for it would hold the claim for nothing. A claim that
-	// may not wait leaves a running Job the same way.
+	// jobStopBound. Waiting for it would hold the claim for nothing. A claim of a
+	// suspended resource leaves a running Job the same way.
 	leaveReadOnlyJobUncollected
 	// recordReadOnlyJob records the UID of the Job a claim never recorded, where
 	// the resource owns it exactly and it is the one the claim fixes, and asks
@@ -51,23 +51,19 @@ const (
 	collectReadOnlyJob
 )
 
-// letGoAtOnce is what a claim that may not wait for its Job passes in place of
-// the words it would say while it waits. Suspension is the stop button, so a
-// suspended claim settles at once what it can: a finished Job gets its TTL, and a
-// Warning names a running one, which admission will not let any claim collect
-// once this one is gone.
-const letGoAtOnce = ""
-
 // releaseReadOnlyJob decides what the claim does with job, given the verdict
 // about it (mutationlifecycle.VerdictFor), envelope, the family's answer to
 // whether the Job is what the claim fixes without a rebuild, now, and whether the
 // claim may wait for the Job to stop. It returns the reason a Warning gives for
-// leaving the Job uncollected. A claim that may not wait records no UID for a
+// leaving the Job uncollected.
+//
+// mayWait is false for a claim of a suspended resource, whichever pass lets go
+// of it: suspension is the stop button. Such a claim settles at once what it can.
+// A finished Job gets its TTL, and a Warning names a running one, which admission
+// will not let any claim collect once this one is gone. It records no UID for a
 // Job it cannot collect anyway.
 //
-// The wait ends by jobStopBound. Since Kubernetes 1.31 a Job past its deadline
-// carries only FailureTarget until every Pod has terminated, and a Pod on a node
-// that is gone may never terminate, so the Job would never finish.
+// The wait ends by jobStopBound (jobStopOverdue).
 func releaseReadOnlyJob(
 	job *batchv1.Job,
 	verdict mutationlifecycle.JobVerdict,
@@ -91,11 +87,23 @@ func releaseReadOnlyJob(
 	case jobTerminal(job):
 		return collectReadOnlyJob, nil
 	}
+	if overdue := jobStopOverdue(job, now); overdue != nil {
+		return leaveReadOnlyJobUncollected, overdue
+	}
+	return waitForReadOnlyJob, nil
+}
+
+// jobStopOverdue is why a claim stops waiting for a running Job it owes a
+// cleanup, or nil while the Job may still stop by jobStopBound. Since Kubernetes
+// 1.31 a Job past its deadline carries only FailureTarget until every Pod has
+// terminated, and a Pod on a node that is gone may never terminate, so the Job
+// would never finish, and a claim waiting for it would wait forever.
+func jobStopOverdue(job *batchv1.Job, now time.Time) error {
 	stopBy := jobStopBound(job)
 	if now.Before(stopBy) {
-		return waitForReadOnlyJob, nil
+		return nil
 	}
-	return leaveReadOnlyJobUncollected, fmt.Errorf(
+	return fmt.Errorf(
 		"the Job did not stop by its own deadline and the grace its Pods are given, %s, "+
 			"and admission admits a cleanup only on a Job that has finished",
 		stopBy.UTC().Format(time.RFC3339))

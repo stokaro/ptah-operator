@@ -628,7 +628,9 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 // and reports held while the claim has to stay over it. The rotation waits under
 // the binding status still records, since that is the binding admission holds the
 // Job's cleanup TTL to, and the claim is retired with the rotation's own write
-// once it is not held.
+// once it is not held. It does not wait for a suspended resource. A failed read
+// fails the pass: retiring the claim on it would let go of a Job that may still
+// be owed its cleanup.
 func (r *MigrationReconciler) letGoOfRetiredReadOnlyMigrationJob(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -870,9 +872,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	// that refusal has always lived. The claim settles at once what it owes that
 	// Job, since it is what lets admission accept the Job's cleanup TTL, and it
 	// does not wait: suspension is the stop button, whether the claim was
-	// supervising the Job or waiting for one it refused (letGoAtOnce).
+	// supervising the Job or waiting for one it refused. A claim of a suspended
+	// resource never waits (letGoOfReadOnlyMigrationJob), so it has no words for
+	// a wait.
 	if found && migration.Spec.Suspend && !mutating {
-		if _, _, err := r.letGoOfReadOnlyMigrationJob(ctx, migration, job, letGoAtOnce); err != nil {
+		if _, _, err := r.letGoOfReadOnlyMigrationJob(ctx, migration, job, ""); err != nil {
 			return ctrl.Result{}, err
 		}
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
@@ -1155,8 +1159,12 @@ func (r *MigrationReconciler) retryPastRefusedMigrationJob(
 // claim has to stay over the Job. The caller lets go once it is not held: it
 // retries past a Job it refused, discards the claim of a suspended resource, or
 // retires it under a changed execution binding. Every caller holds a read-only
-// claim, and decides that before it asks. A suspended claim passes letGoAtOnce
-// and is never held.
+// claim, and decides that before it asks.
+//
+// A claim of a suspended resource is never held, whichever of those passes asks:
+// suspension is the stop button, and a rotation runs before the pass that
+// discards a suspended claim, so the rule is kept here rather than by each
+// caller.
 //
 // The Job is held to what the claim fixes without a rebuild under the execution
 // binding status records (validateMigrationJobEnvelope), the match the
@@ -1171,10 +1179,10 @@ func (r *MigrationReconciler) letGoOfReadOnlyMigrationJob(
 	job *batchv1.Job,
 	waiting string,
 ) (result ctrl.Result, held bool, err error) {
+	mayWait := !migration.Spec.Suspend
 	release := func() (readOnlyJobRelease, error) {
 		verdict, _ := mutationlifecycle.VerdictFor(migrationJobClaim(migration, job))
-		return releaseReadOnlyJob(job, verdict, validateMigrationJobEnvelope(job, migration), r.now(),
-			waiting != letGoAtOnce)
+		return releaseReadOnlyJob(job, verdict, validateMigrationJobEnvelope(job, migration), r.now(), mayWait)
 	}
 	step, reason := release()
 	if step == recordReadOnlyJob {

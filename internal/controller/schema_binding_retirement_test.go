@@ -18,6 +18,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -483,7 +484,9 @@ func declarePodMetadata(
 // record both vouch for, declared Pod metadata included. The claim is the last
 // thing that can name its Job, so a Job it leaves with no TTL, because the
 // record does not vouch for it or admission refused the write, is named by a
-// Warning, and a refused write does not fail the pass.
+// Warning, and a refused write does not fail the pass. A Job a TTL already
+// collects is not named, and neither is one the resource no longer owns, which is
+// not the claim's.
 func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 	t.Parallel()
 
@@ -493,8 +496,11 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 		breakRecord func(*operatorv1alpha1.BindingRetirementStatus)
 		// refuse answers the stopped Job's TTL write, as admission refusing it
 		// does.
-		refuse      error
-		wantCleanup bool
+		refuse error
+		// collected gives the stopped Job a TTL before the pass that retires
+		// the claim, and disowned takes its owner away.
+		collected, disowned bool
+		wantCleanup         bool
 		// stays is what the Warning says, or empty where there must be none.
 		stays string
 	}{
@@ -504,6 +510,16 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			name:        "a record that retired another epoch",
 			breakRecord: func(record *operatorv1alpha1.BindingRetirementStatus) { record.RetiredEpoch = unretiredEpoch },
 			stays:       "the Job is not the one the retired claim fixes",
+		},
+		{
+			// A TTL collects the Job, so nothing names it as staying.
+			name:        "a Job that already has its TTL, under a record that retired another epoch",
+			breakRecord: func(record *operatorv1alpha1.BindingRetirementStatus) { record.RetiredEpoch = unretiredEpoch },
+			collected:   true, wantCleanup: true,
+		},
+		{
+			// A Job this resource does not own is not the claim's to name.
+			name: "a Job the resource no longer owns", disowned: true,
 		},
 		{
 			name:   "a TTL write admission refuses",
@@ -585,6 +601,21 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			}
 
 			finishJob(t, api, job)
+			if row.collected || row.disowned {
+				stopped := &batchv1.Job{}
+				if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), stopped); err != nil {
+					t.Fatal(err)
+				}
+				if row.collected {
+					stopped.Spec.TTLSecondsAfterFinished = ptr(jobclaim.CleanupTTLSeconds)
+				}
+				if row.disowned {
+					stopped.OwnerReferences = nil
+				}
+				if err := api.Update(context.Background(), stopped); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if row.refuse != nil {
 				reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.refuse)
 			}
