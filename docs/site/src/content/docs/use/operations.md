@@ -1461,9 +1461,13 @@ to be exposed on a Kubernetes node or on the host running a kind test cluster.
 
 ## Suspension and deletion
 
-Setting `spec.suspend=true` prevents new Jobs and cancels no SQL. If an apply
-is already active, the controller continues observing that Job until its
-outcome is safe to classify; it does not delete the Pod mid-mutation.
+Suspension prevents new operations. It does not necessarily stop one that is
+already running: setting `spec.suspend=true` cancels no SQL and deletes no Job
+or Pod, and a Job's cleanup TTL removes it only once it has finished. A Job
+still running when the resource is suspended runs until it stops by itself or
+reaches its own deadline. If an apply is already active, the controller
+continues observing that Job until its outcome is safe to classify; it does not
+delete the Pod mid-mutation.
 
 For either kind that classification is `Unknown`, whatever the run did.
 Suspending is a spec edit, the generation it bumps is one of the inputs the
@@ -1511,7 +1515,9 @@ is dropped rather than waited for, since it changes nothing; its Job stops at
 its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
 the claim names, so a read Job that had finished gets its TTL as the claim is
 dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
-Warning Event names one still running, which stays until it is deleted.
+Warning Event names one still running, which stays until it is deleted. A read
+a `PtahMigration` holds while an execution component changes is dropped the
+same way once the resource is suspended, rather than waited for.
 Running one again sends nothing when the field already holds the value.
 With `--wait`, suspend stays until the operator reports the resource
 `Suspended` with nothing in flight, and resume until the resource is back in
