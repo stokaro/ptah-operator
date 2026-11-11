@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-08T13:07:15.792974+00:00",
+  "frozenAt": "2026-11-11T11:49:14.034737+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -20,7 +20,7 @@
     },
     {
       "path": "support/kubernetes.json",
-      "sha256": "bf0d7b98a5ba4a7d102e3e28fd605a2b875aaadd5109fbfbecfdf712d68a3298"
+      "sha256": "7276e891c2dafb11896f8736ff7d971a6a4933a5e7021060cf047365d848f416"
     },
     {
       "path": "support/e2e-suites.json",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.10 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 86,
+  "revision": 87,
   "supersedes": {
-    "freezeCommit": "3c4ee0859050cff5a9aecb2f2392d8ac7dc6d0de",
-    "sha256": "4343e760eb0bd941279b4b4503e3c6eb0a6dbbfd9ddf8d4e858c6e307c755ce4"
+    "freezeCommit": "6ace518af281a8d48290dda3ec7e124f5a95d46f",
+    "sha256": "0f0d11edb34e8ad86411bb55b88ffed235fa66576543d5685875fa21111bd772"
   },
-  "revisionReason": "Declare the published v0.2.10 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.10 as the published predecessor of the next candidate. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Refresh lastVerified in support/kubernetes.json to 2026-11-10, the date the scheduled support-window discovery last verified the window. The supported minors, the kind release and every node image digest are unchanged, as are phases, cells, platforms, the profile and its targets."
 }
