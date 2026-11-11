@@ -495,8 +495,8 @@ func TestADeletedSchemasLastEventKeepsWhyItsApplyPodNeverStarted(t *testing.T) {
 			run.reconcileOnce(t)
 
 			event := settledSchemaEvent(t, run.recorder)
-			if want := uncertainApplyFixedEvent + lastReportedBefore + run.said; !strings.Contains(event, want) {
-				t.Fatalf("ApplyOutcomeUnknown = %q, want it to carry %q", event, want)
+			if want := deletedApplyEventPrefix + row.ended + lastReportedBefore + run.said; event != want {
+				t.Fatalf("ApplyOutcomeUnknown = %q, want %q", event, want)
 			}
 			failed := settledSchemaFailure(t, run.api, run.schema)
 			if want := row.ended + lastReportedBefore + run.said; !strings.Contains(failed.Message, want) {
@@ -539,8 +539,8 @@ func TestADeletedSchemaWhosePodStartedWhileItWaitedRepeatsNoStaleReport(t *testi
 	pastTheDeadline(t, run.api, run.job, run.pod)
 	run.reconcileOnce(t)
 
-	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
-		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
+	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+notProvenDuringDeletion; event != want {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want the deletion's sentence alone, %q", event, want)
 	}
 	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "Apply executor termination is not proven during deletion") ||
 		strings.Contains(failed.Message, run.said) {
@@ -588,8 +588,8 @@ func TestADeletedSchemaTakesNoReportFromAJobItsClaimNeverRecorded(t *testing.T) 
 	pastTheDeadline(t, run.api, run.job, run.pod)
 	run.reconcileOnce(t)
 
-	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
-		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
+	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+notProvenDuringDeletion; event != want {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want the deletion's sentence alone, %q", event, want)
 	}
 	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "Apply executor termination is not proven during deletion") ||
 		strings.Contains(failed.Message, lastReportedBefore) {
@@ -638,13 +638,26 @@ func TestAnUncertainApplyEventCarriesTheLastPodReport(t *testing.T) {
 		Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
 		Message: "Job " + job + " cannot create its Pod; the API server refused it: " + strings.Repeat("r", 1000),
 	}}
+	// ended is a plain error in a deletion ending's words: the Event keys on
+	// the type, so it keeps the fixed text.
 	ended := errors.New("dispatched Apply Job identity was lost during deletion")
+	deleted := deletedApplyEnding(ended.Error())
+	deletedText := "Apply outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the database: " + ended.Error()
 	for _, row := range []struct {
 		name    string
 		failure error
 		want    string
 	}{
 		{name: "no report", failure: ended, want: fixed},
+		{name: "a deleted schema's ending", failure: deleted, want: deletedText},
+		{
+			name: "a deleted schema's ending and a report", failure: withLastPodReport(deleted, report),
+			want: deletedText + lastReportedBefore + report.reported.Message,
+		},
+		{
+			name: "a deleted schema's ending under another wrap", failure: fmt.Errorf("while settling: %w", withLastPodReport(deleted, report)),
+			want: deletedText + lastReportedBefore + report.reported.Message,
+		},
 		{
 			name: "a report", failure: withLastPodReport(ended, report),
 			want: fixed + lastReportedBefore + report.reported.Message,
@@ -830,8 +843,8 @@ func TestADeletedSchemaWhoseDisownedJobRanRepeatsNoStaleReport(t *testing.T) {
 	disowned(t, run.api, run.job)
 	run.reconcileOnce(t)
 
-	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
-		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
+	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+"dispatched Apply Job identity was lost during deletion"; event != want {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want the deletion's sentence alone, %q", event, want)
 	}
 	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "dispatched Apply Job identity was lost during deletion") ||
 		strings.Contains(failed.Message, run.said) {

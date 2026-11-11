@@ -1545,9 +1545,14 @@ observe an already active operation and release coordination safely. It waits
 on a running Job only while the operation holds the database lock: an Apply, a
 Plan, or the Observe that proves an Apply. A Resolve, a Verify or any other
 Observe holds nothing, so deletion drops its claim without waiting, including
-one whose Pod a policy refuses. Once no operation is active, deletion removes
-Kubernetes-owned plans and Jobs through normal garbage collection; database
-objects remain untouched.
+one whose Pod a policy refuses. Once an Apply's Job has stopped, the deletion
+records the outcome as unknown, because nothing read the result, in an
+`ApplyOutcomeUnknown` Warning Event that names how the Apply ended. It then
+hands the database Lease back once no Pod of the Job is still running, and, unless
+the Job's one Pod showed its executor run and stop, not before the Apply's
+execution deadline and its grace period have passed. Once no operation is
+active, deletion removes Kubernetes-owned plans and Jobs through normal garbage
+collection; database objects remain untouched.
 
 Deleting a `PtahMigration` follows the same rule, and an Apply is where it is
 visible. The Job is owned by the resource, so releasing the finalizer under a

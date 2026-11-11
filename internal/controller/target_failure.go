@@ -54,6 +54,14 @@ func (e *targetFailureError) Error() string {
 	return targetfailure.Message(e.kind, e.url)
 }
 
+// deletedApplyEnding is how a deleted PtahSchema's Apply ended. The sentence is
+// the operator's own and quotes nothing the runner wrote, so the
+// ApplyOutcomeUnknown Event carries it: the status goes with the resource, and
+// nothing will observe the database for it.
+type deletedApplyEnding string
+
+func (e deletedApplyEnding) Error() string { return string(e) }
+
 // uncertainApplyEvent is the text of the ApplyOutcomeUnknown Event. A result that
 // named a kind says why the Pod that reported it could not open the target, and
 // keeps as much of the sentence as any failure Event. Every other Apply error
@@ -66,6 +74,11 @@ func (e *targetFailureError) Error() string {
 // this Event is the only place it is left.
 func uncertainApplyEvent(failure error) string {
 	text := "Apply outcome is uncertain; observing database state"
+	var deleted deletedApplyEnding
+	if errors.As(failure, &deleted) {
+		text = "Apply outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the database: " +
+			string(deleted)
+	}
 	var target *targetFailureError
 	if errors.As(failure, &target) {
 		text += ": " + bounded(target.Error(), 512)

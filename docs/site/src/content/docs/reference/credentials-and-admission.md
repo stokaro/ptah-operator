@@ -332,13 +332,16 @@ the lock changed in `InSync` and in a `LeaseContinuityLost` Event. A read that
 loses its Lease does not keep them: nothing looks at its Pod again before its Job
 stops, so `Ready` says the lock changed. A `PtahSchema` deleted while its Apply
 runs waits for it, and records `dispatched Apply Job identity was lost during
-deletion` when its Job went, or `Apply executor termination is not proven during
-deletion` when the Job stopped and no Pod showed its executor end. The status goes
-with the resource, and the Event is what stays. When the Job's one Pod shows its
-executor terminated, the deletion discards the claim and records nothing, and
-that includes an executor that never started: when the kubelet stops a Pod whose
-container is still waiting, it marks the container terminated with reason
-`ContainerStatusUnknown`.
+deletion` when its Job went, `Apply executor termination is not proven during
+deletion` when the Job stopped and no Pod showed its executor run and stop, and
+`Apply executor ended and its result was not read during deletion` when the Job's
+one Pod did. A container terminated with reason `ContainerStatusUnknown` shows
+neither: the kubelet gives that reason to a container that was still waiting when
+it stopped the Pod, as it does at the Job's deadline to one blocked on a missing
+Secret. The status goes with the resource, and the `ApplyOutcomeUnknown` Event is
+what stays: `Apply outcome is uncertain; the PtahSchema is being deleted, so
+nothing will observe the database:` and the sentence, followed by `; last reported
+before that:` and the words unless a Pod showed its executor start.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded, and a refusal is not
