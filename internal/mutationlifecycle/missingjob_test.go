@@ -45,12 +45,16 @@ var lost = verdictAt{mutationlifecycle.VerdictUnaccounted, mutationlifecycle.Cau
 
 // The grace is the dispatching manager's own bound plus a margin, and no
 // shorter: a reader that waited less could still retire a claim whose create
-// is on its way.
+// is on its way, or whose refused create is still taking its mark back.
 func TestTheGraceOutlastsTheDispatchCriticalSection(t *testing.T) {
 	t.Parallel()
 	if mutationlifecycle.MissingJobGrace <= mutationlifecycle.DispatchCriticalSection {
 		t.Fatalf("MissingJobGrace = %s, want longer than DispatchCriticalSection %s",
 			mutationlifecycle.MissingJobGrace, mutationlifecycle.DispatchCriticalSection)
+	}
+	if mutationlifecycle.MissingJobGrace <= mutationlifecycle.DispatchStopBound {
+		t.Fatalf("MissingJobGrace = %s, want longer than DispatchStopBound %s, by which a refused create's withdrawal ends",
+			mutationlifecycle.MissingJobGrace, mutationlifecycle.DispatchStopBound)
 	}
 }
 

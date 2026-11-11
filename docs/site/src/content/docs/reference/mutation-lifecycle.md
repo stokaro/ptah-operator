@@ -219,7 +219,7 @@ Finding nothing under a fresh marker is not yet a lost Job. After a node pause
 two managers act at once until the old leader's lease runs out, and one of them
 can read the other's marker before that manager's create lands. So a pass over
 an active claim that finds it marked, with no recorded Job UID and no Job,
-waits `mutationlifecycle.MissingJobGrace`, 45 seconds, before it declares the
+waits `mutationlifecycle.MissingJobGrace`, 55 seconds, before it declares the
 outcome unknown.
 
 The dispatching manager runs its mark-to-record steps for at most 40 seconds,
@@ -229,12 +229,12 @@ first: it stores the Job, or it refuses the create, and a refusal takes the
 marker back with the approval kept. A shorter bound made the client give up on
 a create the server was still admitting, and the claim was retired with its
 approval spent. A client that gives up at the bound anyway cancels the request
-on the API server; the other 5 seconds of the grace cover the cancellation
-arriving and a storage write already in flight. The write that withdraws the
-marker or retires the claim after the create runs on a context of its own, so a
-create that ended with the bound does not make it fail. The Job-write webhook
-also reads the claim uncached, so a create whose admission runs after the claim
-was retired is refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
+on the API server. The write that withdraws the marker or retires the claim
+after the create runs on a context of its own, for up to 10 more seconds, so a
+create that ended with the bound does not make it fail, and the grace waits for
+that write too. The other 5 seconds cover a cancellation arriving and a storage
+write already in flight. The Job-write webhook also reads the claim uncached, so
+a create whose admission runs after the claim was retired is refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
 leaves the API server to finish the request on its own bounds. That case fails
 closed: a Job stored under a retired claim runs no Pod, because Pod admission
 refuses a Pod whose claim is no longer active.

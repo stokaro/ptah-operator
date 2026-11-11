@@ -37,7 +37,11 @@ import (
 //     ends at DispatchCriticalSection. That outlasts the chart's Job-write
 //     webhook timeout, so the API server normally answers first. A client
 //     that gives up there anyway cancels the request on the API server.
-//     createLandingMargin covers the cancellation arriving and a storage write
+//   - A refused create withdraws the mark on a context of its own, which ends
+//     by DispatchStopBound. The grace runs from there, so a reader does not
+//     retire a claim whose mark is about to be taken back, which would spend
+//     an approval no Job used.
+//   - createLandingMargin covers a cancellation arriving and a storage write
 //     already in flight.
 //   - The Job-write webhook in internal/controllerwrite reads the claim
 //     uncached and refuses a create once the claim is retired or its owner is
@@ -49,10 +53,11 @@ import (
 // fails closed: a Job stored under a retired claim runs no Pod, because Pod
 // admission (internal/podintent) refuses a Pod whose claim is no longer
 // active.
-const MissingJobGrace = DispatchCriticalSection + createLandingMargin
+const MissingJobGrace = DispatchStopBound + createLandingMargin
 
 // createLandingMargin is the time the API server may still take to act on the
-// cancellation of a create abandoned at DispatchCriticalSection, or to finish
+// cancellation of a request abandoned at its bound, the create at
+// DispatchCriticalSection or the withdrawal at DispatchStopBound, or to finish
 // a storage write that was already under way when it arrived. That takes
 // milliseconds when the cluster is healthy. Five seconds is long next to it,
 // and short next to a spent approval, which costs a person the time to approve
