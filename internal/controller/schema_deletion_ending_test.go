@@ -93,9 +93,13 @@ func deadlineStoppedAWaitingPod(t *testing.T, api client.Client, job *batchv1.Jo
 	}
 }
 
-// deletedSchemaEnding is the claim the ending retired: none active, and the
-// Apply's outcome recorded as unknown with the observation horizon want.
-func deletedSchemaEnding(t *testing.T, run unstartedSchema, want *metav1.Time) *operatorv1alpha1.PtahSchema {
+// deletedSchemaEnding is what the ending did with claim, the Apply's claim
+// before it: retired, and the Apply's outcome recorded as unknown, under the
+// claim's Job and the pods Pods the ending read, with the observation horizon
+// want.
+func deletedSchemaEnding(
+	t *testing.T, run unstartedSchema, claim *operatorv1alpha1.ActiveOperationStatus, pods int32, want *metav1.Time,
+) *operatorv1alpha1.PtahSchema {
 	t.Helper()
 
 	settled := safetyGetSchema(t, run.api, run.schema)
@@ -106,7 +110,21 @@ func deletedSchemaEnding(t *testing.T, run unstartedSchema, want *metav1.Time) *
 	if !strings.Contains(failed.Message, "during deletion") {
 		t.Fatalf("ReconciliationFailed = %q, want a deletion ending", failed.Message)
 	}
+	if settled.Status.ActiveOperation != nil {
+		t.Fatalf("the ending left the claim active: %#v", settled.Status.ActiveOperation)
+	}
 	pending := settled.Status.PendingObservation
+	switch {
+	case pending == nil:
+		t.Fatal("the ending recorded no outcome, so the claim was discarded")
+	case pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown:
+		t.Fatalf("the ending recorded outcome %q, want %q", pending.Outcome, operatorv1alpha1.PendingObservationOutcomeUnknown)
+	case pending.ApplyOperationID != claim.ID || pending.ApplyJobName != claim.JobName || pending.ApplyJobUID != claim.JobUID:
+		t.Fatalf("the ending recorded Apply %q under Job %q (%q), want the claim's %q under %q (%q)",
+			pending.ApplyOperationID, pending.ApplyJobName, pending.ApplyJobUID, claim.ID, claim.JobName, claim.JobUID)
+	case pending.ApplyPodCount != pods:
+		t.Fatalf("the ending recorded %d Pods, want the %d it read", pending.ApplyPodCount, pods)
+	}
 	switch {
 	case want == nil && pending.ObserveAfter != nil:
 		t.Fatalf("the ending waits until %s for an executor that stopped", pending.ObserveAfter)
@@ -152,7 +170,7 @@ func TestADeletedSchemasApplyThatNeverStartedIsRecorded(t *testing.T) {
 	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+notProvenDuringDeletion+lastReportedBefore+run.said; event != want {
 		t.Fatalf("ApplyOutcomeUnknown = %q, want %q", event, want)
 	}
-	deletedSchemaEnding(t, run, &horizon)
+	deletedSchemaEnding(t, run, operation, 1, &horizon)
 
 	// The database stays held until the horizon, and the resource with it.
 	run.reconcileOnce(t)
@@ -184,6 +202,7 @@ func TestADeletedSchemasApplyThatRanIsRecorded(t *testing.T) {
 			run := admittedUnstartedSchemaApplyRun(t)
 			deleteSchemaWhileItsApplyRuns(t, run)
 			row.end(t, run.api, run.job, run.pod)
+			operation := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
 			run.reconcileOnce(t)
 
 			if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+endedDuringDeletion; event != want {
@@ -192,7 +211,7 @@ func TestADeletedSchemasApplyThatRanIsRecorded(t *testing.T) {
 			if failed := settledSchemaFailure(t, run.api, run.schema); failed.Message != endedDuringDeletion {
 				t.Fatalf("ReconciliationFailed = %q, want %q", failed.Message, endedDuringDeletion)
 			}
-			deletedSchemaEnding(t, run, nil)
+			deletedSchemaEnding(t, run, operation, 1, nil)
 			schemaGone(t, run, 3)
 		})
 	}
@@ -217,12 +236,41 @@ func TestADeletedSchemasApplyPodThatStartedAndStandsTakesTheReportOff(t *testing
 	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+notProvenDuringDeletion; event != want {
 		t.Fatalf("ApplyOutcomeUnknown = %q, want %q", event, want)
 	}
-	deletedSchemaEnding(t, run, &horizon)
+	deletedSchemaEnding(t, run, operation, 1, &horizon)
 
 	run.reconciler.Clock = func() time.Time { return horizon.Add(time.Second) }
 	run.reconcileOnce(t)
 	if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.PendingObservation == nil {
 		t.Fatal("the deletion let the database go while the Apply's Pod stands Running")
+	}
+	podsGone(t, run.api, run.job)
+	schemaGone(t, run, 3)
+}
+
+// A Job that left two Pods, the first stuck Terminating on a node that stopped
+// answering and its replacement waiting on the same Secret, cannot attribute
+// the Apply to one Pod. The deletion records the outcome as unknown rather than
+// failing every pass, keeps why the Pods never started, and holds the
+// resource while the Pods stand.
+func TestADeletedSchemaWhoseApplyJobLeftTwoPodsIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	run := admittedUnstartedSchemaApplyRun(t)
+	deleteSchemaWhileItsApplyRuns(t, run)
+	aSecondPod(t, run.api, run.job, run.pod)
+	operation := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
+	horizon := metav1.NewTime(operation.ExecutionNotAfter.Add(time.Duration(operation.TerminationGracePeriodSeconds) * time.Second))
+	run.reconcileOnce(t)
+
+	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+notProvenDuringDeletion+lastReportedBefore+run.said; event != want {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want %q", event, want)
+	}
+	deletedSchemaEnding(t, run, operation, 2, &horizon)
+
+	run.reconciler.Clock = func() time.Time { return horizon.Add(time.Second) }
+	run.reconcileOnce(t)
+	if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.PendingObservation == nil {
+		t.Fatal("the deletion let the database go while the Apply's Pods stand")
 	}
 	podsGone(t, run.api, run.job)
 	schemaGone(t, run, 3)
