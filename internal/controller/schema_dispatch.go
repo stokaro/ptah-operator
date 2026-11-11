@@ -247,9 +247,34 @@ func (d *schemaDispatch) Mark(ctx context.Context) error {
 // Withdraw clears only the marker. A Plan's key digest stays; the next Mark
 // writes this process's digest again before the next create.
 func (d *schemaDispatch) Withdraw(ctx context.Context) error {
+	return mutationlifecycle.WithdrawMark(ctx, d.operation().ID, d.clearMark, d.rereadMark)
+}
+
+func (d *schemaDispatch) clearMark(ctx context.Context) error {
 	before := d.schema.DeepCopy()
 	d.operation().DispatchStarted = false
 	return d.r.patchStatus(ctx, before, d.schema)
+}
+
+// rereadMark replaces the schema in hand with the API server's copy after a
+// withdrawal conflicted. It reads directly: the cache may still serve the
+// version the patch conflicted with.
+func (d *schemaDispatch) rereadMark(ctx context.Context) (mutationlifecycle.MarkState, error) {
+	fresh := &operatorv1alpha1.PtahSchema{}
+	key := types.NamespacedName{Namespace: d.schema.Namespace, Name: d.schema.Name}
+	if err := d.r.directReader().Get(ctx, key, fresh); err != nil {
+		return mutationlifecycle.MarkState{}, err
+	}
+	*d.schema = *fresh
+	operation := d.operation()
+	if operation == nil {
+		return mutationlifecycle.MarkState{}, nil
+	}
+	return mutationlifecycle.MarkState{
+		OperationID:     operation.ID,
+		DispatchStarted: operation.DispatchStarted,
+		JobUID:          string(operation.JobUID),
+	}, nil
 }
 
 func (d *schemaDispatch) Create(ctx context.Context, job *batchv1.Job) error {

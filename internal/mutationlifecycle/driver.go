@@ -196,7 +196,8 @@ type Family interface {
 	// the same boundary.
 	Mark(ctx context.Context) error
 	// Withdraw clears the dispatch marker after the API server refused the
-	// claim's one create before storing it.
+	// claim's one create before storing it. Both families implement it with
+	// WithdrawMark, which owns what a conflict means.
 	Withdraw(ctx context.Context) error
 	// Create creates the Job.
 	Create(ctx context.Context, job *batchv1.Job) error
@@ -447,8 +448,10 @@ func (p *dispatchPass) create(ctx context.Context, claim Claim) Outcome {
 				fmt.Errorf("the %s Job create result is uncertain: %w", claim.Type, err)))
 		case DispositionWithdraw:
 			// The API server refused the create before storing it, so no Job
-			// stands under the name. A withdrawal that does not land leaves
-			// the mark, and the next pass retires the claim as it always has.
+			// stands under the name. The family withdraws through
+			// WithdrawMark, which writes again after a conflict. A withdrawal
+			// that still does not land leaves the mark, and the claim is
+			// retired once MissingJobGrace has passed.
 			settle, cancel := settling(ctx)
 			defer cancel()
 			if withdrawErr := p.family.Withdraw(settle); withdrawErr != nil {

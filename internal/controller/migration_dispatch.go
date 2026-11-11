@@ -233,9 +233,34 @@ func (d *migrationDispatch) Mark(ctx context.Context) error {
 }
 
 func (d *migrationDispatch) Withdraw(ctx context.Context) error {
+	return mutationlifecycle.WithdrawMark(ctx, d.operation().ID, d.clearMark, d.rereadMark)
+}
+
+func (d *migrationDispatch) clearMark(ctx context.Context) error {
 	before := d.migration.DeepCopy()
 	d.operation().DispatchStarted = false
 	return d.r.patchMigrationStatus(ctx, before, d.migration)
+}
+
+// rereadMark replaces the migration in hand with the API server's copy after
+// a withdrawal conflicted. It reads directly: the cache may still serve the
+// version the patch conflicted with.
+func (d *migrationDispatch) rereadMark(ctx context.Context) (mutationlifecycle.MarkState, error) {
+	fresh := &operatorv1alpha1.PtahMigration{}
+	key := types.NamespacedName{Namespace: d.migration.Namespace, Name: d.migration.Name}
+	if err := d.r.directReader().Get(ctx, key, fresh); err != nil {
+		return mutationlifecycle.MarkState{}, err
+	}
+	*d.migration = *fresh
+	operation := d.operation()
+	if operation == nil {
+		return mutationlifecycle.MarkState{}, nil
+	}
+	return mutationlifecycle.MarkState{
+		OperationID:     operation.ID,
+		DispatchStarted: operation.DispatchStarted,
+		JobUID:          string(operation.JobUID),
+	}, nil
 }
 
 func (d *migrationDispatch) Create(ctx context.Context, job *batchv1.Job) error {
