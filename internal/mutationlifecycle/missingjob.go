@@ -38,9 +38,11 @@ import (
 //     webhook timeout, so the API server normally answers first. A client
 //     that gives up there anyway cancels the request on the API server.
 //   - A refused create withdraws the mark on a context of its own, which ends
-//     by DispatchStopBound. The grace runs from there, so a reader does not
-//     retire a claim whose mark is about to be taken back, which would spend
-//     an approval no Job used.
+//     by DispatchStopBound after the mark was written. The grace runs from the
+//     reader's own first sighting of the mark, which comes after the mark, and
+//     is longer than that bound, so a reader does not retire a claim whose
+//     mark is about to be taken back, which would spend an approval no Job
+//     used.
 //   - createLandingMargin covers a cancellation arriving and a storage write
 //     already in flight.
 //   - The Job-write webhook in internal/controllerwrite reads the claim

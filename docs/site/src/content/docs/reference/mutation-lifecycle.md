@@ -224,21 +224,22 @@ outcome unknown.
 
 The dispatching manager runs its mark-to-record steps for at most 40 seconds,
 `mutationlifecycle.DispatchCriticalSection`. That is longer than the 30 seconds
-the chart gives the Job-write webhook, so the API server answers the create
-first: it stores the Job, or it refuses the create, and a refusal takes the
-marker back with the approval kept. A shorter bound made the client give up on
-a create the server was still admitting, and the claim was retired with its
-approval spent. A client that gives up at the bound anyway cancels the request
-on the API server. The write that withdraws the marker or retires the claim
-after the create runs on a context of its own, for up to 10 more seconds, so a
-create that ended with the bound does not make it fail, and the grace waits for
-that write too. The last 5 seconds of the grace cover a cancellation arriving
-and a storage write already in flight. The Job-write webhook also reads the claim uncached, so
-a create whose admission runs after the claim was retired is refused. A
+the chart gives the Job-write webhook, and longer than the 34 seconds the API
+server allows a create, so the API server answers the create first: it stores
+the Job, or it refuses the create, and a refusal takes the marker back with the
+approval kept. A shorter bound made the client give up on a create the server
+was still admitting, and the claim was retired with its approval spent. A
+client that gives up at the bound anyway cancels the request on the API server.
+The write that withdraws the marker or retires the claim after the create runs
+on a context of its own, for up to 10 more seconds, so a create that ended with
+the bound does not make it fail, and the grace waits for that write too. The
+last 5 seconds of the grace cover a cancellation arriving and a storage write
+already in flight. The Job-write webhook also reads the claim uncached, so a
+create whose admission runs after the claim was retired is refused. A
 dispatcher that cannot cancel, because it is frozen or partitioned, leaves the
-API server to finish the request on its own bounds. That case fails
-closed: a Job stored under a retired claim runs no Pod, because Pod admission
-refuses a Pod whose claim is no longer active.
+API server to finish the request on its own bounds. That case fails closed: a
+Job stored under a retired claim runs no Pod, because Pod admission refuses a
+Pod whose claim is no longer active.
 
 The wait is measured on the reading manager's own clock, from the first time
 it saw that claim so, because the marker carries no time and another manager's
@@ -247,6 +248,15 @@ again, which only delays a verdict that fails closed. A claim that recorded its
 Job's UID saw the create return, and its missing Job is unknown at once. A
 resource being deleted does not wait either: the Job-write webhook refuses a
 create for an owner being deleted.
+
+A dispatch holds its family's reconcile worker while it runs. Each controller
+runs one worker, the default of the pinned controller-runtime, so the family's
+other resources wait behind a dispatch for up to 50 seconds. A Job-write
+webhook that does not answer holds the worker for its whole 30 seconds on every
+attempt, and the refused create is tried again at the per-item backoff, which
+starts at 5 milliseconds and doubles: about a dozen attempts pass before the
+backoff reaches the webhook's timeout, and each of them holds the worker for 30
+seconds. That is what waiting for the answer costs instead of an approval.
 
 The approval is spent before the marker, in both families, so every marked
 claim's approval is already spent ([The dispatch sequence](#the-dispatch-sequence)
@@ -276,6 +286,13 @@ write and stays uncertain. `mutationlifecycle.ClassifyCreate` decides which
 answer a failed create gave. Replacing every manager at once is when this
 happens: the replaced managers' webhook endpoints go first, and a leader not
 yet told to stop can still be dispatching.
+
+The withdrawal is a status write from the version the marker was written at,
+and admission can take the webhook's whole timeout, in which a person or a
+GitOps tool may write the resource. `mutationlifecycle.WithdrawMark` reads the
+resource again after such a conflict and withdraws again, as long as it holds
+the same claim, still marked, with no Job recorded. A claim that moved is left
+for the next pass to judge.
 
 The created Job is read back and its whole intent compared against what the
 builder produced -- owner reference, labels, annotations and a semantic

@@ -263,7 +263,7 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 			// outcome nobody established, which only a person can clear. The
 			// mark, create, read-back and record run to the end on a context
 			// the shutdown does not cancel. The create has to stay on it:
-			// MissingJobGrace is measured against its end.
+			// MissingJobGrace counts on no create outliving this context.
 			critical, cancel := context.WithTimeout(context.WithoutCancel(ctx), DispatchCriticalSection)
 			defer cancel()
 			stepCtx = critical
@@ -288,11 +288,27 @@ func (d Driver) Dispatch(ctx context.Context, family Family) (reconcile.Result, 
 // happened (#973). TestTheCriticalSectionOutlastsJobWriteAdmission holds this
 // bound above every timeout the chart accepts.
 //
+// Forty seconds is enough because the API server bounds a create on its own:
+// apiserver's create handler gives the request at most 34 seconds
+// (requestTimeoutUpperBound in k8s.io/apiserver/pkg/endpoints/handlers), and
+// the webhook's 30 seconds run inside them. The server has answered by then,
+// so a longer section waits for nothing.
+//
 // It also bounds the create from the other side. The client abandons the
 // create when this context ends, and that cancels the request on the API
 // server, so admission does not run on past it. MissingJobGrace, how long
 // another manager waits for a marked claim's Job before calling it lost, is
-// this bound plus a margin.
+// DispatchStopBound, this section and the write after it, plus a margin.
+//
+// A dispatch holds a worker for that long. Each family's controller runs one
+// reconcile worker, the default of the pinned controller-runtime, so the
+// family's other resources wait behind a dispatch for up to DispatchStopBound.
+// A Job-write webhook that does not answer holds the worker for its whole
+// timeout on every attempt. The refused create is tried again at the per-item
+// backoff, which starts at 5 milliseconds and doubles, so it reaches the
+// webhook's 30 seconds only after about a dozen attempts, and each of them
+// holds the worker for 30 seconds. That is the cost of waiting for the answer
+// instead of spending the approval.
 const DispatchCriticalSection = jobWriteAdmissionTimeout + dispatchStepsAllowance
 
 // jobWriteAdmissionTimeout is the longest the API server waits for the
@@ -313,6 +329,21 @@ const dispatchStepsAllowance = 10 * time.Second
 // fail: a refused create would keep its mark and spend its approval, and an
 // unaccounted claim would wait MissingJobGrace on the next pass before it is
 // retired.
+//
+// Ten seconds assumes requests that no admission webhook holds. The withdrawal
+// is that: a status write, and the re-read and status write WithdrawMark makes
+// after a conflict. No webhook the chart installs matches a status subresource;
+// the ValidatingAdmissionPolicy that does runs inside the API server. A
+// retirement is not always. A migration's retirement first writes the
+// unresolved-run annotation on the PtahMigration itself, which the
+// mmigrationwriter webhook admits within webhook.timeoutSeconds (5 seconds by
+// default, up to 30), and a retirement over a Job read back asks for that Job's
+// cleanup TTL through the Job-write webhook. When those outlast this bound the
+// retirement fails, and a later pass retires the claim with the same verdict,
+// after MissingJobGrace when no Job stands: the approval is spent on that path
+// either way, so only the time to the verdict moves. A withdrawal that failed
+// would change the verdict, which is why it is the write this bound is sized
+// for.
 const settleTimeout = 10 * time.Second
 
 // DispatchStopBound is the longest a dispatch that has begun may still run

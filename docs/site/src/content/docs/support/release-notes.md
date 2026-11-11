@@ -53,7 +53,7 @@ ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
 in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
-that caps `terminationGracePeriodSeconds` lower has to admit it.
+that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -146,7 +146,23 @@ that caps `terminationGracePeriodSeconds` lower has to admit it.
   instead of on a later pass. A stopping manager now takes up to 50 seconds to
   finish such a dispatch, and its Pod's termination grace period is 60
   seconds, up from Kubernetes' default 30. `webhook.controllerWriteTimeoutSeconds`
-  is unchanged.
+  is unchanged. While the webhook does not answer, each attempt holds the
+  family's one reconcile worker for those 30 seconds, and the family's other
+  resources wait behind it. A refused create is now withdrawn when something
+  wrote the resource while admission ran, such as an annotation, a label or
+  `kubectl ptah refresh`: the write made the withdrawal conflict, and the Apply
+  ended `Unknown` with its approval spent.
+- **A Job another manager is still creating is waited for.** After a node
+  pause two managers act at once until the old leader's lease runs out, and one
+  of them could read the other's dispatch mark before that manager's Job create
+  landed. It found no Job and retired the Apply as `Unknown` at once, with the
+  approval spent. A manager that finds a mutating claim marked, with no Job UID
+  recorded and no Job, now writes nothing for 55 seconds from the first time it
+  saw it so, and calls the Job lost only after that. An Apply whose manager
+  died between its mark and its create therefore goes `Unknown` up to a minute
+  later than before, and a manager that restarts in that time waits again. A
+  claim that recorded its Job's UID, and a resource being deleted, do not
+  wait.
 
 ## 0.2.10
 
