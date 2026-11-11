@@ -316,18 +316,18 @@ missing and will not be recreated`, `dispatched Apply Job was replaced`,
 Apply dispatch`, each followed by `; last reported before that:` and the words. A
 `PtahSchema` whose database Lease changed hands records `database lock continuity
 was lost during Apply` without them: the write that records the lost Lease has
-already replaced `Ready`, where they were.
+already replaced `Ready`, the condition that held them.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded. A Pod can still start
 after the last look and fail without a result, and the failure reads the same. The
 resource looks at an Apply's Pod every 5 seconds, also while a deleted
 `PtahMigration` waits for it. Some endings are recorded while the Pod can still
-start, and a Pod that starts later does not change the record: a `PtahMigration`
-keeps its claim until the Pod stops when the Job went while the Pod stands, when an
-execution component changed, and when its Lease changed hands, and a `PtahSchema`
-goes on to observation at once. So check whether the Secret exists now before you
-change it.
+start, and a Pod that starts later does not change the record. A `PtahMigration`
+records the run and keeps its claim until the Pod stops when its Job went while the
+Pod stood, when an execution component changed and when its Lease changed hands. A
+`PtahSchema` records every ending and goes on to observation at once. So check
+whether the Secret exists now before you change it.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 
