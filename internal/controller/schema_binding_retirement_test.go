@@ -2,14 +2,17 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -477,7 +480,10 @@ func declarePodMetadata(
 // whatever the controller can prove about the Job's envelope. Only then is the
 // claim retired and its Lease handed back, in one write that also clears the
 // record; the cleanup TTL is set only on a Job whose envelope the claim and the
-// record both vouch for, declared Pod metadata included.
+// record both vouch for, declared Pod metadata included. The claim is the last
+// thing that can name its Job, so a Job it leaves with no TTL, because the
+// record does not vouch for it or admission refused the write, is named by a
+// Warning, and a refused write does not fail the pass.
 func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 	t.Parallel()
 
@@ -485,13 +491,24 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 		name        string
 		declare     bool
 		breakRecord func(*operatorv1alpha1.BindingRetirementStatus)
+		// refuse answers the stopped Job's TTL write, as admission refusing it
+		// does.
+		refuse      error
 		wantCleanup bool
+		// stays is what the Warning says, or empty where there must be none.
+		stays string
 	}{
 		{name: "the record names the retained claim", wantCleanup: true},
 		{name: "a Job that carries declared Pod metadata", declare: true, wantCleanup: true},
 		{
 			name:        "a record that retired another epoch",
 			breakRecord: func(record *operatorv1alpha1.BindingRetirementStatus) { record.RetiredEpoch = unretiredEpoch },
+			stays:       "the Job is not the one the retired claim fixes",
+		},
+		{
+			name:   "a TTL write admission refuses",
+			refuse: apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal")),
+			stays:  "injected refusal",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -533,6 +550,8 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			logs := &safetyCountingLogs{content: []byte("a retired Plan result must not be read")}
 			reconciler, api := fakeReconciler(t, logs, schema, job, pod)
 			reconciler.Jobs = rotatedJobs
+			recorder := record.NewFakeRecorder(64)
+			reconciler.Recorder = recorder
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
 			if holder == "" {
@@ -566,6 +585,9 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			}
 
 			finishJob(t, api, job)
+			if row.refuse != nil {
+				reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.refuse)
+			}
 			reconcileRetirementPass(t, reconciler, request, "retire the stopped Plan claim")
 			retired := safetyGetSchema(t, api, schema)
 			if ttl := jobTTL(t, api, job); (ttl != nil) != row.wantCleanup {
@@ -578,6 +600,16 @@ func TestARetiredReadOnlyClaimHoldsItsLeaseUntilItsJobStops(t *testing.T) {
 			}
 			if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != "" {
 				t.Fatalf("the retired Plan's Lease is still held by %q", got)
+			}
+			events := migrationEvents(recorder)
+			if row.stays == "" {
+				if schemaCleanupDeferredFor(events, job.Name, "") {
+					t.Fatalf("the retired Plan Job that got its TTL is named as staying: %q", events)
+				}
+				return
+			}
+			if !schemaCleanupDeferredFor(events, job.Name, row.stays) {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, job.Name, row.stays)
 			}
 		})
 	}

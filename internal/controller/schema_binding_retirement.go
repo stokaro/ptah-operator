@@ -2,11 +2,13 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -233,9 +235,16 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 		// the controller touch it.
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
+			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
+	case err == nil && job.Spec.TTLSecondsAfterFinished == nil && retiredJobIsTheClaims(schema, retired, job):
+		// The claim's own Job, which the envelope does not let the controller
+		// touch. The claim is the last thing that could have named it.
+		r.schemaJobCleanupNotScheduled(schema, operation, job, errors.New(
+			"admission admits a cleanup only on a Job its claim fixes, and the Job is not the one the retired claim fixes"))
 	case err != nil && !apierrors.IsNotFound(err):
 		return ctrl.Result{}, fmt.Errorf("read retired read-only Job: %w", err)
 	}
@@ -248,6 +257,147 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
+// retryPastRefusedSchemaJob moves a read-only claim to its next attempt past the
+// Job reconcileActive refused, once the claim owes that Job nothing more
+// (letGoOfReadOnlySchemaJob).
+func (r *SchemaReconciler) retryPastRefusedSchemaJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	failure error,
+) (ctrl.Result, error) {
+	waiting := fmt.Sprintf("Waiting for Job %s, which this release cannot confirm, to stop before the %s operation runs again",
+		job.Name, schema.Status.ActiveOperation.Type)
+	if result, held, err := r.letGoOfReadOnlySchemaJob(ctx, schema, job, waiting); held || err != nil {
+		return result, err
+	}
+	return r.retryOperation(ctx, schema, nil, failure)
+}
+
+// letGoOfReadOnlySchemaJob settles what a read-only claim owes the Job under its
+// reserved name before the claim lets go of it, by the rule both families keep
+// (releaseReadOnlyJob). It reports held, with the pass's result, while the claim
+// has to stay over the Job. The caller lets go once it is not held: it retries
+// past a Job it refused, or discards the claim of a suspended resource. A claim an
+// execution-binding change retires is kept and settled by cleanupRetiredReadOnlyJob
+// instead, under the retired epoch. Every caller holds a read-only claim, and
+// decides that before it asks. A suspended claim passes letGoAtOnce and is never
+// held.
+//
+// The Job is held to what the claim fixes without a rebuild under the execution
+// binding status records (validateJobEnvelope), the match the controller-write
+// webhook holds a schema Job's cleanup TTL to. A claim that never recorded the
+// Job's UID records it first. A Warning names a Job admission would refuse a TTL
+// (schemaJobCleanupNotScheduled). A Plan's claim keeps renewing the realm Lease
+// while it waits, as it does while it supervises a Job, and Ready says what the
+// claim waits for in the words of waiting.
+func (r *SchemaReconciler) letGoOfReadOnlySchemaJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	waiting string,
+) (result ctrl.Result, held bool, err error) {
+	release := func() (readOnlyJobRelease, error) {
+		verdict, _ := mutationlifecycle.VerdictFor(schemaJobClaim(schema, job))
+		return releaseReadOnlyJob(job, verdict, validateJobEnvelope(job, schema, schema.Status.ActiveOperation), r.now(),
+			waiting != letGoAtOnce)
+	}
+	step, reason := release()
+	if step == recordReadOnlyJob {
+		before := schema.DeepCopy()
+		schema.Status.ActiveOperation.JobUID = job.UID
+		if err := r.patchStatus(ctx, before, schema); err != nil {
+			return ctrl.Result{}, false, fmt.Errorf("record the %s Job before its cleanup: %w",
+				schema.Status.ActiveOperation.Type, err)
+		}
+		step, reason = release()
+	}
+	operation := schema.Status.ActiveOperation
+	switch step {
+	case waitForReadOnlyJob:
+		result, err := r.waitForReadOnlySchemaJob(ctx, schema, waiting)
+		return result, true, err
+	case collectReadOnlyJob:
+		return ctrl.Result{}, false, settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
+			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
+		})
+	case leaveReadOnlyJobUncollected:
+		r.schemaJobCleanupNotScheduled(schema, operation, job, reason)
+	}
+	return ctrl.Result{}, false, nil
+}
+
+// waitForReadOnlySchemaJob keeps the claim over the running Job it owes a
+// cleanup, renews the realm Lease a Plan's claim holds, and says so in Ready with
+// waiting. The words name the Job and nothing that changes from one pass to the
+// next, so a pass that finds them already written writes nothing (patchStatus).
+func (r *SchemaReconciler) waitForReadOnlySchemaJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	waiting string,
+) (ctrl.Result, error) {
+	holdsLock := schemaClaimHoldsLock(schema)
+	if holdsLock {
+		acquired, requeue, err := r.acquireOperationLock(ctx, schema)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !acquired {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
+	}
+	before := schema.DeepCopy()
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonOperationInProgress, waiting)
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: activeJobPollInterval(holdsLock)}, nil
+}
+
+// schemaJobCleanupNotScheduled says that a Job will not be collected by a TTL.
+// Nothing else collects it while its owner lives.
+func (r *SchemaReconciler) schemaJobCleanupNotScheduled(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	job *batchv1.Job,
+	err error,
+) {
+	r.event(schema, corev1.EventTypeWarning, "SchemaJobCleanupDeferred",
+		"%s Job %q has no cleanup scheduled, so it stays until it is deleted by hand or with its owner: %s",
+		operation.Type, job.Name, bounded(err.Error(), 512))
+}
+
+// schemaJobClaim describes job, standing under the name the active claim
+// reserved, to the decision about what a pass does with it
+// (mutationlifecycle.VerdictFor).
+func schemaJobClaim(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) mutationlifecycle.JobClaim {
+	operation := schema.Status.ActiveOperation
+	return mutationlifecycle.JobClaim{
+		Mutating:        schemaOperation(operation).Mutating,
+		DispatchStarted: operation.DispatchStarted,
+		RecordedJobUID:  string(operation.JobUID),
+		Found:           true,
+		FoundJobUID:     string(job.UID),
+		OwnedExactly: exactControllerOwner(job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID),
+	}
+}
+
+// retiredJobIsTheClaims reports whether job is the Job under the name the record
+// holds that this resource owns exactly, with the recorded UID or none recorded:
+// the Job the retired claim dispatched, whatever its envelope says.
+func retiredJobIsTheClaims(
+	schema *operatorv1alpha1.PtahSchema,
+	retired *operatorv1alpha1.RetiredJobStatus,
+	job *batchv1.Job,
+) bool {
+	return retired != nil && job != nil && job.Name == retired.Name &&
+		(retired.UID == "" || job.UID == retired.UID) &&
+		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema", schema.Name, schema.UID)
+}
+
 // retiredJobMayStillRun reports whether job is one this resource dispatched
 // under the name the record holds -- its UID the recorded one, or none
 // recorded yet -- and has not reached a terminal condition. It asks nothing
@@ -258,10 +408,7 @@ func retiredJobMayStillRun(
 	retired *operatorv1alpha1.RetiredJobStatus,
 	job *batchv1.Job,
 ) bool {
-	return retired != nil && job != nil && job.Name == retired.Name &&
-		(retired.UID == "" || job.UID == retired.UID) && !jobTerminal(job) &&
-		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema", schema.Name, schema.UID)
+	return retiredJobIsTheClaims(schema, retired, job) && !jobTerminal(job)
 }
 
 // adoptRetiredApplyJobUID looks for the Job a retired Apply claim may have
