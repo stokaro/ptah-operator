@@ -1561,7 +1561,9 @@ records the outcome as unknown, because nothing read the result, in an
 `ApplyOutcomeUnknown` Warning Event that names how the Apply ended. It then
 hands the database Lease back once no Pod of the Job is still running, and, unless
 the Job's one Pod showed its executor run and stop, not before the Apply's
-execution deadline and its grace period have passed. Once no operation is
+execution deadline and its grace period have passed. A deletion that finds the
+Job gone, or the database Lease changed hands, records the outcome at once and
+always waits for that deadline and grace period. Once no operation is
 active, deletion removes Kubernetes-owned plans and Jobs through normal garbage
 collection; database objects remain untouched.
 
@@ -2555,7 +2557,8 @@ a reading of the database confirms convergence. A schema named there that is
 being deleted reads nothing: it goes, and its record with it, once no Pod of
 its Apply's Job is still running and, unless that Job's one Pod showed its
 executor run and stop, once the Apply's execution deadline and its grace period
-have passed. That is about 30 seconds after the deadline for an Apply whose Pod
+have passed. One whose Job is gone, or whose Lease changed hands, always waits
+for that deadline and grace period. That is about 30 seconds after the deadline for an Apply whose Pod
 never started, so a deletion at that deadline can fire
 `PtahOperatorUnresolvedApply`.
 

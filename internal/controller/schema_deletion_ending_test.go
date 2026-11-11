@@ -54,7 +54,8 @@ func admittedUnstartedSchemaApplyRun(t *testing.T) unstartedSchema {
 
 // deadlineStoppedAWaitingPod is what the Job's deadline can leave of a Pod whose
 // executor waited on a Secret. The Job controller deletes the Pod, and the
-// kubelet stops it with grace 0 and gives the container that never started
+// kubelet stops its containers within the Pod's grace period, deletes the Pod
+// object with grace 0, and gives the container that never started
 // the termination it gives every container it has no status for
 // (ContainerStatusUnknown, 137), with the Pod Failed. The Job reads Failed
 // once the Pod is terminal and counted. On a cluster the Pod object is still
