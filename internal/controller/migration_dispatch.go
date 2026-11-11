@@ -141,16 +141,12 @@ func (d *migrationDispatch) Build(ctx context.Context) (*batchv1.Job, mutationli
 		// boundary. Admission permits CREATE only while the claim has no UID,
 		// so advance to a fresh attempt and a fresh deterministic name rather
 		// than recreating the Job this claim already had, once every Pod that
-		// Job owned has stopped.
-		stopped, err := podsStopped(ctx, r.directReader(), migration.Namespace, operation.JobName, operation.JobUID)
-		if err != nil {
-			return nil, mutationlifecycle.Stop(ctrl.Result{}, err)
-		}
-		if !stopped {
-			return nil, mutationlifecycle.Stop(ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil)
-		}
-		return nil, mutationlifecycle.Stop(r.retryMigrationOperation(ctx, migration, nil,
-			fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID)))
+		// Job owned has stopped, and no later than their stop bound
+		// (podsStillStopping): a Pod on a node that is gone may never be
+		// reported stopped. Past the bound a ReadJobOverdue Warning names the
+		// Pod. Only a read gets here: a missing Apply that dispatched is an
+		// outcome nobody established, settled before dispatch.
+		return nil, mutationlifecycle.Stop(r.retryLostReadOnlyMigrationJob(ctx, migration))
 	}
 	plan, err := r.migrationPlanForJob(ctx, migration, operation)
 	if err != nil {
@@ -299,4 +295,30 @@ func (d *migrationDispatch) Unaccounted(ctx context.Context, job *batchv1.Job, f
 
 func (d *migrationDispatch) Retry(ctx context.Context, failure error) (ctrl.Result, error) {
 	return d.r.retryMigrationOperation(ctx, d.migration, nil, failure)
+}
+
+// retryLostReadOnlyMigrationJob is retryLostReadOnlyJob for a PtahMigration. A
+// migration's read holds no Lease, so its wait renews nothing.
+func (r *MigrationReconciler) retryLostReadOnlyMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	pods, err := podsOwnedByJob(ctx, r.directReader(), migration.Namespace, operation.JobName, operation.JobUID)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	missing := fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID)
+	running, stopBy := podsStillStopping(pods)
+	if len(running) == 0 {
+		return r.retryMigrationOperation(ctx, migration, nil, missing)
+	}
+	if r.now().Before(stopBy) {
+		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+	}
+	r.event(migration, corev1.EventTypeWarning, readJobOverdueReason, "%s",
+		readJobOverdueText(lostReadJobOverdueLead(string(operation.Type), operation.JobName, stopBy), running))
+	return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf(
+		"%w, and its Pods did not stop by %s, their own deadline plus the grace they are given",
+		missing, stopBy.UTC().Format(time.RFC3339)))
 }
