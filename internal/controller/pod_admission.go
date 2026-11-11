@@ -186,8 +186,8 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 // lastPodReport is what a resource last reported about the Pod of the Job its
 // active claim names, and whether that Job has said since that the Pod ran.
 type lastPodReport struct {
-	// reported is the condition the resource reports a Pod that cannot start
-	// on: Progressing on a migration, Ready on a schema.
+	// reported is the condition the resource reports a Pod that is not
+	// running on: Progressing on a migration, Ready on a schema.
 	reported *metav1.Condition
 	// jobName is the Job the claim names. The report has to be about it.
 	jobName string
@@ -234,9 +234,11 @@ func claimJobRan(job *batchv1.Job, recorded types.UID) bool {
 }
 
 // withUnstartedPod adds what the resource last reported about a Pod that could
-// not start to a failure that says only that no result arrived. The Job's
-// deadline removes the Pod, so what this operation reported is all that is left
-// to say why. judgePodAdmission keeps the condition standing until this reads it.
+// not start, or could not be created, to a failure that says only that no
+// result arrived. The Job's deadline removes the Pod, so what this operation
+// reported is all that is left to say why. judgePodAdmission keeps a kubelet's
+// report standing until this reads it, and the look that would clear a
+// refusal does not run on a terminal Job.
 //
 // The report can be out of date, so the words say whose they are. The resource
 // looks at a read-only operation's Pod every 30 seconds and at an Apply's every
@@ -250,26 +252,61 @@ func withUnstartedPod(failure error, report lastPodReport) error {
 	return withLastPodReport(failure, report)
 }
 
+// standing is a report that says why the claim's Pod is not running: the
+// kubelet cannot configure its container (PodConfigurationError), or the API
+// server refused to create it (PodAdmissionRefused). judgePodAdmission writes
+// both from a look at the claim's Job, and both name that Job first.
+//
+// A refusal is kept for the same reason as the kubelet's words. The Job's
+// deadline ends a Job whose Pod was never created, the run then ends with no
+// result frame, and the API server's text is the only thing that says why. It
+// is the cluster's own text, bounded and stripped of control characters, and it
+// is already in the condition and in the PodAdmissionRefused Event.
+func (report lastPodReport) standing() bool {
+	reported := report.reported
+	if reported == nil || !strings.HasPrefix(reported.Message, "Job "+report.jobName+" ") {
+		return false
+	}
+	switch operatorv1alpha1.ConditionReason(reported.Reason) {
+	case operatorv1alpha1.ReasonPodConfigurationError, operatorv1alpha1.ReasonPodAdmissionRefused:
+		return true
+	}
+	return false
+}
+
+// lastPodReportError is a failure with the resource's last report about its
+// claim's Pod after it. The ApplyOutcomeUnknown Event of a PtahSchema reads the
+// report from it: the Event is otherwise fixed text, and on a deleted schema it
+// is the only record left.
+type lastPodReportError struct {
+	failure  error
+	reported string
+}
+
+func (e *lastPodReportError) Error() string {
+	return e.failure.Error() + "; last reported before that: " + e.reported
+}
+
+func (e *lastPodReportError) Unwrap() error { return e.failure }
+
 // withLastPodReport adds the same words to a failure that ended an Apply before
-// anything read its result: its inputs changed, its Job went, an execution
-// component changed under it, the database lock changed hands, or the resource
-// was deleted. Such a failure says what ended the run and nothing about why its
-// Pod never started, and by then the Pod is usually gone. A person who fixes
-// urlFrom after reading `secret "x" not found` changes the inputs, and the
-// record would say only that.
+// anything read its result: its inputs changed, its Job went or stopped being
+// its claim's, an execution component changed under it, its Job produced Pods
+// the result cannot be attributed to, the database lock changed hands, or the
+// resource was deleted. Such a failure says what ended the run and nothing
+// about why its Pod never started, and by then the Pod is usually gone. A
+// person who fixes urlFrom after reading `secret "x" not found` changes the
+// inputs, and the record would say only that.
 //
 // No result was read on those paths, so the words are worded as the last
 // report, as withUnstartedPod's are. Nothing is added when the report is about
-// another Job, when a look found the Pod started and took the condition off
-// PodConfigurationError, or when the claim's Job says a Pod succeeded after the
-// last look.
+// another Job, when a look found the Pod running and took the condition off
+// the report, or when the claim's Job says a Pod succeeded after the last look.
 func withLastPodReport(failure error, report lastPodReport) error {
-	reported := report.reported
-	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
-		!strings.HasPrefix(reported.Message, "Job "+report.jobName+" ") || report.ran {
+	if !report.standing() || report.ran {
 		return failure
 	}
-	return fmt.Errorf("%w; last reported before that: %s", failure, reported.Message)
+	return &lastPodReportError{failure: failure, reported: report.reported.Message}
 }
 
 // podAdmissionConditionChange is what one pass decided about a condition that

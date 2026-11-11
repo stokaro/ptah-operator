@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -527,6 +528,15 @@ func TestWithUnstartedPodAddsWhatTheResourceReported(t *testing.T) {
 			name: "a lost frame after the Pod could not start", failure: frameLost, reported: reported,
 			want: "read Observe result: ptah runner result frame not found; last reported before that: Job ptah-observe-app cannot start its Pod: " + missingSecretText,
 		},
+		{
+			name: "a lost frame after the API server refused the Pod", failure: frameLost,
+			reported: &metav1.Condition{
+				Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
+				Message: "Job ptah-observe-app cannot create its Pod; the API server refused it: " + refusalText,
+			},
+			want: "read Observe result: ptah runner result frame not found; last reported before that: " +
+				"Job ptah-observe-app cannot create its Pod; the API server refused it: " + refusalText,
+		},
 		{name: "no condition", failure: frameLost, want: frameLost.Error()},
 		{
 			name: "another reason", failure: frameLost,
@@ -573,6 +583,42 @@ func TestAReadPastItsDeadlineKeepsSayingWhyItsPodNeverStarted(t *testing.T) {
 	if failed == nil || failed.Status != metav1.ConditionTrue || !strings.Contains(failed.Message, runner.ErrFrameNotFound.Error()) ||
 		!strings.Contains(failed.Message, said) {
 		t.Fatalf("ReconciliationFailed = %#v, want the lost frame and %q", failed, said)
+	}
+}
+
+// A Pod the API server refused until the Job's deadline was never created, so
+// the Job fails with no Pod and the read finds no frame. The refusal is the only
+// thing that says why (#981).
+func TestAReadRefusedUntilItsDeadlineKeepsTheRefusal(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseObserving
+	// Started before the deadline that has passed: a Job with no Pod is read
+	// as one only after the grace a Pod gets to appear.
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationObserve, ID: "observe-refused",
+		JobName: "observe-refused-job", JobUID: "job-uid",
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 30, 0, 0, time.UTC)), Attempt: 1,
+	}
+	bindActiveInput(t, schema)
+	said := "Job observe-refused-job cannot create its Pod; the API server refused it: " + refusalText
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodAdmissionRefused, said)
+	job, _ := terminalWorkload(schema, batchv1.JobFailed)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+	if !reconciler.now().After(schema.Status.ActiveOperation.StartedAt.Add(terminalPodGrace)) {
+		t.Fatalf("the reconciler's clock %s is inside the grace after %s, so the pass waits for a Pod",
+			reconciler.now(), schema.Status.ActiveOperation.StartedAt)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if want := runner.ErrFrameNotFound.Error() + "; last reported before that: " + said; failed == nil ||
+		failed.Status != metav1.ConditionTrue || !strings.Contains(failed.Message, want) {
+		t.Fatalf("ReconciliationFailed = %#v, want it to carry %q", failed, want)
 	}
 }
 

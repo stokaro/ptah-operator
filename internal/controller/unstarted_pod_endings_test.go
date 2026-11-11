@@ -586,44 +586,92 @@ func unstartedSchemaApply(t *testing.T) (
 ) {
 	t.Helper()
 
-	ctx := context.Background()
-	builder := workloadBuilderForMigrations()
-	run := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder, recorded: true}, builder)
-	reconciler, api, schema, job := run.reconciler, run.api, run.schema, run.job
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), UID: "unstarted-pod-uid",
-			Labels: maps.Clone(job.Spec.Template.Labels), Annotations: maps.Clone(job.Spec.Template.Annotations),
-			OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
-		},
-		Spec: *job.Spec.Template.Spec.DeepCopy(),
-	}
-	waitingOnASecret(pod)
-	if err := api.Create(ctx, pod.DeepCopy()); err != nil {
-		t.Fatal(err)
-	}
-	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
-	reconcileOnce := func() {
+	run := unstartedSchemaApplyRun(t)
+	return run.api, run.schema, run.job, run.pod, run.said, func() {
 		t.Helper()
-		if _, err := reconciler.Reconcile(ctx, request); err != nil {
-			t.Fatalf("Reconcile() error = %v", err)
-		}
+		run.reconcileOnce(t)
 	}
+}
 
-	reconcileOnce()
-	ready := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReady)
-	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
-		!strings.Contains(ready.Message, missingSecretText) {
-		t.Fatalf("Ready while the Pod waits = %#v, want PodConfigurationError naming the Secret, "+
-			"or nothing below has words to keep", ready)
+// unstartedSchema is a schema Apply after the pass that reported why its Pod
+// is not running, with what the rows that end it need.
+type unstartedSchema struct {
+	reconciler *SchemaReconciler
+	api        client.Client
+	recorder   *record.FakeRecorder
+	schema     *operatorv1alpha1.PtahSchema
+	job        *batchv1.Job
+	// pod is the Pod the kubelet cannot start, and nil when the API server
+	// refused to create one.
+	pod *corev1.Pod
+	// said is what Ready said about the Pod.
+	said string
+}
+
+func (run unstartedSchema) reconcileOnce(t *testing.T) {
+	t.Helper()
+	if _, err := run.reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run.schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
 	}
-	return api, schema, job, pod, ready.Message, reconcileOnce
+}
+
+// unstartedSchemaApplyRun is unstartedSchemaApply with the reconciler and an
+// Event recorder.
+func unstartedSchemaApplyRun(t *testing.T) unstartedSchema {
+	t.Helper()
+
+	return schemaApplyUnderReport(t, func(api client.Client, job *batchv1.Job) *corev1.Pod {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: job.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), UID: "unstarted-pod-uid",
+				Labels: maps.Clone(job.Spec.Template.Labels), Annotations: maps.Clone(job.Spec.Template.Annotations),
+				OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+			},
+			Spec: *job.Spec.Template.Spec.DeepCopy(),
+		}
+		waitingOnASecret(pod)
+		if err := api.Create(context.Background(), pod.DeepCopy()); err != nil {
+			t.Fatal(err)
+		}
+		return pod
+	}, operatorv1alpha1.ReasonPodConfigurationError, missingSecretText)
+}
+
+// schemaApplyUnderReport dispatches a schema Apply, lets stand return the Pod the
+// Job stands with, and runs the pass that reports it. It fails unless Ready
+// then carries reason with words in its message.
+func schemaApplyUnderReport(
+	t *testing.T,
+	stand func(api client.Client, job *batchv1.Job) *corev1.Pod,
+	reason operatorv1alpha1.ConditionReason,
+	words string,
+) unstartedSchema {
+	t.Helper()
+
+	builder := workloadBuilderForMigrations()
+	dispatched := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder, recorded: true}, builder)
+	run := unstartedSchema{
+		reconciler: dispatched.reconciler, api: dispatched.api, recorder: record.NewFakeRecorder(256),
+		schema: dispatched.schema, job: dispatched.job,
+	}
+	run.reconciler.Recorder = run.recorder
+	run.pod = stand(run.api, run.job)
+
+	run.reconcileOnce(t)
+	ready := meta.FindStatusCondition(safetyGetSchema(t, run.api, run.schema).Status.Conditions, operatorv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != string(reason) || !strings.Contains(ready.Message, words) {
+		t.Fatalf("Ready while the Pod is not running = %#v, want %s with %q, "+
+			"or nothing below has words to keep", ready, reason, words)
+	}
+	run.said = ready.Message
+	return run
 }
 
 // settledSchemaFailure is what a schema keeps once its claim is gone. It fails
 // unless the Apply's outcome was recorded as unknown, and returns
-// ReconciliationFailed: the ApplyOutcomeUnknown Event is fixed text, so this
-// condition is the one place the words stay until the next result.
+// ReconciliationFailed, which carries the sentence that says how the Apply
+// ended as well as the words; the ApplyOutcomeUnknown Event carries the words
+// alone (rarer_apply_endings_test.go).
 func settledSchemaFailure(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) *metav1.Condition {
 	t.Helper()
 
@@ -783,6 +831,10 @@ func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 		Reason:  string(operatorv1alpha1.ReasonPodConfigurationError),
 		Message: "Job " + job + " cannot start its Pod: " + missingSecretText,
 	}
+	refused := &metav1.Condition{
+		Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
+		Message: "Job " + job + " cannot create its Pod; the API server refused it: pods \"x\" is forbidden",
+	}
 	ended := errors.New("the operation inputs changed while the Job was running")
 	for _, row := range []struct {
 		name   string
@@ -802,12 +854,21 @@ func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 			want: ended.Error(),
 		},
 		{
-			name: "a Pod admission refused",
+			name:   "a Pod the API server refused to create",
+			report: lastPodReport{jobName: job, reported: refused},
+			want:   ended.Error() + lastReportedBefore + refused.Message,
+		},
+		{
+			name: "another reason in the same words",
 			report: lastPodReport{jobName: job, reported: &metav1.Condition{
-				Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
-				Message: "Job " + job + " cannot create its Pod; the API server refused it: pods \"x\" is forbidden",
+				Reason: string(operatorv1alpha1.ReasonLeaseContinuityLost), Message: reported.Message,
 			}},
 			want: ended.Error(),
+		},
+		{
+			name:   "a refusal the claim's Job ran past",
+			report: lastPodReport{reported: refused, jobName: job, ran: true},
+			want:   ended.Error(),
 		},
 		{
 			name:   "a report about a Job whose name the claim's begins",

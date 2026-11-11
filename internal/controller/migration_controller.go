@@ -929,7 +929,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			if mutationlifecycle.HarvestFailure(
 				mutationlifecycle.FaultPodMultiplicity, mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
-				return r.finishUncertainMigrationApply(ctx, migration, job, err, "")
+				return r.finishUncertainMigrationApply(ctx, migration, job,
+					withLastPodReport(err, migrationPodReport(migration, job)), "")
 			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
@@ -1048,7 +1049,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 		if err := validateMigrationJobEnvelope(job, migration); err != nil {
 			if mutating {
 				result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-					fmt.Errorf("dispatched Apply Job is not its claim's: %w", err), "")
+					withLastPodReport(fmt.Errorf("dispatched Apply Job is not its claim's: %w", err),
+						migrationPodReport(migration, job)), "")
 				return result, true, settleErr
 			}
 			result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
@@ -1061,7 +1063,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	if err != nil {
 		if mutating {
 			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("rebuild immutable Apply Job intent: %w", err), "")
+				withLastPodReport(fmt.Errorf("rebuild immutable Apply Job intent: %w", err),
+					migrationPodReport(migration, job)), "")
 			return result, true, settleErr
 		}
 		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,
@@ -1071,7 +1074,8 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	if err := validateAdoptedMigrationJobIntent(job, expected, migration); err != nil {
 		if mutating {
 			result, settleErr := r.finishUncertainMigrationApply(ctx, migration, job,
-				fmt.Errorf("dispatched Apply Job intent changed: %w", err), "")
+				withLastPodReport(fmt.Errorf("dispatched Apply Job intent changed: %w", err),
+					migrationPodReport(migration, job)), "")
 			return result, true, settleErr
 		}
 		result, settleErr := r.retryPastRefusedMigrationJob(ctx, migration, job,

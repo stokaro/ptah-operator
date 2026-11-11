@@ -844,6 +844,18 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			if !acquired {
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
+			// The look Apply supervision takes at a Job in flight, for the
+			// reason a deleted PtahMigration takes it: the ending this wait
+			// leads to carries what Ready last said about the Pod, so a Pod
+			// that starts while the resource waits has to take those words off
+			// first. A look that fails leaves them standing, still worded as
+			// the last report, and is not returned: an error requeue backs off,
+			// and this wait is what renews the Lease.
+			if schemaOperation(operation).Mutating && operation.JobUID != "" {
+				if err := r.reportPodAdmission(ctx, schema, job); err != nil {
+					ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
+				}
+			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 		if err != nil && !apierrors.IsNotFound(err) {
@@ -857,7 +869,14 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			if !acquired {
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
-			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job identity was lost during deletion"))
+			// The status goes with the resource; the ApplyOutcomeUnknown Event
+			// is what keeps the report.
+			var reported *batchv1.Job
+			if err == nil {
+				reported = job
+			}
+			return r.finishUncertainApply(ctx, schema, nil, withLastPodReport(
+				errors.New("dispatched Apply Job identity was lost during deletion"), schemaPodReport(schema, reported)))
 		}
 		if schemaOperation(operation).Mutating && !dispatchedApplyUnknown {
 			if err == nil {
@@ -872,7 +891,8 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 						ctx,
 						schema,
 						nil,
-						fmt.Errorf("Apply executor termination is not proven during deletion"),
+						withLastPodReport(errors.New("Apply executor termination is not proven during deletion"),
+							schemaPodReport(schema, job)),
 						evidence.PodUIDs,
 						evidence.PodCount,
 						true,
@@ -1045,13 +1065,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		expectedJob, expectedErr := r.expectedJob(ctx, schema, operation)
 		if expectedErr != nil {
 			if schemaOperation(operation).Mutating {
-				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("rebuild immutable Apply Job intent: %w", expectedErr))
+				return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
+					fmt.Errorf("rebuild immutable Apply Job intent: %w", expectedErr), schemaPodReport(schema, job)))
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
 		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation); intentErr != nil {
 			if schemaOperation(operation).Mutating {
-				return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr))
+				return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
+					fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr), schemaPodReport(schema, job)))
 			}
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job intent changed: %w", intentErr))
 		}
@@ -1061,7 +1083,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		// that fails them is not recorded, and is settled as one that fails
 		// the rebuild is.
 		if schemaOperation(operation).Mutating {
-			return r.finishUnknownRunningApply(ctx, schema, fmt.Errorf("dispatched Apply Job is not its claim's: %w", envelopeErr))
+			return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
+				fmt.Errorf("dispatched Apply Job is not its claim's: %w", envelopeErr), schemaPodReport(schema, job)))
 		}
 		return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job is not its claim's: %w", envelopeErr))
 	}
@@ -1140,7 +1163,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if mutationlifecycle.HarvestFailure(
 				mutationlifecycle.FaultPodMultiplicity, schemaOperation(operation).Mutating,
 			) == mutationlifecycle.DispositionUnaccounted {
-				return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
+				return r.finishUncertainApplyWithEvidence(ctx, schema, job,
+					withLastPodReport(failure, schemaPodReport(schema, job)), evidence.PodUIDs, evidence.PodCount, true)
 			}
 			return r.retryOperation(ctx, schema, job, failure)
 		}
@@ -1283,10 +1307,18 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	honestJob := jobErr == nil && (operation.JobUID == "" || operation.JobUID == job.UID) &&
 		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID)
 	if schemaOperation(operation).Mutating {
+		// The report is asked about the Job under the name even when the
+		// finisher is not given it: claimJobRan takes only the claim's own
+		// Job's success as the Pod having run.
+		var reported *batchv1.Job
+		if jobErr == nil {
+			reported = job
+		}
+		failure := withLastPodReport(errors.New("database lock continuity was lost during Apply"), schemaPodReport(schema, reported))
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
-		return r.finishUncertainApply(ctx, schema, job, fmt.Errorf("database lock continuity was lost during Apply"))
+		return r.finishUncertainApply(ctx, schema, job, failure)
 	}
 	if honestJob && !jobTerminal(job) {
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
@@ -3920,7 +3952,14 @@ func (r *SchemaReconciler) acquireActiveLock(
 	}
 	if continuityLost {
 		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "The operation result is invalid because the database lock epoch changed")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after lock continuity was lost")
+		// Ready keeps a report about the claim's Pod: the next pass settles
+		// the claim (recoverLeaseContinuity), and an Apply's record carries the
+		// report from Ready. A PtahMigration keeps it the same way, on
+		// Progressing, which its continuity write does not touch. InSync and
+		// the Event below say the lock changed.
+		if !schemaPodReport(schema, nil).standing() {
+			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after lock continuity was lost")
+		}
 	}
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return false, 0, err

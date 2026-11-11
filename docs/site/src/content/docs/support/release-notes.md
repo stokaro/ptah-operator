@@ -60,7 +60,9 @@ records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too.
+Job too. A script or an alert that matches the whole text of a `PtahSchema`'s
+`ApplyOutcomeUnknown` Event has to expect `; last reported before that:` and what
+the schema last reported after it, on an Apply whose Pod never ran.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -219,6 +221,19 @@ Job too.
   refuse, such as one under another execution epoch or one whose claim never
   recorded its UID, is left at once, and so is one that has not finished by then.
   A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
+- **More endings keep why the Pod never ran.** The same words now follow an Apply
+  whose Job stopped being its claim's after the inputs moved, whose claim could not
+  build its Job again because its plan was deleted, whose Job a newer release
+  builds differently, or whose Job left more than one Pod. A Pod the API server
+  refused to create is covered as well: an Apply or a read still refused at its
+  Job's deadline recorded only `result frame not found`, and now carries the
+  refusal after it. A `PtahSchema` keeps the words when its database Lease changed
+  hands, where the write that records the lost Lease used to replace them, and when
+  it is deleted while its Apply runs. Its `ApplyOutcomeUnknown` Event now carries
+  them, which is what stays of a deleted schema, and a deleted schema looks at the
+  Pod while it waits for it, as a deleted `PtahMigration` does.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  has the messages.
 
 ## 0.2.10
 

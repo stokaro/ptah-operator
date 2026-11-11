@@ -307,25 +307,41 @@ waited takes its status with it, and its `MigrationRunUncertain` Warning Event
 carries `the PtahMigration was deleted while a dispatched Apply was in flight; last
 reported before that:` and the words.
 
-A `PtahSchema` keeps the words in one place: the message of
-`ReconciliationFailed`, reason `ApplyOutcomeUnknown`, until the next result
-rewrites it. Its `ApplyOutcomeUnknown` Warning Event is fixed text. The sentences
-are `operation inputs changed while the Job was running`, `dispatched Apply Job is
+An Apply of either kind keeps them too when its Job stopped being its claim's
+after the inputs moved, as when someone relabeled it (`dispatched Apply Job is not
+its claim's`), when its claim could not build its Job again, as when its plan was
+deleted (`rebuild immutable Apply Job intent`), when a newer release builds the Job
+differently (`dispatched Apply Job intent changed`), and when its Job left more
+than one Pod, as when a Pod stands Terminating on a node that stopped answering
+(`terminal Job has multiple executor Pods` on a `PtahMigration`, `Job produced
+multiple executor Pods` on a `PtahSchema`).
+
+A `PtahSchema` keeps the words in the message of `ReconciliationFailed`, reason
+`ApplyOutcomeUnknown`, until the next result rewrites it, and in its
+`ApplyOutcomeUnknown` Warning Event: `Apply outcome is uncertain; observing
+database state; last reported before that:` and the words. Its other sentences are
+`operation inputs changed while the Job was running`, `dispatched Apply Job is
 missing and will not be recreated`, `dispatched Apply Job was replaced`,
-`dispatched Apply Job lost schema ownership` and `execution binding changed after
-Apply dispatch`, each followed by `; last reported before that:` and the words. A
-`PtahSchema` whose database Lease changed hands records `database lock continuity
-was lost during Apply` without them: the write that records the lost Lease has
-already replaced `Ready`, the condition that held them.
+`dispatched Apply Job lost schema ownership`, `execution binding changed after
+Apply dispatch` and `database lock continuity was lost during Apply`, each followed
+by `; last reported before that:` and the words. The write that records a lost
+Lease leaves `Ready` as it was while `Ready` holds the words, and says the lock
+changed in `InSync` and in a `LeaseContinuityLost` Event. A `PtahSchema` deleted
+while its Apply runs waits for it, and records `dispatched Apply Job identity was
+lost during deletion` when its Job went, or `Apply executor termination is not
+proven during deletion` when the Job stopped and no Pod showed its executor end.
+The status goes with the resource, and the Event is what stays. When a Pod does
+show the executor ended, the deletion discards the claim and records nothing.
 
 Those words are the last report and not a reading taken at the end. Nothing is
 added when the claim's own Job reports a Pod that succeeded. A Pod can still start
 after the last look and fail without a result, and the failure reads the same. The
-resource looks at an Apply's Pod every 5 seconds, also while a deleted
-`PtahMigration` waits for it. Some endings are recorded while the Pod can still
-start, and a Pod that starts later does not change the record. A `PtahMigration`
-records the run and keeps its claim until the Pod stops when its Job went while the
-Pod stood, when an execution component changed and when its Lease changed hands. A
+resource looks at an Apply's Pod every 5 seconds, also while a deleted resource
+waits for it. Some endings are recorded while the Pod can still start, and a Pod
+that starts later does not change the record. A `PtahMigration` records the run
+and keeps its claim until the Pod stops when its Job went while the Pod stood, when
+an execution component changed, when its Lease changed hands, and on any other
+ending above that finds its Job running or its Pods standing. A
 `PtahSchema` records every ending at once and reads the database again once the
 Apply's deadline has passed. So check whether the Secret exists now before you
 change it.

@@ -286,6 +286,14 @@ the spec takes effect on the next claim. The message is the API server's own
 text, bounded and stripped of control characters; it names the policy or the
 webhook and what it wanted, and nothing the operation holds.
 
+A Job still refused at its deadline fails with no Pod, and the run ends with no
+result. The failure it records keeps the refusal after it as what was last
+reported: `ptah runner result frame not found; last reported before that: Job
+<the Job> cannot create its Pod; the API server refused it:` and the API server's
+text. An Apply that ends another way first keeps it the same way, on the endings
+[Before the Secret exists](../credentials-and-admission/#external-secret-stores-not-synced)
+lists for the kubelet's words.
+
 A Pod that exists and cannot start because the kubelet cannot configure its
 container reads the same way, with reason `PodConfigurationError` and the
 kubelet's words in the message: a [Secret or a key that does not exist
