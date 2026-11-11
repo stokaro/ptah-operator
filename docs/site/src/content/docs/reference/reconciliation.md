@@ -640,7 +640,10 @@ annotation, with a value later than any the resource holds and than the last
 one `status.lastReadRequest` answered, so a second request a moment after the
 first is not taken for an answered one. With `--wait` it waits for the read
 the request starts, under the rules below, and stops with `PolicyRefused` when
-that read ends in the verification policy's refusal of the artifact.
+that read ends in the verification policy's refusal of the artifact. It knows
+that read's reading by a new stamp in `status.history.observedAt` or
+`status.target.lastObservedAt`, and does not order it against the reading before:
+a manager whose clock is behind the previous one's dates a later reading earlier.
 
 A value `status.lastReadRequest` does not record as answered is answered once
 no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,
@@ -775,7 +778,10 @@ run ends, with the source, the database and the execution binding it ran under, 
 `verification`, the first reading after it. The claim is written before the Job and
 outlives the Job, the plan and the approval, so none of them has to exist for the
 record to be true. A later run replaces `lastRun`, and the journal is what still
-names the one before it.
+names the one before it. `verification` is written in the status write that
+records the reading, so `kubectl ptah wait --for applied` and `approve --wait` go
+by it rather than by comparing the reading's time with `finishedAt`, which two
+managers' clocks may have written.
 
 The database is the one thing the claim cannot vouch for, so `targetIdentityDigest`
 is what the run's result named and nothing else. That is the database it opened,

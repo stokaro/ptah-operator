@@ -582,7 +582,8 @@ generation the resource had then.
                                         already waiting included
                              applied    an Apply or a migration run ended
                                         after the wait began, confirmed by
-                                        a reading afterwards
+                                        the reading afterwards the operator
+                                        records on it
                              suspended  the operator reports it Suspended,
                                         with nothing in flight
                              read       the read a refresh asked for ended
@@ -601,8 +602,11 @@ policy holds (a schema plan that is destructive while allowDestructive is
 false, or any plan under apply Never), once the operator has planned it again
 after the wait began, and one for in-sync, approval or applied on an artifact
 the verification policy refuses. A run that applied before such a refusal ends
-the wait with CompletionNotProved, naming the run. A wait for read stops on a
-refusal the read it asked for ended in, and not on one from before it.
+the wait with CompletionNotProved, naming the run, and so does one whose next
+reading was of another database. A wait for read stops on a refusal the read it
+asked for ended in, and not on one from before it. Two managers' clocks may
+date the operator's records, so a wait counts a reading by a new stamp and
+never by which time is later.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

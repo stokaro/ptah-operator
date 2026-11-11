@@ -1789,7 +1789,7 @@ kubectl ptah wait schema/storefront --for in-sync --timeout 10m -n application
 | --- | --- |
 | `in-sync` | the resource rests in sync at the generation it had when the wait began, from a reading of the database that began after the wait did |
 | `approval` | a plan waits for an approval, with none recorded on it yet, at the generation the resource had when the wait began; a plan already waiting counts |
-| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it; one that ended before does not count, even when that reading ends after; `--plan` narrows it to one plan, by name or fingerprint, and another plan's run ends the wait |
+| `applied` | an Apply or a migration run that ended after the wait began is recorded applied, and the operator's reading afterwards confirms it, for a migration the reading of the run's database it records on the run as `status.lastRun.verification`; one that ended before does not count, even when that reading ends after; `--plan` narrows it to one plan, by name or fingerprint, and another plan's run ends the wait |
 | `suspended` | the operator reports the resource `Suspended` for that generation, with nothing in flight; a schema still owing the proof of an Apply reaches it, since that proof starts no Job until resume |
 | `read` | the read a `kubectl ptah refresh` asked for has ended; `--read-request` names the request |
 
@@ -1813,7 +1813,7 @@ reads those rather than the order or the time of what happened.
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest, or a run spent that other approval, which leaves this one `Stale` |
 | `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it, or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it: the run has no `verification` and `status.history.targetIdentityDigest` names another database than the run's. Or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -1899,6 +1899,27 @@ refusal writes. The wait compares that stamp with the one the resource carried w
 the wait began, or when the operator took the request if a read was under way at
 first. It never compares it with the time of the request, which your clock wrote
 and not the operator's.
+
+A wait does not put two of the operator's times in order either, except on a run
+an older operator recorded. The manager that holds the lease writes them, and
+after a failover the next manager's clock can be behind or ahead of the one
+before, so a later reading can carry an earlier time. A wait counts a reading by
+its stamp, `status.target.lastObservedAt` for a schema and
+`status.history.observedAt` for a migration: a stamp other than the one the
+resource carried when the wait began, or when the operator took the request, is a
+reading recorded since, whatever its time. Two readings stamped within one second
+look like one, which can only make a wait longer.
+
+A migration run is decided by its own record. The reading that confirms it
+records itself on the run, as `status.lastRun.verification`, in the same status
+write, so `wait --for applied`, `--plan` and `approve --wait` end at that record,
+in `Planning` when the reading found more migrations pending. Until a reading
+records itself there, a history of the run's database is the reading from before
+the run, and a resource that rests `Suspended` or `Blocked` by its realm keeps the
+wait running. A history of another database, once the resource rests, is a
+reading that cannot verify the run, and the wait stops with `CompletionNotProved`. A run that an operator older
+than 0.2.10 recorded carries no `operationID` and gets no `verification`, so
+`wait --for applied` still dates its reading by the run's `finishedAt`.
 
 A resource its database realm blocks keeps a wait running: another resource's
 change or an administrator's grant ends that refusal, not a change to this

@@ -93,6 +93,32 @@ one `stale` outcome, where it took two of each.
   a recorded approval follows its Apply too, and the `ReadRequested` Event now
   says so.
 
+- **Waits under two managers' clocks.** After a leader failover the manager that
+  writes a resource's status can run a clock behind or ahead of the one before
+  it, and some waits put times the two had written in order. A wait now counts a
+  reading by a new stamp and decides a migration run by the reading the operator
+  records on it, `status.lastRun.verification`. So
+  `kubectl ptah wait migration/... --for applied` now exits 8 with
+  `CompletionNotProved` when the reading after the run was of another database,
+  where it exited 0, or 7 at its timeout under skew. It also ends at the
+  read-back itself, which is in `Planning` when the read-back found more
+  migrations pending. Under skew it keeps waiting where it exited 0 on a
+  migration suspended before the history was read back, or 8 with
+  `NotConverged` on one its realm blocked, and exits 0 where it timed out with 7
+  on a read-back dated before the run's end.
+  `kubectl ptah approve migration/... --wait` and `wait --for applied --plan`
+  keep waiting under skew where they exited 8 with `CompletionNotProved` on a
+  migration suspended or blocked by its realm before the read-back, and exit 8 with
+  `CompletionNotProved` where they timed out after a reading of another database
+  dated before the run's end. A wait for `in-sync`, `approval` or `read`, and the
+  `--wait` of `refresh`, `resume` and `set-source`, exits 0 under skew where it
+  timed out on a reading dated before the one before it; `refresh --wait` and
+  `wait --for read` also exit 0 rather than 8 with `PolicyRefused` when the
+  requested read ended in such a reading and a newer request's read was
+  refused. A run that an operator older than 0.2.10 recorded carries no
+  verification, so `wait --for applied` still dates its reading by the run's
+  end.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
