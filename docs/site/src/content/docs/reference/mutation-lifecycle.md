@@ -232,10 +232,11 @@ approval spent. A client that gives up at the bound anyway cancels the request
 on the API server. The write that withdraws the marker or retires the claim
 after the create runs on a context of its own, for up to 10 more seconds, so a
 create that ended with the bound does not make it fail, and the grace waits for
-that write too. The other 5 seconds cover a cancellation arriving and a storage
-write already in flight. The Job-write webhook also reads the claim uncached, so
-a create whose admission runs after the claim was retired is refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
-leaves the API server to finish the request on its own bounds. That case fails
+that write too. The last 5 seconds of the grace cover a cancellation arriving
+and a storage write already in flight. The Job-write webhook also reads the claim uncached, so
+a create whose admission runs after the claim was retired is refused. A
+dispatcher that cannot cancel, because it is frozen or partitioned, leaves the
+API server to finish the request on its own bounds. That case fails
 closed: a Job stored under a retired claim runs no Pod, because Pod admission
 refuses a Pod whose claim is no longer active.
 
