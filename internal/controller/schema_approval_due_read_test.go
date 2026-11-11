@@ -417,6 +417,21 @@ func TestAReadRequestFollowsTheApplyOfARecordedApproval(t *testing.T) {
 			message: "A read was requested; it starts now",
 			claim:   operatorv1alpha1.OperationResolve,
 		},
+		{
+			// A realm refusal blocked the resource and kept its plan and the
+			// recorded approval; the refusal has ended. A Blocked resource
+			// reads at its interval whatever its plan records, so the read
+			// starts now.
+			name: "a recorded approval on a Blocked resource",
+			decide: func(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.PtahSchemaApproval {
+				t.Helper()
+				approval := recordTheApproval(t, api, schema, plan)
+				schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+				return approval
+			},
+			message: "A read was requested; it starts now",
+			claim:   operatorv1alpha1.OperationResolve,
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
