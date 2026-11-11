@@ -598,7 +598,8 @@ func (i buildInput) dataPlane() (
 // read before it starts the child when the URL names another target, so a
 // proof whose Secret moved neither logs in to the new target nor reads it,
 // however long it waits there. An ordinary read carries no binding: it is how
-// a new target is learned.
+// a new target is learned. Which reads are proofs is decided again on harvest,
+// by schemaClaimServesProof in internal/controller; the two have to agree.
 func appendProofTargetBinding(environment []corev1.EnvVar, pending *operatorv1alpha1.PendingObservationStatus) []corev1.EnvVar {
 	if pending == nil {
 		return environment

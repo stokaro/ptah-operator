@@ -293,8 +293,8 @@ No read of another target can say what the Apply did, and the resource stops:
   another claimant of that database waits.
 - It reads again every `spec.execution.failureRetryInterval`, so it finds the first
   target if that comes back. Each read is bound to the plan's target, as the Apply
-  was, and the runner refuses it with `target_binding_mismatch` before it connects,
-  so nothing logs in to the new target or reads it. No source is resolved, no plan
+  was, and the runner refuses it before it connects, with `target_binding_mismatch`
+  in the Pod's log, so nothing logs in to the new target or reads it. No source is resolved, no plan
   is published, no Apply runs and a read request waits.
 
 **Put the first URL back.** The next read matches, and the proof runs as it would
