@@ -1100,15 +1100,32 @@ func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
 // (unrecordedMigrationJobRefusal), and a Warning names it, because this is the last
 // pass that can. A write of the UID that fails holds the claim too.
 //
-// A deleting resource needs no TTL: the garbage collector takes the Job with its
-// owner, and a TTL write that kept failing would hold the finalizer.
+// A deleting resource is never held for any of that, because a failure that kept
+// recurring would keep the finalizer on. A Job that goes with the resource needs no
+// TTL (migrationJobGoesWithResource). One that outlives it, under a deletion that
+// orphans dependents, still gets its TTL, since nothing else collects it once its
+// owner is gone. A failure on the way is reported as MigrationJobCleanupDeferred,
+// and the claim goes.
 func (r *MigrationReconciler) scheduleStoppedMigrationJobCleanup(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 ) error {
-	if migration.DeletionTimestamp != nil {
-		return nil
+	err := r.scheduleStoppedMigrationJobTTL(ctx, migration)
+	if err == nil || migration.DeletionTimestamp == nil {
+		return err
 	}
+	operation := migration.Status.ActiveOperation
+	r.migrationJobCleanupNotScheduled(migration, operation,
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: migration.Namespace, Name: operation.JobName}}, err)
+	return nil
+}
+
+// scheduleStoppedMigrationJobTTL is scheduleStoppedMigrationJobCleanup up to the
+// failure it returns.
+func (r *MigrationReconciler) scheduleStoppedMigrationJobTTL(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) error {
 	operation := migration.Status.ActiveOperation
 	job := &batchv1.Job{}
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
@@ -1117,6 +1134,9 @@ func (r *MigrationReconciler) scheduleStoppedMigrationJobCleanup(
 		return nil
 	case err != nil:
 		return fmt.Errorf("read the stopped Apply Job: %w", err)
+	}
+	if migrationJobGoesWithResource(migration, job) {
+		return nil
 	}
 	if operation.JobUID == "" {
 		if refusal := unrecordedMigrationJobRefusal(migration, job); refusal != nil {
@@ -1161,7 +1181,10 @@ func (r *MigrationReconciler) scheduleUnaccountedMigrationJobCleanup(
 	approved := operation != nil && operation.ApprovalRef != nil
 	keepLog := jobclaim.MigrationRunKeepsLog(approved, r.reportedMigrationOutcome(ctx, job, operation), false)
 	return retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
-		r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
+		// A Job deleted with its resource keeps its log for neither time.
+		if !migrationJobGoesWithResource(migration, job) {
+			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
+		}
 	})
 }
 
@@ -1400,35 +1423,58 @@ func unrecordedMigrationJobRefusal(migration *operatorv1alpha1.PtahMigration, jo
 	return nil
 }
 
-// migrationApplyLogPointer is failedApplyLogPointer for a migration's Apply Job,
-// which a deletion takes with the resource.
+// migrationJobGoesWithResource reports whether job goes when the migration being
+// deleted goes, so that nothing of it outlives the resource: no TTL to collect it
+// later and no Pod log to read after it. Every place that treats a deleting
+// resource's Job as gone asks this, rather than whether the resource is deleting.
 //
 // The resource controls its Job, and the Job its Pods. Once the finalizer comes
 // off, the garbage collector deletes the Job and its Pod with the PtahMigration,
-// and the log goes with the Pod. The TTL is still asked for, but it does not
-// keep the Job past its owner. So a deleted resource's record says the log goes,
-// rather than where to read it for a day.
+// under the default propagation and the foreground one alike. Other finalizers on
+// the resource only delay that.
 //
-// That holds only for a Job the garbage collector deletes with this resource. A
-// deletion that orphans dependents takes the owner reference off the Job, and
-// the resource carries the orphan finalizer until it has. Such a Job outlives
-// the resource for its TTL, so it gets the usual pointer, which is empty when
-// admission refused it a TTL.
+// A deletion that orphans dependents is the exception. The garbage collector takes
+// the owner reference off the Job and then the orphan finalizer off the resource,
+// so a Job the resource still carries that finalizer over, or no longer controls,
+// outlives it, and its TTL is what collects it. A Job that is itself being deleted
+// goes in any case.
+func migrationJobGoesWithResource(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) bool {
+	switch {
+	case migration.DeletionTimestamp == nil || job == nil:
+		return false
+	case job.DeletionTimestamp != nil:
+		return true
+	default:
+		return metav1.IsControlledBy(job, migration) &&
+			!slices.Contains(migration.Finalizers, metav1.FinalizerOrphanDependents)
+	}
+}
+
+// migrationApplyLogPointer is failedApplyLogPointer for a migration's Apply Job,
+// which a deletion may take with the resource. The TTL is still asked for, but it
+// does not keep such a Job past its owner, so the record says the log goes rather
+// than where to read it for a day. A Job that outlives the resource gets the usual
+// pointer, which is empty when admission refused it a TTL.
+//
+// A Job already being deleted may have lost its Pod before this pass read it: a
+// foreground deletion deletes the Pods first. Its record says the log was there.
 func migrationApplyLogPointer(
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	reading applyLogReading,
 ) string {
-	if migration.DeletionTimestamp == nil || job == nil || !metav1.IsControlledBy(job, migration) ||
-		slices.Contains(migration.Finalizers, metav1.FinalizerOrphanDependents) {
+	if !migrationJobGoesWithResource(migration, job) {
 		return failedApplyLogPointer(job, reading)
 	}
-	subject := applyLogSubject(reading)
-	if subject == "" {
+	switch subject := applyLogSubject(reading); {
+	case subject == "":
 		return ""
+	case job.DeletionTimestamp != nil:
+		return fmt.Sprintf("%s was in the Pod log of Job %s, which is being deleted with its Pod", subject, job.Name)
+	default:
+		return fmt.Sprintf("%s is in the Pod log of Job %s, and the Job and its Pod are deleted with the PtahMigration",
+			subject, job.Name)
 	}
-	return fmt.Sprintf("%s is in the Pod log of Job %s, and the Job and its Pod are deleted with the PtahMigration",
-		subject, job.Name)
 }
 
 // retireUncertainMigrationApply is finishUncertainMigrationApply for a caller
@@ -1466,8 +1512,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		// does when the Job controller writes its status. Admission admits the
 		// TTL only while the claim names the Job, so the claim stays for the pass
 		// that retires it, which reads the Job again and asks once more
-		// (scheduleStoppedMigrationJobCleanup). A deleting resource does not
-		// wait for it.
+		// (scheduleStoppedMigrationJobCleanup). A deleting resource whose Job goes
+		// with it does not wait for it (migrationJobGoesWithResource). One whose
+		// Job outlives it waits one pass, which does not return what it meets.
 		//
 		// It refuses it on a Job that has not finished as well. Where the claim
 		// names this Job and stays because the Job may still write, the pass
@@ -1484,7 +1531,7 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		case !later:
 			switch err := r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job); {
 			case err == nil:
-			case apierrors.IsConflict(err) && job.UID == operation.JobUID && migration.DeletionTimestamp == nil:
+			case apierrors.IsConflict(err) && job.UID == operation.JobUID && !migrationJobGoesWithResource(migration, job):
 				retain = true
 			default:
 				r.migrationJobCleanupNotScheduled(migration, operation, job, err)

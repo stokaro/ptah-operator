@@ -1558,9 +1558,11 @@ that dispatched something records the run `Unknown`, because nothing read what
 it did; a claim that only reserved a Job name records nothing, because nothing
 ran. Both hand the database Lease back and then release the resource, and the
 garbage collector deletes the Job and its Pod with it. The Pod log goes with the
-Pod, so read it before you delete the resource if you need it:
-`kubectl logs -n <namespace> job/<name> -c ptah`, where `<name>` is
-`status.activeOperation.jobName`. A read-only operation is not waited on: its
+Pod. To keep it, start `kubectl logs -f -n <namespace> job/<name> -c ptah`
+before the delete, with `<name>` from `status.activeOperation.jobName`. It
+follows a run still in flight to its end, and a read taken during the wait shows
+only what the run had written by then. For a run already recorded `Unknown`, the
+name is `status.lastRun.jobName`. A read-only operation is not waited on: its
 Job reads and reports, and deletion discards the claim and goes.
 
 Use the default propagation. `kubectl delete --cascade=foreground` asks
@@ -2234,9 +2236,11 @@ than a record that ends in the event stream.
 It does refuse to lose it quietly. The pass that removes the finalizer emits a
 Warning Event, `UnresolvedRunDiscarded`, naming the outcome, the Job the run
 ran as, the plan it was carrying out and the database it addressed, and logs
-the same. Those are what remain for whoever later finds a change in that
-database nobody can account for, so capture them before the Event's retention
-window closes:
+the same. Where that Job still stands, the Event adds that the Job and its Pod
+log are deleted with the resource, so a `MigrationRunUncertain` Event that
+pointed at the log for 24 hours no longer holds. Those are what remain for
+whoever later finds a change in that database nobody can account for, so
+capture them before the Event's retention window closes:
 
 ```sh
 kubectl -n "$NAMESPACE" get events --field-selector reason=UnresolvedRunDiscarded \
@@ -2451,11 +2455,7 @@ The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes
 Pod's log with it sooner, and deleting the resource collects the Job with it. So the
 `MigrationRunUncertain` Warning Event of a `PtahMigration` deleted while its Apply
 waited names the Job and says the Job and its Pod are deleted with the resource, in
-place of the `kubectl logs` command. A deletion with `--cascade=orphan` leaves the
-Job behind. The Event then points at its log when the manager gave the Job its TTL
-before the garbage collector took the owner reference off; otherwise admission
-refuses the TTL, and a `MigrationJobCleanupDeferred` Warning Event names the Job,
-which stays until it is deleted. A
+place of the `kubectl logs` command. A
 retained Job counts toward a `count/jobs.batch` quota, and a full quota stops every
 operation in the namespace, because each one needs a Job. Once you have read a finished
 Job's log, `kubectl delete job -n <namespace> <job>` frees the quota and takes the Pod
