@@ -1208,6 +1208,16 @@ before anything else runs. A dispatched `PtahMigration` Apply is recorded as
 an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
 until a History reading or a `PtahMigrationRunAcknowledgment` accounts for it.
 A dispatched read-only Job of either family is run again under a new attempt.
+A `PtahMigration` claim that recorded the Job's UID, with the Job the one it
+fixes, waits for that Job to stop first and gives it the five-minute TTL of a
+harvested Job, because admission admits the TTL only on the Job an active claim
+names. `Progressing` names the Job while the claim waits. The wait lasts at most
+the Job's `spec.execution.activeDeadlineSeconds`, 15 minutes by default, from the
+Job's start, plus the termination grace its Pods are given and 30 seconds. A Job
+admission would refuse, such as one under another execution epoch, is left at
+once, and so is one that has not finished by then, such as one whose Pod stays
+`Terminating` on a node that is gone. A `MigrationJobCleanupDeferred` Warning
+Event names the Job it leaves.
 
 A claim that had not dispatched yet resolves its admission snapshot again from
 the template the replacement builds, and the `AdmissionSnapshotRefreshed` Event

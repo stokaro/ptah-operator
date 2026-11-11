@@ -123,6 +123,10 @@ func runDispatchedBy(
 	job.Spec.Template.Labels[batchv1.ControllerUidLabel] = string(job.UID)
 	job.Spec.Template.Labels[batchv1.JobNameLabel] = job.Name
 	job.Status.Active = 1
+	// The Job controller starts the Job once the claim has created it, and its
+	// deadline counts from then.
+	started := operation.StartedAt
+	job.Status.StartTime = &started
 
 	// The hand-built workload supplies a Pod's spec and status; its identity
 	// is replaced with the one the built Job gives it.
@@ -226,7 +230,9 @@ func assertAdopted(t *testing.T, api client.Client, run dispatchedRun) {
 // assertRefused fails unless the pass settled the claim the way its operation
 // settles a Job it cannot confirm, for the reason want names: an Apply is
 // recorded as outcome unknown, retaining its running claim, and a read-only claim moves to
-// a new attempt under a new name, leaving the Job as it found it.
+// a new attempt under a new name, leaving the Job as it found it. That is a
+// read-only claim whose Job admission would not collect; one whose Job it would
+// waits for the Job to stop (assertRefusedOnceStopped).
 //
 // The retained Apply claim is the one it was, and names the Job by UID: a claim
 // that never recorded the UID records it before the run is settled, where the Job
@@ -325,7 +331,8 @@ func claimsAndVerdicts() []struct {
 // manager identity, which it takes from the live Pod template. A predecessor
 // that built a different Pod template left a run this manager cannot
 // confirm: an Apply is recorded as outcome unknown, and a read-only claim is
-// run again.
+// run again. A read-only claim that recorded the Job's UID runs again once the
+// Job stops, so the Job gets its cleanup first (assertRefusedOnceStopped).
 func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 	t.Parallel()
 
@@ -361,7 +368,12 @@ func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 					assertAdopted(t, api, run)
 					return
 				}
-				assertRefused(t, api, run, "the Job's spec is not the one its claim builds")
+				const want = "the Job's spec is not the one its claim builds"
+				if claim.operation == operatorv1alpha1.MigrationOperationHistory && claim.recorded {
+					assertRefusedOnceStopped(t, reconciler, api, run, batchv1.JobComplete, want)
+					return
+				}
+				assertRefused(t, api, run, want)
 			})
 		}
 	}
@@ -431,7 +443,8 @@ func TestAMigrationRefusesAJobWhosePodTemplateIsNotItsSnapshots(t *testing.T) {
 // precondition. A claim that cannot build its Job has nothing to hold the Job
 // under its name to, so it cannot confirm it, and settles it as it settles
 // any Job it cannot confirm. An Apply whose plan is gone is the case a person
-// can cause: the plan names the sequence the Job was built to run.
+// can cause: the plan names the sequence the Job was built to run. The History
+// reading recorded its Job's UID, so it runs again once the Job stops.
 func TestAMigrationClaimThatCannotRebuildItsJobDoesNotAdoptIt(t *testing.T) {
 	t.Parallel()
 
@@ -457,6 +470,10 @@ func TestAMigrationClaimThatCannotRebuildItsJobDoesNotAdoptIt(t *testing.T) {
 
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !migrationOperation(run.migration.Status.ActiveOperation).Mutating {
+				assertRefusedOnceStopped(t, reconciler, api, run, batchv1.JobComplete, row.want)
+				return
 			}
 			assertRefused(t, api, run, row.want)
 		})

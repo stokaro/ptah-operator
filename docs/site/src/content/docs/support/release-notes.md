@@ -59,6 +59,8 @@ in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
+An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
+Job too.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -203,6 +205,20 @@ that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
   later than before, and a manager that restarts in that time waits again. A
   claim that recorded its Job's UID, and a resource being deleted, do not
   wait.
+- **A refused read-only migration Job is collected.** A read-only migration
+  claim that could not confirm the Job under its name, as after a release that
+  changed the Job, ran again under a new attempt and left that Job with no TTL,
+  so the Job and its Pod stayed until the resource was deleted, and nothing named
+  them. Admission admits the TTL only on a finished Job the active claim names by
+  UID. Where the claim recorded the Job's UID and the Job is the one the claim
+  fixes, the claim now waits for the Job to stop, as it waits for a Job it
+  supervises, and gives it the five minutes a harvested Job gets before it runs
+  again. It waits at most the Job's `spec.execution.activeDeadlineSeconds`, 15
+  minutes by default, plus the termination grace its Pods are given and 30
+  seconds, and `Progressing` names the Job meanwhile. A Job admission would
+  refuse, such as one under another execution epoch or one whose claim never
+  recorded its UID, is left at once, and so is one that has not finished by then.
+  A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
 
 ## 0.2.10
 
