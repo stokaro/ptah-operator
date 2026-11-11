@@ -46,7 +46,9 @@ an approval recorded before the interval ended to be consumed by an Apply and
 then marked `Stale` by the proof after it, as every applied approval is, rather
 than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
-one `stale` outcome, where it took two of each.
+one `stale` outcome, where it took two of each. A script that acts on the exit
+status of a `kubectl ptah` wait on a migration run has to expect the statuses
+the bullet on waits under two managers' clocks lists.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -92,7 +94,6 @@ one `stale` outcome, where it took two of each.
   not yet recorded still wait for the read. A read requested on a schema with
   a recorded approval follows its Apply too, and the `ReadRequested` Event now
   says so.
-
 - **Waits under two managers' clocks.** After a leader failover the manager that
   writes a resource's status can run a clock behind or ahead of the one before
   it, and some waits put times the two had written in order. A wait now counts a
