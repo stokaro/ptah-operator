@@ -418,9 +418,10 @@ func (r *SchemaReconciler) settleRetiredApplyJobCleanup(
 }
 
 // storedRetirementNamesApplyJob reports whether the PtahSchema as stored still
-// holds the retirement record and pending observation that name job by the name
-// and UID admission holds the Job's cleanup to. It reads past the cache, for the
-// reason storedSchemaClaimNamesJob does.
+// holds the retirement record and pending observation that name job, by the rule
+// this pass asked for the Job's cleanup under (retiredPredecessorApplyJobMatches),
+// which is the one admission holds that cleanup to. It reads past the cache, for
+// the reason storedSchemaClaimNamesJob does.
 func (r *SchemaReconciler) storedRetirementNamesApplyJob(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -433,9 +434,7 @@ func (r *SchemaReconciler) storedRetirementNamesApplyJob(
 		}
 		return false, err
 	}
-	pending := stored.Status.PendingObservation
-	retired := retiredApplyJob(stored, pending)
-	return retired != nil && retired.Name == job.Name && retired.UID == job.UID && pending.ApplyJobUID == job.UID, nil
+	return retiredPredecessorApplyJobMatches(stored, stored.Status.PendingObservation, job), nil
 }
 
 // retiredPredecessorApplyJobMatches holds the Apply Job a retirement record

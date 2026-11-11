@@ -398,6 +398,12 @@ func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 			schema.Status.PendingObservation.ApplyJobName = "another-apply"
 			schema.Status.PendingObservation.ApplyJobUID = "another-apply-uid"
 		}},
+		// The record still names the Job by name and UID, and admission refuses the
+		// cleanup all the same, so the fence asks what admission asks
+		// (retiredPredecessorApplyJobMatches) rather than the name and UID alone.
+		{name: "refused after the stored observation stopped being outcome-unknown", move: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingObservation.Outcome = operatorv1alpha1.PendingObservationApplySucceeded
+		}},
 	} {
 		t.Run(move.name, func(t *testing.T) {
 			t.Parallel()
