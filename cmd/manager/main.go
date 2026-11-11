@@ -62,6 +62,34 @@ const (
 // must fail before it can interpret or write durable controller state.
 var controllerRevision string
 
+// withStopTiming sets how the manager holds the leader Lease and how long it
+// takes to stop.
+//
+// The defaults (15 s lease, 10 s renew deadline) restart the leader whenever
+// the API server stalls for ten seconds, which storing plans at the declared
+// ceiling did on a kind control plane (#619). A manager that stops releases
+// the Lease once its reconcilers have returned, so a rolling restart or an
+// upgrade hands over at once and only a manager that dies holding it waits out
+// the lease.
+//
+// A stopping manager finishes a dispatch it already began, which takes up to
+// mutationlifecycle.DispatchStopBound when the Job-write webhook is slow, so
+// that is the graceful shutdown. The Lease is released after every runnable
+// has stopped, so the stop has to end inside the Pod's grace period; the chart
+// sets that 10 seconds longer. When both were 30 seconds, the kill and the
+// release raced, and a manager the kubelet killed first left its successor
+// waiting out the whole lease.
+func withStopTiming(options ctrl.Options) ctrl.Options {
+	leaseDuration, renewDeadline, retryPeriod := 60*time.Second, 45*time.Second, 2*time.Second
+	shutdownTimeout := mutationlifecycle.DispatchStopBound
+	options.LeaseDuration = &leaseDuration
+	options.RenewDeadline = &renewDeadline
+	options.RetryPeriod = &retryPeriod
+	options.LeaderElectionReleaseOnCancel = true
+	options.GracefulShutdownTimeout = &shutdownTimeout
+	return options
+}
+
 func main() {
 	var metricsAddress string
 	var probeAddress string
@@ -166,22 +194,13 @@ func main() {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 
-	leaseDuration, renewDeadline, retryPeriod := 60*time.Second, 45*time.Second, 2*time.Second
-	// A stopping manager finishes a dispatch it already began, which takes up
-	// to mutationlifecycle.DispatchStopBound when the Job-write webhook is
-	// slow. The Lease is released after every runnable has stopped, so the
-	// stop has to end inside the Pod's grace period; the chart sets that 10
-	// seconds longer. When both were 30 seconds, the kill and the release
-	// raced, and a manager the kubelet killed first left its successor waiting
-	// out the whole lease.
-	shutdownTimeout := mutationlifecycle.DispatchStopBound
 	// One request budget for the whole process; see internal/apipace.
 	apiConfig, err := apipace.Config(ctrl.GetConfigOrDie(), apiRequestsPerSecond, apiRequestBurst)
 	if err != nil {
 		log.Error(err, "invalid API request rate")
 		os.Exit(1)
 	}
-	manager, err := ctrl.NewManager(apiConfig, ctrl.Options{
+	manager, err := ctrl.NewManager(apiConfig, withStopTiming(ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
 		Client:                  managercache.ClientOptions(),
@@ -190,21 +209,10 @@ func main() {
 		LeaderElection:          leaderElection,
 		LeaderElectionID:        leaderElectionID,
 		LeaderElectionNamespace: targetLockNamespace,
-		// The defaults (15 s lease, 10 s renew deadline) restart the leader
-		// whenever the API server stalls for ten seconds, which storing plans
-		// at the declared ceiling did on a kind control plane (#619). A
-		// manager that stops releases the Lease once its reconcilers have
-		// returned, so a rolling restart or an upgrade hands over at once and
-		// only a manager that dies holding it waits out the lease.
-		LeaseDuration:                 &leaseDuration,
-		RenewDeadline:                 &renewDeadline,
-		RetryPeriod:                   &retryPeriod,
-		LeaderElectionReleaseOnCancel: true,
-		GracefulShutdownTimeout:       &shutdownTimeout,
 		WebhookServer: webhook.NewServer(webhook.Options{
 			Port: webhookPort, CertDir: webhookCertDir,
 		}),
-	})
+	}))
 	if err != nil {
 		log.Error(err, "create manager")
 		os.Exit(1)

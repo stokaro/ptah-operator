@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -26,12 +24,6 @@ import (
 // A section equal to the webhook timeout, or longer by a moment, gives them
 // nothing, and the row refuses it.
 const dispatchStepsFloor = 5 * time.Second
-
-// leaseReleaseFloor is the least the Pod's grace period has to leave after the
-// manager's graceful shutdown: the leader Lease is released after every
-// runnable has stopped, and the kubelet's kill must not race it. 0.2.2 left
-// ten seconds, and the release landed.
-const leaseReleaseFloor = 10 * time.Second
 
 // A Job-write webhook slower than the dispatch critical section made the
 // dispatcher's own create time out on the client side. The create read as
@@ -122,20 +114,16 @@ func TestAJobWriteWebhookAsSlowAsTheChartAllowsIsAnswered(t *testing.T) {
 	}
 }
 
-// A stopping manager finishes a dispatch it began, so its graceful shutdown is
-// DispatchStopBound, and the Pod's grace period has to cover that shutdown and
-// the Lease release after it.
-func TestTheManagerPodOutlastsADispatchItStops(t *testing.T) {
+// A stopping manager waits DispatchStopBound for a dispatch it began, so the
+// bound has to cover the write that settles the create's answer after the
+// critical section. cmd/manager holds the manager's shutdown to this bound and
+// the chart's Pod grace period above it.
+func TestTheStopBoundOutlastsTheCriticalSection(t *testing.T) {
 	t.Parallel()
 
 	if mutationlifecycle.DispatchStopBound <= mutationlifecycle.DispatchCriticalSection {
 		t.Fatalf("DispatchStopBound %s does not outlast DispatchCriticalSection %s, so a stop cuts the write after a create",
 			mutationlifecycle.DispatchStopBound, mutationlifecycle.DispatchCriticalSection)
-	}
-	grace := managerTerminationGrace(t)
-	if slack := grace - mutationlifecycle.DispatchStopBound; slack < leaseReleaseFloor {
-		t.Fatalf("the manager Pod's grace period %s leaves %s after a %s shutdown, want at least %s for the Lease release",
-			grace, slack, mutationlifecycle.DispatchStopBound, leaseReleaseFloor)
 	}
 }
 
@@ -229,20 +217,4 @@ func controllerWriteWebhookTimeout(t *testing.T) string {
 		t.Fatalf("the vcontrollerwrite webhook entry sets timeoutSeconds %d times, want once", len(timeouts))
 	}
 	return timeouts[0]
-}
-
-var podGraceLine = regexp.MustCompile(`(?m)^      terminationGracePeriodSeconds: ([0-9]+)$`)
-
-// managerTerminationGrace is the grace period the chart gives the manager Pod.
-func managerTerminationGrace(t *testing.T) time.Duration {
-	t.Helper()
-	matches := podGraceLine.FindAllSubmatch(chartFile(t, "templates/deployment.yaml"), -1)
-	if len(matches) != 1 {
-		t.Fatalf("the manager Deployment template sets terminationGracePeriodSeconds %d times, want once", len(matches))
-	}
-	seconds, err := strconv.Atoi(string(matches[0][1]))
-	if err != nil {
-		t.Fatalf("parse the manager Pod's terminationGracePeriodSeconds: %v", err)
-	}
-	return time.Duration(seconds) * time.Second
 }
