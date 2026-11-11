@@ -67,11 +67,23 @@ script that reads the `kubectl logs` command out of the
 propagation finds none there now. A script or an alert that matches the whole
 text of a `PtahSchema`'s `ApplyOutcomeUnknown` Event has to expect
 `; last reported before that:` and what the schema last reported after it, on
-an Apply whose Pod never ran. A script or a GitOps tool that deletes a
-`PtahSchema` or a `PtahMigration` with `--cascade=orphan`, `propagationPolicy:
-Orphan` or `orphanDependents: true`, or deletes one that carries the `orphan`
-finalizer without naming a propagation, is now refused and has to name
-`Background`, the default.
+an Apply whose Pod never ran, and on a deleted schema
+`the PtahSchema is being deleted, so nothing will observe the database:` and
+how the Apply ended in place of `observing database state`. A deleted schema
+whose Apply's executor ran and stopped now records that Apply: an alert on
+`ptah_operator_applies_total{family="schema",outcome="uncertain"}` or on
+`ptah_operator_failures_total{family="schema",stage="apply"}` counts it once,
+and `ptah_operator_operation_duration_seconds` records it with
+`outcome="uncertain"` where it recorded `canceled`. Such records count in
+`ptah_operator_unresolved_attempts` until the deleted schema goes, so
+`PtahOperatorUnresolvedApply`, which is critical and has no pending period, can
+fire for a schema deleted while its Apply runs: for about 30 seconds past the
+Apply's deadline when its Pod never started, and for a pass when its executor
+ran and stopped. A script or a GitOps tool that deletes a `PtahSchema` or a
+`PtahMigration` with `--cascade=orphan`, `propagationPolicy: Orphan` or
+`orphanDependents: true`, or deletes one that carries the `orphan` finalizer
+without naming a propagation, is now refused and has to name `Background`, the
+default.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -179,6 +191,22 @@ finalizer without naming a propagation, is now refused and has to name
   added when the claim's own Job reports a Pod that succeeded.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
   has the messages.
+- **A deleted schema's Apply is never discarded in silence.** A `PtahSchema`
+  deleted while its Apply ran discarded the claim with no record and no Event
+  when the Job's one Pod showed its executor terminated. That included an
+  executor that never started: at the Job's deadline the kubelet stops a Pod
+  whose container still waits on a missing Secret and marks the container
+  terminated with reason `ContainerStatusUnknown`, so the case where why the Pod
+  never ran matters most left nothing. A `ContainerStatusUnknown` termination now
+  proves nothing: the deletion records the outcome as unknown, keeps the last
+  report, and holds the database until the Apply's execution deadline and its
+  grace period have passed. An executor that ran and stopped is recorded as well,
+  since nothing read its result, and the database goes back without that wait.
+  Every Apply ending of a deleted schema, including a database Lease that changed
+  hands while it waited, leaves an `ApplyOutcomeUnknown` Warning Event that says
+  the schema is being deleted and how the Apply ended, as a deleted
+  `PtahMigration` leaves `MigrationRunUncertain`. A Pod that started since the
+  last look leaves the last report out of the Lease and lost-Job endings too.
 - **More endings keep why the Pod never ran.** The same words now follow an Apply
   whose Job stopped being its claim's after the inputs moved, whose claim could not
   build its Job again because its plan was deleted, whose Job a newer release
@@ -306,7 +334,9 @@ finalizer without naming a propagation, is now refused and has to name
   API server, so it refuses no deletion because the manager is down, and the
   namespace controller, which names `Background`, is not refused. A resource an
   orphaning deletion left `Terminating` before the upgrade stays so until it is
-  deleted again with `kubectl delete`, which takes the `orphan` finalizer off, as
+  deleted again with `kubectl delete`, or its namespace is deleted, either of
+  which takes the `orphan` finalizer off. The dependents that deletion already
+  freed stay behind, as
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
 
 ## 0.2.10

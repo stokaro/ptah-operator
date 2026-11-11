@@ -1556,9 +1556,16 @@ observe an already active operation and release coordination safely. It waits
 on a running Job only while the operation holds the database lock: an Apply, a
 Plan, or the Observe that proves an Apply. A Resolve, a Verify or any other
 Observe holds nothing, so deletion drops its claim without waiting, including
-one whose Pod a policy refuses. Once no operation is active, deletion removes
-Kubernetes-owned plans and Jobs through normal garbage collection; database
-objects remain untouched.
+one whose Pod a policy refuses. Once an Apply's Job has stopped, the deletion
+records the outcome as unknown, because nothing read the result, in an
+`ApplyOutcomeUnknown` Warning Event that names how the Apply ended. It then
+hands the database Lease back once no Pod of the Job is still running, and, unless
+the Job's one Pod showed its executor run and stop, not before the Apply's
+execution deadline and its grace period have passed. A deletion that finds the
+Job gone, or the database Lease changed hands, records the outcome at once and
+always waits for that deadline and grace period. Once no operation is
+active, deletion removes Kubernetes-owned plans and Jobs through normal garbage
+collection; database objects remain untouched.
 
 Deleting a `PtahMigration` follows the same rule, and an Apply is where it is
 visible. The Job is owned by the resource, so releasing the finalizer under a
@@ -1611,10 +1618,23 @@ that names no propagation, because the API server would honor the finalizer.
 named propagation takes the finalizer off in the same write, so a plain
 `kubectl delete` goes through. That is also how to release a resource an
 orphaning deletion left `Terminating` before the policy was installed: delete
-it again with `kubectl delete`. The namespace controller names `Background`
-too, so the policy does not refuse a namespace deletion. The policy runs in the
-API server and asks the manager nothing, so it refuses no deletion because the
-manager is down.
+it again with `kubectl delete`, or delete its namespace. The namespace
+controller names `Background` too, so the policy does not refuse a namespace
+deletion, and its deletion takes the finalizer off as well. The policy runs in
+the API server and asks the manager nothing, so it refuses no deletion because
+the manager is down.
+
+Such a deletion has already taken the owner reference off every dependent
+admission let it change: the Jobs, the plans and the source snapshots. They
+stay after the resource goes, and the result records of a Job that stays are
+kept with it. List them, and delete the ones that have no owner reference:
+
+```sh
+kubectl get jobs,configmaps,ptahmigrationplans -n application \
+  -l operator.ptah.run/migration=orders
+kubectl get jobs,configmaps,ptahschemaplans -n application \
+  -l operator.ptah.run/schema=storefront
+```
 
 ### Deleting a namespace {#delete-namespace}
 
@@ -2526,7 +2546,9 @@ that sent statements and lost the connection reads the same once its proof finds
 the database closed. Only the completed proof settles the record. The
 `ApplyOutcomeUnknown` Event carries the sentence when the Apply's own Pod reported
 it could not open the target, and the fixed text otherwise, followed by what the
-schema last reported about a Pod that never ran when there is such a report.
+schema last reported about a Pod that never ran when there is such a report. A
+schema being deleted counts here too, from the moment its deletion records the
+Apply's outcome as unknown until the resource goes.
 
 The leader reads both resource families and both plan kinds directly from the
 API server once per scrape, sharing those results across the unresolved,
@@ -2564,7 +2586,14 @@ kubectl get ptahschemas -A -o json |
 A migration named there is
 [a run nobody accounted for](#a-migration-run-nobody-accounted-for) and waits
 for a person. A schema named there settles itself once its horizon passes and
-a reading of the database confirms convergence.
+a reading of the database confirms convergence. A schema named there that is
+being deleted reads nothing: it goes, and its record with it, once no Pod of
+its Apply's Job is still running and, unless that Job's one Pod showed its
+executor run and stop, once the Apply's execution deadline and its grace period
+have passed. One whose Job is gone, or whose Lease changed hands, always waits
+for that deadline and grace period. That is about 30 seconds after the deadline for an Apply whose Pod
+never started, so a deletion at that deadline can fire
+`PtahOperatorUnresolvedApply`.
 
 #### The chart's rules {#unresolved-rules}
 

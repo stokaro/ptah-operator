@@ -145,7 +145,7 @@ func TestAnUncertainApplyEventBoundsTheSentence(t *testing.T) {
 	if len(sentence) <= 512 {
 		t.Fatalf("the sentence is %d bytes, so this row bounds nothing", len(sentence))
 	}
-	got := uncertainApplyEvent(resultFailure(&runner.ResultError{Code: string(dataplane.TargetTLSFailed)}, long))
+	got := uncertainApplyEvent(resultFailure(&runner.ResultError{Code: string(dataplane.TargetTLSFailed)}, long), false)
 	if want := "Apply outcome is uncertain; observing database state: " + bounded(sentence, 512); got != want {
 		t.Fatalf("uncertainApplyEvent() = %q, want %q", got, want)
 	}
