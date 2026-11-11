@@ -965,8 +965,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // A Job the claim cannot confirm is settled by the asymmetry every lost Job
 // is. A mutating claim's Job may already be running SQL, so the run is
 // recorded as outcome unknown, naming the Job, and nothing is dispatched
-// beside it. A read-only claim moves to a new attempt under a new name. The
-// Job it leaves keeps its own deadline and gets no cleanup TTL here: the
+// beside it. Where the claim recorded the Job's UID, the Job gets its cleanup
+// TTL once it stops, before the claim goes (scheduleStoppedMigrationJobCleanup):
+// the webhook holds a terminal Job to what its claim fixes without a rebuild, so
+// a Job another release built gets it, and one that fails that match is refused
+// and reported. A read-only claim moves to a new attempt under a new name.
+// The Job it leaves keeps its own deadline and gets no cleanup TTL here: the
 // controller-write webhook judges that TTL by the same matcher, and a refusal
 // would hold the retry behind it.
 //

@@ -1909,7 +1909,7 @@ and its logs may be gone by then, which is why the record carries their
 identity rather than pointing at them. A run that reported `Partial` or `Unknown`,
 or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
 finishes, under `apply: Always` as under an approval, and `status.lastRun.message`
-says how to read it.
+says how to read it, unless the Job was still running when the run was recorded.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the executor opened, and that
@@ -2302,10 +2302,15 @@ status points at none. A run whose result nobody read, because its frame was los
 its Job ran more than one Pod, says `Anything the run wrote is in the Pod log`. An
 execution binding change during a running Apply retires the claim with no Job to name,
 so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
-stopped. When admission refuses the 24 hours, as the guard of the previous release
-does after a Helm upgrade that failed once the manager rolled out, the Job keeps five
-minutes, and a `FailedApplyLogShortened` Warning Event and a line in the manager's log
-say so.
+stopped. A migration Apply whose outcome went `Unknown` while its Job was still
+running, as when a release changed the executor or the Job under it, is recorded
+before admission lets the Job take a TTL, so its `status.lastRun.message` names no
+log. The Job takes its TTL by the table above once it stops, in the write that
+retires the claim, and `kubectl logs` reads the Job `status.lastRun.jobName` names
+for as long as that TTL keeps it. When admission refuses the 24 hours, as the guard
+of the previous release does after a Helm upgrade that failed once the manager
+rolled out, the Job keeps five minutes, and a `FailedApplyLogShortened` Warning
+Event and a line in the manager's log say so.
 
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
 Pod's log with it sooner, and deleting the resource collects the Job with it. A
