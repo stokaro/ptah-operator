@@ -610,6 +610,9 @@ func TestAJobsStopBoundIsWhatItCarries(t *testing.T) {
 
 	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	started := created.Add(10 * time.Second)
+	// slack is the 30 seconds operations.md promises past the grace, written here
+	// rather than read from jobStopReportSlack.
+	const slack = 30 * time.Second
 	condition := func(conditionType batchv1.JobConditionType, status corev1.ConditionStatus, at time.Time) batchv1.JobCondition {
 		return batchv1.JobCondition{Type: conditionType, Status: status, LastTransitionTime: metav1.NewTime(at)}
 	}
@@ -622,35 +625,35 @@ func TestAJobsStopBoundIsWhatItCarries(t *testing.T) {
 	}{
 		{
 			name: "a grace of its own", grace: ptr(int64(90)), deadline: ptr(int64(600)),
-			want: started.Add(600*time.Second + 90*time.Second + jobStopReportSlack),
+			want: started.Add(600*time.Second + 90*time.Second + slack),
 		},
 		{
 			name: "no grace set", deadline: ptr(int64(600)),
-			want: started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+			want: started.Add(600*time.Second + 30*time.Second + slack),
 		},
 		{
 			name: "no deadline", grace: ptr(int64(30)),
-			want: started.Add(30*time.Second + jobStopReportSlack),
+			want: started.Add(30*time.Second + slack),
 		},
 		{
 			name: "a FailureTarget set False", grace: ptr(int64(30)), deadline: ptr(int64(600)),
 			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionFalse, started)},
-			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+			want:       started.Add(600*time.Second + 30*time.Second + slack),
 		},
 		{
 			name: "a FailureTarget with no time", grace: ptr(int64(30)), deadline: ptr(int64(600)),
 			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionTrue, time.Time{})},
-			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+			want:       started.Add(600*time.Second + 30*time.Second + slack),
 		},
 		{
 			name: "another condition", grace: ptr(int64(30)), deadline: ptr(int64(600)),
 			conditions: []batchv1.JobCondition{condition(batchv1.JobSuspended, corev1.ConditionTrue, started)},
-			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+			want:       started.Add(600*time.Second + 30*time.Second + slack),
 		},
 		{
 			name: "a FailureTarget with a grace of its own", grace: ptr(int64(90)), deadline: ptr(int64(600)),
 			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionTrue, started.Add(time.Minute))},
-			want:       started.Add(time.Minute + 90*time.Second + jobStopReportSlack),
+			want:       started.Add(time.Minute + 90*time.Second + slack),
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -668,5 +671,62 @@ func TestAJobsStopBoundIsWhatItCarries(t *testing.T) {
 				t.Fatalf("migrationJobStopBound() = %s, want %s", got, row.want)
 			}
 		})
+	}
+}
+
+// saysItWaits reports whether Progressing says the claim waits for a Job it refused.
+func saysItWaits(migration *operatorv1alpha1.PtahMigration) bool {
+	progressing := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	return progressing != nil && strings.HasPrefix(progressing.Message, "Waiting for Job ")
+}
+
+// TestAFailedWriteOfTheWaitFailsThePass is the status write that says a read-only
+// claim waits for the running Job it refused, failing. The pass fails, so it is
+// retried with the claim kept, and the next pass writes what the claim waits for.
+func TestAFailedWriteOfTheWaitFailsThePass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	current := workloadBuilderForMigrations()
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
+		dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true,
+	})
+	reconciler, api := run.reconciler(t, current)
+	failures := 0
+	reconciler.Client = interceptor.NewClient(admittedJobWrites(api, current), interceptor.Funcs{
+		SubResourcePatch: func(
+			ctx context.Context, writer client.Client, subResource string, object client.Object, patch client.Patch,
+			options ...client.SubResourcePatchOption,
+		) error {
+			// Only the write that says the claim waits fails, so the row measures
+			// that write and no other one the pass makes.
+			if migration, ok := object.(*operatorv1alpha1.PtahMigration); ok && failures == 0 &&
+				saysItWaits(migration) {
+				failures++
+				return apierrors.NewConflict(operatorv1alpha1.GroupVersion.WithResource("ptahmigrations").GroupResource(),
+					object.GetName(), errors.New("the object has been modified"))
+			}
+			return writer.SubResource(subResource).Patch(ctx, object, patch, options...)
+		},
+	})
+
+	_, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+	if failures != 1 {
+		t.Fatalf("%d status writes reached the injected failure, want one", failures)
+	}
+	if err == nil {
+		t.Fatal("Reconcile() returned no error, want the failed write of the wait to fail the pass")
+	}
+	claimed := run.migration.Status.ActiveOperation
+	if operation := readMigration(t, api, run.migration).Status.ActiveOperation; !equality.Semantic.DeepEqual(operation, claimed) {
+		t.Fatalf("the claim did not stay over the running Job after the failed write: operation=%#v", operation)
+	}
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v on the pass after the failure", err)
+	}
+	progressing := meta.FindStatusCondition(readMigration(t, api, run.migration).Status.Conditions,
+		operatorv1alpha1.ConditionMigrationProgressing)
+	if want := "Waiting for Job " + run.job.Name; progressing == nil || !strings.Contains(progressing.Message, want) {
+		t.Fatalf("Progressing = %#v after the next pass, want it to say %q", progressing, want)
 	}
 }

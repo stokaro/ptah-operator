@@ -1138,9 +1138,10 @@ const jobStopReportSlack = 30 * time.Second
 // plus the termination grace its Pods are given and jobStopReportSlack. A Job the
 // Job controller has not started yet counts from its creation, which comes no
 // later. A Job with no deadline, which no release of this operator builds, gets
-// no time beyond the grace and the slack. A FailureTarget or SuccessCriteriaMet condition says the Job controller is
-// already terminating the Job's Pods, so where one stands, the bound is its time
-// plus the same grace and slack, if that comes first.
+// no time beyond the grace and the slack. A FailureTarget or SuccessCriteriaMet
+// condition says the Job controller is already terminating the Job's Pods, so
+// where one stands, the bound is its time plus the same grace and slack, if that
+// comes first.
 //
 // Neither condition is terminal for this purpose. Admission admits the TTL only on
 // a Job that is Complete or Failed, the same test jobTerminal makes.
