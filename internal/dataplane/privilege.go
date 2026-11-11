@@ -161,8 +161,14 @@ func classifyPrivilegeSegment(tokens []string, found map[string]bool) {
 				found[PrivilegeRole] = true
 			}
 		case "SECURITY_INVOKER":
-			// A PostgreSQL view reverting to its owner's rights.
-			if next == "FALSE" || next == "OFF" || previous == "RESET" {
+			// A PostgreSQL view's security_invoker decides whose rights its
+			// readers read with. ALTER VIEW and CREATE OR REPLACE VIEW change
+			// it on a view that may already have readers, and either direction
+			// changes what they can read, so there any value counts however it
+			// is spelled, and so does a reset. A view CREATE VIEW makes has no
+			// readers yet, and there only its owner's rights count, as they do
+			// for a new function.
+			if !createsWithoutReplacing(tokens) || next == "FALSE" || next == "OFF" {
 				found[PrivilegeSecurityDefiner] = true
 			}
 		case "DEFINER":
@@ -252,6 +258,13 @@ func definerClause(tokens []string, index int) bool {
 		}
 	}
 	return false
+}
+
+// createsWithoutReplacing reports whether a segment is a CREATE that is not a
+// CREATE OR REPLACE, so it makes an object that did not exist. A segment that
+// does not start at CREATE is read as changing something that may exist.
+func createsWithoutReplacing(tokens []string) bool {
+	return tokenAt(tokens, 0) == "CREATE" && tokenAt(tokens, 1) != "OR"
 }
 
 // startsStatement reports whether the word at index begins a statement: the

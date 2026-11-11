@@ -157,7 +157,7 @@ waived it would be the same `Always` again.
 | `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings; `SET ROLE` and `SET SESSION AUTHORIZATION`, which change who the rest of the Apply runs as |
 | `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
 | `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
-| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, and a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`; a PostgreSQL view's `security_invoker` set to `false` or `off`, or reset |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, and a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`; a PostgreSQL view's `security_invoker` set to any value or reset by `ALTER VIEW` or `CREATE OR REPLACE VIEW`, and set to `false` or `off` by `CREATE VIEW` |
 | `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
 | `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
 
@@ -197,6 +197,14 @@ MySQL and MariaDB run a stored routine with its definer's rights unless it says
 on it runs its body with the rights of the login that created it. To keep a
 plan that creates a routine unattended, declare the routine with invoker rights
 (`security = "INVOKER"`), and the plan carries `SQL SECURITY INVOKER`.
+
+A PostgreSQL view's `security_invoker` is raised in either direction on a view
+that may already have readers. With the owner's rights they read what the owner
+can; with invoker rights each of them needs rights of their own on the tables
+the view reads, so a read that worked can start failing. The reading takes no
+value from `ALTER VIEW` or `CREATE OR REPLACE VIEW`, so `0`, `no` or a quoted
+`'false'` is raised the same as `true`. A view `CREATE VIEW` makes has no
+readers yet, and is raised only when it runs with its owner's rights.
 
 The class only adds. Ptah's plan document has no field for it and a document
 that tried to supply one is refused, a statement Ptah rated `safe` is raised all

@@ -16,6 +16,22 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.11
+
+**Before you upgrade.** Under `apply: Always`, a plan that gives an existing
+PostgreSQL view invoker rights now waits for an approval bound to it.
+
+- **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
+  (security_invoker=true)` ran unattended under `apply: Always`, and the view's
+  readers then needed rights of their own on the tables it reads, so a read that
+  worked could start failing. The operator now records `SecurityDefiner` for
+  `security_invoker` set to any value or reset by `ALTER VIEW` or
+  `CREATE OR REPLACE VIEW`. It read only `false` and `off` before, so a value
+  Ptah wrote as `0` or `no` ran unattended as well. `CREATE VIEW` is read as
+  before. A `CREATE SCHEMA` for a schema the URL leaves out still runs
+  unattended; [Databases and privileges](../databases/#postgresql) says what it
+  does under the documented login.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
