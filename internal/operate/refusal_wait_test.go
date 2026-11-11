@@ -477,6 +477,59 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 			wantDone: 3,
 		},
 		{
+			// The same, with the reading dated by a manager whose clock is behind the
+			// one that read the database before the request. It is a reading recorded
+			// since, however it is dated, so the refusal beside it is a later read's.
+			name:  "the read the request started ended with a reading another manager dated earlier, and a newer request's read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(accepted(family)).object(family) },
+			docs: func(family operate.Family) []doc {
+				claimed := func(observedAt, resolvedAt time.Time) doc {
+					d := accepted(family)
+					d.phase, d.operation, d.observedAt = "Resolving", "Resolve", observedAt
+					stamp(&d, family, resolvedAt)
+					return d
+				}
+				newerRefused := refusedAt(family, at(150))
+				newerRefused.observedAt = at(-30)
+				return []doc{taken(claimed(t0, before)), takenNewer(claimed(at(-30), after)), takenNewer(newerRefused)}
+			},
+			wantDone: 3,
+		},
+		{
+			// A read under way when the request was written ends with a reading, which
+			// a manager whose clock is behind dates before the baseline's, and the
+			// operator takes the request at rest on it. The read the request starts
+			// ends in a refusal beside that same reading: it is not one of its own.
+			name:  "a read under way at the request ends with a reading dated earlier, then the requested read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				read := accepted(family)
+				read.observedAt = at(-60)
+				claim := read
+				claim.phase, claim.operation = "Resolving", "Resolve"
+				refusal := refusedAt(family, after)
+				refusal.observedAt = at(-60)
+				return []doc{asked(read), taken(read), taken(claim), taken(refusal)}
+			},
+			wantStop: 4,
+		},
+		{
+			// The same, with the read the request started ending in a reading, dated
+			// by that manager after the one under way and still before the baseline's.
+			name:  "a read under way at the request ends with a reading dated earlier, then the requested read with one",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				read := accepted(family)
+				read.observedAt = at(-60)
+				claim := read
+				claim.phase, claim.operation = "Resolving", "Resolve"
+				next := accepted(family)
+				next.observedAt = at(-30)
+				return []doc{asked(read), taken(read), taken(claim), taken(next)}
+			},
+			wantDone: 4,
+		},
+		{
 			name:  "a refusal while a newer request waits for the operator",
 			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
 			docs: func(family operate.Family) []doc {
@@ -620,7 +673,7 @@ func TestARefusalAfterAnAppliedRunSaysTheRunApplied(t *testing.T) {
 	applied := func(finishedAt int) *runDoc {
 		return &runDoc{
 			outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: job, jobUID: "job-uid-1",
-			startedAt: at(40), finishedAt: at(finishedAt), operationID: "op-1",
+			startedAt: at(40), finishedAt: at(finishedAt), operationID: "op-1", database: databaseA,
 			plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
 		}
 	}
@@ -695,16 +748,15 @@ func TestARefusalAfterAnAppliedRunSaysTheRunApplied(t *testing.T) {
 
 // A run whose reading afterwards is recorded on it was read back, so a refusal that
 // comes later stops no wait for it, whatever date that reading carries. Here another
-// manager's clock dated it before the run ended: a wait for a plan or a decision
-// goes by the record and is done, and a wait for any run, which dates the reading,
-// keeps waiting for one after the run. Neither may say the target will not come, or
+// manager's clock dated it before the run ended. Every wait goes by the record and
+// is done at the document that shows it: none may say the target will not come, or
 // that no reading followed the run.
 func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 	t.Parallel()
 
 	run := &runDoc{
 		outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: "run-1", jobUID: "job-uid-1",
-		startedAt: at(40), finishedAt: at(80), operationID: "op-1",
+		startedAt: at(40), finishedAt: at(80), operationID: "op-1", database: databaseA,
 		plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
 		verification: operatorv1alpha1.MigrationRunVerifiedInSync, verifiedAt: at(70),
 	}
@@ -715,14 +767,12 @@ func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 	for _, wait := range []struct {
 		name    string
 		options operate.WaitOptions
-		// done is a wait the record ends; any other keeps waiting to its timeout.
-		done bool
 	}{
 		{name: "any run"},
-		{name: "a plan", options: operate.WaitOptions{Plan: "plan-a"}, done: true},
+		{name: "a plan", options: operate.WaitOptions{Plan: "plan-a"}},
 		{name: "a decision", options: operate.WaitOptions{Decision: &operate.Decision{
 			PlanName: "plan-a", PlanUID: "plan-uid-a", ApprovalName: "approval-a", ApprovalUID: "approval-uid-a",
-		}}, done: true},
+		}}},
 	} {
 		t.Run(wait.name, func(t *testing.T) {
 			t.Parallel()
@@ -732,12 +782,8 @@ func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 			options.Target, options.Timeout, options.Interval, options.Clock = operate.TargetApplied, timeout, interval, newStepClock()
 			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), options)
 
-			var timedOut *operate.TimeoutError
-			switch {
-			case wait.done && err != nil:
-				t.Fatalf("err = %v, want the run recorded as read back to end the wait", err)
-			case !wait.done && (!errors.As(err, &timedOut) || !strings.Contains(timedOut.Waiting, "the history read back after run run-1")):
-				t.Fatalf("err = %v, want a timeout still waiting for the history read back after run run-1", err)
+			if err != nil || tl.readCount() != 2 {
+				t.Fatalf("err = %v after %d reads, want the run recorded as read back to end the wait at read 2", err, tl.readCount())
 			}
 		})
 	}
