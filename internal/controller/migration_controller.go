@@ -2564,7 +2564,8 @@ func (r *MigrationReconciler) harvestMigrationJob(
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 ) error {
-	return r.settleMigrationJobCleanup(ctx, migration, job, r.markJobHarvested(ctx, job))
+	_, err := r.settleMigrationJobCleanup(ctx, migration, job, r.markJobHarvested(ctx, job))
+	return err
 }
 
 // settleMigrationJobCleanup settles written, the answer to a cleanup TTL write
@@ -2572,22 +2573,26 @@ func (r *MigrationReconciler) harvestMigrationJob(
 // claim: a harvest's (harvestMigrationJob), or a failed or uncertain Apply's by
 // the rule its Pod log is kept by (retainFailedApplyJob). A refusal names the
 // Job in a MigrationJobCleanupDeferred Warning and the pass goes on, while the
-// stored claim still names the Job (settleHarvestedJobCleanup).
+// stored claim still names the Job (settleHarvestedJobCleanup). stays reports
+// that refusal: nothing collects the Job, so it and its Pod log stay until
+// someone deletes it.
 func (r *MigrationReconciler) settleMigrationJobCleanup(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	written error,
-) error {
+) (stays bool, err error) {
 	operation := migration.Status.ActiveOperation
-	return settleHarvestedJobCleanup(written, func() (bool, error) {
+	err = settleHarvestedJobCleanup(written, func() (bool, error) {
 		if operation == nil {
 			return false, nil
 		}
 		return r.storedMigrationClaimNamesJob(ctx, migration, job)
 	}, func(refusal error) {
+		stays = true
 		r.migrationJobCleanupNotScheduled(migration, operation, job, refusal)
 	})
+	return stays, err
 }
 
 // storedMigrationClaimNamesJob reports whether the PtahMigration as stored holds

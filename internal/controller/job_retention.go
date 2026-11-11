@@ -180,18 +180,34 @@ func executorLogsLost(pods []*corev1.Pod) bool {
 	return true
 }
 
-// failedApplyLogPointer says where an Apply's Pod log is and how long it stays, from
-// the TTL the Job carries, so it stays true of a Job a previous release harvested,
-// of an Apply no approval names, and of a Job a guard held to the short TTL. It
-// promises only what the reading allows, and is empty when there is nothing to read
-// or no time to promise.
-func failedApplyLogPointer(job *batchv1.Job, reading applyLogReading) string {
+// failedApplyLogPointer says where an Apply's Pod log is and how long it stays. A
+// Job that carries a TTL keeps the log for that time, so the pointer stays true of
+// a Job a previous release harvested, of an Apply no approval names, and of a Job a
+// guard held to the short TTL. stays is the caller's word that admission refused
+// the Job's cleanup TTL in this pass: nothing collects the Job then, so the log
+// stays until someone deletes the Job, which is when a person needs the pointer
+// most. Why the Job stays is the Warning that names it. A later pass can still
+// ask again and be admitted, as an execution component change does for the Job
+// of an uncertain schema Apply it retires (cleanupRetiredApplyJob); its
+// RetiredApplyLogKept Event then says the time the TTL gives the log, and the
+// pointer recorded before is not rewritten. A Job with no TTL that the caller
+// does not say stays, such as one still running whose cleanup a later pass asks
+// for, has no time to promise. The pointer promises only what the reading allows, and is
+// empty when there is nothing to read.
+func failedApplyLogPointer(job *batchv1.Job, reading applyLogReading, stays bool) string {
 	subject := applyLogSubject(reading)
-	if job == nil || job.Spec.TTLSecondsAfterFinished == nil || subject == "" {
+	switch {
+	case job == nil || subject == "":
+		return ""
+	case job.Spec.TTLSecondsAfterFinished != nil:
+		return fmt.Sprintf("%s is in the Pod log for %s after the Job finishes: kubectl logs -n %s job/%s -c %s",
+			subject, retentionWords(*job.Spec.TTLSecondsAfterFinished), job.Namespace, job.Name, executorContainerName)
+	case stays:
+		return fmt.Sprintf("%s is in the Pod log until the Job is deleted: kubectl logs -n %s job/%s -c %s",
+			subject, job.Namespace, job.Name, executorContainerName)
+	default:
 		return ""
 	}
-	return fmt.Sprintf("%s is in the Pod log for %s after the Job finishes: kubectl logs -n %s job/%s -c %s",
-		subject, retentionWords(*job.Spec.TTLSecondsAfterFinished), job.Namespace, job.Name, executorContainerName)
 }
 
 // applyLogSubject names what the reading says the Pod log holds, and is empty
@@ -208,8 +224,8 @@ func applyLogSubject(reading applyLogReading) string {
 }
 
 // withLogPointer appends the pointer to a sentence, when there is one.
-func withLogPointer(sentence string, job *batchv1.Job, reading applyLogReading) string {
-	if pointer := failedApplyLogPointer(job, reading); pointer != "" {
+func withLogPointer(sentence string, job *batchv1.Job, reading applyLogReading, stays bool) string {
+	if pointer := failedApplyLogPointer(job, reading, stays); pointer != "" {
 		return sentence + ". " + pointer
 	}
 	return sentence

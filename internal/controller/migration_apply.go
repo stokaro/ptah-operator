@@ -619,13 +619,15 @@ func (r *MigrationReconciler) recordMigrationRun(
 	default:
 		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome, run.leftDirtyRevision)
 		// The run was read from the Job's Pods, as a harvest's is, so a refused
-		// cleanup leaves the Job in place and the run is still recorded.
-		if err := r.settleMigrationJobCleanup(ctx, migration, job, retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
+		// cleanup leaves the Job in place and the run is still recorded, pointing
+		// at the log for as long as the Job stays.
+		stays, err := r.settleMigrationJobCleanup(ctx, migration, job, retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
-		})); err != nil {
+		}))
+		if err != nil {
 			return ctrl.Result{}, err
 		}
-		message = withLogPointer(message, job, servedLogReading(ctx, r.directReader(), job, run.log))
+		message = withLogPointer(message, job, servedLogReading(ctx, r.directReader(), job, run.log), stays)
 	}
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()
@@ -1162,7 +1164,8 @@ func (r *MigrationReconciler) scheduleStoppedMigrationJobTTL(
 		// The name holds a later Job, and admission would refuse its TTL.
 		return nil
 	}
-	return r.settleMigrationJobCleanup(ctx, migration, job, r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job))
+	_, err := r.settleMigrationJobCleanup(ctx, migration, job, r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job))
+	return err
 }
 
 // scheduleUnaccountedMigrationJobCleanup schedules the cleanup of the Job of an
@@ -1452,7 +1455,8 @@ func migrationJobGoesWithResource(migration *operatorv1alpha1.PtahMigration, job
 // which a deletion may take with the resource. The TTL is still asked for, but it
 // does not keep such a Job past its owner, so the record says the log goes rather
 // than where to read it for a day. A Job that outlives the resource gets the usual
-// pointer, which is empty when admission refused it a TTL.
+// pointer, which says the log stays until the Job is deleted where the caller says
+// the Job stays.
 //
 // A Job already being deleted may have lost its Pod before this pass read it: a
 // foreground deletion deletes the Pods first. Its record says the log was there.
@@ -1460,9 +1464,10 @@ func migrationApplyLogPointer(
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	reading applyLogReading,
+	stays bool,
 ) string {
 	if !migrationJobGoesWithResource(migration, job) {
-		return failedApplyLogPointer(job, reading)
+		return failedApplyLogPointer(job, reading, stays)
 	}
 	switch subject := applyLogSubject(reading); {
 	case subject == "":
@@ -1521,6 +1526,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 		// covers a finished Job whose Pod has not stopped too: the TTL then follows
 		// what the stopped Pod reported, rather than a report it has not made yet.
 		later := mayStillWrite && job.UID == operation.JobUID
+		// stays is a Job whose TTL write failed in a way the Warning reports as
+		// the Job staying until it is deleted, so the record says the same.
+		stays := false
 		switch refusal := unrecordedMigrationJobRefusal(migration, job); {
 		case refusal != nil:
 			if !mayStillWrite && job.Spec.TTLSecondsAfterFinished == nil {
@@ -1534,10 +1542,11 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 			case apierrors.IsConflict(err) && job.UID == operation.JobUID && !migrationJobGoesWithResource(migration, job):
 				retain = true
 			default:
+				stays = true
 				r.migrationJobCleanupNotScheduled(migration, operation, job, err)
 			}
 		}
-		if pointer := migrationApplyLogPointer(migration, job, failedApplyLogReading(ctx, r.directReader(), job, failure)); pointer != "" {
+		if pointer := migrationApplyLogPointer(migration, job, failedApplyLogReading(ctx, r.directReader(), job, failure), stays); pointer != "" {
 			failure = fmt.Errorf("%w. %s", failure, pointer)
 		}
 	}

@@ -79,7 +79,9 @@ func TestADeletedMigrationsLogPointerFollowsItsJob(t *testing.T) {
 		migration *operatorv1alpha1.PtahMigration
 		job       *batchv1.Job
 		reading   applyLogReading
-		want      string
+		// stays is the caller's word that admission refused the Job's cleanup.
+		stays bool
+		want  string
 	}{
 		{
 			name:      "a resource that is not being deleted points at the log",
@@ -114,6 +116,20 @@ func TestADeletedMigrationsLogPointerFollowsItsJob(t *testing.T) {
 			migration: deletingMigration("example.com/backup"), job: owned, reading: applyLogUnread, want: goes,
 		},
 		{
+			name:      "a Job whose cleanup was refused stays until it is deleted",
+			migration: migration, job: untimed, reading: applyLogUnread, stays: true,
+			want: "Anything the run wrote is in the Pod log until the Job is deleted: " +
+				"kubectl logs -n " + migration.Namespace + " job/" + owned.Name + " -c " + executorContainerName,
+		},
+		{
+			name:      "a Job with no TTL yet and no refusal has no time to promise",
+			migration: migration, job: untimed, reading: applyLogUnread, want: "",
+		},
+		{
+			name:      "a refused Job that goes with the resource still goes",
+			migration: deletingMigration(), job: untimed, reading: applyLogUnread, stays: true, want: goes,
+		},
+		{
 			name:      "a Job already being deleted may have lost its Pod",
 			migration: deletingMigration(metav1.FinalizerDeleteDependents), job: going, reading: applyLogUnread,
 			want: "Anything the run wrote was in the Pod log of Job " + going.Name + ", which is being deleted with its Pod",
@@ -121,7 +137,7 @@ func TestADeletedMigrationsLogPointerFollowsItsJob(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := migrationApplyLogPointer(test.migration, test.job, test.reading); got != test.want {
+			if got := migrationApplyLogPointer(test.migration, test.job, test.reading, test.stays); got != test.want {
 				t.Fatalf("migrationApplyLogPointer() = %q, want %q", got, test.want)
 			}
 		})
@@ -337,8 +353,9 @@ func TestAMigrationDeletedWhileItsJobIsOrphanedPointsAtTheLog(t *testing.T) {
 // Once the garbage collector has orphaned the Job it takes the orphan finalizer
 // off, so the pass meets a deleting resource with only its own finalizer and a Job
 // it no longer controls. That Job is not deleted with the resource, and admission
-// refuses its TTL, so the Event promises neither.
-func TestAMigrationDeletedAfterItsJobWasOrphanedSaysNothingOfTheLog(t *testing.T) {
+// refuses its TTL, so nothing collects it: the Event points at the log until the
+// Job is deleted, and does not say it goes with the resource.
+func TestAMigrationDeletedAfterItsJobWasOrphanedPointsAtTheLogUntilTheJobIsDeleted(t *testing.T) {
 	t.Parallel()
 
 	api, run, events := deletedApply{prepare: orphaned}.settle(t)
@@ -351,10 +368,10 @@ func TestAMigrationDeletedAfterItsJobWasOrphanedSaysNothingOfTheLog(t *testing.T
 		t.Fatalf("the Events %q do not say the orphaned Job stays", events)
 	}
 	event := uncertainRunEvent(t, events)
-	for _, promise := range []string{goesWith, "kubectl logs"} {
-		if strings.Contains(event, promise) {
-			t.Fatalf("MigrationRunUncertain = %q promises %q of a Job that outlives the resource with no TTL", event, promise)
-		}
+	want := "Anything the run wrote is in the Pod log until the Job is deleted: kubectl logs -n " +
+		run.job.Namespace + " job/" + run.job.Name + " -c " + executorContainerName
+	if !strings.Contains(event, want) || strings.Contains(event, goesWith) {
+		t.Fatalf("MigrationRunUncertain = %q, want it to point at the log with %q", event, want)
 	}
 	if discarded := onlyEvent(t, events, "Warning UnresolvedRunDiscarded "); strings.Contains(discarded, discardedGoes) {
 		t.Fatalf("UnresolvedRunDiscarded = %q says an orphaned Job goes with the resource", discarded)

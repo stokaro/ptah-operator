@@ -295,6 +295,11 @@ func (way unknownWhileRunning) reach(t *testing.T) (dispatchedRun, *MigrationRec
 	if got := storedTTL(t, api, run.job); got != nil {
 		t.Fatalf("the running Job's TTL = %d, want none while it runs", *got)
 	}
+	// The Job has no TTL yet and is not one that stays: the pass that retires the
+	// claim once it stops gives it one, so the record promises no time for its log.
+	if strings.Contains(held.Status.LastRun.Message, "kubectl logs") {
+		t.Fatalf("LastRun.Message = %q points at the log of a running Job the record cannot time", held.Status.LastRun.Message)
+	}
 	// Admission in this harness refuses the TTL on the running Job, as it does on
 	// a cluster. A harness that admitted it would let every row pass on old code.
 	running := &batchv1.Job{}

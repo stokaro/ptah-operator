@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
@@ -329,6 +331,58 @@ func TestASchemaStaleHarvestSettlesARefusedCleanup(t *testing.T) {
 				t.Fatalf("the Job's TTL = %s, want none after a refusal", ttlText(got))
 			}
 		})
+	}
+}
+
+// TestASchemaResultPassAsksForItsJobsCleanupOnce is the harvest of a finished
+// Resolve whose result names another reference than the one the resource asked
+// for, so the pass that reads it retries the claim. The pass harvests the Job
+// before it reads the result, and the retry does not harvest it again: under a
+// refusal admission gives every time, the TTL is asked for once, and one Warning
+// names the Job left behind.
+func TestASchemaResultPassAsksForItsJobsCleanupOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	run, reconciler, api, recorder := schemaResolveFinished(t)
+	frame, err := runner.MarshalFrame(runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationResolve,
+		OperationID: run.schema.Status.ActiveOperation.ID, ChildExitCode: 0, ResolvedDigest: testDigest,
+		ResolvedReference: "oci://registry.example/another/schema@" + testDigest,
+		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler.Logs = staticLogs{content: frame}
+	refusal := &ttlRefusal{answer: apierrors.NewForbidden(batchv1.Resource("jobs"), run.job.Name, errors.New("injected persistent refusal"))}
+	reconciler.Client = refusal.client(reconciler.Client.(client.WithWatch))
+
+	if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+		t.Fatalf("Reconcile(): %v, want the refusal not to fail the pass", err)
+	}
+	claimed := run.schema.Status.ActiveOperation
+	stored := safetyGetSchema(t, api, run.schema)
+	operation := stored.Status.ActiveOperation
+	if operation == nil || operation.Attempt != claimed.Attempt+1 || operation.JobName == run.job.Name {
+		t.Fatalf("operation = %#v, want the claim retried at attempt %d under a new Job", operation, claimed.Attempt+1)
+	}
+	failed := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Message != "resolved reference does not match the requested source" {
+		t.Fatalf("ReconciliationFailed = %#v, want the retry the mismatched reference asked for", failed)
+	}
+	if want := []int32{jobCleanupTTLSeconds}; !slices.Equal(refusal.asked, want) {
+		t.Fatalf("the TTLs asked for = %v, want %v: one harvest in the pass", refusal.asked, want)
+	}
+	events := migrationEvents(recorder)
+	deferred := 0
+	for _, event := range events {
+		if strings.HasPrefix(event, corev1.EventTypeWarning+" SchemaJobCleanupDeferred ") {
+			deferred++
+		}
+	}
+	if deferred != 1 || !schemaCleanupDeferredFor(events, run.job.Name, "injected persistent refusal") {
+		t.Fatalf("Events = %q, want one Warning that Job %q stays", events, run.job.Name)
 	}
 }
 
