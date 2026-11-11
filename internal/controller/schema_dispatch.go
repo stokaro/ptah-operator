@@ -364,7 +364,7 @@ func (r *SchemaReconciler) retryLostReadOnlyJob(
 		}
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
-	r.event(schema, corev1.EventTypeWarning, readJobOverdueReason, "%s",
+	r.event(schema, corev1.EventTypeWarning, "ReadJobOverdue", "%s",
 		readJobOverdueText(lostReadJobOverdueLead(string(operation.Type), operation.JobName, stopBy), running))
 	return r.retryOperation(ctx, schema, nil, fmt.Errorf("%w, and its Pods did not stop by %s, their own deadline plus the grace they are given",
 		missing, stopBy.UTC().Format(time.RFC3339)))

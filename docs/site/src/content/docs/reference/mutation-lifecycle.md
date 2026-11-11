@@ -385,10 +385,20 @@ waits keeps the same rule (`stopWaitingForJob`): no longer than the bound above
 (`jobStopOverdue`), and not at all while the resource is suspended. A
 `PtahSchema` claim that serves post-apply proof waits under a suspension too
 (`schemaClaimMayWait`): proof outranks suspension, so suspension does not
-discard that claim, and the proof keeps renewing its Lease anyway. So does the
-lost-epoch Plan of a resource being deleted, as deletion waits on the running
-Job of every claim that holds the lock. A claim that stops waiting names the
-Job it leaves running in a Warning Event.
+discard that claim, and the proof keeps renewing its Lease anyway. Deletion
+waits on the running Job of a claim that holds the lock by the bound alone,
+suspended or not: an Apply's until the Job stops, and a Plan's or a proof
+read's until the bound, where it discards the claim and records a proof it had
+not taken as `Unknown`. The bound also ends the wait of a live read-only claim
+over a Job the Job controller has marked `FailureTarget` (`readJobStopOverdue`),
+which runs again under a new Job, and of a claim whose recorded Job is gone over
+the Pods that Job owned (`podsStillStopping`: each Pod's own deadline, or the end
+of its deletion grace, plus 30 seconds). A Job the Job controller has not marked
+is still running as far as it is concerned, and its own deadline stops it. Each
+of these waits checks the bound before it renews a Lease, so none renews it
+past the bound. A claim that stops waiting names the Job it leaves running in a
+Warning Event: `ReadJobOverdue` for a deleted schema's read and for the two
+just named, with the Pod that may still read and its node.
 
 Suspension prevents new operations. It does not necessarily stop one that is
 already running: nothing deletes a running Job or its Pod, and a cleanup TTL

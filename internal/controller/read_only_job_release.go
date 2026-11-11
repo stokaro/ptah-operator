@@ -265,13 +265,11 @@ func podsStillStopping(pods []*corev1.Pod) (running []*corev1.Pod, stopBy time.T
 	return running, stopBy
 }
 
-// readJobOverdueReason is the Event reason, in either family, of the Warning
-// that a read-only claim stopped waiting for its Job at the Job's stop bound.
-const readJobOverdueReason = "ReadJobOverdue"
-
-// readJobOverdueText is what the ReadJobOverdue Warning says: lead, which says
-// what the claim stopped waiting for and did instead, and then the first of the
-// Job's Pods that has not stopped, with its node and the delete that removes it.
+// readJobOverdueText is what the ReadJobOverdue Warning says, in either family,
+// when a read-only claim stops waiting for its Job at the stop bound: lead,
+// which says what the claim stopped waiting for and did instead, and then the
+// first of the Job's Pods that has not stopped, with its node and the delete
+// that removes it.
 // Such a Pod may still read the database, and whatever it reads, nothing uses.
 // A Job builds its Pods one at a time, so there is rarely a second one.
 func readJobOverdueText(lead string, running []*corev1.Pod) string {

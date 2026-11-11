@@ -316,7 +316,7 @@ func (r *MigrationReconciler) retryLostReadOnlyMigrationJob(
 	if r.now().Before(stopBy) {
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
-	r.event(migration, corev1.EventTypeWarning, readJobOverdueReason, "%s",
+	r.event(migration, corev1.EventTypeWarning, "ReadJobOverdue", "%s",
 		readJobOverdueText(lostReadJobOverdueLead(string(operation.Type), operation.JobName, stopBy), running))
 	return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf(
 		"%w, and its Pods did not stop by %s, their own deadline plus the grace they are given",

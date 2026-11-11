@@ -101,8 +101,11 @@ container and the Pod the kubelet lost rather than the refusal of a
 log read. A script that reads the `kubectl logs` command out of an
 `ApplyOutcomeUnknown`, `MigrationRunUncertain` or `MigrationRunFinished` Event,
 `Applying` or `status.lastRun.message` finds none where every executor of the Job
-ended that way, and an alert on Warning Events can see the new reason
-`PodStuckTerminating`.
+ended that way, and an alert on Warning Events can see the new reasons
+`PodStuckTerminating` and `ReadJobOverdue`. A deleted `PtahSchema` whose Plan, or
+whose read that proves an Apply, runs past its Job's deadline, the grace of its
+Pods and 30 seconds no longer waits for that Job: it hands the database Lease
+back and goes while the Pod may still read, and records the proof `Unknown`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -399,6 +402,21 @@ ended that way, and an alert on Warning Events can see the new reason
   has already ended, and
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
   when to run it.
+- **A read is not waited for past its Job's stop bound.** A read Job whose Pod
+  sits on a node that is gone carries only `FailureTarget` and never finishes. A
+  deleted `PtahSchema` waited for such a Plan, or for the read that proves an
+  Apply, with no bound and renewed the database Lease all along, so neither the
+  resource nor the realm was let go. It now waits no longer than the Job's
+  deadline, the grace of its Pods and 30 seconds, checked before it renews the
+  Lease, and then discards the claim, records the proof `Unknown`, hands the
+  Lease back and goes. A live read in either kind that supervised a Job marked
+  `FailureTarget`, or waited for the Pods of a recorded Job that is gone, had no
+  bound either; it now runs again under a new Job at that bound. Each records a
+  `ReadJobOverdue` Warning Event that names the Job, the Pod that may still
+  read, its node and the forced delete. Nothing uses what such a Pod reads, and
+  [What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)
+  says what it can still hold. An Apply is still waited for until its Job
+  stops.
 
 ## 0.2.10
 

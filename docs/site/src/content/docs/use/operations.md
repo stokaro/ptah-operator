@@ -1557,10 +1557,17 @@ self-approval](../approvals/#refusing-a-self-approval)).
 Deleting a `PtahSchema` never runs SQL. The transient finalizer exists only to
 observe an already active operation and release coordination safely. It waits
 on a running Job only while the operation holds the database lock: an Apply, a
-Plan, or the Observe that proves an Apply. A Resolve, a Verify or any other
-Observe holds nothing, so deletion drops its claim without waiting, including
-one whose Pod a policy refuses. Once an Apply's Job has stopped, the deletion
-records the outcome as unknown, because nothing read the result, in an
+Plan, or the Observe that proves an Apply. It waits for an Apply's Job until the
+Job stops. A Plan or the proof Observe writes nothing to the database
+([What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)),
+so deletion waits for its Job only until the Job's stop bound: its own
+deadline, the termination grace its Pods are given and 30 seconds more. Past
+the bound it discards the claim, records a proof it had not taken as unknown,
+hands the database Lease back without renewing it again, and names the Job and
+a Pod still running in a `ReadJobOverdue` Warning Event. A Resolve, a Verify or
+any other Observe holds nothing, so deletion drops its claim without waiting,
+including one whose Pod a policy refuses. Once an Apply's Job has stopped, the
+deletion records the outcome as unknown, because nothing read the result, in an
 `ApplyOutcomeUnknown` Warning Event that names how the Apply ended. It then
 hands the database Lease back once no Pod of the Job is still running, and, unless
 the Job's one Pod showed its executor run and stop, not before the Apply's
@@ -1606,10 +1613,10 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 `operator.ptah.run/migration-operation` finalizer by hand is the last resort,
 and it is a statement that nothing is executing against that database any more.
 
-A deleted `PtahSchema` waits the same way for an Apply, a Plan or the Observe
-that proves an Apply, and for the Pod of an Apply that ended while it still ran,
-and says which Pod it waits for. Once the Job is past its own deadline, the
-termination grace its Pods are given and 30 seconds more, a
+A deleted `PtahSchema` waits the same way for an Apply, and for the Pod of an
+Apply that ended while it still ran, and says which Pod it waits for. Once the
+Job is past its own deadline, the termination grace its Pods are given and 30
+seconds more, a
 `PodStuckTerminating` Warning Event names each Pod of the Job that is being
 deleted, is past its own grace period and has not stopped, with its node. It
 comes again 30 seconds later, then twice as long after each time, up to every 5
@@ -1624,6 +1631,20 @@ A forced delete removes the Pod object and nothing else. On a node that is only
 cut off, the container can still be running and still write to the database, so
 confirm that the machine is gone, for example that its VM was terminated, before
 you run it. The Job then finishes, and the deletion goes on as above.
+
+A read's Pod on such a node is not waited for past its Job's stop bound, in
+either kind. A deleted schema lets go of a Plan or a proof read as above. A live
+read whose Job the Job controller has marked to fail, `FailureTarget`, runs
+again under a new Job at the bound, and so does a read whose recorded Job is
+gone, once that Job's Pods are past their own deadline, or the end of their
+deletion grace, and 30 seconds. Each says so in a `ReadJobOverdue` Warning
+Event that names the Job, the Pod that has not stopped, its node and the same
+forced delete. The Pod may come back with its node and finish its read. Nothing
+uses what it reads: the result receiver refuses a Pod whose claim is gone or
+has moved to another Job, and the operator reads a result only for the Job its
+claim names. The Pod cannot take the database Lease either. Delete it once the
+node is known to be gone, since a session it still holds can keep a later
+`PtahSchema` Apply on the same database waiting for its lock.
 
 `kubectl delete --cascade=orphan` is refused. An orphaning deletion makes the
 garbage collector take the resource's owner reference off every dependent

@@ -32,7 +32,7 @@ import (
 // supported cluster shows: a Job past its deadline with FailureTarget, and its
 // Pod deleted and still Running on a node that does not answer.
 
-const readJobOverdueEvent = corev1.EventTypeWarning + " " + readJobOverdueReason + " "
+const readJobOverdueEvent = corev1.EventTypeWarning + " ReadJobOverdue "
 
 // readJobOverdueEvents is every ReadJobOverdue Event recorded since the last
 // call.

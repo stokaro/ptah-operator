@@ -162,7 +162,7 @@ func (r *SchemaReconciler) warnReadJobOverdue(
 		ctrl.LoggerFrom(ctx).Info("could not list the Pods of a read Job past its stop bound", "job", job.Name, "error", err.Error())
 	}
 	running, _ := podsStillStopping(pods)
-	r.event(schema, corev1.EventTypeWarning, readJobOverdueReason, "%s", readJobOverdueText(
+	r.event(schema, corev1.EventTypeWarning, "ReadJobOverdue", "%s", readJobOverdueText(
 		readJobOverdueLead(string(schema.Status.ActiveOperation.Type), job.Name, jobStopBound(job), then), running))
 }
 

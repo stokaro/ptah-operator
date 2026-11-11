@@ -483,3 +483,45 @@ person. Apply reads its own report on every exit status, and only `applied`
 naming the approved plan's digest is a success. A `stale-plan` refusal is
 reported as such, and every Apply failure after dispatch, that refusal
 included, stays outcome-unknown until an observation settles it.
+
+## What a read does to the database
+
+A `PtahSchema` Plan, and the Observe that proves an Apply, hold the database
+realm Lease while they run, and neither writes to the database. Nothing
+enforces that at the database: the session is not a read-only transaction, and
+the login is the one the resource names, not a read-only role. What keeps a
+read from writing is the command the runner runs. The runner opens no database
+connection of its own; it starts Ptah with the target URL in its environment.
+The behavior below was read from the source of the Ptah build
+[`support/ptah.json`](../../support/ptah/) pins, v0.23.0 at commit `f47b2bfa`.
+
+| Operation | Runner command | What reaches the database |
+| --- | --- | --- |
+| Observe | `ptah schema drift --format json` | The comparison of the live schema with the desired one: catalog queries, the managed-data comparison's reads, and the probes below. |
+| Plan | `ptah schema plan --output <file> --json`, twice, and the two files must be byte-identical | The same comparison, once for each file. A dev URL names the schema an unqualified file loads into, and the saved plan provisions nothing on it. |
+| Plan, then | `ptah schema apply --plan <first file> --auto-approve --json --dry-run`, with no schema file, dev URL or protected-table list in its environment | The apply's preview lock, a check that the plan still fits the target, and a return before any statement of the plan runs. |
+
+Resolve and Verify run `ptah oci resolve` and `ptah oci verify`, and open no
+database session.
+
+The comparison asks the server to spell some things itself. On PostgreSQL it
+creates a throwaway object in a transaction it rolls back, so a CHECK or a view
+body compares in the server's own spelling. On MySQL it creates a `TEMPORARY`
+table to learn which non-ASCII index names collide, and drops it again; a
+temporary table belongs to its session and goes with it. Neither persists
+anything, and the PostgreSQL probe is why the session cannot be read-only:
+PostgreSQL refuses `CREATE` in a read-only transaction, temporary objects
+included.
+
+What a read can still do is hold things on the server while its session lives,
+most of all the dry run's preview lock, the advisory lock a schema Apply takes.
+A read whose Pod outlives its claim, on a node that came back after the
+operator stopped waiting for it ([Suspension and
+deletion](../../use/operations/#suspension-and-deletion)), can therefore keep a
+later `PtahSchema` Apply on the same database waiting for that lock until the
+Apply's `spec.policy.lockTimeout`, 30 seconds unless set, ends it before the
+Apply writes anything. It cannot change the database. Nothing uses what it reads either: the
+[result receiver](#durable-result-protocol) authorizes only the Pod of the Job
+the live claim names, and the operator reads a result only for that Job. A
+session whose node was cut off stays open until the database server drops the
+connection.
