@@ -61,7 +61,9 @@ The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only
 migration Job too, including one a suspension leaves running. A `PtahSchema`
-records the same Warning under the new reason `SchemaJobCleanupDeferred`. A
+records the same Warning under the new reason `SchemaJobCleanupDeferred`.
+Either Warning can now also name a finished Job its claim harvests, a
+succeeded Apply's included, where admission refuses the Job's TTL. A
 script that reads the `kubectl logs` command out of the
 `MigrationRunUncertain` Event of a `PtahMigration` deleted with the default
 propagation finds none there now. A script or an alert that matches the whole
@@ -365,6 +367,21 @@ default.
   which takes the `orphan` finalizer off. The dependents that deletion already
   freed stay behind, as
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
+- **A refused cleanup of a harvested Job no longer stops the resource.** A
+  claim asks for its finished Job's cleanup TTL as it harvests the Job: before
+  it consumes the result or records a migration run, retries, or is discarded
+  because its inputs changed. A refusal of that write, from the controller-write
+  webhook or from a ValidatingAdmissionPolicy such as one of your own or the
+  guard of another manager version during an upgrade, failed every pass. The
+  result was never consumed, a migration Apply's run was never recorded and its
+  Lease stayed held, and the resource did not move again. Such a refusal now
+  lets the pass go on, and a `SchemaJobCleanupDeferred` or
+  `MigrationJobCleanupDeferred` Warning names the Job, which stays until it is
+  deleted by hand or with its owner. Admission reads the claim as stored, so
+  the pass goes on only where the stored claim still names the Job. Where
+  another manager has moved the claim, the pass fails and the next one reads
+  the claim again. A TTL write that fails for any reason but a refusal still
+  fails the pass.
 
 ## 0.2.10
 

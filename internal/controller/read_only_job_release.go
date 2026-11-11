@@ -155,6 +155,34 @@ func settleJobCleanupAnswer(err error, refused func(error)) error {
 	}
 }
 
+// settleHarvestedJobCleanup settles the answer to the cleanup TTL write of a
+// harvest in either family (harvestJob, harvestMigrationJob): the write a claim
+// makes on its own finished Job before it acts for it. The answer says nothing
+// about what the Job's result proves, which the claim read from the Job's own
+// Pods, so it is settled by the rule settleJobCleanupAnswer keeps, with one more
+// condition on a refusal. Admission reads the Job's owner as stored and refuses
+// the TTL of a Job the stored claim no longer names, so a refusal can also mean
+// that the claim this pass read has moved since, as under two managers, and a
+// pass that went on would act for a claim that is no longer there. A refusal is
+// settled only where claimed reports that the stored claim still names the Job.
+// Otherwise the pass fails with the refusal, and the next pass reads the claim
+// again.
+func settleHarvestedJobCleanup(err error, claimed func() (bool, error), refused func(error)) error {
+	if !apierrors.IsForbidden(err) && !apierrors.IsInvalid(err) {
+		return settleJobCleanupAnswer(err, refused)
+	}
+	stillClaimed, readErr := claimed()
+	if readErr != nil {
+		return fmt.Errorf("read the claim again after its Job's cleanup was refused (%w): %w", err, readErr)
+	}
+	if !stillClaimed {
+		return fmt.Errorf("the claim that names the Job changed after this pass read it, "+
+			"so the refusal of the Job's cleanup is read again with it: %w", err)
+	}
+	refused(err)
+	return nil
+}
+
 // jobStopReportSlack is how long past the moment a Job's Pods must have stopped
 // the claim still waits: for the kubelet to report the stopped Pod and the Job
 // controller to write the Job's terminal condition.

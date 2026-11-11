@@ -613,7 +613,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 	message := run.message
 	switch outcome {
 	case operatorv1alpha1.MigrationRunOutcomeApplied, operatorv1alpha1.MigrationRunOutcomeUpToDate:
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
 	default:
