@@ -2514,7 +2514,8 @@ changes privileges needs an approval under `Always` as well, and its Apply keeps
 hours.
 
 The `Applying` condition of a schema, `status.lastRun.message` of a migration and the
-Warning Event say where to read the log and for how long, from the TTL the Job holds:
+Warning Event say where to read the log and for how long: for the TTL the Job holds,
+or until the Job is deleted where its cleanup TTL could not be set:
 
 ```bash
 kubectl logs -n application job/ptah-apply-orders-5d06b0eaaa30addb -c ptah
@@ -2550,11 +2551,30 @@ Helm upgrade that failed once the manager rolled out, the Job keeps five minutes
 and a `FailedApplyLogShortened` Warning Event and a line in the manager's log say
 so.
 
+Where admission answers the five minutes with Forbidden or Invalid as well, whether as
+the fallback or as the TTL the run keeps, the Job keeps no TTL. The run is recorded
+all the same, or for a schema the outcome is recorded unknown and read-only
+observation follows, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
+Warning Event names the Job, which stays until it is deleted. No
+`FailedApplyLogShortened` Event comes then. The status and the Event still point at
+the log, and say it is there until the Job is deleted: nothing collects the Job, so
+the log stays longest exactly then. For a schema Apply recorded unknown, a later
+change of execution component asks for the TTL again, and where admission admits it
+then, a `RetiredApplyLogKept` Warning Event says how long the log stays; the status
+recorded before is not rewritten. A finished Job its claim harvests, a read's or a
+succeeded Apply's, is settled the same way, once in each pass. So under a policy that
+refuses the manager's TTL patch, every Job a claim harvests stays: about three for
+each read cycle, some 430 a day for each resource at the default 10-minute interval,
+until a `count/jobs.batch` quota refuses the next Job and every operation in the
+namespace stops. Admit the patch.
+
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
 Pod's log with it sooner, and deleting the resource collects the Job with it. So the
 `MigrationRunUncertain` Warning Event of a `PtahMigration` deleted while its Apply
 waited names the Job and says the Job and its Pod are deleted with the resource, in
-place of the `kubectl logs` command. A
+place of the `kubectl logs` command. A Job the deletion orphaned outlives the
+resource with no TTL, since admission admits none for a Job no resource controls,
+and the Event points at its log until the Job is deleted. A
 retained Job counts toward a `count/jobs.batch` quota, and a full quota stops every
 operation in the namespace, because each one needs a Job. Once you have read a finished
 Job's log, `kubectl delete job -n <namespace> <job>` frees the quota and takes the Pod

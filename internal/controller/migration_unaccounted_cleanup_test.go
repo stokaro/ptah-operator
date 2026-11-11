@@ -141,7 +141,14 @@ func TestOnlyARefusalLetsAStoppedJobsClaimGoWithoutItsCleanup(t *testing.T) {
 				if got := storedTTL(t, api, run.job); got != nil {
 					t.Fatalf("the refused Job's TTL = %d, want none", *got)
 				}
+				// Nothing was reported, so the run keeps its log for 24 hours: that
+				// TTL is asked first, and the five-minute fallback after it.
+				if failures != 2 {
+					t.Fatalf("%d TTL writes reached the refusal, want the long one and its fallback", failures)
+				}
 				events := migrationEvents(recorder)
+				// No TTL was written, so nothing says the log stays five minutes.
+				assertNoShortening(t, events)
 				const says = "has no cleanup scheduled, so it stays until it is deleted by hand or with its owner"
 				if !slices.ContainsFunc(events, func(event string) bool {
 					return strings.Contains(event, "MigrationJobCleanupDeferred") && strings.Contains(event, says) &&
@@ -287,6 +294,11 @@ func (way unknownWhileRunning) reach(t *testing.T) (dispatchedRun, *MigrationRec
 	}
 	if got := storedTTL(t, api, run.job); got != nil {
 		t.Fatalf("the running Job's TTL = %d, want none while it runs", *got)
+	}
+	// The Job has no TTL yet and is not one that stays: the pass that retires the
+	// claim once it stops gives it one, so the record promises no time for its log.
+	if strings.Contains(held.Status.LastRun.Message, "kubectl logs") {
+		t.Fatalf("LastRun.Message = %q points at the log of a running Job the record cannot time", held.Status.LastRun.Message)
 	}
 	// Admission in this harness refuses the TTL on the running Job, as it does on
 	// a cluster. A harness that admitted it would let every row pass on old code.

@@ -141,9 +141,20 @@ func (r *SchemaReconciler) schemaJobCleanupNotScheduled(
 	job *batchv1.Job,
 	err error,
 ) {
+	r.schemaJobCleanupDeferred(schema, operation.Type, job, err)
+}
+
+// schemaJobCleanupDeferred is schemaJobCleanupNotScheduled for a Job no active
+// claim names, such as the Apply a retirement record names.
+func (r *SchemaReconciler) schemaJobCleanupDeferred(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.OperationType,
+	job *batchv1.Job,
+	err error,
+) {
 	r.event(schema, corev1.EventTypeWarning, "SchemaJobCleanupDeferred",
 		"%s Job %q has no cleanup scheduled, so it stays until it is deleted by hand or with its owner: %s",
-		operation.Type, job.Name, bounded(err.Error(), 512))
+		operation, job.Name, bounded(err.Error(), 512))
 }
 
 // warnReadJobOverdue records the ReadJobOverdue Warning for the running Job of

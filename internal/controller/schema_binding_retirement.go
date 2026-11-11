@@ -377,18 +377,64 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 		// This Apply's outcome is unknown, so its log is kept as any such log is.
 		// Nobody will read its result, and the claim was retired with no Job to
 		// name, so this is the first moment there is a time to tell a person.
-		if err := retainFailedApplyJob(ctx, r.Client, job, pending.Plan.Approval != nil, func(message string) {
+		stays, err := r.settleRetiredApplyJobCleanup(ctx, schema, retired, job, retainFailedApplyJob(ctx, r.Client, job, pending.Plan.Approval != nil, func(message string) {
 			r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
-		}); err != nil {
+		}))
+		if err != nil {
 			return err
 		}
-		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, nil)); pointer != "" {
+		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, nil), stays); pointer != "" {
 			r.event(schema, corev1.EventTypeWarning, "RetiredApplyLogKept", "The Apply its execution binding retired was not read. %s", pointer)
 		}
 	}
 	before := schema.DeepCopy()
 	settleRetirement(schema, retiredJobCleanup)
 	return r.patchStatus(ctx, before, schema)
+}
+
+// settleRetiredApplyJobCleanup settles written, the answer to the cleanup TTL
+// write on job, the Apply Job the retirement record names. No claim names that
+// Job any more: admission admits the write by the record and the pending
+// observation (validatePendingApplyJobCleanup), so a refusal is held to the
+// record as stored, the way a harvest's is held to the stored claim
+// (settleHarvestedJobCleanup). A refusal names the Job in a
+// SchemaJobCleanupDeferred Warning, and the record is settled with the Job left
+// in place: the outcome stays unknown whether the Job goes or not, and a fresh
+// read-only proof is what settles it. stays reports that refusal.
+func (r *SchemaReconciler) settleRetiredApplyJobCleanup(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	retired *operatorv1alpha1.RetiredJobStatus,
+	job *batchv1.Job,
+	written error,
+) (stays bool, err error) {
+	err = settleHarvestedJobCleanup(written, func() (bool, error) {
+		return r.storedRetirementNamesApplyJob(ctx, schema, job)
+	}, func(refusal error) {
+		stays = true
+		r.schemaJobCleanupDeferred(schema, retired.Operation, job, refusal)
+	})
+	return stays, err
+}
+
+// storedRetirementNamesApplyJob reports whether the PtahSchema as stored still
+// holds the retirement record and pending observation that name job, by the rule
+// this pass asked for the Job's cleanup under (retiredPredecessorApplyJobMatches),
+// which is the one admission holds that cleanup to. It reads past the cache, for
+// the reason storedSchemaClaimNamesJob does.
+func (r *SchemaReconciler) storedRetirementNamesApplyJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+) (bool, error) {
+	stored := &operatorv1alpha1.PtahSchema{}
+	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: schema.Name}, stored); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return retiredPredecessorApplyJobMatches(stored, stored.Status.PendingObservation, job), nil
 }
 
 // retiredPredecessorApplyJobMatches holds the Apply Job a retirement record
