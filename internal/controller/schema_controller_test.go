@@ -1932,6 +1932,72 @@ func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
 	}
 }
 
+// A verification refusal read after the policy was replaced is not the current
+// policy's verdict, so the claim is discarded and Verify runs again, as it does
+// for a result that satisfied the old policy (verificationPolicyChanged). The
+// pass gives the finished Job its cleanup TTL before the claim goes: once no
+// claim names the Job, admission admits no TTL for it.
+func TestARefusalUnderAReplacedPolicyCollectsItsJob(t *testing.T) {
+	t.Parallel()
+
+	policyBytes := []byte("require_digest_pin: true\nrequire_signature: true\n")
+	policyDigest := fingerprint.DigestBytes(policyBytes)
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseVerifying
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		RequestedReference: schema.Spec.Desired.OCIRef,
+		ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
+		Digest:             testDigest,
+	}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationVerify, ID: testDigest,
+		JobName: "verify-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+		VerificationPolicyUID: testPolicyUID, VerificationPolicyDigest: policyDigest,
+	}
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	frame, err := runner.MarshalFrame(runner.Result{
+		ProtocolVersion:          runner.ProtocolVersion,
+		Operation:                runner.OperationVerify,
+		OperationID:              testDigest,
+		ChildExitCode:            2,
+		ResolvedDigest:           testDigest,
+		VerificationRequirements: []string{"require_signature"},
+		VerificationPolicyDigest: policyDigest,
+		Error:                    &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: "verification-policy-v2-uid"},
+		Immutable:  ptr(true),
+		Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "require_digest_pin: true\n"},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, replaced)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+	if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseVerifying ||
+		verified == nil || verified.Reason != "PolicyChanged" {
+		t.Fatalf("status after a refusal under a replaced policy = %#v", actual.Status)
+	}
+	harvested := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), harvested); err != nil {
+		t.Fatal(err)
+	}
+	if harvested.Spec.TTLSecondsAfterFinished == nil || *harvested.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
+		t.Fatalf("Job cleanup TTL = %#v, want %d", harvested.Spec.TTLSecondsAfterFinished, jobCleanupTTLSeconds)
+	}
+}
+
 func TestVerificationResultCannotOutrunPolicyConfigMapUpdate(t *testing.T) {
 	t.Parallel()
 

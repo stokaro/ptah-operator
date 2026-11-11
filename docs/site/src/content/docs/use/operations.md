@@ -1491,7 +1491,9 @@ one to end and the operator's reading afterwards.
 
 While a `PtahSchema` owes the proof of an Apply, suspension starts no proof
 Job and drops a proof claim whose Job was not created; a proof Observe already
-running ends, and the Plan that completes the proof waits for resume. The
+running ends, and the Plan that completes the proof waits for resume. A proof
+read whose Job this release cannot confirm, as after an upgrade that changed
+the Job, waits for that Job to stop and gives it its cleanup TTL. The
 schema retains and renews the Apply's database-realm Lease meanwhile. This
 deliberately blocks later mutations in the same realm until the resource is
 resumed and the read-only proof completes, or until the resource is deleted.
@@ -1516,8 +1518,9 @@ its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
 the claim names, so a read Job that had finished gets its TTL as the claim is
 dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
 Warning Event names one still running, which stays until it is deleted. A read
-a `PtahMigration` holds while an execution component changes is dropped the
-same way once the resource is suspended, rather than waited for.
+either kind holds while an execution component changes, and a `PtahSchema` Plan
+whose database lock epoch moved, is dropped the same way once the resource is
+suspended, rather than waited for, unless it serves a proof.
 Running one again sends nothing when the field already holds the value.
 With `--wait`, suspend stays until the operator reports the resource
 `Suspended` with nothing in flight, and resume until the resource is back in

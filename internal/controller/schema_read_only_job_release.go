@@ -39,10 +39,9 @@ func (r *SchemaReconciler) retryPastRefusedSchemaJob(
 // instead, under the retired epoch. Every caller holds a read-only claim, and
 // decides that before it asks.
 //
-// A claim of a suspended resource is never held, whichever pass asks: suspension
-// is the stop button. Post-apply proof outranks suspension, so a proof claim
-// that refused its Job reaches the retry under a suspension too, and the rule is
-// kept here rather than by each caller.
+// A claim of a suspended resource is not held, whichever pass asks: suspension
+// is the stop button. A claim that serves post-apply proof is held as any other
+// is (schemaClaimMayWait), and the rule is kept here rather than by each caller.
 //
 // The Job is held to what the claim fixes without a rebuild under the execution
 // binding status records (validateJobEnvelope), the match the controller-write
@@ -57,7 +56,7 @@ func (r *SchemaReconciler) letGoOfReadOnlySchemaJob(
 	job *batchv1.Job,
 	waiting string,
 ) (result ctrl.Result, held bool, err error) {
-	mayWait := !schema.Spec.Suspend
+	mayWait := schemaClaimMayWait(schema)
 	release := func() (readOnlyJobRelease, error) {
 		verdict, _ := mutationlifecycle.VerdictFor(schemaJobClaim(schema, job))
 		return releaseReadOnlyJob(job, verdict, validateJobEnvelope(job, schema, schema.Status.ActiveOperation), r.now(),
@@ -86,6 +85,23 @@ func (r *SchemaReconciler) letGoOfReadOnlySchemaJob(
 		r.schemaJobCleanupNotScheduled(schema, operation, job, reason)
 	}
 	return ctrl.Result{}, false, nil
+}
+
+// schemaClaimMayWait reports whether the read-only claim may wait for the Job
+// under its name to stop before it lets go, in every wait a PtahSchema claim
+// keeps (stopWaitingForJob). Suspension is the stop button, so a claim of a
+// suspended resource does not wait, unless it serves post-apply proof. Proof
+// outranks suspension: suspension does not discard its claim, the proof keeps
+// renewing its Lease, and a proof read whose Job the claim did not refuse is
+// supervised to its end. Waiting for a refused one holds nothing more, and
+// letting go would leave that Job with no cleanup, running beside the proof read
+// that starts on resume.
+//
+// It asks what reconcileActive's suspension site asks, whether a proof is owed,
+// rather than whether this claim serves it (schemaClaimServesProof): a claim
+// suspension does not discard is never let go here either.
+func schemaClaimMayWait(schema *operatorv1alpha1.PtahSchema) bool {
+	return !schema.Spec.Suspend || schema.Status.PendingObservation != nil
 }
 
 // waitForReadOnlySchemaJob keeps the claim over the running Job it owes a

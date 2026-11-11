@@ -63,6 +63,10 @@ type runShape struct {
 	// recorded says the pass that created the Job also recorded its UID, so
 	// the claim supervises the Job rather than adopting it.
 	recorded bool
+	// proof, for a PtahSchema run, gives the resource the post-apply proof the
+	// claim serves, and the Lease the proof holds, before the claim is bound to
+	// its inputs.
+	proof bool
 }
 
 // runDispatchedBy stands up a dispatched run of operationType.
