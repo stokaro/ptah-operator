@@ -52,6 +52,8 @@ the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
 in it for one `retired` record per operation, as [A quota on result
 records](../../use/operations/#result-record-quota) says.
+The manager Pod now asks for a 60-second termination grace period, so a policy
+that caps `terminationGracePeriodSeconds` lower has to admit it.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -132,6 +134,19 @@ records](../../use/operations/#result-record-quota) says.
   namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
   Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
   Job exists, the collector retries with backoff up to every 5 minutes.
+- **A slow Job-write webhook no longer spends an approval.** A dispatch gave
+  its mark, create, read-back and record 15 seconds, while the chart gives the
+  manager's Job-write webhook 30. A webhook slower than 15 seconds made the
+  manager give up on its own create, which reads as an outcome nobody
+  established, so a single manager retired the Apply as `Unknown` and the
+  approval was spent. The dispatch now waits 40 seconds, so the API server
+  answers first: the Job is created, or the create is refused and the
+  dispatch is withdrawn with the approval kept. The write that withdraws or
+  retires the claim no longer runs on the ended context, so it lands at once
+  instead of on a later pass. A stopping manager now takes up to 50 seconds to
+  finish such a dispatch, and its Pod's termination grace period is 60
+  seconds, up from Kubernetes' default 30. `webhook.controllerWriteTimeoutSeconds`
+  is unchanged.
 
 ## 0.2.10
 

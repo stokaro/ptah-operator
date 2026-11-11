@@ -32,6 +32,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/managercache"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
@@ -166,11 +167,14 @@ func main() {
 	utilruntime.Must(operatorv1alpha1.AddToScheme(scheme))
 
 	leaseDuration, renewDeadline, retryPeriod := 60*time.Second, 45*time.Second, 2*time.Second
-	// The release happens after every runnable has stopped, so the stop has
-	// to end inside the Pod's 30-second grace period. At controller-runtime's
-	// own 30 seconds the kill and the release raced, and a manager the kubelet
-	// killed first left its successor waiting out the whole lease.
-	shutdownTimeout := 20 * time.Second
+	// A stopping manager finishes a dispatch it already began, which takes up
+	// to mutationlifecycle.DispatchStopBound when the Job-write webhook is
+	// slow. The Lease is released after every runnable has stopped, so the
+	// stop has to end inside the Pod's grace period; the chart sets that 10
+	// seconds longer. When both were 30 seconds, the kill and the release
+	// raced, and a manager the kubelet killed first left its successor waiting
+	// out the whole lease.
+	shutdownTimeout := mutationlifecycle.DispatchStopBound
 	// One request budget for the whole process; see internal/apipace.
 	apiConfig, err := apipace.Config(ctrl.GetConfigOrDie(), apiRequestsPerSecond, apiRequestBurst)
 	if err != nil {

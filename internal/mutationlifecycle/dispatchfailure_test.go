@@ -168,6 +168,14 @@ func webhookUnreachable() error {
 		`Post "https://ptah-operator-webhook.ptah-system.svc:443/validate-operator-controller-write?timeout=10s": no endpoints available`))
 }
 
+// webhookTimedOut is the API server's answer when the Job-write webhook did not
+// answer within its timeoutSeconds: the dispatcher's call error, as
+// apierrors.NewInternalError wraps it.
+func webhookTimedOut() error {
+	return apierrors.NewInternalError(fmt.Errorf(`failed calling webhook "vcontrollerwrite.operator.ptah.run": failed to call webhook: ` +
+		`Post "https://ptah-operator-webhook.ptah-system.svc:443/validate-operator-controller-write?timeout=30s": context deadline exceeded`))
+}
+
 // What each failed create proves. A refusal has to be an answer the API
 // server gives before it writes; everything that can follow the write, or
 // says nothing at all, stays unknown.
@@ -182,6 +190,10 @@ func TestWhatAFailedCreateProves(t *testing.T) {
 	}{
 		{"an unreachable webhook that fails closed", webhookUnreachable(), mutationlifecycle.AnswerRefused},
 		{"the same, wrapped by the caller", fmt.Errorf("create Apply Job: %w", webhookUnreachable()), mutationlifecycle.AnswerRefused},
+		// What the API server answers when the Job-write webhook takes longer
+		// than its timeoutSeconds. DispatchCriticalSection waits for this
+		// answer rather than giving up first (#973).
+		{"a webhook that fails closed and did not answer in time", webhookTimedOut(), mutationlifecycle.AnswerRefused},
 		{"a webhook denial", apierrors.NewForbidden(jobs, "apply", errors.New("admission webhook denied the request")), mutationlifecycle.AnswerRefused},
 		{"an invalid Job", apierrors.NewInvalid(schema.GroupKind{Group: "batch", Kind: "Job"}, "apply", nil), mutationlifecycle.AnswerRefused},
 		{"a missing namespace", apierrors.NewNotFound(schema.GroupResource{Resource: "namespaces"}, "team-a"), mutationlifecycle.AnswerRefused},

@@ -219,16 +219,22 @@ Finding nothing under a fresh marker is not yet a lost Job. After a node pause
 two managers act at once until the old leader's lease runs out, and one of them
 can read the other's marker before that manager's create lands. So a pass over
 an active claim that finds it marked, with no recorded Job UID and no Job,
-waits `mutationlifecycle.MissingJobGrace`, 20 seconds, before it declares the
+waits `mutationlifecycle.MissingJobGrace`, 45 seconds, before it declares the
 outcome unknown.
 
-Admission alone may take longer than that, since the chart gives the Job-write
-webhook up to 30 seconds. But the dispatching manager's client abandons its
-create once its mark-to-record steps have run 15 seconds, and that cancels the
-request on the API server; the other 5 seconds cover the cancellation arriving
-and a storage write already in flight. The Job-write webhook also reads the
-claim uncached, so a create whose admission runs after the claim was retired is
-refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
+The dispatching manager runs its mark-to-record steps for at most 40 seconds,
+`mutationlifecycle.DispatchCriticalSection`. That is longer than the 30 seconds
+the chart gives the Job-write webhook, so the API server answers the create
+first: it stores the Job, or it refuses the create, and a refusal takes the
+marker back with the approval kept. A shorter bound made the client give up on
+a create the server was still admitting, and the claim was retired with its
+approval spent. A client that gives up at the bound anyway cancels the request
+on the API server; the other 5 seconds of the grace cover the cancellation
+arriving and a storage write already in flight. The write that withdraws the
+marker or retires the claim after the create runs on a context of its own, so a
+create that ended with the bound does not make it fail. The Job-write webhook
+also reads the claim uncached, so a create whose admission runs after the claim
+was retired is refused. A dispatcher that cannot cancel, because it is frozen or partitioned,
 leaves the API server to finish the request on its own bounds. That case fails
 closed: a Job stored under a retired claim runs no Pod, because Pod admission
 refuses a Pod whose claim is no longer active.

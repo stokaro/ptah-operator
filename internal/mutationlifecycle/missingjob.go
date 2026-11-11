@@ -30,14 +30,15 @@ import (
 // MissingJobGrace is how long this process watches a marked mutating claim
 // with no recorded Job UID find its Job missing before it calls the Job lost.
 //
-// Admission alone may take longer than the grace: the chart gives the
-// Job-write webhook up to 30 seconds. What keeps a create from landing after
-// the grace is below, and a change to any of it has to answer for this bound:
+// What keeps a create from landing after the grace is below, and a change to
+// any of it has to answer for this bound:
 //
 //   - The dispatching manager runs its create on the context Driver.Dispatch
-//     ends at DispatchCriticalSection. Its client abandons the create there,
-//     and that cancels the request on the API server. createLandingMargin
-//     covers the cancellation arriving and a storage write already in flight.
+//     ends at DispatchCriticalSection. That outlasts the chart's Job-write
+//     webhook timeout, so the API server normally answers first. A client
+//     that gives up there anyway cancels the request on the API server.
+//     createLandingMargin covers the cancellation arriving and a storage write
+//     already in flight.
 //   - The Job-write webhook in internal/controllerwrite reads the claim
 //     uncached and refuses a create once the claim is retired or its owner is
 //     deleting. A create whose admission runs after the claim was retired is

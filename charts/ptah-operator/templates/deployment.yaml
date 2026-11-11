@@ -40,6 +40,11 @@ spec:
       serviceAccountName: {{ include "ptah-operator.serviceAccountName" . }}
       automountServiceAccountToken: false
       enableServiceLinks: false
+      # A stopping manager finishes a dispatch it already began and then
+      # releases its leader Lease. The stop takes up to 50 seconds
+      # (mutationlifecycle.DispatchStopBound) when the Job-write webhook is
+      # slow, and the release has to land before the kill.
+      terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
