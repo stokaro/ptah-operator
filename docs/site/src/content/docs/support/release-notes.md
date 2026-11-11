@@ -60,7 +60,9 @@ records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too.
+Job too. A script that reads the `kubectl logs` command out of the
+`MigrationRunUncertain` Event of a `PtahMigration` deleted with the default
+propagation finds none there now.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -226,6 +228,16 @@ Job too.
   by UID or does not own, so every pass failed on the refusal, and the read never
   ran again. The claim now moves to a new attempt at once, as a schema claim
   does, and writes nothing to that Job.
+- **A deleted migration no longer points at a log it takes with it.** A
+  `PtahMigration` deleted while its Apply waited records the run `Unknown`, and
+  its `MigrationRunUncertain` Warning Event said the Pod log stayed for 24 hours
+  and gave the `kubectl logs` command. The next pass releases the resource, and
+  the garbage collector deletes the Job and its Pod with it, so the command found
+  nothing. The Event now names the Job and says the Job and its Pod are deleted
+  with the resource, and `UnresolvedRunDiscarded` says the same while the Job
+  stands. A `FailedApplyLogShortened` Event no longer fires for such a Job. To keep
+  the log, follow it with `kubectl logs -f` from before the delete, as
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
 
 ## 0.2.10
 
