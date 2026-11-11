@@ -341,47 +341,36 @@ func stopMigrationWorkload(t *testing.T, api client.Client, run dispatchedRun, r
 	}
 }
 
-// TestAJobItsClaimNeverRecordedIsNamedWhenItStays is a claim that never recorded
-// its Job's UID, as when the manager that created the Job stopped before it
-// recorded the create. Admission admits a cleanup TTL only on the Job a claim
-// names by UID, so the Job stays until it is deleted by hand or with its owner,
-// and a Warning names it when the claim goes. Recording the UID first, the step
-// adoption takes, is #970.
+// TestAClaimThatNeverRecordedItsJobRecordsItBeforeTheRunIsSettled is a claim that
+// never recorded its Job's UID, as when the manager that created the Job stopped
+// before it recorded the create. Admission admits a cleanup TTL only on the Job a
+// claim names by UID, so the pass that records the run unknown records the UID
+// first, the step adopting the Job takes, and the claim it keeps while the Job runs
+// names the Job. The pass that retires the claim once the Job has stopped then
+// schedules the TTL by the rule a recorded claim's Job follows.
 //
-// A release that changed the Job reads it before the claim is kept, and asks for
-// its TTL then; admission refuses it, and that pass says so. A release that moved
-// the executor reads no Job a claim did not record, so the pass that retires the
-// claim is the first that names it.
-func TestAJobItsClaimNeverRecordedIsNamedWhenItStays(t *testing.T) {
+// A release that moved the executor and a lost lease read no Job a claim did not
+// record, and a release that changed the Job reads it and cannot confirm it. Each
+// records the UID all the same.
+func TestAClaimThatNeverRecordedItsJobRecordsItBeforeTheRunIsSettled(t *testing.T) {
 	t.Parallel()
 
-	const stays = "has no cleanup scheduled, so it stays until it is deleted by hand or with its owner: " +
-		"its claim never recorded the Job's UID"
 	for _, row := range []struct {
 		name string
 		way  func() unknownWhileRunning
-		// firstPass is whether the pass that recorded the run unknown already
-		// asked for the TTL and was refused.
-		firstPass bool
 	}{
 		{name: "an executor rollout", way: executorRolledOut},
-		{name: "a release that changed the Job", way: jobRebuiltDifferently, firstPass: true},
+		{name: "a release that changed the Job", way: jobRebuiltDifferently},
+		{name: "a lost lease", way: leaseLost},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
 			run, reconciler, api, recorder := row.way().unrecorded().reach(t)
-			first := migrationEvents(recorder)
-			refused := slices.ContainsFunc(first, func(event string) bool {
-				return strings.Contains(event, "MigrationJobCleanupDeferred") && strings.Contains(event, run.job.Name)
-			})
-			if refused != row.firstPass {
-				t.Fatalf("the pass that recorded the run unknown said the cleanup was refused: %t, want %t; Events %q",
-					refused, row.firstPass, first)
+			if kept := readMigration(t, api, run.migration).Status.ActiveOperation; kept.JobUID != run.job.UID {
+				t.Fatalf("the claim kept over the running Job names Job UID %q, want %q", kept.JobUID, run.job.UID)
 			}
-			retiring := record.NewFakeRecorder(64)
-			reconciler.Recorder = retiring
 			stopMigrationWorkload(t, api, run, "")
 			if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
@@ -389,29 +378,38 @@ func TestAJobItsClaimNeverRecordedIsNamedWhenItStays(t *testing.T) {
 			if settled := readMigration(t, api, run.migration); settled.Status.ActiveOperation != nil {
 				t.Fatalf("the stopped Job's claim was kept: %#v", settled.Status.ActiveOperation)
 			}
-			if got := storedTTL(t, api, run.job); got != nil {
-				t.Fatalf("the unrecorded Job's TTL = %d, want none: admission admits it only by UID", *got)
+			if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
+				t.Fatalf("the stopped Job's TTL = %s once its claim went, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
 			}
-			events := migrationEvents(retiring)
-			named := 0
-			for _, event := range events {
-				if strings.Contains(event, "MigrationJobCleanupDeferred") && strings.Contains(event, stays) &&
-					strings.Contains(event, run.job.Name) {
-					named++
-				}
-			}
-			if named != 1 {
-				t.Fatalf("%d Events say the Job %s stays because its claim recorded no UID, want 1: %q", named, run.job.Name, events)
+			events := migrationEvents(recorder)
+			assertNoShortening(t, events)
+			if slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, "MigrationJobCleanupDeferred") }) {
+				t.Fatalf("the Events %q say the cleanup was not scheduled, and it was", events)
 			}
 		})
 	}
 }
 
-// TestAJobItsClaimNeverRecordedIsNamedWhenTheFirstPassLetsTheClaimGo is the same
-// claim over a Job that had finished before the release that moved the executor
-// reconciled it. Nothing can write, so the claim goes in the pass that records the
-// run unknown, and that pass is the only one that can name the Job.
-func TestAJobItsClaimNeverRecordedIsNamedWhenTheFirstPassLetsTheClaimGo(t *testing.T) {
+// leaseLost is a database lock that changed hands under the running Apply. The
+// release and the binding hold, and the claim records that its lease was not
+// continuous.
+func leaseLost() unknownWhileRunning {
+	current := workloadBuilderForMigrations()
+	return unknownWhileRunning{
+		shape: runShape{dispatcher: current, recorded: true, claim: func(operation *operatorv1alpha1.MigrationOperationStatus) {
+			operation.LeaseContinuityLost = true
+		}},
+		next: current, says: "the database lock epoch changed",
+	}
+}
+
+// TestAClaimThatNeverRecordedAFinishedJobSchedulesItsCleanupBeforeItGoes is the
+// same claim over a Job that had finished before the release that moved the
+// executor reconciled it. Nothing can write, so the claim goes in the pass that
+// records the run unknown, and that pass is the only one that can schedule the
+// TTL: it records the UID, schedules the TTL, and the run names the Pod log the
+// TTL keeps.
+func TestAClaimThatNeverRecordedAFinishedJobSchedulesItsCleanupBeforeItGoes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -431,92 +429,252 @@ func TestAJobItsClaimNeverRecordedIsNamedWhenTheFirstPassLetsTheClaimGo(t *testi
 		t.Fatalf("the stopped Apply did not go unknown with its claim let go: claim=%#v unresolved=%#v lastRun=%#v",
 			settled.Status.ActiveOperation, settled.Status.UnresolvedRun, settled.Status.LastRun)
 	}
-	if got := storedTTL(t, api, run.job); got != nil {
-		t.Fatalf("the unrecorded Job's TTL = %d, want none: admission admits it only by UID", *got)
+	if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
+		t.Fatalf("the finished Job's TTL = %s once its claim went, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
+	}
+	const names = "Anything the run wrote is in the Pod log for 24 hours"
+	if !strings.Contains(settled.Status.LastRun.Message, names) {
+		t.Fatalf("status.lastRun.message = %q, want it to say %q", settled.Status.LastRun.Message, names)
 	}
 	events := migrationEvents(recorder)
-	if !slices.ContainsFunc(events, func(event string) bool {
-		return strings.Contains(event, "MigrationJobCleanupDeferred") &&
-			strings.Contains(event, "its claim never recorded the Job's UID") && strings.Contains(event, run.job.Name)
-	}) {
-		t.Fatalf("the Events %q do not say the Job %s stays", events, run.job.Name)
+	assertNoShortening(t, events)
+	if slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, "MigrationJobCleanupDeferred") }) {
+		t.Fatalf("the Events %q say the cleanup was not scheduled, and it was", events)
 	}
 }
 
-// TestAnUnrecordedClaimNamesOnlyAJobThatStays holds the Warning to a Job the claim
-// could have created and nothing collects: one another resource owns, or one that
-// already carries a TTL, gets none.
-func TestAnUnrecordedClaimNamesOnlyAJobThatStays(t *testing.T) {
+// TestAFailedWriteOfTheUIDRecordsNoRun is the write that records an unrecorded
+// claim's Job failing in the pass that would record the run unknown. The pass
+// fails before it records anything else, so the retry finds the claim as it was
+// and records the UID, the run and the TTL in order.
+func TestAFailedWriteOfTheUIDRecordsNoRun(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	way := executorRolledOut().unrecorded()
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, way.shape)
+	reconciler, api := run.reconciler(t, way.next)
+	failures := 0
+	reconciler.Client = interceptor.NewClient(admittedJobWrites(api, way.next), interceptor.Funcs{
+		SubResourcePatch: func(
+			ctx context.Context, writer client.Client, subResource string, object client.Object, patch client.Patch,
+			options ...client.SubResourcePatchOption,
+		) error {
+			if migration, ok := object.(*operatorv1alpha1.PtahMigration); ok && failures == 0 &&
+				migration.Status.ActiveOperation != nil && migration.Status.ActiveOperation.JobUID != "" {
+				failures++
+				return apierrors.NewConflict(operatorv1alpha1.GroupVersion.WithResource("ptahmigrations").GroupResource(),
+					migration.Name, errors.New("the object has been modified"))
+			}
+			return writer.SubResource(subResource).Patch(ctx, object, patch, options...)
+		},
+	})
+	stopMigrationWorkload(t, api, run, "")
+
+	_, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+	if failures == 0 {
+		t.Fatal("no write of the UID reached the injected failure, so this row proved nothing")
+	}
+	if err == nil {
+		t.Fatal("Reconcile() returned no error, want the failed write of the UID to fail the pass")
+	}
+	current := readMigration(t, api, run.migration)
+	if current.Status.ActiveOperation == nil || current.Status.ActiveOperation.JobUID != "" ||
+		current.Status.LastRun != nil || current.Status.UnresolvedRun != nil {
+		t.Fatalf("the failed pass recorded something: claim=%#v lastRun=%#v unresolved=%#v",
+			current.Status.ActiveOperation, current.Status.LastRun, current.Status.UnresolvedRun)
+	}
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v on the pass after the failure", err)
+	}
+	settled := readMigration(t, api, run.migration)
+	if settled.Status.ActiveOperation != nil || settled.Status.UnresolvedRun == nil {
+		t.Fatalf("the retried pass did not record the run and let the claim go: claim=%#v unresolved=%#v",
+			settled.Status.ActiveOperation, settled.Status.UnresolvedRun)
+	}
+	if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
+		t.Fatalf("the finished Job's TTL = %s after the retried pass, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
+	}
+}
+
+// TestAnUnrecordedClaimRecordsOnlyAJobItsResourceOwns is a Job another
+// PtahMigration owns standing under the name an unrecorded claim reserved. It is
+// not the Job this claim's dispatch created, so the claim records no UID, and the
+// Job gets no write while it runs or after it stops.
+func TestAnUnrecordedClaimRecordsOnlyAJobItsResourceOwns(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	way := executorRolledOut().unrecorded()
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, way.shape)
+	run.job.OwnerReferences[0].UID = "another-migration-uid"
+	reconciler, api := run.reconciler(t, way.next)
+	writes := 0
+	reconciler.Client = interceptor.NewClient(admittedJobWrites(api, way.next), interceptor.Funcs{
+		Patch: func(ctx context.Context, writer client.WithWatch, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+			if _, isJob := object.(*batchv1.Job); isJob {
+				writes++
+			}
+			return writer.Patch(ctx, object, patch, options...)
+		},
+	})
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	held := readMigration(t, api, run.migration)
+	if held.Status.ActiveOperation == nil || held.Status.UnresolvedRun == nil {
+		t.Fatalf("the Apply did not go unknown with its claim kept while the Job under its name runs: claim=%#v unresolved=%#v",
+			held.Status.ActiveOperation, held.Status.UnresolvedRun)
+	}
+	if uid := held.Status.ActiveOperation.JobUID; uid != "" {
+		t.Fatalf("the claim records Job UID %q, the UID of a Job another resource owns", uid)
+	}
+	stopMigrationWorkload(t, api, run, "")
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if settled := readMigration(t, api, run.migration); settled.Status.ActiveOperation != nil {
+		t.Fatalf("the stopped claim was kept: %#v", settled.Status.ActiveOperation)
+	}
+	if writes != 0 {
+		t.Fatalf("%d writes reached a Job another resource owns, want none", writes)
+	}
+	if got := storedTTL(t, api, run.job); got != nil {
+		t.Fatalf("the other resource's Job TTL = %d, want none", *got)
+	}
+	if events := migrationEvents(recorder); slices.ContainsFunc(events, func(event string) bool {
+		return strings.Contains(event, "MigrationJobCleanupDeferred")
+	}) {
+		t.Fatalf("the Events %q report a cleanup for a Job the claim never ran", events)
+	}
+}
+
+// TestAnUnreadNameKeepsAnUnrecordedClaimUntilItRecordsItsJob is a read of the name
+// an unrecorded claim reserved that fails in the pass that records the run unknown,
+// over a Job that has finished. That read is what would have recorded the UID, and
+// nothing then says whether the name holds a Job that may still write, so the claim
+// and the database stay, as for any read that cannot say. The next pass reads the
+// stopped Job, records its UID and schedules its TTL before the claim goes. A write
+// of the UID that fails there keeps the claim for the pass after it, because the
+// claim is what lets the TTL be scheduled at all. The run recorded before the name
+// could be read names no Job, and names the Job once the claim records it, so the
+// record says which Job holds the log the TTL keeps.
+func TestAnUnreadNameKeepsAnUnrecordedClaimUntilItRecordsItsJob(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
-		name   string
-		change func(t *testing.T, api client.WithWatch, job *batchv1.Job) *batchv1.Job
+		name string
+		// failRecord is whether the write that records the UID fails once.
+		failRecord bool
 	}{
-		{name: "another resource owns the Job under the name", change: ownedByAnotherMigration},
-		{name: "the Job already carries a TTL", change: func(t *testing.T, api client.WithWatch, job *batchv1.Job) *batchv1.Job {
-			t.Helper()
-			stored := &batchv1.Job{}
-			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), stored); err != nil {
-				t.Fatal(err)
-			}
-			stored.Spec.TTLSecondsAfterFinished = ptr(jobclaim.CleanupTTLSeconds)
-			if err := api.Update(context.Background(), stored); err != nil {
-				t.Fatal(err)
-			}
-			return stored
-		}},
+		{name: "the next pass records it"},
+		{name: "the write that records it fails once", failRecord: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
-			run, reconciler, api, recorder := executorRolledOut().unrecorded().reach(t)
-			migrationEvents(recorder)
-			retiring := record.NewFakeRecorder(64)
-			reconciler.Recorder = retiring
+			way := executorRolledOut().unrecorded()
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, way.shape)
+			reconciler, api := run.reconciler(t, way.next)
+			reconciler.Client = admittedJobWrites(api, way.next)
 			stopMigrationWorkload(t, api, run, "")
-			standing := row.change(t, api, run.job)
+			readFailures := 0
+			reconciler.APIReader = interceptor.NewClient(api, interceptor.Funcs{
+				Get: func(ctx context.Context, reader client.WithWatch, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+					if _, isJob := object.(*batchv1.Job); isJob && readFailures == 0 {
+						readFailures++
+						return apierrors.NewServiceUnavailable("the API server is restarting")
+					}
+					return reader.Get(ctx, key, object, options...)
+				},
+			})
+
 			if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
-			if settled := readMigration(t, api, run.migration); settled.Status.ActiveOperation != nil {
-				t.Fatalf("the stopped claim was kept: %#v", settled.Status.ActiveOperation)
+			if readFailures == 0 {
+				t.Fatal("no read of the reserved name reached the injected failure, so this row proved nothing")
 			}
-			if events := migrationEvents(retiring); slices.ContainsFunc(events, func(event string) bool {
-				return strings.Contains(event, "MigrationJobCleanupDeferred")
-			}) {
-				t.Fatalf("the Events %q say the Job %s (UID %s) stays", events, standing.Name, standing.UID)
+			held := readMigration(t, api, run.migration)
+			if held.Status.ActiveOperation == nil || held.Status.UnresolvedRun == nil ||
+				held.Status.LastRun == nil || !strings.Contains(held.Status.LastRun.Message, way.says) {
+				t.Fatalf("the Apply did not go unknown with its claim kept over an unread name: claim=%#v unresolved=%#v lastRun=%#v",
+					held.Status.ActiveOperation, held.Status.UnresolvedRun, held.Status.LastRun)
+			}
+			if uid := held.Status.ActiveOperation.JobUID; uid != "" {
+				t.Fatalf("the claim records Job UID %q from a read that failed", uid)
+			}
+			if last, unresolved := held.Status.LastRun, held.Status.UnresolvedRun; last.JobName != "" || last.JobUID != "" ||
+				unresolved.JobName != "" || unresolved.JobUID != "" {
+				t.Fatalf("the run recorded over an unread name names a Job: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
+			assertDatabaseStillHeld(t, reconciler, api)
+			if got := storedTTL(t, api, run.job); got != nil {
+				t.Fatalf("the Job's TTL = %d before its claim recorded it, want none", *got)
+			}
+
+			recordFailures := 0
+			if row.failRecord {
+				reconciler.Client = interceptor.NewClient(reconciler.Client.(client.WithWatch), interceptor.Funcs{
+					SubResourcePatch: func(
+						ctx context.Context, writer client.Client, subResource string, object client.Object, patch client.Patch,
+						options ...client.SubResourcePatchOption,
+					) error {
+						if migration, ok := object.(*operatorv1alpha1.PtahMigration); ok && recordFailures == 0 &&
+							migration.Status.ActiveOperation != nil && migration.Status.ActiveOperation.JobUID != "" {
+							recordFailures++
+							return apierrors.NewConflict(operatorv1alpha1.GroupVersion.WithResource("ptahmigrations").GroupResource(),
+								migration.Name, errors.New("the object has been modified"))
+						}
+						return writer.SubResource(subResource).Patch(ctx, object, patch, options...)
+					},
+				})
+				_, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+				if recordFailures == 0 {
+					t.Fatal("no write of the UID reached the injected failure, so this row proved nothing")
+				}
+				if err == nil {
+					t.Fatal("Reconcile() returned no error, want the failed write of the UID to fail the pass so it is retried")
+				}
+				if current := readMigration(t, api, run.migration); current.Status.ActiveOperation == nil {
+					t.Fatal("a failed write of the UID let the claim go")
+				}
+				if got := storedTTL(t, api, run.job); got != nil {
+					t.Fatalf("the Job's TTL = %d after the failed write of the UID, want none yet", *got)
+				}
+			}
+			if _, err := reconciler.Reconcile(ctx, migrationRequest(run.migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v on the pass that records the Job", err)
+			}
+			if settled := readMigration(t, api, run.migration); settled.Status.ActiveOperation != nil {
+				t.Fatalf("the stopped Job's claim was kept: %#v", settled.Status.ActiveOperation)
+			}
+			if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
+				t.Fatalf("the stopped Job's TTL = %s once its claim went, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
+			}
+			settled := readMigration(t, api, run.migration)
+			last, unresolved := settled.Status.LastRun, settled.Status.UnresolvedRun
+			if last == nil || unresolved == nil || last.OperationID != held.Status.LastRun.OperationID {
+				t.Fatalf("the unknown run's records went with its claim: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
+			if last.JobName != run.job.Name || last.JobUID != run.job.UID ||
+				unresolved.JobName != run.job.Name || unresolved.JobUID != run.job.UID {
+				t.Fatalf("the unknown run does not name Job %q (UID %q), which keeps its log: lastRun=%#v unresolved=%#v",
+					run.job.Name, run.job.UID, last, unresolved)
+			}
+			if last.DispatchedBy == nil || unresolved.DispatchedBy == nil {
+				t.Fatalf("the unknown run names its Job but not the manager that built it: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
+			if !unresolvedRunCopyMatches(settled, unresolved) {
+				t.Fatalf("the unresolved-run copy %q is not the record %#v",
+					settled.Annotations[operatorv1alpha1.UnresolvedRunAnnotation], unresolved)
 			}
 		})
 	}
-}
-
-// ownedByAnotherMigration replaces the Job under its name with a finished one
-// another PtahMigration owns.
-func ownedByAnotherMigration(t *testing.T, api client.WithWatch, job *batchv1.Job) *batchv1.Job {
-	t.Helper()
-	ctx := context.Background()
-
-	stored := &batchv1.Job{}
-	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
-		t.Fatal(err)
-	}
-	if err := api.Delete(ctx, stored); err != nil {
-		t.Fatal(err)
-	}
-	other := stored.DeepCopy()
-	other.ResourceVersion = ""
-	other.UID = "another-migration-job-uid"
-	other.OwnerReferences[0].UID = "another-migration-uid"
-	if err := api.Create(ctx, other); err != nil {
-		t.Fatal(err)
-	}
-	other.Status = stored.Status
-	if err := api.Status().Update(ctx, other); err != nil {
-		t.Fatal(err)
-	}
-	return other
 }
 
 // TestALostLeaseHandsTheRecordedJobToItsCleanup is a migration Apply whose

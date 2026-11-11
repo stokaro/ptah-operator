@@ -537,7 +537,7 @@ func TestWithUnstartedPodAddsWhatTheResourceReported(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			got := withUnstartedPod(row.failure, row.reported)
+			got := withUnstartedPod(row.failure, lastPodReport{reported: row.reported, jobName: "ptah-observe-app"})
 			if got.Error() != row.want {
 				t.Fatalf("withUnstartedPod() = %q, want %q", got, row.want)
 			}
@@ -647,6 +647,109 @@ func TestAFailureSaysItsPodReportIsTheLastOne(t *testing.T) {
 		if progressing == nil || !strings.Contains(progressing.Message, lastReported+said) {
 			t.Fatalf("Progressing = %#v, want %q", progressing, lastReported+said)
 		}
+	})
+}
+
+// The same falls inside one look with a Pod that ran to the end and wrote no
+// frame. Its Job is Complete, which says the Pod started, so the failure does
+// not repeat a report that says it could not.
+func TestALostFrameFromAPodThatRanRepeatsNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	const frameLost = "ptah runner result frame not found"
+	refuseStaleReport := func(t *testing.T, message, said string) {
+		t.Helper()
+		if !strings.Contains(message, frameLost) {
+			t.Fatalf("failure = %q, want the lost frame", message)
+		}
+		if strings.Contains(message, said) {
+			t.Fatalf("failure = %q repeats a report the Job's success proved out of date", message)
+		}
+	}
+	t.Run("a schema read", func(t *testing.T) {
+		t.Parallel()
+		schema := schemaFixture()
+		schema.Finalizers = []string{activeOperationFinalizer}
+		schema.Status.Phase = operatorv1alpha1.PhaseObserving
+		schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, ID: "observe-started",
+			JobName: "observe-started-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+		}
+		bindActiveInput(t, schema)
+		said := "Job observe-started-job cannot start its Pod: " + missingSecretText
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalWorkload(schema, batchv1.JobComplete)
+		reconciler, api := fakeReconciler(t, staticLogs{content: []byte("no frame here\n")}, schema, job, pod)
+
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		if failed == nil {
+			t.Fatal("no ReconciliationFailed condition")
+		}
+		refuseStaleReport(t, failed.Message, said)
+	})
+	t.Run("a schema Apply", func(t *testing.T) {
+		t.Parallel()
+		schema, plan, policy := dispatchedApplyWithPlan(t)
+		said := "Job " + schema.Status.ActiveOperation.JobName + " cannot start its Pod: " + missingSecretText
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalWorkload(schema, batchv1.JobComplete)
+		reconciler, api := fakeReconciler(t, staticLogs{content: []byte("no frame here\n")}, schema, plan, policy, job, pod)
+		reconciler.Locks = targetlock.New(api, api, nil)
+
+		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonApplyOutcomeUnknown) {
+			t.Fatalf("ReconciliationFailed = %#v, want ApplyOutcomeUnknown", failed)
+		}
+		refuseStaleReport(t, failed.Message, said)
+	})
+	t.Run("a migration read", func(t *testing.T) {
+		t.Parallel()
+		migration := migrationFixture()
+		migration.Status.ExecutionBinding = migrationExecutionBinding()
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseResolving
+		migration.Finalizers = []string{migrationOperationFinalizer}
+		operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationResolve)
+		said := "Job " + operation.JobName + " cannot start its Pod: " + missingSecretText
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+		reconciler, api := fakeMigrationReconciler(t, staticLogs{content: []byte("no frame here\n")}, migration, job, pod)
+
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		progressing := meta.FindStatusCondition(readMigration(t, api, migration).Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+		if progressing == nil {
+			t.Fatal("no Progressing condition")
+		}
+		refuseStaleReport(t, progressing.Message, said)
+	})
+	t.Run("a migration Apply", func(t *testing.T) {
+		t.Parallel()
+		migration, plan := awaitingApprovalFixture(t)
+		operation := applyClaimFor(t, migration, plan)
+		approvedClaim(operation, plan)
+		said := "Job " + operation.JobName + " cannot start its Pod: " + missingSecretText
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonPodConfigurationError, said)
+		job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+		reconciler, api := fakeMigrationReconciler(t, staticLogs{content: []byte("no frame here\n")},
+			migration, plan, job, pod, verificationPolicyConfigMap())
+		holdMigrationApplyLease(t, reconciler, api, migration)
+
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		run := readMigration(t, api, migration).Status.LastRun
+		if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+			t.Fatalf("last run = %#v, want an unknown outcome", run)
+		}
+		refuseStaleReport(t, run.Message, said)
 	})
 }
 

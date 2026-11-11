@@ -383,6 +383,18 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
 					return ctrl.Result{}, err
 				}
+				// The look Apply supervision takes at a Job in flight. The
+				// record this wait ends in carries what Progressing last said
+				// about the Pod, so a Pod that starts while the resource waits
+				// has to take those words off before the run ends without a
+				// result. A look that fails leaves them standing, still worded
+				// as the last report, and is not returned: an error requeue
+				// backs off, and this wait is what renews the Lease.
+				if job != nil && operation.JobUID != "" && !jobTerminal(job) {
+					if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
+						ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
+					}
+				}
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			// A dispatch this claim started, or a Job it can account for under
@@ -413,8 +425,15 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// names the epoch goes in this write and every other resource on
 				// that database would wait out the full lease for a run this pass
 				// watched stop.
+				//
+				// The resource and this record go on the next pass, and the
+				// MigrationRunUncertain Event outlives them, so the failure
+				// carries what the kubelet last said about a Pod that never
+				// started.
 				if _, err := r.retireUncertainMigrationApply(ctx, migration, job,
-					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), "", false); err != nil {
+					withLastPodReport(errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"),
+						migrationPodReport(migration, job)),
+					"", false); err != nil {
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -585,13 +604,16 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 		return ctrl.Result{}, true, err
 	}
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
-		errors.New("an execution component changed while the Apply was dispatched"), "")
+		withLastPodReport(errors.New("an execution component changed while the Apply was dispatched"),
+			migrationPodReport(migration, job)), "")
 	return result, true, err
 }
 
 // recordedMigrationApplyJob reads the Job the active claim recorded by UID, for
 // a pass that settles the claim without supervising its Job. It is nil when the
-// claim recorded no UID or the name it reserved holds no Job with that UID.
+// claim recorded no UID or the name it reserved holds no Job with that UID. A
+// claim with no UID records one before its run is settled
+// (adoptUnrecordedApplyJob), so the Job its dispatch created is handed on there.
 //
 // Handing the Job on is what lets the settling pass schedule its cleanup TTL
 // while the claim still names it, the one moment admission accepts it. A
@@ -787,8 +809,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		// The continuity write leaves a Pod the kubelet cannot start on
+		// Progressing, so the words are still there to carry.
 		return r.finishUncertainMigrationApply(ctx, migration, job,
-			errors.New("the database lock epoch changed under the dispatched run"), "")
+			withLastPodReport(errors.New("the database lock epoch changed under the dispatched run"),
+				migrationPodReport(migration, job)), "")
 	}
 	kind := migrationOperation(operation)
 	mutating := kind.Mutating
@@ -806,16 +831,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
 			errors.New("reconciliation was suspended while the operation ran"))
 	}
+	var standing *batchv1.Job
+	if found {
+		standing = job
+	}
 	verdict, cause, wait := missingJobsOf(&r.missingJobs).Verdict(client.ObjectKeyFromObject(migration), operation.ID,
-		mutationlifecycle.JobClaim{
-			Mutating:        mutating,
-			DispatchStarted: operation.DispatchStarted,
-			RecordedJobUID:  string(operation.JobUID),
-			Found:           found,
-			FoundJobUID:     string(job.UID),
-			OwnedExactly: found && exactControllerOwner(job.OwnerReferences,
-				operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID),
-		}, monotonicNow(r.Clock))
+		migrationJobClaim(migration, standing), monotonicNow(r.Clock))
 	switch verdict {
 	case mutationlifecycle.VerdictDispatch:
 		return r.dispatch.Dispatch(ctx, &migrationDispatch{r: r, migration: migration})
@@ -842,8 +863,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if found {
 			lost = job
 		}
+		// A replacement under the name is not the claim's Job, and the report
+		// does not take its success as the claim's Pod having run.
 		return r.finishUncertainMigrationApply(ctx, migration, lost,
-			errors.New(unaccountedMigrationJobReason(cause)), "")
+			withLastPodReport(errors.New(unaccountedMigrationJobReason(cause)),
+				migrationPodReport(migration, lost)), "")
 	case mutationlifecycle.VerdictRetry:
 		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
 	}
@@ -851,21 +875,10 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return result, err
 	}
 	if verdict == mutationlifecycle.VerdictAdopt {
-		before := migration.DeepCopy()
-		migration.Status.ActiveOperation.JobUID = job.UID
-		if mutating {
-			migration.Status.ActiveOperation.DispatchStarted = true
-		}
-		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		if _, err := r.adoptMigrationJob(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
 		operation = migration.Status.ActiveOperation
-		// The Job this claim reserved a name for already existed, so the pass
-		// that created it lost its own status write. Recording the UID is the
-		// same transition either way, and the guard above makes it happen once.
-		if mutating && r.Telemetry != nil {
-			r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
-		}
 	}
 	if !jobTerminal(job) {
 		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
@@ -896,7 +909,8 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		) == mutationlifecycle.DispositionUnaccounted {
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
-			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr, "")
+			return r.finishUncertainMigrationApply(ctx, migration, job, withLastPodReport(currentErr,
+				migrationPodReport(migration, job)), "")
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
@@ -965,7 +979,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return r.retryMigrationOperation(ctx, migration, job, errors.New(boundary))
 		}
 		return r.retryMigrationOperation(ctx, migration, job, withUnstartedPod(fmt.Errorf("read %s result: %w", operation.Type, parseErr),
-			meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)))
+			migrationPodReport(migration, job)))
 	}
 	if !jobSucceeded(job) {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s Job failed", operation.Type))
@@ -1004,12 +1018,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // A Job the claim cannot confirm is settled by the asymmetry every lost Job
 // is. A mutating claim's Job may already be running SQL, so the run is
 // recorded as outcome unknown, naming the Job, and nothing is dispatched
-// beside it. Where the claim recorded the Job's UID, the Job gets its cleanup
-// TTL once it stops, before the claim goes (scheduleStoppedMigrationJobCleanup):
-// the webhook holds a terminal Job to what its claim fixes without a rebuild, so
-// a Job another release built gets it, and one that fails that match is refused
-// and reported. Where the claim recorded none, the Job stays and a Warning says
-// so (#970). A read-only claim moves to a new attempt under a new name. The Job
+// beside it. A claim that never recorded the Job's UID records it first
+// (adoptMigrationJob), and the Job gets its cleanup TTL once it stops, before
+// the claim goes (scheduleStoppedMigrationJobCleanup): the webhook holds a
+// terminal Job to what its claim fixes without a rebuild, so a Job another
+// release built gets it, and one that fails that match is refused and
+// reported. A read-only claim moves to a new attempt under a new name. The Job
 // it leaves runs to its own deadline and gets no cleanup TTL here: the
 // controller-write webhook judges that TTL by the same matcher, and a refusal
 // would hold the retry behind it. Once that Job finishes, it stays until it is
@@ -1061,6 +1075,104 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 		return result, true, settleErr
 	}
 	return ctrl.Result{}, false, nil
+}
+
+// migrationJobClaim describes the Job standing under the name the active claim
+// reserved, or nil where nothing stands there, to the decision about what a
+// pass does with it (mutationlifecycle.VerdictFor).
+func migrationJobClaim(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) mutationlifecycle.JobClaim {
+	operation := migration.Status.ActiveOperation
+	claim := mutationlifecycle.JobClaim{
+		Mutating:        migrationOperation(operation).Mutating,
+		DispatchStarted: operation.DispatchStarted,
+		RecordedJobUID:  string(operation.JobUID),
+	}
+	if job != nil {
+		claim.Found = true
+		claim.FoundJobUID = string(job.UID)
+		claim.OwnedExactly = exactControllerOwner(job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID)
+	}
+	return claim
+}
+
+// adoptMigrationJob records job as the Job the active claim dispatched, where
+// the claim never recorded one: the pass that created the Job stopped, or lost
+// the create's answer, before it wrote the UID. It reports whether it recorded
+// the Job, and writes nothing for a Job the claim cannot adopt.
+//
+// The claim adopts only the Job mutationlifecycle.VerdictFor gives
+// VerdictAdopt: one this resource owns exactly as controller, under the name the
+// claim reserved, while the claim names no UID. Owning it is not enough. The
+// controller-write webhook holds only the manager's own creates to the claim
+// (validateMigrationJobCreate), and a Job anyone else created under that name is
+// held to nothing, so every caller first holds the Job to what the claim fixes. A
+// pass that supervises the Job does that in holdMigrationJobToItsClaim, and a pass
+// that settles an Apply nobody accounted for in unrecordedMigrationJobRefusal,
+// with the match admission applies when it admits the Job's cleanup TTL. A Job
+// that passes is the one this claim's dispatch created, whichever release built
+// it.
+//
+// Every claim records its Job's UID here or in the pass that created the Job, and
+// only once. So an Apply is also recorded as dispatched here and counted as
+// started, the transition the creating pass would have made.
+//
+// The UID is what the rest of the claim's life reads. A pass that supervises the
+// Job binds to it, the pass that asks whether the Job can still write lists the
+// Pods it owned, and admission admits a cleanup TTL only on the Job a claim names
+// by UID. A run this claim already recorded unknown without naming its Job, as
+// when the pass that recorded it could not read the name, names the Job in the
+// same write (nameRecordedMigrationRun), so the record points at the log the TTL
+// keeps.
+func (r *MigrationReconciler) adoptMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (bool, error) {
+	if verdict, _ := mutationlifecycle.VerdictFor(migrationJobClaim(migration, job)); verdict != mutationlifecycle.VerdictAdopt {
+		return false, nil
+	}
+	before := migration.DeepCopy()
+	operation := migration.Status.ActiveOperation
+	mutating := migrationOperation(operation).Mutating
+	operation.JobUID = job.UID
+	if mutating {
+		operation.DispatchStarted = true
+	}
+	nameRecordedMigrationRun(migration, operation, job)
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return false, err
+	}
+	if mutating && r.Telemetry != nil {
+		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
+	}
+	return true, nil
+}
+
+// nameRecordedMigrationRun names job in the records of the claim's run that name
+// no Job: status.lastRun and status.unresolvedRun, where either is the record of
+// operation. A record of another run, or one that names a Job, is left as it is.
+// The copy of the unresolved run on metadata follows the record in the same
+// status write (patchMigrationStatus).
+func nameRecordedMigrationRun(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	job *batchv1.Job,
+) {
+	if run := migration.Status.LastRun; run != nil && run.OperationID == operation.ID &&
+		run.JobName == "" && run.JobUID == "" {
+		run.JobName, run.JobUID = job.Name, job.UID
+		if run.DispatchedBy == nil {
+			run.DispatchedBy = dispatcherRecord(job)
+		}
+	}
+	if run := migration.Status.UnresolvedRun; run != nil && run.OperationID == operation.ID &&
+		run.JobName == "" && run.JobUID == "" {
+		run.JobName, run.JobUID = job.Name, job.UID
+		if run.DispatchedBy == nil {
+			run.DispatchedBy = dispatcherRecord(job)
+		}
+	}
 }
 
 // expectedMigrationJob is the Job the active claim builds now: the plan an
