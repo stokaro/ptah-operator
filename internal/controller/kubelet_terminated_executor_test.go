@@ -712,6 +712,11 @@ func TestAMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
 			case !row.pointed && reads != 0:
 				t.Errorf("the harvest read the log of an executor the kubelet lost %d times, want none", reads)
 			}
+			// The log is gone without a read, and the record says so.
+			if gone := strings.Contains(record.Message, lostExecutorLogText(run.pod)); gone == row.pointed {
+				t.Errorf("status.lastRun.message = %q, says the kubelet lost the executor's log: %t, want %t",
+					record.Message, gone, !row.pointed)
+			}
 			event := findEvent(run.recorder, "Warning MigrationRunUncertain ")
 			if event == "" {
 				t.Fatal("no MigrationRunUncertain Event was recorded")
