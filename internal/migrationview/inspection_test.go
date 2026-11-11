@@ -56,7 +56,7 @@ func TestLoadReadsTheUnresolvedRunAndTheLastRunsJob(t *testing.T) {
 
 // A hold always names a database, and the record of its run says whether anybody
 // reported it. A hold beside no such record does not say which it is.
-func TestRenderTextSaysWhenAHoldsDatabaseIsAssumed(t *testing.T) {
+func TestRenderTextSaysWhenAHoldsDatabaseComesFromItsPlan(t *testing.T) {
 	t.Parallel()
 
 	const fromPlan = "of its plan: the run named none"

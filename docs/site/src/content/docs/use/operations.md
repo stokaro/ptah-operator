@@ -1917,15 +1917,17 @@ does the summary the runner wrote into its Pod's termination message, where it
 was read in place of a log that was gone. Without either -- an Apply whose
 create was never confirmed, a Pod that wrote nothing a reader could use -- the
 record falls back to the database the plan was computed against, which is the
-last one this resource read. Either way the record names the only database the
-run can have changed. The runner refuses an Apply whose URL names another
-target than its plan's before Ptah starts, so a run whose frame names another
-one changed nothing, and a Secret that rotated only its password still names
-the same database. The identity is the route the URL describes: the login, the
-host, the port, the database and the parameters that are not a credential or a
-timeout. A host name that now resolves to another server is the same identity,
-and what stops a run there is the history fingerprint the Apply carries, which
-Ptah compares under the migration lock before it runs anything. Read that
+last one this resource read. The runner refuses an Apply whose URL names
+another target than its plan's before Ptah starts, so a run whose frame names
+another one changed nothing, and the planned database is the only one a run
+can have changed. A Secret that rotated only its password still names the same
+database. The identity is the route the URL describes: the login, the host, the
+port, the database and the parameters that are not a credential or a
+connection setting, such as a timeout or MySQL's `checkConnLiveness` and
+`maxAllowedPacket`. A host name that now resolves to another server is the same
+identity. What stops a run there is only the approved sequence the Apply
+carries: Ptah compares it with what it selects under the migration lock, so a
+server whose pending migrations are the approved ones runs them. Read that
 database before repairing anything: a reader who inspects another, such as a
 replica or a restored copy, finds nothing wrong and clears a record that was
 telling the truth.

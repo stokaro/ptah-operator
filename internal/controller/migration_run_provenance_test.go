@@ -322,9 +322,9 @@ func migrationHistoryInSync() dataplane.MigrationStatusReport {
 	}
 }
 
-// A run that named no database may have run nowhere, or against what its Secret
-// held by then. A clean reading of the planned database settles the hold, by the rule
-// that has always settled it, and says nothing about the run.
+// A run that named no database reported nothing about what it did. A clean
+// reading of the planned database settles the hold, by the rule that has always
+// settled it, and says nothing about the run.
 func TestAReadingDoesNotVerifyARunThatNamedNoDatabase(t *testing.T) {
 	t.Parallel()
 

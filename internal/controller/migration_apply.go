@@ -884,9 +884,8 @@ func recordMigrationRunProvenance(
 //
 // A reading of another database says nothing about what the run did, so it leaves
 // the run unverified, as it leaves an unresolved one unsettled. That covers a run
-// that named no database, since a reading always names one: the run may have executed
-// nothing or reached another database, so a clean reading of the planned one is no
-// statement about it. Its outcome is Unknown or Partial, which a wait stops on without
+// that named no database, since a reading always names one: the run reported
+// nothing, so a clean reading of the planned one is no statement about it. Its outcome is Unknown or Partial, which a wait stops on without
 // a reading, and what settles its hold is not this record. A run with no operation ID
 // was recorded by a release without this field and stays as it was.
 func recordMigrationRunVerification(migration *operatorv1alpha1.PtahMigration) {
@@ -1161,11 +1160,10 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // settles the record before another Apply can be authorized.
 //
 // reportedTarget is the database the run's result named, and is empty wherever
-// no result frame was read -- which is most of the ways in. A run that reached
-// a database the plan was never computed against arrives here through exactly
-// one of them, and that is the case where naming the planned database instead
-// would be wrong: a clean reading of it would settle a run that never touched
-// it, and a reading of the database that was touched could never match.
+// no result frame was read -- which is most of the ways in. A run the runner
+// refused because its Secret named another target arrives here through exactly
+// one of them, with that target named. Naming the planned database instead
+// would make the record say something the run's own result contradicts.
 //
 // Whether the database goes back in the same write depends on whether anything
 // the claim dispatched can still write, and that is read here, before the
