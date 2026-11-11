@@ -266,6 +266,72 @@ func TestASchemaRetryHarvestSettlesARefusedCleanup(t *testing.T) {
 	}
 }
 
+// TestASchemaStaleHarvestSettlesARefusedCleanup is the harvest of a finished
+// Resolve whose resource was edited while the Job ran, so the claim is discarded
+// as stale without its result. A refusal of the Job's TTL lets the claim go, and a
+// Warning names the Job left behind. A lost write fails the pass with the claim
+// kept.
+func TestASchemaStaleHarvestSettlesARefusedCleanup(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		answer  error
+		settled bool
+	}{
+		{
+			name: "refused by a policy",
+			answer: apierrors.NewInvalid(batchv1.SchemeGroupVersion.WithKind("Job").GroupKind(), "", field.ErrorList{
+				field.Forbidden(field.NewPath("spec", "ttlSecondsAfterFinished"), "injected policy refusal"),
+			}),
+			settled: true,
+		},
+		{name: "lost", answer: errors.New("connection reset by peer")},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run, reconciler, api, recorder := schemaResolveFinished(t)
+			edited := safetyGetSchema(t, api, run.schema)
+			edited.Generation++
+			if err := api.Update(ctx, edited); err != nil {
+				t.Fatal(err)
+			}
+			reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.answer)
+
+			_, err := reconciler.Reconcile(ctx, run.request())
+			claimed := run.schema.Status.ActiveOperation
+			stored := safetyGetSchema(t, api, run.schema)
+			events := migrationEvents(recorder)
+			if !row.settled {
+				if !errors.Is(err, row.answer) {
+					t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+				}
+				if !equality.Semantic.DeepEqual(stored.Status.ActiveOperation, claimed) {
+					t.Fatalf("a lost TTL write let the stale claim go: operation=%#v", stored.Status.ActiveOperation)
+				}
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Reconcile(): %v, want the refusal not to fail the pass", err)
+			}
+			if stored.Status.ActiveOperation != nil || stored.Status.Phase == operatorv1alpha1.PhaseVerifying {
+				t.Fatalf("the stale claim was not discarded: phase=%q operation=%#v", stored.Status.Phase, stored.Status.ActiveOperation)
+			}
+			if !schemaCleanupDeferredFor(events, run.job.Name, "injected policy refusal") {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays", events, run.job.Name)
+			}
+			if got := storedTTL(t, api, run.job); got != nil {
+				t.Fatalf("the Job's TTL = %s, want none after a refusal", ttlText(got))
+			}
+		})
+	}
+}
+
 // assertSchemaResolveConsumed fails unless the Resolve's result was consumed:
 // its claim retired and the resource moved on to verification.
 func assertSchemaResolveConsumed(t *testing.T, stored *operatorv1alpha1.PtahSchema) {

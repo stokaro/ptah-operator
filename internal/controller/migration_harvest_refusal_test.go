@@ -269,6 +269,77 @@ func TestAMigrationRetryHarvestSettlesARefusedCleanup(t *testing.T) {
 	}
 }
 
+// TestAMigrationStaleHarvestSettlesARefusedCleanup is the harvest of a finished
+// History read whose resource was edited while the Job ran, so the claim is
+// discarded as stale without its result. A refusal of the Job's TTL lets the
+// claim go, and a Warning names the Job left behind. A lost write fails the pass
+// with the claim kept.
+func TestAMigrationStaleHarvestSettlesARefusedCleanup(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name    string
+		answer  error
+		settled bool
+	}{
+		{
+			name: "refused by a policy",
+			answer: apierrors.NewInvalid(batchv1.SchemeGroupVersion.WithKind("Job").GroupKind(), "", field.ErrorList{
+				field.Forbidden(field.NewPath("spec", "ttlSecondsAfterFinished"), "injected policy refusal"),
+			}),
+			settled: true,
+		},
+		{name: "lost", answer: errors.New("connection reset by peer")},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			current := workloadBuilderForMigrations()
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+			reconciler, api := run.reconciler(t, current)
+			recorder := record.NewFakeRecorder(64)
+			reconciler.Recorder = recorder
+			finishMigrationJob(t, api, run, batchv1.JobComplete)
+			edited := readMigration(t, api, run.migration)
+			edited.Generation++
+			if err := api.Update(ctx, edited); err != nil {
+				t.Fatal(err)
+			}
+			reconciler.Client = refusingJobTTL(admittedJobWrites(api, current), row.answer)
+
+			_, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+			claimed := run.migration.Status.ActiveOperation
+			operation := readMigration(t, api, run.migration).Status.ActiveOperation
+			events := migrationEvents(recorder)
+			if !row.settled {
+				if !errors.Is(err, row.answer) {
+					t.Fatalf("Reconcile() error = %v, want the lost TTL write to fail the pass", err)
+				}
+				if !equality.Semantic.DeepEqual(operation, claimed) {
+					t.Fatalf("a lost TTL write let the stale claim go: operation=%#v", operation)
+				}
+				if cleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Reconcile(): %v, want the refusal not to fail the pass", err)
+			}
+			if operation != nil {
+				t.Fatalf("the stale claim was not discarded: operation=%#v", operation)
+			}
+			if !cleanupDeferredFor(events, run.job.Name, "injected policy refusal") {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays", events, run.job.Name)
+			}
+			if got := storedTTL(t, api, run.job); got != nil {
+				t.Fatalf("the Job's TTL = %s, want none after a refusal", ttlText(got))
+			}
+		})
+	}
+}
+
 // assertMigrationApplyRecorded fails unless the Apply's run was recorded as
 // applied, naming its Job, and its claim retired.
 func assertMigrationApplyRecorded(t *testing.T, stored *operatorv1alpha1.PtahMigration, job *batchv1.Job) {
