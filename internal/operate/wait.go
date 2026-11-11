@@ -813,10 +813,14 @@ func (w *waiter) checkRead(s snapshot) verdict {
 		}
 		return w.stop(s, StopReadFailed, message+"; the operator starts another read after its retry delay")
 	}
-	if refused := w.readRefusal(s); refused != nil {
-		return w.stop(s, StopPolicyRefused, refusalMessage(refused))
-	}
 	if !fresh {
+		// A fresh reading says a read that began after the request already
+		// ended with one, so a refusal is looked for only where there is none:
+		// beside a fresh reading it ended a later read, which this wait is not
+		// for.
+		if refused := w.readRefusal(s); refused != nil {
+			return w.stop(s, StopPolicyRefused, refusalMessage(refused))
+		}
 		return waitingFor("a read of the database that began after request %s (the last one is from %s)",
 			w.options.ReadRequest, instant(s.observedAt))
 	}
@@ -914,6 +918,12 @@ func refusalMessage(refused *metav1.Condition) string {
 // refusal it found, under the stamp it had, and the claim the next pass writes
 // takes it out of artifactRefusal, so one document of a new refusal says enough:
 // it is the end of that read, at rest until the next one.
+//
+// checkRead asks only of a document whose reading does not count. One that counts
+// was recorded by a read that began after the request, and the operator takes a
+// newer request on the pass after the rest that read ended in, milliseconds later,
+// so a wait polling at its interval can miss that rest and see the newer read's
+// refusal beside the reading. That refusal is a later read's.
 func (w *waiter) readRefusal(s snapshot) *metav1.Condition {
 	refused := w.artifactRefusal(s)
 	if refused == nil || s.refusal.same(w.refusalFloor) {

@@ -336,14 +336,29 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 		stamp(&d, family, resolvedAt)
 		return d
 	}
+	// accepted is a resource at rest in sync on an artifact the policy accepted.
+	accepted := func(family operate.Family) doc {
+		d := doc{phase: "InSync", observedAt: t0, conditions: []metav1.Condition{
+			condition(operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, "PolicySatisfied",
+				"The resolved artifact satisfied its verification policy", 3),
+		}}
+		stamp(&d, family, before)
+		return d
+	}
+	// takenNewer is d after the operator took a newer request, otherRequest.
+	takenNewer := func(d doc) doc {
+		d.annotation, d.lastRead = otherRequest, otherRequest
+		return d
+	}
 	for _, row := range []struct {
 		name string
 		// since is the baseline; nil makes the first read the baseline, as
 		// kubectl ptah wait --for read does.
 		since func(operate.Family) client.Object
 		docs  func(operate.Family) []doc
-		// wantStop is the read the wait stops at. Zero expects a timeout.
-		wantStop int
+		// wantStop is the read the wait stops at, and wantDone the read it is
+		// done at. Zero for both expects a timeout.
+		wantStop, wantDone int
 	}{
 		{
 			name:  "the read the request started ended in a refusal",
@@ -385,6 +400,16 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 			name:  "a refusal from before the request, dated after it by the operator's clock",
 			since: func(family operate.Family) client.Object { return asked(refusedAt(family, at(600))).object(family) },
 			docs:  func(family operate.Family) []doc { return []doc{taken(refusedAt(family, at(600)))} },
+		},
+		{
+			// kubectl ptah wait --for read begun while that read verifies: a
+			// schema's ArtifactVerified is already False, with Pending, under
+			// the stamp the refusal will carry.
+			name: "a wait begun while the read the request started verifies",
+			docs: func(family operate.Family) []doc {
+				return []doc{taken(verifying(family, after)), taken(refusedAt(family, after))}
+			},
+			wantStop: 2,
 		},
 		{
 			name: "a wait begun after the operator took the request finds the refusal standing",
@@ -431,6 +456,27 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 			docs:  func(family operate.Family) []doc { return []doc{taken(refusedAt(family, inFlight))} },
 		},
 		{
+			// The operator takes a newer request on the pass after the rest the
+			// read ended in, milliseconds later, so a poll can miss that rest
+			// and find the newer read's refusal beside this read's reading.
+			name:  "the read the request started ended with a reading, and a newer request's read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(accepted(family)).object(family) },
+			docs: func(family operate.Family) []doc {
+				// claimed is the claim of a Resolve on the accepted artifact, beside
+				// the reading at observedAt and a schema's Resolve at resolvedAt.
+				claimed := func(observedAt, resolvedAt time.Time) doc {
+					d := accepted(family)
+					d.phase, d.operation, d.observedAt = "Resolving", "Resolve", observedAt
+					stamp(&d, family, resolvedAt)
+					return d
+				}
+				newerRefused := refusedAt(family, at(150))
+				newerRefused.observedAt = at(30)
+				return []doc{taken(claimed(t0, before)), takenNewer(claimed(at(30), after)), takenNewer(newerRefused)}
+			},
+			wantDone: 3,
+		},
+		{
 			name:  "a refusal while a newer request waits for the operator",
 			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
 			docs: func(family operate.Family) []doc {
@@ -465,6 +511,10 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 				var stop *operate.StopError
 				var timedOut *operate.TimeoutError
 				switch {
+				case row.wantDone > 0:
+					if err != nil || tl.readCount() != row.wantDone {
+						t.Fatalf("err = %v after %d reads, want the read done at read %d", err, tl.readCount(), row.wantDone)
+					}
 				case row.wantStop > 0:
 					if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyRefused || stop.Phase != "Blocked" ||
 						stop.Target != operate.TargetRead || tl.readCount() != row.wantStop || !strings.Contains(stop.Message, refusalMessage) {
