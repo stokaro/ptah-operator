@@ -1002,7 +1002,8 @@ func TestAFailedMigrationReadGivesWayOnlyWhereNoJobStandsUnderItsName(t *testing
 			}
 
 			actual := reconcileMigration(t, reconciler, api, run.migration)
-			gaveWay := slices.ContainsFunc(migrationEvents(recorder), func(event string) bool {
+			events := migrationEvents(recorder)
+			gaveWay := slices.ContainsFunc(events, func(event string) bool {
 				return strings.HasPrefix(event, corev1.EventTypeNormal+" ReadRestarted ")
 			})
 			if !row.standing {
@@ -1012,7 +1013,7 @@ func TestAFailedMigrationReadGivesWayOnlyWhereNoJobStandsUnderItsName(t *testing
 				return
 			}
 			if gaveWay {
-				t.Fatalf("the failed read gave way over the Job under its name: %q", migrationEvents(recorder))
+				t.Fatalf("the failed read gave way over the Job under its name: %q", events)
 			}
 			assertAdopted(t, api, run)
 		})
