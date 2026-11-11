@@ -1120,15 +1120,8 @@ func (r *MigrationReconciler) scheduleStoppedMigrationJobCleanup(
 		// The name holds a later Job, and admission would refuse its TTL.
 		return nil
 	}
-	switch err := r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job); {
-	case err == nil, apierrors.IsNotFound(err):
-		return nil
-	case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
-		r.migrationJobCleanupNotScheduled(migration, operation, job, err)
-		return nil
-	default:
-		return err
-	}
+	return r.settleMigrationJobCleanupAnswer(migration, operation, job,
+		r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job))
 }
 
 // scheduleUnaccountedMigrationJobCleanup schedules the cleanup of the Job of an
@@ -1196,6 +1189,30 @@ func (r *MigrationReconciler) warnUnrecordedMigrationJob(
 		return
 	}
 	r.unrecordedMigrationJobStays(migration, operation, job)
+}
+
+// settleMigrationJobCleanupAnswer settles the answer to a migration Job's cleanup
+// TTL write. A TTL that was set, or a Job deleted since it was read, needs nothing
+// more. A refusal says admission will not collect the Job however often it is
+// asked: Forbidden from the controller-write webhook, Invalid from a
+// ValidatingAdmissionPolicy such as the controller-object guard. A Warning names
+// the Job, and the caller goes on. Any other failure may pass, so it is returned,
+// and the pass fails and asks again.
+func (r *MigrationReconciler) settleMigrationJobCleanupAnswer(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	job *batchv1.Job,
+	err error,
+) error {
+	switch {
+	case err == nil, apierrors.IsNotFound(err):
+		return nil
+	case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
+		r.migrationJobCleanupNotScheduled(migration, operation, job, err)
+		return nil
+	default:
+		return err
+	}
 }
 
 // migrationJobCleanupNotScheduled says that a Job will not be collected by a TTL.

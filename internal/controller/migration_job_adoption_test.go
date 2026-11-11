@@ -123,6 +123,10 @@ func runDispatchedBy(
 	job.Spec.Template.Labels[batchv1.ControllerUidLabel] = string(job.UID)
 	job.Spec.Template.Labels[batchv1.JobNameLabel] = job.Name
 	job.Status.Active = 1
+	// The Job controller starts the Job once the claim has created it, and its
+	// deadline counts from then.
+	started := operation.StartedAt
+	job.Status.StartTime = &started
 
 	// The hand-built workload supplies a Pod's spec and status; its identity
 	// is replaced with the one the built Job gives it.

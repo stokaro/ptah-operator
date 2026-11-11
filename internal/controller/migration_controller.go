@@ -1015,8 +1015,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 // refused gets the cleanup TTL a harvested read-only Job gets, once it stops
 // (retryPastRefusedMigrationJob). The claim is what lets admission accept that
 // TTL, so the claim stays until the Job stops, as it would for a Job it
-// supervised. A Job whose TTL admission would refuse is left at once, and a
-// Warning names it.
+// supervised, and no longer than the Job's own deadline and the grace its Pods
+// are given to stop. A Job whose TTL admission would refuse is left at once, and
+// so is one that has not stopped by then, and a Warning names it.
 //
 // A release that changes the Job or its Pod template therefore cannot adopt a
 // run its predecessor dispatched: a running Apply is recorded unknown, and a
@@ -1071,12 +1072,18 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 // a harvested read-only Job gets (markJobHarvested).
 //
 // The controller-write webhook admits a migration Job's cleanup TTL only once
-// the Job has finished, and only on the Job the active claim names by UID, held
-// to what the claim fixes without a rebuild (validateMigrationJobEnvelope is
-// the same match). Once the claim moves on, no claim names the Job, and its
-// cleanup cannot be scheduled again. So a Job admission would accept keeps the
-// claim until it stops, as a Job the claim supervised would: the wait ends at
-// the Job's own deadline, and a read-only claim holds no Lease while it waits.
+// the Job has finished, Complete or Failed as jobTerminal reads it, and only on
+// the Job the active claim names by UID, held to what the claim fixes without a
+// rebuild (validateMigrationJobEnvelope is the same match). Once the claim moves
+// on, no claim names the Job, and its cleanup cannot be scheduled again. So a Job
+// admission would accept keeps the claim until it stops, as a Job the claim
+// supervised would, and Progressing says what the claim waits for. A read-only
+// claim holds no Lease while it waits.
+//
+// The wait ends by migrationJobStopBound. Since Kubernetes 1.31 a Job past its
+// deadline carries only FailureTarget until every Pod has terminated, and a Pod on
+// a node that is gone may never terminate, so the Job would never finish. A Job
+// still not finished by that bound is left, as one admission would refuse is.
 //
 // A Job admission would refuse is left at once, because waiting for it would
 // hold the retry for nothing: one whose UID the claim never recorded, and one
@@ -1097,18 +1104,82 @@ func (r *MigrationReconciler) retryPastRefusedMigrationJob(
 		case refused != nil:
 			r.migrationJobCleanupNotScheduled(migration, operation, job, refused)
 		case !jobTerminal(job):
-			return ctrl.Result{RequeueAfter: activeJobPollInterval(false)}, nil
+			stopBy := migrationJobStopBound(job)
+			if r.now().Before(stopBy) {
+				return r.waitForRefusedMigrationJob(ctx, migration, job)
+			}
+			r.migrationJobCleanupNotScheduled(migration, operation, job, fmt.Errorf(
+				"the Job did not stop by its own deadline and the grace its Pods are given, %s, "+
+					"and admission admits a cleanup only on a Job that has finished",
+				stopBy.UTC().Format(time.RFC3339)))
 		default:
-			switch err := r.markJobHarvested(ctx, job); {
-			case err == nil, apierrors.IsNotFound(err):
-			case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
-				r.migrationJobCleanupNotScheduled(migration, operation, job, err)
-			default:
+			if err := r.settleMigrationJobCleanupAnswer(migration, operation, job, r.markJobHarvested(ctx, job)); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 	}
 	return r.retryMigrationOperation(ctx, migration, nil, failure)
+}
+
+// waitForRefusedMigrationJob keeps the claim over the running Job it refused, and
+// says so in Progressing. The message names the Job and nothing that changes from
+// one pass to the next, so a pass that finds it already written writes nothing
+// (patchMigrationStatus).
+func (r *MigrationReconciler) waitForRefusedMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (ctrl.Result, error) {
+	before := migration.DeepCopy()
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf(
+			"Waiting for Job %s, which this release cannot confirm, to stop before the %s operation runs again",
+			job.Name, migration.Status.ActiveOperation.Type))
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: activeJobPollInterval(false)}, nil
+}
+
+// jobStopReportSlack is how long past the moment a Job's Pods must have stopped
+// the claim still waits: for the kubelet to report the stopped Pod and the Job
+// controller to write the Job's terminal condition.
+const jobStopReportSlack = 30 * time.Second
+
+// migrationJobStopBound is when a Job that has not finished has had every chance
+// to: its own deadline, counted from its start as the Job controller counts it,
+// plus the termination grace its Pods are given and jobStopReportSlack. A Job the
+// Job controller has not started yet counts from its creation, which comes no
+// later. A FailureTarget or SuccessCriteriaMet condition says the Job controller is
+// already terminating the Job's Pods, so where one stands, the bound is its time
+// plus the same grace and slack, if that comes first.
+//
+// Neither condition is terminal for this purpose. Admission admits the TTL only on
+// a Job that is Complete or Failed, the same test jobTerminal makes.
+func migrationJobStopBound(job *batchv1.Job) time.Time {
+	grace := time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second
+	if seconds := job.Spec.Template.Spec.TerminationGracePeriodSeconds; seconds != nil {
+		grace = time.Duration(*seconds) * time.Second
+	}
+	start := job.CreationTimestamp.Time
+	if job.Status.StartTime != nil {
+		start = job.Status.StartTime.Time
+	}
+	var deadline time.Duration
+	if job.Spec.ActiveDeadlineSeconds != nil {
+		deadline = time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second
+	}
+	bound := start.Add(deadline + grace + jobStopReportSlack)
+	for _, condition := range job.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue || condition.LastTransitionTime.IsZero() ||
+			(condition.Type != batchv1.JobFailureTarget && condition.Type != batchv1.JobSuccessCriteriaMet) {
+			continue
+		}
+		if stopping := condition.LastTransitionTime.Add(grace + jobStopReportSlack); stopping.Before(bound) {
+			bound = stopping
+		}
+	}
+	return bound
 }
 
 // refusedMigrationJobCleanup says why admission would refuse the cleanup TTL of
