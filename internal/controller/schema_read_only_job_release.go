@@ -96,6 +96,10 @@ func (r *SchemaReconciler) letGoOfReadOnlySchemaJob(
 // supervised to its end. Waiting for a refused one holds nothing more, and
 // letting go would leave that Job with no cleanup, running beside the proof read
 // that starts on resume.
+//
+// It asks what reconcileActive's suspension site asks, whether a proof is owed,
+// rather than whether this claim serves it (schemaClaimServesProof): a claim
+// suspension does not discard is never let go here either.
 func schemaClaimMayWait(schema *operatorv1alpha1.PtahSchema) bool {
 	return !schema.Spec.Suspend || schema.Status.PendingObservation != nil
 }

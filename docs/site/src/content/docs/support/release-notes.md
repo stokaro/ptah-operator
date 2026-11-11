@@ -334,7 +334,11 @@ waiting for its Job.
   `SchemaJobCleanupDeferred` Warning names a Job still running then. That
   claim, and a Plan whose database lock epoch moved while its Job ran, waited
   for the Job under `spec.suspend` too. Neither waits once the resource is
-  suspended, and the Warning names a Job they leave running. A suspended
+  suspended, and the Warning names a Job they leave running; a deletion still
+  waits for the Plan's Job, by the same bound. The retired claim also renews
+  the Lease it holds while it waits. It let the Lease run out before, so a Job
+  that outlasted the Lease could let another claimant take the realm, and a
+  proof whose Lease changed hands is recorded `Unknown`. A suspended
   `PtahSchema` claim that serves a post-apply proof is the exception, here and
   in the entry above: the proof keeps its Lease and runs to its end under
   suspension, so a proof read whose Job this release cannot confirm waits for

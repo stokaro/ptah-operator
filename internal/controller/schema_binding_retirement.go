@@ -236,8 +236,25 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 		// Job's stop bound, past which a Job that carries only FailureTarget
 		// would hold the realm forever. A Job left running is named, since the
 		// claim is the last thing that could have collected it.
+		//
+		// While it waits, the claim renews the Lease it holds, as it does while it
+		// supervises its Job (waitForReadOnlySchemaJob): the Lease's duration was
+		// fixed when the claim, or the Apply a proof follows, took it, and the
+		// Job's deadline comes from the spec the Job was built from, so a Job can
+		// outlast a Lease nobody renews. Another claimant can take a Lease that
+		// lapsed while the Job's Pod still reads, and a proof whose Lease changed
+		// hands is recorded Unknown.
 		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema))
 		if stop == nil {
+			if schemaClaimHoldsLock(schema) {
+				acquired, requeue, err := r.acquireOperationLock(ctx, schema)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				if !acquired {
+					return ctrl.Result{RequeueAfter: requeue}, nil
+				}
+			}
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		r.schemaJobCleanupNotScheduled(schema, operation, job, stop)

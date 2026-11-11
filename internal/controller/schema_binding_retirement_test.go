@@ -8,6 +8,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -500,6 +501,8 @@ type retiredReadShape struct {
 	// proof makes the claim the Observe that proves an Apply, under the Lease
 	// the Apply took, where it is otherwise a Plan under a Lease of its own.
 	proof bool
+	// deadline is the Job's activeDeadlineSeconds, 900 where it is zero.
+	deadline int64
 }
 
 // retiredReadStarted is when the Job of every retired read started: a minute
@@ -549,6 +552,9 @@ func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
 		declarePodMetadata(t, schema, job, schema.Status.ActiveOperation)
 	}
 	job.Spec.ActiveDeadlineSeconds = ptr(int64(900))
+	if shape.deadline != 0 {
+		job.Spec.ActiveDeadlineSeconds = ptr(shape.deadline)
+	}
 	job.Status.StartTime = &retiredReadStarted
 	job.Status.Conditions = nil
 	pod.Status = corev1.PodStatus{Phase: corev1.PodRunning}
@@ -673,6 +679,90 @@ func TestARetiredReadOnlyClaimWaitsForItsJobOnlyUntilItStops(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A retired read-only claim that waits for its Job renews the Lease it holds on
+// every pass, as it does while it supervises the Job. The Lease's duration was
+// fixed when the claim, or the Apply a proof follows, took it, while the Job's
+// deadline comes from the spec the Job was built from, so a Job can outlast a
+// Lease nobody renews. Another claimant can take a Lease that lapsed, and a proof
+// whose Lease changed hands is recorded Unknown.
+// Each row's Job runs past the Lease the claim took, and two passes, each inside
+// the Lease the one before it left, carry the claim past that Lease.
+func TestARetiredReadOnlyClaimRenewsItsLeaseWhileItWaits(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name  string
+		shape retiredReadShape
+	}{
+		{name: "a Plan", shape: retiredReadShape{deadline: 1800}},
+		{name: "the Observe that proves an Apply", shape: retiredReadShape{proof: true, deadline: 1800}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := rotateOverARunningRead(t, row.shape)
+			reconciler, api := run.reconciler, run.api
+			taken := retiredReadLease(t, run)
+			epoch := taken.Annotations[leaseEpochAnnotation]
+			if taken.Spec.RenewTime == nil || taken.Spec.LeaseDurationSeconds == nil || epoch == "" {
+				t.Fatalf("the claim's Lease carries no renew time, duration or epoch: %#v", taken)
+			}
+			lapses := taken.Spec.RenewTime.Add(time.Duration(*taken.Spec.LeaseDurationSeconds) * time.Second)
+			if stopBy := jobStopBound(run.job); !lapses.Add(time.Minute).Before(stopBy) {
+				t.Fatalf("the Lease lapses at %s and the Job's stop bound is %s, so no pass waits past the Lease",
+					lapses, stopBy)
+			}
+			clock := &safetyClock{}
+			reconciler.Clock = clock.Now
+			reconciler.Locks = targetlock.New(api, api, clock)
+
+			for _, at := range []time.Time{lapses.Add(-time.Minute), lapses.Add(time.Minute)} {
+				clock.now = at
+				result := reconcileRetirementPass(t, reconciler, run.request, "wait for the running Job at "+at.String())
+				if result.RequeueAfter != maxLockContentionPoll {
+					t.Fatalf("the retired claim did not wait for its running Job at %s: %#v", at, result)
+				}
+				lease := retiredReadLease(t, run)
+				if lease.Spec.RenewTime == nil || !lease.Spec.RenewTime.Time.Equal(at) {
+					t.Fatalf("the waiting claim's Lease was renewed at %v, want %s", lease.Spec.RenewTime, at)
+				}
+				if holder := lease.Spec.HolderIdentity; holder == nil || *holder != run.holder ||
+					lease.Annotations[leaseEpochAnnotation] != epoch {
+					t.Fatalf("the waiting claim's Lease is held by %v under epoch %q, want %q under %q",
+						holder, lease.Annotations[leaseEpochAnnotation], run.holder, epoch)
+				}
+			}
+			got := safetyGetSchema(t, api, run.schema)
+			if operation := got.Status.ActiveOperation; operation == nil || operation.ID != run.retained.ID ||
+				operation.LeaseContinuityLost || got.Status.PendingBindingRetirement == nil {
+				t.Fatalf("the retired claim did not keep waiting under the Lease it took: %#v", got.Status)
+			}
+			if pending := got.Status.PendingObservation; row.shape.proof &&
+				(pending == nil || pending.Outcome == operatorv1alpha1.PendingObservationOutcomeUnknown) {
+				t.Fatalf("the proof is no longer owed as the Apply left it: %#v", pending)
+			}
+		})
+	}
+}
+
+// leaseEpochAnnotation is where targetlock records a Lease's epoch.
+const leaseEpochAnnotation = "operator.ptah.run/lease-epoch"
+
+// retiredReadLease reads the realm Lease the run's claim holds.
+func retiredReadLease(t *testing.T, run retiredRead) *coordinationv1.Lease {
+	t.Helper()
+	name, err := targetlock.LeaseName(testCoordinationDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &coordinationv1.Lease{}
+	if err := run.api.Get(context.Background(),
+		client.ObjectKey{Namespace: run.reconciler.LockNamespace, Name: name}, lease); err != nil {
+		t.Fatal(err)
+	}
+	return lease
 }
 
 // A rotation keeps a read-only claim whose Job may still reach the database,

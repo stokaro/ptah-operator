@@ -1328,10 +1328,13 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	// Lease until the Job stops. It waits by the rule every read-only claim
 	// waiting for its Job keeps (stopWaitingForJob): not at all for a suspended
 	// resource, and no longer than jobStopBound, past which a Job that carries
-	// only FailureTarget would hold the realm forever.
+	// only FailureTarget would hold the realm forever. A resource being deleted
+	// waits by the bound alone, suspended or not: deletion waits on a running Job
+	// for every claim that holds the lock (reconcileDeletion), and this is the
+	// pass it hands a claim whose epoch moved.
 	switch {
 	case honestJob && !jobTerminal(job):
-		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema))
+		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema) || schema.DeletionTimestamp != nil)
 		if stop == nil {
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}

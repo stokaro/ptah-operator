@@ -378,15 +378,17 @@ Every read-only claim that lets go of its Job settles it by that one rule,
 refused, one that suspension discards, and a migration's claim that an
 execution-binding change retires. A `PtahSchema` claim that a binding change
 retires is kept under the retired epoch until its Job stops, as a Plan's claim
-has to be to hold its Lease, and gets its TTL then. A Plan whose database lock
-epoch moved while its Job ran waits for the Job, renewing the Lease, before its
-result is discarded. Every one of these waits keeps the same rule
-(`stopWaitingForJob`): no longer than the bound above (`jobStopOverdue`), and
-not at all while the resource is suspended. The one exception is a `PtahSchema`
-claim that serves post-apply proof, which waits under a suspension too
+has to be to hold its Lease, renews that Lease while it waits, and gets its TTL
+then. A Plan whose database lock epoch moved while its Job ran waits for the
+Job, renewing the Lease, before its result is discarded. Every one of these
+waits keeps the same rule (`stopWaitingForJob`): no longer than the bound above
+(`jobStopOverdue`), and not at all while the resource is suspended. A
+`PtahSchema` claim that serves post-apply proof waits under a suspension too
 (`schemaClaimMayWait`): proof outranks suspension, so suspension does not
-discard that claim, and the proof keeps renewing its Lease anyway. A claim that
-stops waiting names the Job it leaves running in a Warning Event.
+discard that claim, and the proof keeps renewing its Lease anyway. So does the
+lost-epoch Plan of a resource being deleted, as deletion waits on the running
+Job of every claim that holds the lock. A claim that stops waiting names the
+Job it leaves running in a Warning Event.
 
 Suspension prevents new operations. It does not necessarily stop one that is
 already running: nothing deletes a running Job or its Pod, and a cleanup TTL
@@ -574,7 +576,8 @@ leaves `status.plan` in that write, so the plan status names always belongs to
 the current epoch. A read-only claim stays in `status.activeOperation` until a
 Job of this resource under the recorded name has stopped, whether or not the
 controller can prove that Job's envelope, so a Plan's Lease is not handed back
-while its Pod can still reach the database. It stays no longer than the Job's
+while its Pod can still reach the database, and it renews the Lease it holds on
+every pass while it waits. It stays no longer than the Job's
 stop bound, and not at all once the resource is suspended unless it serves a
 proof, by the rule every read-only wait keeps, and a Warning Event names a Job
 it leaves running. The claim is then retired, and the

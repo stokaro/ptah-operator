@@ -469,7 +469,7 @@ produced across an epoch change is discarded rather than read: the lock it held
 was somebody else's by then. The read waits for its Job to stop first, renewing
 the Lease, no longer than the Job's deadline, the grace of its Pods and 30
 seconds, and not at all once the resource is suspended unless it serves a
-proof.
+proof or the resource is being deleted.
 
 ## The migration lifecycle
 

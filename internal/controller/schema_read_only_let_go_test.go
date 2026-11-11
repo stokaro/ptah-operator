@@ -922,9 +922,11 @@ func TestASuspendedProofReadWaitsForTheJobItRefused(t *testing.T) {
 // jobStopBound, dated from what the built Job carries: a Job past its deadline
 // carries only FailureTarget until every Pod has terminated, and would otherwise
 // hold the realm forever. It does not wait at all for a suspended resource,
-// unless the claim proves an Apply, which outranks suspension. A claim that stops
-// waiting is discarded with its Lease handed back, and a Warning names the Job,
-// which has no TTL.
+// unless the claim proves an Apply, which outranks suspension. A resource being
+// deleted waits by the bound alone, suspended or not, as deletion waits on the
+// running Job of every claim that holds the lock. A claim that stops waiting is
+// discarded with its Lease handed back, and a Warning names the Job, which has
+// no TTL.
 func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	t.Parallel()
 
@@ -932,9 +934,9 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	for _, row := range []struct {
 		name string
 		// past dates the pass at the Job's stop bound rather than a second
-		// before it, suspend suspends the resource, and proof makes the claim
-		// the Plan that proves an Apply.
-		past, suspend, proof bool
+		// before it, suspend suspends the resource, proof makes the claim the
+		// Plan that proves an Apply, and deleting deletes the resource first.
+		past, suspend, proof, deleting bool
 		// stays is what the Warning says of the Job the claim stops waiting
 		// for, or empty where the claim waits on.
 		stays string
@@ -943,6 +945,11 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 		{name: "at its stop bound", past: true, stays: "the Job did not stop by its own deadline"},
 		{name: "suspended inside its stop bound", suspend: true, stays: notWaited},
 		{name: "suspended while it proves an Apply", suspend: true, proof: true},
+		{name: "suspended and being deleted inside its stop bound", suspend: true, deleting: true},
+		{
+			name: "being deleted at its stop bound", past: true, deleting: true,
+			stays: "the Job did not stop by its own deadline",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -953,6 +960,14 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
 			run.schema.Spec.Suspend = row.suspend
 			reconciler, api, recorder := run.reconciler(t, current)
+			if row.deleting {
+				if err := api.Delete(ctx, run.schema.DeepCopy()); err != nil {
+					t.Fatal(err)
+				}
+				if deleting := safetyGetSchema(t, api, run.schema); deleting.DeletionTimestamp == nil {
+					t.Fatal("the resource is not being deleted, so the row measures nothing about deletion")
+				}
+			}
 			holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
 			if holder == "" {
 				t.Fatal("the running Plan's claim holds no Lease, so nothing below measures one")
@@ -969,7 +984,12 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Reconcile(): %v", err)
 			}
-			got := safetyGetSchema(t, api, run.schema)
+			// A deletion that lets go of the claim also lets go of the resource.
+			got := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.schema), got); err != nil &&
+				!(row.deleting && row.stays != "" && apierrors.IsNotFound(err)) {
+				t.Fatal(err)
+			}
 			events := migrationEvents(recorder)
 			if ttl := storedTTL(t, api, run.job); ttl != nil {
 				t.Fatalf("the running Job's TTL = %d, want none", *ttl)
