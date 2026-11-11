@@ -18,11 +18,16 @@ out of silence.
 
 ## 0.2.11
 
-**Before you upgrade.** Under `apply: Always`, a plan that changes an existing
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Under `apply: Always`, a plan that changes an existing
 PostgreSQL view's `security_invoker`, or changes the definition of a view that
 states it, now waits for an approval bound to it. A plan published before the
 upgrade that holds such a statement and waits for an approval is planned again
-and asks for a new one.
+and asks for a new one. A dashboard or an alert that reads
+`ptah_operator_plans_total` or
+`ptah_operator_approvals_total{outcome="required"}` for `family="schema"`, or a
+script that counts `ApprovalRequired` Events, has to expect one count for each
+plan rather than one for each read of a plan waiting for approval.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -32,9 +37,22 @@ and asks for a new one.
   `CREATE OR REPLACE VIEW`. It read only `false` and `off` before, so a value
   Ptah wrote as `0` or `no` ran unattended as well. Ptah restates a view's
   options when its definition changes, so such a change waits too, as a
-  `CREATE OR REPLACE FUNCTION` does. `CREATE VIEW` is read as before. A `CREATE SCHEMA` for a schema the URL leaves out still runs
-  unattended; [Databases and privileges](../databases/#postgresql) says what it
-  does under the documented login.
+  `CREATE OR REPLACE FUNCTION` does. `CREATE VIEW` is read as before. A
+  `CREATE SCHEMA` for a schema the URL leaves out still runs unattended;
+  [Databases and privileges](../databases/#postgresql) says what it does under
+  the documented login.
+- **A waiting plan counted once.** A scheduled read of a schema clears the plan
+  it waits on and publishes the same plan again when the database has not
+  changed. The plan counter, the required-approval counter and the
+  `ApprovalRequired` Event took that plan for a new one, so a plan waiting for a
+  day under a short interval was counted, and announced, once for each read.
+  They now follow the plan's `PlanPublished` entry in `status.journal`. A plan
+  already published still records an `ApprovalRequired` Event, and counts as
+  `required`, each time it starts asking: after something withdrew its
+  requirement, or after an edit of `spec.policy.apply` such as `Never` to
+  `OnApproval`. [Events](../../troubleshoot/events/) lists the cases. Migrations
+  keep the plan they wait on in status through a read, so their counters did not
+  move.
 
 ## 0.2.10
 

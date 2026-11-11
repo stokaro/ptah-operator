@@ -429,6 +429,32 @@ func TestADiscardedMigrationPlanCountsNoDecisionUntilAReadWithdrawsIt(t *testing
 	}
 }
 
+// A migration's scheduled read keeps the plan it waits on in status until the plan
+// it computes takes its place, and ApprovalRequired stays True through it. The
+// counters never see the plan go away and come back, which is what made a schema
+// count a waiting plan once per read (#871).
+func TestAScheduledReadOfAWaitingMigrationPlanCountsNothing(t *testing.T) {
+	t.Parallel()
+
+	harness, clock, plan := waitingForAnApproval(t)
+	observed := &telemetryObservation{}
+	harness.reconciler.Telemetry = observed
+	for read := range 2 {
+		readToTheHistory(harness, clock)
+		if during := harness.migration(); during.Status.Plan == nil || during.Status.Plan.UID != plan.UID {
+			t.Fatalf("read %d named plan %+v while it ran, want %s; this row is about a read that keeps it", read+1, during.Status.Plan, plan.Name)
+		}
+		harness.answer(historyAnswer(harness, pendingReport()))
+		again := harness.migration()
+		if again.Status.Phase != operatorv1alpha1.MigrationPhaseAwaitingApproval || again.Status.Plan == nil || again.Status.Plan.UID != plan.UID {
+			t.Fatalf("read %d left phase %s and plan %+v, want plan %s waiting again", read+1, again.Status.Phase, again.Status.Plan, plan.Name)
+		}
+	}
+	if len(observed.plans) != 0 || len(observed.approvals) != 0 {
+		t.Fatalf("two reads of the waiting plan reported plans %q and approvals %q, want none", observed.plans, observed.approvals)
+	}
+}
+
 // A read-only operation that has to be retried is an operation failure at its
 // own stage. History is the stage a schema does not have, and mapping the
 // migration enum through the schema one reported it as the controller's own
