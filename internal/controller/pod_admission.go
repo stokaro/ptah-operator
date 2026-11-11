@@ -12,7 +12,9 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -181,35 +183,90 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 	return reading, nil
 }
 
+// lastPodReport is what a resource last reported about the Pod of the Job its
+// active claim names, and whether that Job has said since that the Pod ran.
+type lastPodReport struct {
+	// reported is the condition the resource reports a Pod that cannot start
+	// on: Progressing on a migration, Ready on a schema.
+	reported *metav1.Condition
+	// jobName is the Job the claim names. The report has to be about it.
+	jobName string
+	// ran is a Job with the claim's UID that reports a succeeded Pod or
+	// Complete: the Pod started after the last look, and the report is wrong.
+	ran bool
+}
+
+// migrationPodReport is a migration's report about its claim's Pod. job is the
+// Job the ending pass holds, or nil; a Job that is not the claim's own by its
+// recorded UID says nothing about the claim's Pod.
+func migrationPodReport(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) lastPodReport {
+	operation := migration.Status.ActiveOperation
+	if operation == nil {
+		return lastPodReport{}
+	}
+	return lastPodReport{
+		reported: meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing),
+		jobName:  operation.JobName,
+		ran:      claimJobRan(job, operation.JobUID),
+	}
+}
+
+// schemaPodReport is migrationPodReport for a schema.
+func schemaPodReport(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) lastPodReport {
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		return lastPodReport{}
+	}
+	return lastPodReport{
+		reported: meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady),
+		jobName:  operation.JobName,
+		ran:      claimJobRan(job, operation.JobUID),
+	}
+}
+
+// claimJobRan is a Job that is the claim's own and has run a Pod to success.
+// A replacement under the same name, or any Job when the claim recorded no UID
+// to compare, is not evidence about the claim's Pod. A failed Job is not
+// evidence either way: the Job controller counts a Pod its deadline deleted as
+// failed, whether or not that Pod ever started.
+func claimJobRan(job *batchv1.Job, recorded types.UID) bool {
+	return job != nil && job.UID == recorded && (job.Status.Succeeded > 0 || jobSucceeded(job))
+}
+
 // withUnstartedPod adds what the resource last reported about a Pod that could
 // not start to a failure that says only that no result arrived. The Job's
 // deadline removes the Pod, so what this operation reported is all that is left
 // to say why. judgePodAdmission keeps the condition standing until this reads it.
 //
 // The report can be out of date, so the words say whose they are. The resource
-// looks at a running Pod every 30 seconds and the terminal pass does not look at
-// its waiting state at all, so a Secret that arrived and a Pod that then started
-// and died without a result can fall between two looks.
-func withUnstartedPod(failure error, reported *metav1.Condition) error {
+// looks at a read-only operation's Pod every 30 seconds and at an Apply's every
+// 5, and the terminal pass does not look at its waiting state at all, so a
+// Secret that arrived and a Pod that then started and died without a result can
+// fall between two looks.
+func withUnstartedPod(failure error, report lastPodReport) error {
 	if !errors.Is(failure, runner.ErrFrameNotFound) {
 		return failure
 	}
-	return withLastPodReport(failure, reported)
+	return withLastPodReport(failure, report)
 }
 
 // withLastPodReport adds the same words to a failure that ended an Apply before
 // anything read its result: its inputs changed, its Job went, an execution
-// component changed under it, or the resource was deleted. Such a failure says
-// what ended the run and nothing about why its Pod never started, and by then
-// the Pod is usually gone. A person who fixes urlFrom after reading
-// `secret "x" not found` changes the inputs, and the record would say only that.
+// component changed under it, the database lock changed hands, or the resource
+// was deleted. Such a failure says what ended the run and nothing about why its
+// Pod never started, and by then the Pod is usually gone. A person who fixes
+// urlFrom after reading `secret "x" not found` changes the inputs, and the
+// record would say only that.
 //
-// No result was read on those paths, so nothing says the Pod started after the
-// last look either, and the words are worded as the last report, as
-// withUnstartedPod's are. A Pod that a look found started has taken the
-// condition off PodConfigurationError, and then nothing is added.
-func withLastPodReport(failure error, reported *metav1.Condition) error {
-	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) {
+// No result was read on those paths, so the words are worded as the last
+// report, as withUnstartedPod's are. Nothing is added when the report is about
+// another Job, when a look found the Pod started and took the condition off
+// PodConfigurationError, or when the claim's Job says a Pod succeeded after the
+// last look.
+func withLastPodReport(failure error, report lastPodReport) error {
+	reported := report.reported
+	if reported == nil || reported.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) ||
+		!strings.HasPrefix(reported.Message, "Job "+report.jobName+" ") || report.ran {
 		return failure
 	}
 	return fmt.Errorf("%w; last reported before that: %s", failure, reported.Message)

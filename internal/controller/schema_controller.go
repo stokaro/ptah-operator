@@ -1002,7 +1002,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if !acquired {
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
-			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job is missing and will not be recreated"))
+			return r.finishUncertainApply(ctx, schema, nil, withLastPodReport(
+				errors.New("dispatched Apply Job is missing and will not be recreated"), schemaPodReport(schema, nil)))
 		}
 		return r.dispatch.Dispatch(ctx, &schemaDispatch{r: r, schema: schema})
 	}
@@ -1032,7 +1033,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	})
 	switch verdict {
 	case mutationlifecycle.VerdictUnaccounted:
-		return r.finishUnknownRunningApply(ctx, schema, errors.New(unaccountedSchemaJobReason(cause)))
+		// A replacement under the name is not the claim's Job, and the report
+		// does not take its success as the claim's Pod having run.
+		return r.finishUnknownRunningApply(ctx, schema,
+			withLastPodReport(errors.New(unaccountedSchemaJobReason(cause)), schemaPodReport(schema, job)))
 	case mutationlifecycle.VerdictRetry:
 		return r.retryOperation(ctx, schema, nil, errors.New(retriedSchemaJobReason(cause)))
 	}
@@ -1112,8 +1116,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// its formerly exact inputs became stale. Never classify that case
 			// like an undispatched read-only operation: force fresh observation
 			// before any later plan can run.
-			return r.finishUncertainApply(ctx, schema, job, withLastPodReport(currentErr,
-				meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)))
+			return r.finishUncertainApply(ctx, schema, job, withLastPodReport(currentErr, schemaPodReport(schema, job)))
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
@@ -1181,7 +1184,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if failure == nil {
 				failure = fmt.Errorf("Apply Job did not complete successfully")
 			}
-			failure = withUnstartedPod(failure, meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady))
+			failure = withUnstartedPod(failure, schemaPodReport(schema, job))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
 				evidence.PodUIDs, evidence.PodCount, !evidence.Trusted,
@@ -1194,7 +1197,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.retryOperation(ctx, schema, job, errors.New(boundary))
 			}
 			return r.retryOperation(ctx, schema, job, withUnstartedPod(fmt.Errorf("read %s result: %w", operation.Type, parseErr),
-				meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)))
+				schemaPodReport(schema, job)))
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
 	}
@@ -2566,12 +2569,22 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	// The Job is read only to ask whether its Pod ran since the last look. The
+	// finisher still gets none: the retired-Job record the rotation writes
+	// schedules its cleanup once it stops.
+	job := &batchv1.Job{}
+	switch err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job); {
+	case apierrors.IsNotFound(err):
+		job = nil
+	case err != nil:
+		return ctrl.Result{}, fmt.Errorf("read the dispatched Apply Job: %w", err)
+	}
 	evidence := podIdentityEvidence(pods)
 	return r.finishUncertainApplyWithEvidenceAndBinding(
 		ctx,
 		schema,
 		nil,
-		failure,
+		withLastPodReport(failure, schemaPodReport(schema, job)),
 		evidence.PodUIDs,
 		evidence.PodCount,
 		true,

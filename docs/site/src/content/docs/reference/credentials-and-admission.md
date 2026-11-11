@@ -295,19 +295,39 @@ words after the sentence that says how it ended. Pointing `urlFrom` at the Secre
 that exists is one: it changes the inputs the Apply was decided from, and the Job
 keeps the Pod it made, which still names the old Secret. Past the deadline a
 `PtahMigration` records `the operation inputs changed while the Job was running;
-last reported before that:` and the words in `status.lastRun`, and a `PtahSchema`
-reports `ApplyOutcomeUnknown` with `operation inputs changed while the Job was
-running; last reported before that:` and the words. A `PtahMigration` Apply keeps
-them the same way when its Job was deleted (`the dispatched Apply Job is missing
-and will not be recreated`) and when a release changed an execution component
-under it (`an execution component changed while the Apply was dispatched`). A
-`PtahMigration` deleted while its Apply waited takes its status with it, and its
-`MigrationRunUncertain` Warning Event carries `the PtahMigration was deleted while
-a dispatched Apply was in flight; last reported before that:` and the words.
+last reported before that:` and the words in `status.lastRun`. A `PtahMigration`
+Apply keeps them the same way when its Job was deleted (`the dispatched Apply Job
+is missing and will not be recreated`), replaced by another Job under the same name
+(`the dispatched Apply Job was replaced`) or left without its owner reference (`the
+dispatched Apply Job lost its owner`), when a release changed an execution
+component under it (`an execution component changed while the Apply was
+dispatched`), and when its database Lease changed hands (`the database lock epoch
+changed under the dispatched run`). A `PtahMigration` deleted while its Apply
+waited takes its status with it, and its `MigrationRunUncertain` Warning Event
+carries `the PtahMigration was deleted while a dispatched Apply was in flight; last
+reported before that:` and the words.
 
-Those words are the last report and not a reading taken at the end. The Secret can
-arrive and the Pod can start and die without a result between two looks, and the
-failure reads the same, so check whether the Secret exists now before you change it.
+A `PtahSchema` keeps the words in one place: the message of
+`ReconciliationFailed`, reason `ApplyOutcomeUnknown`, until the next result
+rewrites it. Its `ApplyOutcomeUnknown` Warning Event is fixed text. The sentences
+are `operation inputs changed while the Job was running`, `dispatched Apply Job is
+missing and will not be recreated`, `dispatched Apply Job was replaced`,
+`dispatched Apply Job lost schema ownership` and `execution binding changed after
+Apply dispatch`, each followed by `; last reported before that:` and the words. A
+`PtahSchema` whose database Lease changed hands records `database lock continuity
+was lost during Apply` without them: the write that records the lost Lease has
+already replaced `Ready`, where they were.
+
+Those words are the last report and not a reading taken at the end. Nothing is
+added when the claim's own Job reports a Pod that succeeded. A Pod can still start
+after the last look and fail without a result, and the failure reads the same. The
+resource looks at an Apply's Pod every 5 seconds, also while a deleted
+`PtahMigration` waits for it. Some endings are recorded while the Pod can still
+start, and a Pod that starts later does not change the record: a `PtahMigration`
+keeps its claim until the Pod stops when the Job went while the Pod stands, when an
+execution component changed, and when its Lease changed hands, and a `PtahSchema`
+goes on to observation at once. So check whether the Secret exists now before you
+change it.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 

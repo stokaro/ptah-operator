@@ -97,12 +97,15 @@ one `stale` outcome, where it took two of each.
   `PtahMigration` Apply past its Job's deadline then recorded only `result frame
   not found`, and an Apply that ended another way before its result was read
   recorded only how it ended: its inputs changed, as when `urlFrom` is pointed at
-  the Secret that exists, or, on a `PtahMigration`, its Job was deleted, a
-  release changed an execution component under it, or the resource was deleted.
+  the Secret that exists, its Job was deleted, replaced or left without its
+  owner, a release changed an execution component under it, or, on a
+  `PtahMigration`, its database Lease changed hands or the resource was deleted.
   Those records now carry the words after that sentence, as what was last
   reported: `status.lastRun` and `Blocked` on a `PtahMigration`, and
   `ReconciliationFailed` on a `PtahSchema`. A deleted `PtahMigration` keeps them
-  in its `MigrationRunUncertain` Warning Event.
+  in its `MigrationRunUncertain` Warning Event, and now looks at the Pod while
+  it waits for it, so a Pod that starts in that wait takes them off. Nothing is
+  added when the claim's own Job reports a Pod that succeeded.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
   has the messages.
 

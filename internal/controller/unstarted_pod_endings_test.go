@@ -6,12 +6,15 @@ import (
 	"maps"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,12 +24,14 @@ import (
 
 // An Apply whose Pod the kubelet cannot start ends in one of several ways before
 // anything reads its result: a person fixes urlFrom after reading
-// `secret ... not found`, deletes the stuck Job, deletes the resource, or a
-// release moves an execution component under it. Each ending writes a sentence
-// of its own, and the record kept only that sentence, with no trace of why the
-// Pod never started (#972). These rows start from a Pod the kubelet reports,
-// read the words the resource wrote from it, end the Apply each way, and read
-// the record that is left once nothing can still write.
+// `secret ... not found`, deletes or replaces the stuck Job, deletes the
+// resource, a release moves an execution component under it, or the database
+// Lease changes hands. Each ending writes a sentence of its own, and the record
+// kept only that sentence, with no trace of why the Pod never started (#972).
+// These rows start from a Pod the kubelet reports, read the words the resource
+// wrote from it, end the Apply each way, and read the record that is left once
+// nothing can still write. The rows that end in a Pod that started after all
+// hold the words back.
 
 const lastReportedBefore = "; last reported before that: "
 
@@ -234,8 +239,265 @@ func TestADeletedMigrationsLastEventKeepsWhyItsApplyPodNeverStarted(t *testing.T
 	}
 }
 
-func TestASchemaApplyWhoseInputsChangedKeepsWhyItsPodNeverStarted(t *testing.T) {
+// startedAfterAll is the Secret arriving after the last look: the kubelet
+// starts the container, and the Job counts a ready Pod.
+func startedAfterAll(t *testing.T, api client.Client, job *batchv1.Job, pod *corev1.Pod) {
+	t.Helper()
+
+	ctx := context.Background()
+	storedPod := &corev1.Pod{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(pod), storedPod); err != nil {
+		t.Fatal(err)
+	}
+	runningExecutorPod(storedPod)
+	if err := api.Status().Update(ctx, storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedJob := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), storedJob); err != nil {
+		t.Fatal(err)
+	}
+	ready := int32(1)
+	storedJob.Status = batchv1.JobStatus{Active: 1, Ready: &ready}
+	if err := api.Status().Update(ctx, storedJob); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ranToSuccess is a Pod that started after the last look and ran the Apply to
+// the end: it succeeded, and the Job counts it and completes.
+func ranToSuccess(t *testing.T, api client.Client, job *batchv1.Job, pod *corev1.Pod) {
+	t.Helper()
+
+	ctx := context.Background()
+	storedPod := &corev1.Pod{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(pod), storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedPod.Status = corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: executorContainerName,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 0, Reason: "Completed", StartedAt: metav1.Now(), FinishedAt: metav1.Now(),
+		}},
+	}}}
+	if err := api.Status().Update(ctx, storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedJob := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), storedJob); err != nil {
+		t.Fatal(err)
+	}
+	storedJob.Status = succeededJobStatus()
+	if err := api.Status().Update(ctx, storedJob); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// endedWithoutAResult is a Pod that started and then failed before it wrote a
+// result: the container exited 1, and the Job used up its backoff limit.
+func endedWithoutAResult(t *testing.T, api client.Client, job *batchv1.Job, pod *corev1.Pod) {
+	t.Helper()
+
+	ctx := context.Background()
+	storedPod := &corev1.Pod{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(pod), storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedPod.Status = corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: executorContainerName,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 1, Reason: "Error", StartedAt: metav1.Now(), FinishedAt: metav1.Now(),
+		}},
+	}}}
+	if err := api.Status().Update(ctx, storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedJob := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), storedJob); err != nil {
+		t.Fatal(err)
+	}
+	storedJob.Status = batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{
+		Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonBackoffLimitExceeded,
+	}}}
+	if err := api.Status().Update(ctx, storedJob); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func succeededJobStatus() batchv1.JobStatus {
+	return batchv1.JobStatus{Succeeded: 1, Conditions: []batchv1.JobCondition{
+		{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue},
+		{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+	}}
+}
+
+// replacedBySucceededJob is a person deleting the claim's Job and creating
+// another under the same name, which then runs to success.
+func replacedBySucceededJob(t *testing.T, api client.Client, job *batchv1.Job) {
+	t.Helper()
+
+	ctx := context.Background()
+	stored := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Delete(ctx, stored.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	replacement := stored.DeepCopy()
+	replacement.ResourceVersion = ""
+	replacement.UID = "replacement-job-uid"
+	if err := api.Create(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	replacement.Status = succeededJobStatus()
+	if err := api.Status().Update(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Pod that starts after the last look and runs the Apply to the end leaves
+// the words standing on Progressing, since no look came between. The claim's
+// own Job says the Pod ran, and the record does not repeat a report that the
+// run proved out of date.
+func TestAMigrationApplyWhosePodRanBeforeItsInputsChangedRepeatsNoStaleReport(t *testing.T) {
 	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, _, migration, job, pod, said := unstartedMigrationApply(t)
+
+	// The Secret store synced and the Pod ran; meanwhile a person changed a
+	// setting the run's inputs include.
+	edited := readMigration(t, api, migration)
+	edited.Spec.Execution.ConnectTimeout = metav1.Duration{Duration: 45 * time.Second}
+	edited.Generation++
+	if err := api.Update(ctx, edited); err != nil {
+		t.Fatal(err)
+	}
+	ranToSuccess(t, api, job, pod)
+	reconcileMigration(t, reconciler, api, migration)
+
+	run := settledMigrationRun(t, api, migration)
+	if !strings.Contains(run.Message, "the operation inputs changed while the Job was running") {
+		t.Fatalf("last run message = %q, want the sentence a change of inputs writes", run.Message)
+	}
+	if strings.Contains(run.Message, said) {
+		t.Fatalf("last run message = %q repeats a report the Job's success proved out of date", run.Message)
+	}
+}
+
+// A Job someone created under the claim's name is not the claim's Job, so its
+// success says nothing about the claim's Pod.
+func TestAMigrationApplyWhoseJobWasReplacedKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, _, migration, job, pod, said := unstartedMigrationApply(t)
+
+	replacedBySucceededJob(t, api, job)
+	if stored := reconcileMigration(t, reconciler, api, migration); stored.Status.ActiveOperation == nil || stored.Status.UnresolvedRun == nil {
+		t.Fatalf("a replaced Job did not record its run, or let the claim go while its Pod stands: claim %#v, unresolved %#v",
+			stored.Status.ActiveOperation, stored.Status.UnresolvedRun)
+	}
+	if err := api.Delete(ctx, pod.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	reconcileMigration(t, reconciler, api, migration)
+
+	run := settledMigrationRun(t, api, migration)
+	if want := "the dispatched Apply Job was replaced" + lastReportedBefore + said; !strings.Contains(run.Message, want) {
+		t.Fatalf("last run message = %q, want it to carry %q", run.Message, want)
+	}
+}
+
+// The database Lease went while the Pod waited: it lapsed, or a person deleted
+// it. The renewal that follows creates another under a new epoch.
+func TestAMigrationApplyThatLostItsDatabaseLockKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, _, migration, job, pod, said := unstartedMigrationApply(t)
+
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(ctx, leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) == 0 {
+		t.Fatal("no database Lease exists, so removing it proves nothing")
+	}
+	for index := range leases.Items {
+		if err := api.Delete(ctx, &leases.Items[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stored := reconcileMigration(t, reconciler, api, migration); stored.Status.ActiveOperation == nil ||
+		!stored.Status.ActiveOperation.LeaseContinuityLost || stored.Status.UnresolvedRun != nil {
+		t.Fatalf("the renewal did not record the lost continuity, or settled the run itself: claim %#v, unresolved %#v",
+			stored.Status.ActiveOperation, stored.Status.UnresolvedRun)
+	}
+	if stored := reconcileMigration(t, reconciler, api, migration); stored.Status.ActiveOperation == nil || stored.Status.UnresolvedRun == nil {
+		t.Fatalf("the lost continuity did not record the run, or let the claim go while its Pod stands: claim %#v, unresolved %#v",
+			stored.Status.ActiveOperation, stored.Status.UnresolvedRun)
+	}
+
+	pastTheDeadline(t, api, job, pod)
+	reconcileMigration(t, reconciler, api, migration)
+
+	run := settledMigrationRun(t, api, migration)
+	if want := "the database lock epoch changed under the dispatched run" + lastReportedBefore + said; !strings.Contains(run.Message, want) {
+		t.Fatalf("last run message = %q, want it to carry %q", run.Message, want)
+	}
+}
+
+// A deleted resource waits for its Pod, and looks at it while it waits as
+// supervision does. A Pod that starts in that wait and then ends without a
+// result does not leave the Event a report the look found out of date.
+func TestADeletedMigrationWhosePodStartedWhileItWaitedRepeatsNoStaleReport(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	reconciler, api, recorder, migration, job, pod, said := unstartedMigrationApply(t)
+	recordedConfigurationErrors(recorder)
+
+	if err := api.Delete(ctx, readMigration(t, api, migration)); err != nil {
+		t.Fatal(err)
+	}
+	reconcileMigration(t, reconciler, api, migration)
+	startedAfterAll(t, api, job, pod)
+	waiting := reconcileMigration(t, reconciler, api, migration)
+	if progressing := meta.FindStatusCondition(waiting.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing); waiting.Status.ActiveOperation == nil ||
+		progressing == nil || progressing.Reason == string(operatorv1alpha1.ReasonPodConfigurationError) {
+		t.Fatalf("the deletion wait did not look at the Pod that started: claim %#v, Progressing %#v",
+			waiting.Status.ActiveOperation, progressing)
+	}
+
+	endedWithoutAResult(t, api, job, pod)
+	// One pass records the run, and the next lets the resource go.
+	for range 2 {
+		if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+	}
+	gone := &operatorv1alpha1.PtahMigration{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(migration), gone); !apierrors.IsNotFound(err) {
+		t.Fatalf("the deletion did not complete, so this is not what stays: error %v, finalizers %#v", err, gone.Finalizers)
+	}
+
+	event := findEvent(recorder, corev1.EventTypeWarning+" MigrationRunUncertain ")
+	if !strings.Contains(event, "the PtahMigration was deleted while a dispatched Apply was in flight") {
+		t.Fatalf("MigrationRunUncertain = %q, want the sentence a deletion writes", event)
+	}
+	if strings.Contains(event, said) {
+		t.Fatalf("MigrationRunUncertain = %q repeats a report the look found out of date", event)
+	}
+}
+
+// unstartedSchemaApply is unstartedMigrationApply for a schema, which reports a
+// Pod that cannot start on Ready. reconcileOnce runs one pass.
+func unstartedSchemaApply(t *testing.T) (
+	client.Client, *operatorv1alpha1.PtahSchema, *batchv1.Job, *corev1.Pod, string, func(),
+) {
+	t.Helper()
 
 	ctx := context.Background()
 	builder := workloadBuilderForMigrations()
@@ -268,7 +530,35 @@ func TestASchemaApplyWhoseInputsChangedKeepsWhyItsPodNeverStarted(t *testing.T) 
 		t.Fatalf("Ready while the Pod waits = %#v, want PodConfigurationError naming the Secret, "+
 			"or nothing below has words to keep", ready)
 	}
-	said := ready.Message
+	return api, schema, job, pod, ready.Message, reconcileOnce
+}
+
+// settledSchemaFailure is what a schema keeps once its claim is gone. It fails
+// unless the Apply's outcome was recorded as unknown, and returns
+// ReconciliationFailed: the ApplyOutcomeUnknown Event is fixed text, so this
+// condition is the one place the words stay until the next result.
+func settledSchemaFailure(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) *metav1.Condition {
+	t.Helper()
+
+	settled := safetyGetSchema(t, api, schema)
+	if settled.Status.ActiveOperation != nil {
+		t.Fatalf("the claim is still active, so this is not the record that stays: %#v", settled.Status.ActiveOperation)
+	}
+	if pending := settled.Status.PendingObservation; pending == nil || pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
+		t.Fatalf("pending observation = %#v, want the Apply's outcome unknown", pending)
+	}
+	failed := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonApplyOutcomeUnknown) {
+		t.Fatalf("ReconciliationFailed = %#v, want ApplyOutcomeUnknown", failed)
+	}
+	return failed
+}
+
+func TestASchemaApplyWhoseInputsChangedKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	api, schema, job, pod, said, reconcileOnce := unstartedSchemaApply(t)
 
 	edited := safetyGetSchema(t, api, schema)
 	edited.Spec.Target.URLFrom.Name = "application-database-fixed"
@@ -285,61 +575,159 @@ func TestASchemaApplyWhoseInputsChangedKeepsWhyItsPodNeverStarted(t *testing.T) 
 	pastTheDeadline(t, api, job, pod)
 	reconcileOnce()
 
-	settled := safetyGetSchema(t, api, schema)
-	if settled.Status.ActiveOperation != nil {
-		t.Fatalf("the claim is still active, so this is not the record that stays: %#v", settled.Status.ActiveOperation)
+	failed := settledSchemaFailure(t, api, schema)
+	if want := "operation inputs changed while the Job was running" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
+		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
 	}
-	if pending := settled.Status.PendingObservation; pending == nil || pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
-		t.Fatalf("pending observation = %#v, want the Apply's outcome unknown", pending)
+}
+
+func TestASchemaApplyWhoseJobWentKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	api, schema, job, _, said, reconcileOnce := unstartedSchemaApply(t)
+
+	if err := api.Delete(ctx, job.DeepCopy()); err != nil {
+		t.Fatal(err)
 	}
-	failed := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-	want := "operation inputs changed while the Job was running" + lastReportedBefore + said
-	if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonApplyOutcomeUnknown) || !strings.Contains(failed.Message, want) {
-		t.Fatalf("ReconciliationFailed = %#v, want ApplyOutcomeUnknown carrying %q", failed, want)
+	reconcileOnce()
+
+	failed := settledSchemaFailure(t, api, schema)
+	if want := "dispatched Apply Job is missing and will not be recreated" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
+		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
+	}
+}
+
+func TestASchemaApplyWhoseJobWasReplacedKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	api, schema, job, _, said, reconcileOnce := unstartedSchemaApply(t)
+
+	replacedBySucceededJob(t, api, job)
+	reconcileOnce()
+
+	failed := settledSchemaFailure(t, api, schema)
+	if want := "dispatched Apply Job was replaced" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
+		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
+	}
+}
+
+func TestASchemaApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	api, schema, _, _, said, reconcileOnce := unstartedSchemaApply(t)
+
+	// A release moved the executor while the Pod waited for its Secret.
+	moved := safetyGetSchema(t, api, schema)
+	moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+	if err := api.Status().Update(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	reconcileOnce()
+
+	failed := settledSchemaFailure(t, api, schema)
+	if want := "execution binding changed after Apply dispatch" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
+		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
 	}
 }
 
 func TestWithLastPodReportAddsWhatTheResourceReported(t *testing.T) {
 	t.Parallel()
 
+	const job = "ptah-m-apply-orders"
 	reported := &metav1.Condition{
 		Reason:  string(operatorv1alpha1.ReasonPodConfigurationError),
-		Message: "Job ptah-m-apply-orders cannot start its Pod: " + missingSecretText,
+		Message: "Job " + job + " cannot start its Pod: " + missingSecretText,
 	}
 	ended := errors.New("the operation inputs changed while the Job was running")
 	for _, row := range []struct {
-		name     string
-		reported *metav1.Condition
-		want     string
+		name   string
+		report lastPodReport
+		want   string
 	}{
 		{
-			name: "a Pod the kubelet could not start", reported: reported,
+			name: "a Pod the kubelet could not start", report: lastPodReport{reported: reported, jobName: job},
 			want: ended.Error() + lastReportedBefore + reported.Message,
 		},
-		{name: "no condition", want: ended.Error()},
+		{name: "no condition", report: lastPodReport{jobName: job}, want: ended.Error()},
 		{
 			name: "a Pod a look found started",
-			reported: &metav1.Condition{
+			report: lastPodReport{jobName: job, reported: &metav1.Condition{
 				Reason: string(operatorv1alpha1.ReasonOperationInProgress), Message: "Apply operation is in progress",
-			},
+			}},
 			want: ended.Error(),
 		},
 		{
 			name: "a Pod admission refused",
-			reported: &metav1.Condition{
-				Reason: string(operatorv1alpha1.ReasonPodAdmissionRefused), Message: "pods \"x\" is forbidden",
-			},
+			report: lastPodReport{jobName: job, reported: &metav1.Condition{
+				Reason:  string(operatorv1alpha1.ReasonPodAdmissionRefused),
+				Message: "Job " + job + " cannot create its Pod; the API server refused it: pods \"x\" is forbidden",
+			}},
 			want: ended.Error(),
+		},
+		{
+			name:   "a report about a Job whose name the claim's begins",
+			report: lastPodReport{reported: reported, jobName: "ptah-m-apply-order"},
+			want:   ended.Error(),
+		},
+		{
+			name:   "a report about another Job",
+			report: lastPodReport{reported: reported, jobName: "ptah-m-apply-billing"},
+			want:   ended.Error(),
+		},
+		{
+			name:   "a Pod the claim's Job ran to success since",
+			report: lastPodReport{reported: reported, jobName: job, ran: true},
+			want:   ended.Error(),
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			got := withLastPodReport(ended, row.reported)
+			got := withLastPodReport(ended, row.report)
 			if got.Error() != row.want {
 				t.Fatalf("withLastPodReport() = %q, want %q", got, row.want)
 			}
 			if !errors.Is(got, ended) {
 				t.Fatalf("withLastPodReport() lost the failure it was given: %v", got)
+			}
+		})
+	}
+}
+
+func TestClaimJobRanTakesOnlyTheClaimsJobsSuccess(t *testing.T) {
+	t.Parallel()
+
+	const recorded = types.UID("claim-job-uid")
+	jobWith := func(uid types.UID, status batchv1.JobStatus) *batchv1.Job {
+		return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ptah-m-apply-orders", UID: uid}, Status: status}
+	}
+	for _, row := range []struct {
+		name     string
+		job      *batchv1.Job
+		recorded types.UID
+		want     bool
+	}{
+		{name: "no Job", recorded: recorded},
+		{name: "the claim's Job counting a succeeded Pod", job: jobWith(recorded, batchv1.JobStatus{Succeeded: 1}), recorded: recorded, want: true},
+		{
+			name: "the claim's Job complete", recorded: recorded, want: true,
+			job: jobWith(recorded, batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}),
+		},
+		{
+			name: "the claim's Job past its deadline", recorded: recorded,
+			job: jobWith(recorded, batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{{
+				Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded,
+			}}}),
+		},
+		{name: "the claim's Job still running", job: jobWith(recorded, batchv1.JobStatus{Active: 1}), recorded: recorded},
+		{name: "a replacement that succeeded", job: jobWith("replacement-job-uid", succeededJobStatus()), recorded: recorded},
+		{name: "a succeeded Job and no UID on record", job: jobWith("some-job-uid", succeededJobStatus())},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if got := claimJobRan(row.job, row.recorded); got != row.want {
+				t.Fatalf("claimJobRan() = %t, want %t", got, row.want)
 			}
 		})
 	}

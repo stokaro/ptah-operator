@@ -383,6 +383,18 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
 					return ctrl.Result{}, err
 				}
+				// The look Apply supervision takes at a Job in flight. The
+				// record this wait ends in carries what Progressing last said
+				// about the Pod, so a Pod that starts while the resource waits
+				// has to take those words off before the run ends without a
+				// result. A look that fails leaves them standing, still worded
+				// as the last report, and is not returned: an error requeue
+				// backs off, and this wait is what renews the Lease.
+				if job != nil && operation.JobUID != "" && !jobTerminal(job) {
+					if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
+						ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
+					}
+				}
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			// A dispatch this claim started, or a Job it can account for under
@@ -420,7 +432,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// started.
 				if _, err := r.retireUncertainMigrationApply(ctx, migration, job,
 					withLastPodReport(errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"),
-						meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)),
+						migrationPodReport(migration, job)),
 					"", false); err != nil {
 					return ctrl.Result{}, err
 				}
@@ -593,7 +605,7 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 	}
 	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
 		withLastPodReport(errors.New("an execution component changed while the Apply was dispatched"),
-			meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
+			migrationPodReport(migration, job)), "")
 	return result, true, err
 }
 
@@ -795,8 +807,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		// The continuity write leaves a Pod the kubelet cannot start on
+		// Progressing, so the words are still there to carry.
 		return r.finishUncertainMigrationApply(ctx, migration, job,
-			errors.New("the database lock epoch changed under the dispatched run"), "")
+			withLastPodReport(errors.New("the database lock epoch changed under the dispatched run"),
+				migrationPodReport(migration, job)), "")
 	}
 	kind := migrationOperation(operation)
 	mutating := kind.Mutating
@@ -850,9 +865,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if found {
 			lost = job
 		}
+		// A replacement under the name is not the claim's Job, and the report
+		// does not take its success as the claim's Pod having run.
 		return r.finishUncertainMigrationApply(ctx, migration, lost,
 			withLastPodReport(errors.New(unaccountedMigrationJobReason(cause)),
-				meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
+				migrationPodReport(migration, lost)), "")
 	case mutationlifecycle.VerdictRetry:
 		return r.retryMigrationOperation(ctx, migration, job, errors.New(retriedMigrationJobReason(cause)))
 	}
@@ -906,7 +923,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			// An Apply Job that exists may already have changed the database,
 			// whatever its formerly exact inputs now say.
 			return r.finishUncertainMigrationApply(ctx, migration, job, withLastPodReport(currentErr,
-				meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)), "")
+				migrationPodReport(migration, job)), "")
 		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
@@ -975,7 +992,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return r.retryMigrationOperation(ctx, migration, job, errors.New(boundary))
 		}
 		return r.retryMigrationOperation(ctx, migration, job, withUnstartedPod(fmt.Errorf("read %s result: %w", operation.Type, parseErr),
-			meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)))
+			migrationPodReport(migration, job)))
 	}
 	if !jobSucceeded(job) {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("the %s Job failed", operation.Type))

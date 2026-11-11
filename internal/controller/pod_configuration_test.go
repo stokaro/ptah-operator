@@ -537,7 +537,7 @@ func TestWithUnstartedPodAddsWhatTheResourceReported(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			got := withUnstartedPod(row.failure, row.reported)
+			got := withUnstartedPod(row.failure, lastPodReport{reported: row.reported, jobName: "ptah-observe-app"})
 			if got.Error() != row.want {
 				t.Fatalf("withUnstartedPod() = %q, want %q", got, row.want)
 			}
