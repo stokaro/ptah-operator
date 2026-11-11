@@ -1603,6 +1603,23 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 `operator.ptah.run/migration-operation` finalizer by hand is the last resort,
 and it is a statement that nothing is executing against that database any more.
 
+A deleted `PtahSchema` waits the same way for an Apply, a Plan or the Observe
+that proves an Apply, and says which Pod it waits for. Once the Job is past its
+own deadline, the termination grace its Pods are given and 30 seconds more, a
+`PodStuckTerminating` Warning Event names each Pod of the Job that is being
+deleted and has not stopped, with its node. It comes again 30 seconds later,
+then twice as long after each time, up to every 5 minutes. Once the node is
+known to be gone, delete the Pod without waiting for its kubelet:
+
+```sh
+kubectl delete pod -n <namespace> <pod> --force --grace-period=0
+```
+
+A forced delete removes the Pod object and nothing else. On a node that is only
+cut off, the container can still be running and still write to the database, so
+confirm that the machine is gone, for example that its VM was terminated, before
+you run it. The Job then finishes, and the deletion goes on as above.
+
 ### Deleting a namespace {#delete-namespace}
 
 A namespace that ran a `PtahSchema` or a `PtahMigration` stays `Terminating` for
@@ -2446,9 +2463,14 @@ kubectl logs -n application job/ptah-apply-orders-5d06b0eaaa30addb -c ptah
 
 They say so only when there is something to read. A target that could not be opened,
 a refused or stale plan and an init container that failed write no such line, so the
-status points at none. A run whose result nobody read, because its frame was lost or
-its Job ran more than one Pod, says `Anything the run wrote is in the Pod log`. An
-execution binding change during a running Apply retires the claim with no Job to name,
+status points at none. Neither does a Job whose every executor the kubelet ended with
+reason `ContainerStatusUnknown`, which it gives a container it has no status for: one
+that never started, when the Job's deadline stops its Pod, and one the container
+runtime stopped reporting while it ran. The kubelet keeps no container for it and
+answers `kubectl logs` with an error. A run whose result nobody read, because its
+frame was lost or its Job ran more than one Pod, says
+`Anything the run wrote is in the Pod log`. An execution binding change during a
+running Apply retires the claim with no Job to name,
 so a `RetiredApplyLogKept` Warning Event says the same once the Job's Pods have
 stopped. A migration Apply whose outcome went `Unknown` while its Job was still
 running, as when a release changed the executor or the Job under it or the database

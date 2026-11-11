@@ -206,8 +206,9 @@ func TestTheLogPointerSaysOnlyWhatTheReadingAllows(t *testing.T) {
 
 // TestAFailureSaysWhatItsLogHolds reads the choke point. A result's code decides,
 // because the runner writes Ptah's sentence for two codes and no others; a failure
-// with no result may have written anything, unless the Job has no Pod or an init
-// container ended the Pod.
+// with no result may have written anything, unless the Job has no Pod, an init
+// container ended the Pod, or the kubelet ended every Pod's executor with
+// ContainerStatusUnknown, which it serves no log for.
 func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 	t.Parallel()
 
@@ -225,16 +226,29 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			}}},
 		}
 	}
+	// executorPod is a Pod of job whose executor ended for reason.
+	executorPod := func(job *batchv1.Job, index int, reason string) *corev1.Pod {
+		pod := jobPod(job, 0)
+		pod.Name = fmt.Sprintf("%s-%d", pod.Name, index)
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: reason}},
+		}}
+		return pod
+	}
 	coded := func(code string) error {
 		return resultFailure(&runner.ResultError{Code: code, Message: "the runner's sentence"}, corev1.SecretKeySelector{})
 	}
+	const lost = "ContainerStatusUnknown"
 	for _, test := range []struct {
 		name    string
 		failure error
 		noJob   bool
 		noPod   bool
 		initEnd bool
-		want    applyLogReading
+		// executors are the reasons each of the Job's Pods' executor ended for,
+		// one Pod per entry.
+		executors []string
+		want      applyLogReading
 	}{
 		{name: "an outcome that is unknown", failure: coded("apply_outcome_unknown"), want: applyLogHoldsReport},
 		{name: "a failure before any statement", failure: coded("apply_failed"), want: applyLogHoldsReport},
@@ -251,7 +265,13 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			failure: errors.New("Job ptah-apply-1 failed: DeadlineExceeded: Job was active longer than specified deadline"),
 			want:    applyLogSaysNothing,
 		},
+		{name: "no result and an executor the kubelet lost", failure: errors.New("apply result is uncertain"), executors: []string{lost}, want: applyLogSaysNothing},
+		{name: "no result and every executor the kubelet lost", failure: errors.New("apply result is uncertain"), executors: []string{lost, lost}, want: applyLogSaysNothing},
+		{name: "no result, one executor lost and one that exited", failure: errors.New("apply result is uncertain"), executors: []string{lost, "Error"}, want: applyLogUnread},
+		{name: "no result, one executor that exited and one lost", failure: errors.New("apply result is uncertain"), executors: []string{"Error", lost}, want: applyLogUnread},
+		{name: "no result and an executor that exited", failure: errors.New("apply result is uncertain"), executors: []string{"Error"}, want: applyLogUnread},
 		{name: "no failure to read, as a retired Apply has", want: applyLogUnread},
+		{name: "no failure to read and an executor the kubelet lost", executors: []string{lost}, want: applyLogSaysNothing},
 		{name: "no failure to read and no Pod", noPod: true, want: applyLogSaysNothing},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -261,6 +281,10 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			switch {
 			case test.initEnd:
 				builder = builder.WithObjects(jobPod(job, 2))
+			case len(test.executors) > 0:
+				for index, reason := range test.executors {
+					builder = builder.WithObjects(executorPod(job, index, reason))
+				}
 			case !test.noPod:
 				builder = builder.WithObjects(jobPod(job, 0))
 			}

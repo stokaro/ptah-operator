@@ -283,32 +283,54 @@ func TestTheLiveEndingsLeaveOutAReportAStartedPodOutdated(t *testing.T) {
 
 // A claim that never recorded its Job's UID, as when the manager stopped
 // between creating the Job and recording it, still has its Pods listed when its
-// Lease changes hands during deletion: under the Job its name holds, which the
-// claim's schema owns. The deleted schema's finisher is not given that Job, and
-// listing by the claim's empty UID found nothing, so a Pod that started after
-// the last look left a stale report in the Event.
+// Lease changes hands during deletion: under the Job its name holds, where the
+// claim's schema owns that Job. The deleted schema's finisher is not given the
+// Job, and listing by the claim's empty UID found nothing, so a Pod that started
+// after the last look left a stale report in the Event. A Job the schema does
+// not own is not shown to be the claim's, so its Pods are not listed and say
+// nothing of the claim's.
 func TestADeletedSchemaWhoseClaimNeverRecordedItsJobListsThatJobsPods(t *testing.T) {
 	t.Parallel()
 
-	run := admittedUnstartedSchemaApplyRun(t)
-	deleteSchemaWhileItsApplyRuns(t, run)
-	unrecorded := safetyGetSchema(t, run.api, run.schema)
-	unrecorded.Status.ActiveOperation.JobUID = ""
-	if err := run.api.Status().Update(context.Background(), unrecorded); err != nil {
-		t.Fatal(err)
-	}
-	operation := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
-	horizon := applyHorizon(operation)
-	firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
-	databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
-	// One pass records the lost continuity, and the next ends the Apply.
-	run.reconcileOnce(t)
-	run.reconcileOnce(t)
+	for _, row := range []struct {
+		name string
+		// disown leaves the Job under the claim's name without its owner.
+		disown bool
+	}{
+		{name: "a Job the schema owns"},
+		{name: "a Job the schema does not own", disown: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
 
-	if event, want := settledSchemaEvent(t, run.recorder), deletedApplyEventPrefix+continuityLost; event != want {
-		t.Errorf("ApplyOutcomeUnknown = %q, want %q", event, want)
+			run := admittedUnstartedSchemaApplyRun(t)
+			deleteSchemaWhileItsApplyRuns(t, run)
+			unrecorded := safetyGetSchema(t, run.api, run.schema)
+			unrecorded.Status.ActiveOperation.JobUID = ""
+			if err := run.api.Status().Update(context.Background(), unrecorded); err != nil {
+				t.Fatal(err)
+			}
+			if row.disown {
+				disowned(t, run.api, run.job)
+			}
+			operation := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
+			horizon := applyHorizon(operation)
+			firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+			databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
+			// One pass records the lost continuity, and the next ends the Apply.
+			run.reconcileOnce(t)
+			run.reconcileOnce(t)
+
+			want, pods := deletedApplyEventPrefix+continuityLost, int32(1)
+			if row.disown {
+				want, pods = want+lastReportedBefore+run.said, 0
+			}
+			if event := settledSchemaEvent(t, run.recorder); event != want {
+				t.Errorf("ApplyOutcomeUnknown = %q, want %q", event, want)
+			}
+			deletedSchemaEnding(t, run, operation, continuityLost, pods, &horizon)
+		})
 	}
-	deletedSchemaEnding(t, run, operation, continuityLost, 1, &horizon)
 }
 
 // A durable result needs no log, so the harvest reads it from a Pod whose
@@ -355,6 +377,66 @@ func TestADurableResultFromALostExecutorProvesNoStop(t *testing.T) {
 			}
 			if evidence.Stopped != row.stopped {
 				t.Fatalf("evidence.Stopped = %t, want %t", evidence.Stopped, row.stopped)
+			}
+		})
+	}
+}
+
+// A migration's record shares the schema's reading of what its Pod log holds
+// (failedApplyLogReading), so a run whose every executor the kubelet ended with
+// ContainerStatusUnknown points at no Pod log either: kubectl logs answers such
+// a container with an error. The control row is an executor that exited, whose
+// log holds whatever it wrote.
+func TestAMigrationRunWhoseExecutorTheKubeletLostPointsAtNoLog(t *testing.T) {
+	t.Parallel()
+
+	const pointer = "Anything the run wrote is in the Pod log for "
+	for _, row := range []struct {
+		name string
+		end  func(t *testing.T, run unstartedMigration)
+		// pointed is a record whose message points at the executor's log.
+		pointed bool
+	}{
+		{
+			name: "an executor that never started",
+			end: func(t *testing.T, run unstartedMigration) {
+				deadlineStoppedAWaitingPod(t, run.api, run.job, run.pod)
+			},
+		},
+		{
+			name: "an executor the runtime lost while it ran",
+			end: func(t *testing.T, run unstartedMigration) {
+				firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+				reconcileMigration(t, run.reconciler, run.api, run.migration)
+				lostWhileItRan(t, run.api, run.job, run.pod)
+			},
+		},
+		{
+			name: "an executor that exited with an error", pointed: true,
+			end: func(t *testing.T, run unstartedMigration) {
+				firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+				reconcileMigration(t, run.reconciler, run.api, run.migration)
+				endedWithoutAResult(t, run.api, run.job, run.pod)
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := unstartedMigrationApplyRun(t)
+			row.end(t, run)
+			record := run.settle(t, 3)
+			event := findEvent(run.recorder, "Warning MigrationRunUncertain ")
+			if event == "" {
+				t.Fatal("no MigrationRunUncertain Event was recorded")
+			}
+			for subject, text := range map[string]string{"status.lastRun.message": record.Message, "MigrationRunUncertain": event} {
+				if pointed := strings.Contains(text, pointer); pointed != row.pointed {
+					t.Errorf("%s = %q, points at the Pod log: %t, want %t", subject, text, pointed, row.pointed)
+				}
+				if logs := strings.Contains(text, "kubectl logs"); logs != row.pointed {
+					t.Errorf("%s = %q, names kubectl logs: %t, want %t", subject, text, logs, row.pointed)
+				}
 			}
 		})
 	}

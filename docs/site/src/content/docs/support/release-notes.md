@@ -79,7 +79,15 @@ where it recorded `canceled`. Such records count in
 `PtahOperatorUnresolvedApply`, which is critical and has no pending period, can
 fire for a schema deleted while its Apply runs: for about 30 seconds past the
 Apply's deadline when its Pod never started, and for a pass when its executor ran
-and stopped.
+and stopped. A live `PtahSchema` whose Apply's executor the kubelet ended with
+reason `ContainerStatusUnknown` now counts there until the Apply's execution
+deadline and grace period have passed and a reading follows, and its
+`ReconciliationFailed` says
+`apply result is uncertain: ptah runner result frame not found` in place of
+`the result log is gone`. A script that reads the `kubectl logs` command out of
+an `ApplyOutcomeUnknown` or `MigrationRunUncertain` Event, `Applying` or
+`status.lastRun.message` finds none where every executor of the Job ended that
+way, and an alert on Warning Events can see the new reason `PodStuckTerminating`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -318,6 +326,25 @@ and stopped.
   the UID of an Apply Job its claim never recorded before it asks for that
   Job's TTL, and a Job deleted before that TTL was asked for is no longer named
   by a Warning.
+- **A lost executor proves no stop on a live schema either.** The kubelet gives
+  an executor it has no status for the reason `ContainerStatusUnknown`: one that
+  never started, when the Job's deadline stops its Pod, and one the container
+  runtime stopped reporting while it ran. A live `PtahSchema` took that for a
+  stop. It asked for the executor's log, which the kubelet refuses for such a
+  container, recorded the outcome as unknown and read the database at once,
+  while the container could still be running. It now asks for no log and reads
+  the database only once the Apply's execution deadline and its grace period
+  have passed, as a deleted schema does. Neither family points at the Pod log of
+  a Job whose every executor ended that way, since `kubectl logs` cannot read
+  one. The live endings for a missing Job and for inputs that changed while the
+  Job ran leave out the last report when a Pod of the Job shows its executor
+  started, and a deleted schema whose claim never recorded its Job's UID reads
+  that Job's Pods when its Lease changes hands. A deleted `PtahSchema` that waits
+  on a Pod stuck terminating on a node that is gone said nothing about it. A
+  `PodStuckTerminating` Warning Event now names the Pod, its node and the forced
+  delete that ends the wait, and
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
+  when to run it.
 
 ## 0.2.10
 
