@@ -2745,10 +2745,11 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 	// The claim still names the Job here, and the record below is read-only
 	// observation, so a refused cleanup leaves the Job in place and the record is
-	// still written.
-	if err := r.settleSchemaJobCleanup(ctx, schema, job, retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
+	// still written, pointing at the log for as long as the Job stays.
+	stays, err := r.settleSchemaJobCleanup(ctx, schema, job, retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
 		r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
-	})); err != nil {
+	}))
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	reading := failedApplyLogReading(ctx, r.directReader(), job, failure)
@@ -2789,7 +2790,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	// Applying is what stays once the observation has settled the record, so it
 	// is where a person arriving later finds the log.
 	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown,
-		withLogPointer("Apply outcome is uncertain; only read-only observation is permitted", job, reading))
+		withLogPointer("Apply outcome is uncertain; only read-only observation is permitted", job, reading, stays))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Database state must be observed before any next action")
 	setFailure(schema, operatorv1alpha1.ReasonApplyOutcomeUnknown, failure)
 	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionUnaccounted); err != nil {
@@ -2801,7 +2802,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
 	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s",
-		withLogPointer(uncertainApplyEvent(failure, schema.DeletionTimestamp != nil), job, reading))
+		withLogPointer(uncertainApplyEvent(failure, schema.DeletionTimestamp != nil), job, reading, stays))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -3928,7 +3929,8 @@ func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Jo
 // and the Job stays until it is deleted by hand or with its owner. The pass goes
 // on only while the stored claim still names the Job (settleHarvestedJobCleanup).
 func (r *SchemaReconciler) harvestJob(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) error {
-	return r.settleSchemaJobCleanup(ctx, schema, job, r.markJobHarvested(ctx, job))
+	_, err := r.settleSchemaJobCleanup(ctx, schema, job, r.markJobHarvested(ctx, job))
+	return err
 }
 
 // settleSchemaJobCleanup settles written, the answer to a cleanup TTL write on
@@ -3936,22 +3938,25 @@ func (r *SchemaReconciler) harvestJob(ctx context.Context, schema *operatorv1alp
 // a harvest's (harvestJob), or an uncertain Apply's by the rule its Pod log is
 // kept by (retainFailedApplyJob). A refusal names the Job in a
 // SchemaJobCleanupDeferred Warning and the pass goes on, while the stored claim
-// still names the Job (settleHarvestedJobCleanup).
+// still names the Job (settleHarvestedJobCleanup). stays reports that refusal:
+// nothing collects the Job, so it and its Pod log stay until someone deletes it.
 func (r *SchemaReconciler) settleSchemaJobCleanup(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
 	written error,
-) error {
+) (stays bool, err error) {
 	operation := schema.Status.ActiveOperation
-	return settleHarvestedJobCleanup(written, func() (bool, error) {
+	err = settleHarvestedJobCleanup(written, func() (bool, error) {
 		if operation == nil {
 			return false, nil
 		}
 		return r.storedSchemaClaimNamesJob(ctx, schema, job)
 	}, func(refusal error) {
+		stays = true
 		r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
 	})
+	return stays, err
 }
 
 // storedSchemaClaimNamesJob reports whether the PtahSchema as stored holds a

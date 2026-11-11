@@ -160,7 +160,7 @@ func TestAJobHarvestedByAPreviousReleaseKeepsItsTTL(t *testing.T) {
 	}
 	const want = "What Ptah reported is in the Pod log for 5 minutes after the Job finishes: " +
 		"kubectl logs -n team-a job/ptah-apply-orders-0123 -c ptah"
-	if got := failedApplyLogPointer(job, applyLogHoldsReport); got != want {
+	if got := failedApplyLogPointer(job, applyLogHoldsReport, false); got != want {
 		t.Fatalf("failedApplyLogPointer() = %q, want %q", got, want)
 	}
 }
@@ -174,27 +174,49 @@ func TestTheLogPointerSaysOnlyWhatTheReadingAllows(t *testing.T) {
 		firm   = "What Ptah reported" + where
 		unread = "Anything the run wrote" + where
 	)
-	if got := failedApplyLogPointer(finishedJob(&long), applyLogHoldsReport); got != firm {
+	if got := failedApplyLogPointer(finishedJob(&long), applyLogHoldsReport, false); got != firm {
 		t.Fatalf("failedApplyLogPointer() = %q, want %q", got, firm)
 	}
-	if got := failedApplyLogPointer(finishedJob(&long), applyLogUnread); got != unread {
+	if got := failedApplyLogPointer(finishedJob(&long), applyLogUnread, false); got != unread {
 		t.Fatalf("failedApplyLogPointer() = %q, want %q", got, unread)
 	}
-	if got := withLogPointer("Apply failed", finishedJob(&long), applyLogHoldsReport); got != "Apply failed. "+firm {
+	if got := withLogPointer("Apply failed", finishedJob(&long), applyLogHoldsReport, false); got != "Apply failed. "+firm {
 		t.Fatalf("withLogPointer() = %q", got)
 	}
-	if got := failedApplyLogPointer(finishedJob(&long), applyLogSaysNothing); got != "" {
+	if got := failedApplyLogPointer(finishedJob(&long), applyLogSaysNothing, false); got != "" {
 		t.Errorf("a log with nothing to read: failedApplyLogPointer() = %q", got)
 	}
-	if got := withLogPointer("Apply failed", finishedJob(&long), applyLogSaysNothing); got != "Apply failed" {
+	if got := withLogPointer("Apply failed", finishedJob(&long), applyLogSaysNothing, false); got != "Apply failed" {
 		t.Errorf("a log with nothing to read: withLogPointer() = %q", got)
 	}
 	for name, job := range map[string]*batchv1.Job{"no Job": nil, "a Job no TTL reached": finishedJob(nil)} {
-		if got := failedApplyLogPointer(job, applyLogHoldsReport); got != "" {
+		if got := failedApplyLogPointer(job, applyLogHoldsReport, false); got != "" {
 			t.Errorf("%s: failedApplyLogPointer() = %q, want nothing to promise", name, got)
 		}
-		if got := withLogPointer("Apply failed", job, applyLogHoldsReport); got != "Apply failed" {
+		if got := withLogPointer("Apply failed", job, applyLogHoldsReport, false); got != "Apply failed" {
 			t.Errorf("%s: withLogPointer() = %q", name, got)
+		}
+	}
+	// A Job whose cleanup admission refused stays until someone deletes it, and its
+	// log with it. A Job that already carries a TTL is never refused one, since no
+	// TTL is asked for it, so its TTL is what the pointer says.
+	const stays = " is in the Pod log until the Job is deleted: kubectl logs -n team-a job/ptah-apply-orders-0123 -c ptah"
+	if got := failedApplyLogPointer(finishedJob(nil), applyLogHoldsReport, true); got != "What Ptah reported"+stays {
+		t.Errorf("a refused cleanup: failedApplyLogPointer() = %q, want %q", got, "What Ptah reported"+stays)
+	}
+	if got := withLogPointer("Apply failed", finishedJob(nil), applyLogUnread, true); got != "Apply failed. Anything the run wrote"+stays {
+		t.Errorf("a refused cleanup: withLogPointer() = %q", got)
+	}
+	if got := failedApplyLogPointer(finishedJob(&long), applyLogHoldsReport, true); got != firm {
+		t.Errorf("a Job with a TTL: failedApplyLogPointer() = %q, want %q", got, firm)
+	}
+	for name, job := range map[string]*batchv1.Job{"no Job": nil, "nothing to read": finishedJob(nil)} {
+		reading := applyLogHoldsReport
+		if job != nil {
+			reading = applyLogSaysNothing
+		}
+		if got := failedApplyLogPointer(job, reading, true); got != "" {
+			t.Errorf("%s under a refused cleanup: failedApplyLogPointer() = %q, want nothing", name, got)
 		}
 	}
 	for seconds, want := range map[int32]string{86400: "24 hours", 7200: "2 hours", 300: "5 minutes", 90: "90 seconds", 0: "0 seconds"} {

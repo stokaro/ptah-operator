@@ -377,12 +377,13 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 		// This Apply's outcome is unknown, so its log is kept as any such log is.
 		// Nobody will read its result, and the claim was retired with no Job to
 		// name, so this is the first moment there is a time to tell a person.
-		if err := r.settleRetiredApplyJobCleanup(ctx, schema, retired, job, retainFailedApplyJob(ctx, r.Client, job, pending.Plan.Approval != nil, func(message string) {
+		stays, err := r.settleRetiredApplyJobCleanup(ctx, schema, retired, job, retainFailedApplyJob(ctx, r.Client, job, pending.Plan.Approval != nil, func(message string) {
 			r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
-		})); err != nil {
+		}))
+		if err != nil {
 			return err
 		}
-		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, nil)); pointer != "" {
+		if pointer := failedApplyLogPointer(job, failedApplyLogReading(ctx, r.directReader(), job, nil), stays); pointer != "" {
 			r.event(schema, corev1.EventTypeWarning, "RetiredApplyLogKept", "The Apply its execution binding retired was not read. %s", pointer)
 		}
 	}
@@ -399,19 +400,21 @@ func (r *SchemaReconciler) cleanupRetiredApplyJob(
 // (settleHarvestedJobCleanup). A refusal names the Job in a
 // SchemaJobCleanupDeferred Warning, and the record is settled with the Job left
 // in place: the outcome stays unknown whether the Job goes or not, and a fresh
-// read-only proof is what settles it.
+// read-only proof is what settles it. stays reports that refusal.
 func (r *SchemaReconciler) settleRetiredApplyJobCleanup(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	retired *operatorv1alpha1.RetiredJobStatus,
 	job *batchv1.Job,
 	written error,
-) error {
-	return settleHarvestedJobCleanup(written, func() (bool, error) {
+) (stays bool, err error) {
+	err = settleHarvestedJobCleanup(written, func() (bool, error) {
 		return r.storedRetirementNamesApplyJob(ctx, schema, job)
 	}, func(refusal error) {
+		stays = true
 		r.schemaJobCleanupDeferred(schema, retired.Operation, job, refusal)
 	})
+	return stays, err
 }
 
 // storedRetirementNamesApplyJob reports whether the PtahSchema as stored still

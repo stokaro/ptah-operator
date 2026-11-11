@@ -101,6 +101,20 @@ func eventsNamed(events []string, reason string) bool {
 	return slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, " "+reason+" ") })
 }
 
+// stayingLogPointer is how a record ends that points at the Pod log of a Job whose
+// cleanup failed for good: the log stays with the Job until someone deletes it.
+func stayingLogPointer(job *batchv1.Job) string {
+	return " is in the Pod log until the Job is deleted: kubectl logs -n " +
+		job.Namespace + " job/" + job.Name + " -c " + executorContainerName
+}
+
+// eventEndingWith reports whether an Event of the reason ends with the text.
+func eventEndingWith(events []string, reason, ending string) bool {
+	return slices.ContainsFunc(events, func(event string) bool {
+		return strings.Contains(event, " "+reason+" ") && strings.HasSuffix(event, ending)
+	})
+}
+
 // schemaApplyFailed stands up an approved schema Apply whose Pod reported that it
 // sent statements and failed, so the pass records its outcome as unknown and hands
 // the database to read-only observation.
@@ -128,7 +142,8 @@ func schemaApplyFailed(t *testing.T) (*operatorv1alpha1.PtahSchema, *batchv1.Job
 // TestAnUncertainSchemaApplyIsRecordedUnderARefusedCleanup is an approved Apply
 // whose Job failed with no result. A refusal of both TTLs leaves the Job in place:
 // the pass still records the outcome as unknown, names the Job in a Warning, and
-// hands the database to read-only observation. A lost write fails the pass with
+// hands the database to read-only observation. The record points at the log until
+// the Job is deleted, since nothing collects it. A lost write fails the pass with
 // the claim kept and nothing recorded, and the next pass keeps the log for 24
 // hours. A refusal that comes after the stored claim moved, as under a second
 // manager, fails the pass and names nothing. The fake API server runs no webhook,
@@ -161,12 +176,15 @@ func TestAnUncertainSchemaApplyIsRecordedUnderARefusedCleanup(t *testing.T) {
 				t.Fatalf("the Job's TTL = %s, want none after a refusal", ttlText(got))
 			}
 			if applying := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionApplying); applying == nil ||
-				applying.Reason != string(operatorv1alpha1.ReasonOutcomeUnknown) || strings.Contains(applying.Message, "kubectl logs") {
-				t.Fatalf("Applying = %#v, want the outcome unknown with no pointer to a log no TTL keeps", applying)
+				applying.Reason != string(operatorv1alpha1.ReasonOutcomeUnknown) || !strings.HasSuffix(applying.Message, stayingLogPointer(job)) {
+				t.Fatalf("Applying = %#v, want the outcome unknown and the log pointed at until the Job is deleted", applying)
 			}
 			events := migrationEvents(recorder)
 			if !schemaCleanupDeferredFor(events, job.Name, row.says) {
 				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, job.Name, row.says)
+			}
+			if !eventEndingWith(events, "ApplyOutcomeUnknown", stayingLogPointer(job)) {
+				t.Fatalf("Events = %q, want the ApplyOutcomeUnknown Event to point at the log until the Job is deleted", events)
 			}
 			assertNoShortening(t, events)
 		})
@@ -295,11 +313,11 @@ func retiredApplyStopped(t *testing.T) (*operatorv1alpha1.PtahSchema, *batchv1.J
 // TestARetiredSchemaApplyIsSettledUnderARefusedCleanup is the cleanup of an
 // approved Apply a binding change retired. No claim names the Job any more:
 // admission admits its TTL by the retirement record. A refusal of both TTLs
-// settles the record with the Job left in place, a Warning names the Job, and
-// nothing says where a log is kept, since no TTL keeps one. A lost write fails
-// with the record kept, and the next call keeps the log for 24 hours. A refusal
-// that comes after the stored record was settled, or moved to another Apply,
-// fails and names nothing.
+// settles the record with the Job left in place, a Warning names the Job, and the
+// log is pointed at until the Job is deleted, since nothing collects it. A lost
+// write fails with the record kept, and the next call keeps the log for 24 hours.
+// A refusal that comes after the stored record was settled, or moved to another
+// Apply, fails and names nothing.
 func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -333,8 +351,8 @@ func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 				t.Fatalf("Events = %q, want a Warning that Apply Job %q stays because %q", events, job.Name, row.says)
 			}
 			assertNoShortening(t, events)
-			if eventsNamed(events, "RetiredApplyLogKept") {
-				t.Fatalf("Events = %q say where a log is kept, and no TTL keeps one", events)
+			if !eventEndingWith(events, "RetiredApplyLogKept", stayingLogPointer(job)) {
+				t.Fatalf("Events = %q, want the RetiredApplyLogKept Event to point at the log until the Job is deleted", events)
 			}
 		})
 	}
@@ -443,8 +461,9 @@ func migrationApplyFailedAtAStatement(t *testing.T) (
 
 // TestAFailedMigrationRunIsRecordedUnderARefusedCleanup is an Apply whose run
 // failed and left a dirty revision. A refusal of both TTLs leaves the Job in
-// place: the pass still records the run and retires its claim, and a Warning
-// names the Job. A lost write fails the pass with the claim kept and no run
+// place: the pass still records the run and retires its claim, a Warning names the
+// Job, and the run points at the log until the Job is deleted, since nothing
+// collects it. A lost write fails the pass with the claim kept and no run
 // recorded. A refusal from the controller-write webhook after the stored claim
 // moved fails the pass and names nothing.
 func TestAFailedMigrationRunIsRecordedUnderARefusedCleanup(t *testing.T) {
@@ -469,8 +488,8 @@ func TestAFailedMigrationRunIsRecordedUnderARefusedCleanup(t *testing.T) {
 				t.Fatalf("the failed run was not recorded: phase=%q operation=%#v lastRun=%#v",
 					stored.Status.Phase, stored.Status.ActiveOperation, stored.Status.LastRun)
 			}
-			if strings.Contains(stored.Status.LastRun.Message, "kubectl logs") {
-				t.Fatalf("LastRun.Message = %q points at a log no TTL keeps", stored.Status.LastRun.Message)
+			if !strings.HasSuffix(stored.Status.LastRun.Message, stayingLogPointer(job)) {
+				t.Fatalf("LastRun.Message = %q, want it to point at the log until the Job is deleted", stored.Status.LastRun.Message)
 			}
 			if got := storedTTL(t, api, job); got != nil {
 				t.Fatalf("the Job's TTL = %s, want none after a refusal", ttlText(got))
@@ -556,6 +575,72 @@ func TestAFailedMigrationRunIsRecordedUnderARefusedCleanup(t *testing.T) {
 			t.Fatalf("a refusal for a claim that moved named the Job as staying: %q", events)
 		}
 	})
+}
+
+// TestAnUncertainMigrationRunPointsAtTheLogItsFailedCleanupLeaves is the path that
+// blocks a migration on a run nobody accounted for, which a deletion takes as well.
+// It records the run whatever the Job's cleanup is answered. A TTL write that fails
+// leaves a Job nothing collects, so a Warning says the Job stays until it is
+// deleted, and the record points at the log for as long rather than dropping the
+// pointer where the log is kept longest.
+func TestAnUncertainMigrationRunPointsAtTheLogItsFailedCleanupLeaves(t *testing.T) {
+	t.Parallel()
+
+	type answer struct {
+		name   string
+		answer error
+		says   string
+		asked  []int32
+	}
+	var rows []answer
+	for _, row := range failedApplyRefusals() {
+		rows = append(rows, answer{row.name, row.answer, row.says, []int32{failedApplyTTLSeconds, jobCleanupTTLSeconds}})
+	}
+	// Any other failure leaves the Job without a TTL as well: the record is still
+	// written, and nothing asks for the Job's cleanup again.
+	rows = append(rows, answer{"lost", errors.New("connection reset by peer"), "connection reset by peer", []int32{failedApplyTTLSeconds}})
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			migration, plan := awaitingApprovalFixture(t)
+			operation := applyClaimFor(t, migration, plan)
+			operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: "approval", UID: "approval-uid"}
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, pod, verificationPolicyConfigMap())
+			recorder := record.NewFakeRecorder(32)
+			reconciler.Recorder = recorder
+			refusal := &ttlRefusal{answer: row.answer}
+			reconciler.Client = refusal.client(reconciler.Client.(client.WithWatch))
+
+			unread := errors.New("the Apply produced no readable account")
+			if _, err := reconciler.retireUncertainMigrationApply(context.Background(), migration, job, unread, "", false); err != nil {
+				t.Fatalf("retireUncertainMigrationApply() error = %v, want the run recorded under a failed cleanup", err)
+			}
+			if !slices.Equal(refusal.asked, row.asked) {
+				t.Fatalf("the TTLs asked for = %v, want %v", refusal.asked, row.asked)
+			}
+			if got := storedTTL(t, api, job); got != nil {
+				t.Fatalf("the Job's TTL = %s, want none after the write failed", ttlText(got))
+			}
+			settled := readMigration(t, api, migration)
+			if settled.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked || settled.Status.LastRun == nil {
+				t.Fatalf("phase = %q, last run = %#v, want the resource blocked on the recorded run", settled.Status.Phase, settled.Status.LastRun)
+			}
+			pointer := "Anything the run wrote" + stayingLogPointer(job)
+			if message := settled.Status.LastRun.Message; !strings.Contains(message, pointer) {
+				t.Fatalf("LastRun.Message = %q, want %q", message, pointer)
+			}
+			blocked := meta.FindStatusCondition(settled.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if blocked == nil || !strings.Contains(blocked.Message, pointer) {
+				t.Fatalf("Blocked = %#v, want it to say %q", blocked, pointer)
+			}
+			events := migrationEvents(recorder)
+			if !cleanupDeferredFor(events, job.Name, row.says) {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, job.Name, row.says)
+			}
+			assertNoShortening(t, events)
+		})
+	}
 }
 
 // TestAStoppedMigrationJobsRefusedCleanupAfterItsClaimMovedFailsThePass is an Apply

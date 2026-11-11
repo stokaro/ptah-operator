@@ -105,7 +105,9 @@ log read. A script that reads the `kubectl logs` command out of an
 `ApplyOutcomeUnknown`, `MigrationRunUncertain` or `MigrationRunFinished` Event,
 `Applying` or `status.lastRun.message` finds none where every executor of the Job
 ended that way, and an alert on Warning Events can see the new reason
-`PodStuckTerminating`.
+`PodStuckTerminating`. Where a Job's cleanup TTL could not be set, as for a Job the
+deletion of a `PtahMigration` orphaned, that pointer is no longer left out: it says
+the log is there `until the Job is deleted`, with the same `kubectl logs` command.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -421,7 +423,11 @@ ended that way, and an alert on Warning Events can see the new reason
   reason but a refusal still fails the pass. Under a policy that refuses the
   manager's TTL patch, every harvested Job now stays instead, about 430 a day
   for each resource at the default 10-minute interval, until a
-  `count/jobs.batch` quota refuses the next Job. Admit the patch.
+  `count/jobs.batch` quota refuses the next Job. Admit the patch. A schema pass
+  that retries a result it cannot take asks for the TTL once, where it asked a
+  second time and named the Job in a second Warning. A run or an unknown
+  outcome recorded under such a refusal points at its Pod log until the Job is
+  deleted, rather than at no log, since the log stays longest then.
 
 ## 0.2.10
 
