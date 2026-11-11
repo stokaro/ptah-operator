@@ -477,6 +477,59 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 			wantDone: 3,
 		},
 		{
+			// The same, with the reading dated by a manager whose clock is behind the
+			// one that read the database before the request. It is a reading recorded
+			// since, however it is dated, so the refusal beside it is a later read's.
+			name:  "the read the request started ended with a reading another manager dated earlier, and a newer request's read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(accepted(family)).object(family) },
+			docs: func(family operate.Family) []doc {
+				claimed := func(observedAt, resolvedAt time.Time) doc {
+					d := accepted(family)
+					d.phase, d.operation, d.observedAt = "Resolving", "Resolve", observedAt
+					stamp(&d, family, resolvedAt)
+					return d
+				}
+				newerRefused := refusedAt(family, at(150))
+				newerRefused.observedAt = at(-30)
+				return []doc{taken(claimed(t0, before)), takenNewer(claimed(at(-30), after)), takenNewer(newerRefused)}
+			},
+			wantDone: 3,
+		},
+		{
+			// A read under way when the request was written ends with a reading, which
+			// a manager whose clock is behind dates before the baseline's, and the
+			// operator takes the request at rest on it. The read the request starts
+			// ends in a refusal beside that same reading: it is not one of its own.
+			name:  "a read under way at the request ends with a reading dated earlier, then the requested read in a refusal",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				read := accepted(family)
+				read.observedAt = at(-60)
+				claim := read
+				claim.phase, claim.operation = "Resolving", "Resolve"
+				refusal := refusedAt(family, after)
+				refusal.observedAt = at(-60)
+				return []doc{asked(read), taken(read), taken(claim), taken(refusal)}
+			},
+			wantStop: 4,
+		},
+		{
+			// The same, with the read the request started ending in a reading, dated
+			// by that manager after the one under way and still before the baseline's.
+			name:  "a read under way at the request ends with a reading dated earlier, then the requested read with one",
+			since: func(family operate.Family) client.Object { return asked(resolving(family, before)).object(family) },
+			docs: func(family operate.Family) []doc {
+				read := accepted(family)
+				read.observedAt = at(-60)
+				claim := read
+				claim.phase, claim.operation = "Resolving", "Resolve"
+				next := accepted(family)
+				next.observedAt = at(-30)
+				return []doc{asked(read), taken(read), taken(claim), taken(next)}
+			},
+			wantDone: 4,
+		},
+		{
 			name:  "a refusal while a newer request waits for the operator",
 			since: func(family operate.Family) client.Object { return asked(refusedAt(family, before)).object(family) },
 			docs: func(family operate.Family) []doc {

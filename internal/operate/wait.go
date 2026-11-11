@@ -305,10 +305,12 @@ func (e *TimeoutError) Error() string {
 // serve, or a read it refuses. A failed read the server may answer next time
 // is retried until the timeout.
 //
-// Status timestamps carry whole seconds, so a reading made in the same second
-// as the baseline's is not newer than it. That can only make a wait last
-// longer, never end it early, and a read cycle runs several Jobs, so two
-// readings within one second do not occur in practice.
+// The operator's timestamps are compared with each other for equality and are not
+// ordered, since different managers' clocks write them (freshness). Status
+// timestamps carry whole seconds, so a reading stamped in the same second as the
+// one before it carries the same stamp and does not count as recorded since. That
+// can only make a wait last longer, never end it early, and a read cycle runs
+// several Jobs, so two readings within one second do not occur in practice.
 func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOptions) (Result, error) {
 	w, err := newWaiter(ref, options)
 	if err != nil {
@@ -541,15 +543,23 @@ func (v verdict) target(asked Target) Target {
 }
 
 // freshness decides which reading of the database a target may count: one
-// newer than floor that is not the harvest of a read already running at the
-// baseline.
+// recorded after the document floor came from, that is not the harvest of a read
+// already running at the baseline.
+//
+// A reading is told by its stamp, status.target.lastObservedAt for a schema and
+// status.history.observedAt for a migration, which only the harvest of a reading
+// writes and nothing clears. A stamp other than floor's is a reading recorded
+// since. Stamps are
+// compared for equality and never ordered: each is from the clock of the manager
+// that harvested the reading, and a manager whose clock is behind dates a later
+// reading before an earlier one.
 //
 // The operator stamps a reading when it collects the Job's result, not when
 // the Job read the database. A schema's Observe or a migration's History
 // claim in flight at the baseline may have read the database before the
-// change the wait is about and still be stamped after the baseline. The
-// first newer reading is that claim's, so it moves the floor instead of
-// counting. A claim for a generation older than the wait requires is not
+// change the wait is about and still be recorded after the baseline. The
+// first reading recorded since is that claim's, so it moves the floor instead
+// of counting. A claim for a generation older than the wait requires is not
 // skipped: its inputs no longer hold, and the operator discards it rather
 // than recording its reading.
 type freshness struct {
@@ -567,7 +577,7 @@ func newFreshness(baseline snapshot, minGeneration int64) freshness {
 // see takes the documents in the order they were read and reports whether
 // this one's reading counts.
 func (f *freshness) see(s snapshot) bool {
-	if !s.observedAt.After(f.floor) {
+	if s.observedAt.Equal(f.floor) {
 		return false
 	}
 	if f.skipOne {
@@ -578,11 +588,9 @@ func (f *freshness) see(s snapshot) bool {
 	return true
 }
 
-// raise moves the floor to at when at is later.
+// raise moves the floor to the reading of a later document, at.
 func (f *freshness) raise(at time.Time) {
-	if at.After(f.floor) {
-		f.floor = at
-	}
+	f.floor = at
 	f.skipOne = false
 }
 
@@ -602,7 +610,7 @@ type waiter struct {
 	gateAsFound bool
 
 	// The read target's state. When the baseline does not rest, the floor
-	// and failureFloor are raised to the document in which the operator
+	// and failureFloor move to the document in which the operator
 	// takes the request, which it does only once the cycle under way is over:
 	// that cycle's reading and its failures belong to no read the request
 	// asked for.

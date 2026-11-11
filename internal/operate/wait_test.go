@@ -227,6 +227,38 @@ func TestWaitTargets(t *testing.T) {
 			wantReads: 5,
 		},
 		{
+			// The manager that harvested the read the request started has a clock
+			// behind the one that harvested the reading before it.
+			name: "read: an answer another manager dated before the reading it follows is the answer", target: operate.TargetRead,
+			readRequest: request,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "InSync", observedAt: at(0), annotation: request, lastRead: oldRequest, conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), annotation: request, lastRead: request},
+					{phase: "InSync", observedAt: at(-30), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 3,
+		},
+		{
+			// The read the operator starts after the one already running is
+			// harvested by a manager whose clock is behind the one that harvested
+			// that running read. It is still the answer.
+			name: "read: the read after one already running is the answer, however each is dated", target: operate.TargetRead,
+			readRequest: request,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), annotation: request, lastRead: oldRequest},
+					{phase: "InSync", observedAt: at(10), annotation: request, lastRead: oldRequest, conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(10), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(10), annotation: request, lastRead: request},
+					{phase: "InSync", observedAt: at(-20), annotation: request, lastRead: request, conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 5,
+		},
+		{
 			name: "read: a newer reading with an operation still in flight is not the end", target: operate.TargetRead,
 			readRequest: request,
 			docs: func(f operate.Family) []doc {
@@ -471,6 +503,47 @@ func TestWaitTargets(t *testing.T) {
 			wantReads: 3,
 		},
 		{
+			// A failover to a manager whose clock is behind: the reading after the
+			// baseline is dated before the baseline's own.
+			name: "in-sync: a reading another manager dated before the baseline's is the target", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "InSync", observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(-30), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 3,
+		},
+		{
+			// The harvest of the read in flight at the baseline, dated before the
+			// baseline's reading by a manager whose clock is behind, is still that
+			// read's, and does not count.
+			name: "in-sync: the read in flight when the wait began is not the target, however it is dated", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(-60), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantTimeout: true, wantMessage: "a read of the database that began after the wait did (the last one is from 2026-10-01T08:59:00Z)",
+		},
+		{
+			// The read after it is, whichever way the two managers' clocks lean.
+			name: "in-sync: the read after the one in flight when the wait began is the target, however each is dated", target: operate.TargetInSync,
+			docs: func(f operate.Family) []doc {
+				phase, operation := readPhase(f)
+				return []doc{
+					{phase: phase, operation: operation, observedAt: at(0), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(-60), conditions: inSyncConditions(f, 3)},
+					{phase: "Resolving", operation: "Resolve", observedAt: at(-60), conditions: inSyncConditions(f, 3)},
+					{phase: "InSync", observedAt: at(-30), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 4,
+		},
+		{
 			name: "in-sync: an old InSync with no newer reading is not the target", target: operate.TargetInSync,
 			docs: func(f operate.Family) []doc {
 				return []doc{
@@ -591,6 +664,17 @@ func TestWaitTargets(t *testing.T) {
 				return []doc{gateAt(0), gateAt(0), gateAt(600)}
 			},
 			wantReads: 3,
+		},
+		{
+			name: "approval: with a baseline, a newer reading another manager dated earlier is the target", target: operate.TargetApproval,
+			since: func(operate.Family) *doc {
+				waiting := gateAt(0)
+				return &waiting
+			},
+			docs: func(f operate.Family) []doc {
+				return []doc{gateAt(0), gateAt(-600)}
+			},
+			wantReads: 2,
 		},
 		{
 			name: "approval: with a baseline, the gate it shows never becomes the target", target: operate.TargetApproval,
