@@ -636,7 +636,8 @@ kubectl annotate ptahmigration orders \
 annotation, with a value later than any the resource holds and than the last
 one `status.lastReadRequest` answered, so a second request a moment after the
 first is not taken for an answered one. With `--wait` it waits for the read
-the request starts, under the rules below.
+the request starts, under the rules below, and stops with `PolicyRefused` when
+that read ends in the verification policy's refusal of the artifact.
 
 A value `status.lastReadRequest` does not record as answered is answered once
 no operation is running. In `InSync`, `Blocked`, `ReadyToApply`,

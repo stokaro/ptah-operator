@@ -23,7 +23,8 @@ type Target string
 const (
 	// TargetRead is the end of the read a read request asked for: the request
 	// answered, a read of the database that began after it, and nothing in
-	// flight.
+	// flight. A read that ends where the verification policy refuses the
+	// artifact stops the wait with StopPolicyRefused.
 	TargetRead Target = "read"
 	// TargetInSync is a resource that rests in sync at the required
 	// generation, by a read of the database that began after the baseline.
@@ -223,7 +224,8 @@ const (
 	// the database is not read, until the operator reads an artifact the policy
 	// accepts: at spec.interval, on a read request, or at once after a spec edit.
 	// A wait for a migration run that has ended goes by the run's record instead,
-	// and one that applied with no reading after it is StopNotProved.
+	// and one that applied with no reading after it is StopNotProved. A wait for a
+	// read stops on the refusal its own read ended in, and on no older one.
 	StopPolicyRefused StopReason = "PolicyRefused"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
@@ -607,6 +609,11 @@ type waiter struct {
 	answered      bool
 	floorAtAnswer bool
 	failureFloor  failureMark
+	// refusalFloor is the refusal the document the request is dated by records,
+	// or none: the baseline, or the document in which the operator takes the
+	// request when the baseline does not rest. A refusal with another stamp ended
+	// a read that began after it (readRefusal).
+	refusalFloor refusalStamp
 
 	// earlier is the plan whose post-Apply proof the baseline owed, until
 	// that proof ends: its Apply ended before the wait began. The
@@ -714,6 +721,7 @@ func (w *waiter) begin(baseline snapshot) {
 	if w.options.Target != TargetRead {
 		return
 	}
+	w.refusalFloor = baseline.refusal
 	switch {
 	case baseline.lastReadRequest == w.token:
 		// Taken before the baseline, so a claim in flight now began after
@@ -784,6 +792,7 @@ func (w *waiter) checkRead(s snapshot) verdict {
 			if w.floorAtAnswer {
 				w.fresh.raise(s.observedAt)
 				w.failureFloor = s.failureMark()
+				w.refusalFloor = s.refusal
 				fresh = false
 			}
 		case s.readRequest != w.options.ReadRequest:
@@ -805,6 +814,13 @@ func (w *waiter) checkRead(s snapshot) verdict {
 		return w.stop(s, StopReadFailed, message+"; the operator starts another read after its retry delay")
 	}
 	if !fresh {
+		// A fresh reading says a read that began after the request already
+		// ended with one, so a refusal is looked for only where there is none:
+		// beside a fresh reading it ended a later read, which this wait is not
+		// for.
+		if refused := w.readRefusal(s); refused != nil {
+			return w.stop(s, StopPolicyRefused, refusalMessage(refused))
+		}
 		return waitingFor("a read of the database that began after request %s (the last one is from %s)",
 			w.options.ReadRequest, instant(s.observedAt))
 	}
@@ -858,7 +874,7 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 // migration run that has ended does not come here (checkApplied).
 func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
 	if refused := w.heldRefusal(s); refused != nil {
-		return w.stop(s, StopPolicyRefused, fmt.Sprintf("%s; %s", refused.Message, refusalEnds)), true
+		return w.stop(s, StopPolicyRefused, refusalMessage(refused)), true
 	}
 	if s.plan == nil || !fresh {
 		return verdict{}, false
@@ -883,6 +899,38 @@ const refusalReadsToStop = 2
 
 // refusalEnds says what ends a verification policy's refusal.
 const refusalEnds = "a new artifact or a policy edit is read at spec.interval or on a read request, and a spec edit at once"
+
+// refusalMessage is what a StopPolicyRefused says: the refusal and what ends it.
+func refusalMessage(refused *metav1.Condition) string {
+	return fmt.Sprintf("%s; %s", refused.Message, refusalEnds)
+}
+
+// readRefusal is the refusal the read a request asked for ended in, or nil: an
+// artifactRefusal whose stamp differs from refusalFloor's, so that a read which
+// began after the request was written ended in it.
+//
+// The refusal comes before the database is read, so no reading dates it, and the
+// request's value is an instant the client's clock chose, which says nothing about
+// the operator's. What dates it is the stamp (refusalStamp) compared with the one
+// on the document the request is dated by. That document either rests, so that
+// the next Resolve is claimed after it, or is the one in which the operator takes
+// the request, which it does only at rest. The pass that answers leaves the
+// refusal it found, under the stamp it had, and the claim the next pass writes
+// takes it out of artifactRefusal, so one document of a new refusal says enough:
+// it is the end of that read, at rest until the next one.
+//
+// checkRead asks only of a document whose reading does not count. One that counts
+// was recorded by a read that began after the request, and the operator takes a
+// newer request on the pass after the rest that read ended in, milliseconds later,
+// so a wait polling at its interval can miss that rest and see the newer read's
+// refusal beside the reading. That refusal is a later read's.
+func (w *waiter) readRefusal(s snapshot) *metav1.Condition {
+	refused := w.artifactRefusal(s)
+	if refused == nil || s.refusal.same(w.refusalFloor) {
+		return nil
+	}
+	return refused
+}
 
 // heldRefusal is artifactRefusal once enough reads in a row have found it, or nil.
 // check counts the reads, so a count that high means this document has it too.
@@ -928,7 +976,8 @@ func (w *waiter) readBackHeld(s snapshot, run *runRecord) (verdict, bool) {
 // request the operator has not taken, may give another answer, and a spec edited
 // since the refusal may be the edit that allows the artifact.
 //
-// A wait for a source holds the refusal to the artifact it is for.
+// A wait for a source holds the refusal to the artifact it is for, and a wait for
+// a read to a refusal its own read ended in (readRefusal).
 func (w *waiter) artifactRefusal(s snapshot) *metav1.Condition {
 	refused := s.condition(operatorv1alpha1.ConditionArtifactVerified)
 	if refused == nil || refused.Status != metav1.ConditionFalse || refused.Reason != string(operatorv1alpha1.ReasonPolicyRefused) ||

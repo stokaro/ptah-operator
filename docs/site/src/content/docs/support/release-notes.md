@@ -33,7 +33,13 @@ match `has no cleanup scheduled, so it stays until it is deleted by hand or
 with its owner` in place of `keeps its own deadline because its cleanup could
 not be scheduled`, and has to expect no such Event for a Job its claim names by
 UID while that Job is still running. A migration Job an earlier release left
-without a TTL stays until you delete it.
+without a TTL stays until you delete it. A script that runs `kubectl ptah
+refresh --wait` or `kubectl ptah wait --for read` on a resource whose read ends
+in the verification policy's refusal of the artifact now gets exit status 8
+with `PolicyRefused`, where it ran to the timeout and exited 7. The resource
+may have been refused already, or in sync until a tag moved. A refusal from
+before the request does not stop the wait; only the refusal the requested read
+ends in does.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
