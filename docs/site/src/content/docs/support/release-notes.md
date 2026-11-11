@@ -34,7 +34,10 @@ with its owner` in place of `keeps its own deadline because its cleanup could
 not be scheduled`, and has to expect no such Event for a Job its claim names by
 UID while that Job is still running. A claim that never recorded its Job's UID
 now records it before the TTL is asked for, so such a Job gets no such Event
-either where admission admits the TTL. A migration Job an earlier release left
+either where admission admits the TTL. A dashboard or an alert on
+`ptah_operator_applies_total{family="migration",outcome="started"}` has to expect
+a count for an Apply whose Job's UID is recorded only as its run goes `Unknown`,
+once for each such run. A migration Job an earlier release left
 without a TTL stays until you delete it. A script that runs `kubectl ptah
 refresh --wait` or `kubectl ptah wait --for read` on a resource whose read ends
 in the verification policy's refusal of the artifact now gets exit status 8
@@ -87,8 +90,15 @@ one `stale` outcome, where it took two of each.
   between creating the Job and recording it, left the Job without a cleanup TTL
   once its run went `Unknown`, because admission admits that TTL only on the Job
   a claim names by UID. The claim now records the UID of the Job under the name
-  it reserved, where the resource owns that Job, before the TTL is asked for, and
-  the Job takes its TTL by the same rule.
+  it reserved, where the resource owns that Job and the Job is the one the claim
+  fixes, before the TTL is asked for, and the Job takes its TTL by the same rule.
+  A run recorded `Unknown` before the claim could read that name names the Job
+  when the claim records it. A Job the claim does not fix, such as one under
+  another execution epoch, is never recorded, and a `MigrationJobCleanupDeferred`
+  Warning names it when the claim goes. A TTL write that meets a newer version of
+  the Job, as when the Job controller has just written its status, keeps the
+  claim for the next pass, which asks again, where it used to leave the Job with
+  no TTL.
 - **A recorded approval wins over a due read.** An approval the operator had
   recorded in `status.plan.approval` when the interval ended was spent by the
   read that followed: the read's observation marked it `Stale` although the

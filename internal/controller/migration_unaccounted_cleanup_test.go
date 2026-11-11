@@ -559,7 +559,9 @@ func TestAnUnrecordedClaimRecordsOnlyAJobItsResourceOwns(t *testing.T) {
 // and the database stay, as for any read that cannot say. The next pass reads the
 // stopped Job, records its UID and schedules its TTL before the claim goes. A write
 // of the UID that fails there keeps the claim for the pass after it, because the
-// claim is what lets the TTL be scheduled at all.
+// claim is what lets the TTL be scheduled at all. The run recorded before the name
+// could be read names no Job, and names the Job once the claim records it, so the
+// record says which Job holds the log the TTL keeps.
 func TestAnUnreadNameKeepsAnUnrecordedClaimUntilItRecordsItsJob(t *testing.T) {
 	t.Parallel()
 
@@ -606,6 +608,10 @@ func TestAnUnreadNameKeepsAnUnrecordedClaimUntilItRecordsItsJob(t *testing.T) {
 			if uid := held.Status.ActiveOperation.JobUID; uid != "" {
 				t.Fatalf("the claim records Job UID %q from a read that failed", uid)
 			}
+			if last, unresolved := held.Status.LastRun, held.Status.UnresolvedRun; last.JobName != "" || last.JobUID != "" ||
+				unresolved.JobName != "" || unresolved.JobUID != "" {
+				t.Fatalf("the run recorded over an unread name names a Job: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
 			assertDatabaseStillHeld(t, reconciler, api)
 			if got := storedTTL(t, api, run.job); got != nil {
 				t.Fatalf("the Job's TTL = %d before its claim recorded it, want none", *got)
@@ -649,6 +655,23 @@ func TestAnUnreadNameKeepsAnUnrecordedClaimUntilItRecordsItsJob(t *testing.T) {
 			}
 			if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.FailedApplyRetentionTTLSeconds {
 				t.Fatalf("the stopped Job's TTL = %s once its claim went, want %d", ttlText(got), jobclaim.FailedApplyRetentionTTLSeconds)
+			}
+			settled := readMigration(t, api, run.migration)
+			last, unresolved := settled.Status.LastRun, settled.Status.UnresolvedRun
+			if last == nil || unresolved == nil || last.OperationID != held.Status.LastRun.OperationID {
+				t.Fatalf("the unknown run's records went with its claim: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
+			if last.JobName != run.job.Name || last.JobUID != run.job.UID ||
+				unresolved.JobName != run.job.Name || unresolved.JobUID != run.job.UID {
+				t.Fatalf("the unknown run does not name Job %q (UID %q), which keeps its log: lastRun=%#v unresolved=%#v",
+					run.job.Name, run.job.UID, last, unresolved)
+			}
+			if last.DispatchedBy == nil || unresolved.DispatchedBy == nil {
+				t.Fatalf("the unknown run names its Job but not the manager that built it: lastRun=%#v unresolved=%#v", last, unresolved)
+			}
+			if !unresolvedRunCopyMatches(settled, unresolved) {
+				t.Fatalf("the unresolved-run copy %q is not the record %#v",
+					settled.Annotations[operatorv1alpha1.UnresolvedRunAnnotation], unresolved)
 			}
 		})
 	}

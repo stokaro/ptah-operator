@@ -107,10 +107,10 @@ func requireMigrationInputsMoved(t *testing.T, reconciler *MigrationReconciler, 
 
 // TestAMigrationWhoseInputsMovedRefusesAJobThatIsNotItsClaims holds the Job
 // under a claim's reserved name to the claim once the claim can no longer
-// rebuild it. An Apply records the run as outcome unknown, and the claim it
-// keeps while the Job may write names that Job by UID, so its cleanup can be
-// asked for once it stops. A History reading moves to a new attempt under a new
-// name and records no UID.
+// rebuild it. An Apply records the run as outcome unknown, and a History
+// reading moves to a new attempt under a new name; neither claim records the
+// UID of the Job it refused, because recording it would make the Job the
+// claim's.
 func TestAMigrationWhoseInputsMovedRefusesAJobThatIsNotItsClaims(t *testing.T) {
 	t.Parallel()
 
@@ -130,7 +130,7 @@ func TestAMigrationWhoseInputsMovedRefusesAJobThatIsNotItsClaims(t *testing.T) {
 				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
 					t.Fatalf("Reconcile() error = %v", err)
 				}
-				assertRefused(t, api, run, "Job is not its claim's: "+row.want)
+				assertRefusedOutsideItsClaim(t, api, run, "Job is not its claim's: "+row.want)
 			})
 		}
 	}

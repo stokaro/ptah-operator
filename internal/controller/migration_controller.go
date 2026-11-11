@@ -1076,10 +1076,15 @@ func migrationJobClaim(migration *operatorv1alpha1.PtahMigration, job *batchv1.J
 //
 // The claim adopts only the Job mutationlifecycle.VerdictFor gives
 // VerdictAdopt: one this resource owns exactly as controller, under the name the
-// claim reserved, while the claim names no UID. The controller-write webhook
-// admits a Job under that name only while the claim names no UID
-// (validateMigrationJobCreate), so that Job is the one this claim's dispatch
-// created, whichever release built it.
+// claim reserved, while the claim names no UID. Owning it is not enough. The
+// controller-write webhook holds only the manager's own creates to the claim
+// (validateMigrationJobCreate), and a Job anyone else created under that name is
+// held to nothing, so every caller first holds the Job to what the claim fixes. A
+// pass that supervises the Job does that in holdMigrationJobToItsClaim, and a pass
+// that settles an Apply nobody accounted for in unrecordedMigrationJobRefusal,
+// with the match admission applies when it admits the Job's cleanup TTL. A Job
+// that passes is the one this claim's dispatch created, whichever release built
+// it.
 //
 // Every claim records its Job's UID here or in the pass that created the Job, and
 // only once. So an Apply is also recorded as dispatched here and counted as
@@ -1088,7 +1093,10 @@ func migrationJobClaim(migration *operatorv1alpha1.PtahMigration, job *batchv1.J
 // The UID is what the rest of the claim's life reads. A pass that supervises the
 // Job binds to it, the pass that asks whether the Job can still write lists the
 // Pods it owned, and admission admits a cleanup TTL only on the Job a claim names
-// by UID.
+// by UID. A run this claim already recorded unknown without naming its Job, as
+// when the pass that recorded it could not read the name, names the Job in the
+// same write (nameRecordedMigrationRun), so the record points at the log the TTL
+// keeps.
 func (r *MigrationReconciler) adoptMigrationJob(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -1104,6 +1112,7 @@ func (r *MigrationReconciler) adoptMigrationJob(
 	if mutating {
 		operation.DispatchStarted = true
 	}
+	nameRecordedMigrationRun(migration, operation, job)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return false, err
 	}
@@ -1111,6 +1120,32 @@ func (r *MigrationReconciler) adoptMigrationJob(
 		r.Telemetry.ObserveApply(telemetry.FamilyMigration, telemetry.ApplyStarted)
 	}
 	return true, nil
+}
+
+// nameRecordedMigrationRun names job in the records of the claim's run that name
+// no Job: status.lastRun and status.unresolvedRun, where either is the record of
+// operation. A record of another run, or one that names a Job, is left as it is.
+// The copy of the unresolved run on metadata follows the record in the same
+// status write (patchMigrationStatus).
+func nameRecordedMigrationRun(
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	job *batchv1.Job,
+) {
+	if run := migration.Status.LastRun; run != nil && run.OperationID == operation.ID &&
+		run.JobName == "" && run.JobUID == "" {
+		run.JobName, run.JobUID = job.Name, job.UID
+		if run.DispatchedBy == nil {
+			run.DispatchedBy = dispatcherRecord(job)
+		}
+	}
+	if run := migration.Status.UnresolvedRun; run != nil && run.OperationID == operation.ID &&
+		run.JobName == "" && run.JobUID == "" {
+		run.JobName, run.JobUID = job.Name, job.UID
+		if run.DispatchedBy == nil {
+			run.DispatchedBy = dispatcherRecord(job)
+		}
+	}
 }
 
 // expectedMigrationJob is the Job the active claim builds now: the plan an

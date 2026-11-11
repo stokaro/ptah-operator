@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -35,6 +36,10 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 	for _, row := range []struct {
 		name  string
 		fault func(jobName string) *dispatchFaultClient
+		// recorded is whether the claim records the UID of the Job the create
+		// left: the one its dispatch built does, and one outside what the claim
+		// fixes does not.
+		recorded bool
 	}{
 		{
 			name: "the create never answered",
@@ -44,6 +49,7 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 					created: func(*batchv1.Job) error { return lost },
 				}
 			},
+			recorded: true,
 		},
 		{
 			name: "the created Job is not the one the claim describes",
@@ -68,14 +74,18 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 			}
 			reconciler, api := fakeMigrationReconciler(t, staticLogs{},
 				migration, plan, verificationPolicyConfigMap())
+			// The real builder, because the claim records only a Job that carries
+			// what it fixes, and the fixture builder writes none of it.
+			reconciler.Jobs = workloadBuilderForMigrations()
 			fault := row.fault(operation.JobName)
 			fault.Client = reconciler.Client
 			reconciler.Client = fault
 
 			// Repeated passes must preserve the reserved workload identity and
 			// wait for it, even when the create never confirmed its UID. The
-			// claim records the UID of the Job the create left under its name,
-			// which is the one its dispatch created, and binds to nothing else.
+			// claim records the UID of the Job the create left under its name
+			// where that Job is the one its dispatch built, and binds to nothing
+			// else.
 			var actual *operatorv1alpha1.PtahMigration
 			for range 4 {
 				if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
@@ -90,11 +100,15 @@ func TestAnUnconfirmedMigrationApplyDispatchIsNeverRetried(t *testing.T) {
 			if standing.UID == "" {
 				t.Fatal("the Job the create left has no UID, so naming it proves nothing")
 			}
+			want := types.UID("")
+			if row.recorded {
+				want = standing.UID
+			}
 			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.ID != operation.ID ||
 				actual.Status.ActiveOperation.JobName != operation.JobName ||
-				actual.Status.ActiveOperation.JobUID != standing.UID {
-				t.Fatalf("an unconfirmed running Apply lost or rebound its reserved claim, or did not name the Job %q under it: %#v",
-					standing.UID, actual.Status.ActiveOperation)
+				actual.Status.ActiveOperation.JobUID != want {
+				t.Fatalf("an unconfirmed running Apply lost or rebound its reserved claim, or names Job UID other than %q: %#v",
+					want, actual.Status.ActiveOperation)
 			}
 			if actual.Status.LastRun == nil ||
 				actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {

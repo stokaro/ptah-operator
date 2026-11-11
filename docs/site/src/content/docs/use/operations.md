@@ -1934,10 +1934,12 @@ identity rather than pointing at them. A run that reported `Partial` or `Unknown
 or nothing, [keeps its Pod log](#failed-apply-log) for 24 hours after the Job
 finishes, under `apply: Always` as under an approval. A claim that never recorded
 the Job's UID, as when the manager stopped between creating the Job and recording
-it, records it before the TTL is asked for, so its Job keeps the log the same way.
-`status.lastRun.message` says how to read it when the Job had finished by the time
-the run was recorded. A Job still running then takes its TTL once it stops, and the
-message names no log.
+it, records it before the TTL is asked for, so its Job keeps the log the same way,
+and a run recorded before the claim could read the Job's name names the Job then. A
+Job under the reserved name that the claim does not fix, such as one under another
+execution epoch, is never recorded, and stays with no TTL. `status.lastRun.message`
+says how to read it when the Job had finished by the time the run was recorded. A
+Job still running then takes its TTL once it stops, and the message names no log.
 
 Which database `targetIdentityDigest` names depends on what the run managed to
 say. A readable result frame reports the database the Pod's URL named, and so
@@ -2357,9 +2359,12 @@ table above once the Job stops, just before the write that retires the claim, an
 `kubectl logs` reads the Job `status.lastRun.jobName` names for as long as that TTL
 keeps it. Admission admits the TTL only on the Job a claim names by UID, so a claim
 that never recorded the UID, as when the manager stopped between creating the Job
-and recording it, records it before the TTL is asked for. Where
-admission refuses the TTL, the Job stays until it is deleted, and a
-`MigrationJobCleanupDeferred` Warning Event names it when the claim goes. When
+and recording it, records it before the TTL is asked for, where the Job is the one
+the claim fixes, and `status.lastRun.jobName` names it from then on. A Job that is
+not, such as one under another execution epoch, is never recorded. Where admission
+refuses the TTL, or the claim does not record the Job, the Job stays until it is
+deleted, and a `MigrationJobCleanupDeferred` Warning Event names it when the claim
+goes. When
 admission refuses the 24 hours, as the guard of the previous release does after a
 Helm upgrade that failed once the manager rolled out, the Job keeps five minutes,
 and a `FailedApplyLogShortened` Warning Event and a line in the manager's log say
