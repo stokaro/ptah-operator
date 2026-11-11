@@ -148,6 +148,22 @@ records](../../use/operations/#result-record-quota) says.
   namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
   Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
   Job exists, the collector retries with backoff up to every 5 minutes.
+- **The kubelet's words stay on an Apply whose Pod never started.** An Apply
+  whose Secret or key is missing reports the kubelet's words while it waits. A
+  `PtahMigration` Apply past its Job's deadline then recorded only `result frame
+  not found`, and an Apply that ended another way before its result was read
+  recorded only how it ended: its inputs changed, as when `urlFrom` is pointed at
+  the Secret that exists, its Job was deleted, replaced or left without its
+  owner, a release changed an execution component under it, or, on a
+  `PtahMigration`, its database Lease changed hands or the resource was deleted.
+  Those records now carry the words after that sentence, as what was last
+  reported: `status.lastRun` and `Blocked` on a `PtahMigration`, and
+  `ReconciliationFailed` on a `PtahSchema`. A deleted `PtahMigration` keeps them
+  in its `MigrationRunUncertain` Warning Event, and now looks at the Pod while
+  it waits for it, so a Pod that starts in that wait takes them off. Nothing is
+  added when the claim's own Job reports a Pod that succeeded.
+  [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
+  has the messages.
 
 ## 0.2.10
 
