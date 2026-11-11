@@ -337,10 +337,10 @@ runner image -- is taken from the live Pod template first, because it binds
 nothing and the snapshot pins it. A Job that fails the match, or a claim that
 cannot rebuild its Job, is settled the way a lost Job is: a mutating claim's
 run is recorded `Unknown` and never gets a second executor, and a read-only
-claim runs again under a new attempt. A `PtahSchema` claim leaves the old Job
-to its own deadline, and so does a `PtahMigration` claim whose Job admission
-would refuse a cleanup TTL. A `PtahMigration` claim whose Job admission would
-collect first waits a bounded time for that Job to stop, as described below.
+claim runs again under a new attempt. A read-only claim whose Job admission
+would collect first waits a bounded time for that Job to stop, as described
+below. One whose Job admission would refuse a cleanup TTL leaves it to its own
+deadline, and a Warning Event names it.
 Once the inputs have moved the claim cannot rebuild its Job. The pass then
 holds the Job to what the claim fixes without a rebuild: the epoch, the labels
 and annotations, and the Pod template against the admission snapshot. That is
@@ -362,16 +362,27 @@ or its Pod template cannot confirm them: a running `PtahSchema` or
 else is applied until that run is accounted for; a running read-only Job is
 run again. A migration Apply whose plan was deleted while it ran is
 recorded `Unknown` the same way, because its Job cannot be rebuilt without the
-plan it runs. A migration's read-only claim runs again once the Job it refused
-has stopped, where admission admits that Job's cleanup TTL, so the Job gets the
-TTL first (`retryPastRefusedMigrationJob`). It waits no longer than the Job's
-own deadline and the termination grace of its Pods, plus 30 seconds for the
-kubelet and the Job controller to report, because a Job past its deadline is
-not `Failed` until every Pod has terminated, and a Pod on a node that is gone
-may never terminate.
+plan it runs. A read-only claim runs again once the Job it refused has stopped,
+where admission admits that Job's cleanup TTL, so the Job gets the TTL first
+(`retryPastRefusedSchemaJob`, `retryPastRefusedMigrationJob`). A claim that
+never recorded the Job's UID records it first, where the Job is the one the
+claim fixes. It waits no longer than the Job's own deadline and the termination
+grace of its Pods, plus 30 seconds for the kubelet and the Job controller to
+report, because a Job past its deadline is not `Failed` until every Pod has
+terminated, and a Pod on a node that is gone may never terminate.
+
+Every read-only claim that lets go of its Job settles it by that one rule,
+`releaseReadOnlyJob`, in both families: one that runs again past a Job it
+refused, one that suspension discards, and a migration's claim that an
+execution-binding change retires. A `PtahSchema` claim that a binding change
+retires is kept under the retired epoch until its Job stops, as a Plan's claim
+has to be to hold its Lease, and gets its TTL then.
 
 Suspension cannot discard a dispatched mutating claim in either family. A
-resource suspended mid-Apply keeps its claim and keeps renewing the Lease.
+resource suspended mid-Apply keeps its claim and keeps renewing the Lease. A
+read-only claim is discarded at once, because suspension is the stop button: it
+gives a Job that has finished its TTL first, and a Warning Event names one still
+running, which stays until it is deleted.
 
 For a migration, suspending is also a spec edit, and the generation it bumps is
 one of the inputs `migrationInputFingerprint` digests. So the pass that finds

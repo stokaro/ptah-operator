@@ -60,7 +60,8 @@ records](../../use/operations/#result-record-quota) says.
 The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only migration
-Job too.
+Job too, including one a suspension leaves running, and one on a
+`PtahSchema`'s Warning Events with the new `SchemaJobCleanupDeferred`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -205,19 +206,39 @@ Job too.
   later than before, and a manager that restarts in that time waits again. A
   claim that recorded its Job's UID, and a resource being deleted, do not
   wait.
+- **A read-only Job is collected wherever its claim lets go of it.** More
+  read-only claims let go of the Job under their name and left it with no TTL:
+  a `PtahSchema` claim that could not confirm its Job, as after a release that
+  changed the Job, a claim of either family discarded because its resource was
+  suspended, and a migration claim retired because an execution component
+  changed. Admission admits the TTL only on a finished Job the active claim
+  names by UID, so the Job and its Pod stayed until the resource was deleted,
+  and nothing named them. A `PtahSchema` claim that could not confirm its Job,
+  and a migration claim a rotation retires, now wait for a Job they can confirm
+  to stop, by the bound the next entry gives, and give it the five minutes a
+  harvested Job gets. `Ready` names the Job while a `PtahSchema` claim waits.
+  Suspension still does not wait: a Job that has finished gets its TTL as the
+  claim goes, and a Warning names one still running. A claim that never
+  recorded the Job's UID records it first. A new `SchemaJobCleanupDeferred`
+  Warning Event names a Job a `PtahSchema` claim leaves with no TTL. A
+  `PtahSchema` claim a binding change retires already waited for its Job; a TTL
+  write admission refuses there no longer fails the pass, and a Warning names
+  the Job. A migration being deleted records the UID of an Apply Job its claim
+  never recorded before it asks for that Job's TTL, and a Job deleted before
+  that TTL was asked for is no longer named by a Warning.
 - **A refused read-only migration Job is collected.** A read-only migration
   claim that could not confirm the Job under its name, as after a release that
   changed the Job, ran again under a new attempt and left that Job with no TTL,
   so the Job and its Pod stayed until the resource was deleted, and nothing named
   them. Admission admits the TTL only on a finished Job the active claim names by
-  UID. Where the claim recorded the Job's UID and the Job is the one the claim
-  fixes, the claim now waits for the Job to stop, as it waits for a Job it
-  supervises, and gives it the five minutes a harvested Job gets before it runs
-  again. It waits at most the Job's `spec.execution.activeDeadlineSeconds`, 15
+  UID. Where the Job is the one the claim fixes, the claim now waits for the Job
+  to stop, as it waits for a Job it supervises, and gives it the five minutes a
+  harvested Job gets before it runs again, recording the Job's UID first if it
+  never did. It waits at most the Job's `spec.execution.activeDeadlineSeconds`, 15
   minutes by default, plus the termination grace its Pods are given and 30
   seconds, and `Progressing` names the Job meanwhile. A Job admission would
-  refuse, such as one under another execution epoch or one whose claim never
-  recorded its UID, is left at once, and so is one that has not finished by then.
+  refuse, such as one under another execution epoch, is left at once, and so is
+  one that has not finished by then.
   A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
 
 ## 0.2.10
