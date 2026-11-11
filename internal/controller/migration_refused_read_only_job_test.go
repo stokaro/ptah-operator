@@ -600,3 +600,73 @@ func TestARefusedReadOnlyJobThatDoesNotStopIsLeft(t *testing.T) {
 		})
 	}
 }
+
+// TestAJobsStopBoundIsWhatItCarries holds migrationJobStopBound to the Job's own
+// values on inputs the built Jobs never vary: every read-only Job the builder
+// writes carries the default termination grace and a deadline, and the Job
+// controller sets its conditions True with a time.
+func TestAJobsStopBoundIsWhatItCarries(t *testing.T) {
+	t.Parallel()
+
+	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	started := created.Add(10 * time.Second)
+	condition := func(conditionType batchv1.JobConditionType, status corev1.ConditionStatus, at time.Time) batchv1.JobCondition {
+		return batchv1.JobCondition{Type: conditionType, Status: status, LastTransitionTime: metav1.NewTime(at)}
+	}
+	for _, row := range []struct {
+		name       string
+		grace      *int64
+		deadline   *int64
+		conditions []batchv1.JobCondition
+		want       time.Time
+	}{
+		{
+			name: "a grace of its own", grace: ptr(int64(90)), deadline: ptr(int64(600)),
+			want: started.Add(600*time.Second + 90*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "no grace set", deadline: ptr(int64(600)),
+			want: started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "no deadline", grace: ptr(int64(30)),
+			want: started.Add(30*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "a FailureTarget set False", grace: ptr(int64(30)), deadline: ptr(int64(600)),
+			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionFalse, started)},
+			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "a FailureTarget with no time", grace: ptr(int64(30)), deadline: ptr(int64(600)),
+			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionTrue, time.Time{})},
+			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "another condition", grace: ptr(int64(30)), deadline: ptr(int64(600)),
+			conditions: []batchv1.JobCondition{condition(batchv1.JobSuspended, corev1.ConditionTrue, started)},
+			want:       started.Add(600*time.Second + 30*time.Second + jobStopReportSlack),
+		},
+		{
+			name: "a FailureTarget with a grace of its own", grace: ptr(int64(90)), deadline: ptr(int64(600)),
+			conditions: []batchv1.JobCondition{condition(batchv1.JobFailureTarget, corev1.ConditionTrue, started.Add(time.Minute))},
+			want:       started.Add(time.Minute + 90*time.Second + jobStopReportSlack),
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(created)},
+				Spec: batchv1.JobSpec{
+					ActiveDeadlineSeconds: row.deadline,
+					Template:              corev1.PodTemplateSpec{Spec: corev1.PodSpec{TerminationGracePeriodSeconds: row.grace}},
+				},
+				Status: batchv1.JobStatus{StartTime: &metav1.Time{Time: started}, Conditions: row.conditions},
+			}
+			if got := migrationJobStopBound(job); !got.Equal(row.want) {
+				t.Fatalf("migrationJobStopBound() = %s, want %s", got, row.want)
+			}
+		})
+	}
+}

@@ -1137,7 +1137,8 @@ const jobStopReportSlack = 30 * time.Second
 // to: its own deadline, counted from its start as the Job controller counts it,
 // plus the termination grace its Pods are given and jobStopReportSlack. A Job the
 // Job controller has not started yet counts from its creation, which comes no
-// later. A FailureTarget or SuccessCriteriaMet condition says the Job controller is
+// later. A Job with no deadline, which no release of this operator builds, gets
+// no time beyond the grace and the slack. A FailureTarget or SuccessCriteriaMet condition says the Job controller is
 // already terminating the Job's Pods, so where one stands, the bound is its time
 // plus the same grace and slack, if that comes first.
 //
