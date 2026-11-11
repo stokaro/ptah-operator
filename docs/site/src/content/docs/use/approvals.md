@@ -105,12 +105,12 @@ not admit an approval now. The operator reads a waiting schema again at its
 interval, and admission takes no approval while it does: an answer given then
 is sent when that read ends, if the plan shown is the one waiting again. It
 waits up to five minutes for that read to end before it sends, and `--timeout`
-bounds each request it makes rather than that wait. An approval the operator
-recorded in `status.plan.approval` before the interval ended is not spent by
-that read: the plan is applied first, and the database is read after the
-Apply. The answer it
+bounds each request it makes rather than that wait. The answer it
 prints is the API server's: the approval admission stored with the identity
-it stamped, or the refusal in RBAC's or admission's own words.
+it stamped, or the refusal in RBAC's or admission's own words. An approval the
+operator recorded in `status.plan.approval` before the interval ended is not
+spent by the interval's read: the plan is applied first, and the database is
+read after the Apply.
 
 - `--plan-fingerprint <fingerprint>` approves without asking, and only if the
   current plan carries that fingerprint. It is for a script that reviewed the

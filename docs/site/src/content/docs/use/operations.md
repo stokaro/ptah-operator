@@ -1375,8 +1375,12 @@ approval, or `Blocked`: read-only verification, observation, and planning
 continue, the same immutable plan returns as current when its inputs are
 unchanged, and no `Apply` Job is created during the refresh. A moved tag or
 database drift observed by a due refresh therefore invalidates stale plan or
-approval evidence before mutation can begin. A resource `Blocked` with
-`TargetIdentityChanged` is the exception: it resolves no source until [its proof
+approval evidence before mutation can begin. An approval the controller already
+recorded for the current plan is an exception: the Apply it authorizes runs
+first, with the plan built from the digest resolved before, and the source is
+resolved again one interval after the proof that follows the Apply. A tag that
+moved in the meantime is seen then. A resource `Blocked` with
+`TargetIdentityChanged` is another: it resolves no source until [its proof
 ends](../recovery/#a-schema-whose-target-moved).
 
 Native verification always inspects the resolved digest. When the selected

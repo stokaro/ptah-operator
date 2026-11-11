@@ -21,8 +21,11 @@ out of silence.
 **Before you upgrade.** A script that approves a schema plan again once its
 approval goes `Stale`, or an alert on
 `ptah_operator_approvals_total{family="schema",outcome="stale"}`, has to expect
-an approval recorded before the interval ended to be applied rather than marked
-stale by the interval's read.
+an approval recorded before the interval ended to be consumed by an Apply and
+then marked `Stale` by the proof after it, as every applied approval is, rather
+than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
+plan approved just before its interval ended now takes one approval and counts
+one `stale` outcome, where it took two of each.
 
 - **A recorded approval wins over a due read.** An approval the operator had
   recorded in `status.plan.approval` when the interval ended was spent by the
@@ -30,7 +33,9 @@ stale by the interval's read.
   plan did not change, and the same plan waited for a second approval. The
   Apply it authorizes now runs first, and the read-only proof after the Apply
   reads the database. An automatic Apply under `apply: Always` and an approval
-  not yet recorded still wait for the read.
+  not yet recorded still wait for the read. A read requested on a schema with
+  a recorded approval follows its Apply too, and the `ReadRequested` Event now
+  says so.
 
 ## 0.2.10
 

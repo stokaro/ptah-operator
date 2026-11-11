@@ -133,8 +133,11 @@ request.
 
 Every reconciliation interval resolves the reference again, and a moved tag
 clears dependent plan and applied evidence before repeating verification and
-observation. An old approval cannot authorize a plan built from new bytes. Pin a
-digest when you do not want the reference to move.
+observation. An old approval cannot authorize a plan built from new bytes. An
+approval the operator recorded before the interval ended is the exception: the
+plan it names is applied first, and the reference is resolved again one
+interval after the proof that follows that Apply. Pin a digest when you do not
+want the reference to move.
 
 - [Operations](../use/operations/#mutable-tags-and-registry-outages)
 
