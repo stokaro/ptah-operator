@@ -79,7 +79,15 @@ where it recorded `canceled`. Such records count in
 `PtahOperatorUnresolvedApply`, which is critical and has no pending period, can
 fire for a schema deleted while its Apply runs: for about 30 seconds past the
 Apply's deadline when its Pod never started, and for a pass when its executor ran
-and stopped.
+and stopped. `kubectl ptah suspend --wait` on a `PtahSchema` no longer waits
+for the Job of a read that an execution-binding change retired or whose
+database lock epoch moved, unless the read serves a post-apply proof: the
+resource reports `Suspended` while that Job may still run, and a
+`SchemaJobCleanupDeferred` Warning names the Job. On a schema whose proof read
+runs a Job this release cannot confirm, it now waits for that Job to stop, up
+to 60 seconds past the Job's deadline, which can outlast the five-minute
+default of `--wait-timeout`. 0.2.10 retried such a read at once without
+waiting for its Job.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -318,6 +326,25 @@ and stopped.
   the UID of an Apply Job its claim never recorded before it asks for that
   Job's TTL, and a Job deleted before that TTL was asked for is no longer named
   by a Warning.
+- **A read-only wait ends at the Job's stop bound and gives way to suspension.**
+  A `PtahSchema` claim a binding change retired waited for its read-only Job
+  with no bound, and the resource ran nothing else until the Job stopped, which
+  a Job that carries only `FailureTarget` never does. It now waits no longer
+  than the Job's deadline, the grace of its Pods and 30 seconds, and a
+  `SchemaJobCleanupDeferred` Warning names a Job still running then. That
+  claim, and a Plan whose database lock epoch moved while its Job ran, waited
+  for the Job under `spec.suspend` too. Neither waits once the resource is
+  suspended, and the Warning names a Job they leave running; a deletion still
+  waits for the Plan's Job, by the same bound. The retired claim also renews
+  the Lease it holds while it waits. It let the Lease run out before, so a Job
+  that outlasted the Lease could let another claimant take the realm, and a
+  proof whose Lease changed hands is recorded `Unknown`. A suspended
+  `PtahSchema` claim that serves a post-apply proof is the exception, here and
+  in the entry above: the proof keeps its Lease and runs to its end under
+  suspension, so a proof read whose Job this release cannot confirm waits for
+  that Job by the same bound and gives it its TTL before it reads again.
+  [Suspended, and losing a lock](../../reference/reconciliation/#suspended-and-losing-a-lock)
+  says what a suspended resource still waits for.
 
 ## 0.2.10
 
