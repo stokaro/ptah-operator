@@ -16,6 +16,14 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.11
+
+**Before you upgrade.** A script that runs `kubectl ptah refresh --wait` or
+`kubectl ptah wait --for read` on a resource whose verification policy refuses
+the artifact now gets exit status 8 with `PolicyRefused` once the read it asked
+for ends in that refusal, where it ran to the timeout and exited 7. A refusal
+from before the request still leaves the wait to its timeout.
+
 ## 0.2.10
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

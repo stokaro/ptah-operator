@@ -74,6 +74,9 @@ type doc struct {
 	annotation string
 	lastRead   string
 	conditions []metav1.Condition
+	// resolvedAt is a schema's status.source.resolvedAt: when its last Resolve
+	// was harvested. A migration records no such time.
+	resolvedAt time.Time
 	plan       *planDoc
 	noHistory  bool
 	applied    *appliedDoc
@@ -163,6 +166,10 @@ func (d doc) object(family operate.Family) client.Object {
 		if !d.observedAt.IsZero() {
 			observed := metav1.NewTime(d.observedAt)
 			status.Target.LastObservedAt = &observed
+		}
+		if !d.resolvedAt.IsZero() {
+			resolved := metav1.NewTime(d.resolvedAt)
+			status.Source.ResolvedAt = &resolved
 		}
 		if d.operation != "" {
 			status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{

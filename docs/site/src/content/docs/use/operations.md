@@ -1872,9 +1872,22 @@ The wait reads the refusal from `ArtifactVerified`, `False` with
 two reads in a row. No reading dates it, so a refusal that stands when the wait
 begins stops it too. An older one does not: a spec edited since, a read request
 the operator has not taken, a read under way, or an artifact that passed since
-leaves the wait running, whatever `Ready` or `Blocked` still says. To see whether a
-policy edit helps, ask for a read first: `kubectl ptah refresh --wait` is not stopped
-by the refusal it may end, and its timeout names the refusal if it stands.
+leaves the wait running, whatever `Ready` or `Blocked` still says.
+
+To see whether a policy edit helps, ask for a read with `kubectl ptah refresh
+--wait`. The refusal that stands when you ask does not stop it. If the read it
+asked for ends in a refusal again, the wait stops with `PolicyRefused` and the
+requirements, as `kubectl ptah wait --for read` does. A refusal from before the
+request, or from a read that was already under way when it was written, leaves the
+wait running, and the timeout names that refusal.
+
+The wait tells the two apart by a stamp the operator writes with each refusal. For
+a schema it is `status.source.resolvedAt`, which the Resolve of each read writes;
+for a migration it is the `lastTransitionTime` of `ArtifactVerified`, which the
+refusal writes. The wait compares that stamp with the one the resource carried when
+the wait began, or when the operator took the request if a read was under way at
+first. It never compares it with the time of the request, which your clock wrote
+and not the operator's.
 
 A resource its database realm blocks keeps a wait running: another resource's
 change or an administrator's grant ends that refusal, not a change to this
