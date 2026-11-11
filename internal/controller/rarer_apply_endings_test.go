@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -452,8 +453,8 @@ func TestRarerSchemaApplyEndingsKeepWhyItsPodNeverRan(t *testing.T) {
 			if want := lastReportedBefore + run.said; !strings.Contains(failed.Message, want) {
 				t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
 			}
-			if want := uncertainApplyFixedEvent + lastReportedBefore + run.said; !strings.Contains(settledSchemaEvent(t, run.recorder), want) {
-				t.Fatalf("ApplyOutcomeUnknown = %q, want it to carry %q", settledSchemaEvent(t, run.recorder), want)
+			if event, want := settledSchemaEvent(t, run.recorder), uncertainApplyFixedEvent+lastReportedBefore+run.said; !strings.Contains(event, want) {
+				t.Fatalf("ApplyOutcomeUnknown = %q, want it to carry %q", event, want)
 			}
 		})
 	}
@@ -536,13 +537,61 @@ func TestADeletedSchemaWhosePodStartedWhileItWaitedRepeatsNoStaleReport(t *testi
 	pastTheDeadline(t, run.api, run.job, run.pod)
 	run.reconcileOnce(t)
 
-	event := settledSchemaEvent(t, run.recorder)
-	if !strings.HasSuffix(event, uncertainApplyFixedEvent) {
+	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
 		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
 	}
 	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "Apply executor termination is not proven during deletion") ||
 		strings.Contains(failed.Message, run.said) {
 		t.Fatalf("ReconciliationFailed = %q, want the deletion's sentence without the report the look found out of date", failed.Message)
+	}
+}
+
+// A Job under the reserved name that the claim never recorded is not shown to
+// be the claim's: owning it is not enough, since anyone who may create a Job
+// can create one with the schema as its owner. The deletion wait does not take
+// a report from it, so the ending says nothing about its Pod.
+func TestADeletedSchemaTakesNoReportFromAJobItsClaimNeverRecorded(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	builder := workloadBuilderForMigrations()
+	dispatched := schemaRunDispatchedBy(t, operatorv1alpha1.OperationApply, runShape{dispatcher: builder}, builder)
+	run := unstartedSchema{
+		reconciler: dispatched.reconciler, api: dispatched.api, recorder: record.NewFakeRecorder(256),
+		schema: dispatched.schema, job: dispatched.job,
+	}
+	run.reconciler.Recorder = run.recorder
+	if operation := run.schema.Status.ActiveOperation; operation == nil || !operation.DispatchStarted || operation.JobUID != "" {
+		t.Fatalf("the claim = %#v, want a dispatch that never recorded its Job", operation)
+	}
+	run.pod = &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: run.job.Namespace, Name: generatedTerminalPodName(run.job.Name, "abc12"), UID: "unstarted-pod-uid",
+			Labels: maps.Clone(run.job.Spec.Template.Labels), Annotations: maps.Clone(run.job.Spec.Template.Annotations),
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(run.job)},
+		},
+		Spec: *run.job.Spec.Template.Spec.DeepCopy(),
+	}
+	waitingOnASecret(run.pod)
+	if err := run.api.Create(ctx, run.pod.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteSchemaWhileItsApplyRuns(t, run)
+	if ready := meta.FindStatusCondition(safetyGetSchema(t, run.api, run.schema).Status.Conditions, operatorv1alpha1.ConditionReady); ready != nil &&
+		ready.Reason == string(operatorv1alpha1.ReasonPodConfigurationError) {
+		t.Fatalf("the deletion wait took a report from a Job its claim never recorded: Ready %#v", ready)
+	}
+
+	pastTheDeadline(t, run.api, run.job, run.pod)
+	run.reconcileOnce(t)
+
+	if event := settledSchemaEvent(t, run.recorder); event != uncertainApplyFixedEvent {
+		t.Fatalf("ApplyOutcomeUnknown = %q, want the fixed text alone", event)
+	}
+	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "Apply executor termination is not proven during deletion") ||
+		strings.Contains(failed.Message, lastReportedBefore) {
+		t.Fatalf("ReconciliationFailed = %q, want the deletion's sentence and no report", failed.Message)
 	}
 }
 
