@@ -424,6 +424,14 @@ before it changes anything when the two differ, so the executed sequence is
 the approved one or nothing: a history that moved after the approval, forwards
 or backwards, reads as a failed run with nothing applied.
 
+The reads that prove a schema Apply are held to the same route identity. The
+Observe and the Plan that a `PtahSchema` runs after an Apply carry the digest
+its plan named, and the runner refuses either one before it starts the child
+when the Pod's URL hashes to another, with the digest the URL gave in its
+result. A proof whose Secret moved therefore never logs in to the new target.
+No other read carries the binding: an ordinary read is how the operator learns
+where a URL now points.
+
 All resources use one configurable coordination namespace, so resources in
 different namespaces still contend for the same database. The manager's
 leader-election Lease lives there too. Replicas of the one supported Helm

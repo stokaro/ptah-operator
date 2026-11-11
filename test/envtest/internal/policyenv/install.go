@@ -89,6 +89,11 @@ func Install(ctx context.Context, plane *harness.ControlPlane, chart *Chart) (*E
 			return nil, fmt.Errorf("create %T %s: %w", object, object.GetName(), err)
 		}
 	}
+	// Setup writes as the manager before any row has waited, and a refusal a
+	// row reads has to be the policy's rather than a grant still on its way.
+	if err := plane.AwaitRBAC(ctx, chart.Names.Namespace); err != nil {
+		return nil, err
+	}
 	for _, policy := range chart.Policies {
 		if err := admin.Create(ctx, cleanPolicy(policy)); err != nil {
 			return nil, fmt.Errorf("create policy %s: %w", policy.Name, err)

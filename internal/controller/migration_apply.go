@@ -814,18 +814,18 @@ func recordUnresolvedMigrationRun(
 
 // migrationRunTarget is the database a hold on a run names.
 //
-// Which database to name is the whole point of the record, so the run's own account
-// of it wins. A result frame names the target its Secret held, and that is not
-// always the one the plan was computed against: Secret content can rotate between
-// the history reading and the Apply. Recording the planned database instead would
-// let a clean reading of it settle a run that never touched it, while a reading of
-// the database that was touched could not match what was stored.
+// The run's own account wins. A result frame names the target the Pod's Secret
+// held, and the runner refuses an Apply whose target is not its plan's before
+// Ptah starts (target_binding_mismatch). So a frame that names another target
+// than the plan's reports a refusal that changed nothing, and the hold names
+// where that refusal looked, which is the database a person would go and read.
 //
 // With no frame, or one that named no target or something the status schema would
-// refuse, the best that is known is the database the plan was computed against,
-// which is the last history this resource read. A hold needs somewhere to start
-// looking. The run's own record does not take that value: it says what was planned
-// and not what happened.
+// refuse, the hold names the database the plan was computed against, which is the
+// last history this resource read. By the same refusal it is the only database the
+// run can have changed, so a clean reading of it says what the run did, and a
+// reading of another one settles nothing. The run's own record does not take that
+// value: it says what the run reported, and the run reported nothing.
 func migrationRunTarget(migration *operatorv1alpha1.PtahMigration, reportedTarget string) string {
 	if sha256Digest.MatchString(reportedTarget) {
 		return reportedTarget
@@ -884,9 +884,8 @@ func recordMigrationRunProvenance(
 //
 // A reading of another database says nothing about what the run did, so it leaves
 // the run unverified, as it leaves an unresolved one unsettled. That covers a run
-// that named no database, since a reading always names one: the run may have executed
-// nothing or reached another database, so a clean reading of the planned one is no
-// statement about it. Its outcome is Unknown or Partial, which a wait stops on without
+// that named no database, since a reading always names one: the run reported
+// nothing, so a clean reading of the planned one is no statement about it. Its outcome is Unknown or Partial, which a wait stops on without
 // a reading, and what settles its hold is not this record. A run with no operation ID
 // was recorded by a release without this field and stays as it was.
 func recordMigrationRunVerification(migration *operatorv1alpha1.PtahMigration) {
@@ -1161,11 +1160,10 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 // settles the record before another Apply can be authorized.
 //
 // reportedTarget is the database the run's result named, and is empty wherever
-// no result frame was read -- which is most of the ways in. A run that reached
-// a database the plan was never computed against arrives here through exactly
-// one of them, and that is the case where naming the planned database instead
-// would be wrong: a clean reading of it would settle a run that never touched
-// it, and a reading of the database that was touched could never match.
+// no result frame was read -- which is most of the ways in. A run the runner
+// refused because its Secret named another target arrives here through exactly
+// one of them, with that target named. Naming the planned database instead
+// would make the record say something the run's own result contradicts.
 //
 // Whether the database goes back in the same write depends on whether anything
 // the claim dispatched can still write, and that is read here, before the

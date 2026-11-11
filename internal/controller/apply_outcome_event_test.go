@@ -120,7 +120,11 @@ func TestAnUncertainApplyEventKeepsTheFixedTextForAnyOtherError(t *testing.T) {
 		reconciler.Locks = targetlock.New(api, api, nil)
 		recorder := record.NewFakeRecorder(32)
 		reconciler.Recorder = recorder
-		if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		clock := &safetyClock{now: reconciler.now()}
+		reconciler.Clock = clock.Now
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		waitOutMissingJobGrace(t, clock, func() (ctrl.Result, error) { return reconciler.Reconcile(context.Background(), request) })
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 			t.Fatalf("Reconcile() error = %v", err)
 		}
 		assertUnaccountedApply(t, safetyGetSchema(t, api, schema))
