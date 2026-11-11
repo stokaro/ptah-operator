@@ -673,8 +673,10 @@ type UnresolvedMigrationRunStatus struct {
 	// TargetIdentityDigest is the credential-free identity of the database this
 	// run's result named. Where no result frame was read at all -- which is most
 	// of the ways a run becomes unresolved -- it is the database its plan was
-	// computed against instead, because that is then the only thing known about
-	// where it went.
+	// computed against instead. That is the only database the run can have
+	// changed: the runner refuses an Apply whose URL names another target before
+	// Ptah starts, so a result that names another one reports a run that
+	// changed nothing.
 	//
 	// The reading that settles this record has to be of that database: a
 	// history read somewhere else says nothing about what this run did.

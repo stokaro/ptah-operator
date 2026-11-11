@@ -84,10 +84,36 @@ var databaseReachableReasons = map[dataplane.TargetFailureKind]operatorv1alpha1.
 // is another Plan with no Observe before it, and a refusal that repeats would keep
 // an old reason for as long as it repeats. invalid_plan_output is not one of these:
 // the runner also writes it for a child that never reached the target.
+//
+// desired_schema_invalid is one. Ptah connects and pings before it loads the
+// file, and the runner writes the code only where the failed sentence ends with
+// the comparison's or a declaration's fault, which a connect failure never does.
+// desired_source_unreadable is not. A parse error also comes after a reply, but
+// the runner writes the code when the Plan failed in a way no target failure
+// kind names and the file would not have parsed either. A server that drops the
+// connection is such a failure, and Ptah v0.23.0 names no kind for it on either
+// engine.
 func planReadTheTarget(code string) bool {
 	switch code {
-	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed":
+	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed", runner.CodeDesiredSchemaInvalid:
 		return true
+	}
+	return false
+}
+
+// failureReadTheTarget reports an error code the runner writes for operation
+// only after a read came back from the target. An Observe has one:
+// desired_schema_invalid, for the same reason as a Plan. Ptah's drift connects
+// and reads the database before it compares, and the runner writes the code
+// only where the command's sentence ends with that comparison's fault. An
+// Observe runs before a Plan and compares the same way, so a declaration that
+// cannot be compared usually stops there, and its retry is another Observe.
+func failureReadTheTarget(operation operatorv1alpha1.OperationType, code string) bool {
+	switch operation {
+	case operatorv1alpha1.OperationPlan:
+		return planReadTheTarget(code)
+	case operatorv1alpha1.OperationObserve:
+		return code == runner.CodeDesiredSchemaInvalid
 	}
 	return false
 }

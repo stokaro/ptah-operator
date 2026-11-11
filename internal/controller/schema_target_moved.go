@@ -28,6 +28,15 @@ import (
 // because the way out that loses nothing is putting the first URL back, and a
 // Secret raises no event here.
 //
+// None of those reads reaches the new target. The Observe and the Plan that prove
+// an Apply carry the digest of the Apply's plan, as the Apply does
+// (workload.appendProofTargetBinding), and the runner refuses one whose URL names
+// another before it starts the child: target_binding_mismatch, with the digest
+// the URL gave. So nothing logs in to a database the plan was not made for, with
+// credentials nobody approved for it, however long the resource waits there, and
+// the refusal still says which target the URL names. A read with no proof owed
+// carries no binding, because it is how a new target is learned.
+//
 // The other way out is a person's statement. Crediting the Apply from a reading
 // of another target would attribute it to a database it may never have reached,
 // and giving the proof up unasked would let a store's mistake reach the next
@@ -58,8 +67,9 @@ import (
 
 // proofReadAnotherTarget reports a proof's read that names a target other than
 // the one its Apply was planned for. The runner works the digest out from the
-// URL before the child starts, so it is there whether the child could log in or
-// not, and a result with none says nothing about where it read.
+// URL before anything else reads it, so it is there on the runner's refusal of a
+// read bound to another target as on a child's success or failure, and a result
+// with none says nothing about where it read.
 func proofReadAnotherTarget(pending *operatorv1alpha1.PendingObservationStatus, digest string) bool {
 	return pending != nil && digest != "" && digest != pending.Plan.TargetIdentityDigest
 }

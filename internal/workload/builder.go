@@ -415,6 +415,9 @@ func (i buildInput) validate() error {
 		if !sha256Pattern.MatchString(i.operation.CoordinationDigest) {
 			return fmt.Errorf("%s operation requires a valid coordination binding", i.operation.Type)
 		}
+		if pending := i.schema.Status.PendingObservation; pending != nil && !sha256Pattern.MatchString(pending.Plan.TargetIdentityDigest) {
+			return fmt.Errorf("%s operation that proves an Apply requires the applied plan's target identity", i.operation.Type)
+		}
 		if i.operation.Type == operatorv1alpha1.OperationPlan &&
 			(i.operation.LeaseDurationSeconds < 5 || i.operation.LeaseDurationSeconds > 86460) {
 			return errors.New("plan operation lease duration is outside the supported range")
@@ -522,6 +525,7 @@ func (i buildInput) dataPlane() (
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
 			literalEnv("PTAH_SEVERITY", stringOrDefault(i.operation.ObservationSeverity, "all")),
 		)
+		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 	case operatorv1alpha1.OperationPlan:
 		target := *i.operation.Target
 		environment = append(environment,
@@ -534,6 +538,7 @@ func (i buildInput) dataPlane() (
 			literalEnv(runner.EnvPlanSealPublicKey, i.planSealPublicKey.Encode()),
 			literalEnv(runner.EnvSealedPlanJobName, i.operation.JobName),
 		)
+		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 		if i.operation.ObservationDev != nil {
 			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.operation.ObservationDev.URLFrom))
 		}
@@ -586,6 +591,20 @@ func (i buildInput) dataPlane() (
 		annotations[AnnotationPlanContentDigest] = i.plan.Spec.ContentDigest
 	}
 	return environment, volumes, mounts, annotations, nil
+}
+
+// appendProofTargetBinding binds a read that proves an Apply to the target that
+// Apply was planned for, as the Apply itself is bound. The runner refuses the
+// read before it starts the child when the URL names another target, so a
+// proof whose Secret moved neither logs in to the new target nor reads it,
+// however long it waits there. An ordinary read carries no binding: it is how
+// a new target is learned. Which reads are proofs is decided again on harvest,
+// by schemaClaimServesProof in internal/controller; the two have to agree.
+func appendProofTargetBinding(environment []corev1.EnvVar, pending *operatorv1alpha1.PendingObservationStatus) []corev1.EnvVar {
+	if pending == nil {
+		return environment
+	}
+	return append(environment, literalEnv(runner.EnvExpectedTargetIdentityDigest, pending.Plan.TargetIdentityDigest))
 }
 
 // artifactFetch builds the container pair that materializes one verified,

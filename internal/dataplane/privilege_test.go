@@ -116,6 +116,44 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 		{name: "function made security definer", dialect: "postgres", statement: `ALTER FUNCTION "public"."get_tenant"(uuid) SECURITY DEFINER`, want: []string{"SecurityDefiner"}},
 		{name: "view back to owner rights", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker = false)`, want: []string{"SecurityDefiner"}},
 		{name: "view option reset", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" RESET (security_invoker)`, want: []string{"SecurityDefiner"}},
+		// Invoker rights on a view that already has readers make each of them
+		// need rights of their own on what it reads, so a read that worked can
+		// start failing (#897). The reading takes no value from the statement,
+		// so a spelling it cannot see is raised all the same.
+		{name: "view to invoker rights", dialect: "postgres", statement: `ALTER VIEW "differs_notes_view" SET (security_invoker=true)`, want: []string{"SecurityDefiner"}},
+		{name: "view to invoker rights spelled on", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker=on)`, want: []string{"SecurityDefiner"}},
+		{name: "view option as a bare name", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker)`, want: []string{"SecurityDefiner"}},
+		{name: "view option as a number", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker=0)`, want: []string{"SecurityDefiner"}},
+		{name: "view option as a string", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker='false')`, want: []string{"SecurityDefiner"}},
+		{name: "view option through ALTER TABLE", dialect: "postgres", statement: `ALTER TABLE "public"."v_orders" SET (security_invoker=true)`, want: []string{"SecurityDefiner"}},
+		{
+			name: "view replaced with invoker rights", dialect: "postgres",
+			statement: "CREATE OR REPLACE VIEW \"public\".\"v_orders\" WITH (security_invoker=true) AS\nSELECT id FROM public.orders",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "view to invoker rights in a DO block", dialect: "postgres",
+			statement: `DO $$ BEGIN ALTER VIEW "public"."v_orders" SET (security_invoker=true); END $$`,
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			// Ptah writes a view whose body changed this way with the options
+			// the declaration states, whether or not they changed, and the
+			// statement cannot say which.
+			name: "view body changed, invoker rights restated", dialect: "postgres",
+			statement: "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name, created_at FROM differs_notes",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "new view with its owner's rights spelled off", dialect: "postgres",
+			statement: "CREATE VIEW \"public\".\"v_orders\" WITH (security_invoker=off) AS\nSELECT id FROM public.orders",
+			want:      []string{"SecurityDefiner"},
+		},
+		{
+			name: "new view with its owner's rights", dialect: "postgres",
+			statement: "CREATE VIEW \"public\".\"v_orders\" WITH (security_invoker=false) AS\nSELECT id FROM public.orders",
+			want:      []string{"SecurityDefiner"},
+		},
 		{
 			// Ptah writes every function as CREATE OR REPLACE, new or not, and
 			// a trigger function is no exception.
@@ -256,7 +294,11 @@ func TestDecodePlanDoesNotRaiseLookalikes(t *testing.T) {
 			name: "invoker function created", dialect: "postgres",
 			statement: `CREATE FUNCTION "public"."total"(a int) RETURNS int LANGUAGE sql SECURITY INVOKER AS $$ SELECT a $$`,
 		},
-		{name: "view invoker rights", dialect: "postgres", statement: `ALTER VIEW "public"."v_orders" SET (security_invoker = true)`},
+		// A view CREATE VIEW makes has no readers whose rights could change.
+		{
+			name: "new view with invoker rights", dialect: "postgres",
+			statement: "CREATE VIEW \"public\".\"v_orders\" WITH (security_invoker=true) AS\nSELECT id FROM public.orders",
+		},
 		{name: "view replaced", dialect: "postgres", statement: "CREATE OR REPLACE VIEW \"public\".\"v_orders\" AS\nSELECT id FROM public.orders"},
 		{
 			name: "trigger replaced", dialect: "postgres",

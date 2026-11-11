@@ -53,6 +53,7 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 			absent: []string{
 				"PTAH_DEV_URL", "PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
 				"PTAH_IGNORE", "PTAH_EXCLUDE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
+				"PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
 			},
 		},
 		{
@@ -61,6 +62,7 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
 				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
+				"PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
 			},
 		},
 		{
@@ -514,8 +516,11 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	}
 	schema.Spec.Desired.Transport.DeepCopyInto(&originalSource.Transport)
 	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
-		Outcome:            operatorv1alpha1.PendingObservationApplySucceeded,
-		Plan:               operatorv1alpha1.CurrentPlanStatus{ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: testCoordinationDigest()},
+		Outcome: operatorv1alpha1.PendingObservationApplySucceeded,
+		Plan: operatorv1alpha1.CurrentPlanStatus{
+			ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: testCoordinationDigest(),
+			TargetIdentityDigest: digest('c'),
+		},
 		CoordinationDigest: testCoordinationDigest(),
 		Source:             originalSource,
 		Target: operatorv1alpha1.DatabaseTargetBinding{
@@ -563,6 +568,9 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	if got := requireEnv(t, job, runner.EnvCoordinationDigest).Value; got != testCoordinationDigest() {
 		t.Fatalf("coordination digest = %q, want persisted proof binding", got)
 	}
+	if got := requireEnv(t, job, runner.EnvExpectedTargetIdentityDigest).Value; got != digest('c') {
+		t.Fatalf("expected target digest = %q, want the applied plan's", got)
+	}
 	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
 	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath, "--skip-parse"}) {
 		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
@@ -592,6 +600,51 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	}
 	if !hasMount(guard, caVolumeName) || !hasMount(guard, caSnapshotVolumeName) {
 		t.Fatalf("post-apply guard mounts = %#v, want persisted CA source and snapshot", guard.VolumeMounts)
+	}
+}
+
+// A read that proves an Apply carries the target that Apply was planned for, and
+// the runner refuses it before the child starts when the URL names another. The
+// binding is the applied plan's, not the target the resource last observed, and
+// a proof whose plan names no target is not built at all rather than sent out
+// unbound.
+func TestBuildBindsAProofReadToTheAppliedPlansTarget(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationObserve,
+		operatorv1alpha1.OperationPlan,
+	} {
+		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			active := operationFixture(operation)
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+				Outcome: operatorv1alpha1.PendingObservationApplySucceeded,
+				Plan: operatorv1alpha1.CurrentPlanStatus{
+					ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: testCoordinationDigest(),
+					TargetIdentityDigest: digest('c'),
+				},
+				CoordinationDigest: testCoordinationDigest(),
+				Source:             *active.Source.DeepCopy(),
+				Target:             *active.Target.DeepCopy(),
+			}
+			if schema.Status.Target.IdentityDigest == digest('c') || active.TargetIdentityDigest == digest('c') {
+				t.Fatal("the fixture's observed target is the plan's, so the row cannot tell which one is bound")
+			}
+			job, err := builderFixture().Build(schema.DeepCopy(), active, nil)
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			if got := requireEnv(t, job, runner.EnvExpectedTargetIdentityDigest).Value; got != digest('c') {
+				t.Fatalf("expected target digest = %q, want the applied plan's %q", got, digest('c'))
+			}
+
+			schema.Status.PendingObservation.Plan.TargetIdentityDigest = ""
+			if _, err := builderFixture().Build(schema, active, nil); err == nil ||
+				!strings.Contains(err.Error(), "target identity") {
+				t.Fatalf("Build() error = %v, want a proof with no plan target refused", err)
+			}
+		})
 	}
 }
 
