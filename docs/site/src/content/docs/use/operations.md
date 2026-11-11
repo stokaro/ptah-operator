@@ -2537,7 +2537,10 @@ observation follows, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDef
 Warning Event names the Job, which stays until it is deleted. No
 `FailedApplyLogShortened` Event comes then. The status and the Event still point at
 the log, and say it is there until the Job is deleted: nothing collects the Job, so
-the log stays longest exactly then. A finished Job its claim harvests, a read's or a
+the log stays longest exactly then. For a schema Apply recorded unknown, a later
+change of execution component asks for the TTL again, and where admission admits it
+then, a `RetiredApplyLogKept` Warning Event says how long the log stays; the status
+recorded before is not rewritten. A finished Job its claim harvests, a read's or a
 succeeded Apply's, is settled the same way, once in each pass. So under a policy that
 refuses the manager's TTL patch, every Job a claim harvests stays: about three for
 each read cycle, some 430 a day for each resource at the default 10-minute interval,

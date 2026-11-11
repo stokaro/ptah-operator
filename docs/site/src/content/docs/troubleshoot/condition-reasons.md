@@ -188,6 +188,10 @@ that failed and left a dirty revision row does. A schema Apply under `Always` ke
 five minutes, because its proof can lead to the next Apply.
 The message says which. Where admission refused the Job's cleanup TTL, nothing
 collects the Job, and the message says the log is there until the Job is deleted.
+For a schema Apply whose outcome is unknown, a later change of execution component
+asks for the TTL again. Where admission admits it then, a `RetiredApplyLogKept`
+Warning Event says how long the log stays, and the message recorded before is not
+rewritten.
 Past that, or on a node that was replaced,
 the log is gone unless something shipped it, and running the statement against a copy
 of the database shows the same error. A Job harvested by the release before this one
