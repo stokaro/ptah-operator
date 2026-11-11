@@ -1139,12 +1139,16 @@ the plan's privilege changes are why.
 `ReadyToApply`, `AwaitingApproval`, and `Blocked` all retain a read-only refresh
 deadline so the cadence survives controller restarts. A resource `Blocked` with
 `TargetIdentityChanged` retains a proof to read instead, at its failure retry
-interval. An eligible Apply can be
-reserved immediately before that deadline; once it is due, a fresh resolution
-and observation take priority over automatic policy or approval consumption.
-After policy and, when required, the exact recorded approval pass final
-validation, the controller captures one timestamp, checks it against that
-deadline, and stores the same value as the Apply operation's start time. That
+interval. Once that deadline is due, a fresh resolution and observation take
+priority over an automatic Apply and over an approval the controller has not
+yet recorded on the plan. An approval already recorded for the current plan
+takes priority over the due read instead, because the read would mark it
+stale even when the plan did not change. The Apply it authorizes runs, and
+the read-only proof after it reads the database; Ptah refuses to apply a plan
+the database moved away from in the meantime. After policy and, when
+required, the exact recorded approval pass final validation, the controller
+captures one timestamp and stores it as the Apply operation's start time. An
+automatic Apply first checks that timestamp against the deadline. That
 durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.

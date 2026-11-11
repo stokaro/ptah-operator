@@ -2067,8 +2067,12 @@ func TestAwaitingApprovalAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			expectedStartedAt: time.Date(2026, 8, 30, 12, 0, 59, 0, time.UTC), expectedClockCalls: 2,
 		},
 		{
-			name: "recorded approval reaches deadline at claim boundary", recordedApproval: true,
-			clockOffsets: []time.Duration{-time.Second, 0}, expectedOperation: operatorv1alpha1.OperationResolve,
+			// A recorded approval of the current plan wins over the read that
+			// comes due as the pass claims, and the claim keeps that instant.
+			name: "recorded approval wins the deadline at claim boundary", recordedApproval: true,
+			clockOffsets:      []time.Duration{-time.Second, 0},
+			expectedOperation: operatorv1alpha1.OperationApply,
+			expectedStartedAt: time.Date(2026, 8, 30, 12, 1, 0, 0, time.UTC), expectedClockCalls: 2,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -2109,7 +2113,6 @@ func TestAwaitingApprovalAuthorizationUsesOneDurableTimestamp(t *testing.T) {
 			}
 			if !test.expectedStartedAt.IsZero() &&
 				(!actual.Status.ActiveOperation.StartedAt.Time.Equal(test.expectedStartedAt) ||
-					!actual.Status.ActiveOperation.StartedAt.Time.Before(deadline) ||
 					clockCalls != test.expectedClockCalls) {
 				t.Fatalf(
 					"Apply authorization = started %s with %d clock calls, want %s with %d calls",

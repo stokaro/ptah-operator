@@ -314,10 +314,17 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	case operatorv1alpha1.PhasePlanning:
 		return r.claim(ctx, schema, operatorv1alpha1.OperationPlan)
 	case operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseAwaitingApproval:
-		if due(schema.Status.NextReconciliationTime, now) {
-			// Refresh the complete evidence chain before considering even an exact
-			// approval or an automatic Apply. This prevents an expired plan from
-			// racing a moved tag or database drift discovered by reconciliation.
+		if due(schema.Status.NextReconciliationTime, now) && !approvalRecorded(schema) {
+			// Refresh the complete evidence chain before an automatic Apply and
+			// before an approval is recorded. This keeps an expired plan from
+			// racing a moved tag or database drift the read would find.
+			//
+			// An approval already recorded is a person's decision about this
+			// plan, and the read would spend it: its Observe marks a recorded
+			// approval stale whatever the database says. reconcileApproval
+			// judges the recorded approval first, and the Apply it authorizes
+			// runs before the read. Ptah refuses to apply a plan the database
+			// has moved away from, and the Apply's own proof reads the database.
 			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 		}
 		return r.reconcileApproval(ctx, schema)
@@ -2156,12 +2163,23 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		}
 	}
 	claimedAt := r.now()
-	if (schema.Status.Phase == operatorv1alpha1.PhaseReadyToApply ||
+	// An automatic Apply checks the instant it is claimed at against the
+	// refresh deadline, and gives way to the read once it is due. An approval
+	// this pass found recorded and current does not give way: it wins over
+	// the read, as at the phase gate in reconcile.
+	if !requiresApproval && (schema.Status.Phase == operatorv1alpha1.PhaseReadyToApply ||
 		schema.Status.Phase == operatorv1alpha1.PhaseAwaitingApproval) &&
 		due(schema.Status.NextReconciliationTime, claimedAt) {
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	}
 	return r.claimAt(ctx, schema, operatorv1alpha1.OperationApply, claimedAt)
+}
+
+// approvalRecorded reports whether status.plan records an approval. It says
+// nothing about whether that approval still authorizes the plan:
+// reconcileApproval decides that.
+func approvalRecorded(schema *operatorv1alpha1.PtahSchema) bool {
+	return schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 }
 
 func (r *SchemaReconciler) claim(ctx context.Context, schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (ctrl.Result, error) {
