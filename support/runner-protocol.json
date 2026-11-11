@@ -377,6 +377,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:2dd57fe2afdf3f01d0cf7e4b57e5cb06e40b3a3c944194c699299eb77b678e1e",
       "reason": "Raise a PostgreSQL view's security_invoker in either direction (#897). The only changes in packages the runner links are the privilege reading in internal/dataplane and the SecurityDefiner doc comments there and in the API package. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is unchanged. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b60e45ab3d4aa8115dcb912496652ff8de5c0a5c6696080d495cde700d9aeb35",
+      "reason": "Stop reading a stored result record without the attempt label as the publication it would be with one (#928). The change is in internal/resultstore, which the runner links for the delivery receipt and binding types; the comparison runs in the manager's receiver and collector, and no release wrote such a record. Commands, payloads, result frames, delivery identity and SQL authority are the same, a manager of any release reads this runner's output as it read the last one, and protocol 1 stays."
     }
   ]
 }

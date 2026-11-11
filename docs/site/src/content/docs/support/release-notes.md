@@ -51,7 +51,12 @@ an approval recorded before the interval ended to be consumed by an Apply and
 then marked `Stale` by the proof after it, as every applied approval is, rather
 than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
-one `stale` outcome, where it took two of each.
+one `stale` outcome, where it took two of each. A script that acts on the exit
+status of a `kubectl ptah` wait on a migration run has to expect the statuses
+the bullet on waits under two managers' clocks lists. A namespace with a
+ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
+in it for one `retired` record per operation, as [A quota on result
+records](../../use/operations/#result-record-quota) says.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -108,6 +113,41 @@ one `stale` outcome, where it took two of each.
   not yet recorded still wait for the read. A read requested on a schema with
   a recorded approval follows its Apply too, and the `ReadRequested` Event now
   says so.
+- **Waits under two managers' clocks.** After a leader failover the manager that
+  writes a resource's status can run a clock behind or ahead of the one before
+  it, and some waits put times the two had written in order. A wait now counts a
+  reading by a new stamp and decides a migration run by the reading the operator
+  records on it, `status.lastRun.verification`. So
+  `kubectl ptah wait migration/... --for applied` now exits 8 with
+  `CompletionNotProved` when the reading after the run was of another database,
+  where it exited 0, or 7 at its timeout under skew. It also ends at the
+  read-back itself, which is in `Planning` when the read-back found more
+  migrations pending. Under skew it keeps waiting where it exited 0 on a
+  migration suspended before the history was read back, or 8 with
+  `NotConverged` on one its realm blocked, and exits 0 where it timed out with 7
+  on a read-back dated before the run's end.
+  `kubectl ptah approve migration/... --wait` and `wait --for applied --plan`
+  keep waiting under skew where they exited 8 with `CompletionNotProved` on a
+  migration suspended or blocked by its realm before the read-back, and exit 8 with
+  `CompletionNotProved` where they timed out after a reading of another database
+  dated before the run's end. A wait for `in-sync`, `approval` or `read`, and the
+  `--wait` of `refresh`, `resume` and `set-source`, exits 0 under skew where it
+  timed out on a reading dated before the one before it. With one clock as
+  well, `wait --for applied` now goes by the run's record when the resource
+  moves on before the next poll: it exits 0 where it exited 8 with
+  `NotConverged` on a resource blocked after a read-back that found it in sync
+  or pending, and 8 with `NotConverged` where it exited 0 after a read-back that
+  was blocked. A run that an operator older than 0.2.10 recorded carries no
+  verification, so `wait --for applied` still dates its reading by the run's
+  end.
+- **Result cleanup under a full quota.** A quota that refused the `retired` record
+  stopped cleanup in a live namespace: the collector asked again every 30 seconds,
+  nothing started the retention window, and the operation's records stayed. Once the
+  operation's Job is gone, the collector now starts the window with a foreground
+  deletion of the result and credential records, as it already did in a terminating
+  namespace, and the records go an hour after it. A `ResultRetirementQuotaExceeded`
+  Warning Event on the `PtahSchema` or `PtahMigration` names the quota. While the
+  Job exists, the collector retries with backoff up to every 5 minutes.
 
 ## 0.2.10
 

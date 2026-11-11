@@ -159,7 +159,7 @@ func recordedEvents(t *testing.T) map[string]recordedEvent {
 					unresolved = append(unresolved, fileSet.Position(call.Pos()).String())
 					return true
 				}
-				family, ok := familyOf(path)
+				families, ok := familyOf(path)
 				if !ok {
 					unresolved = append(unresolved, fileSet.Position(call.Pos()).String()+" is in a file this cannot attribute to a family")
 					return true
@@ -171,7 +171,9 @@ func recordedEvents(t *testing.T) map[string]recordedEvent {
 				if entry.eventType != eventType {
 					t.Errorf("%s is recorded as both %s and %s", reason, entry.eventType, eventType)
 				}
-				entry.families[family] = true
+				for _, family := range families {
+					entry.families[family] = true
+				}
 				events[reason] = entry
 				return true
 			})
@@ -227,14 +229,18 @@ func eventArguments(call *ast.CallExpr) (string, string, bool) {
 	return eventType, reason, true
 }
 
-// familyOf attributes a file to the resource family whose reconciler it is.
-func familyOf(path string) (string, bool) {
+// familyOf attributes a file to the resource families whose Events it records:
+// a reconciler's file to its own family, and the result collector to both,
+// since it records on whichever resource a result belongs to.
+func familyOf(path string) ([]string, bool) {
 	name := filepath.Base(path)
 	switch {
 	case strings.Contains(name, "migration"):
-		return "PtahMigration", true
+		return []string{"PtahMigration"}, true
 	case strings.Contains(name, "schema"):
-		return "PtahSchema", true
+		return []string{"PtahSchema"}, true
+	case filepath.Base(filepath.Dir(path)) == "resultcleanup":
+		return []string{"PtahSchema", "PtahMigration"}, true
 	}
-	return "", false
+	return nil, false
 }

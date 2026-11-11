@@ -209,9 +209,12 @@ func (p Policy) deletionOrder(ctx context.Context, record *api.PtahResultRecord,
 }
 
 // AuthorizeForegroundRetirement permits only the start of a foreground
-// deletion. Its API-controlled timestamp supplies the retirement clock when
-// namespace termination forbids creating a separate marker. Admission protects
-// the foreground finalizer until AuthorizeDelete permits destruction of bytes.
+// deletion. Its API-controlled timestamp supplies the retirement clock when the
+// API refuses a separate marker: a terminating namespace refuses every CREATE,
+// and a full ResourceQuota on result records refuses this one. Nothing here
+// reads why, because the verdict is the same either way: the namespace's phase
+// and its quotas say nothing about the evidence. Admission protects the
+// foreground finalizer until AuthorizeDelete permits destruction of bytes.
 func (p Policy) AuthorizeForegroundRetirement(ctx context.Context, record *api.PtahResultRecord) error {
 	if p.Reader == nil || p.Window < resultretention.MinimumWindow || record == nil || record.UID == "" ||
 		!record.DeletionTimestamp.IsZero() || len(record.Finalizers) != 0 ||

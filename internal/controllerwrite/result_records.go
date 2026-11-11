@@ -87,8 +87,9 @@ func (v *Validator) validateResultRecord(ctx context.Context, req admissionv1.Ad
 			err = resultstore.ValidateRecordUpdate(old, next)
 		}
 		// Foreground retirement may be the only persistent clock available in
-		// a terminating namespace. Even the garbage collector must retain this
-		// API finalizer until the full window and current pins permit deletion.
+		// a terminating namespace or under a full ResourceQuota. Even the garbage
+		// collector must retain this API finalizer until the full window and
+		// current pins permit deletion.
 		// What this update asks for is the deletion, so that is what it is told.
 		if err == nil && !old.DeletionTimestamp.IsZero() && len(old.Finalizers) == 1 &&
 			old.Finalizers[0] == metav1.FinalizerDeleteDependents && len(next.Finalizers) == 0 {
