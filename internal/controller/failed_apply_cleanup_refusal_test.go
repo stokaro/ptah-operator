@@ -298,7 +298,8 @@ func retiredApplyStopped(t *testing.T) (*operatorv1alpha1.PtahSchema, *batchv1.J
 // settles the record with the Job left in place, a Warning names the Job, and
 // nothing says where a log is kept, since no TTL keeps one. A lost write fails
 // with the record kept, and the next call keeps the log for 24 hours. A refusal
-// that comes after the stored record moved fails and names nothing.
+// that comes after the stored record was settled, or moved to another Apply,
+// fails and names nothing.
 func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 	t.Parallel()
 
@@ -364,44 +365,60 @@ func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 			t.Fatalf("Events = %q, want the pointer to the log the retried call kept", events)
 		}
 	})
-	t.Run("refused after the record moved", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
+	// A second manager settled the record, or a later rotation retired another
+	// Apply, so the stored record names another Job. The webhook refuses both.
+	for _, move := range []struct {
+		name string
+		move func(*operatorv1alpha1.PtahSchema)
+	}{
+		{name: "refused after the record was settled", move: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingBindingRetirement = nil
+		}},
+		{name: "refused after the record moved to another Apply", move: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingBindingRetirement.Job.Name = "another-apply"
+			schema.Status.PendingBindingRetirement.Job.UID = "another-apply-uid"
+			schema.Status.PendingObservation.ApplyJobName = "another-apply"
+			schema.Status.PendingObservation.ApplyJobUID = "another-apply-uid"
+		}},
+	} {
+		t.Run(move.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
 
-		stored, job, reconciler, api, recorder := retiredApplyStopped(t)
-		var movedTo string
-		reconciler.Client = interceptor.NewClient(reconciler.Client.(client.WithWatch), interceptor.Funcs{
-			Patch: func(ctx context.Context, writer client.WithWatch, object client.Object, patch client.Patch, options ...client.PatchOption) error {
-				if _, isJob := object.(*batchv1.Job); isJob && movedTo == "" {
-					moved := safetyGetSchema(t, api, stored)
-					moved.Status.PendingBindingRetirement = nil
-					if err := api.Status().Update(ctx, moved); err != nil {
-						t.Fatalf("settle the stored record: %v", err)
+			stored, job, reconciler, api, recorder := retiredApplyStopped(t)
+			var movedTo string
+			reconciler.Client = interceptor.NewClient(reconciler.Client.(client.WithWatch), interceptor.Funcs{
+				Patch: func(ctx context.Context, writer client.WithWatch, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+					if _, isJob := object.(*batchv1.Job); isJob && movedTo == "" {
+						moved := safetyGetSchema(t, api, stored)
+						move.move(moved)
+						if err := api.Status().Update(ctx, moved); err != nil {
+							t.Fatalf("move the stored record: %v", err)
+						}
+						movedTo = moved.ResourceVersion
 					}
-					movedTo = moved.ResourceVersion
-				}
-				return writer.Patch(ctx, object, patch, options...)
-			},
-		})
+					return writer.Patch(ctx, object, patch, options...)
+				},
+			})
 
-		err := reconciler.cleanupRetiredApplyJob(ctx, stored, stored.Status.PendingObservation)
-		if movedTo == "" {
-			t.Fatal("the call asked for no TTL, so nothing moved the record")
-		}
-		if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "the record that names the Job changed") ||
-			!strings.Contains(err.Error(), "no pending execution-binding retirement names this Apply Job") {
-			t.Fatalf("cleanupRetiredApplyJob() = %v, want the webhook's refusal of a Job the stored record no longer names", err)
-		}
-		if settled := safetyGetSchema(t, api, stored); settled.ResourceVersion != movedTo {
-			t.Fatalf("the call wrote over the record that moved: resourceVersion=%s, moved at %s", settled.ResourceVersion, movedTo)
-		}
-		if got := storedTTL(t, api, job); got != nil {
-			t.Fatalf("the Job's TTL = %s, want none", ttlText(got))
-		}
-		if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, job.Name, "") {
-			t.Fatalf("a refusal for a record that moved named the Job as staying: %q", events)
-		}
-	})
+			err := reconciler.cleanupRetiredApplyJob(ctx, stored, stored.Status.PendingObservation)
+			if movedTo == "" {
+				t.Fatal("the call asked for no TTL, so nothing moved the record")
+			}
+			if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "the record that names the Job changed") {
+				t.Fatalf("cleanupRetiredApplyJob() = %v, want the webhook's refusal of a Job the stored record no longer names", err)
+			}
+			if settled := safetyGetSchema(t, api, stored); settled.ResourceVersion != movedTo {
+				t.Fatalf("the call wrote over the record that moved: resourceVersion=%s, moved at %s", settled.ResourceVersion, movedTo)
+			}
+			if got := storedTTL(t, api, job); got != nil {
+				t.Fatalf("the Job's TTL = %s, want none", ttlText(got))
+			}
+			if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, job.Name, "") {
+				t.Fatalf("a refusal for a record that moved named the Job as staying: %q", events)
+			}
+		})
+	}
 }
 
 // migrationApplyFailedAtAStatement stands up an Apply whose Pod reported that it
