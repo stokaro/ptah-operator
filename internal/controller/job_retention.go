@@ -150,7 +150,7 @@ func everyExecutorStatusLost(pods []*corev1.Pod) bool {
 			return false
 		}
 	}
-	return len(pods) > 0
+	return true
 }
 
 // failedApplyLogPointer says where an Apply's Pod log is and how long it stays, from

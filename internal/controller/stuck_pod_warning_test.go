@@ -139,6 +139,67 @@ func TestADeletedSchemaWaitingOnAStuckPodNamesIt(t *testing.T) {
 	}
 }
 
+// A deletion past the Job's stop bound names no Pod that is not stuck: one
+// still running that nothing deleted, and one deleted that has stopped.
+func TestADeletedSchemaNamesNoPodThatIsNotStuck(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name string
+		pod  func(t *testing.T, run unstartedSchema)
+	}{
+		{name: "a running Pod nothing deleted", pod: func(t *testing.T, run unstartedSchema) {
+			firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+			// The Job's deadline has passed and nothing has acted on it.
+			job := &batchv1.Job{}
+			if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.job), job); err != nil {
+				t.Fatal(err)
+			}
+			started := metav1.NewTime(run.reconciler.now().Add(-time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second))
+			job.Status = batchv1.JobStatus{Active: 1, StartTime: &started}
+			if err := run.api.Status().Update(context.Background(), job); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a deleted Pod that failed", pod: func(t *testing.T, run unstartedSchema) {
+			stuckOnAGoneNode(t, run, run.reconciler.now())
+			stored := &corev1.Pod{}
+			if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), stored); err != nil {
+				t.Fatal(err)
+			}
+			stored.Status.Phase = corev1.PodFailed
+			if err := run.api.Status().Update(context.Background(), stored); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			run := admittedUnstartedSchemaApplyRun(t)
+			deleteSchemaWhileItsApplyRuns(t, run)
+			row.pod(t, run)
+			job := &batchv1.Job{}
+			if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.job), job); err != nil {
+				t.Fatal(err)
+			}
+			past := jobStopBound(job).Add(time.Minute)
+			if !past.After(run.reconciler.now()) {
+				t.Fatalf("the Job's stop bound %s is not a time the row can pass", past)
+			}
+			run.reconciler.Clock = func() time.Time { return past }
+			stuckPodEvents(run.recorder)
+			run.reconcileOnce(t)
+			if events := stuckPodEvents(run.recorder); len(events) != 0 {
+				t.Fatalf("a pass past the Job's stop bound recorded %q for a Pod that is not stuck", events)
+			}
+			if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.ActiveOperation == nil {
+				t.Fatal("the deletion stopped waiting for a Job that has not finished, so the row read no wait")
+			}
+		})
+	}
+}
+
 // Past the Job's stop bound only a Pod the API server is deleting and that has
 // not stopped is named. A Pod still running and not deleted is not stuck
 // terminating, and a stopped Pod held by a finalizer waits only on the Job
