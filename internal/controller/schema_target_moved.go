@@ -157,7 +157,7 @@ func (r *SchemaReconciler) settleProofOnMovedTarget(
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
 ) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {

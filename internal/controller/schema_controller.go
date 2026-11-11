@@ -1172,7 +1172,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// before any later plan can run.
 			return r.finishUncertainApplyWithReport(ctx, schema, job, job, currentErr, schemaPodReport(schema, job))
 		}
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := r.harvestJob(ctx, schema, job); err != nil {
 			return ctrl.Result{}, err
 		}
 		return r.discardStaleOperation(ctx, schema, currentErr)
@@ -1280,7 +1280,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.retryOperation(ctx, schema, job, errVerificationRefusalEvidence)
 			}
 			if policyErr := r.verificationResultPolicyError(ctx, schema, result.VerificationPolicyDigest); policyErr != nil {
-				if err := r.markJobHarvested(ctx, job); err != nil {
+				if err := r.harvestJob(ctx, schema, job); err != nil {
 					return ctrl.Result{}, err
 				}
 				return r.verificationPolicyChanged(ctx, schema, policyErr)
@@ -1539,7 +1539,7 @@ func (r *SchemaReconciler) blockVerification(
 	policyUID types.UID,
 	policyDigest string,
 ) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
@@ -1600,7 +1600,7 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	job *batchv1.Job,
 	message string,
 ) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	// No plan survives the refusal, so an approval recorded for the plan this
@@ -1676,7 +1676,7 @@ func (r *SchemaReconciler) consumeResult(
 }
 
 func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, result runner.Result, podUIDs []types.UID, podCount int32, durable bool) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
@@ -2567,7 +2567,7 @@ func (r *SchemaReconciler) retryOperationReporting(
 		}
 		return ctrl.Result{}, fmt.Errorf("retry requires an active read-only operation, got %q", operationType)
 	}
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
@@ -2739,9 +2739,12 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
 ) (ctrl.Result, error) {
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
-	if err := retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
+	// The claim still names the Job here, and the record below is read-only
+	// observation, so a refused cleanup leaves the Job in place and the record is
+	// still written.
+	if err := r.settleSchemaJobCleanup(ctx, schema, job, retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
 		r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
-	}); err != nil {
+	})); err != nil {
 		return ctrl.Result{}, err
 	}
 	reading := failedApplyLogReading(ctx, r.directReader(), job, failure)
@@ -3139,7 +3142,7 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 	job *batchv1.Job,
 	failure error,
 ) (ctrl.Result, error) {
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
@@ -3911,6 +3914,64 @@ func schemaResultReadBudget(schema *operatorv1alpha1.PtahSchema) time.Duration {
 
 func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {
 	return scheduleJobCleanup(ctx, r.Client, job, jobCleanupTTLSeconds)
+}
+
+// harvestJob asks for the cleanup TTL of the finished Job the active claim
+// supervised, at a harvest: before the pass consumes the result the Job's Pods
+// reported, retries the operation, or discards the claim because its inputs
+// moved. Every caller runs after the claim recorded the Job's UID and held the
+// Job to what the claim fixes, and a caller that consumes a result read it from
+// that Job's Pods first, so going on after a refusal acts on nothing the claim
+// did not prove. A refusal names the Job in a SchemaJobCleanupDeferred Warning,
+// and the Job stays until it is deleted by hand or with its owner. The pass goes
+// on only while the stored claim still names the Job (settleHarvestedJobCleanup).
+func (r *SchemaReconciler) harvestJob(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) error {
+	return r.settleSchemaJobCleanup(ctx, schema, job, r.markJobHarvested(ctx, job))
+}
+
+// settleSchemaJobCleanup settles written, the answer to a cleanup TTL write on
+// job, the Job the active claim names, made before the pass acts for that claim:
+// a harvest's (harvestJob), or an uncertain Apply's by the rule its Pod log is
+// kept by (retainFailedApplyJob). A refusal names the Job in a
+// SchemaJobCleanupDeferred Warning and the pass goes on, while the stored claim
+// still names the Job (settleHarvestedJobCleanup).
+func (r *SchemaReconciler) settleSchemaJobCleanup(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	written error,
+) error {
+	operation := schema.Status.ActiveOperation
+	return settleHarvestedJobCleanup(written, func() (bool, error) {
+		if operation == nil {
+			return false, nil
+		}
+		return r.storedSchemaClaimNamesJob(ctx, schema, job)
+	}, func(refusal error) {
+		r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
+	})
+}
+
+// storedSchemaClaimNamesJob reports whether the PtahSchema as stored holds a
+// claim that names job by the name and UID admission holds the Job's cleanup to.
+// A Job's UID is recorded once, by the attempt that made the Job, so that claim is
+// the attempt the pass acts for. It reads the API server, as the admission that
+// refused the Job's cleanup did: the cache can trail a claim another manager just
+// moved.
+func (r *SchemaReconciler) storedSchemaClaimNamesJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+) (bool, error) {
+	stored := &operatorv1alpha1.PtahSchema{}
+	if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(schema), stored); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	active := stored.Status.ActiveOperation
+	return active != nil && active.JobName == job.Name && active.JobUID == job.UID, nil
 }
 
 func (r *SchemaReconciler) removeActiveFinalizer(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {

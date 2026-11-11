@@ -990,7 +990,7 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return r.finishUncertainMigrationApply(ctx, migration, job, withLastPodReport(currentErr,
 				migrationPodReport(migration, job)), "")
 		}
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationStale, currentErr)
@@ -1513,7 +1513,7 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 		migration.Status.NextReconciliationTime = &next
 	}
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	// A reading that leaves nothing to apply, or a history nothing may run
@@ -1582,7 +1582,7 @@ func (r *MigrationReconciler) refuseMigrationArtifact(
 		!verificationRefusalHolds(result, migration.Status.Artifact.Digest, binding.Digest) {
 		return r.retryMigrationOperation(ctx, migration, job, errVerificationRefusalEvidence)
 	}
-	if err := r.markJobHarvested(ctx, job); err != nil {
+	if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := r.markMigrationApprovalsStale(ctx, migration, nil, operatorv1alpha1.ReasonPolicyRefused,
@@ -2244,7 +2244,7 @@ func (r *MigrationReconciler) retryMigrationOperationAs(
 	failure error,
 ) (ctrl.Result, error) {
 	if job != nil {
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -2547,6 +2547,69 @@ func (r *MigrationReconciler) removeMigrationFinalizer(
 
 func (r *MigrationReconciler) markJobHarvested(ctx context.Context, job *batchv1.Job) error {
 	return scheduleJobCleanup(ctx, r.Client, job, jobCleanupTTLSeconds)
+}
+
+// harvestMigrationJob asks for the cleanup TTL of the finished Job the active
+// claim supervised, at a harvest: before the pass records the run or consumes the
+// result the Job's Pods reported, retries the operation, or discards the claim
+// because its inputs moved. Every caller runs after the claim recorded the Job's
+// UID and held the Job to what the claim fixes, and a caller that records a run
+// or consumes a result read it from that Job's Pods first, so going on after a
+// refusal acts on nothing the claim did not prove. A refusal names the Job in a
+// MigrationJobCleanupDeferred Warning, and the Job stays until it is deleted by
+// hand or with its owner. The pass goes on only while the stored claim still
+// names the Job (settleHarvestedJobCleanup).
+func (r *MigrationReconciler) harvestMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) error {
+	return r.settleMigrationJobCleanup(ctx, migration, job, r.markJobHarvested(ctx, job))
+}
+
+// settleMigrationJobCleanup settles written, the answer to a cleanup TTL write
+// on job, the Job the active claim names, made before the pass acts for that
+// claim: a harvest's (harvestMigrationJob), or a failed or uncertain Apply's by
+// the rule its Pod log is kept by (retainFailedApplyJob). A refusal names the
+// Job in a MigrationJobCleanupDeferred Warning and the pass goes on, while the
+// stored claim still names the Job (settleHarvestedJobCleanup).
+func (r *MigrationReconciler) settleMigrationJobCleanup(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	written error,
+) error {
+	operation := migration.Status.ActiveOperation
+	return settleHarvestedJobCleanup(written, func() (bool, error) {
+		if operation == nil {
+			return false, nil
+		}
+		return r.storedMigrationClaimNamesJob(ctx, migration, job)
+	}, func(refusal error) {
+		r.migrationJobCleanupNotScheduled(migration, operation, job, refusal)
+	})
+}
+
+// storedMigrationClaimNamesJob reports whether the PtahMigration as stored holds
+// a claim that names job by the name and UID admission holds the Job's cleanup
+// to. A Job's UID is recorded once, by the attempt that made the Job, so that
+// claim is the attempt the pass acts for. It reads the API server, as the
+// admission that refused the Job's cleanup did: the cache can trail a claim
+// another manager just moved.
+func (r *MigrationReconciler) storedMigrationClaimNamesJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (bool, error) {
+	stored := &operatorv1alpha1.PtahMigration{}
+	if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(migration), stored); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	active := stored.Status.ActiveOperation
+	return active != nil && active.JobName == job.Name && active.JobUID == job.UID, nil
 }
 
 func (r *MigrationReconciler) patchMigrationStatus(

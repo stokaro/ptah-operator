@@ -61,7 +61,10 @@ The manager Pod now asks for a 60-second termination grace period, so a policy
 that refuses or lowers `terminationGracePeriodSeconds` has to allow 60 seconds.
 An alert on `MigrationJobCleanupDeferred` can now fire for a read-only
 migration Job too, including one a suspension leaves running. A `PtahSchema`
-records the same Warning under the new reason `SchemaJobCleanupDeferred`. A
+records the same Warning under the new reason `SchemaJobCleanupDeferred`.
+Either Warning can now also name a finished Job its claim harvests, a
+succeeded, failed or uncertain Apply's included, where admission answers the
+Job's TTL with Forbidden or Invalid. A
 script that reads the `kubectl logs` command out of the
 `MigrationRunUncertain` Event of a `PtahMigration` deleted with the default
 propagation finds none there now. A script or an alert that matches the whole
@@ -399,6 +402,26 @@ ended that way, and an alert on Warning Events can see the new reason
   has already ended, and
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
   when to run it.
+- **A refused cleanup of a harvested Job no longer stops the resource.** A
+  claim asks for its finished Job's cleanup TTL as it harvests the Job: before
+  it consumes the result or records a migration run, retries, or is discarded
+  because its inputs changed. A failed or uncertain Apply asks for the TTL its
+  log is kept by, 24 hours or the five-minute fallback, before its run or its
+  unknown outcome is recorded. A refusal of that write, Forbidden from the
+  controller-write webhook or Invalid from a ValidatingAdmissionPolicy such as
+  one of your own or the guard of another manager version during an upgrade,
+  failed every pass. The result was never consumed, a migration Apply's run was
+  never recorded and its Lease stayed held, and the resource did not move
+  again. Such a refusal now lets the pass go on, and a
+  `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred` Warning names the
+  Job, which stays until it is deleted by hand or with its owner. Admission
+  reads the claim as stored, so the pass goes on only where the stored claim
+  still names the Job. Where another manager has moved the claim, the pass
+  fails and the next one reads the claim again. A TTL write that fails for any
+  reason but a refusal still fails the pass. Under a policy that refuses the
+  manager's TTL patch, every harvested Job now stays instead, about 430 a day
+  for each resource at the default 10-minute interval, until a
+  `count/jobs.batch` quota refuses the next Job. Admit the patch.
 
 ## 0.2.10
 

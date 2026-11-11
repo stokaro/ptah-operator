@@ -613,14 +613,16 @@ func (r *MigrationReconciler) recordMigrationRun(
 	message := run.message
 	switch outcome {
 	case operatorv1alpha1.MigrationRunOutcomeApplied, operatorv1alpha1.MigrationRunOutcomeUpToDate:
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
 		}
 	default:
 		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome, run.leftDirtyRevision)
-		if err := retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
+		// The run was read from the Job's Pods, as a harvest's is, so a refused
+		// cleanup leaves the Job in place and the run is still recorded.
+		if err := r.settleMigrationJobCleanup(ctx, migration, job, retainFailedApplyJob(ctx, r.Client, job, keepLog, func(text string) {
 			r.event(migration, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", text)
-		}); err != nil {
+		})); err != nil {
 			return ctrl.Result{}, err
 		}
 		message = withLogPointer(message, job, servedLogReading(ctx, r.directReader(), job, run.log))
@@ -1160,8 +1162,7 @@ func (r *MigrationReconciler) scheduleStoppedMigrationJobTTL(
 		// The name holds a later Job, and admission would refuse its TTL.
 		return nil
 	}
-	return r.settleMigrationJobCleanupAnswer(migration, operation, job,
-		r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job))
+	return r.settleMigrationJobCleanup(ctx, migration, job, r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job))
 }
 
 // scheduleUnaccountedMigrationJobCleanup schedules the cleanup of the Job of an

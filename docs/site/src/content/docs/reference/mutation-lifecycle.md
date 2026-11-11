@@ -390,6 +390,24 @@ lost-epoch Plan of a resource being deleted, as deletion waits on the running
 Job of every claim that holds the lock. A claim that stops waiting names the
 Job it leaves running in a Warning Event.
 
+A claim that harvests its finished Job asks for the Job's TTL before it acts
+for the Job: before it consumes the result or records the run, retries, or is
+discarded because its inputs moved (`harvestJob`, `harvestMigrationJob`). An
+Apply that failed, or whose outcome is unknown, asks for the TTL its log is
+kept by before the run or the unknown outcome is recorded
+(`retainFailedApplyJob`), and so does the cleanup of an Apply an
+execution-binding change retired. The pass has proved the Job and read the
+result from the Job's own Pods by then, or records that nobody did, so a
+refusal, Forbidden from the controller-write webhook or Invalid from a
+ValidatingAdmissionPolicy, names the Job in a Warning Event and the pass goes
+on. For a failed Apply that means a refusal of the five-minute fallback as well
+as of any 24 hours it asked for. Admission reads the claim, or the retirement
+record, as stored, so a refusal can also say that it moved after the pass read
+it, as under a second manager. The pass reads it again and goes on only where
+it still names the Job (`settleHarvestedJobCleanup`); otherwise it fails, and
+the next pass reads it again. Any other failure of the write fails the pass, as
+everywhere a claim asks for a TTL.
+
 Suspension prevents new operations. It does not necessarily stop one that is
 already running: nothing deletes a running Job or its Pod, and a cleanup TTL
 removes a Job only once it has finished. Suspension cannot discard a dispatched
