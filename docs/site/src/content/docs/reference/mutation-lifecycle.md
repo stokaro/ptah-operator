@@ -392,16 +392,21 @@ Job it leaves running in a Warning Event.
 
 A claim that harvests its finished Job asks for the Job's TTL before it acts
 for the Job: before it consumes the result or records the run, retries, or is
-discarded because its inputs moved (`harvestJob`, `harvestMigrationJob`). It
-has proved the Job and read the result from the Job's own Pods by then, so a
-refusal, from the controller-write webhook or a ValidatingAdmissionPolicy,
-names the Job in a Warning Event and the pass goes on. Admission reads the
-claim as stored, so a refusal can also say that the claim moved after the pass
-read it, as under a second manager. The pass reads the stored claim again and
-goes on only where that claim still names the Job
-(`settleHarvestedJobCleanup`); otherwise it fails, and the next pass reads the
-claim again. Any other failure of the write fails the pass, as everywhere a
-claim asks for a TTL.
+discarded because its inputs moved (`harvestJob`, `harvestMigrationJob`). An
+Apply that failed, or whose outcome is unknown, asks for the TTL its log is
+kept by before the run or the unknown outcome is recorded
+(`retainFailedApplyJob`), and so does the cleanup of an Apply an
+execution-binding change retired. The pass has proved the Job and read the
+result from the Job's own Pods by then, or records that nobody did, so a
+refusal, Forbidden from the controller-write webhook or Invalid from a
+ValidatingAdmissionPolicy, names the Job in a Warning Event and the pass goes
+on. For a failed Apply that means a refusal of the five-minute fallback as well
+as of any 24 hours it asked for. Admission reads the claim, or the retirement
+record, as stored, so a refusal can also say that it moved after the pass read
+it, as under a second manager. The pass reads it again and goes on only where
+it still names the Job (`settleHarvestedJobCleanup`); otherwise it fails, and
+the next pass reads it again. Any other failure of the write fails the pass, as
+everywhere a claim asks for a TTL.
 
 Suspension prevents new operations. It does not necessarily stop one that is
 already running: nothing deletes a running Job or its Pod, and a cleanup TTL

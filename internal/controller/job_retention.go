@@ -45,8 +45,11 @@ func scheduleJobCleanup(ctx context.Context, writer client.Client, job *batchv1.
 // for a moment during an upgrade, and the webhook refuses the long TTL on a run that
 // reported success, which reaches here when the failure is the manager's own rather
 // than the run's. Either way the claim has to settle, and the Job has to be
-// collected. A refusal of the cleanup itself fails the short patch as well, and is
-// returned.
+// collected. A refusal of the cleanup itself fails the short patch as well, and its
+// answer is returned for the caller to settle by the rule a harvest's is settled by
+// (settleHarvestedJobCleanup): the run has been read or recorded unknown, so a
+// Forbidden or Invalid answer leaves the Job in place and names it in a Warning.
+// noteShortened is then not called, since no TTL was written.
 func retainFailedApplyJob(
 	ctx context.Context,
 	writer client.Client,

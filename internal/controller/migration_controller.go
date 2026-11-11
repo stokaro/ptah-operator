@@ -2560,8 +2560,23 @@ func (r *MigrationReconciler) harvestMigrationJob(
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 ) error {
+	return r.settleMigrationJobCleanup(ctx, migration, job, r.markJobHarvested(ctx, job))
+}
+
+// settleMigrationJobCleanup settles written, the answer to a cleanup TTL write
+// on job, the Job the active claim names, made before the pass acts for that
+// claim: a harvest's (harvestMigrationJob), or a failed or uncertain Apply's by
+// the rule its Pod log is kept by (retainFailedApplyJob). A refusal names the
+// Job in a MigrationJobCleanupDeferred Warning and the pass goes on, while the
+// stored claim still names the Job (settleHarvestedJobCleanup).
+func (r *MigrationReconciler) settleMigrationJobCleanup(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	written error,
+) error {
 	operation := migration.Status.ActiveOperation
-	return settleHarvestedJobCleanup(r.markJobHarvested(ctx, job), func() (bool, error) {
+	return settleHarvestedJobCleanup(written, func() (bool, error) {
 		if operation == nil {
 			return false, nil
 		}

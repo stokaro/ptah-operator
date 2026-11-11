@@ -39,15 +39,8 @@ func migrationApplyFinished(t *testing.T) (
 	*operatorv1alpha1.PtahMigration, *batchv1.Job, *MigrationReconciler, client.WithWatch, *record.FakeRecorder,
 ) {
 	t.Helper()
-	migration, plan := awaitingApprovalFixture(t)
-	operation := applyClaimFor(t, migration, plan)
-	builder := workloadBuilderForMigrations()
-	job, pod := builtTerminalMigrationWorkload(t, builder, migration, plan)
-	frame := migrationFrame(t, runner.Result{
-		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationApply,
-		OperationID: operation.ID, ChildExitCode: 0,
-		CoordinationDigest:   operation.CoordinationDigest,
-		TargetIdentityDigest: migration.Status.History.TargetIdentityDigest,
+	return migrationApplyEnded(t, runner.Result{
+		ChildExitCode: 0,
 		MigrationRun: &dataplane.MigrationRunReport{
 			ContractVersion: dataplane.SupportedMigrationRunContract,
 			Direction:       "up",
@@ -56,6 +49,24 @@ func migrationApplyFinished(t *testing.T) (
 			Applied:         []int64{3},
 		},
 	})
+}
+
+// migrationApplyEnded is migrationApplyFinished for a Pod that reported result,
+// which the fixture completes with the identity of the claim and its target.
+func migrationApplyEnded(t *testing.T, result runner.Result) (
+	*operatorv1alpha1.PtahMigration, *batchv1.Job, *MigrationReconciler, client.WithWatch, *record.FakeRecorder,
+) {
+	t.Helper()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	builder := workloadBuilderForMigrations()
+	job, pod := builtTerminalMigrationWorkload(t, builder, migration, plan)
+	result.ProtocolVersion = runner.ProtocolVersion
+	result.Operation = runner.OperationMigrationApply
+	result.OperationID = operation.ID
+	result.CoordinationDigest = operation.CoordinationDigest
+	result.TargetIdentityDigest = migration.Status.History.TargetIdentityDigest
+	frame := migrationFrame(t, result)
 	reconciler, api := fakeMigrationReconciler(
 		t, staticLogs{content: frame}, migration, plan, job, pod, verificationPolicyConfigMap(),
 	)

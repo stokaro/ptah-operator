@@ -2505,6 +2505,18 @@ Helm upgrade that failed once the manager rolled out, the Job keeps five minutes
 and a `FailedApplyLogShortened` Warning Event and a line in the manager's log say
 so.
 
+Where admission answers the five minutes with Forbidden or Invalid as well, whether as
+the fallback or as the TTL the run keeps, the Job keeps no TTL. The run is recorded
+all the same, or for a schema the outcome is recorded unknown and read-only
+observation follows, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
+Warning Event names the Job, which stays until it is deleted. No
+`FailedApplyLogShortened` Event comes then, and the status names no log, because no
+TTL keeps one. A finished Job its claim harvests, a read's or a succeeded Apply's, is
+settled the same way. So under a policy that refuses the manager's TTL patch, every
+Job a claim harvests stays: about three for each read cycle, some 430 a day for each
+resource at the default 10-minute interval, until a `count/jobs.batch` quota refuses
+the next Job and every operation in the namespace stops. Admit the patch.
+
 The 24 hours is how long Kubernetes keeps the Job. A node that is replaced takes the
 Pod's log with it sooner, and deleting the resource collects the Job with it. So the
 `MigrationRunUncertain` Warning Event of a `PtahMigration` deleted while its Apply

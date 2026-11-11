@@ -2691,9 +2691,12 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
 ) (ctrl.Result, error) {
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
-	if err := retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
+	// The claim still names the Job here, and the record below is read-only
+	// observation, so a refused cleanup leaves the Job in place and the record is
+	// still written.
+	if err := r.settleSchemaJobCleanup(ctx, schema, job, retainFailedApplyJob(ctx, r.Client, job, approved, func(message string) {
 		r.event(schema, corev1.EventTypeWarning, "FailedApplyLogShortened", "%s", message)
-	}); err != nil {
+	})); err != nil {
 		return ctrl.Result{}, err
 	}
 	reading := failedApplyLogReading(ctx, r.directReader(), job, failure)
@@ -3859,8 +3862,23 @@ func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Jo
 // and the Job stays until it is deleted by hand or with its owner. The pass goes
 // on only while the stored claim still names the Job (settleHarvestedJobCleanup).
 func (r *SchemaReconciler) harvestJob(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) error {
+	return r.settleSchemaJobCleanup(ctx, schema, job, r.markJobHarvested(ctx, job))
+}
+
+// settleSchemaJobCleanup settles written, the answer to a cleanup TTL write on
+// job, the Job the active claim names, made before the pass acts for that claim:
+// a harvest's (harvestJob), or an uncertain Apply's by the rule its Pod log is
+// kept by (retainFailedApplyJob). A refusal names the Job in a
+// SchemaJobCleanupDeferred Warning and the pass goes on, while the stored claim
+// still names the Job (settleHarvestedJobCleanup).
+func (r *SchemaReconciler) settleSchemaJobCleanup(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	written error,
+) error {
 	operation := schema.Status.ActiveOperation
-	return settleHarvestedJobCleanup(r.markJobHarvested(ctx, job), func() (bool, error) {
+	return settleHarvestedJobCleanup(written, func() (bool, error) {
 		if operation == nil {
 			return false, nil
 		}
