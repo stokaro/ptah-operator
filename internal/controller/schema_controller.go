@@ -1196,6 +1196,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return ctrl.Result{}, err
 	}
 	result, parseErr := evidence.parseResult(schemaOperation(operation).Runner, operation.ID)
+	// An Apply that ends uncertain here waits for its execution horizon unless
+	// the one Pod's executor ran and stopped. A durable result proves neither:
+	// it can be read after the Pod is gone, or from a Pod whose executor the
+	// kubelet lost.
+	waitForHorizon := !evidence.Stopped
 	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
@@ -1209,7 +1214,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// proof meets the same runner and is refused the same way, which
 			// names the cause where a reader looks.
 			return r.finishUncertainApplyWithEvidence(ctx, schema, job,
-				fmt.Errorf("apply result is uncertain: %w", refusal), evidence.PodUIDs, evidence.PodCount, !evidence.Stopped)
+				fmt.Errorf("apply result is uncertain: %w", refusal), evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
 		return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonRunnerProtocolMismatch, refusal, nil)
 	}
@@ -1224,7 +1229,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			failure = withUnstartedPod(failure, schemaPodReport(schema, job))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
-				evidence.PodUIDs, evidence.PodCount, !evidence.Stopped,
+				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
 			)
 		}
 		if parseErr != nil {
@@ -1274,7 +1279,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// start a Job workload more than once, so no child-side pre-mutation
 			// claim can prove that every attempt stayed pre-mutation. Once Job
 			// dispatch was possible, every Apply error requires read-only proof.
-			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, !evidence.Stopped)
+			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
 		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
@@ -1289,7 +1294,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			result.TargetIdentityDigest != schema.Status.Plan.TargetIdentityDigest {
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply target identity changed after approval"),
-				evidence.PodUIDs, evidence.PodCount, !evidence.Stopped,
+				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
 			)
 		}
 	}
@@ -3837,7 +3842,7 @@ func (r *SchemaReconciler) terminalLogs(
 		// Treat either as a missing frame so read-only operations retry and
 		// apply remains uncertain, instead of looping forever on pod/log
 		// BadRequest. Neither proves the executor stopped, so an Apply waits
-		// for its horizon (the !evidence.Stopped flags in reconcileActive).
+		// for its horizon (waitForHorizon in reconcileActive).
 		return evidence, nil
 	}
 	if r.Logs == nil {

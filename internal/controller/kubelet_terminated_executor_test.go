@@ -15,6 +15,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery"
+	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
+	"github.com/stokaro/ptah-operator/internal/resultstore"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 // A live PtahSchema decides how its Apply ended from the executor's own state,
@@ -304,4 +309,53 @@ func TestADeletedSchemaWhoseClaimNeverRecordedItsJobListsThatJobsPods(t *testing
 		t.Errorf("ApplyOutcomeUnknown = %q, want %q", event, want)
 	}
 	deletedSchemaEnding(t, run, operation, continuityLost, 1, &horizon)
+}
+
+// A durable result needs no log, so the harvest reads it from a Pod whose
+// executor the kubelet lost as from any other. The evidence still says that
+// termination proves no stop, which is what holds an Apply ending there to its
+// horizon.
+func TestADurableResultFromALostExecutorProvesNoStop(t *testing.T) {
+	for _, row := range []struct {
+		name    string
+		state   corev1.ContainerStateTerminated
+		stopped bool
+	}{
+		{name: "an executor the kubelet lost", state: corev1.ContainerStateTerminated{ExitCode: 137, Reason: "ContainerStatusUnknown", Message: lostKubeletContainer}},
+		{name: "an executor that exited with an error", stopped: true, state: corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := resulttest.New(t, "schema-apply-admitted-scheduling")
+			f.Pod.Status.Phase = corev1.PodFailed
+			f.Pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+				Name: executorContainerName, State: corev1.ContainerState{Terminated: row.state.DeepCopy()},
+			}}
+			apiClient := &durableTestAPI{Client: f.Client(t)}
+			result := runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.Operation(f.Identity.Binding.Operation),
+				OperationID: f.Identity.Binding.OperationID, ChildExitCode: 1,
+				Error: &runner.ResultError{Code: "statement_failed", Message: "the statement failed"},
+			}
+			payload, err := resultdelivery.Encode(f.Identity, result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := (resultstore.Store{Client: apiClient, Reader: apiClient}).Publish(t.Context(), f.Identity.Binding, payload, fingerprint.DigestBytes(payload)); err != nil {
+				t.Fatal(err)
+			}
+			r := &SchemaReconciler{Client: apiClient, APIReader: apiClient, Results: controllerConsumer(t, apiClient), Logs: forbiddenResultLogs{t}}
+			evidence, err := pollEvidence(t, func() (terminalEvidence, error) {
+				return r.terminalLogs(t.Context(), f.Subject.(*operatorv1alpha1.PtahSchema), f.Job)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !evidence.Durable || evidence.Result == nil || !evidence.Trusted {
+				t.Fatalf("the durable result was not read from the terminated executor: %+v", evidence)
+			}
+			if evidence.Stopped != row.stopped {
+				t.Fatalf("evidence.Stopped = %t, want %t", evidence.Stopped, row.stopped)
+			}
+		})
+	}
 }
