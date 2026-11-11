@@ -189,6 +189,37 @@ func TestAnUncertainSchemaApplyIsRecordedUnderARefusedCleanup(t *testing.T) {
 			assertNoShortening(t, events)
 		})
 	}
+	// A Job deleted since the pass read it needs no TTL and stays nowhere, so
+	// the record names no log and no Warning names the Job.
+	t.Run("deleted since it was read", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+
+		schema, job, reconciler, api, recorder := schemaApplyFailed(t)
+		refusal := &ttlRefusal{answer: apierrors.NewNotFound(batchv1.Resource("jobs"), job.Name)}
+		reconciler.Client = refusal.client(reconciler.Client.(client.WithWatch))
+
+		if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+			t.Fatalf("Reconcile(): %v, want a Job that is gone not to fail the pass", err)
+		}
+		if want := []int32{failedApplyTTLSeconds}; !slices.Equal(refusal.asked, want) {
+			t.Fatalf("the TTLs asked for = %v, want %v", refusal.asked, want)
+		}
+		stored := safetyGetSchema(t, api, schema)
+		if pending := stored.Status.PendingObservation; stored.Status.ActiveOperation != nil || pending == nil ||
+			pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
+			t.Fatalf("the uncertain Apply was not recorded: operation=%#v pending=%#v", stored.Status.ActiveOperation, pending)
+		}
+		if applying := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionApplying); applying == nil ||
+			strings.Contains(applying.Message, "kubectl logs") {
+			t.Fatalf("Applying = %#v, want no pointer to the log of a Job that is gone", applying)
+		}
+		events := migrationEvents(recorder)
+		if schemaCleanupDeferredFor(events, job.Name, "") ||
+			slices.ContainsFunc(events, func(event string) bool { return strings.Contains(event, "kubectl logs") }) {
+			t.Fatalf("Events = %q name a Job that is gone, or point at its log", events)
+		}
+	})
 	t.Run("lost", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
@@ -356,6 +387,28 @@ func TestARetiredSchemaApplyIsSettledUnderARefusedCleanup(t *testing.T) {
 			}
 		})
 	}
+	t.Run("deleted since it was read", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+
+		stored, job, reconciler, api, recorder := retiredApplyStopped(t)
+		refusal := &ttlRefusal{answer: apierrors.NewNotFound(batchv1.Resource("jobs"), job.Name)}
+		reconciler.Client = refusal.client(reconciler.Client.(client.WithWatch))
+
+		if err := reconciler.cleanupRetiredApplyJob(ctx, stored, stored.Status.PendingObservation); err != nil {
+			t.Fatalf("cleanupRetiredApplyJob() = %v, want a Job that is gone to settle the record", err)
+		}
+		if want := []int32{failedApplyTTLSeconds}; !slices.Equal(refusal.asked, want) {
+			t.Fatalf("the TTLs asked for = %v, want %v", refusal.asked, want)
+		}
+		if settled := safetyGetSchema(t, api, stored); settled.Status.PendingBindingRetirement != nil {
+			t.Fatalf("the retirement outlived a Job that is gone: %#v", settled.Status.PendingBindingRetirement)
+		}
+		events := migrationEvents(recorder)
+		if schemaCleanupDeferredFor(events, job.Name, "") || eventsNamed(events, "RetiredApplyLogKept") {
+			t.Fatalf("Events = %q name a Job that is gone, or point at its log", events)
+		}
+	})
 	t.Run("lost", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
@@ -507,6 +560,31 @@ func TestAFailedMigrationRunIsRecordedUnderARefusedCleanup(t *testing.T) {
 			assertNoShortening(t, events)
 		})
 	}
+	t.Run("deleted since it was read", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+
+		migration, job, reconciler, api, recorder := migrationApplyFailedAtAStatement(t)
+		refusal := &ttlRefusal{answer: apierrors.NewNotFound(batchv1.Resource("jobs"), job.Name)}
+		reconciler.Client = refusal.client(reconciler.Client.(client.WithWatch))
+
+		if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile(): %v, want a Job that is gone not to fail the pass", err)
+		}
+		if want := []int32{failedApplyTTLSeconds}; !slices.Equal(refusal.asked, want) {
+			t.Fatalf("the TTLs asked for = %v, want %v", refusal.asked, want)
+		}
+		stored := readMigration(t, api, migration)
+		if stored.Status.LastRun == nil || stored.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeFailed {
+			t.Fatalf("the failed run was not recorded: lastRun=%#v", stored.Status.LastRun)
+		}
+		if strings.Contains(stored.Status.LastRun.Message, "kubectl logs") {
+			t.Fatalf("LastRun.Message = %q points at the log of a Job that is gone", stored.Status.LastRun.Message)
+		}
+		if events := migrationEvents(recorder); cleanupDeferredFor(events, job.Name, "") {
+			t.Fatalf("Events = %q name a Job that is gone", events)
+		}
+	})
 	t.Run("lost", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
