@@ -16,7 +16,9 @@ import (
 // grant written before it. Each round writes grants of every shape a chart
 // renders, fences once, and sends one review per grant, with no retry. A
 // round sent without the fence is refused now and then under load, which is
-// the race the fence closes.
+// the race the fence closes. That makes this a stress probe rather than a
+// regression gate: without the fence it failed 28 of 480 runs at a load of
+// about 40, and on an idle machine it would most likely pass.
 func TestAwaitRBACAnswersForEveryEarlierGrant(t *testing.T) {
 	plane.Require(t)
 	ctx := context.Background()

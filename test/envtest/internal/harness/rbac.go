@@ -30,6 +30,9 @@ const fenceGroup = "rbac-fence.envtest.operator.ptah.run"
 // what each pair grants. Once it does, every earlier write of those kinds has
 // arrived too, and a review then answers for the RBAC as written, whether it
 // allows or refuses. The fence is removed before AwaitRBAC returns.
+//
+// That holds for one API server, which is what envtest runs. Behind several, a
+// review can reach a server whose informers have not seen the fence.
 func (plane *ControlPlane) AwaitRBAC(ctx context.Context, namespace string) error {
 	api, err := kubernetes.NewForConfig(plane.Config)
 	if err != nil {
