@@ -219,8 +219,10 @@ func calledName(fun ast.Expr) string {
 		return fun.Name
 	case *ast.SelectorExpr:
 		return fun.Sel.Name
+	case *ast.FuncLit:
+		return "a function literal"
 	}
-	return ""
+	return fmt.Sprintf("%T", fun)
 }
 
 // receiverTypeName is the type a method's receiver names, without its pointer.
