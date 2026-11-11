@@ -605,8 +605,9 @@ the verification policy refuses. A run that applied before such a refusal ends
 the wait with CompletionNotProved, naming the run, and so does one whose next
 reading was of another database. A wait for read stops on a refusal the read it
 asked for ended in, and not on one from before it. Two managers' clocks may
-date the operator's records, so a wait counts a reading by a new stamp and
-never by which time is later.
+date the operator's records, so a wait counts a reading by a new stamp rather
+than by which time is later, except on a run an operator older than 0.2.10
+recorded.
 
 suspend, resume, refresh and set-source patch the resource as you: they need
 get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is

@@ -113,10 +113,12 @@ the bullet on waits under two managers' clocks lists.
   `CompletionNotProved` where they timed out after a reading of another database
   dated before the run's end. A wait for `in-sync`, `approval` or `read`, and the
   `--wait` of `refresh`, `resume` and `set-source`, exits 0 under skew where it
-  timed out on a reading dated before the one before it; `refresh --wait` and
-  `wait --for read` also exit 0 rather than 8 with `PolicyRefused` when the
-  requested read ended in such a reading and a newer request's read was
-  refused. A run that an operator older than 0.2.10 recorded carries no
+  timed out on a reading dated before the one before it. With one clock as
+  well, `wait --for applied` now goes by the run's record when the resource
+  moves on before the next poll: it exits 0 where it exited 8 with
+  `NotConverged` on a resource blocked after a read-back that found it in sync
+  or pending, and 8 with `NotConverged` where it exited 0 after a read-back that
+  was blocked. A run that an operator older than 0.2.10 recorded carries no
   verification, so `wait --for applied` still dates its reading by the run's
   end.
 

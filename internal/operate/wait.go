@@ -309,8 +309,10 @@ func (e *TimeoutError) Error() string {
 // ordered, since different managers' clocks write them (freshness). Status
 // timestamps carry whole seconds, so a reading stamped in the same second as the
 // one before it carries the same stamp and does not count as recorded since. That
-// can only make a wait last longer, never end it early, and a read cycle runs
-// several Jobs, so two readings within one second do not occur in practice.
+// can only make a wait last longer, never end it early. One manager does not
+// record two readings within one second, since a read cycle runs several Jobs,
+// but another manager's clock can stamp a later reading with the second of an
+// earlier one.
 func Wait(ctx context.Context, reader client.Reader, ref Ref, options WaitOptions) (Result, error) {
 	w, err := newWaiter(ref, options)
 	if err != nil {

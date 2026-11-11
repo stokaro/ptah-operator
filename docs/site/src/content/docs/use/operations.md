@@ -1907,8 +1907,9 @@ before, so a later reading can carry an earlier time. A wait counts a reading by
 its stamp, `status.target.lastObservedAt` for a schema and
 `status.history.observedAt` for a migration: a stamp other than the one the
 resource carried when the wait began, or when the operator took the request, is a
-reading recorded since, whatever its time. Two readings stamped within one second
-look like one, which can only make a wait longer.
+reading recorded since, whatever its time. Two readings stamped with the same
+second, which another manager's clock can do to readings minutes apart, look
+like one, which can only make a wait longer.
 
 A migration run is decided by its own record. The reading that confirms it
 records itself on the run, as `status.lastRun.verification`, in the same status
