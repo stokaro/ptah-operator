@@ -113,6 +113,22 @@ func gateAt(seconds int) doc {
 	return doc{phase: "AwaitingApproval", observedAt: at(seconds), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, conditions: approvalConditions(metav1.ConditionTrue)}
 }
 
+// appliedRun is the record a migration run that applied leaves, as this release
+// writes it: its claim, and the database its result named, which is the one the
+// history before it was read from. No reading after it is recorded yet.
+func appliedRun() *runDoc {
+	return &runDoc{
+		outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80),
+		operationID: "op-1", plan: "plan-1", planUID: "plan-uid-1", policy: true, database: databaseA,
+	}
+}
+
+// unrecordedRun is the record an operator older than 0.2.10 wrote for the same run:
+// no claim, no plan and no database, and no reading after it is ever recorded.
+func unrecordedRun() *runDoc {
+	return &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+}
+
 func failure(seconds int, operation, reason string) operatorv1alpha1.JournalEntry {
 	return operatorv1alpha1.JournalEntry{
 		Type: operatorv1alpha1.JournalOperationFailed, At: metav1.NewTime(at(seconds)), Operation: operation, Reason: reason,
@@ -1077,16 +1093,15 @@ func TestWaitTargets(t *testing.T) {
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
 				earlier := &runDoc{outcome: "Applied", job: "run-0", jobUID: "job-uid-0", startedAt: at(-3700), finishedAt: at(-3600)}
-				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
 				return []doc{
 					{phase: "AwaitingApproval", observedAt: at(0), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}, lastRun: earlier},
 					{phase: "Applying", operation: "Apply", observedAt: at(0), lastRun: earlier},
 					// recordMigrationRun: the run's own account and
 					// VerifyingHistory in one write, the claim retired.
-					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
-					{phase: "VerifyingHistory", operation: "History", observedAt: at(0), lastRun: run},
-					// The history read back settles it.
-					{phase: "InSync", observedAt: at(90), lastRun: run, conditions: inSyncConditions(f, 3)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
+					{phase: "VerifyingHistory", operation: "History", observedAt: at(0), lastRun: appliedRun()},
+					// The history read back records itself on the run.
+					{phase: "InSync", observedAt: at(90), lastRun: verified(appliedRun(), "InSync", 90), conditions: inSyncConditions(f, 3)},
 				}
 			},
 			wantReads: 5,
@@ -1095,25 +1110,25 @@ func TestWaitTargets(t *testing.T) {
 			name: "applied: a run's own account is not the target before the history is read back", target: operate.TargetApplied,
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
-				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
 				}
 			},
 			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase VerifyingHistory",
 		},
 		{
-			name: "applied: a read back that finds more pending settles once the next plan is published", target: operate.TargetApplied,
+			name: "applied: a read back that finds more pending confirms the run", target: operate.TargetApplied,
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
 				// The artifact moved on while the run ran. The history harvest
-				// writes Planning with MigrationsPending before it publishes
-				// the plan for what is still pending.
-				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
+				// records the reading on the run, with Planning and
+				// MigrationsPending, before it publishes the plan for what is
+				// still pending; that plan is about the source, not this run.
+				run := verified(appliedRun(), "Pending", 90)
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
 					{phase: "Planning", observedAt: at(90), lastRun: run, conditions: []metav1.Condition{
 						condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue, "MigrationsPending",
 							"A plan for 1 pending migration is being published", 3),
@@ -1121,7 +1136,7 @@ func TestWaitTargets(t *testing.T) {
 					{phase: "AwaitingApproval", observedAt: at(90), lastRun: run, plan: &planDoc{name: "plan-2", uid: "plan-uid-2"}, conditions: approvalConditions(metav1.ConditionTrue)},
 				}
 			},
-			wantReads: 4,
+			wantReads: 3,
 		},
 		{
 			name: "applied: a history read that failed after an applied run is not the target", target: operate.TargetApplied,
@@ -1129,12 +1144,11 @@ func TestWaitTargets(t *testing.T) {
 			docs: func(f operate.Family) []doc {
 				// The read back could not be dispatched: the resource rests in
 				// Failed with the reading from before the run.
-				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
 					{
-						phase: "Failed", observedAt: at(0), lastRun: run,
+						phase: "Failed", observedAt: at(0), lastRun: appliedRun(),
 						conditions: failedConditions(f, "OperationFailed", "build History Job: the runner image is not configured"),
 						journal:    []operatorv1alpha1.JournalEntry{failure(90, "History", "OperationFailed")},
 					},
@@ -1146,11 +1160,122 @@ func TestWaitTargets(t *testing.T) {
 			name: "applied: a history read back blocked after an applied run stops the wait", target: operate.TargetApplied,
 			only: operate.FamilyMigration,
 			docs: func(f operate.Family) []doc {
-				run := &runDoc{outcome: "Applied", job: "run-1", jobUID: "job-uid-1", startedAt: at(40), finishedAt: at(80)}
 				return []doc{
 					{phase: "Applying", operation: "Apply", observedAt: at(0)},
-					{phase: "VerifyingHistory", observedAt: at(0), lastRun: run},
-					{phase: "Blocked", observedAt: at(90), lastRun: run, conditions: []metav1.Condition{
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
+					{phase: "Blocked", observedAt: at(90), lastRun: verified(appliedRun(), "Blocked", 90), conditions: []metav1.Condition{
+						condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 7 is recorded dirty", 3),
+					}},
+				}
+			},
+			wantStop: operate.StopNotConverged, wantMessage: "Revision 7 is recorded dirty",
+		},
+		{
+			// The run ended at 80 by the clock of the manager that harvested it. A
+			// failover to a manager whose clock is behind read the history back and
+			// dated the reading 70. The record on the run says it was read back.
+			name: "applied: a read back another manager's clock dated before the run's end is the target", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
+					{phase: "InSync", observedAt: at(70), lastRun: verified(appliedRun(), "InSync", 70), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 3,
+		},
+		{
+			// The reading from before the run, which a manager whose clock is ahead
+			// dated 90, after the run's end. A realm block before the read back rests
+			// the resource in Blocked, and no reading of the history wrote that.
+			name: "applied: a realm block before the read back is not a blocked read back", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(90), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}},
+					{phase: "VerifyingHistory", observedAt: at(90), lastRun: appliedRun()},
+					{phase: "Blocked", observedAt: at(90), lastRun: appliedRun(), conditions: []metav1.Condition{
+						condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "RealmConflict", "This database realm is claimed by 2 resources", 3),
+					}},
+				}
+			},
+			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase Blocked",
+		},
+		{
+			// The same reading, at rest in Suspended: suspension drops the read back.
+			name: "applied: a suspension before the read back is not a read back", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "AwaitingApproval", observedAt: at(90), plan: &planDoc{name: "plan-1", uid: "plan-uid-1"}},
+					{phase: "VerifyingHistory", observedAt: at(90), lastRun: appliedRun()},
+					{phase: "Suspended", suspend: true, observedAt: at(90), lastRun: appliedRun()},
+				}
+			},
+			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase Suspended",
+		},
+		{
+			// The Secret moved after the run. A reading records itself on the run in
+			// the same write, so a reading of another database is one after the run
+			// that cannot verify it.
+			name: "applied: a later reading of another database does not confirm the run", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: appliedRun()},
+					{phase: "InSync", observedAt: at(90), historyDatabase: databaseB, lastRun: appliedRun(), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantStop: operate.StopNotProved, wantMessage: "a later reading did not verify it: it read another database",
+		},
+
+		// applied, PtahMigration, a run an operator older than 0.2.10 recorded: no
+		// operation ID and no reading on the run, so the reading the resource shows
+		// is dated by the run's end.
+		{
+			name: "applied: an older operator's run is the target once a reading follows it", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "VerifyingHistory", observedAt: at(0), lastRun: unrecordedRun()},
+					{phase: "InSync", observedAt: at(90), lastRun: unrecordedRun(), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantReads: 3,
+		},
+		{
+			name: "applied: an older operator's run is not the target beside the reading from before it", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "InSync", observedAt: at(0), lastRun: unrecordedRun(), conditions: inSyncConditions(f, 3)},
+				}
+			},
+			wantTimeout: true, wantMessage: "the history read back after run run-1; now phase InSync",
+		},
+		{
+			// A refusal holds back the reading after the run, on two reads in a row.
+			name: "applied: an older operator's run whose read back a refusal holds says the run applied", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "Blocked", observedAt: at(90), lastRun: unrecordedRun(), conditions: refused(f, 3)},
+				}
+			},
+			wantStop: operate.StopNotProved, wantMessage: "run run-1 recorded its migrations applied, and no reading of its database has followed",
+		},
+		{
+			name: "applied: an older operator's run blocked at the reading after it stops the wait", target: operate.TargetApplied,
+			only: operate.FamilyMigration,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{phase: "Blocked", observedAt: at(90), lastRun: unrecordedRun(), conditions: []metav1.Condition{
 						condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 7 is recorded dirty", 3),
 					}},
 				}

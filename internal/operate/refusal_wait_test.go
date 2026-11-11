@@ -620,7 +620,7 @@ func TestARefusalAfterAnAppliedRunSaysTheRunApplied(t *testing.T) {
 	applied := func(finishedAt int) *runDoc {
 		return &runDoc{
 			outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: job, jobUID: "job-uid-1",
-			startedAt: at(40), finishedAt: at(finishedAt), operationID: "op-1",
+			startedAt: at(40), finishedAt: at(finishedAt), operationID: "op-1", database: databaseA,
 			plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
 		}
 	}
@@ -695,16 +695,15 @@ func TestARefusalAfterAnAppliedRunSaysTheRunApplied(t *testing.T) {
 
 // A run whose reading afterwards is recorded on it was read back, so a refusal that
 // comes later stops no wait for it, whatever date that reading carries. Here another
-// manager's clock dated it before the run ended: a wait for a plan or a decision
-// goes by the record and is done, and a wait for any run, which dates the reading,
-// keeps waiting for one after the run. Neither may say the target will not come, or
+// manager's clock dated it before the run ended. Every wait goes by the record and
+// is done at the document that shows it: none may say the target will not come, or
 // that no reading followed the run.
 func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 	t.Parallel()
 
 	run := &runDoc{
 		outcome: operatorv1alpha1.MigrationRunOutcomeApplied, job: "run-1", jobUID: "job-uid-1",
-		startedAt: at(40), finishedAt: at(80), operationID: "op-1",
+		startedAt: at(40), finishedAt: at(80), operationID: "op-1", database: databaseA,
 		plan: "plan-a", planUID: "plan-uid-a", fingerprint: "sha256:a", approval: "approval-a", approvalUID: "approval-uid-a",
 		verification: operatorv1alpha1.MigrationRunVerifiedInSync, verifiedAt: at(70),
 	}
@@ -715,14 +714,12 @@ func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 	for _, wait := range []struct {
 		name    string
 		options operate.WaitOptions
-		// done is a wait the record ends; any other keeps waiting to its timeout.
-		done bool
 	}{
 		{name: "any run"},
-		{name: "a plan", options: operate.WaitOptions{Plan: "plan-a"}, done: true},
+		{name: "a plan", options: operate.WaitOptions{Plan: "plan-a"}},
 		{name: "a decision", options: operate.WaitOptions{Decision: &operate.Decision{
 			PlanName: "plan-a", PlanUID: "plan-uid-a", ApprovalName: "approval-a", ApprovalUID: "approval-uid-a",
-		}}, done: true},
+		}}},
 	} {
 		t.Run(wait.name, func(t *testing.T) {
 			t.Parallel()
@@ -732,12 +729,8 @@ func TestARefusalAfterARunReadBackStopsNoWait(t *testing.T) {
 			options.Target, options.Timeout, options.Interval, options.Clock = operate.TargetApplied, timeout, interval, newStepClock()
 			_, err := operate.Wait(context.Background(), tl.reader(t), refOf(operate.FamilyMigration), options)
 
-			var timedOut *operate.TimeoutError
-			switch {
-			case wait.done && err != nil:
-				t.Fatalf("err = %v, want the run recorded as read back to end the wait", err)
-			case !wait.done && (!errors.As(err, &timedOut) || !strings.Contains(timedOut.Waiting, "the history read back after run run-1")):
-				t.Fatalf("err = %v, want a timeout still waiting for the history read back after run run-1", err)
+			if err != nil || tl.readCount() != 2 {
+				t.Fatalf("err = %v after %d reads, want the run recorded as read back to end the wait at read 2", err, tl.readCount())
 			}
 		})
 	}

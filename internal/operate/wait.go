@@ -1163,37 +1163,13 @@ func (w *waiter) checkRun(s snapshot) (verdict, bool) {
 			unresolved.plan, unresolved.jobName, unresolved.outcome)), true
 	}
 	if run := s.lastRun; run != nil && run.finished && newRun(b.lastRun, run) {
-		switch run.outcome {
-		case operatorv1alpha1.MigrationRunOutcomeApplied:
-			// Before the reading is dated: with no reading of the run's database
-			// recorded on it, the reading the resource shows can be the one from
-			// before the run, which two managers' clocks may date after it.
-			if !run.verified {
-				if held, ok := w.readBackHeld(s, run); ok {
-					return held, true
-				}
-			}
-			// The run's own account is written with VerifyingHistory, which
-			// does not rest, and the operator reads the history back before
-			// the resource settles: only that reading says what the revision
-			// table holds.
-			if !s.resting() || s.observedAt.Before(run.finishedAt) {
-				return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s)), true
-			}
-			if s.phase == string(operatorv1alpha1.MigrationPhaseBlocked) {
-				message := "the history read back afterwards is blocked"
-				if blocker := s.blocker(); blocker != nil {
-					message = fmt.Sprintf("the history read back afterwards is blocked (%s): %s", blocker.Reason, blocker.Message)
-				}
-				return w.stop(s, StopNotConverged, fmt.Sprintf("run %s recorded its migrations applied, and %s",
-					run.jobName, message)), true
-			}
-			if v, ok := w.generationReached(s); !ok {
-				return v, true
-			}
-			return verdict{done: true}, true
-		default:
+		switch {
+		case run.outcome != operatorv1alpha1.MigrationRunOutcomeApplied:
 			return w.runDidNotApply(s, run), true
+		case run.operationID == "":
+			return w.unrecordedRunEnded(s, run), true
+		default:
+			return w.appliedRunEnded(s, run), true
 		}
 	}
 	// An Apply claim the operator could not dispatch is given up, recorded as
@@ -1205,6 +1181,77 @@ func (w *waiter) checkRun(s snapshot) (verdict, bool) {
 		}
 	}
 	return waitingFor("a run that finishes after the wait began; now %s", inFlight(s)), false
+}
+
+// appliedRunEnded judges a run that recorded its migrations applied by the run's
+// own record of the reading after it. The operator writes that reading on the run
+// in the status write that records it (recordMigrationRunVerification in
+// internal/controller), so no instant decides anything here: the run's end, the
+// reading and its record are each stamped by the manager that harvested them, and
+// two managers' clocks need not agree.
+func (w *waiter) appliedRunEnded(s snapshot, run *runRecord) verdict {
+	if !run.verified {
+		// A verification policy's refusal holds back the reading that would record
+		// itself on the run.
+		if held, ok := w.readBackHeld(s, run); ok {
+			return held
+		}
+		// The operator takes a run only from the database status.history was read
+		// from (settleMigrationApply), so the two name one database until a reading
+		// of another database replaces the history. A reading of the run's own
+		// database would have recorded itself on the run. So a history of another
+		// database is a later reading that did not verify the run, and only that
+		// database's next reading is left to wait for, if it ever comes. Only a
+		// resting document says so: a read in flight may be of the run's database.
+		// A history of the run's database is the reading from before the run,
+		// however the resource rests, Suspended or Blocked by its realm included.
+		if s.resting() && s.historyDatabase != run.database {
+			return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and a later reading "+
+				"did not verify it: it read another database, so no record says what the run's database holds", run.jobName))
+		}
+		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
+	}
+	if run.verification == operatorv1alpha1.MigrationRunVerifiedBlocked {
+		message := "the history read back afterwards was blocked"
+		if blocker := s.blocker(); blocker != nil {
+			message = fmt.Sprintf("the history read back afterwards was blocked; the resource now reads %s: %s",
+				blocker.Reason, blocker.Message)
+		}
+		return w.stop(s, StopNotConverged, fmt.Sprintf("run %s recorded its migrations applied, and %s", run.jobName, message))
+	}
+	if v, ok := w.generationReached(s); !ok {
+		return v
+	}
+	return verdict{done: true}
+}
+
+// unrecordedRunEnded judges a run that recorded its migrations applied in a record
+// an operator older than 0.2.10 wrote, for a wait for any run: a wait for a plan
+// does not come here, since such a record names none (anotherRunEnded). The
+// operator records no reading on such a run, so the reading the resource shows is
+// dated by the run's end instead. That compares two instants that two managers'
+// clocks may have written, and it is all such a record leaves to go by.
+func (w *waiter) unrecordedRunEnded(s snapshot, run *runRecord) verdict {
+	if held, ok := w.readBackHeld(s, run); ok {
+		return held
+	}
+	// The run's own account is written with VerifyingHistory, which does not rest,
+	// and the operator reads the history back before the resource settles: only
+	// that reading says what the revision table holds.
+	if !s.resting() || s.observedAt.Before(run.finishedAt) {
+		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
+	}
+	if s.phase == string(operatorv1alpha1.MigrationPhaseBlocked) {
+		message := "the history read back afterwards is blocked"
+		if blocker := s.blocker(); blocker != nil {
+			message = fmt.Sprintf("the history read back afterwards is blocked (%s): %s", blocker.Reason, blocker.Message)
+		}
+		return w.stop(s, StopNotConverged, fmt.Sprintf("run %s recorded its migrations applied, and %s", run.jobName, message))
+	}
+	if v, ok := w.generationReached(s); !ok {
+		return v
+	}
+	return verdict{done: true}
 }
 
 // runDidNotApply stops a wait on a run that ended any way but Applied.
@@ -1352,37 +1399,11 @@ func (w *waiter) boundRunEnded(s snapshot, run *runRecord) verdict {
 	if run.outcome != operatorv1alpha1.MigrationRunOutcomeApplied {
 		return w.runDidNotApply(s, run)
 	}
-	if !run.verified {
-		// A verification policy's refusal holds back the reading that would record
-		// itself on the run. It goes before the date of the reading the resource
-		// shows, which can be the one from before the run, dated after it by another
-		// manager's clock.
-		if held, ok := w.readBackHeld(s, run); ok {
-			return held
-		}
-		// A reading records itself on the run in the status write that records the
-		// reading, so a later one with nothing recorded was of another database, and
-		// only that database's next reading is left to wait for, if it ever comes. Two
-		// managers' clocks date these, so a resource still on its way to that reading
-		// may show one from before the run dated after it: only a resting document says.
-		if s.resting() && s.observedAt.After(run.finishedAt) {
-			return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and a later reading "+
-				"did not verify it: it read another database, so no record says what the run's database holds", run.jobName))
-		}
-		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
+	ended := w.appliedRunEnded(s, run)
+	if ended.done {
+		ended.run = &RunReached{Outcome: run.outcome, JobName: run.jobName}
 	}
-	if run.verification == operatorv1alpha1.MigrationRunVerifiedBlocked {
-		message := "the history read back afterwards was blocked"
-		if blocker := s.blocker(); blocker != nil {
-			message = fmt.Sprintf("the history read back afterwards was blocked; the resource now reads %s: %s",
-				blocker.Reason, blocker.Message)
-		}
-		return w.stop(s, StopNotConverged, fmt.Sprintf("run %s recorded its migrations applied, and %s", run.jobName, message))
-	}
-	if v, ok := w.generationReached(s); !ok {
-		return v
-	}
-	return verdict{done: true, run: &RunReached{Outcome: run.outcome, JobName: run.jobName}}
+	return ended
 }
 
 // boundRunJournaled judges the run the wait names from its journal entry, once a
