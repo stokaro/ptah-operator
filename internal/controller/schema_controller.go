@@ -811,6 +811,8 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		}
 		job := &batchv1.Job{}
 		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
+		// A deleting schema does not wait MissingJobGrace for a missing Job:
+		// the Job-write webhook refuses a create for an owner being deleted.
 		dispatchedApplyUnknown := schemaOperation(operation).Mutating &&
 			schemaMayHaveDispatched(operation) &&
 			(apierrors.IsNotFound(err) || err == nil && (operation.JobUID != "" && operation.JobUID != job.UID || !ownedByUID(job.OwnerReferences, schema.UID)))

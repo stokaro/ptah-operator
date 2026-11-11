@@ -391,6 +391,10 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			// case: DispatchStarted is written before the create and never
 			// cleared, and a UID is only recorded afterwards, so no state holds
 			// one without the other and no mutation can separate them.
+			//
+			// A deleting migration does not wait MissingJobGrace for a missing
+			// Job: the Job-write webhook refuses a create for an owner being
+			// deleted.
 			if migrationMayHaveDispatched(operation) || job != nil {
 				// Something ran under this claim and nothing read what it did.
 				// The unknown outcome and the database go back first; the next

@@ -120,7 +120,10 @@ func monotonicNow(clock func() time.Time) time.Time {
 //
 // It ends the pass before the realm Lease is renewed. The wait acts on
 // nothing, and a manager that marked the claim renewed the Lease just before,
-// for far longer than the grace.
+// for far longer than the grace. For a claim whose dispatcher stopped long
+// ago, the Lease may be near its end. A lapse is recorded as
+// LeaseContinuityLost, the outcome is still unknown, and nothing can land
+// behind it: that dispatcher sends no create.
 func awaitMarkedCreate(ctx context.Context, jobName string, wait time.Duration) ctrl.Result {
 	ctrl.LoggerFrom(ctx).Info("the marked Apply has no Job yet; waiting for a create another manager may still be making",
 		"job", jobName, "wait", wait)

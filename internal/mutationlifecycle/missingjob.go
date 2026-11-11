@@ -30,18 +30,32 @@ import (
 // MissingJobGrace is how long this process watches a marked mutating claim
 // with no recorded Job UID find its Job missing before it calls the Job lost.
 //
-// The dispatching manager runs its mark and its create on one context that
-// ends DispatchCriticalSection after the mark began, so it sends no create
-// later than that. createLandingMargin is for a create sent at the end of that
-// bound and still on its way to storage.
+// Admission alone may take longer than the grace: the chart gives the
+// Job-write webhook up to 30 seconds. What keeps a create from landing after
+// the grace is below, and a change to any of it has to answer for this bound:
+//
+//   - The dispatching manager runs its create on the context Driver.Dispatch
+//     ends at DispatchCriticalSection. Its client abandons the create there,
+//     and that cancels the request on the API server. createLandingMargin
+//     covers the cancellation arriving and a storage write already in flight.
+//   - The Job-write webhook in internal/controllerwrite reads the claim
+//     uncached and refuses a create once the claim is retired or its owner is
+//     deleting. A create whose admission runs after the claim was retired is
+//     refused there.
+//
+// A dispatcher that cannot cancel, because it is frozen or partitioned,
+// leaves the API server to finish the request on its own bounds. That case
+// fails closed: a Job stored under a retired claim runs no Pod, because Pod
+// admission (internal/podintent) refuses a Pod whose claim is no longer
+// active.
 const MissingJobGrace = DispatchCriticalSection + createLandingMargin
 
-// createLandingMargin is the time a create sent at the end of
-// DispatchCriticalSection may still take to be stored: the API server admits
-// it first, through the manager's own Job-write webhook among others, and
-// then writes it. That takes milliseconds when the cluster is healthy. Five
-// seconds is long next to it, and short next to a spent approval, which costs
-// a person the time to approve again.
+// createLandingMargin is the time the API server may still take to act on the
+// cancellation of a create abandoned at DispatchCriticalSection, or to finish
+// a storage write that was already under way when it arrived. That takes
+// milliseconds when the cluster is healthy. Five seconds is long next to it,
+// and short next to a spent approval, which costs a person the time to approve
+// again.
 const createLandingMargin = 5 * time.Second
 
 // missingJobSightingHorizon is how old a sighting may be before a later
@@ -59,10 +73,21 @@ const missingJobSightingHorizon = 10 * MissingJobGrace
 // read as a time.
 //
 // It holds one sighting per resource. A new claim replaces the old claim's
-// sighting, a pass that reaches any verdict other than waiting or lost drops
-// it, and a sighting older than missingJobSightingHorizon is dropped by the
-// next one recorded. The lost verdict keeps it, so a pass that has to retire
-// the claim again, after a conflict or behind the realm, does not wait again.
+// sighting, and a sighting older than missingJobSightingHorizon is dropped by
+// the next one recorded. A pass that reaches any verdict other than waiting or
+// lost drops it too, but only a pass that happens: a state no pass of this
+// process read leaves the sighting where it was. The lost verdict keeps it, so
+// a pass that has to retire the claim again, after a conflict or behind the
+// realm, does not wait again.
+//
+// That leaves one window open. A create the API server refused before storing
+// it makes the dispatching manager withdraw its mark and mark again under the
+// same operation ID. If no pass of this process read the claim unmarked
+// between the two, the old sighting stands for the new mark, and a second
+// create still in flight can be called lost before its own grace has passed,
+// which spends the approval as #869 did. The key stays the operation ID. A new
+// attempt per mark would rename the Job, and a key on the resourceVersion
+// would need proof that no pass writes the resource before its verdict.
 //
 // The zero value is ready to use. It is safe for concurrent use.
 type MissingJobs struct {
@@ -113,6 +138,9 @@ func (m *MissingJobs) await(resource types.NamespacedName, operationID string, n
 		}
 	}
 	sighting, seen := m.seen[resource]
+	// A withdrawn and renewed mark keeps its operation ID, so it reuses the
+	// sighting unless a pass saw it withdrawn; MissingJobs says what that
+	// leaves.
 	if !seen || sighting.operationID != operationID || now.Before(sighting.first) {
 		m.seen[resource] = missingJobSighting{operationID: operationID, first: now}
 		return MissingJobGrace
