@@ -233,7 +233,9 @@ the schema last reported after it, on an Apply whose Pod never ran.
   them, which is what stays of a deleted schema, and a deleted schema looks at the
   Pod while it waits for it, as a deleted `PtahMigration` does.
   [Before the Secret exists](../../reference/credentials-and-admission/#external-secret-stores-not-synced)
-  has the messages.
+  lists each of these endings, and
+  [Execution](../../reference/execution/#meshes-and-policy-engines) says what a
+  refused Job records.
 
 ## 0.2.10
 
