@@ -1189,27 +1189,17 @@ func (r *MigrationReconciler) scheduleUnaccountedMigrationJobCleanup(
 }
 
 // settleMigrationJobCleanupAnswer settles the answer to a migration Job's cleanup
-// TTL write. A TTL that was set, or a Job deleted since it was read, needs nothing
-// more. A refusal says admission will not collect the Job however often it is
-// asked: Forbidden from the controller-write webhook, Invalid from a
-// ValidatingAdmissionPolicy such as the controller-object guard. A Warning names
-// the Job, and the caller goes on. Any other failure may pass, so it is returned,
-// and the pass fails and asks again.
+// TTL write by the rule both families keep (settleJobCleanupAnswer). A Warning
+// names a Job admission refused the TTL.
 func (r *MigrationReconciler) settleMigrationJobCleanupAnswer(
 	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	job *batchv1.Job,
 	err error,
 ) error {
-	switch {
-	case err == nil, apierrors.IsNotFound(err):
-		return nil
-	case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
-		r.migrationJobCleanupNotScheduled(migration, operation, job, err)
-		return nil
-	default:
-		return err
-	}
+	return settleJobCleanupAnswer(err, func(refusal error) {
+		r.migrationJobCleanupNotScheduled(migration, operation, job, refusal)
+	})
 }
 
 // migrationJobCleanupNotScheduled says that a Job will not be collected by a TTL.
@@ -1418,7 +1408,7 @@ func unrecordedMigrationJobRefusal(migration *operatorv1alpha1.PtahMigration, jo
 		return nil
 	}
 	if err := validateMigrationJobEnvelope(job, migration); err != nil {
-		return fmt.Errorf("its claim never recorded the Job's UID, and the Job is not the one the claim fixes: %w", err)
+		return unrecordedJobRefusal(err)
 	}
 	return nil
 }
@@ -1530,7 +1520,9 @@ func (r *MigrationReconciler) retireUncertainMigrationApply(
 			}
 		case !later:
 			switch err := r.scheduleUnaccountedMigrationJobCleanup(ctx, migration, job); {
-			case err == nil:
+			case err == nil, apierrors.IsNotFound(err):
+				// A Job deleted since it was read stays nowhere, so nothing
+				// is said about it.
 			case apierrors.IsConflict(err) && job.UID == operation.JobUID && !migrationJobGoesWithResource(migration, job):
 				retain = true
 			default:

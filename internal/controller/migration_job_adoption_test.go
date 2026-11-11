@@ -331,8 +331,9 @@ func claimsAndVerdicts() []struct {
 // manager identity, which it takes from the live Pod template. A predecessor
 // that built a different Pod template left a run this manager cannot
 // confirm: an Apply is recorded as outcome unknown, and a read-only claim is
-// run again. A read-only claim that recorded the Job's UID runs again once the
-// Job stops, so the Job gets its cleanup first (assertRefusedOnceStopped).
+// run again. A read-only claim runs again once the Job stops, so the Job gets its
+// cleanup first, and one that never recorded the Job's UID records it before it
+// waits (assertRefusedOnceStopped).
 func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 	t.Parallel()
 
@@ -369,7 +370,7 @@ func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 					return
 				}
 				const want = "the Job's spec is not the one its claim builds"
-				if claim.operation == operatorv1alpha1.MigrationOperationHistory && claim.recorded {
+				if claim.operation == operatorv1alpha1.MigrationOperationHistory {
 					assertRefusedOnceStopped(t, reconciler, api, run, batchv1.JobComplete, want)
 					return
 				}

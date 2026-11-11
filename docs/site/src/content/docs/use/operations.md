@@ -1208,16 +1208,18 @@ before anything else runs. A dispatched `PtahMigration` Apply is recorded as
 an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
 until a History reading or a `PtahMigrationRunAcknowledgment` accounts for it.
 A dispatched read-only Job of either family is run again under a new attempt.
-A `PtahMigration` claim that recorded the Job's UID, with the Job the one it
-fixes, waits for that Job to stop first and gives it the five-minute TTL of a
-harvested Job, because admission admits the TTL only on the Job an active claim
-names. `Progressing` names the Job while the claim waits. The wait lasts at most
-the Job's `spec.execution.activeDeadlineSeconds`, 15 minutes by default, from the
-Job's start, plus the termination grace its Pods are given and 30 seconds. A Job
-admission would refuse, such as one under another execution epoch, is left at
-once, and so is one that has not finished by then, such as one whose Pod stays
-`Terminating` on a node that is gone. A `MigrationJobCleanupDeferred` Warning
-Event names the Job it leaves.
+Where the Job is the one the claim fixes, the claim waits for that Job to stop
+first and gives it the five-minute TTL of a harvested Job, because admission
+admits the TTL only on the Job an active claim names. A claim that never
+recorded the Job's UID records it first. `Ready` on a `PtahSchema`, and
+`Progressing` on a `PtahMigration`, names the Job while the claim waits. The
+wait lasts at most the Job's `spec.execution.activeDeadlineSeconds`, 15 minutes
+by default, from the Job's start, plus the termination grace its Pods are given
+and 30 seconds. A Job admission would refuse, such as one under another
+execution epoch, is left at once, and so is one that has not finished by then,
+such as one whose Pod stays `Terminating` on a node that is gone. A
+`SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred` Warning Event names
+the Job it leaves.
 
 A claim that had not dispatched yet resolves its admission snapshot again from
 the template the replacement builds, and the `AdmissionSnapshotRefreshed` Event
@@ -1459,9 +1461,13 @@ to be exposed on a Kubernetes node or on the host running a kind test cluster.
 
 ## Suspension and deletion
 
-Setting `spec.suspend=true` prevents new Jobs and cancels no SQL. If an apply
-is already active, the controller continues observing that Job until its
-outcome is safe to classify; it does not delete the Pod mid-mutation.
+Suspension prevents new operations. It does not necessarily stop one that is
+already running: setting `spec.suspend=true` cancels no SQL and deletes no Job
+or Pod, and a Job's cleanup TTL removes it only once it has finished. A Job
+still running when the resource is suspended runs until it stops by itself or
+reaches its own deadline. If an apply is already active, the controller
+continues observing that Job until its outcome is safe to classify; it does not
+delete the Pod mid-mutation.
 
 For either kind that classification is `Unknown`, whatever the run did.
 Suspending is a spec edit, the generation it bumps is one of the inputs the
@@ -1506,7 +1512,12 @@ the generation it last acted on and its phase, and an operation still in
 flight, and what the suspension does to it. A read under way when the
 suspension arrives, a migration's read of its history after a run included,
 is dropped rather than waited for, since it changes nothing; its Job stops at
-its own deadline.
+its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
+the claim names, so a read Job that had finished gets its TTL as the claim is
+dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
+Warning Event names one still running, which stays until it is deleted. A read
+a `PtahMigration` holds while an execution component changes is dropped the
+same way once the resource is suspended, rather than waited for.
 Running one again sends nothing when the field already holds the value.
 With `--wait`, suspend stays until the operator reports the resource
 `Suspended` with nothing in flight, and resume until the resource is back in

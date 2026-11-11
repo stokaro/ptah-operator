@@ -19,8 +19,10 @@ other, because an obligation stated once and enforced twice drifts, and that
 is where the drift shows.
 
 Symbols named without a package live in `internal/controller`:
-`schema_controller.go` and `schema_binding_retirement.go` for `PtahSchema`,
-`migration_controller.go` and `migration_apply.go` for `PtahMigration`. A dotted name such as
+`schema_controller.go`, `schema_binding_retirement.go` and
+`schema_read_only_job_release.go` for `PtahSchema`, `migration_controller.go`
+and `migration_apply.go` for `PtahMigration`, and `read_only_job_release.go`
+for the rule a read-only claim of either family keeps. A dotted name such as
 `targetlock.Acquire` names a package under `internal/`.
 
 ## The obligations
@@ -337,10 +339,10 @@ runner image -- is taken from the live Pod template first, because it binds
 nothing and the snapshot pins it. A Job that fails the match, or a claim that
 cannot rebuild its Job, is settled the way a lost Job is: a mutating claim's
 run is recorded `Unknown` and never gets a second executor, and a read-only
-claim runs again under a new attempt. A `PtahSchema` claim leaves the old Job
-to its own deadline, and so does a `PtahMigration` claim whose Job admission
-would refuse a cleanup TTL. A `PtahMigration` claim whose Job admission would
-collect first waits a bounded time for that Job to stop, as described below.
+claim runs again under a new attempt. A read-only claim whose Job admission
+would collect first waits a bounded time for that Job to stop, as described
+below. One whose Job admission would refuse a cleanup TTL leaves it to its own
+deadline, and a Warning Event names it.
 Once the inputs have moved the claim cannot rebuild its Job. The pass then
 holds the Job to what the claim fixes without a rebuild: the epoch, the labels
 and annotations, and the Pod template against the admission snapshot. That is
@@ -362,16 +364,35 @@ or its Pod template cannot confirm them: a running `PtahSchema` or
 else is applied until that run is accounted for; a running read-only Job is
 run again. A migration Apply whose plan was deleted while it ran is
 recorded `Unknown` the same way, because its Job cannot be rebuilt without the
-plan it runs. A migration's read-only claim runs again once the Job it refused
-has stopped, where admission admits that Job's cleanup TTL, so the Job gets the
-TTL first (`retryPastRefusedMigrationJob`). It waits no longer than the Job's
-own deadline and the termination grace of its Pods, plus 30 seconds for the
-kubelet and the Job controller to report, because a Job past its deadline is
-not `Failed` until every Pod has terminated, and a Pod on a node that is gone
-may never terminate.
+plan it runs. A read-only claim runs again once the Job it refused has stopped,
+where admission admits that Job's cleanup TTL, so the Job gets the TTL first
+(`retryPastRefusedSchemaJob`, `retryPastRefusedMigrationJob`). A claim that
+never recorded the Job's UID records it first, where the Job is the one the
+claim fixes. It waits no longer than the Job's own deadline and the termination
+grace of its Pods, plus 30 seconds for the kubelet and the Job controller to
+report, because a Job past its deadline is not `Failed` until every Pod has
+terminated, and a Pod on a node that is gone may never terminate.
 
-Suspension cannot discard a dispatched mutating claim in either family. A
-resource suspended mid-Apply keeps its claim and keeps renewing the Lease.
+Every read-only claim that lets go of its Job settles it by that one rule,
+`releaseReadOnlyJob`, in both families: one that runs again past a Job it
+refused, one that suspension discards, and a migration's claim that an
+execution-binding change retires. None of them waits for a Job while the
+resource is suspended. A `PtahSchema` claim that a binding change retires is
+kept under the retired epoch until its Job stops, as a Plan's claim has to be
+to hold its Lease, and gets its TTL then. A Plan whose database lock epoch
+moved while its Job ran waits for the Job, renewing the Lease, by the same
+bound (`jobStopOverdue`) before its result is discarded.
+
+Suspension prevents new operations. It does not necessarily stop one that is
+already running: nothing deletes a running Job or its Pod, and a cleanup TTL
+removes a Job only once it has finished. Suspension cannot discard a dispatched
+mutating claim in either family. A resource suspended mid-Apply keeps its claim
+and keeps renewing the Lease. A read-only claim is discarded at once, because
+suspension is the stop button: it gives a Job that has finished its TTL first,
+and a Warning Event names one still running, which runs until it stops by
+itself or reaches its deadline and then stays until it is deleted. A
+migration's claim that an execution-binding change was holding over its Job is
+let go of the same way.
 
 For a migration, suspending is also a spec edit, and the generation it bumps is
 one of the inputs `migrationInputFingerprint` digests. So the pass that finds
@@ -525,11 +546,15 @@ Both families retire it; they differ in what is left over.
 | | Enforcement |
 | --- | --- |
 | `PtahSchema` | `rotateExecutionBinding` writes `status.pendingBindingRetirement` with the epoch, `reconcileBindingRetirement` works it off, `settleRetirement` clears it |
-| `PtahMigration` | `reconcileMigrationExecutionBinding` drops an undispatched claim in the same write, `applyUncertainUnderBindingChange` records a dispatched one first |
+| `PtahMigration` | `reconcileMigrationExecutionBinding` retires a claim in the write that installs the epoch, `letGoOfRetiredReadOnlyMigrationJob` holds a read-only one over its running Job first, `applyUncertainUnderBindingChange` records a dispatched Apply first |
 
-A migration leaves nothing behind. An undispatched claim goes in the write that
-installs the epoch, and a dispatched Apply becomes an unresolved run first, so
-the epoch moves on the next pass once no claim is in flight.
+A migration leaves no record behind, because it moves the epoch only once
+nothing it retires is left. A claim goes in the write that installs the epoch.
+A read-only claim over a Job that is still running holds that write back, under
+the binding status still records, until the Job stops or reaches its stop
+bound, and the Job gets its cleanup TTL first; a suspended resource does not
+wait. A dispatched Apply becomes an unresolved run first, so the epoch moves on
+the next pass once no claim is in flight.
 
 A schema leaves up to two things, and names them in the write that installs
 the epoch: the retired plan, whose approvals are still to be marked stale, and
@@ -655,8 +680,9 @@ a phase, the other publishes a plan -- so the invariant no longer depends on
 neither being given a branch that leaves a plan standing.
 
 An execution-binding rotation leaves a record for a schema and none for a
-migration. A migration retires everything in the write that moves the epoch. A
-schema keeps a read-only claim until its Job stops, and keeps the retired plan
+migration. A migration moves the epoch only in the write that retires what is
+left, and holds that write back while a read-only claim's Job runs. A schema
+keeps a read-only claim until its Job stops, and keeps the retired plan
 and the retired Apply's Job named until they are tidied, so it carries
 `status.pendingBindingRetirement` until they are.
 [Retire an execution binding](#retire-an-execution-binding) says what each
