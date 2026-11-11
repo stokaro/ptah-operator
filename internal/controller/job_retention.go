@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -100,7 +101,8 @@ func (e resultCodeError) Error() string { return e.message }
 // migration's when no report of the run was read. A failure with no result behind
 // it may have written anything, unless the Job has no Pod, as one admission refused
 // until its deadline has, or an init container ended the Pod first: then there is
-// no operation container to ask for a log.
+// no operation container to ask for a log. Nor is there one when the kubelet ended
+// every Pod's executor with ContainerStatusUnknown (executorStatusLost).
 func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, failure error) applyLogReading {
 	// A target the run could not open has its sentence whole in status.
 	var target *targetFailureError
@@ -118,10 +120,37 @@ func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batch
 		return applyLogSaysNothing
 	}
 	pods, err := podsOwnedByJob(ctx, reader, job.Namespace, job.Name, job.UID)
-	if err != nil || len(pods) == 0 || initBoundaryOf(pods) != "" {
+	if err != nil || len(pods) == 0 || initBoundaryOf(pods) != "" || everyExecutorStatusLost(pods) {
 		return applyLogSaysNothing
 	}
 	return applyLogUnread
+}
+
+// executorStatusLost is a Pod whose executor the kubelet ended with
+// ContainerStatusUnknown. The kubelet writes that termination for a container
+// it has no status for, one that never started as well as one the runtime
+// stopped reporting while it ran, and records no container ID with it. It
+// refuses a log read of a terminated container with no container ID
+// (validateContainerLogStatus), so `kubectl logs` gets 400 for this one.
+func executorStatusLost(pod *corev1.Pod) bool {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == executorContainerName {
+			terminated := status.State.Terminated
+			return terminated != nil && terminated.Reason == "ContainerStatusUnknown"
+		}
+	}
+	return false
+}
+
+// everyExecutorStatusLost is a list of Pods none of which has an executor log
+// the API server serves, because the kubelet lost every one.
+func everyExecutorStatusLost(pods []*corev1.Pod) bool {
+	for _, pod := range pods {
+		if !executorStatusLost(pod) {
+			return false
+		}
+	}
+	return len(pods) > 0
 }
 
 // failedApplyLogPointer says where an Apply's Pod log is and how long it stays, from
