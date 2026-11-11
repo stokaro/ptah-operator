@@ -63,6 +63,10 @@ func templates(v values) []template {
 		ReleaseNamespace:             v.ReleaseNamespace,
 		ControllerServiceAccountName: v.ControllerServiceAccount,
 	}
+	orphan := &crdupgrade.OrphanDeletionGuard{
+		ReleaseName:      v.ReleaseName,
+		ReleaseNamespace: v.ReleaseNamespace,
+	}
 	secret := certrotation.SecretCreateGuard{
 		Namespace:          v.ReleaseNamespace,
 		ReleaseName:        v.ReleaseName,
@@ -124,6 +128,14 @@ func templates(v values) []template {
 				{v.ControllerServiceAccount, "$controllerServiceAccount"},
 			},
 			pairs: statePairs,
+		},
+		{
+			path:   "templates/orphan-deletion-guard.yaml",
+			source: "internal/crdupgrade/orphan_deletion_guard.go",
+			parameters: []parameter{
+				{crdupgrade.OrphanDeletionGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.orphanDeletionGuardPolicyName" .`},
+			},
+			pairs: []policyPair{{policy: orphan.Policy(), binding: orphan.Binding()}},
 		},
 		{
 			path:   "templates/certificate-secret-guard.yaml",

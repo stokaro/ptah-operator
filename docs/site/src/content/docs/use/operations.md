@@ -1596,6 +1596,26 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 `operator.ptah.run/migration-operation` finalizer by hand is the last resort,
 and it is a statement that nothing is executing against that database any more.
 
+`kubectl delete --cascade=orphan` is refused. An orphaning deletion makes the
+garbage collector take the resource's owner reference off every dependent
+before it lets the resource go. The `PtahResultRecord` objects each operation
+leaves are dependents, and admission keeps their owner references as they were
+written, for the garbage collector too, so the `orphan` finalizer would never
+come off and the resource would stay `Terminating`. The chart's admission
+policy refuses `propagationPolicy: Orphan` and `orphanDependents: true` on a
+`PtahSchema` or a `PtahMigration` for every caller, a cluster administrator
+included, and its message names the default propagation, `Background`. A
+resource that already carries the `orphan` finalizer is also refused a deletion
+that names no propagation, because the API server would honor the finalizer.
+`kubectl delete` names `Background` unless `--cascade` says otherwise, and a
+named propagation takes the finalizer off in the same write, so a plain
+`kubectl delete` goes through. That is also how to release a resource an
+orphaning deletion left `Terminating` before the policy was installed: delete
+it again with `kubectl delete`. The namespace controller names `Background`
+too, so the policy does not refuse a namespace deletion. The policy runs in the
+API server and asks the manager nothing, so it refuses no deletion because the
+manager is down.
+
 ### Deleting a namespace {#delete-namespace}
 
 A namespace that ran a `PtahSchema` or a `PtahMigration` stays `Terminating` for

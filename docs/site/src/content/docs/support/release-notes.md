@@ -67,7 +67,11 @@ script that reads the `kubectl logs` command out of the
 propagation finds none there now. A script or an alert that matches the whole
 text of a `PtahSchema`'s `ApplyOutcomeUnknown` Event has to expect
 `; last reported before that:` and what the schema last reported after it, on
-an Apply whose Pod never ran.
+an Apply whose Pod never ran. A script or a GitOps tool that deletes a
+`PtahSchema` or a `PtahMigration` with `--cascade=orphan`, `propagationPolicy:
+Orphan` or `orphanDependents: true`, or deletes one that carries the `orphan`
+finalizer without naming a propagation, is now refused and has to name
+`Background`, the default.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -290,6 +294,20 @@ an Apply whose Pod never ran.
   the UID of an Apply Job its claim never recorded before it asks for that
   Job's TTL, and a Job deleted before that TTL was asked for is no longer named
   by a Warning.
+- **An orphaning deletion is refused.** `kubectl delete --cascade=orphan` on a
+  `PtahSchema` or a `PtahMigration` left the resource `Terminating`: the garbage
+  collector has to take the resource's owner reference off each dependent before
+  the orphan finalizer comes off, and the controller-write webhook refuses that
+  change to the `PtahResultRecord` objects the resource owns. A new admission
+  policy refuses such a deletion instead, `propagationPolicy: Orphan` and
+  `orphanDependents: true` alike, and a deletion that names no propagation of a
+  resource that carries the `orphan` finalizer, which the API server would
+  honor. Its message names `Background`, the default propagation. It runs in the
+  API server, so it refuses no deletion because the manager is down, and the
+  namespace controller, which names `Background`, is not refused. A resource an
+  orphaning deletion left `Terminating` before the upgrade stays so until it is
+  deleted again with `kubectl delete`, which takes the `orphan` finalizer off, as
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says.
 
 ## 0.2.10
 

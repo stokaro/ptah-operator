@@ -1428,6 +1428,13 @@ func unrecordedMigrationJobRefusal(migration *operatorv1alpha1.PtahMigration, jo
 // so a Job the resource still carries that finalizer over, or no longer controls,
 // outlives it, and its TTL is what collects it. A Job that is itself being deleted
 // goes in any case.
+//
+// The chart's orphan-deletion guard refuses such a deletion at admission
+// (internal/crdupgrade/orphan_deletion_guard.go), and a pass can meet one all the
+// same: a resource deleted that way before the guard was installed keeps the
+// orphan finalizer until it is deleted again with a named propagation, and
+// deleting the CRD deletes every resource without admission, honoring the
+// orphan finalizer one carries.
 func migrationJobGoesWithResource(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) bool {
 	switch {
 	case migration.DeletionTimestamp == nil || job == nil:
