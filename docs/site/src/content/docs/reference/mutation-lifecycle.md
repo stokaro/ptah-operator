@@ -412,7 +412,10 @@ uncertain, leaves `status.pendingObservation` carrying the claim's Lease epoch.
 The pending observation renews the Lease, waits until no Apply Pod can still
 run, and claims the read-only Observe and Plan that settle it. Both run under
 that same Lease, and retiring either of them releases nothing while the proof
-is owed. Only the status write that settles the proof stages the release. No other claimant can change the database
+is owed. Both are bound to the target the Apply's plan names, as the Apply is:
+the runner refuses either one before it starts the child when the URL names
+another target, and the resource stops `Blocked` with `TargetIdentityChanged`
+while it holds the Lease. Only the status write that settles the proof stages the release. No other claimant can change the database
 between the Apply and the reading that accounts for it, so an intervening
 mutation cannot be mistaken for this plan's convergence.
 

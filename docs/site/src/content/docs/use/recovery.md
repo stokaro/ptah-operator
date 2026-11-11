@@ -292,8 +292,10 @@ No read of another target can say what the Apply did, and the resource stops:
 - `status.pendingObservation` stays, and the resource keeps its database realm, so
   another claimant of that database waits.
 - It reads again every `spec.execution.failureRetryInterval`, so it finds the first
-  target if that comes back, and it connects to the new one each time. No source is
-  resolved, no plan is published, no Apply runs and a read request waits.
+  target if that comes back. Each read is bound to the plan's target, as the Apply
+  was, and the runner refuses it with `target_binding_mismatch` before it connects,
+  so nothing logs in to the new target or reads it. No source is resolved, no plan
+  is published, no Apply runs and a read request waits.
 
 **Put the first URL back.** The next read matches, and the proof runs as it would
 have. An Apply that succeeded is recorded in `status.applied`. This loses nothing,
@@ -330,9 +332,9 @@ Any other value does nothing, and the next stop says the annotation holds anothe
 value.
 
 That statement says you account for what the Apply did to the first target. A read
-under the new target says nothing about it, and `status.journal` says whether the
-Apply reported `Succeeded` or `Unknown`, so check the first target first if it
-matters. A resource that has stopped takes the statement at its next read, up to
+under the new target could say nothing about it, and the operator makes none before
+you settle. `status.journal` says whether the Apply reported `Succeeded` or
+`Unknown`, so check the first target first if it matters. A resource that has stopped takes the statement at its next read, up to
 `failureRetryInterval` later. A suspended resource starts no reads, so it takes it
 after it resumes, though a read already under way is still taken. By then every Pod
 the Apply could still be running has stopped.

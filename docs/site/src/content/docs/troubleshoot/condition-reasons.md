@@ -94,7 +94,7 @@ decision.
 | `SupersededApproval` | A duplicate approval lost to another approval for the same plan. |
 | `SupportedEngine` | The selected database engine has an implemented operator lifecycle. |
 | `Suspended` | Reconciliation is suspended and no new operation may start. |
-| `TargetIdentityChanged` | The Secret the post-Apply proof reads holds another login, host, port, database or URL parameter than the plan the Apply ran from, so the proof cannot be read. The resource is `Blocked` and keeps its proof and its database realm. Put the first URL back, or [settle it](../../use/recovery/#a-schema-whose-target-moved), after which `apply: Always` applies the next plan with no approval unless it is destructive or changes privileges. |
+| `TargetIdentityChanged` | The Secret the post-Apply proof reads holds another login, host, port, database or URL parameter than the plan the Apply ran from, so the proof cannot be read. The resource is `Blocked` and keeps its proof and its database realm. It tries the read again every `failureRetryInterval`, and the runner refuses each attempt with `target_binding_mismatch` before it connects to the new target. Put the first URL back, or [settle it](../../use/recovery/#a-schema-whose-target-moved), after which `apply: Always` applies the next plan with no approval unless it is destructive or changes privileges. |
 | `TLSFailed` | `DatabaseReachable` is false because the TLS handshake with the target database did not complete. |
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |

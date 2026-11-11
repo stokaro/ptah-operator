@@ -1172,9 +1172,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		return r.retryOperation(ctx, schema, job, fmt.Errorf("%s Job failed", operation.Type))
 	}
-	// Ahead of the child's own error: the runner names the target before the
-	// child starts, and a login that cannot connect reads no more of what the
-	// Apply did than one that can.
+	// Ahead of the result's own error: the runner names the target before the
+	// child starts. A proof's read is bound to its plan's target, so the runner
+	// refuses one whose URL names another with target_binding_mismatch, and that
+	// refusal has to stop the proof rather than fail it as an ordinary read.
 	if schemaClaimServesProof(schema) && proofReadAnotherTarget(schema.Status.PendingObservation, result.TargetIdentityDigest) {
 		if proofSettlementAsked(schema, result.TargetIdentityDigest) {
 			return r.settleProofOnMovedTarget(ctx, schema, job)

@@ -27,7 +27,10 @@ const (
 	// EnvExpectedPlanContentDigest binds apply to exact reconstructed bytes.
 	EnvExpectedPlanContentDigest = "PTAH_EXPECTED_PLAN_CONTENT_DIGEST"
 	// EnvExpectedTargetIdentityDigest binds apply to the credential-free target
-	// route identity observed before the plan was created and approved.
+	// route identity observed before the plan was created and approved. A
+	// read-only database operation that carries it is bound the same way: the
+	// reads that prove a schema Apply carry the digest of that Apply's plan.
+	// It is optional on a read, and a read without it reads any target.
 	EnvExpectedTargetIdentityDigest = "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST"
 	// EnvCoordinationDigest binds every database operation to a user-declared
 	// physical database realm without exposing its plaintext coordination key.
