@@ -13,15 +13,19 @@ reading taken with the pinned executor can be compared byte for byte with the
 file it replaces. Run it once with the executor the readings were taken with
 (--compare) to show the procedure reproduces them, then with the new one.
 
-It removes only the containers and the network it created.
+It removes only the containers, the network and the temporary files it
+created, on every way out a process can still act on: SIGTERM and SIGHUP end
+it the way an interrupt does. A removal that fails or hangs is reported with
+the name to remove by hand, and no command it sends a daemon runs unbounded.
 """
 
 import argparse
 import binascii
 import json
-import os
 from pathlib import Path
 import secrets
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -47,10 +51,25 @@ EXCLUDED = ['CREATE TABLE e2e_excluded_policy_keep (id bigint NOT NULL PRIMARY K
 OBSERVE = ['schema', 'drift', '--schema-file', '/desired.sql', '--format', 'json']
 PLAN = ['schema', 'plan', '--schema-file', '/desired.sql', '--output', '/tmp/plan.json', '--json']
 APPLY = ['schema', 'apply', '--plan', '/plan.json', '--auto-approve', '--json']
+# Every command sent to a daemon ends within a bound. On a host where database
+# containers hang, a docker exec can hang with them, and an unbounded one holds
+# the run and every container it made until someone kills it. The bound is long
+# enough for a first pull of a server image; a command that runs past it has
+# hung. A readiness probe gets a short one, because one that hangs is a server
+# that did not answer, and the start's own deadline decides what that means.
+COMMAND_TIMEOUT = 600
+PROBE_TIMEOUT = 10
 
 
-def run(argv, data=None, check=True):
-    result = subprocess.run(argv, input=data, capture_output=True)
+class CommandTimeout(RuntimeError):
+    """A command that did not finish within its bound."""
+
+
+def run(argv, data=None, check=True, timeout=COMMAND_TIMEOUT):
+    try:
+        result = subprocess.run(argv, input=data, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise CommandTimeout(f"{' '.join(argv[:4])} did not finish within {timeout} seconds") from None
     if check and result.returncode:
         raise RuntimeError(f"{' '.join(argv[:4])} exited {result.returncode}: {result.stderr.decode()[-400:]}")
     return result
@@ -78,6 +97,9 @@ class Lab:
         return self
 
     def start(self):
+        # The executor's saved plans go here, and leave with the Lab.
+        self.scratch = Path(tempfile.mkdtemp(prefix=self.name + '-'))
+        self.created.append(('directory', self.scratch))
         # Each is registered before it is made: a docker run that fails can
         # still leave its container behind.
         self.created.append(('network', self.name))
@@ -101,7 +123,11 @@ class Lab:
             # socket alone and answers a socket probe just before it stops.
             probe = ['pg_isready', '-h', '127.0.0.1', '-U', ACCOUNT, '-d', self.database] if self.engine == 'postgresql' else \
                 ['mysql', '-h127.0.0.1', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
-            if run(self.docker + ['exec', server] + probe, check=False).returncode == 0:
+            try:
+                answered = run(self.docker + ['exec', server] + probe, check=False, timeout=PROBE_TIMEOUT).returncode == 0
+            except CommandTimeout:
+                answered = False
+            if answered:
                 break
             time.sleep(2)
         else:
@@ -113,10 +139,26 @@ class Lab:
 
     def __exit__(self, *_):
         for kind, name in reversed(self.created):
-            if kind == 'container':
-                run(self.docker + ['rm', '-f', '-v', name], check=False)
-            else:
-                run(self.docker + ['network', 'rm', name], check=False)
+            self.remove(kind, name)
+
+    def remove(self, kind, name):
+        """Remove one thing the Lab made. A removal that fails or hangs is reported and the rest still go."""
+        if kind == 'directory':
+            shutil.rmtree(name, ignore_errors=True)
+            return
+        # Both succeed on something that does not exist, so a failure here is
+        # one that leaves the object behind: a daemon gives up killing a
+        # container it cannot stop, and a network that still has it attached
+        # stays too.
+        argv = self.docker + (['rm', '-f', '-v', name] if kind == 'container' else ['network', 'rm', '-f', name])
+        try:
+            result = run(argv, check=False)
+        except CommandTimeout as error:
+            print(f'{error}; remove the {kind} {name} by hand', file=sys.stderr)
+            return
+        if result.returncode:
+            print(f"{' '.join(argv[:4])} exited {result.returncode}: {result.stderr.decode()[-400:]}; "
+                  f'remove the {kind} {name} by hand', file=sys.stderr)
 
     def sql(self, text, root=False):
         if self.engine == 'postgresql':
@@ -151,9 +193,12 @@ class Lab:
                         row[key] = record[key]
                 rows.append(row)
             return rows
+        # root is the lab's own client, never the executor's. A readiness probe
+        # abandoned at its bound keeps running in the server's container and
+        # can connect after a later mark, so it is left out by account.
         query = ("SELECT DATE_FORMAT(event_time, '%Y-%m-%dT%H:%i:%s.%f'), command_type, user_host, thread_id, HEX(argument) "
                  f"FROM mysql.general_log WHERE event_time > '{since}' AND user_host NOT LIKE '%localhost%' "
-                 "AND user_host LIKE '%@  [%' ORDER BY event_time, thread_id")
+                 "AND user_host LIKE '%@  [%' AND user_host NOT LIKE 'root[%' ORDER BY event_time, thread_id")
         rows = []
         for line in self.sql(query, root=True).decode().splitlines():
             stamp, command, client, thread, argument = line.split('\t')
@@ -171,8 +216,8 @@ class Lab:
         env = ['-e', f'PTAH_DB_URL={url}']
         for key, value in (environment or {}).items():
             env += ['-e', f'{key}={value}']
-        run(self.docker + ['create', '--name', container, '--network', self.name] + env + [self.image] + args)
         try:
+            run(self.docker + ['create', '--name', container, '--network', self.name] + env + [self.image] + args)
             if desired:
                 run(self.docker + ['cp', str(FIXTURES / desired), container + ':/desired.sql'])
             if plan:
@@ -186,12 +231,12 @@ class Lab:
             journal = self.journal(mark)
             saved = None
             if '--output' in args:
-                target = Path(os.environ.get('TMPDIR', '/tmp')) / (container + '.json')
+                target = self.scratch / (container + '.json')
                 if run(self.docker + ['cp', container + ':/tmp/plan.json', str(target)], check=False).returncode == 0:
                     saved = target
             return code, journal, saved
         finally:
-            run(self.docker + ['rm', '-f', '-v', container], check=False)
+            self.remove('container', container)
 
 
 def scenarios(engine):
@@ -229,7 +274,6 @@ def capture(context, image, engine, out):
                     if saved is None:
                         raise RuntimeError(f'{engine} {variant} saved no plan')
                     (out / f'{engine}-schema-{variant}plan.json').write_bytes(saved.read_bytes())
-                    saved.unlink()
     results.update(capture_stale_plan(context, image, engine, out, f'{engine}-schema-'))
     # A runner Plan reads the plan twice and validates the first read with a
     # dry run under the resource's lock timeout.
@@ -249,8 +293,6 @@ def capture(context, image, engine, out):
                 rows += part
                 codes.append(code)
                 write(out, f'mysql-schema-lock-{timeout}-plan.jsonl', rows, max(codes), results)
-                first.unlink()
-                again.unlink()
     return results
 
 
@@ -278,8 +320,6 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
         record('drift-validate-plan', rows, code)
         code, rows, _ = lab.ptah(APPLY, plan=second, environment={'PTAH_LOCK_TIMEOUT': '60s'})
         record('drift-apply-current', rows, code)
-        for plan in (first, second):
-            plan.unlink()
     return results
 
 
@@ -428,23 +468,27 @@ def main():
         parser.error('a capture needs --context and --executor-image')
     if args.context in ('default', 'orbstack'):
         parser.error('name an explicit remote Docker context')
+    # Their default handlers end the process without running a finally block,
+    # so a closed terminal or a canceled job would leave everything behind.
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, signal.default_int_handler)
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     results = {}
-    scratch = Path(tempfile.mkdtemp(prefix='ptah-sql-readings-'))
-    if args.postgresql_line:
-        images = dict(added_postgresql_lines())
-        if args.postgresql_line not in images:
-            parser.error(f'support/databases.json adds no PostgreSQL line {args.postgresql_line}')
-        results.update(capture_stale_plan(args.context, args.executor_image, 'postgresql', out,
-                                          f'postgresql-{args.postgresql_line}-schema-',
-                                          server_image=images[args.postgresql_line],
-                                          keep={name for name, _ in LINE_WITNESSES}))
-    for engine in () if args.postgresql_line else args.engine or sorted(SERVERS):
-        if args.part in ('all', 'schema'):
-            results.update(capture(args.context, args.executor_image, engine, out))
-        if args.part in ('all', 'migrations'):
-            results.update(capture_migrations(args.context, args.executor_image, engine, out, scratch))
+    images = dict(added_postgresql_lines())
+    if args.postgresql_line and args.postgresql_line not in images:
+        parser.error(f'support/databases.json adds no PostgreSQL line {args.postgresql_line}')
+    with tempfile.TemporaryDirectory(prefix='ptah-sql-readings-') as scratch:
+        if args.postgresql_line:
+            results.update(capture_stale_plan(args.context, args.executor_image, 'postgresql', out,
+                                              f'postgresql-{args.postgresql_line}-schema-',
+                                              server_image=images[args.postgresql_line],
+                                              keep={name for name, _ in LINE_WITNESSES}))
+        for engine in () if args.postgresql_line else args.engine or sorted(SERVERS):
+            if args.part in ('all', 'schema'):
+                results.update(capture(args.context, args.executor_image, engine, out))
+            if args.part in ('all', 'migrations'):
+                results.update(capture_migrations(args.context, args.executor_image, engine, out, scratch))
     (out / 'capture.json').write_text(json.dumps({'executorImage': args.executor_image, 'readings': results}, indent=2) + '\n')
     mismatched = 0
     for name, result in sorted(results.items()):
