@@ -6,12 +6,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -127,6 +130,32 @@ func assertRefusedOnceStopped(
 	}
 }
 
+// assertWaitSaidOnce fails unless the pass that kept the claim over the running
+// Job it refused said so in Progressing, naming the Job, and unless one more pass
+// over the same running Job writes nothing at all to the resource.
+func assertWaitSaidOnce(t *testing.T, reconciler *MigrationReconciler, api client.WithWatch, run dispatchedRun) {
+	t.Helper()
+	ctx := context.Background()
+
+	held := readMigration(t, api, run.migration)
+	progressing := meta.FindStatusCondition(held.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	want := "Waiting for Job " + run.job.Name + ", which this release cannot confirm, to stop"
+	if progressing == nil || progressing.Status != metav1.ConditionTrue || !strings.Contains(progressing.Message, want) {
+		t.Fatalf("Progressing = %#v, want it True and saying %q", progressing, want)
+	}
+	result, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+	if err != nil {
+		t.Fatalf("Reconcile() on the next pass of the wait: %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("the next pass of the wait asked for no later pass: %#v", result)
+	}
+	if again := readMigration(t, api, run.migration); again.ResourceVersion != held.ResourceVersion {
+		t.Fatalf("the next pass of the wait wrote the resource again: status before %#v, after %#v",
+			held.Status, again.Status)
+	}
+}
+
 // cleanupDeferredFor reports whether events hold the Warning that says the named
 // Job stays, for the reason want names.
 func cleanupDeferredFor(events []string, job, want string) bool {
@@ -186,6 +215,7 @@ func TestARefusedReadOnlyJobIsCollectedOnceItStops(t *testing.T) {
 			if result.RequeueAfter <= 0 {
 				t.Fatalf("the claim waiting for its refused Job asked for no later pass: %#v", result)
 			}
+			assertWaitSaidOnce(t, reconciler, api, run)
 			assertRefusedOnceStopped(t, reconciler, api, run, row.ending, row.want)
 			if events := migrationEvents(recorder); cleanupDeferredFor(events, run.job.Name, "") {
 				t.Fatalf("the Job that got its TTL is named as staying: %q", events)
@@ -299,6 +329,11 @@ func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 	current := workloadBuilderForMigrations()
 	predecessor := managerOnlyPredecessor(current)
 	refused := apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("injected refusal"))
+	// A ValidatingAdmissionPolicy refuses a write with Invalid, as the
+	// controller-object guard does a Job a predecessor built.
+	refusedByPolicy := apierrors.NewInvalid(batchv1.SchemeGroupVersion.WithKind("Job").GroupKind(), "", field.ErrorList{
+		field.Forbidden(field.NewPath("spec", "ttlSecondsAfterFinished"), "injected policy refusal"),
+	})
 	gone := apierrors.NewNotFound(batchv1.Resource("jobs"), "")
 	for _, row := range []struct {
 		name   string
@@ -309,6 +344,7 @@ func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 		stays string
 	}{
 		{name: "refused", answer: refused, retried: true, stays: "injected refusal"},
+		{name: "refused by a policy", answer: refusedByPolicy, retried: true, stays: "injected policy refusal"},
 		{name: "deleted since it was read", answer: gone, retried: true},
 		{name: "lost", answer: errors.New("connection reset by peer")},
 	} {
@@ -386,6 +422,180 @@ func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 			}
 			if events := migrationEvents(recorder); cleanupDeferredFor(events, run.job.Name, "") {
 				t.Fatalf("a lost TTL write named the Job as staying: %q", events)
+			}
+		})
+	}
+}
+
+// TestARefusedReadOnlyJobThatDoesNotStopIsLeft is a read-only claim waiting for a
+// refused Job admission would collect, where the Job does not finish. Since
+// Kubernetes 1.31 a Job past its deadline carries only FailureTarget until every
+// Pod has terminated, and a Pod on a node that is gone may never terminate. The
+// claim waits for the Job's own deadline, counted from its start, plus the
+// termination grace its Pods are given and jobStopReportSlack, or for that grace
+// and slack past a condition that says the Job controller is terminating the Pods,
+// whichever comes first. Then it leaves the Job, a Warning names it, and the claim
+// runs again. Every bound is dated from what the built Job carries.
+func TestARefusedReadOnlyJobThatDoesNotStopIsLeft(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	predecessor := managerOnlyPredecessor(current)
+	// limits is what the built Job carries: its deadline, and its Pods' grace plus
+	// the slack, which is how long past the moment its Pods must have stopped the
+	// claim still waits.
+	type limits struct{ deadline, stopping time.Duration }
+	for _, row := range []struct {
+		name string
+		// started is how long before the pass the Job started, or, with
+		// unstarted, was created.
+		started   func(limits) time.Duration
+		unstarted bool
+		// condition is the condition the Job controller set, standing long before
+		// the pass, or none.
+		condition batchv1.JobConditionType
+		reason    string
+		standing  func(limits) time.Duration
+		// bound is how far after the start the claim stops waiting, where it does.
+		bound func(limits) time.Duration
+		left  bool
+	}{
+		{
+			name:      "past its deadline, with a Pod still terminating",
+			started:   func(l limits) time.Duration { return l.deadline + l.stopping + time.Second },
+			condition: batchv1.JobFailureTarget, reason: batchv1.JobReasonDeadlineExceeded,
+			standing: func(l limits) time.Duration { return l.stopping + time.Second },
+			bound:    func(l limits) time.Duration { return l.deadline + l.stopping },
+			left:     true,
+		},
+		{
+			name:      "past its deadline, inside the grace",
+			started:   func(l limits) time.Duration { return l.deadline + l.stopping - time.Second },
+			condition: batchv1.JobFailureTarget, reason: batchv1.JobReasonDeadlineExceeded,
+			standing: func(l limits) time.Duration { return l.stopping - time.Second },
+		},
+		{
+			name:    "past its deadline, with nothing set",
+			started: func(l limits) time.Duration { return l.deadline + l.stopping + time.Second },
+			bound:   func(l limits) time.Duration { return l.deadline + l.stopping },
+			left:    true,
+		},
+		{
+			name:      "failing before its deadline, past the grace",
+			started:   func(l limits) time.Duration { return l.stopping + time.Minute },
+			condition: batchv1.JobFailureTarget, reason: batchv1.JobReasonBackoffLimitExceeded,
+			standing: func(l limits) time.Duration { return l.stopping + time.Second },
+			bound:    func(l limits) time.Duration { return time.Minute - time.Second + l.stopping },
+			left:     true,
+		},
+		{
+			name:      "failing before its deadline, inside the grace",
+			started:   func(l limits) time.Duration { return l.stopping + time.Minute },
+			condition: batchv1.JobFailureTarget, reason: batchv1.JobReasonBackoffLimitExceeded,
+			standing: func(l limits) time.Duration { return l.stopping - time.Second },
+		},
+		{
+			name:      "succeeding before its deadline, past the grace",
+			started:   func(l limits) time.Duration { return l.stopping + time.Minute },
+			condition: batchv1.JobSuccessCriteriaMet, reason: batchv1.JobReasonCompletionsReached,
+			standing: func(l limits) time.Duration { return l.stopping + time.Second },
+			bound:    func(l limits) time.Duration { return time.Minute - time.Second + l.stopping },
+			left:     true,
+		},
+		{
+			name:      "created before its deadline, not started",
+			started:   func(l limits) time.Duration { return time.Minute },
+			unstarted: true,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
+				dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true,
+			})
+			deadline, grace := run.job.Spec.ActiveDeadlineSeconds, run.job.Spec.Template.Spec.TerminationGracePeriodSeconds
+			if deadline == nil || grace == nil {
+				t.Fatalf("the built Job carries deadline %v and grace %v, so the row dates nothing from them", deadline, grace)
+			}
+			bounds := limits{
+				deadline: time.Duration(*deadline) * time.Second,
+				stopping: time.Duration(*grace)*time.Second + jobStopReportSlack,
+			}
+			if row.unstarted {
+				run.job.Status.StartTime = nil
+			}
+			reconciler, api := run.reconciler(t, current)
+			// The reconciler's clock is fixed, and the Job is dated back from it.
+			now := reconciler.now()
+			start := now.Add(-row.started(bounds))
+			stored := &batchv1.Job{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.job), stored); err != nil {
+				t.Fatal(err)
+			}
+			if row.unstarted {
+				stored.CreationTimestamp = metav1.NewTime(start)
+				if err := api.Update(ctx, stored); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				stored.Status.StartTime = &metav1.Time{Time: start}
+			}
+			if row.condition != "" {
+				stored.Status.Active = 0
+				stored.Status.Terminating = ptr(int32(1))
+				stored.Status.Conditions = []batchv1.JobCondition{{
+					Type: row.condition, Status: corev1.ConditionTrue, Reason: row.reason,
+					LastTransitionTime: metav1.NewTime(now.Add(-row.standing(bounds))),
+				}}
+			}
+			if err := api.Status().Update(ctx, stored); err != nil {
+				t.Fatal(err)
+			}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(run.job), stored); err != nil {
+				t.Fatal(err)
+			}
+			dated := stored.CreationTimestamp.Time
+			if !row.unstarted && stored.Status.StartTime != nil {
+				dated = stored.Status.StartTime.Time
+			}
+			if !dated.Equal(start) || (row.unstarted && stored.Status.StartTime != nil) {
+				t.Fatalf("the stored Job starts at %s (created %s, startTime %v), want it dated %s",
+					dated, stored.CreationTimestamp, stored.Status.StartTime, start)
+			}
+			reconciler.Client = admittedJobWrites(api, current)
+			recorder := record.NewFakeRecorder(64)
+			reconciler.Recorder = recorder
+
+			result, err := reconciler.Reconcile(ctx, migrationRequest(run.migration))
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			claimed := run.migration.Status.ActiveOperation
+			operation := readMigration(t, api, run.migration).Status.ActiveOperation
+			events := migrationEvents(recorder)
+			if got := storedTTL(t, api, run.job); got != nil {
+				t.Fatalf("the Job that has not finished has TTL %d, want none", *got)
+			}
+			if !row.left {
+				if !equality.Semantic.DeepEqual(operation, claimed) {
+					t.Fatalf("the claim did not wait for a Job that may still stop: operation=%#v", operation)
+				}
+				if result.RequeueAfter <= 0 {
+					t.Fatalf("the waiting claim asked for no later pass: %#v", result)
+				}
+				if cleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job that may still stop is named as staying: %q", events)
+				}
+				return
+			}
+			if operation == nil || operation.ID != claimed.ID || operation.Attempt != claimed.Attempt+1 {
+				t.Fatalf("operation = %#v, want the claim moved to attempt %d", operation, claimed.Attempt+1)
+			}
+			by := start.Add(row.bound(bounds)).UTC().Format(time.RFC3339)
+			if !cleanupDeferredFor(events, run.job.Name, "did not stop by its own deadline and the grace its Pods are given, "+by) {
+				t.Fatalf("Events = %q, want a Warning that Job %q did not stop by %s", events, run.job.Name, by)
 			}
 		})
 	}

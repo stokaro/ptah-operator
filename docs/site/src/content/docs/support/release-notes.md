@@ -157,9 +157,12 @@ records](../../use/operations/#result-record-quota) says. An alert on
   UID. Where the claim recorded the Job's UID and the Job is the one the claim
   fixes, the claim now waits for the Job to stop, as it waits for a Job it
   supervises, and gives it the five minutes a harvested Job gets before it runs
-  again. A Job admission would refuse, such as one under another execution epoch
-  or one whose claim never recorded its UID, is left at once, and a
-  `MigrationJobCleanupDeferred` Warning Event names it.
+  again. It waits at most the Job's `spec.execution.activeDeadlineSeconds`, 15
+  minutes by default, plus the termination grace its Pods are given and 30
+  seconds, and `Progressing` names the Job meanwhile. A Job admission would
+  refuse, such as one under another execution epoch or one whose claim never
+  recorded its UID, is left at once, and so is one that has not finished by then.
+  A `MigrationJobCleanupDeferred` Warning Event names the Job it leaves.
 
 ## 0.2.10
 
