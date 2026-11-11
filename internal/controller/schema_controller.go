@@ -1676,6 +1676,10 @@ func (r *SchemaReconciler) consumeResult(
 }
 
 func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, result runner.Result, podUIDs []types.UID, podCount int32, durable bool) (ctrl.Result, error) {
+	// The pass harvests the Job once, here, before any exit below writes
+	// status. The retries below are handed no Job, so none of them asks for
+	// its cleanup again: under a refusal admission keeps giving, a second ask
+	// would be refused again and warned about twice in the same pass.
 	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1698,7 +1702,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if git := schema.Spec.Desired.Git; git != nil {
 			revision, err := gitResolution(git, result)
 			if err != nil {
-				return r.retryOperation(ctx, schema, job, err)
+				return r.retryOperation(ctx, schema, nil, err)
 			}
 			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired)
 			if err == nil {
@@ -1706,7 +1710,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			}
 			if err != nil {
 				if errors.Is(err, errSourceRefused) {
-					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonConfigurationError, err, nil)
+					return r.retryOperationAs(ctx, schema, nil, operatorv1alpha1.ReasonConfigurationError, err, nil)
 				}
 				return ctrl.Result{}, err
 			}
@@ -1731,7 +1735,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if result.Stdout != "" || ocireference.ValidateResolution(
 			schema.Spec.Desired.OCIRef, result.ResolvedReference, result.ResolvedDigest,
 		) != nil {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("resolved reference does not match the requested source"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("resolved reference does not match the requested source"))
 		}
 		changed := schema.Status.Source.Digest != result.ResolvedDigest || schema.Status.Source.RequestedReference != schema.Spec.Desired.OCIRef
 		schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
@@ -1758,7 +1762,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if result.Stdout != "" || len(result.VerificationRequirements) != 0 || result.ResolvedDigest != schema.Status.Source.Digest ||
 			result.ObservedArtifactType != dataplane.SchemaArtifactType || result.VerificationPolicyDigest == "" ||
 			operation.VerificationPolicyUID == "" || result.VerificationPolicyDigest != operation.VerificationPolicyDigest {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("verification evidence does not match the resolved schema artifact"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("verification evidence does not match the resolved schema artifact"))
 		}
 		if policyErr := r.verificationResultPolicyError(ctx, schema, result.VerificationPolicyDigest); policyErr != nil {
 			return r.verificationPolicyChanged(ctx, schema, policyErr)
@@ -1774,7 +1778,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	case operatorv1alpha1.OperationObserve:
 		if result.Stdout != "" || result.CoordinationDigest == "" || result.TargetIdentityDigest == "" ||
 			result.DriftReportDigest == "" || result.DriftFindingCount < 0 {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("observation lacks credential-free target evidence"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("observation lacks credential-free target evidence"))
 		}
 		pending := schema.Status.PendingObservation
 		engine := schema.Spec.Target.Engine
@@ -1784,20 +1788,20 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			expectedCoordination = pending.CoordinationDigest
 			if pending.Plan.CoordinationDigest != expectedCoordination || result.CoordinationDigest != expectedCoordination ||
 				result.TargetIdentityDigest != pending.Plan.TargetIdentityDigest {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("post-apply observation target does not match the applied plan"))
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("post-apply observation target does not match the applied plan"))
 			}
 		} else {
 			var err error
 			expectedCoordination, err = coordination.Digest(schema.Namespace, schema.Spec.Target)
 			if err != nil {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("derive database coordination digest: %w", err))
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("derive database coordination digest: %w", err))
 			}
 		}
 		if result.CoordinationDigest != expectedCoordination {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("observation coordination realm does not match the configured target"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("observation coordination realm does not match the configured target"))
 		}
 		if !dataplane.DialectMatches(string(engine), result.ObservedDialect) {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("observation dialect %q does not match target engine %q", result.ObservedDialect, engine))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("observation dialect %q does not match target engine %q", result.ObservedDialect, engine))
 		}
 		findings := make([]operatorv1alpha1.DriftFindingStatus, len(result.DriftFindings))
 		for index, finding := range result.DriftFindings {
@@ -1837,7 +1841,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			}
 		} else {
 			if policyErr := pendingProofPolicyBindingError(schema, pending); policyErr != nil {
-				return r.retryOperation(ctx, schema, job, policyErr)
+				return r.retryOperation(ctx, schema, nil, policyErr)
 			}
 			// A newer selector or a delete-and-recreate policy must not abandon
 			// post-Apply proof or release its Lease. Record the current-policy
@@ -1857,17 +1861,17 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			expectedExclude = pending.Exclude
 		}
 		if result.CoordinationDigest == "" || result.TargetIdentityDigest == "" {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("planning target does not match the persisted observation binding"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("planning target does not match the persisted observation binding"))
 		}
 		if result.CoordinationDigest != expectedCoordination || result.TargetIdentityDigest != expectedTarget {
-			return r.reobserveAfterStalePlan(ctx, schema, job, fmt.Errorf("planning target changed after observation"))
+			return r.reobserveAfterStalePlan(ctx, schema, fmt.Errorf("planning target changed after observation"))
 		}
 		if result.PlanOutcome != runner.PlanOutcomeChanges && result.PlanOutcome != runner.PlanOutcomeNoChanges {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("plan result has no explicit managed-scope outcome"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("plan result has no explicit managed-scope outcome"))
 		}
 		if result.PlanOutcome == runner.PlanOutcomeNoChanges {
 			if result.Stdout != "" || result.PlanContentDigest != "" {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("no-change plan result contains executable content"))
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("no-change plan result contains executable content"))
 			}
 			observedDrift = ptr(false)
 			schema.Status.Plan = nil
@@ -1920,7 +1924,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				// old one would have cost anyway.
 				if operation.PlanSealPublicKeyDigest == "" ||
 					operation.PlanSealPublicKeyDigest != planSealPublicKeyDigest(r.SealKey.PublicKey()) {
-					return r.retryOperation(ctx, schema, job,
+					return r.retryOperation(ctx, schema, nil,
 						fmt.Errorf("plan was sealed to a manager key this process does not hold"))
 				}
 				// The envelope inside the sealed payload names the exact operation
@@ -1934,19 +1938,19 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 					OperationID: operation.ID, JobName: operation.JobName,
 				})
 				if err != nil {
-					return r.retryOperation(ctx, schema, job, fmt.Errorf("open sealed plan payload: %w", err))
+					return r.retryOperation(ctx, schema, nil, fmt.Errorf("open sealed plan payload: %w", err))
 				}
 			}
 
 			if result.PlanContentDigest == "" || result.PlanContentDigest != fingerprint.DigestBytes(planDocument) {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("plan result content digest is missing or mismatched"))
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("plan result content digest is missing or mismatched"))
 			}
 			decoded, err := dataplane.DecodePlan(planDocument, string(engine))
 			if err != nil {
-				return r.retryOperation(ctx, schema, job, err)
+				return r.retryOperation(ctx, schema, nil, err)
 			}
 			if !reflect.DeepEqual(fingerprint.NormalizeSet(decoded.Exclude), fingerprint.NormalizeSet(expectedExclude)) {
-				return r.retryOperation(ctx, schema, job, fmt.Errorf("plan exclusion scope does not match the persisted policy"))
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("plan exclusion scope does not match the persisted policy"))
 			}
 			count, severity := planDriftSummary(decoded)
 			observedDrift = ptr(true)
@@ -1965,14 +1969,14 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 					if !planPublicationRefused(err) {
 						return ctrl.Result{}, err
 					}
-					// The Job is already harvested. Holding the claim against a
-					// refusal would meet it on every pass until the Job's cleanup
-					// took the result, and the retry after that would name a
-					// missing Job instead of the refusal. The Plan is retried as a
-					// failed one, with the refusal on the resource.
+					// The Job was harvested at the top of the pass. Holding the
+					// claim against a refusal would meet it on every pass until
+					// the Job's cleanup took the result, and the retry after that
+					// would name a missing Job instead of the refusal. The Plan is
+					// retried as a failed one, with the refusal on the resource.
 					failure := fmt.Errorf("publish the plan: %w", err)
 					r.event(schema, corev1.EventTypeWarning, "PlanPublicationRefused", "%s", bounded(failure.Error(), 512))
-					return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonPlanPublicationRefused, failure, setSchemaTargetObserved)
+					return r.retryOperationAs(ctx, schema, nil, operatorv1alpha1.ReasonPlanPublicationRefused, failure, setSchemaTargetObserved)
 				}
 				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
@@ -3136,15 +3140,13 @@ func (r *SchemaReconciler) markOneSchemaApprovalStaleWithReason(
 	return false, nil
 }
 
+// reobserveAfterStalePlan discards a Plan whose target moved while it ran. Its
+// one caller, consumeResultWithTransport, has harvested the Job already.
 func (r *SchemaReconciler) reobserveAfterStalePlan(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
-	job *batchv1.Job,
 	failure error,
 ) (ctrl.Result, error) {
-	if err := r.harvestJob(ctx, schema, job); err != nil {
-		return ctrl.Result{}, err
-	}
 	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
