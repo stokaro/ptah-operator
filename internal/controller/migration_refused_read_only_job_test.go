@@ -69,7 +69,8 @@ func finishMigrationJob(t *testing.T, api client.Client, run dispatchedRun, endi
 
 // assertRefusedOnceStopped takes a read-only claim that refused a running Job
 // admission would collect, after the pass that refused it. It fails unless that
-// pass kept the claim over the Job and left the Job alone, then stops the Job
+// pass kept the claim over the Job, naming the Job by UID whether or not the
+// claim had recorded it, and left the Job alone, then stops the Job
 // and runs one more pass through the real controller-write webhook, and fails
 // unless that pass gave the Job the TTL a harvested read-only Job gets and moved
 // the claim to a new attempt for the reason want names.
@@ -85,9 +86,12 @@ func assertRefusedOnceStopped(
 	ctx := context.Background()
 
 	claimed := run.migration.Status.ActiveOperation
+	kept := claimed.DeepCopy()
+	kept.JobUID = run.job.UID
 	held := readMigration(t, api, run.migration)
-	if !equality.Semantic.DeepEqual(held.Status.ActiveOperation, claimed) {
-		t.Fatalf("the claim did not wait for the running Job it refused: operation=%#v", held.Status.ActiveOperation)
+	if !equality.Semantic.DeepEqual(held.Status.ActiveOperation, kept) {
+		t.Fatalf("the claim did not wait for the running Job it refused, naming it by UID %q: operation=%#v",
+			run.job.UID, held.Status.ActiveOperation)
 	}
 	if got := storedTTL(t, api, run.job); got != nil {
 		t.Fatalf("the running Job's TTL = %d, want none while it runs", *got)
@@ -131,15 +135,16 @@ func assertRefusedOnceStopped(
 }
 
 // assertWaitSaidOnce fails unless the pass that kept the claim over the running
-// Job it refused said so in Progressing, naming the Job, and unless one more pass
-// over the same running Job writes nothing at all to the resource.
-func assertWaitSaidOnce(t *testing.T, reconciler *MigrationReconciler, api client.WithWatch, run dispatchedRun) {
+// Job it owes a cleanup said so in Progressing, naming the Job, and unless one
+// more pass over the same running Job writes nothing at all to the resource. want
+// is what Progressing has to say; refusedJobWait is the words of a claim that
+// refused the Job.
+func assertWaitSaidOnce(t *testing.T, reconciler *MigrationReconciler, api client.WithWatch, run dispatchedRun, want string) {
 	t.Helper()
 	ctx := context.Background()
 
 	held := readMigration(t, api, run.migration)
 	progressing := meta.FindStatusCondition(held.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
-	want := "Waiting for Job " + run.job.Name + ", which this release cannot confirm, to stop"
 	if progressing == nil || progressing.Status != metav1.ConditionTrue || !strings.Contains(progressing.Message, want) {
 		t.Fatalf("Progressing = %#v, want it True and saying %q", progressing, want)
 	}
@@ -156,6 +161,12 @@ func assertWaitSaidOnce(t *testing.T, reconciler *MigrationReconciler, api clien
 	}
 }
 
+// refusedJobWait is what Progressing says while a claim waits for the Job it
+// refused to stop.
+func refusedJobWait(run dispatchedRun) string {
+	return "Waiting for Job " + run.job.Name + ", which this release cannot confirm, to stop"
+}
+
 // cleanupDeferredFor reports whether events hold the Warning that says the named
 // Job stays, for the reason want names.
 func cleanupDeferredFor(events []string, job, want string) bool {
@@ -167,10 +178,11 @@ func cleanupDeferredFor(events []string, job, want string) bool {
 
 // TestARefusedReadOnlyJobIsCollectedOnceItStops is a read-only claim that cannot
 // confirm the running Job under its name, where admission would admit that Job's
-// TTL: the claim recorded the Job's UID, and the Job is the one the claim fixes
-// without a rebuild. The claim waits for the Job to stop, as it would for a Job
-// it supervised, and the pass that sees it stopped schedules its cleanup before
-// the claim moves on. A Job that fails at its deadline is collected the same way.
+// TTL: the Job is the one the claim fixes without a rebuild, and the claim
+// recorded its UID or records it now. The claim waits for the Job to stop, as it
+// would for a Job it supervised, and the pass that sees it stopped schedules its
+// cleanup before the claim moves on. A Job that fails at its deadline is
+// collected the same way.
 func TestARefusedReadOnlyJobIsCollectedOnceItStops(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +210,11 @@ func TestARefusedReadOnlyJobIsCollectedOnceItStops(t *testing.T) {
 			shape: runShape{dispatcher: current, recorded: true},
 			jobs:  failingMigrationBuildJobs{}, ending: batchv1.JobComplete, want: "rebuild immutable Job intent",
 		},
+		{
+			name:  "whose claim never recorded the Job's UID",
+			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting},
+			jobs:  current, ending: batchv1.JobComplete, want: "active Job intent changed",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -215,7 +232,7 @@ func TestARefusedReadOnlyJobIsCollectedOnceItStops(t *testing.T) {
 			if result.RequeueAfter <= 0 {
 				t.Fatalf("the claim waiting for its refused Job asked for no later pass: %#v", result)
 			}
-			assertWaitSaidOnce(t, reconciler, api, run)
+			assertWaitSaidOnce(t, reconciler, api, run, refusedJobWait(run))
 			assertRefusedOnceStopped(t, reconciler, api, run, row.ending, row.want)
 			if events := migrationEvents(recorder); cleanupDeferredFor(events, run.job.Name, "") {
 				t.Fatalf("the Job that got its TTL is named as staying: %q", events)
@@ -233,7 +250,6 @@ func TestARefusedReadOnlyJobAdmissionWouldNotCollectIsNamed(t *testing.T) {
 	t.Parallel()
 
 	current := workloadBuilderForMigrations()
-	predecessor := managerOnlyPredecessor(current)
 	for _, row := range []struct {
 		name  string
 		shape runShape
@@ -247,9 +263,9 @@ func TestARefusedReadOnlyJobAdmissionWouldNotCollectIsNamed(t *testing.T) {
 		stays string
 	}{
 		{
-			name:  "a claim that never recorded the Job's UID",
-			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting},
-			stays: "its claim never recorded the Job's UID",
+			name:  "a claim that never recorded the UID of a Job under another epoch",
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch},
+			stays: "its claim never recorded the Job's UID, and the Job is not the one the claim fixes",
 		},
 		{
 			name:  "a Job under another epoch",
@@ -601,7 +617,7 @@ func TestARefusedReadOnlyJobThatDoesNotStopIsLeft(t *testing.T) {
 	}
 }
 
-// TestAJobsStopBoundIsWhatItCarries holds migrationJobStopBound to the Job's own
+// TestAJobsStopBoundIsWhatItCarries holds jobStopBound to the Job's own
 // values on inputs the built Jobs never vary: every read-only Job the builder
 // writes carries the default termination grace and a deadline, and the Job
 // controller sets its conditions True with a time.
@@ -667,8 +683,8 @@ func TestAJobsStopBoundIsWhatItCarries(t *testing.T) {
 				},
 				Status: batchv1.JobStatus{StartTime: &metav1.Time{Time: started}, Conditions: row.conditions},
 			}
-			if got := migrationJobStopBound(job); !got.Equal(row.want) {
-				t.Fatalf("migrationJobStopBound() = %s, want %s", got, row.want)
+			if got := jobStopBound(job); !got.Equal(row.want) {
+				t.Fatalf("jobStopBound() = %s, want %s", got, row.want)
 			}
 		})
 	}

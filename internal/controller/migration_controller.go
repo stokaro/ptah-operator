@@ -430,6 +430,17 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// MigrationRunUncertain Event outlives them, so the failure
 				// carries what the kubelet last said about a Pod that never
 				// started.
+				//
+				// A claim that never recorded its Job's UID records it first, as
+				// every other pass that settles an Apply nobody read does
+				// (adoptUnrecordedApplyJob), so the run names the Job and
+				// admission admits its cleanup TTL. That TTL is what collects a
+				// Job the deletion orphans.
+				if job != nil {
+					if job, _, err = r.adoptUnrecordedApplyJob(ctx, migration, job); err != nil {
+						return ctrl.Result{}, err
+					}
+				}
 				if _, err := r.retireUncertainMigrationApply(ctx, migration, job,
 					withLastPodReport(errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"),
 						migrationPodReport(migration, job)),
@@ -563,6 +574,9 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		// run against components it never had.
 		return r.applyUncertainUnderBindingChange(ctx, migration)
 	}
+	if result, held, err := r.letGoOfRetiredReadOnlyMigrationJob(ctx, migration); held || err != nil {
+		return result, true, err
+	}
 	before := migration.DeepCopy()
 	migration.Status.ExecutionBinding = binding
 	if current != nil {
@@ -607,6 +621,33 @@ func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 		withLastPodReport(errors.New("an execution component changed while the Apply was dispatched"),
 			migrationPodReport(migration, job)), "")
 	return result, true, err
+}
+
+// letGoOfRetiredReadOnlyMigrationJob settles what a read-only claim a rotation
+// retires owes the Job under its reserved name (letGoOfReadOnlyMigrationJob),
+// and reports held while the claim has to stay over it. The rotation waits under
+// the binding status still records, since that is the binding admission holds the
+// Job's cleanup TTL to, and the claim is retired with the rotation's own write
+// once it is not held.
+func (r *MigrationReconciler) letGoOfRetiredReadOnlyMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (ctrl.Result, bool, error) {
+	operation := migration.Status.ActiveOperation
+	if !migrationOperation(operation).ReadOnly() || operation.JobName == "" {
+		return ctrl.Result{}, false, nil
+	}
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+	switch err := r.directReader().Get(ctx, key, job); {
+	case apierrors.IsNotFound(err):
+		return ctrl.Result{}, false, nil
+	case err != nil:
+		return ctrl.Result{}, false, fmt.Errorf("read the %s Job of the retired claim: %w", operation.Type, err)
+	}
+	waiting := fmt.Sprintf("Waiting for Job %s to stop before the %s operation is retired: an execution component changed",
+		job.Name, operation.Type)
+	return r.letGoOfReadOnlyMigrationJob(ctx, migration, job, waiting)
 }
 
 // recordedMigrationApplyJob reads the Job the active claim recorded by UID, for
@@ -826,8 +867,14 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	}
 	// Suspension is judged only against a Job that exists. A claim with none
 	// goes to dispatch, which refuses a suspended resource itself and is where
-	// that refusal has always lived.
+	// that refusal has always lived. The claim settles at once what it owes that
+	// Job, since it is what lets admission accept the Job's cleanup TTL, and it
+	// does not wait: suspension is the stop button, whether the claim was
+	// supervising the Job or waiting for one it refused (letGoAtOnce).
 	if found && migration.Spec.Suspend && !mutating {
+		if _, _, err := r.letGoOfReadOnlyMigrationJob(ctx, migration, job, letGoAtOnce); err != nil {
+			return ctrl.Result{}, err
+		}
 		return r.discardMigrationOperation(ctx, migration, telemetry.OperationCanceled,
 			errors.New("reconciliation was suspended while the operation ran"))
 	}
@@ -1082,134 +1129,86 @@ func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 }
 
 // retryPastRefusedMigrationJob moves a read-only claim to its next attempt past
-// the Job holdMigrationJobToItsClaim refused, and gives that Job the cleanup TTL
-// a harvested read-only Job gets (markJobHarvested).
-//
-// The controller-write webhook admits a migration Job's cleanup TTL only once
-// the Job has finished, Complete or Failed as jobTerminal reads it, and only on
-// the Job the active claim names by UID, held to what the claim fixes without a
-// rebuild (validateMigrationJobEnvelope is the same match). Once the claim moves
-// on, no claim names the Job, and its cleanup cannot be scheduled again. So a Job
-// admission would accept keeps the claim until it stops, as a Job the claim
-// supervised would, and Progressing says what the claim waits for. A read-only
-// claim holds no Lease while it waits.
-//
-// The wait ends by migrationJobStopBound. Since Kubernetes 1.31 a Job past its
-// deadline carries only FailureTarget until every Pod has terminated, and a Pod on
-// a node that is gone may never terminate, so the Job would never finish. A Job
-// still not finished by that bound is left, as one admission would refuse is.
-//
-// A Job admission would refuse is left at once, because waiting for it would
-// hold the retry for nothing: one whose UID the claim never recorded, and one
-// outside what the claim fixes. A Warning names it
-// (migrationJobCleanupNotScheduled), and so does a refusal of the TTL write
-// itself, which does not hold the claim either. Any other failure of that write
-// fails the pass, and the next pass asks again. A Job that already carries a
-// TTL is collected by it.
+// the Job holdMigrationJobToItsClaim refused, once the claim owes that Job
+// nothing more (letGoOfReadOnlyMigrationJob).
 func (r *MigrationReconciler) retryPastRefusedMigrationJob(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	failure error,
 ) (ctrl.Result, error) {
-	operation := migration.Status.ActiveOperation
-	if job.Spec.TTLSecondsAfterFinished == nil {
-		switch refused := refusedMigrationJobCleanup(migration, job); {
-		case refused != nil:
-			r.migrationJobCleanupNotScheduled(migration, operation, job, refused)
-		case !jobTerminal(job):
-			stopBy := migrationJobStopBound(job)
-			if r.now().Before(stopBy) {
-				return r.waitForRefusedMigrationJob(ctx, migration, job)
-			}
-			r.migrationJobCleanupNotScheduled(migration, operation, job, fmt.Errorf(
-				"the Job did not stop by its own deadline and the grace its Pods are given, %s, "+
-					"and admission admits a cleanup only on a Job that has finished",
-				stopBy.UTC().Format(time.RFC3339)))
-		default:
-			if err := r.settleMigrationJobCleanupAnswer(migration, operation, job, r.markJobHarvested(ctx, job)); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
+	waiting := fmt.Sprintf("Waiting for Job %s, which this release cannot confirm, to stop before the %s operation runs again",
+		job.Name, migration.Status.ActiveOperation.Type)
+	if result, held, err := r.letGoOfReadOnlyMigrationJob(ctx, migration, job, waiting); held || err != nil {
+		return result, err
 	}
 	return r.retryMigrationOperation(ctx, migration, nil, failure)
 }
 
-// waitForRefusedMigrationJob keeps the claim over the running Job it refused, and
-// says so in Progressing. The message names the Job and nothing that changes from
-// one pass to the next, so a pass that finds it already written writes nothing
-// (patchMigrationStatus).
-func (r *MigrationReconciler) waitForRefusedMigrationJob(
+// letGoOfReadOnlyMigrationJob settles what a read-only claim owes the Job under
+// its reserved name before the claim lets go of it, by the rule both families
+// keep (releaseReadOnlyJob). It reports held, with the pass's result, while the
+// claim has to stay over the Job. The caller lets go once it is not held: it
+// retries past a Job it refused, discards the claim of a suspended resource, or
+// retires it under a changed execution binding. Every caller holds a read-only
+// claim, and decides that before it asks. A suspended claim passes letGoAtOnce
+// and is never held.
+//
+// The Job is held to what the claim fixes without a rebuild under the execution
+// binding status records (validateMigrationJobEnvelope), the match the
+// controller-write webhook holds a migration Job's cleanup TTL to. A claim that
+// never recorded the Job's UID records it first (adoptMigrationJob). A Warning
+// names a Job admission would refuse a TTL (migrationJobCleanupNotScheduled). A
+// read-only claim holds no Lease while it waits, and Progressing says what it
+// waits for in the words of waiting.
+func (r *MigrationReconciler) letGoOfReadOnlyMigrationJob(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
+	waiting string,
+) (result ctrl.Result, held bool, err error) {
+	release := func() (readOnlyJobRelease, error) {
+		verdict, _ := mutationlifecycle.VerdictFor(migrationJobClaim(migration, job))
+		return releaseReadOnlyJob(job, verdict, validateMigrationJobEnvelope(job, migration), r.now(),
+			waiting != letGoAtOnce)
+	}
+	step, reason := release()
+	if step == recordReadOnlyJob {
+		if _, err := r.adoptMigrationJob(ctx, migration, job); err != nil {
+			return ctrl.Result{}, false, fmt.Errorf("record the %s Job before its cleanup: %w",
+				migration.Status.ActiveOperation.Type, err)
+		}
+		step, reason = release()
+	}
+	operation := migration.Status.ActiveOperation
+	switch step {
+	case waitForReadOnlyJob:
+		result, err := r.waitForReadOnlyMigrationJob(ctx, migration, waiting)
+		return result, true, err
+	case collectReadOnlyJob:
+		return ctrl.Result{}, false, r.settleMigrationJobCleanupAnswer(migration, operation, job, r.markJobHarvested(ctx, job))
+	case leaveReadOnlyJobUncollected:
+		r.migrationJobCleanupNotScheduled(migration, operation, job, reason)
+	}
+	return ctrl.Result{}, false, nil
+}
+
+// waitForReadOnlyMigrationJob keeps the claim over the running Job it owes a
+// cleanup, and says so in Progressing with waiting. The words name the Job and
+// nothing that changes from one pass to the next, so a pass that finds them
+// already written writes nothing (patchMigrationStatus).
+func (r *MigrationReconciler) waitForReadOnlyMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	waiting string,
 ) (ctrl.Result, error) {
 	before := migration.DeepCopy()
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf(
-			"Waiting for Job %s, which this release cannot confirm, to stop before the %s operation runs again",
-			job.Name, migration.Status.ActiveOperation.Type))
+		operatorv1alpha1.ReasonOperationInProgress, waiting)
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: activeJobPollInterval(false)}, nil
-}
-
-// jobStopReportSlack is how long past the moment a Job's Pods must have stopped
-// the claim still waits: for the kubelet to report the stopped Pod and the Job
-// controller to write the Job's terminal condition.
-const jobStopReportSlack = 30 * time.Second
-
-// migrationJobStopBound is when a Job that has not finished has had every chance
-// to: its own deadline, counted from its start as the Job controller counts it,
-// plus the termination grace its Pods are given and jobStopReportSlack. A Job the
-// Job controller has not started yet counts from its creation, which comes no
-// later. A Job with no deadline, which no release of this operator builds, gets
-// no time beyond the grace and the slack. A FailureTarget or SuccessCriteriaMet
-// condition says the Job controller is already terminating the Job's Pods, so
-// where one stands, the bound is its time plus the same grace and slack, if that
-// comes first.
-//
-// Neither condition is terminal for this purpose. Admission admits the TTL only on
-// a Job that is Complete or Failed, the same test jobTerminal makes.
-func migrationJobStopBound(job *batchv1.Job) time.Time {
-	grace := time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second
-	if seconds := job.Spec.Template.Spec.TerminationGracePeriodSeconds; seconds != nil {
-		grace = time.Duration(*seconds) * time.Second
-	}
-	start := job.CreationTimestamp.Time
-	if job.Status.StartTime != nil {
-		start = job.Status.StartTime.Time
-	}
-	var deadline time.Duration
-	if job.Spec.ActiveDeadlineSeconds != nil {
-		deadline = time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second
-	}
-	bound := start.Add(deadline + grace + jobStopReportSlack)
-	for _, condition := range job.Status.Conditions {
-		if condition.Status != corev1.ConditionTrue || condition.LastTransitionTime.IsZero() ||
-			(condition.Type != batchv1.JobFailureTarget && condition.Type != batchv1.JobSuccessCriteriaMet) {
-			continue
-		}
-		if stopping := condition.LastTransitionTime.Add(grace + jobStopReportSlack); stopping.Before(bound) {
-			bound = stopping
-		}
-	}
-	return bound
-}
-
-// refusedMigrationJobCleanup says why admission would refuse the cleanup TTL of
-// the Job under the active claim's name, from what the controller can see, or
-// returns nil.
-func refusedMigrationJobCleanup(migration *operatorv1alpha1.PtahMigration, job *batchv1.Job) error {
-	if migration.Status.ActiveOperation.JobUID == "" {
-		return errors.New("its claim never recorded the Job's UID, " +
-			"and admission admits a cleanup only on the Job a claim names by UID")
-	}
-	if err := validateMigrationJobEnvelope(job, migration); err != nil {
-		return fmt.Errorf("admission admits a cleanup only on a Job its claim fixes: %w", err)
-	}
-	return nil
 }
 
 // migrationJobClaim describes the Job standing under the name the active claim
