@@ -870,40 +870,43 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			}
 			// The status goes with the resource; the ApplyOutcomeUnknown Event
-			// is what keeps the report.
+			// is what keeps the ending and the report.
 			var reported *batchv1.Job
 			if err == nil {
 				reported = job
 			}
-			return r.finishUncertainApply(ctx, schema, nil, withLastPodReport(
-				errors.New("dispatched Apply Job identity was lost during deletion"), schemaPodReport(schema, reported)))
+			return r.finishUncertainApplyWithReport(ctx, schema, nil,
+				applyEndingSentence("dispatched Apply Job identity was lost during deletion"), schemaPodReport(schema, reported))
 		}
-		if schemaOperation(operation).Mutating && !dispatchedApplyUnknown {
-			if err == nil {
-				evidence, _, evidenceErr := r.collectTerminalPodEvidence(ctx, schema, job)
-				if evidenceErr != nil &&
-					!errors.Is(evidenceErr, errTerminalPodMultiplicity) &&
-					!errors.Is(evidenceErr, errTerminalPodIntent) {
-					return ctrl.Result{}, evidenceErr
-				}
-				if evidenceErr != nil || !evidence.Trusted {
-					return r.finishUncertainApplyWithEvidence(
-						ctx,
-						schema,
-						nil,
-						withLastPodReport(errors.New("Apply executor termination is not proven during deletion"),
-							schemaPodReport(schema, job)),
-						evidence.PodUIDs,
-						evidence.PodCount,
-						true,
-					)
-				}
+		if schemaOperation(operation).Mutating && err == nil {
+			// An Apply holds the realm, so its Job was waited on above until it
+			// stopped. What the Pods show decides how the Apply ended, and
+			// either way nothing read its result: the outcome is unknown, and
+			// the ApplyOutcomeUnknown Event is what stays of it, as the
+			// MigrationRunUncertain Event stays of a deleted PtahMigration's
+			// run. The report goes when a Pod shows its executor started.
+			evidence, selected, evidenceErr := r.collectTerminalPodEvidence(ctx, schema, job)
+			if evidenceErr != nil &&
+				!errors.Is(evidenceErr, errTerminalPodMultiplicity) &&
+				!errors.Is(evidenceErr, errTerminalPodIntent) {
+				return ctrl.Result{}, evidenceErr
 			}
+			report := schemaPodReport(schema, job).withPodsRead(evidence)
+			if evidenceErr != nil || !executorRanAndStopped(evidence, selected) {
+				return r.finishUncertainApplyWithEvidence(ctx, schema, nil,
+					withLastPodReport(applyEndingSentence("Apply executor termination is not proven during deletion"), report),
+					evidence.PodUIDs, evidence.PodCount, true)
+			}
+			// The one Pod's executor ran and stopped under a Job that is
+			// terminal, so nothing can still write, and the database goes
+			// back without waiting out the Apply's horizon.
+			return r.finishUncertainApplyWithEvidence(ctx, schema, nil,
+				withLastPodReport(applyEndingSentence("Apply executor ended and its result was not read during deletion"), report),
+				evidence.PodUIDs, evidence.PodCount, false)
 		}
-		// Nothing the claim dispatched can still be writing here. The Job of a
-		// claim that holds the realm was waited on above until it stopped, and
-		// an Apply whose executor did not provably stop left above as an
-		// outcome nobody established.
+		// Nothing the claim dispatched can still be writing here, and no Apply
+		// ran under it: a read-only claim's Job goes with the resource, and an
+		// Apply claim that reaches here has no Job and never dispatched one.
 		err = r.retireClaim(ctx, schema.DeepCopy(), schema, mutationlifecycle.DispositionDiscard)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
@@ -1313,11 +1316,12 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 		if jobErr == nil {
 			reported = job
 		}
-		failure := withLastPodReport(errors.New("database lock continuity was lost during Apply"), schemaPodReport(schema, reported))
+		report := schemaPodReport(schema, reported)
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
-		return r.finishUncertainApply(ctx, schema, job, failure)
+		return r.finishUncertainApplyWithReport(ctx, schema, job,
+			applyEndingSentence("database lock continuity was lost during Apply"), report)
 	}
 	// A read under a lost epoch is discarded, but its Job is still the claim's,
 	// and its Pod may still reach the database, so the claim keeps renewing the
@@ -2575,6 +2579,20 @@ func (r *SchemaReconciler) retryOperationReporting(
 }
 
 func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
+	return r.finishUncertainApplyWithReport(ctx, schema, job, failure, lastPodReport{})
+}
+
+// finishUncertainApplyWithReport is finishUncertainApply for an ending that
+// carries the schema's last Pod report. The report is decided once the Job's
+// Pods are listed (withPodsRead), so a Pod that started since the last look
+// takes it off, as it does on the endings that read the terminal Pod.
+func (r *SchemaReconciler) finishUncertainApplyWithReport(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	ending error,
+	report lastPodReport,
+) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	jobName := ""
 	var jobUID types.UID
@@ -2591,6 +2609,7 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 		return ctrl.Result{}, err
 	}
 	evidence := podIdentityEvidence(pods)
+	failure := withLastPodReport(ending, report.withPodsRead(evidence))
 	return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
 }
 
@@ -2723,7 +2742,8 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		r.Telemetry.ObserveFailure(telemetry.FamilySchema, telemetry.FailureStageApply, telemetry.FailureUncertain)
 	}
 	r.observeOperation(operation, telemetry.OperationUncertain)
-	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s", withLogPointer(uncertainApplyEvent(failure), job, reading))
+	r.event(schema, corev1.EventTypeWarning, "ApplyOutcomeUnknown", "%s",
+		withLogPointer(uncertainApplyEvent(failure, schema.DeletionTimestamp != nil), job, reading))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
@@ -3702,6 +3722,14 @@ func executorStarted(pod *corev1.Pod) bool {
 		return terminated != nil && terminated.Reason != "ContainerStatusUnknown"
 	}
 	return false
+}
+
+// executorRanAndStopped is a terminal Pod read that proves the executor ran and
+// stopped: the one Pod's executor terminated (Trusted), and the termination is
+// one a started container gets (executorStarted). A ContainerStatusUnknown
+// termination is Trusted and proves neither.
+func executorRanAndStopped(evidence terminalEvidence, selected *corev1.Pod) bool {
+	return evidence.Trusted && selected != nil && executorStarted(selected)
 }
 
 func mergePodEvidence(pending *operatorv1alpha1.PendingObservationStatus, current terminalEvidence) bool {

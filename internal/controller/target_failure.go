@@ -54,18 +54,39 @@ func (e *targetFailureError) Error() string {
 	return targetfailure.Message(e.kind, e.url)
 }
 
+// applyEndingSentence is how an Apply ended, in the operator's own words. It
+// quotes nothing the runner wrote, so the ApplyOutcomeUnknown Event of a deleted
+// PtahSchema may carry it: the status goes with the resource, and the Event is
+// what says how the Apply ended.
+type applyEndingSentence string
+
+func (e applyEndingSentence) Error() string { return string(e) }
+
 // uncertainApplyEvent is the text of the ApplyOutcomeUnknown Event. A result that
 // named a kind says why the Pod that reported it could not open the target, and
 // keeps as much of the sentence as any failure Event. Every other Apply error
 // keeps the fixed text, because what it holds may quote the runner. Either way the
 // outcome stays unknown: one Pod's report does not speak for its Job.
 //
+// A deleting schema is never observed again, so its text says so in place of
+// observing database state, and names how the Apply ended when the failure
+// carries the operator's sentence (applyEndingSentence). It is keyed on the
+// deletion rather than on the sentence, so an ending that carries none still
+// says the right thing.
+//
 // What the schema last reported about a Pod that never ran follows, when the
 // failure carries it (withLastPodReport). That is the condition's own message,
 // the kubelet's or the API server's words about names, and on a deleted schema
 // this Event is the only place it is left.
-func uncertainApplyEvent(failure error) string {
+func uncertainApplyEvent(failure error, deleting bool) string {
 	text := "Apply outcome is uncertain; observing database state"
+	if deleting {
+		text = "Apply outcome is uncertain; the PtahSchema is being deleted, so nothing will observe the database"
+		var ending applyEndingSentence
+		if errors.As(failure, &ending) {
+			text += ": " + string(ending)
+		}
+	}
 	var target *targetFailureError
 	if errors.As(failure, &target) {
 		text += ": " + bounded(target.Error(), 512)
