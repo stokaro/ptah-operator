@@ -32,7 +32,12 @@ an alert that matches the text of a `MigrationJobCleanupDeferred` Event has to
 match `has no cleanup scheduled, so it stays until it is deleted by hand or
 with its owner` in place of `keeps its own deadline because its cleanup could
 not be scheduled`, and has to expect no such Event for a Job its claim names by
-UID while that Job is still running. A migration Job an earlier release left
+UID while that Job is still running. A claim that never recorded its Job's UID
+now records it before the TTL is asked for, so such a Job gets no such Event
+either where admission admits the TTL. A dashboard or an alert on
+`ptah_operator_applies_total{family="migration",outcome="started"}` has to expect
+a count for an Apply whose Job's UID is recorded only as its run goes `Unknown`,
+once for each such run. A migration Job an earlier release left
 without a TTL stays until you delete it. A script that runs `kubectl ptah
 refresh --wait` or `kubectl ptah wait --for read` on a resource whose read ends
 in the verification policy's refusal of the artifact now gets exit status 8
@@ -84,10 +89,21 @@ records](../../use/operations/#result-record-quota) says.
   So did a Job that had finished when the database lock changed hands under its
   run. Where the claim recorded the Job's UID, the Job now takes its cleanup TTL
   by the rule every migration run keeps its Pod log by, once it stops, and the
-  Warning that said a running Job's cleanup could not be scheduled is gone. A Job
-  whose claim never recorded its UID still stays, and a
-  `MigrationJobCleanupDeferred` Warning now names it with `its claim never
-  recorded the Job's UID`.
+  Warning that said a running Job's cleanup could not be scheduled is gone.
+- **A migration Job its claim never recorded is collected too.** A migration
+  Apply claim that never recorded its Job's UID, as when the manager stopped
+  between creating the Job and recording it, left the Job without a cleanup TTL
+  once its run went `Unknown`, because admission admits that TTL only on the Job
+  a claim names by UID. The claim now records the UID of the Job under the name
+  it reserved, where the resource owns that Job and the Job is the one the claim
+  fixes, before the TTL is asked for, and the Job takes its TTL by the same rule.
+  A run recorded `Unknown` before the claim could read that name names the Job
+  when the claim records it. A Job the claim does not fix, such as one under
+  another execution epoch, is never recorded, and a `MigrationJobCleanupDeferred`
+  Warning names it when the claim goes. A TTL write that meets a newer version of
+  the Job, as when the Job controller has just written its status, keeps the
+  claim for the next pass, which asks again, where it used to leave the Job with
+  no TTL.
 - **A recorded approval wins over a due read.** An approval the operator had
   recorded in `status.plan.approval` when the interval ended was spent by the
   read that followed: the read's observation marked it `Stale` although the
