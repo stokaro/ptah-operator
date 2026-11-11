@@ -1035,22 +1035,20 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	// deadline holds a suspended schema for that entire budget, a quarter of an
 	// hour by default. Discard it exactly as a changed input discards a
 	// dispatched read-only operation: the Job keeps its own deadline, and its
-	// Pods can no longer claim an operation this schema no longer has. Post-apply
-	// proof is excluded because that work outranks suspension by design.
+	// Pods can no longer claim an operation this schema no longer has. The claim
+	// first settles at once what it owes the Job, since it is what lets admission
+	// accept the Job's cleanup TTL. A claim of a suspended resource never waits
+	// (letGoOfReadOnlySchemaJob), so it has no words for a wait. Post-apply proof
+	// is excluded because that work outranks suspension by design.
 	if schema.Spec.Suspend && schema.Status.PendingObservation == nil && isReadOnlyOperation(operation) {
+		if _, _, err := r.letGoOfReadOnlySchemaJob(ctx, schema, job, ""); err != nil {
+			return ctrl.Result{}, err
+		}
 		return r.suspendActiveOperation(ctx, schema)
 	}
 	// The same decision both families make about the Job under a reserved
 	// name, with the wording each one owes its reader kept here.
-	verdict, cause, _ := r.jobVerdict(schema, mutationlifecycle.JobClaim{
-		Mutating:        schemaOperation(operation).Mutating,
-		DispatchStarted: operation.DispatchStarted,
-		RecordedJobUID:  string(operation.JobUID),
-		Found:           true,
-		FoundJobUID:     string(job.UID),
-		OwnedExactly: exactControllerOwner(job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID),
-	})
+	verdict, cause, _ := r.jobVerdict(schema, schemaJobClaim(schema, job))
 	switch verdict {
 	case mutationlifecycle.VerdictUnaccounted:
 		// A replacement under the name is not the claim's Job, and the report
@@ -1068,14 +1066,14 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
 					fmt.Errorf("rebuild immutable Apply Job intent: %w", expectedErr), schemaPodReport(schema, job)))
 			}
-			return r.retryOperation(ctx, schema, nil, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
+			return r.retryPastRefusedSchemaJob(ctx, schema, job, fmt.Errorf("rebuild immutable Job intent: %w", expectedErr))
 		}
 		if intentErr := validateAdoptedJobIntent(job, expectedJob, schema, operation); intentErr != nil {
 			if schemaOperation(operation).Mutating {
 				return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
 					fmt.Errorf("dispatched Apply Job intent changed: %w", intentErr), schemaPodReport(schema, job)))
 			}
-			return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job intent changed: %w", intentErr))
+			return r.retryPastRefusedSchemaJob(ctx, schema, job, fmt.Errorf("active Job intent changed: %w", intentErr))
 		}
 	} else if envelopeErr := validateJobEnvelope(job, schema, operation); envelopeErr != nil {
 		// The inputs moved, so the claim cannot rebuild its Job, but it still
@@ -1086,7 +1084,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return r.finishUnknownRunningApply(ctx, schema, withLastPodReport(
 				fmt.Errorf("dispatched Apply Job is not its claim's: %w", envelopeErr), schemaPodReport(schema, job)))
 		}
-		return r.retryOperation(ctx, schema, nil, fmt.Errorf("active Job is not its claim's: %w", envelopeErr))
+		return r.retryPastRefusedSchemaJob(ctx, schema, job, fmt.Errorf("active Job is not its claim's: %w", envelopeErr))
 	}
 	if operation.JobUID == "" {
 		before := schema.DeepCopy()
@@ -1321,11 +1319,22 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 		}
 		return r.finishUncertainApply(ctx, schema, job, failure)
 	}
-	if honestJob && !jobTerminal(job) {
-		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
-	}
-	if honestJob && schema.DeletionTimestamp == nil {
-		if err := r.markJobHarvested(ctx, job); err != nil {
+	// A read under a lost epoch is discarded, but its Job is still the claim's,
+	// and its Pod may still reach the database, so the claim keeps renewing the
+	// Lease until the Job stops. It waits no longer than jobStopBound, as every
+	// read-only claim waiting for its Job does: past it, a Job that carries only
+	// FailureTarget would hold the realm forever (jobStopOverdue).
+	switch {
+	case honestJob && !jobTerminal(job):
+		overdue := jobStopOverdue(job, r.now())
+		if overdue == nil {
+			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+		}
+		r.schemaJobCleanupNotScheduled(schema, operation, job, overdue)
+	case honestJob && schema.DeletionTimestamp == nil:
+		if err := settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
+			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 	}

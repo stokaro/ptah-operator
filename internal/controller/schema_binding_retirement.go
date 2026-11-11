@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -233,9 +234,16 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 		// the controller touch it.
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
-		if err := r.markJobHarvested(ctx, job); err != nil {
+		if err := settleJobCleanupAnswer(r.markJobHarvested(ctx, job), func(refusal error) {
+			r.schemaJobCleanupNotScheduled(schema, operation, job, refusal)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
+	case err == nil && job.Spec.TTLSecondsAfterFinished == nil && retiredJobIsTheClaims(schema, retired, job):
+		// The claim's own Job, which the envelope does not let the controller
+		// touch. The claim is the last thing that could have named it.
+		r.schemaJobCleanupNotScheduled(schema, operation, job, errors.New(
+			"admission admits a cleanup only on a Job its claim fixes, and the Job is not the one the retired claim fixes"))
 	case err != nil && !apierrors.IsNotFound(err):
 		return ctrl.Result{}, fmt.Errorf("read retired read-only Job: %w", err)
 	}
@@ -248,6 +256,20 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 
+// retiredJobIsTheClaims reports whether job is the Job under the name the record
+// holds that this resource owns exactly, with the recorded UID or none recorded:
+// the Job the retired claim dispatched, whatever its envelope says.
+func retiredJobIsTheClaims(
+	schema *operatorv1alpha1.PtahSchema,
+	retired *operatorv1alpha1.RetiredJobStatus,
+	job *batchv1.Job,
+) bool {
+	return retired != nil && job != nil && job.Name == retired.Name &&
+		(retired.UID == "" || job.UID == retired.UID) &&
+		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema", schema.Name, schema.UID)
+}
+
 // retiredJobMayStillRun reports whether job is one this resource dispatched
 // under the name the record holds -- its UID the recorded one, or none
 // recorded yet -- and has not reached a terminal condition. It asks nothing
@@ -258,10 +280,7 @@ func retiredJobMayStillRun(
 	retired *operatorv1alpha1.RetiredJobStatus,
 	job *batchv1.Job,
 ) bool {
-	return retired != nil && job != nil && job.Name == retired.Name &&
-		(retired.UID == "" || job.UID == retired.UID) && !jobTerminal(job) &&
-		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema", schema.Name, schema.UID)
+	return retiredJobIsTheClaims(schema, retired, job) && !jobTerminal(job)
 }
 
 // adoptRetiredApplyJobUID looks for the Job a retired Apply claim may have

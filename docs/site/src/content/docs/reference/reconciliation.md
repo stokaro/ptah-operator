@@ -456,7 +456,9 @@ target.
 terminal result, because abandoning it would leave the database in a state
 nothing recorded. So is a read that serves a proof, and the proof keeps the
 Lease until it ends. Any other read under way is dropped, and the status write
-that drops it stages the release of any Lease it holds.
+that drops it stages the release of any Lease it holds. The read's Job gets its
+cleanup TTL first where it has finished; a Warning Event names one still
+running, which no claim can collect once this one is gone.
 
 `leaseContinuityLost` is set before any result can be harvested when the
 persisted epoch no longer owns an uninterrupted lock interval. A result
