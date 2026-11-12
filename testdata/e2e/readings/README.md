@@ -55,14 +55,14 @@ Ptah v0.14.0 counted nothing, so it carries no `inventory`, and
 row's predicate to refuse it for that alone.
 
 `postgresql-extension-drift-inventory.json` is the status the same row matched
-on Kubernetes 1.37.0, in CI job 128166245075 of run 42295975570. The run built
-`63f5de99`, the merge of `1e2fed14` onto `2845812f`, with the Ptah v0.22.0
-executor. It is stored as the row printed it, and the jobs for Kubernetes 1.35
-and 1.36 printed the same findings and inventory. The schema had already started
-the Plan that follows the drift, so the phase reads `Planning`. It names Secrets
-only by name and key and holds no credentials or plan SQL. Its `inventory` equals
-the one in `internal/dataplane/testdata/drift-feature-extension.json`, the report
-the same image printed for the same schema shape in the runner harness:
+on Kubernetes 1.37.0, in CI job 131270662597 of run 43241757619. The run built
+`9b8a762a` on master with the Ptah v0.23.0 executor. It is stored as the row
+printed it, and the jobs for Kubernetes 1.35 and 1.36 printed the same findings
+and inventory. The schema had already claimed the Plan that follows the drift, so
+the phase reads `Planning`. It names Secrets only by name and key and holds no
+credentials or plan SQL. Its `inventory` equals the one in
+`internal/dataplane/testdata/drift-feature-extension.json`, the report the same
+image printed for the same schema shape in the runner harness:
 `TestExtensionReadingCountsWhatPtahPrinted` and
 `TestObjectInventoryKeepsTheFramedReport` hold it to that report.
 `TestDroppedExtensionObservedRefusesEveryOtherReading` accepts this reading and
