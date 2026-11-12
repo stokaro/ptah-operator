@@ -529,15 +529,17 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   Warning names the Pod. A Pod the kubelet ended, by an eviction, a deadline or
   an `OutOfcpu` refusal, or whose executor reads `ContainerStatusUnknown`, still
   hands the Lease back at once. A `PtahSchema` already held the Lease there.
-- **A deleted schema says why it waits after its Apply Pod is gone.** A
-  `PtahSchema` deleted while its Apply ran keeps the database Lease until its
-  pending observation's `observeAfter`, the Apply's execution deadline and its
-  Pod's termination grace, since a container on a node the API server cannot
-  reach can outlive its Pod object. Once no Pod of the Job was left, as after a
-  forced delete, it stayed `Terminating` with no word about it. An
-  `ApplyPodGone` Warning Event now names the Job, its UID and when the wait
-  ends, with the backoff `PodStuckTerminating` has. The wait itself is
-  unchanged.
+- **A deleted schema says why it waits after its Apply Pod is gone or
+  stopped.** A `PtahSchema` deleted while its Apply ran keeps the database
+  Lease until its pending observation's `observeAfter`, the Apply's execution
+  deadline and its Pod's termination grace, since a container on a node the
+  API server cannot reach can outlive its Pod object. Once no Pod of the Job
+  was left, as after a forced delete, or once the Pods left had all stopped, as
+  one PodGC marked `Failed` whose delete did not succeed, it stayed
+  `Terminating` with no word about it. An `ApplyPodGone` Warning Event now
+  names the Job, its UID, when the wait ends and a Pod that still stands, with
+  its phase. It repeats with the backoff `PodStuckTerminating` has. The wait
+  itself is unchanged.
 - **A Pod log is pointed at only where the Pod shows an executor ran.** A Pod
   that ended with no status for its executor, as one the kubelet refused at
   admission, had no log for `kubectl logs` to read, yet the record of its Apply
