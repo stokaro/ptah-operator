@@ -225,7 +225,7 @@ func (d *dataPlane) waitForSchema(name, description string, match func(*ptahv1al
 				return schema
 			}
 			if failedForCurrentSpec(schema) {
-				d.fatalf("%s entered Failed while waiting for %s", name, description)
+				d.fatalf("%s entered Failed while waiting for %s; %s", name, description, failedSchemaConditions(d.scanner, schema))
 			}
 		}
 		d.sleep(2 * time.Second)

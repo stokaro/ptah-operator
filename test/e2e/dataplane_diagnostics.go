@@ -332,6 +332,22 @@ func schemaWaitReport(schema *ptahv1alpha1.PtahSchema) schemaWaitDiagnostic {
 	return report
 }
 
+// failedSchemaConditions is what a wait says after the reading that ended it
+// entered Failed: the conditions of that document, each message bounded as a
+// timeout report bounds it, so a failed row says why without the run's
+// artifacts. They are scanned like every other diagnostic and withheld when
+// there is nothing to scan them with or they carry a protected credential.
+func failedSchemaConditions(scanner credentialScanner, schema *ptahv1alpha1.PtahSchema) string {
+	encoded, err := canonicalJSON(schemaWaitReport(schema).Conditions)
+	switch {
+	case err != nil || !scanner.ready():
+		return "its conditions are withheld: they could not be scanned"
+	case scanner.leaks(encoded):
+		return "its conditions are withheld: they carry a protected credential"
+	}
+	return "its conditions: " + string(encoded)
+}
+
 // observedJobTimeline is the order a schema's Jobs appeared in after a
 // checkpoint: what a failed blocked-refresh proof prints to separate a chain
 // that started early from one that never ran.
