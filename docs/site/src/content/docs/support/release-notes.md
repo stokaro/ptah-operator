@@ -205,6 +205,15 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   was blocked. A run that an operator older than 0.2.10 recorded carries no
   verification, so `wait --for applied` still dates its reading by the run's
   end.
+- **The receiver says why it could not verify a runner's token.** A result
+  receiver that could not complete a TokenReview, or read the Pod a token is
+  bound to, answered the runner 503 and logged nothing, so nothing told a
+  receiver denied `tokenreviews` from one the API server answered slowly. The
+  manager now logs a `result-receiver` line for each with the namespace and Pod
+  the request names, and the API server's `code` and `reason`, such as `403`
+  and `Forbidden`, or `deadlineExceeded` where no status came back. It never
+  logs the token or the text of an answer: a review that returns an error says
+  so without its text.
 - **Result cleanup under a full quota.** A quota that refused the `retired` record
   stopped cleanup in a live namespace: the collector asked again every 30 seconds,
   nothing started the retention window, and the operation's records stayed. Once the

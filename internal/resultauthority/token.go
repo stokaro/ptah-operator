@@ -9,8 +9,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // TokenReviewer submits a TokenReview to the API server. The receiver's own
@@ -47,12 +49,19 @@ func (v TokenVerifier) Verify(ctx context.Context, token string, identity result
 	if err != nil {
 		// API errors may include submitted fields. Do not propagate a token or
 		// an authenticator's diagnostic into HTTP responses, logs, or Events.
+		logUnavailable(ctx, identity, "TokenReview request failed", err)
 		return errors.New("result token authentication is unavailable")
 	}
 	if err := ctx.Err(); err != nil {
+		logUnavailable(ctx, identity, "TokenReview answered after the verification context ended", err)
 		return err
 	}
-	if review == nil || review.Status.Error != "" {
+	if review == nil {
+		logUnavailable(ctx, identity, "TokenReview returned no review", nil)
+		return errors.New("result token authentication is unavailable")
+	}
+	if review.Status.Error != "" {
+		logUnavailable(ctx, identity, "TokenReview returned an error, which is not logged", nil)
 		return errors.New("result token authentication is unavailable")
 	}
 	status := review.Status
@@ -73,10 +82,29 @@ func (v TokenVerifier) Verify(ctx context.Context, token string, identity result
 		if errors.Is(readError(err), resultdelivery.ErrAuthority) {
 			return resultdelivery.ErrAuthority
 		}
+		logUnavailable(ctx, identity, "reading the Pod a token is bound to failed", err)
 		return errors.New("result token Pod verification is unavailable")
 	}
 	if pod.UID != b.PodUID || pod.Namespace != b.Namespace || pod.Spec.ServiceAccountName != username[3] {
 		return resultdelivery.ErrAuthority
 	}
 	return ctx.Err()
+}
+
+// logUnavailable says why a verification reached no verdict, which the
+// receiver answers with 503. It logs the API server's status code and reason,
+// or for an error without a status whether the deadline passed, and never an
+// error's text or a review's status.error: an API error can repeat submitted
+// fields, and status.error is the authenticator's own diagnostic. The Pod is
+// the one the request names, which nothing has proved yet.
+func logUnavailable(ctx context.Context, identity resultdelivery.Identity, message string, err error) {
+	values := []any{"namespace", identity.Binding.Namespace, "pod", identity.Binding.PodName}
+	var status apierrors.APIStatus
+	switch {
+	case errors.As(err, &status):
+		values = append(values, "code", status.Status().Code, "reason", string(status.Status().Reason))
+	case err != nil:
+		values = append(values, "deadlineExceeded", errors.Is(err, context.DeadlineExceeded))
+	}
+	logf.FromContext(ctx).WithName("result-receiver").Info(message, values...)
 }

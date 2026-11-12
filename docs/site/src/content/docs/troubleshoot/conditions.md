@@ -94,6 +94,15 @@ policy from the operation namespace, and result-record quota or admission
 refusals. Do not dump result records or credential Secrets into tickets: they
 can contain SQL and private keys.
 
+A receiver that could not verify the runner's token answers 503, and the
+manager logs a `result-receiver` line that says why, with the API server's
+`code` and `reason`. `TokenReview request failed` with `403` and `Forbidden`
+means the manager's ServiceAccount lacks `create` on `tokenreviews`, and
+`reading the Pod a token is bound to failed` with `403` means it lacks `get`
+on Pods. A line with `deadlineExceeded` in place of a code got no status from
+the API server, and `true` there means no answer came in time. The line never
+holds the token or the text of an answer.
+
 Restoring receiver/API connectivity lets the original runner retry delivery
 within its bounds. It does not rerun SQL. If the Pod was lost before publishing,
 follow the resource's unknown-outcome recovery and inspect database history;

@@ -1,8 +1,12 @@
 package resultauthority
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +14,12 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/resulttest"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 type reviewFunc func(context.Context, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error)
@@ -151,4 +159,136 @@ func TestTokenAuthenticationFailuresAreBoundedAndRedacted(t *testing.T) {
 	if err := v.Verify(t.Context(), "token\nextra", f.Identity); !errors.Is(err, resultdelivery.ErrAuthority) {
 		t.Fatal(err)
 	}
+}
+
+type failingPodReader struct {
+	client.Reader
+	err error
+}
+
+func (r failingPodReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return r.err
+}
+
+// TestTokenAuthenticationFailuresLogWhyWithoutText reads what the manager's
+// production encoder prints for each verification that reaches no verdict.
+// The receiver answers all of them with the same 503, so the line is the only
+// place that says which it was: the API server's code and reason where it
+// answered with a status, whether the deadline passed where it did not. The
+// token and the text of an answer appear nowhere, so every secret here is
+// spelled "private".
+func TestTokenAuthenticationFailuresLogWhyWithoutText(t *testing.T) {
+	const token = "private.token.bytes"
+	diagnostic := errors.New("private-authenticator-diagnostic for " + token)
+	forbidden := func(resource string) error {
+		return apierrors.NewForbidden(schema.GroupResource{Group: "authentication.k8s.io", Resource: resource}, token, diagnostic)
+	}
+	f := resulttest.New(t, "schema-resolve")
+	b := f.Identity.Binding
+	for name, row := range map[string]struct {
+		answer func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error)
+		podErr error
+		want   map[string]any
+	}{
+		"TokenReview forbidden": {
+			answer: func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				return nil, forbidden("tokenreviews")
+			},
+			want: map[string]any{"msg": "TokenReview request failed", "code": 403.0, "reason": "Forbidden"},
+		},
+		"TokenReview throttled": {
+			answer: func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				return nil, apierrors.NewTooManyRequests(diagnostic.Error(), 1)
+			},
+			want: map[string]any{"msg": "TokenReview request failed", "code": 429.0, "reason": "TooManyRequests"},
+		},
+		"TokenReview deadline": {
+			answer: func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				return nil, &url.Error{Op: "Post", URL: "https://private.invalid/" + token, Err: context.DeadlineExceeded}
+			},
+			want: map[string]any{"msg": "TokenReview request failed", "deadlineExceeded": true},
+		},
+		"TokenReview transport": {
+			answer: func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				return nil, diagnostic
+			},
+			want: map[string]any{"msg": "TokenReview request failed", "deadlineExceeded": false},
+		},
+		"TokenReview status error": {
+			answer: func(_ context.CancelFunc, r *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				r.Status.Error = diagnostic.Error()
+				return r, nil
+			},
+			want: map[string]any{"msg": "TokenReview returned an error, which is not logged"},
+		},
+		"TokenReview missing response": {
+			answer: func(context.CancelFunc, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				return nil, nil
+			},
+			want: map[string]any{"msg": "TokenReview returned no review"},
+		},
+		"TokenReview outlived its context": {
+			answer: func(cancel context.CancelFunc, r *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				cancel()
+				return r, nil
+			},
+			want: map[string]any{"msg": "TokenReview answered after the verification context ended", "deadlineExceeded": false},
+		},
+		"Pod read forbidden": {
+			podErr: forbidden("pods"),
+			want:   map[string]any{"msg": "reading the Pod a token is bound to failed", "code": 403.0, "reason": "Forbidden"},
+		},
+		"Pod read transport": {
+			podErr: diagnostic,
+			want:   map[string]any{"msg": "reading the Pod a token is bound to failed", "deadlineExceeded": false},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			ctx, cancel := context.WithCancel(logf.IntoContext(t.Context(), zap.New(zap.WriteTo(&out))))
+			defer cancel()
+			v := TokenVerifier{Reader: f.Client(t), Reviews: reviewFunc(func(context.Context, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+				if row.answer == nil {
+					return tokenReview(f), nil
+				}
+				return row.answer(cancel, tokenReview(f))
+			})}
+			if row.podErr != nil {
+				v.Reader = failingPodReader{Reader: v.Reader, err: row.podErr}
+			}
+			if err := v.Verify(ctx, token, f.Identity); err == nil || errors.Is(err, resultdelivery.ErrAuthority) {
+				t.Fatalf("a verification with no verdict returned %v, want a retryable error", err)
+			}
+			if strings.Contains(out.String(), "private") {
+				t.Fatalf("the log carries the token or the text of an answer:\n%s", out.String())
+			}
+			lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+			if len(lines) != 1 || lines[0] == "" {
+				t.Fatalf("want one log line, got %d:\n%s", len(lines), out.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal([]byte(lines[0]), &got); err != nil {
+				t.Fatalf("decode %q: %v", lines[0], err)
+			}
+			want := maps.Clone(row.want)
+			maps.Copy(want, map[string]any{"level": "info", "logger": "result-receiver", "namespace": b.Namespace, "pod": b.PodName})
+			delete(got, "ts")
+			if !maps.Equal(got, want) {
+				t.Fatalf("log line\n got %v\nwant %v", got, want)
+			}
+		})
+	}
+	t.Run("verdict", func(t *testing.T) {
+		var out bytes.Buffer
+		ctx := logf.IntoContext(t.Context(), zap.New(zap.WriteTo(&out)))
+		v := TokenVerifier{Reader: f.Client(t), Reviews: reviewFunc(func(context.Context, *authenticationv1.TokenReview) (*authenticationv1.TokenReview, error) {
+			return tokenReview(f), nil
+		})}
+		if err := v.Verify(ctx, token, f.Identity); err != nil {
+			t.Fatal(err)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("a verification that reached its verdict logged:\n%s", out.String())
+		}
+	})
 }
