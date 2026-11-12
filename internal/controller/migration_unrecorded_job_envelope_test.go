@@ -260,8 +260,7 @@ func TestAFailedWriteOfAnAdoptedUIDFailsThePass(t *testing.T) {
 // with it, for the pass that retires it, which asks again. A deleting resource does
 // not wait for it: the garbage collector takes the Job with its owner. Nor does a
 // claim over a later Job under its name, whose TTL admission refuses whatever the
-// next pass reads: the claim goes once its own gone Job no longer holds it, at the
-// end of its Lease term, and a Warning names the Job.
+// next pass reads: the claim goes, and a Warning names the Job.
 func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 	t.Parallel()
 
@@ -308,12 +307,6 @@ func TestATTLWriteThatMeetsANewerJobKeepsTheClaim(t *testing.T) {
 			recorder := record.NewFakeRecorder(64)
 			reconciler.Recorder = recorder
 			stopMigrationWorkload(t, api, run, "")
-			if row.replaced {
-				// The Job the claim recorded is gone, so the claim would stay to
-				// the end of its Lease term whatever the TTL write met
-				// (migrationApplyPodGone), and the pass runs there.
-				toTheApplyLeaseTerm(t, reconciler, api, run.migration)
-			}
 			if row.deleting {
 				if err := api.Delete(ctx, readMigration(t, api, run.migration)); err != nil {
 					t.Fatal(err)
