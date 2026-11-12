@@ -1002,8 +1002,9 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		if until(pending.ObserveAfter, r.now()) > 0 {
-			// With no Pod left to wait for, the wait still lasts until the
-			// Apply's horizon, and a deleted schema says so nowhere else.
+			// With no active Pod left to wait for, the wait still lasts until
+			// the Apply's horizon, and a deleted schema says so nowhere else:
+			// the Warning names a stopped Pod that stands, or says none does.
 			r.warnApplyPodGone(schema, pending, pods, pending.ObserveAfter.Time)
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}

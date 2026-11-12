@@ -1646,8 +1646,9 @@ later, then twice as long after each time, up to every 5 minutes. Each wait
 keeps its own count, so a deletion names a Pod at once although its live Apply
 named it a moment before. A deleted `PtahSchema` whose Apply ended still waits
 until its pending observation's `observeAfter` once no Pod of the Job is left,
-and an `ApplyPodGone` Warning Event names the Job, its UID and that time, with
-the same backoff. Once the node is known to be gone, delete the Pod without
+or once every Pod left reads `Succeeded` or `Failed`, and an `ApplyPodGone`
+Warning Event names the Job, its UID, that time and a Pod that stands, with the
+same backoff. Once the node is known to be gone, delete the Pod without
 waiting for its kubelet:
 
 ```sh
@@ -1688,7 +1689,8 @@ waiting one is released. A Pod the kubelet ended, as by an eviction, a deadline 
 an `OutOfcpu` refusal, reads its executor terminated or never started, and the
 Lease goes back at once. A `PtahSchema` already holds such a Pod to
 `observeAfter`: it counts an executor as stopped only where the Pod reads it
-terminated after it started.
+terminated after it started. A deleted one names the Pod, with its phase, in an
+`ApplyPodGone` Warning while it waits.
 
 A read's Pod on such a node is not waited for past its Job's stop bound, in
 either kind. A deleted schema lets go of a Plan or a proof read as above. A live
