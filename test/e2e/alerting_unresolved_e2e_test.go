@@ -414,22 +414,31 @@ func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string,
 	var warnings []corev1.Event
 	var warned *ptahv1.PtahMigration
 	looks := 0
-	for time.Now().Before(until) {
-		left := time.Until(term).Round(time.Second)
+	for {
+		// Every reading first, then the clock: on a starved runner the
+		// readings can land past the manager's first pass at the term, so a
+		// look counts only if the clock still reads short of the margin once
+		// they are all taken.
 		check()
 		v := read()
 		pods := &corev1.PodList{}
 		a.check(m.list(pods), "read the interrupted workload while its claim is held")
+		current, leaseErr := m.realmLeaseHolder(lease)
+		events := &corev1.EventList{}
+		a.check(m.list(events), "list the Events of %s", name)
+		now := time.Now()
+		if !now.Before(until) {
+			break
+		}
+		left := term.Sub(now).Round(time.Second)
 		settled, err := uncertainApplySettled(v.Status, original, pods.Items)
 		a.check(err, "hold the interrupted %s Apply to its claim", m.engine.name)
 		if settled || !equality.Semantic.DeepEqual(v.Status.ActiveOperation, original) {
 			a.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped", name, left)
 		}
-		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
-			a.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		if leaseErr != nil || current != holder {
+			a.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, leaseErr)
 		}
-		events := &corev1.EventList{}
-		a.check(m.list(events), "list the Events of %s", name)
 		if found := applyPodGoneWarnings(events.Items, v, applyPodGoneApplyWaits, original.JobName, original.JobUID, term); len(found) > 0 {
 			warnings, warned = found, v
 		}

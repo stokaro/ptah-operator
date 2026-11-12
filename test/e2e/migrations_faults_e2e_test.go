@@ -246,22 +246,31 @@ func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *pta
 	var warnings []corev1.Event
 	var warned *ptahv1alpha1.PtahMigration
 	looks := 0
-	for time.Now().Before(until) {
-		left := time.Until(term).Round(time.Second)
+	for {
+		// Every reading first, then the clock: a look whose readings were
+		// taken past the margin could hold the release that follows the term,
+		// so it counts only if the clock still reads short of the margin.
 		migration := &ptahv1alpha1.PtahMigration{}
-		if err := m.get(name, migration); err != nil {
-			m.fatalf("%s could not be read %s before its Apply's Lease term ended: %v", name, left, err)
+		readErr := m.get(name, migration)
+		current, leaseErr := m.realmLeaseHolder(lease)
+		events := &corev1.EventList{}
+		m.check(m.list(events), "the Events of %s could not be listed", name)
+		now := time.Now()
+		if !now.Before(until) {
+			break
+		}
+		left := term.Sub(now).Round(time.Second)
+		if readErr != nil {
+			m.fatalf("%s could not be read %s before its Apply's Lease term ended: %v", name, left, readErr)
 		}
 		m.scanObject(migration, name+" status")
 		if !deletionRetainsClaim(migration) || migration.Status.ActiveOperation.ID != claim.ID {
 			m.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped: finalizers %q, claim present %t",
 				name, left, migration.Finalizers, migration.Status.ActiveOperation != nil)
 		}
-		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
-			m.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		if leaseErr != nil || current != holder {
+			m.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, leaseErr)
 		}
-		events := &corev1.EventList{}
-		m.check(m.list(events), "the Events of %s could not be listed", name)
 		if found := applyPodGoneWarnings(events.Items, migration, applyPodGoneDeletionWaits, claim.JobName, claim.JobUID, term); len(found) > 0 {
 			warnings, warned = found, migration
 		}
