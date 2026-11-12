@@ -170,6 +170,7 @@ func refusedPodCreation(t *testing.T, api client.Client, job *batchv1.Job, pod *
 			t.Fatal(err)
 		}
 	}
+	stoodThroughTheRefusalGrace(t, api, job)
 	stored := &batchv1.Job{}
 	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
 		t.Fatal(err)

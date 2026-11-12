@@ -194,8 +194,11 @@ func TestAWaitReachesInSyncPastARefusalOfTheMigration(t *testing.T) {
 	harness.answer(resolvedTo(testDigest))
 	harness.claimed(operatorv1alpha1.MigrationOperationVerify)
 	harness.answer(acceptedBy(testDigest))
-	clock.now = clock.now.Add(time.Minute)
+	// The History Job finishes before the clock moves: the fake builder gives a
+	// Job no deadline, so one left running for a minute would be past its stop
+	// bound (jobStopBound) and run again under a new name.
 	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+	clock.now = clock.now.Add(time.Minute)
 	harness.answer(historyAnswer(harness, inSyncReport()))
 	ref := operate.Ref{Family: operate.FamilyMigration, Namespace: harness.key.Namespace, Name: harness.key.Name}
 

@@ -285,10 +285,9 @@ func TestALiveMigrationApplyWaitingOnAStuckPodNamesIt(t *testing.T) {
 
 // A live migration read is supervised by the same branch while its Job runs,
 // and is never named in that Warning: a read's Job is let go of at its stop
-// bound once the Job controller marks it to fail (readJobStopOverdue), and
-// ReadJobOverdue names its Pod then. The row's Job is past its stop bound
-// without that mark, as a Job controller that has not acted yet leaves it, so
-// the read is still supervised over a Pod stuck terminating.
+// bound (readJobStopOverdue), and ReadJobOverdue names its Pod then. The row's
+// pass comes after the Pod's grace has run out and before the Job's stop bound,
+// so the read is still supervised over a Pod stuck terminating.
 func TestALiveMigrationReadNamesNoStuckPodAsAnApplys(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -299,17 +298,11 @@ func TestALiveMigrationReadNamesNoStuckPodAsAnApplys(t *testing.T) {
 	recorder := record.NewFakeRecorder(256)
 	reconciler.Recorder = recorder
 	job, _ := jobPodStuckOnAGoneNode(t, api, dispatched.job, dispatched.pod)
-	// The Job controller has not marked the deadline: the Job carries no
-	// FailureTarget, and its stop bound is its deadline from its start.
-	job.Status.Conditions = nil
-	if err := api.Status().Update(ctx, job); err != nil {
-		t.Fatal(err)
-	}
 	pod := &corev1.Pod{}
 	if err := api.Get(ctx, client.ObjectKeyFromObject(dispatched.pod), pod); err != nil {
 		t.Fatal(err)
 	}
-	past := jobStopBound(job).Add(time.Minute)
+	past := jobStopBound(job).Add(-time.Second)
 	if !podStuckTerminating(pod, past) || readJobStopOverdue(job, past) {
 		t.Fatalf("at %s the Pod is stuck: %t, and the read is let go of: %t; want a stuck Pod under a read still supervised",
 			past, podStuckTerminating(pod, past), readJobStopOverdue(job, past))

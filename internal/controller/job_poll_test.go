@@ -14,6 +14,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
+// runningSinceTheFixtureClock is the start the Job controller writes on a Job
+// it runs, at the instant both fake reconcilers' clocks read. A running Job
+// with no start would count its stop bound from a creation the fake client
+// never dated, and be past it on the first pass.
+func runningSinceTheFixtureClock() *metav1.Time {
+	started := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	return &started
+}
+
 func TestRunningSchemaReadUsesWatchBeforeFallback(t *testing.T) {
 	schema := schemaFixture()
 	schema.Finalizers = []string{activeOperationFinalizer}
@@ -22,7 +31,7 @@ func TestRunningSchemaReadUsesWatchBeforeFallback(t *testing.T) {
 	bindActiveInput(t, schema)
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
 	schema.Status.ActiveOperation.JobUID = job.UID
-	job.Status = batchv1.JobStatus{Active: 1}
+	job.Status = batchv1.JobStatus{Active: 1, StartTime: runningSinceTheFixtureClock()}
 	result := runner.Result{Operation: runner.OperationResolve, OperationID: "resolve-1", ResolvedDigest: testDigest,
 		ResolvedReference: "oci://registry.example/team/schema@" + testDigest,
 		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 321}
@@ -61,7 +70,7 @@ func TestRunningMigrationReadUsesWatchBeforeFallback(t *testing.T) {
 	migration.Finalizers = []string{migrationOperationFinalizer}
 	op := migrationClaim(t, migration, api.MigrationOperationResolve)
 	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
-	job.Status = batchv1.JobStatus{Active: 1}
+	job.Status = batchv1.JobStatus{Active: 1, StartTime: runningSinceTheFixtureClock()}
 	result := runner.Result{Operation: runner.OperationResolve, OperationID: op.ID, ResolvedDigest: testDigest,
 		ResolvedReference: "oci://registry.example/team/migrations@" + testDigest,
 		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 321}

@@ -387,7 +387,10 @@ execution-binding change retires. A `PtahSchema` claim that a binding change
 retires is kept under the retired epoch until its Job stops, as a Plan's claim
 has to be to hold its Lease, renews that Lease while it waits, and gets its TTL
 then. A Plan whose database lock epoch moved while its Job ran waits for the
-Job, renewing the Lease, before its result is discarded. Every one of these
+Job, renewing the Lease, before its result is discarded; it asks for the Lease
+only while it waits, so once it waits no longer it is discarded whoever holds
+the Lease, and its release, which names its own epoch, leaves a sibling's Lease
+alone. Every one of these
 waits keeps the same rule (`stopWaitingForJob`): no longer than the bound above
 (`jobStopOverdue`), and not at all while the resource is suspended. A
 `PtahSchema` claim that serves post-apply proof waits under a suspension too
@@ -397,11 +400,15 @@ waits on the running Job of a claim that holds the lock by the bound alone,
 suspended or not: an Apply's until the Job stops, and a Plan's or a proof
 read's until the bound, where it discards the claim and records a proof it had
 not taken as `Unknown`. The bound also ends the wait of a live read-only claim
-over a Job the Job controller has marked `FailureTarget` (`readJobStopOverdue`),
-which runs again under a new Job, and of a claim whose recorded Job is gone over
-the Pods that Job owned (`podsStillStopping`: each Pod's own deadline, or the end
-of its deletion grace, plus 30 seconds). A Job the Job controller has not marked
-is still running as far as it is concerned, and its own deadline stops it. A
+over its running Job (`readJobStopOverdue`), which runs again under a new Job,
+and of a claim whose recorded Job is gone over the Pods that Job owned
+(`podsStillStopping`: each Pod's own deadline, or the end of its deletion grace,
+plus 30 seconds). It holds whether or not the Job controller has marked the Job
+`FailureTarget`: a Job controller that is down marks nothing, and a mark it does
+write only brings the bound earlier. The operator dates the bound by its own
+clock against the start the Job controller recorded, so a skew between the two
+larger than the grace and the 30 seconds lets go of a read the Job controller
+still counts as running; its Pod may read on, and nothing uses what it reads. A
 Plan's wait checks the bound before it renews the Lease, so its Lease is not
 renewed past the bound. A proof read's Lease is different: whether the proof is
 an Observe or a Plan, the Lease is the Apply's pending observation's. The pass

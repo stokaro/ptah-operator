@@ -352,10 +352,11 @@ func failingSchemaApply(t *testing.T) (dispatchedSchemaRead, *SchemaReconciler, 
 // it, a ReadJobOverdue Warning names the Job and the Pod, and the claim moves to
 // its next attempt under a new Job name without another renewal: a Plan hands
 // its Lease back, and a read that proves an Apply leaves the realm with the
-// proof, which goes on. A Job with no FailureTarget is still running as far as
-// the Job controller is concerned, and is supervised past the same instant. An
-// Apply in the same state is supervised past it too: its Pod may still write,
-// so its claim stays on the Job and goes on renewing the Lease.
+// proof, which goes on. A Job the Job controller never marked, as when the
+// controller is down, stops at the same instant (#1006): nothing deleted its
+// Pod, which still runs on a node that answers, and the Warning names that Pod.
+// An Apply in the same state is supervised past the bound: its Pod may still
+// write, so its claim stays on the Job and goes on renewing the Lease.
 func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 	t.Parallel()
 
@@ -363,14 +364,19 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 		name      string
 		operation operatorv1alpha1.OperationType
 		proof     bool
-		// unmarked leaves the Job with no condition at all: the Job controller
-		// has not marked it, though its bound has passed.
+		// unmarked leaves the Job with no condition at all and its Pod
+		// running, not deleted: the Job controller has not acted on the Job,
+		// though its bound has passed.
 		unmarked bool
 	}{
 		{name: "a Resolve", operation: operatorv1alpha1.OperationResolve},
 		{name: "a Plan", operation: operatorv1alpha1.OperationPlan},
 		{name: "the Observe that proves an Apply", operation: operatorv1alpha1.OperationObserve, proof: true},
 		{name: "a Plan the Job controller has not marked", operation: operatorv1alpha1.OperationPlan, unmarked: true},
+		{
+			name: "the Observe that proves an Apply, unmarked", operation: operatorv1alpha1.OperationObserve,
+			proof: true, unmarked: true,
+		},
 		{name: "an Apply", operation: operatorv1alpha1.OperationApply},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -389,6 +395,12 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			bound := jobStopBound(run.job)
 			if row.unmarked {
 				run.job.Status.Conditions = nil
+				run.job.Status.Terminating = nil
+				run.pod.DeletionTimestamp = nil
+				run.pod.Finalizers = slices.DeleteFunc(run.pod.Finalizers, func(finalizer string) bool {
+					return finalizer == "example.invalid/kubelet-confirmation"
+				})
+				run.pod.Spec.NodeName = "node-a"
 				if unmarked := jobStopBound(run.job); !unmarked.Equal(bound) {
 					t.Fatalf("the unmarked Job's stop bound %s is not the marked one's %s, so the row compares two instants", unmarked, bound)
 				}
@@ -409,6 +421,9 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			pod := &corev1.Pod{}
 			if err := api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
 				t.Fatal(err)
+			}
+			if row.unmarked && (pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning) {
+				t.Fatalf("the unmarked Job's Pod is deleted at %v in phase %s, so the Job controller acted on it", pod.DeletionTimestamp, pod.Status.Phase)
 			}
 
 			// A second before the bound the claim supervises the Job.
@@ -434,7 +449,7 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			}
 			writes.take()
 
-			// At the bound it stops, once the Job controller has said so.
+			// At the bound a read stops, whatever the Job controller has said.
 			clock.now = bound
 			if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
 				t.Fatalf("Reconcile() at the bound: %v", err)
@@ -443,20 +458,16 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			all := eventsWithPrefix(recorder, "")
 			events := slices.DeleteFunc(slices.Clone(all), func(event string) bool { return !strings.HasPrefix(event, readJobOverdueEvent) })
 			held := writes.take()
-			if row.unmarked || apply {
+			if apply {
 				if operation == nil || operation.Attempt != dispatched.Attempt || operation.JobName != dispatched.JobName || len(events) != 0 {
 					t.Fatalf("at the Job's stop bound the claim stopped supervising a Job it still owes supervision: claim %#v, events %q",
 						operation, all)
 				}
-				// Only an Apply's wait names its stuck Pod: the Plan's ends at
-				// this bound once the Job controller marks the Job, and its
-				// ReadJobOverdue Warning names the Pod then.
+				// An Apply's wait names its stuck Pod; a read's ends at this
+				// bound, and its ReadJobOverdue Warning names the Pod.
 				stuck := slices.DeleteFunc(slices.Clone(all), func(event string) bool { return !strings.HasPrefix(event, stuckPodEvent) })
-				switch want := stuckPodEvent + stuckPodWarningText(applyWaits, run.job.Name, run.job.UID, pod); {
-				case apply && (len(stuck) != 1 || stuck[0] != want):
+				if want := stuckPodEvent + stuckPodWarningText(applyWaits, run.job.Name, run.job.UID, pod); len(stuck) != 1 || stuck[0] != want {
 					t.Fatalf("PodStuckTerminating Events at the Job's stop bound = %q, want one %q", stuck, want)
-				case !apply && len(stuck) != 0:
-					t.Fatalf("a %s recorded %q, want no PodStuckTerminating Warning", row.operation, stuck)
 				}
 				if lease := testDatabaseLease(t, api, reconciler.LockNamespace); leaseHolder(lease) == "" ||
 					lease.Spec.RenewTime == nil || !lease.Spec.RenewTime.Time.Equal(clock.now) {
@@ -471,12 +482,15 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			want := fmt.Sprintf("%sStopped waiting for %s Job %s: it did not stop by %s, "+
 				"its own deadline plus the grace its Pods are given and 30 seconds. "+
 				"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner. "+
-				"Pod %s on node node-gone has not stopped and may still read the database; nothing uses what it reads. "+
+				"Pod %s on node %s has not stopped and may still read the database; nothing uses what it reads. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
 				readJobOverdueEvent, row.operation, run.job.Name, bound.UTC().Format(time.RFC3339),
-				row.operation, run.job.Name, pod.Name, pod.Namespace, pod.Name)
+				row.operation, run.job.Name, pod.Name, pod.Spec.NodeName, pod.Namespace, pod.Name)
 			if len(events) != 1 || events[0] != want {
 				t.Fatalf("Events at the Job's stop bound = %q, want one %q", all, want)
+			}
+			if stuck := slices.ContainsFunc(all, func(event string) bool { return strings.HasPrefix(event, stuckPodEvent) }); stuck {
+				t.Fatalf("a %s recorded %q, want no PodStuckTerminating Warning", row.operation, all)
 			}
 			if holdsLock {
 				lease := testDatabaseLease(t, api, reconciler.LockNamespace)
@@ -503,32 +517,53 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 }
 
 // TestAMigrationReadStopsSupervisingAFailingJobAtItsStopBound is the same for a
-// PtahMigration read, which holds no Lease. An Apply in the same state is
-// supervised past the bound, as a PtahSchema Apply is, and renews the realm
-// Lease it holds on every pass.
+// PtahMigration read, which holds no Lease, with and without the Job
+// controller's mark (#1006). An Apply in either state is supervised past the
+// bound, as a PtahSchema Apply is, and renews the realm Lease it holds on every
+// pass.
 func TestAMigrationReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 	t.Parallel()
 
 	current := workloadBuilderForMigrations()
-	for _, operationType := range []operatorv1alpha1.MigrationOperationType{
-		operatorv1alpha1.MigrationOperationHistory, operatorv1alpha1.MigrationOperationApply,
+	for _, row := range []struct {
+		operation operatorv1alpha1.MigrationOperationType
+		// unmarked leaves the Job with no condition and its Pod running on a
+		// node that answers: the Job controller has not acted on the Job.
+		unmarked bool
+	}{
+		{operation: operatorv1alpha1.MigrationOperationHistory},
+		{operation: operatorv1alpha1.MigrationOperationHistory, unmarked: true},
+		{operation: operatorv1alpha1.MigrationOperationApply},
+		{operation: operatorv1alpha1.MigrationOperationApply, unmarked: true},
 	} {
-		t.Run(string(operationType), func(t *testing.T) {
+		name := string(row.operation)
+		if row.unmarked {
+			name += " the Job controller has not marked"
+		}
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
+			operationType := row.operation
 			apply := operationType == operatorv1alpha1.MigrationOperationApply
 			run := runDispatchedBy(t, operationType, runShape{dispatcher: current, recorded: true})
 			failed := run.job.Status.StartTime.Add(time.Duration(*run.job.Spec.ActiveDeadlineSeconds) * time.Second)
-			goneBy := metav1.NewTime(failed.Add(time.Duration(*run.job.Spec.Template.Spec.TerminationGracePeriodSeconds) * time.Second))
-			run.pod.DeletionTimestamp = &goneBy
-			run.pod.Finalizers = append(run.pod.Finalizers, "example.invalid/kubelet-confirmation")
-			run.pod.Spec.NodeName = "node-gone"
-			terminating := int32(1)
-			run.job.Status = batchv1.JobStatus{StartTime: run.job.Status.StartTime, Terminating: &terminating, Conditions: []batchv1.JobCondition{{
-				Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded,
-				LastTransitionTime: metav1.NewTime(failed),
-			}}}
+			if row.unmarked {
+				run.pod.Spec.NodeName = "node-a"
+			} else {
+				goneBy := metav1.NewTime(failed.Add(time.Duration(*run.job.Spec.Template.Spec.TerminationGracePeriodSeconds) * time.Second))
+				run.pod.DeletionTimestamp = &goneBy
+				run.pod.Finalizers = append(run.pod.Finalizers, "example.invalid/kubelet-confirmation")
+				run.pod.Spec.NodeName = "node-gone"
+				terminating := int32(1)
+				run.job.Status = batchv1.JobStatus{StartTime: run.job.Status.StartTime, Terminating: &terminating, Conditions: []batchv1.JobCondition{{
+					Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded,
+					LastTransitionTime: metav1.NewTime(failed),
+				}}}
+			}
+			if len(run.job.Status.Conditions) != 0 && row.unmarked {
+				t.Fatalf("the unmarked Job carries %#v", run.job.Status.Conditions)
+			}
 			reconciler, api := run.reconciler(t, current)
 			recorder := record.NewFakeRecorder(64)
 			reconciler.Recorder = recorder
@@ -586,10 +621,10 @@ func TestAMigrationReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			want := fmt.Sprintf("%sStopped waiting for History Job %s: it did not stop by %s, "+
 				"its own deadline plus the grace its Pods are given and 30 seconds. "+
 				"The History runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner. "+
-				"Pod %s on node node-gone has not stopped and may still read the database; nothing uses what it reads. "+
+				"Pod %s on node %s has not stopped and may still read the database; nothing uses what it reads. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
 				readJobOverdueEvent, run.job.Name, bound.UTC().Format(time.RFC3339), run.job.Name,
-				run.pod.Name, run.pod.Namespace, run.pod.Name)
+				run.pod.Name, run.pod.Spec.NodeName, run.pod.Namespace, run.pod.Name)
 			if events := readJobOverdueEvents(recorder); len(events) != 1 || events[0] != want {
 				t.Fatalf("Events at the Job's stop bound = %q, want one %q", events, want)
 			}
