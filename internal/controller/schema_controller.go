@@ -150,7 +150,7 @@ type SchemaReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
-	// deletion waits for is due. It is made on first use, by
+	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
 	Jobs      JobBuilder
@@ -769,12 +769,28 @@ func hasExecutionBindingEvidence(schema *operatorv1alpha1.PtahSchema) bool {
 		!reflect.DeepEqual(schema.Status.Target, operatorv1alpha1.TargetStatus{})
 }
 
+// possibleApplyPodActive is whether a live schema's proof waits for a Pod of
+// the Apply it proves, which applyPodsActive answers. The proof does not read
+// the database while one may still run, and the database Lease is renewed for as
+// long, so a Pod on a node that is gone holds it with no bound, as it holds a
+// deleted schema. A person is told which Pod it is in the same Warning, worded
+// for the proof. A Job lookup that fails warns about nothing and is not
+// returned, for the reason the claim's own wait does not return it.
+//
+// Both waits that ask meet such a Pod only through the pending observation:
+// the proof claim is taken once this said no Pod was active, and under the
+// Job's backoffLimit 0 no later Pod comes.
 func (r *SchemaReconciler) possibleApplyPodActive(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) (bool, error) {
-	active, _, err := r.applyPodsActive(ctx, schema, pending)
+	active, pods, err := r.applyPodsActive(ctx, schema, pending)
+	if active {
+		if warnErr := r.warnStuckApplyPods(ctx, schema, pending, pods, proofWaits); warnErr != nil {
+			ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod the proof waits for", "error", warnErr.Error())
+		}
+	}
 	return active, err
 }
 
@@ -975,7 +991,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			// A Pod on a node that is gone keeps this wait going with no
 			// bound, as it does the claim's wait above, so a person is told
 			// which Pod it is.
-			if err := r.warnStuckApplyPods(ctx, schema, pending, pods); err != nil {
+			if err := r.warnStuckApplyPods(ctx, schema, pending, pods, deletionWaits); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
 		}
@@ -1405,6 +1421,11 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 		if honestJob {
 			listed = job
 		}
+		// A deleted schema's record then names no dispatcher, which
+		// pendingObservationFor reads from the Job it is given. Nothing reads
+		// it there: only a proof that completes carries it into
+		// status.applied, and a deleted schema runs no proof, so the record
+		// goes with it once its wait is over.
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}

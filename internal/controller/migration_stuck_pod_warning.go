@@ -11,20 +11,23 @@ import (
 
 // A deleted PtahMigration's wait for a stuck Apply Pod (stuck_pod_warning.go).
 
-// warnStuckMigrationApplyPods is warnStuckPods for the Apply a deleted
-// PtahMigration waits for (dispatchedApplyMayStillWrite), by the Job identity
-// that wait asks about: the one the claim recorded, or the Job under its name
-// where it recorded none. job is the Job the deletion read under the claim's
-// name, or nil where none stands that is the claim's: dispatchedMigrationApplyJob
-// already refuses a Job whose UID is not the one the claim recorded, so job is
-// never another Job. A Job the claim names that is gone leaves its Pods their
-// own bounds, and its Pods are listed on every pass then, as the wait itself
-// lists them.
+// warnStuckMigrationApplyPods is warnStuckPods for the Apply a PtahMigration
+// waits for, in the words of waiter: a deleted one's wait
+// (dispatchedApplyMayStillWrite), or a live one's supervision of its running
+// Job. It asks by the Job identity that wait asks about: the one the claim
+// recorded, or the Job under its name where it recorded none. job is the Job
+// the pass read under the claim's name, or nil where none stands that is the
+// claim's: dispatchedMigrationApplyJob already refuses a Job whose UID is not
+// the one the claim recorded, so job is never another Job. A Job the claim
+// names that is gone leaves its Pods their own bounds, and its Pods are listed
+// on every pass then, as the wait itself lists them. The Warning names the
+// Job's UID, since another Job can hold the name by then.
 func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	job *batchv1.Job,
+	waiter string,
 ) error {
 	jobName, jobUID := operation.JobName, operation.JobUID
 	if jobUID == "" && job != nil {
@@ -40,9 +43,9 @@ func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 	}
 	warnings := stuckPodWarningsOf(&r.stuckPods)
 	for _, pod := range stuckApplyPods(job, pods, now) {
-		if warnings.due(pod.UID, now) {
+		if warnings.dueFor(waiter, pod.UID, now) {
 			r.event(migration, corev1.EventTypeWarning, "PodStuckTerminating", "%s",
-				stuckPodWarningText(deletionWaits, jobName, pod))
+				stuckPodWarningText(waiter, jobName, jobUID, pod))
 		}
 	}
 	return nil

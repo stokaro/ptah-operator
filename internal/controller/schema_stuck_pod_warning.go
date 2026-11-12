@@ -29,20 +29,22 @@ func (r *SchemaReconciler) warnStuckPods(ctx context.Context, schema *operatorv1
 	if err != nil {
 		return err
 	}
-	r.warnAboutStuckPods(schema, waiter, job.Name, stuckApplyPods(job, pods, now), now)
+	r.warnAboutStuckPods(schema, waiter, job.Name, job.UID, stuckApplyPods(job, pods, now), now)
 	return nil
 }
 
 // warnStuckApplyPods is warnStuckPods for the Apply Job a pending observation
-// names, over the Pods the wait already listed for it by the Job's UID. The Job
-// is read only when one of them is stuck, directly as the claim's wait reads
-// its Job. A Job that is gone, or is not the one the record names, leaves the
-// Pods their own bounds (stuckApplyPods).
+// names, over the Pods the wait already listed for it by the Job's UID, in the
+// words of waiter: a deletion's, or a live proof's. The Job is read only when
+// one of them is stuck, directly as the claim's wait reads its Job. A Job that
+// is gone, or is not the one the record names, leaves the Pods their own bounds
+// (stuckApplyPods), and the Warning names the Job by the UID the record holds.
 func (r *SchemaReconciler) warnStuckApplyPods(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 	pods []*corev1.Pod,
+	waiter string,
 ) error {
 	now := r.now()
 	if !slices.ContainsFunc(pods, func(pod *corev1.Pod) bool { return podStuckTerminating(pod, now) }) {
@@ -57,22 +59,24 @@ func (r *SchemaReconciler) warnStuckApplyPods(
 	case job.UID != pending.ApplyJobUID:
 		job = nil
 	}
-	r.warnAboutStuckPods(schema, deletionWaits, pending.ApplyJobName, stuckApplyPods(job, pods, now), now)
+	r.warnAboutStuckPods(schema, waiter, pending.ApplyJobName, pending.ApplyJobUID, stuckApplyPods(job, pods, now), now)
 	return nil
 }
 
-// warnAboutStuckPods records the Warning about each of the stuck Pods of Job
-// jobName, at most as often as stuckPodWarnings allows.
+// warnAboutStuckPods records the Warning about each of the stuck Pods of the Job
+// jobName with the UID jobUID, at most as often as stuckPodWarnings allows for
+// that Pod and waiter.
 func (r *SchemaReconciler) warnAboutStuckPods(
 	schema *operatorv1alpha1.PtahSchema,
 	waiter, jobName string,
+	jobUID types.UID,
 	stuck []*corev1.Pod,
 	now time.Time,
 ) {
 	warnings := stuckPodWarningsOf(&r.stuckPods)
 	for _, pod := range stuck {
-		if warnings.due(pod.UID, now) {
-			r.event(schema, corev1.EventTypeWarning, "PodStuckTerminating", "%s", stuckPodWarningText(waiter, jobName, pod))
+		if warnings.dueFor(waiter, pod.UID, now) {
+			r.event(schema, corev1.EventTypeWarning, "PodStuckTerminating", "%s", stuckPodWarningText(waiter, jobName, jobUID, pod))
 		}
 	}
 }

@@ -9,7 +9,10 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 // A deleted PtahMigration waits for its Apply until nothing it dispatched can
@@ -94,10 +97,12 @@ func TestADeletedMigrationWaitingOnAStuckPodNamesIt(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			want := fmt.Sprintf("%sDeletion waits for Pod %s of Job %s on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+			// The Job is named by the UID the claim recorded, which a Job that
+			// took the name does not have.
+			want := fmt.Sprintf("%sDeletion waits for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
 				"The database Lease stays held while the Pod may still run. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
-				stuckPodEvent, pod.Name, job.Name, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+				stuckPodEvent, pod.Name, run.job.Name, run.job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
 			stuckPodEvents(run.recorder)
 
 			// The Pod is stuck terminating from the end of its grace, thirty
@@ -211,5 +216,111 @@ func TestADeletedMigrationNamesNoPodThatIsNotStuck(t *testing.T) {
 				t.Fatal("the deletion stopped waiting for a Job that has not finished, so the row read no wait")
 			}
 		})
+	}
+}
+
+// A live PtahMigration supervises its Apply until the Job stops, and renews the
+// database Lease for as long, so a Pod on a node that is gone holds it with no
+// bound, as it holds a live PtahSchema. The claim names the Pod past the Job's
+// stop bound in the same Warning, worded for an Apply, and keeps the claim and
+// the Lease.
+func TestALiveMigrationApplyWaitingOnAStuckPodNamesIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	run := unstartedMigrationApplyRun(t)
+	claim := readMigration(t, run.api, run.migration).Status.ActiveOperation
+	if claim == nil || claim.JobUID != run.job.UID {
+		t.Fatalf("the run is not an Apply claim that recorded its Job: %#v", claim)
+	}
+	holder := leaseHolder(migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest))
+	if holder == "" {
+		t.Fatal("the Apply holds no database Lease, so the row cannot show it kept one")
+	}
+	job, _ := jobPodStuckOnAGoneNode(t, run.api, run.job, run.pod)
+	bound := jobStopBound(job)
+	pod := &corev1.Pod{}
+	if err := run.api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%sThe Apply waits for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+		"The database Lease stays held while the Pod may still run. "+
+		"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
+		stuckPodEvent, pod.Name, job.Name, job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+	stuckPodEvents(run.recorder)
+
+	for _, step := range []struct {
+		at    time.Duration
+		named bool
+	}{
+		{at: -time.Second},
+		{at: 0, named: true},
+		{at: 0},
+		{at: 29 * time.Second},
+		{at: 30 * time.Second, named: true},
+	} {
+		at := bound.Add(step.at)
+		if !podStuckTerminating(pod, at) {
+			t.Fatalf("the Pod is not stuck terminating %s from the Job's stop bound, so the step measures nothing", step.at)
+		}
+		run.reconciler.Clock = func() time.Time { return at }
+		supervising := reconcileMigration(t, run.reconciler, run.api, run.migration)
+		events := stuckPodEvents(run.recorder)
+		switch {
+		case !step.named && len(events) != 0:
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want nothing", step.at, events)
+		case step.named && (len(events) != 1 || events[0] != want):
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want one %q", step.at, events, want)
+		}
+		if supervising.Status.ActiveOperation == nil || supervising.Status.ActiveOperation.ID != claim.ID {
+			t.Fatalf("the Apply stopped supervising its Job %s from the Job's stop bound while the Pod may still run: %#v",
+				step.at, supervising.Status.ActiveOperation)
+		}
+		lease := migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest)
+		if held := leaseHolder(lease); held != holder {
+			t.Fatalf("the database Lease is held by %q %s from the Job's stop bound, want the Apply's %q", held, step.at, holder)
+		}
+	}
+}
+
+// A live migration read is supervised by the same branch while its Job runs,
+// and is never named in that Warning: a read's Job is let go of at its stop
+// bound once the Job controller marks it to fail (readJobStopOverdue), and
+// ReadJobOverdue names its Pod then. The row's Job is past its stop bound
+// without that mark, as a Job controller that has not acted yet leaves it, so
+// the read is still supervised over a Pod stuck terminating.
+func TestALiveMigrationReadNamesNoStuckPodAsAnApplys(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	builder := workloadBuilderForMigrations()
+	dispatched := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: builder, recorded: true})
+	reconciler, api := dispatched.reconciler(t, builder)
+	recorder := record.NewFakeRecorder(256)
+	reconciler.Recorder = recorder
+	job, _ := jobPodStuckOnAGoneNode(t, api, dispatched.job, dispatched.pod)
+	// The Job controller has not marked the deadline: the Job carries no
+	// FailureTarget, and its stop bound is its deadline from its start.
+	job.Status.Conditions = nil
+	if err := api.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(dispatched.pod), pod); err != nil {
+		t.Fatal(err)
+	}
+	past := jobStopBound(job).Add(time.Minute)
+	if !podStuckTerminating(pod, past) || readJobStopOverdue(job, past) {
+		t.Fatalf("at %s the Pod is stuck: %t, and the read is let go of: %t; want a stuck Pod under a read still supervised",
+			past, podStuckTerminating(pod, past), readJobStopOverdue(job, past))
+	}
+	reconciler.Clock = func() time.Time { return past }
+	stuckPodEvents(recorder)
+	supervising := reconcileMigration(t, reconciler, api, dispatched.migration)
+	if events := stuckPodEvents(recorder); len(events) != 0 {
+		t.Fatalf("a read past its Job's stop bound recorded %q, want no PodStuckTerminating Warning", events)
+	}
+	if supervising.Status.ActiveOperation == nil || supervising.Status.ActiveOperation.JobUID != dispatched.job.UID {
+		t.Fatalf("the read stopped supervising its Job, so the row read no wait: %#v", supervising.Status.ActiveOperation)
 	}
 }
