@@ -103,6 +103,11 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		{name: "a live migration's words", event: func(event *corev1.Event) {
 			event.Message = "The Apply waits for" + event.Message[len("Deletion waits for"):]
 		}},
+		// client-go folds Warnings of one reason with different messages into
+		// this. A hold repeats one message, so a combined one is not its own.
+		{name: "a combination of similar Warnings", event: func(event *corev1.Event) {
+			event.Message = "(combined from similar events): " + event.Message
+		}},
 		// The Job a later attempt created under the claim's name.
 		{name: "another Job under the same name", inputs: func(in *inputs) { in.jobUID = "replacement-job-uid" }},
 		// The bound the issue proposed, short of the claim's term.
@@ -146,6 +151,12 @@ func TestApplyPodGoneWarnedInTermDatesTheWarningByItsOwnTimes(t *testing.T) {
 	for name, mutate := range map[string]func(*corev1.Event){
 		"no times of its own": func(event *corev1.Event) {
 			event.FirstTimestamp, event.LastTimestamp, event.EventTime, event.Series = metav1.Time{}, metav1.Time{}, metav1.MicroTime{}, nil
+		},
+		// A zero last time is before every term, so only the check for a
+		// missing time refuses it.
+		"a first time and no last time": func(event *corev1.Event) {
+			event.EventTime, event.Series = metav1.MicroTime{}, nil
+			event.LastTimestamp = metav1.Time{}
 		},
 		"last recorded at the term": func(event *corev1.Event) {
 			event.EventTime, event.Series = metav1.MicroTime{}, nil
