@@ -40,6 +40,16 @@ const (
 	// createContainerConfigError is the waiting reason the kubelet writes for a
 	// container whose configuration it cannot build. It retries by itself.
 	createContainerConfigError = "CreateContainerConfigError"
+	// failedMountEventReason is what the kubelet records against a Pod whose
+	// volume it cannot set up, and mountSetUpFailure begins the message that
+	// says which volume and why (pkg/volume/util/operationexecutor,
+	// GenerateError). The kubelet records the same reason, in other words,
+	// when its wait for every volume times out; those name no cause.
+	failedMountEventReason = "FailedMount"
+	mountSetUpFailure      = "MountVolume.SetUp failed for volume "
+	// combinedEvents is what the kubelet's event aggregator puts in front of
+	// a message once it has seen many similar ones.
+	combinedEvents = "(combined from similar events): "
 )
 
 // podCreationRefusal says why a Job that has never had a Pod is not getting
@@ -144,9 +154,18 @@ type podConfiguration struct {
 // resource read as an operation in progress while the kubelet retried. An
 // external secret store that has not synced yet looks like this.
 //
+// The kubelet says it in one of two places. A value a container reads from a
+// Secret into its environment -- a registry or Git grant -- that the kubelet
+// cannot resolve leaves the container waiting as CreateContainerConfigError,
+// with the reason in its status. A credential is a file in a Secret volume, and
+// a volume the kubelet cannot set up stops the whole Pod before any container:
+// every container waits in the kubelet's default state, and the reason is only
+// in a FailedMount Event against the Pod (podMountFailure).
+//
 // The kubelet builds this text from names and never from a value it resolved:
-// `secret "x" not found` from the API, or `couldn't find key url in Secret ns/x`
-// (pkg/kubelet/kubelet_pods.go, makeEnvironmentVariables, v1.36), and the image
+// `secret "x" not found` from the API, `couldn't find key url in Secret ns/x`
+// (pkg/kubelet/kubelet_pods.go, makeEnvironmentVariables, v1.36),
+// `references non-existent secret key: url` (pkg/volume/secret), and the image
 // user check in pkg/kubelet/kuberuntime. Each name in it is one the Job already
 // holds, and an acceptance row reads a Secret's value against what this reports.
 //
@@ -166,6 +185,7 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 		return podConfiguration{}, fmt.Errorf("read the Pods of Job %s: %w", job.Name, err)
 	}
 	var reading podConfiguration
+	var unmounted []*corev1.Pod
 	for index := range pods.Items {
 		pod := &pods.Items[index]
 		if pod.DeletionTimestamp != nil || !exactControllerOwner(pod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job", job.Name, job.UID) {
@@ -179,8 +199,99 @@ func podConfigurationError(ctx context.Context, reader client.Reader, job *batch
 				return reading, nil
 			}
 		}
+		if mountPending(pod) {
+			unmounted = append(unmounted, pod)
+		}
+	}
+	for _, pod := range unmounted {
+		failure, err := podMountFailure(ctx, reader, pod)
+		if err != nil {
+			return podConfiguration{}, err
+		}
+		if failure != "" {
+			reading.message = fmt.Sprintf("Job %s cannot start its Pod: %s", job.Name, failure)
+			return reading, nil
+		}
 	}
 	return reading, nil
+}
+
+// mountPending is a Pod on a node that may still be waiting for its volumes.
+// The kubelet mounts every volume before it creates the Pod's sandbox, and
+// until it does, every container waits in the default state the kubelet gives
+// one it has not started (pkg/kubelet/kubelet_pods.go,
+// convertToAPIContainerStatuses). A sandbox that is ready
+// (PodReadyToStartContainers) or a container past that state says the volumes
+// were set up, and a FailedMount Event still standing against the Pod is about
+// an earlier attempt.
+//
+// Between the mount and the first container's start -- the image pull -- an
+// earlier attempt's Event is read as current where the kubelet does not report
+// the sandbox. The next pass after the container starts takes it back.
+func mountPending(pod *corev1.Pod) bool {
+	if pod.Spec.NodeName == "" {
+		return false
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReadyToStartContainers && condition.Status == corev1.ConditionTrue {
+			return false
+		}
+	}
+	for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		waiting := status.State.Waiting
+		if waiting == nil || (waiting.Reason != "PodInitializing" && waiting.Reason != "ContainerCreating") {
+			return false
+		}
+	}
+	return true
+}
+
+// podMountFailure is the newest reason the kubelet recorded against pod for a
+// volume it could not set up, bounded, with the object the volume reads when
+// the kubelet's words do not name it: `references non-existent secret key:
+// url` names the key and not the Secret. Empty when the kubelet recorded none.
+func podMountFailure(ctx context.Context, reader client.Reader, pod *corev1.Pod) (string, error) {
+	events := &corev1.EventList{}
+	if err := reader.List(ctx, events, client.InNamespace(pod.Namespace),
+		client.MatchingFields{eventInvolvedObjectUIDField: string(pod.UID)}); err != nil {
+		return "", fmt.Errorf("read the Events recorded against Pod %s: %w", pod.Name, err)
+	}
+	var failures []corev1.Event
+	for _, event := range events.Items {
+		if event.Reason != failedMountEventReason || event.InvolvedObject.Kind != "Pod" || event.InvolvedObject.UID != pod.UID ||
+			!strings.HasPrefix(strings.TrimPrefix(event.Message, combinedEvents), mountSetUpFailure) {
+			continue
+		}
+		failures = append(failures, event)
+	}
+	if len(failures) == 0 {
+		return "", nil
+	}
+	sort.SliceStable(failures, func(i, j int) bool {
+		return eventObservedAt(failures[i]).After(eventObservedAt(failures[j]))
+	})
+	message := strings.TrimPrefix(failures[0].Message, combinedEvents)
+	failure := boundedClusterText(message)
+	volumeName, cause, quoted := strings.Cut(strings.TrimPrefix(message, mountSetUpFailure+`"`), `"`)
+	if !quoted {
+		return failure, nil
+	}
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name != volumeName {
+			continue
+		}
+		kind, name := "", ""
+		switch {
+		case volume.Secret != nil:
+			kind, name = "Secret", volume.Secret.SecretName
+		case volume.ConfigMap != nil:
+			kind, name = "ConfigMap", volume.ConfigMap.Name
+		}
+		if kind != "" && !strings.Contains(cause, `"`+name+`"`) {
+			failure += fmt.Sprintf(" (volume %s reads %s %s/%s)", volumeName, kind, pod.Namespace, name)
+		}
+	}
+	return failure, nil
 }
 
 // lastPodReport is what a resource last reported about the Pod of the Job its
