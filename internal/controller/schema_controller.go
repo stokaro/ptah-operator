@@ -887,7 +887,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			// bound, so a person is told which Pod it is. A list that fails
 			// warns about nothing, for the reason the look above is not
 			// returned. A read's wait ends at the bound this warns past.
-			if err := r.warnStuckPods(ctx, schema, job); err != nil {
+			if err := r.warnStuckPods(ctx, schema, job, deletionWaits); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -1173,6 +1173,17 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
 			return ctrl.Result{}, err
 		}
+		// An Apply is supervised until its Job stops, and the Lease renewed
+		// above for as long, since its Pod may still write. A Pod on a node
+		// that is gone keeps the Job from stopping with no bound, so a person
+		// is told which Pod it is, as a deleted schema's wait tells them. A
+		// list that fails warns about nothing and is not returned: an error
+		// requeue backs off, and this pass is what renews the Lease.
+		if schemaOperation(operation).Mutating {
+			if err := r.warnStuckPods(ctx, schema, job, applyWaits); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod", "error", err.Error())
+			}
+		}
 		if durableDeliveryRequested(job) {
 			engine := ""
 			if operation.Target != nil {
@@ -1275,7 +1286,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if failure == nil {
 				failure = fmt.Errorf("Apply Job did not complete successfully")
 			}
-			failure = withUnstartedPod(failure, schemaPodReport(schema, job))
+			// terminalLogs listed the Job's Pods, so a Pod whose executor
+			// started after the last look takes the report off here, as
+			// finishUncertainApplyWithReport does on the endings that read no
+			// terminal Pod. That finisher is not used: it would list the Pods
+			// again, and it always waits for the Apply's horizon, where this
+			// ending does not wait for an executor that ran and stopped.
+			failure = withUnstartedPod(failure, schemaPodReport(schema, job).withPodsRead(evidence))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
 				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
@@ -2669,7 +2686,9 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 // none has them listed under listed: the Job the ending found under the claim's
 // name and holds to be the claim's, or nil. It is apart from job because a
 // deleted schema's finisher is not given the Job, while its Pods are still the
-// ones that may have started.
+// ones that may have started. The pending observation names the Job they were
+// listed under, so a deletion that waits on it lists the same Pods
+// (applyPodsActive).
 func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -2695,7 +2714,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	}
 	evidence := podIdentityEvidence(pods)
 	failure := withLastPodReport(ending, report.withPodsRead(evidence))
-	return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
+	return r.finishUncertainApplyWithEvidenceAndBinding(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true, nil, jobUID)
 }
 
 func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
@@ -2738,6 +2757,7 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 		evidence.PodCount,
 		true,
 		binding,
+		"",
 	)
 }
 
@@ -2759,6 +2779,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 		podCount,
 		waitForDispatchDeadline,
 		nil,
+		"",
 	)
 }
 
@@ -2771,6 +2792,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	podCount int32,
 	waitForDispatchDeadline bool,
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
+	listedJobUID types.UID,
 ) (ctrl.Result, error) {
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 	// The claim still names the Job here, and the record below is read-only
@@ -2802,6 +2824,11 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if pending.ApplyJobUID == "" {
+		// listedJobUID is the Job the ending listed the Pods of a claim that
+		// recorded no UID under (finishUncertainApplyWithReport), or empty.
+		pending.ApplyJobUID = listedJobUID
 	}
 	schema.Status.PendingObservation = pending
 	if replacementBinding != nil {

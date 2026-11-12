@@ -448,6 +448,16 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 					t.Fatalf("at the Job's stop bound the claim stopped supervising a Job it still owes supervision: claim %#v, events %q",
 						operation, all)
 				}
+				// Only an Apply's wait names its stuck Pod: the Plan's ends at
+				// this bound once the Job controller marks the Job, and its
+				// ReadJobOverdue Warning names the Pod then.
+				stuck := slices.DeleteFunc(slices.Clone(all), func(event string) bool { return !strings.HasPrefix(event, stuckPodEvent) })
+				switch want := stuckPodEvent + stuckPodWarningText(applyWaits, run.job.Name, pod); {
+				case apply && (len(stuck) != 1 || stuck[0] != want):
+					t.Fatalf("PodStuckTerminating Events at the Job's stop bound = %q, want one %q", stuck, want)
+				case !apply && len(stuck) != 0:
+					t.Fatalf("a %s recorded %q, want no PodStuckTerminating Warning", row.operation, stuck)
+				}
 				if lease := testDatabaseLease(t, api, reconciler.LockNamespace); leaseHolder(lease) == "" ||
 					lease.Spec.RenewTime == nil || !lease.Spec.RenewTime.Time.Equal(clock.now) {
 					t.Fatalf("the claim still supervising its Job did not renew the Lease at the bound %s: holder %q, renewed %v, writes %q",

@@ -106,8 +106,10 @@ container and the Pod the kubelet lost rather than the refusal of a
 log read. A script that reads the `kubectl logs` command out of an
 `ApplyOutcomeUnknown`, `MigrationRunUncertain` or `MigrationRunFinished` Event,
 `Applying` or `status.lastRun.message` finds none where every executor of the Job
-ended that way, and an alert on Warning Events can see the new reasons
-`PodStuckTerminating` and `ReadJobOverdue`. Where a Job's cleanup TTL could not
+ended that way, or where every Pod of the Job ended with no status for its
+executor, and an alert on Warning Events can see the new reasons
+`PodStuckTerminating`, on a `PtahMigration` and on a live `PtahSchema` as well,
+and `ReadJobOverdue`. Where a Job's cleanup TTL could not
 be set, as for a Job the deletion of a `PtahMigration` orphaned, that pointer is
 no longer left out: it says the log is there `until the Job is deleted`, with
 the same `kubectl logs` command. A deleted `PtahSchema` whose Plan, or whose
@@ -460,6 +462,26 @@ and goes while the Pod may still read, and records the proof `Unknown`.
   again. A proof keeps the Apply's Lease across its attempts and was not
   affected, and a claim whose Lease went while its Job could run still reports
   the loss.
+- **Every wait on a stuck Apply Pod names it.** A Pod on a node that is gone
+  keeps an Apply's Job from stopping. A deleted `PtahMigration` waiting for its
+  Apply, and a live `PtahSchema` supervising its own, waited for such a Pod in
+  silence and renewed the database Lease all along. Both now record the
+  `PodStuckTerminating` Warning Event a deleted `PtahSchema` records, with the
+  same backoff, once the Job is past its deadline, the grace of its Pods and 30
+  seconds; a live schema's message starts `The Apply waits for`. A deletion
+  whose Job was deleted by hand, or replaced by another Job under its name,
+  still finds the Pods by the Job's UID and names a Pod once it is past its own
+  deadline or deletion grace and 30 seconds. The waits themselves are unchanged
+  but one: a deleted `PtahSchema` whose claim never recorded its Job's UID, and
+  whose Lease changed hands, now records the UID of the Job whose Pods it
+  listed, and waits for those Pods as it waits for a recorded Job's.
+- **A Pod log is pointed at only where an executor ran.** A Pod that ended with
+  no status for its executor, as one the kubelet refused at admission, had no
+  log for `kubectl logs` to read, yet the record of its Apply said
+  `Anything the run wrote is in the Pod log`. Neither family points at a log
+  there now. A schema Apply whose Pod started after the last look and then
+  failed without a result no longer repeats the report that the Pod could not
+  start. A read and a `PtahMigration` Apply still do.
 
 ## 0.2.10
 

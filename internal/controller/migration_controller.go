@@ -111,8 +111,12 @@ type MigrationReconciler struct {
 	// it is still waiting on; resultLogLossWindow is measured on it. It is made
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
-	Jobs       MigrationJobBuilder
-	Locks      *targetlock.Locker
+	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
+	// deletion waits for is due. It is made on first use, by
+	// stuckPodWarningsOf.
+	stuckPods *stuckPodWarnings
+	Jobs      MigrationJobBuilder
+	Locks     *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
@@ -394,6 +398,13 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 					if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
 						ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
 					}
+				}
+				// A Pod on a node that is gone keeps this wait going with no
+				// bound, so a person is told which Pod it is, as a deleted
+				// PtahSchema tells them. A list that fails warns about nothing,
+				// for the reason the look above is not returned.
+				if err := r.warnStuckMigrationApplyPods(ctx, migration, operation, job); err != nil {
+					ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 				}
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}

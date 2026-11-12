@@ -526,6 +526,16 @@ func TestTheLiveEndingsLeaveOutAReportAStartedPodOutdated(t *testing.T) {
 				endedWithoutAResult(t, run.api, run.job, run.pod)
 			},
 		},
+		{
+			// The harvest reads this terminal Pod, and its Pods read come
+			// from that listing.
+			name: "its result was not read", ended: unreadApplyResult, pointed: true,
+			lose: func(t *testing.T, run unstartedSchema) {
+				run.reconciler.Logs = &countedLogs{content: []byte("connection reset by peer\n")}
+				endedWithoutAResult(t, run.api, run.job, run.pod)
+				datedJobEnd(t, run.api, run.job, run.reconciler.now().Add(-frameArrivalWindow))
+			},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -560,9 +570,12 @@ func TestTheLiveEndingsLeaveOutAReportAStartedPodOutdated(t *testing.T) {
 // Lease changes hands during deletion: under the Job its name holds, where the
 // claim's schema owns that Job. The deleted schema's finisher is not given the
 // Job, and listing by the claim's empty UID found nothing, so a Pod that started
-// after the last look left a stale report in the Event. A Job the schema does
-// not own is not shown to be the claim's, so its Pods are not listed and say
-// nothing of the claim's.
+// after the last look left a stale report in the Event. The pending observation
+// names that Job's UID, so the deletion's wait lists the same Pods and holds
+// for one still running past the Apply's horizon. A Job the schema does not own
+// is not shown to be the claim's, so its Pods are not listed, say nothing of
+// the claim's, and the record names no UID: the deletion waits for the horizon
+// alone.
 func TestADeletedSchemaWhoseClaimNeverRecordedItsJobListsThatJobsPods(t *testing.T) {
 	t.Parallel()
 
@@ -596,13 +609,34 @@ func TestADeletedSchemaWhoseClaimNeverRecordedItsJobListsThatJobsPods(t *testing
 			run.reconcileOnce(t)
 
 			want, pods := deletedApplyEventPrefix+continuityLost, int32(1)
+			named := operation.DeepCopy()
+			named.JobUID = run.job.UID
 			if row.disown {
 				want, pods = want+lastReportedBefore+run.said, 0
+				named.JobUID = ""
 			}
 			if event := settledSchemaEvent(t, run.recorder); event != want {
 				t.Errorf("ApplyOutcomeUnknown = %q, want %q", event, want)
 			}
-			deletedSchemaEnding(t, run, operation, continuityLost, pods, &horizon)
+			deletedSchemaEnding(t, run, named, continuityLost, pods, &horizon)
+
+			// Past the horizon the Pod is still running. The wait that lists it
+			// holds; the one that cannot list it lets the schema go.
+			past := horizon.Add(time.Second)
+			run.reconciler.Clock = func() time.Time { return past }
+			run.reconcileOnce(t)
+			err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.schema), &operatorv1alpha1.PtahSchema{})
+			switch gone := apierrors.IsNotFound(err); {
+			case err != nil && !gone:
+				t.Fatal(err)
+			case row.disown && !gone:
+				t.Errorf("the deletion still waits past the horizon with no Job UID recorded: %#v",
+					safetyGetSchema(t, run.api, run.schema).Status.PendingObservation)
+			case !row.disown && gone:
+				t.Error("the deletion went past the horizon while the Pod of the Job its record names still runs")
+			case !row.disown && safetyGetSchema(t, run.api, run.schema).Status.PendingObservation == nil:
+				t.Error("the deletion dropped its pending observation while the Pod of the Job it names still runs")
+			}
 		})
 	}
 }
