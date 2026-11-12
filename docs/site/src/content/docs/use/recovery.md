@@ -322,7 +322,9 @@ that stop even if you wrote the value first. If the store moves on, the resource
 prints another value and the statement waits. If the store comes back, the resource
 stops there again and the next read settles, with no new write. A store that flips
 from the first target to this one and back, A, B, A, B, settles on B, which is what
-the statement said. To take it back, remove the annotation:
+the statement said. A stop that finds the value already written says so, `the
+annotation already holds this value`, since the read after it settles with nothing
+more from you. To take it back, remove the annotation:
 
 ```sh
 kubectl annotate ptahschemas storefront -n application operator.ptah.run/settled-apply-

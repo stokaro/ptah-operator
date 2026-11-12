@@ -89,7 +89,31 @@ const (
 	// applyLogUnread is a run whose result nobody read, so the log may hold
 	// anything or nothing.
 	applyLogUnread
+	// applyLogHoldsReportOnGoneNode and applyLogUnreadOnGoneNode are the two
+	// readings above for a log that was on a node that is gone
+	// (executorLogsOnGoneNodes): it holds the same, and no kubelet is left to
+	// serve it.
+	applyLogHoldsReportOnGoneNode
+	applyLogUnreadOnGoneNode
 )
+
+// onGoneNode is reading for a log that was on a node that is gone. A reading
+// that promises nothing stays as it is.
+func (reading applyLogReading) onGoneNode() applyLogReading {
+	switch reading {
+	case applyLogHoldsReport:
+		return applyLogHoldsReportOnGoneNode
+	case applyLogUnread:
+		return applyLogUnreadOnGoneNode
+	default:
+		return reading
+	}
+}
+
+// nodeGone is a reading for a log that was on a node that is gone.
+func (reading applyLogReading) nodeGone() bool {
+	return reading == applyLogHoldsReportOnGoneNode || reading == applyLogUnreadOnGoneNode
+}
 
 // resultCodeError is a failure read from a result. It keeps the code, because the
 // code is what says whether the runner wrote Ptah's sentence to the Pod log.
@@ -107,7 +131,9 @@ func (e resultCodeError) Error() string { return e.message }
 // no operation container to ask for a log. Nor is there one when no Pod's executor
 // has a log the API server serves (executorLogsLost), because the kubelet lost it
 // or the Pod ended before any executor ran, and that holds for a coded failure as
-// well: a durable result outlives the log the runner also wrote it to.
+// well: a durable result outlives the log the runner also wrote it to. A log that
+// was on a node that is gone (executorLogsOnGoneNodes) holds what it held, and
+// the reading says where it was.
 func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, failure error) applyLogReading {
 	// A target the run could not open has its sentence whole in status.
 	var target *targetFailureError
@@ -129,22 +155,33 @@ func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batch
 	if err != nil || len(pods) == 0 || initBoundaryOf(pods) != "" || executorLogsLost(pods) {
 		return applyLogSaysNothing
 	}
+	if executorLogsOnGoneNodes(pods) {
+		return applyLogUnreadOnGoneNode
+	}
 	return applyLogUnread
 }
 
 // servedLogReading is reading once the Job's Pods have been asked whether the
 // API server serves the executor's log: a reading that promises a log promises
-// nothing when no Pod's executor has one (executorLogsLost). A Job whose Pods
-// are gone, or a list that fails, leaves the reading as the result gave it.
+// nothing when no Pod's executor has one (executorLogsLost), and says the log
+// was on a node that is gone when every log there is was on one
+// (executorLogsOnGoneNodes). A Job whose Pods are gone, or a list that fails,
+// leaves the reading as the result gave it.
 func servedLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, reading applyLogReading) applyLogReading {
 	if reading == applyLogSaysNothing || job == nil {
 		return reading
 	}
 	pods, err := podsOwnedByJob(ctx, reader, job.Namespace, job.Name, job.UID)
-	if err == nil && executorLogsLost(pods) {
+	switch {
+	case err != nil:
+		return reading
+	case executorLogsLost(pods):
 		return applyLogSaysNothing
+	case executorLogsOnGoneNodes(pods):
+		return reading.onGoneNode()
+	default:
+		return reading
 	}
-	return reading
 }
 
 // executorLogUnserved is a Pod whose executor has no log the API server serves.
@@ -204,6 +241,45 @@ func executorLogsLost(pods []*corev1.Pod) bool {
 	return true
 }
 
+// executorLogsOnGoneNodes is a list of Pods whose every executor log was on a
+// node that is gone: each Pod either has no log the API server serves
+// (executorLogUnserved) or carries PodGC's condition (deletedByPodGC), and at
+// least one carries it. The log of a run such a Pod shows was written, but the
+// API server reaches a log through the kubelet of the Pod's node, and it answers
+// a read on a Pod whose Node object is gone with NotFound for the node
+// (classifyResultLogError), so `kubectl logs` gets an error. Only the node's own
+// disk, while it lasts, or a log shipper that read it there, still has it. An
+// empty list is not such a list: Pods that are gone say nothing about the log
+// they had.
+func executorLogsOnGoneNodes(pods []*corev1.Pod) bool {
+	gone := false
+	for _, pod := range pods {
+		switch {
+		case executorLogUnserved(pod):
+		case deletedByPodGC(pod):
+			gone = true
+		default:
+			return false
+		}
+	}
+	return gone
+}
+
+// deletedByPodGC is a Pod PodGC marked Failed because its Node object is gone:
+// it carries the DisruptionTarget condition with podGCDeletionReason. The
+// condition's status is not read: the disruption controller resets a stale
+// DisruptionTarget only on a Pod that has not ended
+// (nonTerminatingPodHasStaleDisruptionCondition), and either way the phase is
+// PodGC's.
+func deletedByPodGC(pod *corev1.Pod) bool {
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.DisruptionTarget && condition.Reason == podGCDeletionReason {
+			return true
+		}
+	}
+	return false
+}
+
 // failedApplyLogPointer says where an Apply's Pod log is and how long it stays. A
 // Job that carries a TTL keeps the log for that time, so the pointer stays true of
 // a Job a previous release harvested, of an Apply no approval names, and of a Job a
@@ -218,11 +294,18 @@ func executorLogsLost(pods []*corev1.Pod) bool {
 // does not say stays, such as one still running whose cleanup a later pass asks
 // for, has no time to promise. The pointer promises only what the reading allows, and is
 // empty when there is nothing to read.
+//
+// A log that was on a node that is gone has no command that reads it, so the
+// pointer names none: it says where the log was and where else it can be read,
+// whatever the Job's TTL, since no TTL keeps a log no kubelet serves.
 func failedApplyLogPointer(job *batchv1.Job, reading applyLogReading, stays bool) string {
 	subject := applyLogSubject(reading)
 	switch {
 	case job == nil || subject == "":
 		return ""
+	case reading.nodeGone():
+		return fmt.Sprintf("%s was in the Pod log of Job %s on a node that is gone, so it can be read only from that node or from a log shipper",
+			subject, job.Name)
 	case job.Spec.TTLSecondsAfterFinished != nil:
 		return fmt.Sprintf("%s is in the Pod log for %s after the Job finishes: kubectl logs -n %s job/%s -c %s",
 			subject, retentionWords(*job.Spec.TTLSecondsAfterFinished), job.Namespace, job.Name, executorContainerName)
@@ -238,9 +321,9 @@ func failedApplyLogPointer(job *batchv1.Job, reading applyLogReading, stays bool
 // when it holds nothing to read.
 func applyLogSubject(reading applyLogReading) string {
 	switch reading {
-	case applyLogHoldsReport:
+	case applyLogHoldsReport, applyLogHoldsReportOnGoneNode:
 		return "What Ptah reported"
-	case applyLogUnread:
+	case applyLogUnread, applyLogUnreadOnGoneNode:
 		return "Anything the run wrote"
 	default:
 		return ""

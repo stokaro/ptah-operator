@@ -6253,6 +6253,336 @@
     }
   },
   {
+    "name": "differs-owner-revoked-postgres/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "grants",
+          "observed": 1
+        },
+        {
+          "desired": 2,
+          "kind": "roles",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:70b73c20937da04071a7769f30fd305150dc8cb4bfce80e4cc5cd8fdd2e0f6f3",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:069cdceded9c2a41efe1ed11b398e255e04ba0070b607d8d51b2aaa8e66f40a4"
+    }
+  },
+  {
+    "name": "differs-owner-revoked-postgres/observe-fixed",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/observe-fixed/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/observe-fixed/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "grants",
+          "observed": 1
+        },
+        {
+          "desired": 2,
+          "kind": "roles",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:e51287f72fa60854b480cd35accb38dcfac42bd0a954fc197557bc32d3f2356c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:069cdceded9c2a41efe1ed11b398e255e04ba0070b607d8d51b2aaa8e66f40a4"
+    }
+  },
+  {
+    "name": "differs-owner-revoked-postgres/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan/2-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:28b88f04a3728e32f52326669da9fd262b065883a1c6f7ffc3aa48215521c685",
+      "planOutcome": "NoChanges",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:069cdceded9c2a41efe1ed11b398e255e04ba0070b607d8d51b2aaa8e66f40a4"
+    }
+  },
+  {
+    "name": "differs-owner-revoked-postgres/plan-fixed",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan-fixed/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan-fixed/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan-fixed/2-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:0736287412d1f886f46e47bc08c3d833f6d59d99d98fb79a7045518357228411",
+      "planOutcome": "NoChanges",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:069cdceded9c2a41efe1ed11b398e255e04ba0070b607d8d51b2aaa8e66f40a4"
+    }
+  },
+  {
+    "name": "differs-owner-revoked-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:f1908895701e3664b35acfd4e8ccdb45548a0930f989345e7f6bf2c397b52c96",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-owner-revoked-postgres/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-owner-revoked-postgres/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:b723f19897573938a54158b67da7581439c3478f1f37cf3a682a5ca2ce74e746",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
     "name": "differs-partition-attach-postgres/apply",
     "operation": "apply",
     "source": "none",

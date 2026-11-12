@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -197,6 +198,72 @@ func TestSchemaWaitReportBoundsConditionMessages(t *testing.T) {
 	}
 	if got := len([]rune(report.Conditions[0].Message)); got != conditionMessageBound {
 		t.Fatalf("the message kept %d characters, want %d", got, conditionMessageBound)
+	}
+}
+
+// The message a wait ends on when its schema entered Failed has to carry the
+// conditions of the document it read, bounded and scanned, and nothing it can
+// not clear. The want is built from the fixture, not from schemaWaitReport.
+func TestFailedSchemaConditionsAreThoseOfTheDocumentThatEndedTheWait(t *testing.T) {
+	t.Parallel()
+	failed := func(messages ...string) *ptahv1alpha1.PtahSchema {
+		schema := &ptahv1alpha1.PtahSchema{
+			ObjectMeta: metav1.ObjectMeta{Name: "e2e-postgresql", Generation: 4},
+			Status:     ptahv1alpha1.PtahSchemaStatus{Phase: ptahv1alpha1.PhaseFailed, ObservedGeneration: 4},
+		}
+		for i, message := range messages {
+			schema.Status.Conditions = append(schema.Status.Conditions, metav1.Condition{
+				Type: []string{"Ready", "Stalled"}[i], Status: []metav1.ConditionStatus{metav1.ConditionFalse, metav1.ConditionTrue}[i],
+				Reason: []string{"SourceUnavailable", "ResolveFailed"}[i], Message: message,
+			})
+		}
+		return schema
+	}
+	safe, err := newCredentialScanner("NEVER_MATCH_FAILED_SCHEMA_CONDITIONS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching, err := newCredentialScanner(diagnosticSentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("printed", func(t *testing.T) {
+		t.Parallel()
+		long := "the source could not be read: " + strings.Repeat("é", 300)
+		schema := failed(long, "Resolve failed on the tag the spec names")
+		got := failedSchemaConditions(safe, schema)
+		const prefix = "its conditions: "
+		encoded, found := strings.CutPrefix(got, prefix)
+		if !found {
+			t.Fatalf("message = %q, want it to start with %q", got, prefix)
+		}
+		var printed []conditionDiagnostic
+		if err := json.Unmarshal([]byte(encoded), &printed); err != nil {
+			t.Fatalf("decode %q: %v", encoded, err)
+		}
+		want := []conditionDiagnostic{
+			{Type: "Ready", Status: metav1.ConditionFalse, Reason: "SourceUnavailable", Message: string([]rune(long)[:conditionMessageBound])},
+			{Type: "Stalled", Status: metav1.ConditionTrue, Reason: "ResolveFailed", Message: "Resolve failed on the tag the spec names"},
+		}
+		if len(printed) != len(schema.Status.Conditions) || !slices.Equal(printed, want) {
+			t.Fatalf("printed %+v\nwant    %+v", printed, want)
+		}
+	})
+	for name, test := range map[string]struct {
+		scanner credentialScanner
+		want    string
+	}{
+		"a match":              {matching, "its conditions are withheld: they carry a protected credential"},
+		"no protected pattern": {credentialScanner{}, "its conditions are withheld: they could not be scanned"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := failedSchemaConditions(test.scanner, failed("ok", "the URL was postgres://user:"+diagnosticSentinel+"@db"))
+			if got != test.want {
+				t.Fatalf("message = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

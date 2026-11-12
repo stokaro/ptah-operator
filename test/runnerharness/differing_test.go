@@ -49,7 +49,23 @@ type differingRow struct {
 	// stored names where a step's document is kept, for the decoder rows that
 	// read it by a path of their own: "<step>/<command>", or "plan/saved plan".
 	stored map[string]string
-	want   differingReading
+	// fix is what a person runs on the database after the first plan, as the
+	// documentation tells them to, on a row whose plan is empty. The row then
+	// reads and plans again, as observe-fixed and plan-fixed, and both have to
+	// find nothing to change.
+	fix []string
+	// held runs against the row's database, as the server's superuser, before
+	// the first read and after the fix. It says what the seed left and what
+	// the fix gave back, so a seed that stopped reaching its state fails the
+	// run rather than reading as converged.
+	held []heldQuery
+	want differingReading
+}
+
+// heldQuery is a query whose one-line answer a row holds before its first read
+// and after its fix.
+type heldQuery struct {
+	name, query, seeded, fixed string
 }
 
 // differingReading is what a row's captures hold, at the pin they answer.
@@ -530,6 +546,33 @@ func authorityRows() []differingRow {
 			seed: []string{"SET ROLE harness_owner_a; CREATE TABLE differs_owned (id integer NOT NULL PRIMARY KEY); GRANT SELECT ON differs_owned TO harness_grantee_a"},
 			want: differingReading{observed: map[string]int32{"tables": 1}},
 		},
+		// What an Apply by Ptah before stokaro/ptah#5508 left: the owner holds
+		// none of its own privileges on its table. v0.23.0 leaves an owner's
+		// privileges out of the comparison, so the read is clean and the plan
+		// empty, and they stay that way once the login grants itself the table
+		// again, which is the way back the 0.2.10 release notes give.
+		{
+			name: "owner-revoked", engine: enginePostgres, declared: "owner-c-postgresql.sql",
+			server: owner("c"), login: "harness_owner_c",
+			seed: []string{"SET ROLE harness_owner_c; CREATE TABLE differs_owned (id integer NOT NULL PRIMARY KEY); " +
+				"GRANT SELECT ON differs_owned TO harness_grantee_c; REVOKE ALL ON differs_owned FROM harness_owner_c"},
+			fix: []string{"SET ROLE harness_owner_c; GRANT ALL ON TABLE differs_owned TO harness_owner_c"},
+			held: []heldQuery{
+				{
+					name:   "the table's ACL",
+					query:  "SELECT relacl::text FROM pg_class WHERE oid = 'differs_owned'::regclass",
+					seeded: "{harness_grantee_c=r/harness_owner_c}",
+					fixed:  "{harness_grantee_c=r/harness_owner_c,harness_owner_c=arwdDxtm/harness_owner_c}",
+				},
+				{
+					name: "what the owner may do with its table",
+					query: "SELECT count(*) FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) AS privilege " +
+						"WHERE has_table_privilege('harness_owner_c', 'differs_owned', privilege)",
+					seeded: "0", fixed: "8",
+				},
+			},
+			want: differingReading{observed: map[string]int32{"tables": 1}},
+		},
 		// On an empty database the plan creates the table and grants it, and the
 		// next read finds nothing left to revoke.
 		{
@@ -620,9 +663,17 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 			}
 		}
 	}
+	row.hold(t, l, "before the first read", func(query heldQuery) string { return query.seeded })
 	run.observe("observe", recordAny, source, keep("observe"))
 	planned := run.plan("plan", nil, recordAny, source, keep("plan"))
 	if planned.plan == nil {
+		if len(row.fix) == 0 {
+			return
+		}
+		l.sql(t, row.engine, database, row.fix...)
+		row.hold(t, l, "after the fix", func(query heldQuery) string { return query.fixed })
+		run.observe("observe-fixed", recordAny, source, keep("observe-fixed"))
+		run.plan("plan-fixed", nil, recordAny, source, keep("plan-fixed"))
 		return
 	}
 	run.publishPlan("plan", planned.plan)
@@ -630,9 +681,50 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 	run.observe("observe-applied", recordAny, source, keep("observe-applied"))
 }
 
+// hold fails the row when one of its held queries answers other than want says.
+func (row differingRow) hold(t *testing.T, l *lab, when string, want func(heldQuery) string) {
+	t.Helper()
+	for _, query := range row.held {
+		if got, expected := l.query(t, row.engine, row.database(), query.query), want(query); got != expected {
+			t.Errorf("%s: %s reads %q %s, want %q", row.family(), query.name, got, when, expected)
+		}
+	}
+}
+
 // check says what the captures miss of the row's reading, or nil.
 func (row differingRow) check(captures runnerharness.Captures) error {
-	return errors.Join(row.checkFirstRead(captures), row.checkPlan(captures), row.checkApply(captures))
+	return errors.Join(row.checkFirstRead(captures), row.checkPlan(captures), row.checkApply(captures), row.checkFix(captures))
+}
+
+// checkFix holds the reads after a row's fix to a database that reads clean and
+// plans nothing, and refuses them on a row that names no fix.
+func (row differingRow) checkFix(captures runnerharness.Captures) error {
+	observe, plan := row.family()+"/observe-fixed", row.family()+"/plan-fixed"
+	if len(row.fix) == 0 {
+		for _, name := range []string{observe, plan} {
+			if _, err := capturedRow(captures, name); err == nil {
+				return fmt.Errorf("%s: a row that names no fix read after one", name)
+			}
+		}
+		return nil
+	}
+	var problems []error
+	child, err := capturedChild(captures, observe, "schema drift")
+	if err != nil {
+		problems = append(problems, err)
+	} else if report, err := dataplane.DecodeDrift(captures.Documents[child.Stdout], child.Exit); err != nil {
+		problems = append(problems, fmt.Errorf("%s: %w", observe, err))
+	} else if report.Drift || len(report.Findings) != 0 {
+		problems = append(problems, fmt.Errorf("%s: the read after the fix says drift=%v with %d findings, want it clean", observe, report.Drift, len(report.Findings)))
+	}
+	record, err := capturedRow(captures, plan)
+	switch {
+	case err != nil:
+		problems = append(problems, err)
+	case frameField(record, "planOutcome") != string(runner.PlanOutcomeNoChanges):
+		problems = append(problems, fmt.Errorf("%s: the plan after the fix is %q, want %s", plan, frameField(record, "planOutcome"), runner.PlanOutcomeNoChanges))
+	}
+	return errors.Join(problems...)
 }
 
 func (row differingRow) checkFirstRead(captures runnerharness.Captures) error {
@@ -1127,6 +1219,32 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 				editDocument(captures, "differs-partition-dump-postgres/observe", "schema drift", func(document map[string]any) {
 					setEntry(document, "inventory", "kind", "indexes", "observed", 3)
 				})
+			},
+		},
+		{
+			name: "a fix the database did not take", row: "differs-owner-revoked-postgres", want: "the read after the fix says drift=true",
+			edit: func(captures *runnerharness.Captures) {
+				useDocument(captures, "differs-precision-postgres/observe", "differs-owner-revoked-postgres/observe-fixed", "schema drift")
+			},
+		},
+		{
+			name: "a plan after the fix that grants the owner back", row: "differs-owner-revoked-postgres", want: "the plan after the fix is",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-owner-revoked-postgres/plan-fixed", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"planOutcome": string(runner.PlanOutcomeChanges)}
+				})
+			},
+		},
+		{
+			name: "a fix that stopped reading", row: "differs-owner-revoked-postgres", want: "no row differs-owner-revoked-postgres/plan-fixed",
+			edit: func(captures *runnerharness.Captures) {
+				captures.Rows = slices.DeleteFunc(captures.Rows, func(row runnerharness.Row) bool { return row.Name == "differs-owner-revoked-postgres/plan-fixed" })
+			},
+		},
+		{
+			name: "a read after a fix the row does not name", row: "differs-owner-existing-postgres", want: "a row that names no fix read after one",
+			edit: func(captures *runnerharness.Captures) {
+				captures.Rows = append(captures.Rows, runnerharness.Row{Name: "differs-owner-existing-postgres/observe-fixed"})
 			},
 		},
 		{
