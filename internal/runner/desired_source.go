@@ -51,6 +51,13 @@ const (
 // the database answered: the command had a connection, and nothing in the
 // sentence separates the two. So it is compared and not copied, and every word
 // that leaves comes from this child, which has no connection to quote.
+//
+// One sentence is copied: a row file refused as outside Ptah's working
+// directory. The check cannot say it, since validate reads no row file, and
+// Ptah's guard writes it from the declaration and the file system alone, so
+// dataplane.RowFileOutsideRoot takes it only whole and in the guard's form. It
+// names the paths inside this container that the declaration led to, and no
+// child runs to explain it.
 func reportSchemaProblem(
 	ctx context.Context,
 	config Config,
@@ -63,6 +70,10 @@ func reportSchemaProblem(
 	file := environmentMap(environment)[envSchemaFile]
 	if file == "" || inputs.ExpectedDatabaseEngine == "" {
 		return false
+	}
+	// The sentence names the row file and not the schema that declares it.
+	if reason, outside := dataplane.RowFileOutsideRoot(failed); outside {
+		return setDesiredSourceProblem(result, CodeDesiredSourceUnreadable, path.Base(file)+": "+reason, redactor, config.Diagnostics)
 	}
 	stdout, exitCode, finished := runDesiredSourceCheck(ctx, config, CommandSpec{
 		Path: config.PtahBinary,

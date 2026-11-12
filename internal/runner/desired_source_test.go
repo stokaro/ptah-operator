@@ -3,11 +3,14 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -570,4 +573,165 @@ func TestAReasonWithNothingReadableKeepsTheCode(t *testing.T) {
 	if result.Error == nil || result.Error.Code != run.unclassified {
 		t.Fatalf("Run() error = %#v, want code %s", result.Error, run.unclassified)
 	}
+}
+
+// boundaryOutput is a document the pinned image printed for a row file outside
+// its working directory, as internal/dataplane/testdata/boundaries holds it.
+func boundaryOutput(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "boundaries", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestARowFileOutsideTheRootIsNamed runs Observe and Plan on what the pinned
+// image printed for a row file named by a path that climbs out of the working
+// directory, one that starts at the root, and one beside the schema, which the
+// source volume puts outside the working directory too. Ptah's sentence is the reason, with
+// the schema that declares the file in front, and no second child runs: validate
+// reads no row file, so it could not say it.
+func TestARowFileOutsideTheRootIsNamed(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		operation, fixture, want string
+	}{
+		{"observe", "drift-row-file.json", `schema.sql: managed data file "../../proc/self/environ" for table public.regions: "/proc/<pid>/environ" is outside allowed root "/work"`},
+		{"plan", "plan-row-file.json", `schema.sql: managed data file "../../proc/self/environ" for table public.regions: "/proc/<pid>/environ" is outside allowed root "/work"`},
+		{"observe", "drift-row-file-rooted.json", `schema.sql: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"`},
+		{"plan", "plan-row-file-rooted.json", `schema.sql: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"`},
+		{"observe", "drift-row-file-beside.json", `schema.sql: managed data file "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is outside allowed root "/work"`},
+		{"plan", "plan-row-file-beside.json", `schema.sql: managed data file "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is outside allowed root "/work"`},
+	} {
+		t.Run(test.operation+"/"+test.fixture, func(t *testing.T) {
+			t.Parallel()
+			run := desiredSourceRuns()[test.operation]
+			result, executor, diagnostics := runDesiredSource(t, run, scriptedResponse{stdout: boundaryOutput(t, test.fixture), exitCode: 2})
+			// The process id is the one the capture's Ptah ran under.
+			got := ""
+			if result.Error != nil {
+				got = processID.ReplaceAllString(result.Error.Message, "/proc/<pid>/")
+			}
+			if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || got != test.want {
+				t.Fatalf("Run() error = %#v, want code %s and %q", result.Error, CodeDesiredSourceUnreadable, test.want)
+			}
+			if result.ChildExitCode != 2 || result.Uncertain || result.MutationStarted {
+				t.Fatalf("Run() = exit %d, uncertain %v, mutation %v", result.ChildExitCode, result.Uncertain, result.MutationStarted)
+			}
+			if !strings.Contains(diagnostics, result.Error.Message) {
+				t.Fatalf("the Pod log does not say why:\n%s", diagnostics)
+			}
+			if len(executor.calls) != 1 {
+				t.Fatalf("ran %d children, want only the command that failed", len(executor.calls))
+			}
+		})
+	}
+}
+
+var processID = regexp.MustCompile(`/proc/\d+/`)
+
+// TestARowFileSentenceIsCarriedOnlyWhole gives Observe and Plan failed documents
+// whose sentence is near the row-file refusal, and holds each to the code it had
+// and to a check that ran: none of it may reach the frame or the Pod log. The
+// near misses are the ways a database's answer reaches a failed sentence, and the
+// other refusals of a row file, which say nothing about the root.
+func TestARowFileSentenceIsCarriedOnlyWhole(t *testing.T) {
+	t.Parallel()
+
+	const outside = `managed data file \"../rows.yaml\" for table public.regions: \"/rows.yaml\" is outside allowed root \"/work\"`
+	documents := map[string]func(message string) string{
+		"observe": func(message string) string {
+			return `{"contract_version":1,"command":"schema drift","error":{"message":"` + message + `"}}`
+		},
+		"plan": func(message string) string {
+			return `{"contract_version":3,"command":"schema plan","outcome":"failed","error":{"message":"` + message + `"}}`
+		},
+	}
+	for name, message := range map[string]string{
+		"a statement after the sentence":     outside + `\nSQL: SELECT 'CHECK-TEXT'`,
+		"another wrapper":                    `error reading database schema: ` + outside,
+		"words after the root":               outside + `: CHECK-TEXT`,
+		"a root that is not quoted":          `managed data file \"../rows.yaml\" for table public.regions: \"/rows.yaml\" is outside allowed root /work`,
+		"a relative root":                    `managed data file \"../rows.yaml\" for table public.regions: \"/rows.yaml\" is outside allowed root \"work\"`,
+		"a resolved path that is not quoted": `managed data file \"../rows.yaml\" for table public.regions: /rows.yaml is outside allowed root \"/work\"`,
+		"a relative resolved path":           `managed data file \"../rows.yaml\" for table public.regions: \"rows.yaml\" is outside allowed root \"/work\"`,
+		"no table":                           `managed data file \"../rows.yaml\" for table : \"/rows.yaml\" is outside allowed root \"/work\"`,
+		"a declared path that is not quoted": `managed data file ../rows.yaml for table public.regions: \"/rows.yaml\" is outside allowed root \"/work\"`,
+		"a file that is not there":           `read managed data file \"/work/rows.yaml\" for table \"regions\": open rows.yaml: no such file or directory`,
+		"a file that does not parse":         `parse managed data file \"/work/rows.yaml\" for table \"regions\": yaml: line 1: CHECK-TEXT`,
+		"the root's words alone":             `\"/rows.yaml\" is outside allowed root \"/work\"`,
+	} {
+		for operation, document := range documents {
+			t.Run(operation+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				run := desiredSourceRuns()[operation]
+				result, executor, diagnostics := runDesiredSource(t, run,
+					scriptedResponse{stdout: document(message), exitCode: 2},
+					scriptedResponse{stdout: desiredSourceOutput(t, "validate-good.txt"), exitCode: 0})
+				if result.Error == nil || result.Error.Code != run.unclassified {
+					t.Fatalf("Run() error = %#v, want code %s", result.Error, run.unclassified)
+				}
+				if len(executor.calls) != 2 {
+					t.Fatalf("ran %d children, want the failed command and its check", len(executor.calls))
+				}
+				for _, word := range []string{"CHECK-TEXT", "rows.yaml", "outside allowed root"} {
+					if strings.Contains(result.Error.Message, word) || strings.Contains(diagnostics, word) {
+						t.Fatalf("the runner repeated %q: %q\n%s", word, result.Error.Message, diagnostics)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestARowFileSentenceIsRedactedAndBounded quotes the database password, which
+// the failed command held, in the declared path, sets a terminal's title in the
+// table's name, and declares a path longer than the frame keeps.
+func TestARowFileSentenceIsRedactedAndBounded(t *testing.T) {
+	t.Parallel()
+
+	run := desiredSourceRuns()["plan"]
+	failed := func(declared, table string) scriptedResponse {
+		message := "managed data file " + strconv.Quote(declared) + " for table " + table + `: "/x" is outside allowed root "/work"`
+		encoded, err := json.Marshal(map[string]any{
+			"contract_version": 3, "command": "schema plan", "outcome": "failed", "error": map[string]string{"message": message},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scriptedResponse{stdout: string(encoded), exitCode: 2}
+	}
+	t.Run("a credential in the declared path", func(t *testing.T) {
+		t.Parallel()
+		result, _, diagnostics := runDesiredSource(t, run, failed("../secret/rows.yaml", "public.regions"))
+		want := `schema.sql: managed data file "../` + RedactionMarker + `/rows.yaml" for table public.regions: "/x" is outside allowed root "/work"`
+		if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || result.Error.Message != want {
+			t.Fatalf("Run() error = %#v, want %q", result.Error, want)
+		}
+		if strings.Contains(diagnostics, "secret") {
+			t.Fatalf("the Pod log carries the password:\n%s", diagnostics)
+		}
+	})
+	t.Run("control bytes in the table's name", func(t *testing.T) {
+		t.Parallel()
+		result, _, diagnostics := runDesiredSource(t, run, failed("../rows.yaml", "public.\x1b]0;pwn\x07regions"))
+		want := `schema.sql: managed data file "../rows.yaml" for table public. ]0;pwn regions: "/x" is outside allowed root "/work"`
+		if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable || result.Error.Message != want {
+			t.Fatalf("Run() error = %#v, want %q", result.Error, want)
+		}
+		if strings.ContainsAny(diagnostics, "\x1b\x07") {
+			t.Fatalf("the Pod log carries control bytes: %q", diagnostics)
+		}
+	})
+	t.Run("a long declared path", func(t *testing.T) {
+		t.Parallel()
+		result, _, _ := runDesiredSource(t, run, failed("../"+strings.Repeat("é", maxDesiredSourceReasonBytes), "public.regions"))
+		if result.Error == nil || result.Error.Code != CodeDesiredSourceUnreadable ||
+			len(result.Error.Message) > maxDesiredSourceReasonBytes || !utf8.ValidString(result.Error.Message) ||
+			strings.Contains(result.Error.Message, "outside allowed root") {
+			t.Fatalf("Run() error = %#v, want at most %d bytes of valid text", result.Error, maxDesiredSourceReasonBytes)
+		}
+	})
 }

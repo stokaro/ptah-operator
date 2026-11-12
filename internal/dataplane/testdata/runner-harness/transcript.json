@@ -1,5 +1,139 @@
 [
   {
+    "name": "boundary-row-file-beside/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing declared rows: managed data file \"regions.yaml\" for table public.regions: \"/source/schema/regions.yaml\" is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/drift-row-file-beside.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"regions.yaml\" for table public.regions: \"/source/schema/regions.yaml\" is outside allowed root \"/work\""
+      },
+      "operation": "observe",
+      "operationId": "sha256:98831a93cc49f6e38412ef1540919bab8f92a7815cff11fb876390145c03284f",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:43735a99730ec0afa521427e2a8f3b60dff6af13bd396c8d8657702fdd1119b9"
+    }
+  },
+  {
+    "name": "boundary-row-file-beside/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: managed data file \"regions.yaml\" for table public.regions: \"/source/schema/regions.yaml\" is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/plan-row-file-beside.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"regions.yaml\" for table public.regions: \"/source/schema/regions.yaml\" is outside allowed root \"/work\""
+      },
+      "operation": "plan",
+      "operationId": "sha256:5baba3b9df53ddf7f0f6850be6e469777b3a2367d77874ede5af13674c2ef72b",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:43735a99730ec0afa521427e2a8f3b60dff6af13bd396c8d8657702fdd1119b9"
+    }
+  },
+  {
+    "name": "boundary-row-file-rooted/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing declared rows: managed data file \"/proc/self/environ\" for table public.regions: a path starting at a root is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/drift-row-file-rooted.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"/proc/self/environ\" for table public.regions: a path starting at a root is outside allowed root \"/work\""
+      },
+      "operation": "observe",
+      "operationId": "sha256:efa5b0d0a6dced12f6bfe9f512394b3c0ff903fbc17190c461df9a7198107c66",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c43b501dc2acbb4fce4d67f3c340ff445a42a6fca68f4f80269357fd2cadb8f6"
+    }
+  },
+  {
+    "name": "boundary-row-file-rooted/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: managed data file \"/proc/self/environ\" for table public.regions: a path starting at a root is outside allowed root \"/work\"\n",
+        "stdout": "boundaries/plan-row-file-rooted.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"/proc/self/environ\" for table public.regions: a path starting at a root is outside allowed root \"/work\""
+      },
+      "operation": "plan",
+      "operationId": "sha256:7b734939012c8f7f767f8bed95bd05fd16e21ef565b0d2cd4fd11c0e35d3dd15",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:c43b501dc2acbb4fce4d67f3c340ff445a42a6fca68f4f80269357fd2cadb8f6"
+    }
+  },
+  {
     "name": "boundary-row-file/observe",
     "operation": "observe",
     "source": "git",
@@ -16,23 +150,14 @@
         "exit": 2,
         "stderr": "error: error comparing declared rows: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/<pid>/environ\" is outside allowed root \"/work\"\n",
         "stdout": "boundaries/drift-row-file.json"
-      },
-      {
-        "command": "schema validate",
-        "args": [
-          "schema",
-          "validate",
-          "--dialect=PostgreSQL"
-        ],
-        "exit": 0
       }
     ],
     "result": {
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "child_exit",
-        "message": "ptah exited with code 2"
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/<pid>/environ\" is outside allowed root \"/work\""
       },
       "operation": "observe",
       "operationId": "sha256:3c7315f7773e3fc968d1a21ba68681733bdcbb27d8a90faf4187b8912340394c",
@@ -59,23 +184,14 @@
         "exit": 2,
         "stderr": "error: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/<pid>/environ\" is outside allowed root \"/work\"\n",
         "stdout": "boundaries/plan-row-file.json"
-      },
-      {
-        "command": "schema validate",
-        "args": [
-          "schema",
-          "validate",
-          "--dialect=PostgreSQL"
-        ],
-        "exit": 0
       }
     ],
     "result": {
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "invalid_plan_output",
-        "message": "plan command did not complete successfully"
+        "code": "desired_source_unreadable",
+        "message": "schema.hcl: managed data file \"../../proc/self/environ\" for table public.regions: \"/proc/<pid>/environ\" is outside allowed root \"/work\""
       },
       "operation": "plan",
       "operationId": "sha256:addd53e35fe8d37c680c4e909b8c624cdec50514f0643c0533e2dd677ea5bba6",
