@@ -2,16 +2,41 @@ Migration:            application/orders
 Phase:                Resolving
 Ready:                False, HistoryDirty: The revision table holds a dirty row
 Blocked:              True, HistoryDirty: Revision 4 is recorded dirty; a person has to decide what the interrupted run did
-Artifact:             oci://registry.example:5000/migrations/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000
-History read:         2026-01-01T00:00:00Z
+Artifact:             oci://e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/migrations/postgresql@sha256:33d6d2db6e9e8871a93f3b2de140cbfcc1e19c53e7e74aa692b0e31f93743c97
+History read:         2026-11-12T17:24:01Z
 Current version:      3
 Applied:              3
 Pending:              1
 Dirty:                true
 
-Last run:             Partial, started 2026-01-01T00:00:00Z, finished 2026-01-01T00:00:00Z
-  Job:                ptah-m-apply-e2e-migrations-postgresql-300c6910991650c8, UID 00000000-0000-0000-0000-000000000000
-  Message:            A migration committed some of its statements and not the rest; retrying the file would run them twice
+Last run:             Partial, started 2026-11-12T17:22:45Z, finished 2026-11-12T17:23:02Z
+  Job:                ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b, UID fefdc744-0c10-4f0d-9384-3f2365e3c19e
+  Operation:          sha256:ebb57d14e23606b70f6778129a495af49468c9c12cdcb32c71e633469493c614
+  Plan:               ptah-mplan-f84af4e9756cd32102e155d6, fingerprint sha256:f84af4e9756cd32102e155d64dcdd674a02b8ffe9f6e937edb550746b48d9e49
+  Authorized:         approval e2e-migrations-postgresql-partial-approval (UID d1f4e72e-7350-4ab2-88d7-c86065ebe839) by kubernetes-admin at 2026-11-12T17:22:45Z
+  Read back:          Blocked at version 3, 2026-11-12T17:24:01Z
+  Stopped at:         version 4, statement 2 of 2, SQLSTATE 42P01
+  Message:            Migration 4 (Partial Backfill) committed 1 of its 2 statements, then failed with SQLSTATE 42P01; retrying the file would run them twice. What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n ptah-test-a-1-36-4-enh920-mig-8a3858119c job/ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b -c ptah
+
+Unresolved run:       Partial, recorded 2026-11-12T17:23:02Z
+  Operation:          sha256:ebb57d14e23606b70f6778129a495af49468c9c12cdcb32c71e633469493c614
+  Job:                ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b, UID fefdc744-0c10-4f0d-9384-3f2365e3c19e
+  Plan:               ptah-mplan-f84af4e9756cd32102e155d6, UID 921ae250-003f-456e-988e-265b1b6d79c5
+  Database:           sha256:772ddaa62ee164daa1739f602f4552524bc0f3b4a35cdb3670f255f81123eaa1 (target identity digest)
+  While this record stands no plan is published and no Apply is dispatched;
+  resolve, verify and the history read go on.
+  The database is the one the run named or, where it named none, the one its
+  plan was computed against. The runner starts nothing against a database
+  other than its plan's, so the run changed this one or none. A reader who
+  inspects another database, such as a replica or a restored copy, finds
+  nothing wrong and settles a record that was telling the truth.
+  Establish what the run did there first. A history read of that database that
+  finds nothing of the artifact left to apply clears the record by itself. If
+  the database is accounted for and still has work pending, settle it with a
+  PtahMigrationRunAcknowledgment naming migration UID details-uid and the
+  operation above.
+  The operations guide has the procedure, under "A migration run nobody
+  accounted for".
 
 No plan is published.
 
@@ -20,50 +45,52 @@ Approvals: none
 Run acknowledgments: none
 
 Conditions:
-  TYPE              STATUS  REASON               SINCE                 MESSAGE
-  Progressing       True    OperationInProgress  2026-01-01T00:00:00Z  Resolve operation is in progress
-  ArtifactVerified  True    PolicySatisfied      2026-01-01T00:00:00Z  The resolved artifact satisfied its verification policy
-  Blocked           True    HistoryDirty         2026-01-01T00:00:00Z  Revision 4 is recorded dirty; a person has to decide what the interrupted run did
-  Ready             False   HistoryDirty         2026-01-01T00:00:00Z  The revision table holds a dirty row
-  ApprovalRequired  False   Satisfied            2026-01-01T00:00:00Z  The plan's approval requirements are satisfied
+  TYPE               STATUS  REASON               SINCE                 MESSAGE
+  Progressing        True    OperationInProgress  2026-11-12T17:24:02Z  Resolve operation is in progress
+  ArtifactVerified   True    PolicySatisfied      2026-11-12T17:23:51Z  The resolved artifact satisfied its verification policy
+  Blocked            True    HistoryDirty         2026-11-12T17:23:02Z  Revision 4 is recorded dirty; a person has to decide what the interrupted run did
+  Ready              False   HistoryDirty         2026-11-12T17:22:41Z  The revision table holds a dirty row
+  DatabaseReachable  True    Observed             2026-11-12T17:16:06Z  The migration history was read
+  ApprovalRequired   False   HistoryDirty         2026-11-12T17:22:45Z  This reading published no plan, so nothing waits for an approval
 
 Details, every status field this plugin's API version knows:
 
-Status:               generation 2; the spec is at generation 2
-  Observed generation: 2
+Status:               generation 4; the spec is at generation 4
+  Observed generation: 4
   Phase: Resolving
+  Next reconciliation time: 2026-11-12T17:24:32Z
 
-Active operation:     Resolve, attempt 1, claimed 2026-01-01T00:00:00Z
-  Its Job ptah-m-resolve-e2e-migrations-postgresql-cd27f210111a471b is
+Active operation:     Resolve, attempt 1, claimed 2026-11-12T17:24:02Z
+  Its Job ptah-m-resolve-e2e-migrations-postgresql-12589d85f775ec61 is
   confirmed: the claim records the Job's UID
-  00000000-0000-0000-0000-000000000000, and a Job of that name with another UID
+  02bd759e-8267-43c7-8c76-5698b3c8b1fc, and a Job of that name with another UID
   is not this one.
   Type: Resolve
-  ID: sha256:0000000000000000000000000000000000000000000000000000000000000000
-  Input fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-  Job name: ptah-m-resolve-e2e-migrations-postgresql-cd27f210111a471b
-  Job UID: 00000000-0000-0000-0000-000000000000
-  Started at: 2026-01-01T00:00:00Z
+  ID: sha256:dd8e3506d4a7f5066dea14a88cd14ff487c989e15b9146b16f11daf4dd15a29b
+  Input fingerprint: sha256:7d6761fe5daeef9074d5c49744ce20eb9e4370aa998474102b886a70a7c84ab6
+  Job name: ptah-m-resolve-e2e-migrations-postgresql-12589d85f775ec61
+  Job UID: 02bd759e-8267-43c7-8c76-5698b3c8b1fc
+  Started at: 2026-11-12T17:24:02Z
   Attempt: 1
-  Execution binding ID: v1-fc38bc8939c0a258fe469f8707978a63
+  Execution binding ID: v1-222bbc3d0d7276c803a4f04f73db8ac4
   Admission snapshot:
     Version: v1
-    Digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
-    Template digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    Digest: sha256:edf2f7a301eff9a4ea8ef29564a8153a2b839fa6319f255fe1f0a96cd5dd82c2
+    Template digest: sha256:7c060db2de1620141d89566083870dfad83b1d86ded0eb30db1147340217de3e
     Service account:
       Object:
         Name: default
-        UID: 00000000-0000-0000-0000-000000000000
-        Resource version: 8115
+        UID: 73733871-f3f8-4d54-8c0e-0b8fc3d4644c
+        Resource version: 1808
       Image pull secrets:
         - Name: e2e-registry-pull
     Limit ranges:
       - Object:
           Name: ptah-operation-defaults
-          UID: 00000000-0000-0000-0000-000000000000
-          Resource version: 8113
+          UID: 17af5e3c-6494-4289-965e-90d5afe135dd
+          Resource version: 1806
         Default requests: cpu=10m, memory=16Mi
-        Default limits: cpu=100m, memory=64Mi
+        Default limits: cpu=100m, memory=128Mi
     Priority class:
       Value: 0
       Preemption policy: PreemptLowerPriority
@@ -73,16 +100,16 @@ Active operation:     Resolve, attempt 1, claimed 2026-01-01T00:00:00Z
     Extended resource toleration enabled: false
     Always pull images enabled: false
 
-Execution binding:    v1-fc38bc8939c0a258fe469f8707978a63
-  Epoch: v1-fc38bc8939c0a258fe469f8707978a63
+Execution binding:    v1-222bbc3d0d7276c803a4f04f73db8ac4
+  Epoch: v1-222bbc3d0d7276c803a4f04f73db8ac4
   Controller state version: 1
-  Ptah version: 939c2fb
-  Executor image: registry.example:5000/ptah-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  Runner protocol version: 6
+  Ptah version: v0.23.0
+  Executor image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-executor@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489
+  Runner protocol version: 1
 
 Artifact:
-  Resolved reference: oci://registry.example:5000/migrations/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  Digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Resolved reference: oci://e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/migrations/postgresql@sha256:33d6d2db6e9e8871a93f3b2de140cbfcc1e19c53e7e74aa692b0e31f93743c97
+  Digest: sha256:33d6d2db6e9e8871a93f3b2de140cbfcc1e19c53e7e74aa692b0e31f93743c97
   Registry auth from:
     Name: e2e-registry-auth
     Mode: Environment
@@ -93,28 +120,100 @@ Artifact:
   Transport:
     Plain HTTP: true
 
-History read:         2026-01-01T00:00:00Z
+History read:         2026-11-12T17:24:01Z
   The database's revision table as the operator last read it, with its newest
   rows. It is the database's record of what ran, apart from the operator's
   journal.
-  Observed at: 2026-01-01T00:00:00Z
-  Contract version: 1
+  Observed at: 2026-11-12T17:24:01Z
+  Contract version: 2
   Current version: 3
   Applied count: 3
   Pending count: 1
-  Fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-  Target identity digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Fingerprint: sha256:6081c551694ad893386cfbb509424322be8bc71374c0398ce03250f0da530eba
+  Target identity digest: sha256:772ddaa62ee164daa1739f602f4552524bc0f3b4a35cdb3670f255f81123eaa1
   Dirty: true
+  Revisions:
+    - Version: 4
+      Description: Partial Backfill
+      State: dirty
+      Applied at: 2026-11-12T17:22:49Z
+      Execution millis: 124
+    - Version: 3
+      Description: Recolor First Widget
+      Checksum: c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41
+      State: applied
+      Applied at: 2026-11-12T17:16:16Z
+      Execution millis: 7
+    - Version: 2
+      Description: Add Widget Color
+      Checksum: 7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc
+      State: applied
+      Applied at: 2026-11-12T17:16:16Z
+      Execution millis: 62
+    - Version: 1
+      Description: Create Widgets
+      Checksum: 2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6
+      State: applied
+      Applied at: 2026-11-12T17:16:16Z
+      Execution millis: 6
 
 Last run:             Partial
   The most recent run. A run nobody has accounted for is the unresolved run, a
   record of its own.
   Outcome: Partial
-  Job name: ptah-m-apply-e2e-migrations-postgresql-300c6910991650c8
-  Job UID: 00000000-0000-0000-0000-000000000000
-  Started at: 2026-01-01T00:00:00Z
-  Finished at: 2026-01-01T00:00:00Z
-  Message: A migration committed some of its statements and not the rest; retrying the file would run them twice
+  Job name: ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b
+  Job UID: fefdc744-0c10-4f0d-9384-3f2365e3c19e
+  Operation ID: sha256:ebb57d14e23606b70f6778129a495af49468c9c12cdcb32c71e633469493c614
+  Plan ref:
+    Name: ptah-mplan-f84af4e9756cd32102e155d6
+    UID: 921ae250-003f-456e-988e-265b1b6d79c5
+  Plan fingerprint: sha256:f84af4e9756cd32102e155d64dcdd674a02b8ffe9f6e937edb550746b48d9e49
+  Authorization:
+    Kind: Approval
+    Approval ref:
+      Name: e2e-migrations-postgresql-partial-approval
+      UID: d1f4e72e-7350-4ab2-88d7-c86065ebe839
+    Approver:
+      Username: kubernetes-admin
+      Groups: kubeadm:cluster-admins, system:authenticated
+    Approved at: 2026-11-12T17:22:45Z
+  Artifact digest: sha256:33d6d2db6e9e8871a93f3b2de140cbfcc1e19c53e7e74aa692b0e31f93743c97
+  Target identity digest: sha256:772ddaa62ee164daa1739f602f4552524bc0f3b4a35cdb3670f255f81123eaa1
+  Execution binding ID: v1-222bbc3d0d7276c803a4f04f73db8ac4
+  Verification:
+    Observed at: 2026-11-12T17:24:01Z
+    History fingerprint: sha256:6081c551694ad893386cfbb509424322be8bc71374c0398ce03250f0da530eba
+    Current version: 3
+    Result: Blocked
+  Started at: 2026-11-12T17:22:45Z
+  Finished at: 2026-11-12T17:23:02Z
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-operator@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+    Controller revision: 1bf45520d047d243613894334d3aceeba7ee61a3
+    Runner image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-runner@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+  Message: Migration 4 (Partial Backfill) committed 1 of its 2 statements, then failed with SQLSTATE 42P01; retrying the file would run them twice. What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n ptah-test-a-1-36-4-enh920-mig-8a3858119c job/ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b -c ptah
+  Failure:
+    Version: 4
+    Statement: 2
+    Statements: 2
+    SQL state: 42P01
+
+Unresolved run:       Partial
+  It holds the migration whatever the last run or the conditions say, until a
+  reading of the database or a person's acknowledgment settles it.
+  Outcome: Partial
+  Operation ID: sha256:ebb57d14e23606b70f6778129a495af49468c9c12cdcb32c71e633469493c614
+  Job name: ptah-m-apply-e2e-migrations-postgresql-86b299c22594a75b
+  Job UID: fefdc744-0c10-4f0d-9384-3f2365e3c19e
+  Plan ref:
+    Name: ptah-mplan-f84af4e9756cd32102e155d6
+    UID: 921ae250-003f-456e-988e-265b1b6d79c5
+  Target identity digest: sha256:772ddaa62ee164daa1739f602f4552524bc0f3b4a35cdb3670f255f81123eaa1
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-operator@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+    Controller revision: 1bf45520d047d243613894334d3aceeba7ee61a3
+    Runner image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-runner@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+  Recorded at: 2026-11-12T17:23:02Z
 
 kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
 kubectl events -n application --for ptahmigration/orders prints its Events.
