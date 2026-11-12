@@ -50,9 +50,9 @@ import (
 // when it is written. The read has to name the target the value names, and the
 // last stop has to have printed that value, so the stop that says what settling
 // does always comes first. A store that leaves the target and comes back stops
-// the resource there again, and the next read takes the statement with no new
-// write. That is what the statement said, and removing the annotation takes it
-// back. A suspended resource starts no reads, so it takes the statement from a
+// the resource there again, that stop says the annotation already holds the
+// value, and the next read takes the statement with no new write. That is what
+// the statement said, and removing the annotation takes it back. A suspended resource starts no reads, so it takes the statement from a
 // read already under way or after it resumes. Every Pod the Apply could still be
 // running has stopped by then, because a claim serving the proof reaches a
 // harvest only past that check. A statement does not stop a Pod.
@@ -89,20 +89,27 @@ const movedTargetEvent = "The URL Secret now holds another target than the plan 
 // movedTargetFailure is the sentence the stop reports, and proofSettlementAsked
 // reads the value back from it. It keeps below the 1024 bytes a condition holds at
 // the longest name and namespace, with the command last so that a person can run
-// it as it stands. It says when the annotation holds another value, since nothing
-// refuses one when it is written, and does not repeat that value, which can be as
-// long as an annotation can.
+// it as it stands. It says what the annotation already holds, since nothing
+// refuses a value when it is written. Another value settles nothing, and the stop
+// does not repeat it, since it can be as long as an annotation can. The value the
+// stop prints is a statement the next read of this target takes with no new
+// write, and under apply: Always the next plan follows, so the stop says so
+// rather than ask for a command already run. A value is one or the other, so the
+// stop says one of them at most.
 func movedTargetFailure(schema *operatorv1alpha1.PtahSchema, targetDigest string) error {
 	value := settledApplyValue(schema.Status.PendingObservation.ApplyOperationID, targetDigest)
-	another := ""
-	if held, written := schema.Annotations[operatorv1alpha1.SettledApplyAnnotation]; written && held != value {
-		another = "the settled-apply annotation holds another value, which settles nothing on this target; "
+	held := ""
+	if written, ok := schema.Annotations[operatorv1alpha1.SettledApplyAnnotation]; ok {
+		held = "the settled-apply annotation holds another value, which settles nothing on this target; "
+		if written == value {
+			held = "the annotation already holds this value, so the next read of this target gives the proof up; "
+		}
 	}
 	return fmt.Errorf("the URL Secret now holds another target than the plan this Apply ran from: another login, host, port, "+
 		"database or URL parameter, so no read can say what the Apply did; %sput the first URL back and the proof finishes, "+
 		"or give the proof up, which reads the database under the new URL and, under apply: Always, applies the next plan "+
 		"with no approval unless it is destructive or changes privileges: kubectl annotate ptahschema %s -n %s %s=%s --overwrite",
-		another, schema.Name, schema.Namespace, operatorv1alpha1.SettledApplyAnnotation, value)
+		held, schema.Name, schema.Namespace, operatorv1alpha1.SettledApplyAnnotation, value)
 }
 
 // blockProofOnMovedTarget records what stops the proof and what ends it. It is a

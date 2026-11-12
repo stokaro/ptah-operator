@@ -207,6 +207,15 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`.
   was blocked. A run that an operator older than 0.2.10 recorded carries no
   verification, so `wait --for applied` still dates its reading by the run's
   end.
+- **The receiver says why it could not verify a runner's token.** A result
+  receiver that could not complete a TokenReview, or read the Pod a token is
+  bound to, answered the runner 503 and logged nothing, so nothing told a
+  receiver denied `tokenreviews` from one the API server answered slowly. The
+  manager now logs a `result-receiver` line for each with the namespace and Pod
+  the request names, and the API server's `code` and `reason`, such as `403`
+  and `Forbidden`, or `deadlineExceeded` where no status came back. It never
+  logs the token or the text of an answer: a review that returns an error says
+  so without its text.
 - **Result cleanup under a full quota.** A quota that refused the `retired` record
   stopped cleanup in a live namespace: the collector asked again every 30 seconds,
   nothing started the retention window, and the operation's records stayed. Once the
@@ -550,6 +559,16 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`.
   the Job where the claim started one before it lost the Lease, since an
   Apply's SQL may still be running then. A report that the claim's Pod cannot
   start stays on `Ready` instead. The wait itself is unchanged.
+- **A stop says when the annotation already settles it.** A statement in the
+  `operator.ptah.run/settled-apply` annotation holds until the proof ends, so a
+  store that flips from the first target to another and back, A, B, A, B, stops
+  on B a second time with the value already written, and the next read gives the
+  proof up with no new write. That stop printed the command as if a person still
+  had to run it. It now says `the annotation already holds this value, so the
+  next read of this target gives the proof up`, and never together with the
+  clause for another value.
+  [A schema whose target moved](../../use/recovery/#a-schema-whose-target-moved)
+  says how to take the statement back.
 
 ## 0.2.10
 

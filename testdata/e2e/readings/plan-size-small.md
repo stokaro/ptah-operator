@@ -1,9 +1,10 @@
-The two small plan documents were generated on 2026-11-06 by the Ptah
-v0.22.0 release image
-`ghcr.io/stokaro/ptah@sha256:e2aefbf1911acde19833721e9ecb314740abe941c3336451fdb7287371ae21f3`
-(commit `0dd9190b6477830272c90fd98b2b57b603166fd1`). It ran
+The two small plan documents were generated on 2026-11-12 by the Ptah
+v0.23.0 release image
+`ghcr.io/stokaro/ptah@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489`
+(commit `f47b2bfa3b696c93730e7d25397987ed0a4a2562`). It ran
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
-PostgreSQL 17.11 and MySQL 8.4.11 databases, and the source is what
+PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
+`support/databases.json` pins for those lines, and the source is what
 `e2e-handcraft-oci plan-size-schema <engine> 32 0` writes
 (`test/e2e/handcraftoci`). These are standalone native CLI fixture
 measurements; they do not supply Kubernetes or production acceptance.
@@ -27,6 +28,9 @@ the 64 bytes the MySQL document gains include the name of the database it read,
 `plan_size`. A longer name is a longer plan, so the cluster scenario gives its five
 databases names of one length (`planSizeDatabase`); a name one byte shorter than
 the first measured a repeated byte at 5 bytes instead of 6, and stopped the row.
+The v0.23.0 image reproduces both documents' statements and byte sizes exactly.
+The MySQL document is byte-identical to the v0.22.0 one; the PostgreSQL one
+differs only in the plan name and the fingerprints.
 
 The SQL source contains 32 `<` bytes in defaults. PostgreSQL uses one TEXT
 column. MySQL distributes the total over 100 VARCHAR(16000) columns in a fixed
@@ -35,9 +39,11 @@ a MySQL TEXT default. All native plans are non-destructive CREATE TABLE
 statements, with no padding or edited plan bytes in the CLI probes.
 
 Adding one `<` byte increases the saved native JSON by six bytes; adding one
-`x` increases it by one. With v0.22.0 the PostgreSQL envelope is 587 bytes and
-the MySQL envelope is 23,181 bytes; with v0.17.0 they were 549 and 23,117, and
-before it 592 and 27,517. Full plans
+`x` increases it by one. With v0.22.0 and v0.23.0 the PostgreSQL envelope is
+587 bytes and the MySQL envelope is 23,181 bytes; with v0.17.0 they were 549 and
+23,117, and before it 592 and 27,517. At v0.23.0 the cluster scenario, which
+calibrates from real plans, passed its exact 8 MiB and 8 MiB + 1 byte rows on
+both engines on Kubernetes 1.35, 1.36 and 1.37 in CI run 43241757619. Full plans
 generated from those envelopes measured exactly 8,388,608 and 8,388,609 bytes
 on both engines, and each 8,388,608-byte plan applied from its saved file on a
 fresh database. With the `f6e562c5` executor, native OCI-layout publication and
