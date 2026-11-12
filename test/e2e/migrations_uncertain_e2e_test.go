@@ -176,15 +176,19 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 	term, err := applyLeaseTerm(original)
 	m.check(err, "read the Lease term of the interrupted %s Apply", m.engine.name)
 	settled := false
+	held := 0
 	for deadline := term.Add(applyLeaseTermSlack); !settled && time.Now().Before(deadline); {
 		current := m.migration(name)
 		pods := &corev1.PodList{}
 		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
 		settled, err = uncertainApplySettled(current.Status, original, pods.Items)
 		m.check(err, "%s violated its interrupted Apply boundary", name)
-		if time.Now().Before(term.Add(-applyLeaseTermMargin)) && !equality.Semantic.DeepEqual(current.Status.ActiveOperation, original) {
-			m.fatalf("%s let go of its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
-				name, time.Until(term).Round(time.Second), term.UTC().Format(time.RFC3339))
+		if time.Now().Before(term.Add(-applyLeaseTermMargin)) {
+			if !equality.Semantic.DeepEqual(current.Status.ActiveOperation, original) {
+				m.fatalf("%s let go of its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
+					name, time.Until(term).Round(time.Second), term.UTC().Format(time.RFC3339))
+			}
+			held++
 		}
 		m.assertNoNewApplyJob([]string{string(original.JobUID)}, "while its interrupted workload was settling", name)
 		if !settled {
@@ -195,6 +199,15 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 		m.fatalf("%s did not stop its owned Pods, retire its original claim and preserve Unknown within %s of its Lease term at %s",
 			name, applyLeaseTermSlack, term.UTC().Format(time.RFC3339))
 	}
+	// A hold nobody looked at proves nothing. If the Job went away within the
+	// margin of the term, every look came after it and the check above never
+	// ran.
+	if held == 0 {
+		m.fatalf("%s was never read holding its interrupted Apply's claim before %s short of its Lease term at %s",
+			name, applyLeaseTermMargin, term.UTC().Format(time.RFC3339))
+	}
+	m.logf("%s held its interrupted Apply's claim through %d looks to %s before the end of its Lease term",
+		name, held, applyLeaseTermMargin)
 	// The run is over and the database keeps what it committed. Both halves
 	// matter: without the first the refusal is about nothing, and without the
 	// second there would be nothing a replay could double.

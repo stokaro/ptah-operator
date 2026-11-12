@@ -7,6 +7,21 @@ import subprocess
 import json
 import unittest
 from result_partial_loss import verify_evidence
+from result_runner_loss_test import FakeLab, StopAtWait, fresh_claim, unknown_reading
+
+
+class PartialLossWaitTests(unittest.TestCase):
+    def test_the_dirty_history_wait_starts_at_the_lease_term(self):
+        from result_partial_loss import run
+        operation = fresh_claim(60)
+        lab = FakeLab(operation, unknown_reading(operation), stop=4)
+        arguments = lab.arguments()
+        arguments.update(sql=lambda statement: 'count\n1', migration_sql='', publish_template={}, initial={})
+        with self.assertRaises(StopAtWait):
+            run(**arguments)
+        expected = operation['leaseDurationSeconds'] - 60 + 120
+        # A fixed 120 seconds from the deletion would end before the hold does.
+        self.assertAlmostEqual(lab.waits[3], expected, delta=5)
 
 
 class PartialLossEvidenceTests(unittest.TestCase):

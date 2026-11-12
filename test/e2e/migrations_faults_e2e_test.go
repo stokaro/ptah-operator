@@ -167,7 +167,7 @@ func (m *migrationRun) deletionDuringApplyProof() {
 	applyJob := &batchv1.Job{}
 	applyJob.Namespace, applyJob.Name = m.in.TestNamespace, job
 	m.deleteAndWait(applyJob, "the "+m.engine.name+" Apply Job")
-	m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
+	warned := m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
 
 	// The resource has to go on its own. A manager whose settling pass asked
 	// for nothing to follow it would sit here holding the finalizer.
@@ -177,6 +177,10 @@ func (m *migrationRun) deletionDuringApplyProof() {
 			if current, err := m.realmLeaseHolder(lease); err != nil || current == holder {
 				m.fatalf("the deleted %s migration went and the realm Lease %s still names %q (read error %v)",
 					m.engine.name, lease, current, err)
+			}
+			if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneDeletionWaits, claim, term); err != nil {
+				m.fatalf("the deleted %s migration went, but %v: Job %s, UID %s, term %s",
+					m.engine.name, err, claim.JobName, claim.JobUID, term.UTC().Format(time.RFC3339))
 			}
 			m.logf("PASS %s held a deleted migration until its Apply could not write", m.engine.kind)
 			// The rows the run committed are still the database's own
@@ -232,10 +236,11 @@ func (m *migrationRun) assertDeletionRetainsItsRunningApply(name, job string) {
 // and Pod are gone to keeping its claim, its finalizer and the realm Lease's
 // holder until the end of the term the claim took the Lease for, and to saying
 // so in an ApplyPodGone Warning that names the Job, its UID and that term. The
-// Warning is dated by its own timestamps, not by the look that found it.
+// Warning is dated by its own timestamps, not by the look that found it. It
+// returns the migration as the look that found the Warning read it.
 func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *ptahv1alpha1.MigrationOperationStatus,
 	term time.Time, lease types.NamespacedName, holder string,
-) {
+) *ptahv1alpha1.PtahMigration {
 	m.t.Helper()
 	until := term.Add(-applyLeaseTermMargin)
 	if !time.Now().Before(until) {
@@ -246,22 +251,31 @@ func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *pta
 	var warnings []corev1.Event
 	var warned *ptahv1alpha1.PtahMigration
 	looks := 0
-	for time.Now().Before(until) {
-		left := time.Until(term).Round(time.Second)
+	for {
+		// Every reading first, then the clock: a look whose readings were
+		// taken past the margin could hold the release that follows the term,
+		// so it counts only if the clock still reads short of the margin.
 		migration := &ptahv1alpha1.PtahMigration{}
-		if err := m.get(name, migration); err != nil {
-			m.fatalf("%s could not be read %s before its Apply's Lease term ended: %v", name, left, err)
+		readErr := m.get(name, migration)
+		current, leaseErr := m.realmLeaseHolder(lease)
+		events := &corev1.EventList{}
+		m.check(m.list(events), "the Events of %s could not be listed", name)
+		now := time.Now()
+		if !now.Before(until) {
+			break
+		}
+		left := term.Sub(now).Round(time.Second)
+		if readErr != nil {
+			m.fatalf("%s could not be read %s before its Apply's Lease term ended: %v", name, left, readErr)
 		}
 		m.scanObject(migration, name+" status")
 		if !deletionRetainsClaim(migration) || migration.Status.ActiveOperation.ID != claim.ID {
 			m.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped: finalizers %q, claim present %t",
 				name, left, migration.Finalizers, migration.Status.ActiveOperation != nil)
 		}
-		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
-			m.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		if leaseErr != nil || current != holder {
+			m.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, leaseErr)
 		}
-		events := &corev1.EventList{}
-		m.check(m.list(events), "the Events of %s could not be listed", name)
 		if found := applyPodGoneWarnings(events.Items, migration, applyPodGoneDeletionWaits, claim.JobName, claim.JobUID, term); len(found) > 0 {
 			warnings, warned = found, migration
 		}
@@ -284,6 +298,26 @@ func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *pta
 	m.logf("ApplyPodGone reading: %s", reading)
 	m.logf("%s kept its claim and the realm Lease through %d looks to %s before the end of its Lease term",
 		name, looks, applyLeaseTermMargin)
+	return warned
+}
+
+// applyPodGoneWarnedOnlyInTerm lists the ApplyPodGone Warnings about the
+// claim's Job again, once the claim has let go, and holds every one to the
+// claim's term (applyPodGoneWarnedInTerm). A hold looks only before the term,
+// so the Warnings it found cannot show one the manager recorded at the term or
+// after it; a listing taken after the release can.
+func (m *migrationRun) applyPodGoneWarnedOnlyInTerm(migration *ptahv1alpha1.PtahMigration, waiter string,
+	claim *ptahv1alpha1.MigrationOperationStatus, term time.Time,
+) error {
+	events := &corev1.EventList{}
+	if err := m.list(events); err != nil {
+		return fmt.Errorf("the Events of %s could not be listed again: %w", migration.Name, err)
+	}
+	warnings := applyPodGoneWarnings(events.Items, migration, waiter, claim.JobName, claim.JobUID, term)
+	if err := applyPodGoneWarnedInTerm(warnings, claim.StartedAt.Time, term); err != nil {
+		return fmt.Errorf("once the claim had let go, %w", err)
+	}
+	return nil
 }
 
 // realmLeaseHolder is the holder a realm Lease names now: empty once released,

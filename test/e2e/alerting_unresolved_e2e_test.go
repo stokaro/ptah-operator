@@ -63,15 +63,15 @@ func (a *alertingRun) unresolvedApply() {
 	}
 }
 
-// PostgreSQL scopes advisory locks to each database, and these families own
-// different databases and alert series. MySQL's server-wide migration lock
-// keeps its cases sequential. Neither lane changes shared manager settings.
+// The two families own different databases and alert series, and on each
+// engine they run side by side. Neither can wait on the other's lock. A
+// PostgreSQL advisory lock is scoped to its database. A MySQL GET_LOCK name is
+// server-wide, but the families take different ones: Ptah's migrator takes
+// ptah_migrate and its schema apply ptah_schema_apply (migration/migrator and
+// internal/atlasschema at the pinned f47b2bfa), and the operator names neither.
+// Every database read either case makes is filtered by its own database.
+// Neither lane changes shared manager settings.
 func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.PtahMigration) {
-	if m.engine.name != "postgresql" {
-		a.unresolvedMigrationCase(m, template)
-		a.unresolvedSchemaCase(m)
-		return
-	}
 	var cases [2]harness.ParallelCase
 	for i, family := range []string{"migration", "schema"} {
 		cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
@@ -86,7 +86,7 @@ func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.Pt
 			}
 		}}
 	}
-	if !harness.ParallelPair(a.t, "independent-postgresql-families", cases) {
+	if !harness.ParallelPair(a.t, "independent-"+m.engine.name+"-families", cases) {
 		a.t.FailNow()
 	}
 }
@@ -287,7 +287,7 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 	// every bound below that waits on it.
 	term, err := applyLeaseTerm(original)
 	a.check(err, "read the interrupted Apply's Lease term")
-	a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
+	warned := a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
 	// A missing Job alone cannot authorize repair. Require retirement of the
 	// original claim, terminal/absent Pods, and no database session of that user.
 	a.check(harness.Wait(a.ctx, "the interrupted executor to become unable to write", time.Until(term)+applyLeaseTermSlack, time.Second, func(context.Context) (bool, string, error) {
@@ -306,6 +306,10 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		body, err := serverSQL(a.ctx, a.cluster, a.in.TestNamespace, m.engine, statement)
 		return err == nil && trimmedSQL(body) == "0", "waiting for every old database session to finish", err
 	}), "establish the runbook repair boundary")
+	if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
+		a.fatalf("%s retired its claim, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
 	if sql("SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state='applied'") != "2" || sql("SELECT count(*) FROM schema_migrations WHERE version=3 AND state='applied'") != "0" || sql("SELECT count(*) FROM e2e_migration_widgets") != "3" {
 		a.fatalf("interruption changed the accounted database effects")
 	}
@@ -393,10 +397,11 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 // Warning that names the Job, its UID and that term. The Warning is dated by its
 // own timestamps, not by the look that found it. Each look also runs check, so
 // the hold is read under the managers, scrape targets and watches the rest of
-// the row is read under.
+// the row is read under. It returns the migration as the look that found the
+// Warning read it.
 func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string, original *ptahv1.MigrationOperationStatus,
 	term time.Time, read func() *ptahv1.PtahMigration, check func(),
-) {
+) *ptahv1.PtahMigration {
 	a.t.Helper()
 	until := term.Add(-applyLeaseTermMargin)
 	if !time.Now().Before(until) {
@@ -414,22 +419,31 @@ func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string,
 	var warnings []corev1.Event
 	var warned *ptahv1.PtahMigration
 	looks := 0
-	for time.Now().Before(until) {
-		left := time.Until(term).Round(time.Second)
+	for {
+		// Every reading first, then the clock: on a starved runner the
+		// readings can land past the manager's first pass at the term, so a
+		// look counts only if the clock still reads short of the margin once
+		// they are all taken.
 		check()
 		v := read()
 		pods := &corev1.PodList{}
 		a.check(m.list(pods), "read the interrupted workload while its claim is held")
+		current, leaseErr := m.realmLeaseHolder(lease)
+		events := &corev1.EventList{}
+		a.check(m.list(events), "list the Events of %s", name)
+		now := time.Now()
+		if !now.Before(until) {
+			break
+		}
+		left := term.Sub(now).Round(time.Second)
 		settled, err := uncertainApplySettled(v.Status, original, pods.Items)
 		a.check(err, "hold the interrupted %s Apply to its claim", m.engine.name)
 		if settled || !equality.Semantic.DeepEqual(v.Status.ActiveOperation, original) {
 			a.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped", name, left)
 		}
-		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
-			a.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		if leaseErr != nil || current != holder {
+			a.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, leaseErr)
 		}
-		events := &corev1.EventList{}
-		a.check(m.list(events), "list the Events of %s", name)
 		if found := applyPodGoneWarnings(events.Items, v, applyPodGoneApplyWaits, original.JobName, original.JobUID, term); len(found) > 0 {
 			warnings, warned = found, v
 		}
@@ -451,6 +465,7 @@ func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string,
 	m.scan(reading, "the ApplyPodGone reading")
 	a.logf("ApplyPodGone reading: %s", reading)
 	a.logf("%s kept its claim and the realm Lease through %d looks to %s before the end of its Lease term", name, looks, applyLeaseTermMargin)
+	return warned
 }
 
 func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, started time.Time, label string) alUnresolvedHistory {

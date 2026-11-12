@@ -55,6 +55,24 @@ def verify_evidence(value):
     return {'sqlExecutions': 1, 'originalResultPublished': False, 'resolution': 'HistoryRead'}
 
 
+def seconds_to_lease_term(operation, now):
+    """Seconds from now until the claim's Lease term ends, and never fewer than none.
+
+    A PtahMigration whose Apply Job and Pod are gone, with nothing to say the
+    executor stopped, keeps the claim and the realm Lease until the end of the
+    term the claim took the Lease for: its startedAt plus leaseDurationSeconds
+    (ApplyPodGone). Nothing reads the history before then, so a wait for what a
+    history read brings starts at the term, not at the deletion.
+    """
+    started, duration = operation.get('startedAt'), operation.get('leaseDurationSeconds')
+    if not isinstance(started, str) or not started:
+        raise ValueError('The Apply claim records no startedAt')
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+        raise ValueError('The Apply claim records no Lease duration')
+    term = dt.datetime.fromisoformat(started.replace('Z', '+00:00')) + dt.timedelta(seconds=duration)
+    return max(0.0, (term - now).total_seconds())
+
+
 def snapshot_migration(m):
     metadata = {key: m['metadata'][key] for key in ['name', 'namespace', 'uid', 'generation']}
     # The API omits annotations after the controller removes its last copy.
@@ -125,7 +143,8 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
                 and c.get('observedGeneration') == m['metadata']['generation']
                 for c in m.get('status', {}).get('conditions', [])) else None
 
-        final = wait(recovered, 240)
+        # The history read that recovers the run waits for the claim's term.
+        final = wait(recovered, seconds_to_lease_term(operation, dt.datetime.now(dt.timezone.utc)) + 240)
         apply_jobs = [j for j in get('jobs')['items'] if j['metadata']['name'].startswith('ptah-m-apply-')]
         result = {'engine': engine, 'commit': environment['E2E_CONTROLLER_REVISION'],
                   'namespace': ns, 'resourceUID': resource['metadata']['uid'],
