@@ -1645,7 +1645,20 @@ kubectl delete pod -n <namespace> <pod> --force --grace-period=0
 A forced delete removes the Pod object and nothing else. On a node that is only
 cut off, the container can still be running and still write to the database, so
 confirm that the machine is gone, for example that its VM was terminated, before
-you run it. The Job then finishes, and the deletion goes on as above.
+you run it. The Job then finishes. Nothing tells a Pod deleted this way from
+one that stopped, so the Apply keeps the database Lease, renewing it, until the
+end of the term it took the Lease for, and the deletion goes on as above from
+there. A `PtahSchema` keeps it until `status.pendingObservation.observeAfter`,
+the end of the Apply's execution window and its Pods' termination grace. A
+`PtahMigration` keeps it until its claim's `startedAt` plus
+`leaseDurationSeconds`, which is `spec.execution.activeDeadlineSeconds` and 2
+minutes, and an `ApplyPodGone` Warning Event names the Job and when the wait
+ends. The same holds where its Job was deleted, or another Job took the Job's
+name. A `PodStuckTerminating` Warning about a migration's Job that still stands
+comes only past that term, so there the Lease goes back once the Job finishes.
+For a Job deleted by hand a Pod is named sooner, and the wait runs out the rest
+of the term. A Job that finished with no Pod counted failed, as one whose Pod
+the API server refused, had no Pod to lose, and the Lease goes back at once.
 
 A read's Pod on such a node is not waited for past its Job's stop bound, in
 either kind. A deleted schema lets go of a Plan or a proof read as above. A live
