@@ -1301,20 +1301,22 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 		return true, nil
 	}
 	var unconfirmed *corev1.Pod
+	var why unconfirmedStop
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			return true, nil
 		}
-		if unconfirmed == nil && podStopUnconfirmed(pod) {
-			unconfirmed = pod
+		if unconfirmed == nil {
+			if stop := podStopUnconfirmed(pod); stop != stopConfirmed {
+				unconfirmed, why = pod, stop
+			}
 		}
 	}
 	if unconfirmed != nil || len(pods) == 0 && migrationApplyPodGone(job) {
 		if until := migrationApplyLeaseTermEnd(operation); r.now().Before(until) {
 			hold := &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
 			if unconfirmed != nil {
-				hold.podName, hold.podPhase = unconfirmed.Name, unconfirmed.Status.Phase
-				hold.executorRunning = executorContainerRunning(unconfirmed)
+				hold.podName, hold.podPhase, hold.stop = unconfirmed.Name, unconfirmed.Status.Phase, why
 			}
 			return true, hold
 		}
@@ -1335,11 +1337,25 @@ type applyPodGoneHold struct {
 	// podName and podPhase are the standing Pod, and empty where none stands.
 	podName  string
 	podPhase corev1.PodPhase
-	// executorRunning is set where that Pod's executor container reads
-	// running, and unset where PodGC wrote the phase over one that never read
-	// terminated.
-	executorRunning bool
+	// stop is why nothing says that Pod's executor stopped.
+	stop unconfirmedStop
 }
+
+// unconfirmedStop is what podStopUnconfirmed finds on a Pod: whether its
+// terminal phase comes with the kubelet's account that the executor stopped,
+// and where it does not, why not.
+type unconfirmedStop int
+
+const (
+	// stopConfirmed is a Pod that has not ended, or one whose executor the
+	// kubelet accounted for.
+	stopConfirmed unconfirmedStop = iota
+	// stopUnconfirmedRunning is a terminal Pod whose executor reads running.
+	stopUnconfirmedRunning
+	// stopUnconfirmedByPodGC is a Pod under PodGC's DisruptionTarget condition
+	// whose executor never read terminated.
+	stopUnconfirmedByPodGC
+)
 
 // podGCDeletionReason is the reason of the DisruptionTarget condition PodGC
 // writes, with the Failed phase, on a Pod whose Node object is gone
@@ -1348,8 +1364,8 @@ type applyPodGoneHold struct {
 const podGCDeletionReason = "DeletionByPodGC"
 
 // podStopUnconfirmed reports whether a Pod that reads Succeeded or Failed has
-// that phase without the kubelet's account that its executor stopped, so it
-// is read as a Pod that is gone (migrationApplyPodGone).
+// that phase without the kubelet's account that its executor stopped, and why,
+// so it is read as a Pod that is gone (migrationApplyPodGone).
 //
 // The kubelet does not publish a terminal phase for a Pod that could still have
 // a running container: mergePodStatus holds the phase back until the pod worker
@@ -1357,13 +1373,19 @@ const podGCDeletionReason = "DeletionByPodGC"
 // an initialized Pod that is not terminated as terminated, reason
 // ContainerStatusUnknown (pkg/kubelet/status, v1.35.8, v1.36.4 and v1.37.0). So
 // a terminal Pod whose executor reads running took its phase from something
-// else. PodGC is what writes it: it patches Failed onto a Pod whose Node object
-// is gone, keeping the container statuses the kubelet last reported, and then
-// force-deletes it. Where that delete fails, the Pod stands Failed while its
-// container can still run on a machine the API server cannot reach. On such a
-// Pod an executor that reads waiting, or nothing, may have started since its
-// kubelet last reported, so under PodGC's condition anything short of
-// terminated is unconfirmed too.
+// else. PodGC writes it (pkg/controller/podgc, markFailedAndDeletePod, the same
+// releases), and only on a Pod that is not already Succeeded or Failed: on a
+// Pod whose Node object is still gone after its 40-second quarantine, with the
+// DisruptionTarget condition (gcOrphaned), and on a terminating Pod on a node
+// that is not ready and is tainted node.kubernetes.io/out-of-service, with no
+// condition (gcTerminating). It keeps the container statuses the kubelet last
+// reported, and then force-deletes the Pod. Where that delete fails, or succeeds
+// while another finalizer holds the Pod, the Pod stands Failed while its
+// container can still run on a machine the API server cannot reach. Under the
+// condition, an executor that reads waiting, or nothing, may have started since
+// its kubelet last reported, so anything short of terminated is unconfirmed too.
+// With no condition only a running executor is: an out-of-service taint is a
+// person's word that the node is shut down.
 //
 // A terminated executor, ContainerStatusUnknown included, is the kubelet's
 // account that the container is not running: it writes ContainerStatusUnknown
@@ -1372,19 +1394,19 @@ const podGCDeletionReason = "DeletionByPodGC"
 // never started, on a Pod it ended itself, is confirmed too: an admission
 // refusal such as OutOfcpu records no container, and a Pod ended before it
 // initialized leaves its executor waiting.
-func podStopUnconfirmed(pod *corev1.Pod) bool {
+func podStopUnconfirmed(pod *corev1.Pod) unconfirmedStop {
 	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-		return false
+		return stopConfirmed
 	}
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.Name != executorContainerName {
 			continue
 		}
 		if status.State.Terminated != nil {
-			return false
+			return stopConfirmed
 		}
 		if status.State.Running != nil {
-			return true
+			return stopUnconfirmedRunning
 		}
 		break
 	}
@@ -1394,21 +1416,10 @@ func podStopUnconfirmed(pod *corev1.Pod) bool {
 	// phase is PodGC's.
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.DisruptionTarget && condition.Reason == podGCDeletionReason {
-			return true
+			return stopUnconfirmedByPodGC
 		}
 	}
-	return false
-}
-
-// executorContainerRunning reports whether a Pod's executor container reads
-// running.
-func executorContainerRunning(pod *corev1.Pod) bool {
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name == executorContainerName {
-			return status.State.Running != nil
-		}
-	}
-	return false
+	return stopConfirmed
 }
 
 // migrationApplyPodGone reports whether a Pod of the claim's Job may be gone

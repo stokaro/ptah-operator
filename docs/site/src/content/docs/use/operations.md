@@ -1660,14 +1660,19 @@ For a Job deleted by hand a Pod is named sooner, and the wait runs out the rest
 of the term. A Job that finished with no Pod counted failed, as one whose Pod
 the API server refused, had no Pod to lose, and the Lease goes back at once.
 
-Deleting a node's Node object has the same effect as a forced delete. PodGC
-marks each of the node's Pods `Failed`, with the condition `DisruptionTarget`
-and reason `DeletionByPodGC`, keeps the container statuses the kubelet last
-reported, and deletes the Pod with no grace period. Where that delete fails, the
-Pod stands `Failed` with its executor still reading running, which the kubelet
-never writes before the container stops. A `PtahMigration` reads such a Pod as
-gone: it keeps the Lease until the end of the term, and the `ApplyPodGone`
-Warning names the Pod. A Pod the kubelet ended, as by an eviction, a deadline or
+Deleting a node's Node object has the same effect as a forced delete. Once the
+Node object has been gone for PodGC's 40-second quarantine, PodGC marks each of
+the node's Pods that is not already terminal `Failed`, with the condition
+`DisruptionTarget` and reason `DeletionByPodGC`, keeps the container statuses the
+kubelet last reported, and deletes the Pod with no grace period. It does the
+same, with no condition, to a terminating Pod on a node that is not ready and is
+tainted `node.kubernetes.io/out-of-service`. Where that delete fails, or another
+finalizer holds the Pod, the Pod stands `Failed` with its executor still reading
+running, which the kubelet never writes before the container stops. A
+`PtahMigration` reads such a Pod as gone, whether or not its Job is still there:
+it keeps the Lease until the end of the term, and the `ApplyPodGone` Warning
+names the Pod. On an out-of-service node only a running executor is held, and a
+waiting one is released. A Pod the kubelet ended, as by an eviction, a deadline or
 an `OutOfcpu` refusal, reads its executor terminated or never started, and the
 Lease goes back at once. A `PtahSchema` already holds such a Pod to
 `observeAfter`: it counts an executor as stopped only where the Pod reads it

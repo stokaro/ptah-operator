@@ -29,9 +29,11 @@ const applyPodGoneEvent = "Warning ApplyPodGone "
 //
 // A Pod that stands Failed with a phase the kubelet did not write holds the
 // same way (podStopUnconfirmed): PodGC marks a Pod Failed when its Node object
-// is gone, keeping the executor status the kubelet last reported, and a Pod
-// whose delete then failed stands. A Pod the kubelet ended itself reads its
-// executor terminated, or never started, and hands the Lease back at once.
+// is gone, or when it is terminating on an out-of-service node, keeping the
+// executor status the kubelet last reported, and a Pod whose delete then failed,
+// or that another finalizer holds, stands. It holds whether or not its Job is
+// still there. A Pod the kubelet ended itself reads its executor terminated, or
+// never started, and hands the Lease back at once.
 //
 // Each row runs through the deletion of the resource, which waits for its
 // Apply (reconcileMigrationDeletion), and through the live harvest, which
@@ -78,6 +80,18 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 				Phase:             corev1.PodFailed,
 				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})},
 			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			// The garbage collector deletes a deleted Job's Pods once it
+			// reaches them, and a Pod another finalizer holds stands past
+			// that. The Job says nothing any more, so the Pod's status is the
+			// whole answer.
+			name: "a Job deleted while its Pod stands with PodGC's status", held: true, standing: standingRunning,
+			end: jobDeletedWhileItsPodStands(corev1.PodStatus{
+				Phase:             corev1.PodFailed,
+				Conditions:        []corev1.PodCondition{podGCCondition(), readyCondition(corev1.ConditionTrue)},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})},
+			}),
 		},
 		{
 			name: "a Pod PodGC marked Failed after its executor stopped",
@@ -426,7 +440,8 @@ func applyPodGoneWant(waiter string, run unstartedMigration, term time.Time, sta
 	case standingRunning:
 		return fmt.Sprintf("%s%s for Job %s, UID %s, until %s: Pod %s of the Job reads Failed while its executor container reads running. "+
 			"The kubelet does not write that phase before the container stops, so nothing says the executor stopped. "+
-			"PodGC writes it on a Pod whose Node object is gone, while the container can still run on a node the API "+
+			"PodGC writes it on a Pod whose Node object is gone, or on a terminating Pod on a node tainted "+
+			"node.kubernetes.io/out-of-service, while the container can still run on a node the API "+
 			"server cannot reach, so the database Lease stays held until the term the Apply took it for ends.",
 			applyPodGoneEvent, waiter, run.job.Name, run.job.UID, until, run.pod.Name)
 	case standingPodGC:
@@ -452,19 +467,44 @@ func podStandsFailed(status corev1.PodStatus, reason string) func(t *testing.T, 
 	return func(t *testing.T, run unstartedMigration) {
 		t.Helper()
 
-		firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
-		stored := &corev1.Pod{}
-		if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), stored); err != nil {
-			t.Fatal(err)
-		}
-		stored.Status = *status.DeepCopy()
-		if err := run.api.Status().Update(context.Background(), stored); err != nil {
-			t.Fatal(err)
-		}
+		podReadsAfterItRan(t, run, status)
 		podGoneJobStatus(t, run, batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{
 			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: reason},
 			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: reason},
 		}})
+	}
+}
+
+// jobDeletedWhileItsPodStands leaves the Apply's Pod standing with status and
+// deletes its Job, as a person deleting the Job leaves it until the garbage
+// collector reaches the Pod, or for as long as another finalizer holds it.
+func jobDeletedWhileItsPodStands(status corev1.PodStatus) func(t *testing.T, run unstartedMigration) {
+	return func(t *testing.T, run unstartedMigration) {
+		t.Helper()
+
+		podReadsAfterItRan(t, run, status)
+		if err := run.api.Delete(context.Background(), run.job.DeepCopy()); err != nil {
+			t.Fatal(err)
+		}
+		if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), &corev1.Pod{}); err != nil {
+			t.Fatalf("the row needs the Pod to stand once its Job is gone: %v", err)
+		}
+	}
+}
+
+// podReadsAfterItRan gives the Apply's Pod status after it first read its
+// executor running, as the kubelet reported it.
+func podReadsAfterItRan(t *testing.T, run unstartedMigration, status corev1.PodStatus) {
+	t.Helper()
+
+	firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+	stored := &corev1.Pod{}
+	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Status = *status.DeepCopy()
+	if err := run.api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -488,7 +528,9 @@ func executorIn(state corev1.ContainerState) corev1.ContainerStatus {
 // podStopUnconfirmed answers about an ended Pod's executor container and no
 // other. A Pod still running has its own wait, and is not unconfirmed. Another
 // container's state says nothing about the executor's, whichever is listed
-// first.
+// first. A running executor is the reason under PodGC's condition too, and a
+// waiting one counts only under it: PodGC marks a terminating Pod on an
+// out-of-service node Failed with no condition.
 func TestPodStopUnconfirmedReadsOnlyTheExecutorOfAnEndedPod(t *testing.T) {
 	t.Parallel()
 
@@ -500,7 +542,7 @@ func TestPodStopUnconfirmedReadsOnlyTheExecutorOfAnEndedPod(t *testing.T) {
 	for _, row := range []struct {
 		name   string
 		status corev1.PodStatus
-		want   bool
+		want   unconfirmedStop
 	}{
 		{
 			name:   "a running Pod",
@@ -511,7 +553,26 @@ func TestPodStopUnconfirmedReadsOnlyTheExecutorOfAnEndedPod(t *testing.T) {
 			status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{
 				other(stopped), executorIn(running),
 			}},
-			want: true,
+			want: stopUnconfirmedRunning,
+		},
+		{
+			name: "a running executor under PodGC's condition",
+			status: corev1.PodStatus{
+				Phase: corev1.PodFailed, Conditions: []corev1.PodCondition{podGCCondition()},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(running)},
+			},
+			want: stopUnconfirmedRunning,
+		},
+		{
+			name:   "an executor that never reported, under PodGC's condition",
+			status: corev1.PodStatus{Phase: corev1.PodFailed, Conditions: []corev1.PodCondition{podGCCondition()}},
+			want:   stopUnconfirmedByPodGC,
+		},
+		{
+			name: "an out-of-service Pod whose executor waits",
+			status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{
+				executorIn(corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}),
+			}},
 		},
 		{
 			name: "an executor stopped behind another container that runs",
@@ -524,7 +585,7 @@ func TestPodStopUnconfirmedReadsOnlyTheExecutorOfAnEndedPod(t *testing.T) {
 			t.Parallel()
 
 			if got := podStopUnconfirmed(&corev1.Pod{Status: row.status}); got != row.want {
-				t.Fatalf("podStopUnconfirmed() = %t, want %t", got, row.want)
+				t.Fatalf("podStopUnconfirmed() = %d, want %d", got, row.want)
 			}
 		})
 	}

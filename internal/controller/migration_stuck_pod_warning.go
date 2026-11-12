@@ -75,15 +75,16 @@ func (r *MigrationReconciler) warnMigrationApplyPodGone(migration *operatorv1alp
 	}
 	until := hold.until.UTC().Format(time.RFC3339)
 	switch {
-	case hold.podName != "" && hold.executorRunning:
+	case hold.stop == stopUnconfirmedRunning:
 		r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
 			"%s for Job %s, UID %s, until %s: Pod %s of the Job reads %s while its executor container reads running. "+
 				"The kubelet does not write that phase before the container stops, so nothing says the executor stopped. "+
-				"PodGC writes it on a Pod whose Node object is gone, while the container can still run on a node the API "+
+				"PodGC writes it on a Pod whose Node object is gone, or on a terminating Pod on a node tainted "+
+				"node.kubernetes.io/out-of-service, while the container can still run on a node the API "+
 				"server cannot reach, so the database Lease stays held until the term the Apply took it for ends.",
 			waiter, hold.jobName, hold.jobUID, until, hold.podName, hold.podPhase)
 		return
-	case hold.podName != "":
+	case hold.stop == stopUnconfirmedByPodGC:
 		r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
 			"%s for Job %s, UID %s, until %s: Pod %s of the Job reads %s, which PodGC wrote when the Pod's Node object "+
 				"went, and its executor container never read terminated, so nothing says the executor stopped. "+
