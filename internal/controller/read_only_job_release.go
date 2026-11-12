@@ -17,8 +17,13 @@ import (
 // Job it cannot confirm, when its resource is suspended, and when an execution
 // binding change retires a migration's claim.
 //
-// The claim owes that Job the cleanup TTL a harvested read-only Job gets, and the
-// claim is what makes the TTL possible. The controller-write webhook admits a
+// This release creates every read-only Job with its cleanup TTL, which collects
+// the Job once it finishes, whoever lets go of it, so such a Job is let go of as
+// it is. The steps below serve a read-only Job 0.2.10 or an earlier release
+// created, which carries no TTL until the manager gives it one.
+//
+// The claim owes such a Job the cleanup TTL a harvested read-only Job gets, and
+// the claim is what makes the TTL possible. The controller-write webhook admits a
 // read-only Job's cleanup TTL only once the Job has finished, Complete or Failed
 // as jobTerminal reads it, and only on the Job the active claim names by UID, held
 // to what the claim fixes without a rebuild. Once the claim lets go, no claim
@@ -30,8 +35,9 @@ type readOnlyJobRelease int
 const (
 	// releaseReadOnlyJobAsItIs lets go of a Job the claim owes nothing it can
 	// give: none stands under the name, the Job already carries a TTL that
-	// collects it, or the Job is not the claim's, because it replaced the Job
-	// the claim recorded or the resource does not own it exactly.
+	// collects it, from its creation or from a harvest, or the Job is not the
+	// claim's, because it replaced the Job the claim recorded or the resource
+	// does not own it exactly.
 	releaseReadOnlyJobAsItIs readOnlyJobRelease = iota
 	// leaveReadOnlyJobUncollected lets go of a Job whose TTL admission would
 	// refuse, and a Warning names it: one an unrecorded claim may not record,
@@ -327,6 +333,22 @@ func readJobOverdueLead(operation, jobName string, stopBy time.Time, then string
 	return fmt.Sprintf("Stopped waiting for %s Job %s: it did not stop by %s, "+
 		"its own deadline plus the grace its Pods are given and 30 seconds. %s",
 		operation, jobName, stopBy.UTC().Format(time.RFC3339), then)
+}
+
+// overdueReadJobFate is what the ReadJobOverdue Warning says becomes of the
+// running Job a read-only claim of operation stops supervising at its stop bound,
+// in either family. The claim runs again under a new Job either way. A Job created
+// with its cleanup TTL, as this release creates every read-only Job, is collected
+// once it finishes. One a release before 0.2.11 created carries none, and since it
+// has not finished, admission refuses it one, so it stays until it is deleted by
+// hand or with its owner.
+func overdueReadJobFate(operation string, job *batchv1.Job) string {
+	if ttl := job.Spec.TTLSecondsAfterFinished; ttl != nil {
+		return fmt.Sprintf("The %s runs again under a new Job, and Job %s is deleted %d seconds after it finishes.",
+			operation, job.Name, *ttl)
+	}
+	return fmt.Sprintf("The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner.",
+		operation, job.Name)
 }
 
 // lostReadJobOverdueLead is the lead of the ReadJobOverdue Warning for a claim

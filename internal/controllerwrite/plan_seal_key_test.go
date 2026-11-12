@@ -12,6 +12,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -204,6 +205,51 @@ func TestPlanJobCreateAdmitsAndRefusesByTheClaimsRecordedSealKeyDigest(t *testin
 			}
 			if !test.allow && !strings.Contains(responseMessage(response), "seal key") {
 				t.Fatalf("refusal = %q, want one naming the seal key", responseMessage(response))
+			}
+		})
+	}
+}
+
+// TestSchemaPlanJobIsCreatedWithItsCleanupTTL holds the schema family to the
+// rule the migration rows hold: the webhook rebuilds a read-only Job with its
+// cleanup TTL, so a Plan Job created without it, or with another, is outside
+// its claim.
+func TestSchemaPlanJobIsCreatedWithItsCleanupTTL(t *testing.T) {
+	t.Parallel()
+
+	builder, _ := twoReplicaBuilders(t)
+	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "tenant-a", Name: "ptah-orders", UID: "service-account-uid", ResourceVersion: "1",
+	}}
+	short, long := jobclaim.CleanupTTLSeconds, jobclaim.FailedApplyRetentionTTLSeconds
+	for _, test := range []struct {
+		name  string
+		ttl   *int32
+		allow bool
+	}{
+		{"its cleanup TTL", &short, true},
+		{"no TTL", nil, false},
+		{"the long TTL", &long, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := realPlanSchemaFixture(t)
+			operation := schema.Status.ActiveOperation
+			operation.PlanSealPublicKeyDigest = fingerprint.DigestBytes([]byte(builder.PlanSealPublicKey.Encode()))
+			live := buildRealPlanJob(t, builder, schema, serviceAccount)
+			if live.Spec.TTLSecondsAfterFinished == nil || *live.Spec.TTLSecondsAfterFinished != short {
+				t.Fatalf("the builder wrote TTL %v on a Plan Job, want %d", live.Spec.TTLSecondsAfterFinished, short)
+			}
+			live.Spec.TTLSecondsAfterFinished = test.ttl
+			operation.JobName = live.Name
+
+			response := handlerFixture(t, builder, schema, serviceAccount).Handle(context.Background(), requestFor(t, admissionv1.Create, live))
+			if response.Allowed != test.allow {
+				t.Fatalf("Handle() allowed = %t (%s), want %t", response.Allowed, responseMessage(response), test.allow)
+			}
+			if !test.allow && !strings.Contains(responseMessage(response), specOutsideClaim) {
+				t.Fatalf("refusal = %q, want one naming %q", responseMessage(response), specOutsideClaim)
 			}
 		})
 	}

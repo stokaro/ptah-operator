@@ -246,6 +246,9 @@ func schemaRunDispatchedBy(
 		if shape.alter != nil {
 			shape.alter(job)
 		}
+		if shape.createdWithoutTTL {
+			job.Spec.TTLSecondsAfterFinished = nil
+		}
 		return job
 	}
 	operation.AdmissionSnapshot = testAdmissionSnapshotOf(build().Spec.Template.DeepCopy())
@@ -360,8 +363,9 @@ func assertSchemaRefused(t *testing.T, run dispatchedSchemaRun, want string) {
 	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.job), left); err != nil {
 		t.Fatalf("read the Job the claim left: %v", err)
 	}
-	if left.UID != run.job.UID || left.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatalf("the Job the claim could not confirm was changed: UID %q, TTL %v", left.UID, left.Spec.TTLSecondsAfterFinished)
+	if left.UID != run.job.UID || ttlText(left.Spec.TTLSecondsAfterFinished) != ttlText(run.job.Spec.TTLSecondsAfterFinished) {
+		t.Fatalf("the Job the claim could not confirm was changed: UID %q, TTL %s, created with %s",
+			left.UID, ttlText(left.Spec.TTLSecondsAfterFinished), ttlText(run.job.Spec.TTLSecondsAfterFinished))
 	}
 }
 

@@ -457,13 +457,15 @@ target.
 `spec.suspend` prevents new Jobs. A Job already applying is still observed to a
 terminal result, because abandoning it would leave the database in a state
 nothing recorded. So is a read that serves a proof, and the proof keeps the
-Lease until it ends. A proof read whose Job this release cannot confirm waits
-for that Job to stop, as it would on a resource that is not suspended, and
-gives it its cleanup TTL before it reads again. Any other read under way is
-dropped, and the status write that drops it stages the release of any Lease it
-holds. The read's Job gets its cleanup TTL first where it has finished; a
-Warning Event names one still running, which no claim can collect once this one
-is gone.
+Lease until it ends. A proof read whose Job this release cannot confirm, and
+which carries no cleanup TTL, waits for that Job to stop, as it would on a
+resource that is not suspended, and gives it its cleanup TTL before it reads
+again. Any other read under way is dropped, and the status write that drops it
+stages the release of any Lease it holds. A read-only Job is created with its
+cleanup TTL, which removes it once it has finished, so the claim writes nothing
+to it. A read-only Job a release before 0.2.11 created carries none: it gets
+its cleanup TTL first where it has finished, and a Warning Event names one
+still running, which no claim can collect once this one is gone.
 
 `leaseContinuityLost` is set before any result can be harvested when the
 persisted epoch no longer owns an uninterrupted lock interval. A result

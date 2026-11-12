@@ -1253,8 +1253,8 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	if job.Spec.PodReplacementPolicy == nil || *job.Spec.PodReplacementPolicy != batchv1.Failed {
 		t.Fatalf("podReplacementPolicy = %v, want Failed", job.Spec.PodReplacementPolicy)
 	}
-	if job.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatal("TTL must remain unset until the controller harvests logs")
+	if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != CleanupTTLSeconds {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want the read-only Job's %d", ttl, CleanupTTLSeconds)
 	}
 	pod := job.Spec.Template.Spec
 	if pod.ActiveDeadlineSeconds == nil || *pod.ActiveDeadlineSeconds != 600 {
