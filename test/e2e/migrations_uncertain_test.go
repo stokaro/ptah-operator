@@ -283,7 +283,7 @@ func TestUncertainApplySettledAfterAHistoryRead(t *testing.T) {
 				"blocked by a modified history":  func(s *ptahv1alpha1.PtahMigrationStatus) { muBlockedFor(s, "HistoryModified") },
 				"history reason under the claim": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation = original.DeepCopy() },
 				"lost unresolved record":         func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun = nil },
-				// The reason a later reading could leave behind.
+				// The reason without the reading that found the revision.
 				"dirty reason over a clean history": func(s *ptahv1alpha1.PtahMigrationStatus) { s.History.Dirty = false },
 				"dirty reason with no history read": func(s *ptahv1alpha1.PtahMigrationStatus) { s.History = nil },
 				"not blocked": func(s *ptahv1alpha1.PtahMigrationStatus) {
