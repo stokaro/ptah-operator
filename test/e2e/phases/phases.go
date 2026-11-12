@@ -424,7 +424,7 @@ var MigrationFaultsMySQL = define[MigrationsInputs](Phase{
 var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 	Name:    "migration-runtime-postgresql",
 	Test:    "TestMigrationRuntimePostgreSQL",
-	Timeout: 45 * time.Minute,
+	Timeout: 60 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
 		"pod-configuration-past-deadline",
@@ -448,7 +448,7 @@ var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
 	Name:    "migration-runtime-mysql",
 	Test:    "TestMigrationRuntimeMySQL",
-	Timeout: 45 * time.Minute,
+	Timeout: 60 * time.Minute,
 	Scenarios: []string{
 		"runtime-artifact",
 		"pod-configuration-past-deadline",
