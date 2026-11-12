@@ -1413,14 +1413,8 @@ func podStopUnconfirmed(pod *corev1.Pod) unconfirmedStop {
 		}
 		break
 	}
-	// The status is not read: the disruption controller resets a stale
-	// DisruptionTarget only on a Pod that has not ended
-	// (nonTerminatingPodHasStaleDisruptionCondition), and either way the
-	// phase is PodGC's.
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.DisruptionTarget && condition.Reason == podGCDeletionReason {
-			return stopUnconfirmedByPodGC
-		}
+	if deletedByPodGC(pod) {
+		return stopUnconfirmedByPodGC
 	}
 	return stopConfirmed
 }
@@ -1626,13 +1620,15 @@ func migrationJobGoesWithResource(migration *operatorv1alpha1.PtahMigration, job
 //
 // A Job already being deleted may have lost its Pod before this pass read it: a
 // foreground deletion deletes the Pods first. Its record says the log was there.
+// A log that was on a node that is gone was never readable through the Job, so
+// its record says where it was, as failedApplyLogPointer does for any Job.
 func migrationApplyLogPointer(
 	migration *operatorv1alpha1.PtahMigration,
 	job *batchv1.Job,
 	reading applyLogReading,
 	stays bool,
 ) string {
-	if !migrationJobGoesWithResource(migration, job) {
+	if reading.nodeGone() || !migrationJobGoesWithResource(migration, job) {
 		return failedApplyLogPointer(job, reading, stays)
 	}
 	switch subject := applyLogSubject(reading); {

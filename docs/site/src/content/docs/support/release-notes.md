@@ -562,6 +562,19 @@ name the resource, and one more line before the closing `kubectl events` line.
   clause for another value.
   [A schema whose target moved](../../use/recovery/#a-schema-whose-target-moved)
   says how to take the statement back.
+- **A log on a node that is gone names no command.** A Pod PodGC marked
+  `Failed` after its node went, over an executor the kubelet last reported
+  running, shows a run, and the record of its Apply still pointed at the log
+  with a `kubectl logs` command. The API server answers that command with
+  NotFound for the node, since no kubelet is left to serve the log. Where the
+  Pod carries PodGC's `DisruptionTarget` condition, reason `DeletionByPodGC`,
+  both families now say instead that the log was on a node that is gone, so it
+  can be read only from that node or from a log shipper. That holds for the
+  `Applying` condition and the `ApplyOutcomeUnknown` and `RetiredApplyLogKept`
+  Events of a `PtahSchema`, and for `status.lastRun.message` and the
+  `MigrationRunUncertain` Event of a `PtahMigration`, whatever the Job's TTL. A
+  script that matches `is in the Pod log` there has to match `was in the Pod
+  log of Job` as well.
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
   the order the operator recorded it and from when it is complete, then every
