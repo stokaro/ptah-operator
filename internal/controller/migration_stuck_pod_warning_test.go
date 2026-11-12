@@ -30,8 +30,13 @@ func TestADeletedMigrationWaitingOnAStuckPodNamesIt(t *testing.T) {
 		// gone deletes the claim's Job, and replace then puts another Job
 		// under its name.
 		gone, replace bool
+		// unrecorded clears the UID the claim recorded, as a create whose
+		// answer was lost after it persisted leaves the claim, so the wait
+		// knows the Job only by the name it reserved.
+		unrecorded bool
 	}{
 		{name: "under the claim's Job"},
+		{name: "under a claim that recorded no Job UID", unrecorded: true},
 		{name: "after the Job was deleted", gone: true},
 		{name: "under a Job that took its name", gone: true, replace: true},
 	} {
@@ -50,6 +55,13 @@ func TestADeletedMigrationWaitingOnAStuckPodNamesIt(t *testing.T) {
 			holder := leaseHolder(migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest))
 			if holder == "" {
 				t.Fatal("the Apply holds no database Lease, so the row cannot show the deletion kept it")
+			}
+			if row.unrecorded {
+				stored := readMigration(t, run.api, run.migration)
+				stored.Status.ActiveOperation.JobUID = ""
+				if err := run.api.Status().Update(ctx, stored); err != nil {
+					t.Fatal(err)
+				}
 			}
 			job, _ := jobPodStuckOnAGoneNode(t, run.api, run.job, run.pod)
 			bound := jobStopBound(job)
@@ -120,6 +132,10 @@ func TestADeletedMigrationWaitingOnAStuckPodNamesIt(t *testing.T) {
 				if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != claim.ID {
 					t.Fatalf("the deletion stopped waiting %s from the bound while the Pod may still run: claim %#v",
 						step.at, waiting.Status.ActiveOperation)
+				}
+				if row.unrecorded && waiting.Status.ActiveOperation.JobUID != "" {
+					t.Fatalf("the claim recorded Job UID %q %s from the bound, so the row no longer measures a claim that recorded none",
+						waiting.Status.ActiveOperation.JobUID, step.at)
 				}
 				lease := migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest)
 				if held := leaseHolder(lease); held != holder {

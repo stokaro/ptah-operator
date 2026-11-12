@@ -15,9 +15,11 @@ import (
 // PtahMigration waits for (dispatchedApplyMayStillWrite), by the Job identity
 // that wait asks about: the one the claim recorded, or the Job under its name
 // where it recorded none. job is the Job the deletion read under the claim's
-// name, or nil where none stands that is the claim's. A Job the claim names
-// that is gone leaves its Pods their own bounds, and its Pods are listed on
-// every pass then, as the wait itself lists them.
+// name, or nil where none stands that is the claim's: dispatchedMigrationApplyJob
+// already refuses a Job whose UID is not the one the claim recorded, so job is
+// never another Job. A Job the claim names that is gone leaves its Pods their
+// own bounds, and its Pods are listed on every pass then, as the wait itself
+// lists them.
 func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -27,9 +29,6 @@ func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 	jobName, jobUID := operation.JobName, operation.JobUID
 	if jobUID == "" && job != nil {
 		jobName, jobUID = job.Name, job.UID
-	}
-	if job != nil && job.UID != jobUID {
-		job = nil
 	}
 	now := r.now()
 	if job != nil && jobStopOverdue(job, now) == nil {
