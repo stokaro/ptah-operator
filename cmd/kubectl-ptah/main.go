@@ -52,7 +52,7 @@ const (
 	// running, or a source another writer changed after it was read; or
 	// settle met a schema that has not stopped on a proof whose target moved,
 	// a stop that prints no value it reads, or a value that no longer matches
-	// the resource.
+	// the resource or is not the one --expect names.
 	exitNotDone = 4
 	// exitRefused covers a write the API server refused with a 4xx, in its
 	// own words: RBAC, admission, the schema, a name already taken, a
@@ -591,15 +591,19 @@ removing the annotation before then takes it back. settle sends nothing when
 the annotation already holds the value. It changes nothing on a schema that
 has not stopped there, on a stop that prints no value it reads, or on a value
 that names another Apply than the proof owed, or that another read replaced
-after settle read it.
+after settle read it. Without --expect it settles the stop it reads when it
+runs, whichever target that names; --expect binds it to the value you read.
 
+  --expect <value>         the value the stop printed when you read it, after
+                           settled-apply= in its command; settle writes that
+                           value or nothing
   --wait                   wait until the operator has taken the statement
                            and given the proof up; a proof a read of the
                            first target ends instead stops the wait
   --wait-timeout <dur>     how long --wait waits (default 5m)
   -o, --output <format>    text (the default), or yaml or json
 
-  kubectl ptah settle schema/storefront -n application --wait
+  kubectl ptah settle schema/storefront -n application --expect "$VALUE" --wait
 
 wait reads a schema or a migration until it reaches a target. Apart from a plan
 already waiting for an approval, it counts nothing that was already true when
@@ -652,7 +656,8 @@ admit an approval now, the fingerprint is not the current plan's, you
 declined, the resource was deleted and created again, set-source met a source
 that is not an OCI artifact, an Apply running, or a source changed after it
 was read, or settle met a schema that has not stopped on a moved target, a
-stop that prints no value, or a value that no longer matches), 5
+stop that prints no value, or a value that no longer matches or is not the
+one --expect names), 5
 refused by RBAC or the API server, 6 sent with no answer: the change may have
 been stored, 7 the wait timed out, 8 the resource will not reach the target.
 `)

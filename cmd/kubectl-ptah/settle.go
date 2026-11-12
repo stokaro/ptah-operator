@@ -19,9 +19,17 @@ func settleCommand(ctx context.Context, arguments []string, stdout, stderr io.Wr
 	flags := newCommandFlags("settle", stderr)
 	timeout := flags.Duration("timeout", apiTimeout, "how long to wait for the API server")
 	waiting := addWaitFlags(flags, "the operator has taken the statement and given the proof up")
+	expect := flags.String("expect", "", "the value the stop printed when you read it: settle writes that value or nothing")
 	ref, code, done := flags.parse(arguments, stderr)
 	if done {
 		return code
+	}
+	if *expect != "" {
+		if _, err := operate.ParseSettleValue(*expect); err != nil {
+			fmt.Fprintf(stderr, "kubectl-ptah: --expect: %v. Give the value after %s= in the command the stop prints.\n",
+				err, operatorv1alpha1.SettledApplyAnnotation)
+			return exitUsage
+		}
 	}
 	if ref.Family != operate.FamilySchema {
 		fmt.Fprintf(stderr, "kubectl-ptah: settle takes a PtahSchema, as schema/NAME. A PtahMigration owes no proof that "+
@@ -37,7 +45,7 @@ func settleCommand(ctx context.Context, arguments []string, stdout, stderr io.Wr
 		return exitFailed
 	}
 	changeCtx, cancel := context.WithTimeout(ctx, *timeout)
-	result, err := operate.Settle(changeCtx, cluster, ref)
+	result, err := operate.Settle(changeCtx, cluster, ref, operate.SettleOptions{Expect: *expect})
 	cancel()
 	if err != nil {
 		return settleFailed(stderr, ref, err)
@@ -63,6 +71,7 @@ func settleFailed(stderr io.Writer, ref operate.Ref, err error) int {
 		notStopped *operate.NotStoppedError
 		noValue    *operate.NoSettleValueError
 		stale      *operate.StaleSettleValueError
+		unexpected *operate.UnexpectedSettleValueError
 	)
 	switch {
 	case errors.As(err, &notStopped):
@@ -74,6 +83,11 @@ func settleFailed(stderr io.Writer, ref operate.Ref, err error) int {
 	case errors.As(err, &noValue):
 		fmt.Fprintf(stderr, "kubectl-ptah: %s. Nothing was changed.\nThe operator takes no value but the one its stop "+
 			"prints, so settle writes no other. %s shows the message.\n", statusview.Clean(noValue.Error()), viewCommand(ref))
+		return exitNotDone
+	case errors.As(err, &unexpected):
+		fmt.Fprintf(stderr, "kubectl-ptah: %s. Nothing was changed.\nThe stop names another target than the one you read "+
+			"about: a read named another target since. %s shows the stop as it stands; check what the URL Secret holds "+
+			"before you settle that one.\n", statusview.Clean(unexpected.Error()), viewCommand(ref))
 		return exitNotDone
 	case errors.As(err, &stale):
 		fmt.Fprintf(stderr, "kubectl-ptah: %s. Nothing was changed.\nRun settle again to read the stop as it stands "+
@@ -106,13 +120,13 @@ func writeSettleReport(out io.Writer, result operate.SettleResult, waiting bool)
 	field("Observed", "phase "+orNone(statusview.Clean(result.Phase)))
 
 	text.WriteString(applyAccount(result) + "\n")
-	given := "the proof, the plan " + orNone(statusview.Clean(result.Plan))
+	fmt.Fprintf(&text, "Taking the statement gives up the proof, the plan %s and the database lock in one status write",
+		orNone(statusview.Clean(result.Plan)))
 	if result.Approval != "" {
-		given += " and the approval " + statusview.Clean(result.Approval) + " it consumed, which goes Stale,"
+		fmt.Fprintf(&text, "; the approval %s it consumed goes Stale", statusview.Clean(result.Approval))
 	}
-	fmt.Fprintf(&text, "Taking the statement gives up %s and the database lock, in one status write. The journal records "+
-		"the proof Verified, Unknown, status.applied records no Apply, and the operator reads the database again under "+
-		"the URL the Secret holds and plans from what it finds.\n", given)
+	text.WriteString(". The journal records the proof Verified, Unknown, status.applied records no Apply, and the operator " +
+		"reads the database again under the URL the Secret holds and plans from what it finds.\n")
 	text.WriteString(applyPolicyLine(ref, result.Apply) + "\n")
 	switch {
 	case result.Suspended:

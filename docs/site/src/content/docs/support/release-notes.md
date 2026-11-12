@@ -135,8 +135,10 @@ leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
   writes the same annotation, and nothing else. It prints how the journal
   records the Apply's end and what the operator gives up when it takes the
   statement, and changes nothing, with exit status 4, on a schema that has not
-  stopped there or a value that no longer matches it. `--wait` waits until the
-  operator has taken the statement.
+  stopped there or a value that no longer matches it. `--expect` names the
+  value you read, so a stop that moved to another target since is refused
+  rather than settled. `--wait` waits until the operator has taken the
+  statement.
   [Settle from the command line](../../use/recovery/#settle) has the details.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's

@@ -87,8 +87,8 @@ func TestSettleWritesTheValueItsStopPrintsAndSaysWhatItGivesUp(t *testing.T) {
 		"Target:   the read named "+movedTo+"; the plan was made for "+planTarget,
 		"Observed: phase Blocked",
 		"It Succeeded, as the journal records: it reported its statements done there",
-		"Taking the statement gives up the proof, the plan ptah-plan-aaa and the approval approve-aaa it consumed, "+
-			"which goes Stale, and the database lock, in one status write.",
+		"Taking the statement gives up the proof, the plan ptah-plan-aaa and the database lock in one status write; "+
+			"the approval approve-aaa it consumed goes Stale.",
 		"The journal records the proof Verified, Unknown, status.applied records no Apply",
 		"Under spec.policy.apply Always the operator applies that plan without a person, unless it is destructive",
 		"The operator takes it at the next read of that target, up to spec.execution.failureRetryInterval (45s) after the last one.",
@@ -146,7 +146,7 @@ func TestSettleSaysHowTheApplyEnded(t *testing.T) {
 				schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
 				schema.Status.Plan.Approval = nil
 			},
-			says: []string{"Taking the statement gives up the proof, the plan ptah-plan-aaa and the database lock",
+			says: []string{"Taking the statement gives up the proof, the plan ptah-plan-aaa and the database lock in one status write. ",
 				"Under spec.policy.apply OnApproval that plan waits for an approval: kubectl ptah approve schema/storefront -n demo reviews it."},
 		},
 	} {
@@ -286,6 +286,47 @@ func TestSettleRefusesWhatTheOperatorWouldNotTake(t *testing.T) {
 	}
 }
 
+// --expect binds the statement to the stop the person read: a read of another
+// target since then prints another value, and settle writes nothing over it.
+func TestSettleWritesOnlyTheValueItWasToldToExpect(t *testing.T) {
+	t.Run("the stop still prints it", func(t *testing.T) {
+		api := newCluster(t, stoppedOnMove(movedTo))
+
+		code, stdout, stderr := runCommand(t, api, "settle", "schema/storefront", "--expect", settleValueOn(movedTo))
+
+		if value, _ := settledAnnotation(t, api); code != exitOK || value != settleValueOn(movedTo) {
+			t.Fatalf("settle --expect = %d, annotation %q, stdout %q, stderr %q", code, value, stdout, stderr)
+		}
+	})
+	t.Run("the stop moved to another target", func(t *testing.T) {
+		api := newCluster(t, stoppedOnMove(movedAgain))
+
+		code, stdout, stderr := runCommand(t, api, "settle", "schema/storefront", "--expect", settleValueOn(movedTo))
+
+		if code != exitNotDone || stdout != "" || api.patchCount() != 0 {
+			t.Fatalf("settle --expect on a moved stop = %d after %d patches, stdout %q, stderr %q",
+				code, api.patchCount(), stdout, stderr)
+		}
+		requireSays(t, "settle's stderr", stderr,
+			"prints "+settleValueOn(movedAgain)+", not "+settleValueOn(movedTo)+", the value expected. Nothing was changed.",
+			"check what the URL Secret holds before you settle that one.")
+		if value, held := settledAnnotation(t, api); held {
+			t.Fatalf("a refused settlement left the annotation holding %q", value)
+		}
+	})
+	t.Run("a value that names no target", func(t *testing.T) {
+		api := newCluster(t, stoppedOnMove(movedTo))
+
+		code, stdout, stderr := runCommand(t, api, "settle", "schema/storefront", "--expect", settledApply)
+
+		if code != exitUsage || stdout != "" || api.patchCount() != 0 {
+			t.Fatalf("settle --expect with the Apply's ID alone = %d after %d patches, stdout %q, stderr %q",
+				code, api.patchCount(), stdout, stderr)
+		}
+		requireSays(t, "settle's stderr", stderr, "--expect:", "Give the value after "+operatorv1alpha1.SettledApplyAnnotation+"=")
+	})
+}
+
 func TestSettleTakesOnlyASchema(t *testing.T) {
 	api := newCluster(t, resting("migration"))
 
@@ -403,7 +444,8 @@ func TestSettleWaitsForTheOperatorToTakeTheStatement(t *testing.T) {
 			t.Fatalf("settle --wait with no read = %d, stdout %q, stderr %q", code, stdout, stderr)
 		}
 		requireSays(t, "the timeout", stderr, "did not reach settled within 1m0s.", "Phase:       Blocked",
-			"Waiting for: the next read of target "+movedTo+", which takes the statement (spec.execution.failureRetryInterval is 45s)")
+			"Waiting for: the next read of target "+movedTo+", which takes the statement (spec.execution.failureRetryInterval is 45s), "+
+				"unless the URL Secret holds target "+planTarget+" again, the one the plan was made for")
 	})
 }
 

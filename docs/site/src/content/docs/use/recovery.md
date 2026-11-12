@@ -389,21 +389,27 @@ came from, and a run nobody accounted for is settled by a
 
 ### Settle from the command line {#settle}
 
-`kubectl ptah settle` writes the statement with the value the stop prints:
+`kubectl ptah settle` writes the statement with the value the stop prints.
+Give it the value you read, the part after `settled-apply=` in the printed
+command, so that it settles that stop and no other:
 
 ```sh
-kubectl ptah settle schema/storefront -n application --wait
+kubectl ptah settle schema/storefront -n application --expect "$VALUE" --wait
 ```
+
+Without `--expect` it settles the stop it reads when it runs. If the URL Secret
+moved again after you read the message, that stop names a target you have not
+looked at, and under `apply: Always` the next plan applies there.
 
 It reads the value from the message `ReconciliationFailed` ends with, as the
 operator wrote it, and works out nothing itself. It sets the
 `operator.ptah.run/settled-apply` annotation to that value, the change the
 printed `kubectl annotate` command makes, and nothing else. The report says how
 `status.journal` records the end of the Apply, `Succeeded` or `Unknown`, and
-what the operator gives up when it takes the statement: the proof, the plan,
-the approval the Apply consumed, which goes `Stale`, and the database lock. It
-says what the apply policy lets the next plan do, when the operator takes the
-statement, and how to take it back. When the annotation already holds the
+what the operator gives up when it takes the statement: the proof, the plan
+and the database lock in one status write, while the approval the Apply
+consumed goes `Stale`. It says what the apply policy lets the next plan do,
+when the operator takes the statement, and how to take it back. When the annotation already holds the
 value, it sends nothing.
 
 settle changes nothing, and exits 4, for:
@@ -416,6 +422,11 @@ settle changes nothing, and exits 4, for:
   short.
 - A value that names another Apply than the one whose proof is owed, or the
   target the plan was made for.
+- A value other than the one `--expect` names: a read of another target
+  stopped the resource since you read it. Read the message again, and check
+  what the URL Secret holds before you settle that target. A value that is not
+  an operation ID and a target digest joined by a slash is a usage error, exit
+  status 2.
 - A value that a read of another target replaced between settle's read and its
   patch. The patch carries the `resourceVersion` of that read, so the API
   server refuses it when anything wrote in between. settle reads again,
@@ -431,9 +442,11 @@ it stops the wait with exit status 8: a read of the first target recorded
 execution binding recorded `Superseded`. So does an annotation removed or
 changed while the proof is still owed. A wait that times out exits 7
 and says what the statement still waits for: the next read of the target, a
-resume, or a stop that prints the value again. `-o yaml` or `-o json` prints
-the resource the API server answered with, or with `--wait` the one the wait
-ended on.
+resume, or a stop that prints the value again. Which target the URL Secret
+holds is not in the resource's status, so the wait cannot tell that a read of
+the first target is coming; it says that such a read finishes the proof
+instead. `-o yaml` or `-o json` prints the resource the API server answered
+with, or with `--wait` the one the wait ended on.
 
 settle takes a `PtahSchema` only; a `PtahMigration` is a usage error, exit
 status 2. It needs `get` and `patch` on `ptahschemas`, the same `patch` the

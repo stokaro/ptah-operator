@@ -195,7 +195,7 @@ func TestSettleWritesTheValueTheStopPrints(t *testing.T) {
 			t.Parallel()
 			api := newSettleClient(t, stoppedSchema(movedTarget, row.annotations))
 
-			result, err := operate.Settle(context.Background(), api, schemaRef())
+			result, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 			if err != nil {
 				t.Fatal(err)
@@ -226,7 +226,7 @@ func TestSettleWritesTheValueTheStopPrints(t *testing.T) {
 				t.Fatalf("Settle changed more than the annotation: %#v", schema)
 			}
 
-			again, err := operate.Settle(context.Background(), api, schemaRef())
+			again, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 			if err != nil || again.Changed || !again.Held || api.patchCount() != 1 {
 				t.Fatalf("Settle again = %#v, %v after %d patches; want nothing sent", again, err, api.patchCount())
 			}
@@ -301,7 +301,7 @@ func TestSettleRefusesWhatTheControllerWouldNotTake(t *testing.T) {
 			row.change(schema)
 			api := newSettleClient(t, schema)
 
-			_, err := operate.Settle(context.Background(), api, schemaRef())
+			_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 			if !row.refuse(err) || !strings.Contains(err.Error(), row.says) {
 				t.Fatalf("Settle = %v, want a refusal that says %q", err, row.says)
@@ -318,8 +318,66 @@ func TestSettleRefusesWhatTheControllerWouldNotTake(t *testing.T) {
 	t.Run("a migration", func(t *testing.T) {
 		t.Parallel()
 		api := newSettleClient(t)
-		if _, err := operate.Settle(context.Background(), api, refOf(operate.FamilyMigration)); err == nil || api.patchCount() != 0 {
+		if _, err := operate.Settle(context.Background(), api, refOf(operate.FamilyMigration), operate.SettleOptions{}); err == nil || api.patchCount() != 0 {
 			t.Fatalf("Settle on a migration = %v after %d patches", err, api.patchCount())
+		}
+	})
+}
+
+// An expected value binds the statement to the stop the person read. The stop
+// the command reads has to print it, on every read Settle makes.
+func TestSettleWritesOnlyTheValueExpected(t *testing.T) {
+	t.Parallel()
+	t.Run("the stop prints it", func(t *testing.T) {
+		t.Parallel()
+		api := newSettleClient(t, stoppedSchema(movedTarget, nil))
+
+		result, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{Expect: settleValue(movedTarget)})
+
+		if err != nil || !result.Changed || api.stored(t).Annotations[operatorv1alpha1.SettledApplyAnnotation] != settleValue(movedTarget) {
+			t.Fatalf("Settle = %#v, %v; want the expected value written", result, err)
+		}
+	})
+	for _, row := range []struct {
+		name   string
+		stored *operatorv1alpha1.PtahSchema
+		before func(context.Context, client.Client)
+		sent   int
+	}{
+		{name: "the stop prints another target", stored: stoppedSchema(thirdTarget, nil)},
+		{name: "the stop prints another target and the annotation already holds it",
+			stored: stoppedSchema(thirdTarget, map[string]string{operatorv1alpha1.SettledApplyAnnotation: settleValue(thirdTarget)})},
+		{name: "a read moved the stop after Settle read it", stored: stoppedSchema(movedTarget, nil), sent: 1},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			api := newSettleClient(t, row.stored)
+			if row.sent > 0 {
+				api.before = rewriteStatus(t, func(status *operatorv1alpha1.PtahSchemaStatus) {
+					status.Conditions[0].Message = stopMessage(thirdTarget)
+				})
+			}
+			held := row.stored.Annotations[operatorv1alpha1.SettledApplyAnnotation]
+
+			_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{Expect: settleValue(movedTarget)})
+
+			var unexpected *operate.UnexpectedSettleValueError
+			if !errors.As(err, &unexpected) || unexpected.Printed != settleValue(thirdTarget) || unexpected.Expected != settleValue(movedTarget) {
+				t.Fatalf("Settle = %v, want the value of target c refused against the one expected", err)
+			}
+			if got := api.stored(t).Annotations[operatorv1alpha1.SettledApplyAnnotation]; got != held || api.patchCount() != row.sent {
+				t.Fatalf("Settle left %q after %d patches, want %q after %d", got, api.patchCount(), held, row.sent)
+			}
+		})
+	}
+	t.Run("a value that names no target", func(t *testing.T) {
+		t.Parallel()
+		api := newSettleClient(t, stoppedSchema(movedTarget, nil))
+
+		_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{Expect: applyID})
+
+		if err == nil || api.patchCount() != 0 {
+			t.Fatalf("Settle with the Apply's ID alone expected = %v after %d patches", err, api.patchCount())
 		}
 	})
 }
@@ -350,7 +408,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 		api := newSettleClient(t, stoppedSchema(movedTarget, nil))
 		api.before = rewriteStatus(t, func(status *operatorv1alpha1.PtahSchemaStatus) { status.ObservedGeneration++ })
 
-		result, err := operate.Settle(context.Background(), api, schemaRef())
+		result, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if err != nil || !result.Changed || api.patchCount() != 2 {
 			t.Fatalf("Settle = %#v, %v after %d patches; want it written on the second", result, err, api.patchCount())
@@ -366,7 +424,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 			status.Conditions[0].Message = stopMessage(thirdTarget)
 		})
 
-		_, err := operate.Settle(context.Background(), api, schemaRef())
+		_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if !stale(err) || !strings.Contains(err.Error(), "a read named another target since") {
 			t.Fatalf("Settle = %v, want the moved stop refused", err)
@@ -383,7 +441,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 		api := newSettleClient(t, stoppedSchema(movedTarget, nil))
 		api.every = rewriteStatus(t, func(status *operatorv1alpha1.PtahSchemaStatus) { status.ObservedGeneration++ })
 
-		_, err := operate.Settle(context.Background(), api, schemaRef())
+		_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if !apierrors.IsConflict(err) || operate.Classify(err) != operate.Refused || api.patchCount() != 3 {
 			t.Fatalf("Settle = %v (%s) after %d patches; want the third conflict refused", err, operate.Classify(err), api.patchCount())
@@ -397,7 +455,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 		api := newSettleClient(t, stoppedSchema(movedTarget, nil))
 		api.before = rewriteStatus(t, func(status *operatorv1alpha1.PtahSchemaStatus) { status.PendingObservation = nil })
 
-		_, err := operate.Settle(context.Background(), api, schemaRef())
+		_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if !notStopped(err) || operate.Classify(err) != operate.Refused {
 			t.Fatalf("Settle = %v (%s), want it refused as not stopped", err, operate.Classify(err))
@@ -418,7 +476,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 			}
 		}
 
-		result, err := operate.Settle(context.Background(), api, schemaRef())
+		result, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if err != nil || result.Changed || !result.Held || api.patchCount() != 1 {
 			t.Fatalf("Settle = %#v, %v after %d patches; want the value found there", result, err, api.patchCount())
@@ -440,7 +498,7 @@ func TestSettleDecidesAgainAfterAConflict(t *testing.T) {
 			}
 		}
 
-		_, err := operate.Settle(context.Background(), api, schemaRef())
+		_, err := operate.Settle(context.Background(), api, schemaRef(), operate.SettleOptions{})
 
 		if !errors.Is(err, operate.ErrReplaced) || operate.Classify(err) != operate.Replaced {
 			t.Fatalf("Settle = %v, want the replaced resource refused", err)
@@ -551,6 +609,21 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		})
 	}
 
+	t.Run("a settled Ready with no journal entry", func(t *testing.T) {
+		t.Parallel()
+		// The status write that settles records the entry; Ready alone is not
+		// that write.
+		gone := settled(written)
+		gone.Status.Journal.Entries = gone.Status.Journal.Entries[:len(gone.Status.Journal.Entries)-1]
+
+		_, err, _ := waitSettled(t, written, gone)
+
+		var stop *operate.StopError
+		if !errors.As(err, &stop) || stop.Reason != operate.StopProofEnded || !strings.Contains(stop.Message, "records no reading") {
+			t.Fatalf("Wait = %v, want a proof gone with no entry stopped", err)
+		}
+	})
+
 	t.Run("an entry the baseline already held", func(t *testing.T) {
 		t.Parallel()
 		// An earlier Apply of the same plan settled long ago: its entry is no news.
@@ -583,10 +656,14 @@ func TestAWaitForASettlementSaysWhatItWaitsFor(t *testing.T) {
 		document *operatorv1alpha1.PtahSchema
 		says     string
 	}{
-		{"the stop that prints it", written, "the next read of target " + movedTarget + ", which takes the statement (spec.execution.failureRetryInterval is 45s)"},
+		{"the stop that prints it", written, "the next read of target " + movedTarget + ", which takes the statement " +
+			"(spec.execution.failureRetryInterval is 45s), unless the URL Secret holds target " + planTarget +
+			" again, the one the plan was made for: a read of it finishes the proof instead"},
 		{"suspended", suspended, "resume: a suspended resource starts no read"},
 		{"stopped on another target", elsewhere, "a stop on target " + movedTarget + " again"},
-		{"failing on the first target", failing, "a read that names target " + movedTarget + " and stops there again"},
+		{"a read that stopped nowhere", failing, "a read that names target " + movedTarget + " and stops there: the last read " +
+			"did not stop on a moved target. It failed and named no target, or it read target " + planTarget +
+			", the one the plan was made for, where the proof finishes without the statement"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()

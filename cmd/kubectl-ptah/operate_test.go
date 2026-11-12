@@ -1022,6 +1022,7 @@ func TestOperateUsage(t *testing.T) {
 		{"settle", "migration/storefront"},
 		{"settle", "schema/storefront", "--for", "in-sync"},
 		{"settle", "schema/storefront", "--wait", "--wait-timeout", "0s"},
+		{"settle", "schema/storefront", "--expect", "sha256:abc"},
 	} {
 		t.Run(strings.Join(arguments, " "), func(t *testing.T) {
 			t.Parallel()

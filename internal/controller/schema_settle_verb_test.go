@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
@@ -65,7 +66,8 @@ func TestTheSettleVerbReadsTheValueTheStopPrints(t *testing.T) {
 
 // What the verb writes is what the printed command writes, so the controller
 // takes it the same way: at the next read of the target, and over a value that
-// settled nothing. The verb sends nothing while the annotation holds it.
+// settled nothing. The verb sends nothing while the annotation holds it, and
+// settle --wait ends on the document the reconciler wrote.
 func TestTheSettleVerbsStatementSettlesTheProof(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
@@ -83,7 +85,7 @@ func TestTheSettleVerbsStatementSettlesTheProof(t *testing.T) {
 			}
 			ref := operate.Ref{Family: operate.FamilySchema, Namespace: blocked.Namespace, Name: blocked.Name}
 
-			result, err := operate.Settle(context.Background(), api, ref)
+			result, err := operate.Settle(context.Background(), api, ref, operate.SettleOptions{})
 
 			if err != nil || !result.Changed || result.Printed.Value != movedValue() {
 				t.Fatalf("Settle = %#v, %v; want the printed value written", result, err)
@@ -91,11 +93,19 @@ func TestTheSettleVerbsStatementSettlesTheProof(t *testing.T) {
 			if held := storedSchemaOf(t, api, blocked).Annotations[operatorv1alpha1.SettledApplyAnnotation]; held != movedValue() {
 				t.Fatalf("the annotation holds %q, want %q", held, movedValue())
 			}
-			again, err := operate.Settle(context.Background(), api, ref)
+			again, err := operate.Settle(context.Background(), api, ref, operate.SettleOptions{})
 			if err != nil || again.Changed {
 				t.Fatalf("Settle again = %#v, %v; want nothing sent", again, err)
 			}
 			assertSettled(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil))
+
+			waited, err := operate.Wait(context.Background(), api, ref, operate.WaitOptions{
+				Target: operate.TargetSettled, Timeout: 10 * time.Second, Interval: 10 * time.Millisecond,
+				Since: result.Object, Settlement: result.Printed.Value,
+			})
+			if err != nil || waited.Target != operate.TargetSettled || waited.Reads != 1 {
+				t.Fatalf("a wait from the settle's answer = %+v, %v; want it settled at the first read", waited, err)
+			}
 		})
 	}
 }
@@ -109,7 +119,7 @@ func TestTheSettleVerbRefusesWhatTheControllerWouldNotTake(t *testing.T) {
 		schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
 		reconciler.Logs = staticLogs{content: movedTargetFrame(t, schema, testDigest, failure)}
 		reconcileSchema(t, reconciler, api, schema)
-		_, err := operate.Settle(context.Background(), api, operate.Ref{Family: operate.FamilySchema, Namespace: schema.Namespace, Name: schema.Name})
+		_, err := operate.Settle(context.Background(), api, operate.Ref{Family: operate.FamilySchema, Namespace: schema.Namespace, Name: schema.Name}, operate.SettleOptions{})
 		var notStopped *operate.NotStoppedError
 		if !errors.As(err, &notStopped) {
 			t.Fatalf("Settle = %v, want it refused as not stopped", err)

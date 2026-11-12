@@ -65,6 +65,10 @@ func PrintedSettleValue(message, name, namespace string) (SettleValue, error) {
 	return splitSettleValue(strings.TrimPrefix(fields[6], key))
 }
 
+// ParseSettleValue reads a settled-apply value a person gives, as a stop
+// prints it: the Apply's operation ID, a slash, and the digest of a target.
+func ParseSettleValue(value string) (SettleValue, error) { return splitSettleValue(value) }
+
 // splitSettleValue reads what a settled-apply value names: the Apply's
 // operation ID, a slash, and the digest of a target.
 func splitSettleValue(value string) (SettleValue, error) {
@@ -169,6 +173,33 @@ func (e *StaleSettleValueError) Error() string {
 // Unwrap is the refusal, so Classify reads the change as refused.
 func (e *StaleSettleValueError) Unwrap() error { return e.sent }
 
+// UnexpectedSettleValueError is a stop that prints another value than the one
+// the person expected, as when the URL Secret moved again after they read the
+// stop. Settle sends nothing: the statement is about one target, and the
+// person read about another.
+type UnexpectedSettleValueError struct {
+	Ref      Ref
+	Printed  string
+	Expected string
+	sent     error
+}
+
+func (e *UnexpectedSettleValueError) Error() string {
+	return fmt.Sprintf("the stop of %s prints %s, not %s, the value expected", e.Ref, e.Printed, e.Expected)
+}
+
+// Unwrap is the refusal, so Classify reads the change as refused.
+func (e *UnexpectedSettleValueError) Unwrap() error { return e.sent }
+
+// SettleOptions narrows a settlement.
+type SettleOptions struct {
+	// Expect is the value the person read from the stop. When it is set, Settle
+	// writes that value or nothing: a stop that prints another one is refused
+	// with *UnexpectedSettleValueError. Without it, Settle settles the stop it
+	// reads, whichever target that stop names.
+	Expect string
+}
+
 // stopped reads a schema's stop: the proof it owes and the value its condition
 // prints, or the reason it has none.
 func stopped(ref Ref, schema *operatorv1alpha1.PtahSchema) (SettleValue, error) {
@@ -212,18 +243,27 @@ func stopped(ref Ref, schema *operatorv1alpha1.PtahSchema) (SettleValue, error) 
 // It refuses a resource that has not stopped on a proof whose target moved
 // (*NotStoppedError), a stop that prints no value it can read
 // (*NoSettleValueError), and a printed value that names another Apply than the
-// one whose proof is owed (*StaleSettleValueError). It sends nothing when the
-// annotation already holds the value.
+// one whose proof is owed (*StaleSettleValueError), and, with
+// options.Expect, a printed value other than the one expected
+// (*UnexpectedSettleValueError). It sends nothing when the annotation already
+// holds the value.
 //
 // The patch tests metadata.uid and carries the resourceVersion of the read, as
 // SetSource's does, since the value is decided from status: a read that named
 // another target in between prints another value. A conflict is read again,
 // and a stop that prints another value than the first read is refused rather
-// than written: the person asked to settle the stop this command read. Anything
-// else is decided again from the fresh read, three times at most.
-func Settle(ctx context.Context, c client.Client, ref Ref) (SettleResult, error) {
+// than written, since the report describes the stop this command read. That
+// binds the statement to this command's own read, not to whatever the person
+// inspected before running it; options.Expect is what binds it to that.
+// Anything else is decided again from the fresh read, three times at most.
+func Settle(ctx context.Context, c client.Client, ref Ref, options SettleOptions) (SettleResult, error) {
 	if ref.Family != FamilySchema {
 		return SettleResult{}, fmt.Errorf("%s owes no proof that a statement settles: only a PtahSchema does", ref)
+	}
+	if options.Expect != "" {
+		if _, err := splitSettleValue(options.Expect); err != nil {
+			return SettleResult{}, fmt.Errorf("the value expected: %w", err)
+		}
 	}
 	const attempts = 3
 	var (
@@ -245,6 +285,9 @@ func Settle(ctx context.Context, c client.Client, ref Ref) (SettleResult, error)
 		printed, err := stopped(ref, schema)
 		if err != nil {
 			return SettleResult{}, withRefusal(err, lastErr)
+		}
+		if options.Expect != "" && printed.Value != options.Expect {
+			return SettleResult{}, &UnexpectedSettleValueError{Ref: ref, Printed: printed.Value, Expected: options.Expect, sent: lastErr}
 		}
 		switch {
 		case first == nil:
@@ -383,17 +426,24 @@ func (w *waiter) checkSettled(s snapshot) verdict {
 		return waitingFor("resume: a suspended resource starts no read, and the statement waits for one that names target %s",
 			value.TargetDigest)
 	}
+	// Which target the URL Secret holds is not in status, and a read of the
+	// plan's own target, once the first URL is back, finishes the proof
+	// without the statement. Every answer below says so rather than promise
+	// that the next read takes it.
+	first := pending.Plan.TargetIdentityDigest
 	failed := meta.FindStatusCondition(s.conditions, operatorv1alpha1.ConditionReconciliationFailed)
 	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonTargetIdentityChanged) {
-		return waitingFor("a read that names target %s and stops there again (the last read did not stop on a moved target)",
-			value.TargetDigest)
+		return waitingFor("a read that names target %s and stops there: the last read did not stop on a moved target. It "+
+			"failed and named no target, or it read target %s, the one the plan was made for, where the proof finishes "+
+			"without the statement", value.TargetDigest, orNone(first))
 	}
 	if printed, err := PrintedSettleValue(failed.Message, schema.Name, schema.Namespace); err != nil || printed.Value != value.Value {
 		return waitingFor("a stop on target %s again: the last read named another target, and the statement waits for a "+
 			"stop that prints it", value.TargetDigest)
 	}
-	return waitingFor("the next read of target %s, which takes the statement (spec.execution.failureRetryInterval is %s)",
-		value.TargetDigest, schema.Spec.Execution.FailureRetryInterval.Duration)
+	return waitingFor("the next read of target %s, which takes the statement (spec.execution.failureRetryInterval is %s), "+
+		"unless the URL Secret holds target %s again, the one the plan was made for: a read of it finishes the proof "+
+		"instead", value.TargetDigest, schema.Spec.Execution.FailureRetryInterval.Duration, orNone(first))
 }
 
 // proofEnded decides a document whose proof of the Apply is no longer owed, by
@@ -402,10 +452,8 @@ func (w *waiter) proofEnded(s snapshot, schema *operatorv1alpha1.PtahSchema) ver
 	plan := w.baseline.proofPlan.name
 	ended := newVerified(w.baseline.journal, s.journal, plan)
 	if ended == nil {
-		ready := meta.FindStatusCondition(s.conditions, operatorv1alpha1.ConditionReady)
-		if ready != nil && ready.Reason == string(operatorv1alpha1.ReasonProofSettled) {
-			return verdict{done: true}
-		}
+		// The status write that ends a proof records it in the journal, so a
+		// proof gone with no new entry is not one this wait can call settled.
 		return w.stop(s, StopProofEnded, fmt.Sprintf("the proof of Apply %s is no longer owed, and the journal records no "+
 			"reading of plan %s that ended it", w.settlement.ApplyOperationID, orNone(plan)))
 	}
