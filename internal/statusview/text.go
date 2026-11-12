@@ -88,3 +88,23 @@ func invisible(character rune) bool {
 		unicode.Is(unicode.Bidi_Control, character) ||
 		unicode.Is(unicode.Cf, character)
 }
+
+// WriteWrapped writes one paragraph in lines of at most width columns, each
+// after indent. A word longer than a line, such as a digest, takes a line of
+// its own.
+func WriteWrapped(text *strings.Builder, indent string, width int, paragraph string) {
+	line := indent
+	for _, word := range strings.Fields(paragraph) {
+		if line != indent && len(line)+1+len(word) > width {
+			text.WriteString(line + "\n")
+			line = indent
+		}
+		if line != indent {
+			line += " "
+		}
+		line += word
+	}
+	if line != indent {
+		text.WriteString(line + "\n")
+	}
+}

@@ -184,13 +184,14 @@ condition below, at any stage.
 You can read the history at any stage, and reading it changes nothing:
 
 ```sh
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.journal}' | jq
+kubectl ptah history migration/orders -n application
 kubectl -n application get ptahmigration orders -o jsonpath='{.status.history.revisions}' | jq
 kubectl events -n application --for ptahmigration/orders
 ```
 
-The journal dates the run as a whole. How long each migration took comes from
-the revision table, where the table records it.
+`history` prints the operator's journal, which dates the run as a whole, with
+the approval and any acknowledgment that name the migration. How long each
+migration took comes from the revision table, where the table records it.
 [The lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
 says how far back the journal, the Events and the finished Jobs reach.
 

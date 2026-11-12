@@ -127,7 +127,25 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
 for a read tried again after a failure, the failure's reason, which
 `ReconciliationFailed` still carries. After a rollback, an earlier manager
 leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
+A script that reads the text of `kubectl ptah schema` or `migration`, rather
+than `-o json`, finds the `kubectl ptah history` command where it found a
+`kubectl get` of the namespace, when more than five approvals or acknowledgments
+name the resource, and one more line before the closing `kubectl events` line.
 
+- **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
+  `migration/NAME` prints the lifecycle journal the resource's status keeps, in
+  the order the operator recorded it and from when it is complete, then every
+  approval and run acknowledgment that names the resource by name and UID,
+  oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
+  with more than five decisions sent the reader to a list of the whole
+  namespace. Each entry shows its plan, decision, Job and outcome, folded
+  failures show their count and the last time, and each plan and decision an
+  entry names is marked as still stored or not. An entry an earlier release
+  wrote without the UIDs that would join it says so, and a status with no
+  journal reads differently from an empty one. `-o json` carries every field of
+  every entry. It needs `get` on the resource; listing plans and decisions is
+  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
+  has the rest.
 - **`kubectl ptah settle` gives up a proof whose target moved.** A schema whose
   URL Secret names another target than the plan its Apply ran from stops with a
   `kubectl annotate` command in its message, and the value had to be copied out
@@ -230,7 +248,10 @@ leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
   the request names, and the API server's `code` and `reason`, such as `403`
   and `Forbidden`, or `deadlineExceeded` where no status came back. It never
   logs the token or the text of an answer: a review that returns an error says
-  so without its text.
+  so without its text. An authority check that reached no verdict after the
+  runner authenticated, with either Pod tokens or client certificates, answered
+  503 silently as well, and now logs `result authorization reached no verdict`
+  the same way, or that it is waiting for the Job's adoption or the Pod's pin.
 - **Result cleanup under a full quota.** A quota that refused the `retired` record
   stopped cleanup in a live namespace: the collector asked again every 30 seconds,
   nothing started the retention window, and the operation's records stayed. Once the

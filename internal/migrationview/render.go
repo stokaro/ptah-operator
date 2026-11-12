@@ -89,13 +89,13 @@ func renderText(out io.Writer, view View) error {
 	renderUnresolvedRun(&text, view.UID, readingGate(view), view.UnresolvedRun, view.LastRun)
 	renderResolvedRun(&text, view.ResolvedRun)
 	renderPlan(&text, view.Plan, statusview.Find(view.Conditions, operatorv1alpha1.ConditionMigrationApprovalRequired))
-	if statusview.WriteListHeading(&text, "Approvals", "ptahmigrationapprovals", view.Namespace,
+	if statusview.WriteListHeading(&text, "Approvals", "ptahmigrationapprovals", historyCommand(view),
 		view.Approvals, view.ApprovalsUnreadable) {
 		for _, approval := range view.Approvals.Items {
 			statusview.WriteApproval(&text, approval, "no condition written")
 		}
 	}
-	if statusview.WriteListHeading(&text, "Run acknowledgments", "ptahmigrationrunacknowledgments", view.Namespace,
+	if statusview.WriteListHeading(&text, "Run acknowledgments", "ptahmigrationrunacknowledgments", historyCommand(view),
 		view.Acknowledgments, view.AcknowledgmentsUnreadable) {
 		for _, acknowledgment := range view.Acknowledgments.Items {
 			renderAcknowledgment(&text, acknowledgment)
@@ -105,9 +105,16 @@ func renderText(out io.Writer, view View) error {
 		text.WriteString("\nConditions:\n")
 		statusview.WriteTable(&text, "  ", view.Conditions, view.Generation)
 	}
-	fmt.Fprintf(&text, "\nkubectl events -n %s --for ptahmigration/%s prints its Events.\n", view.Namespace, view.Migration)
+	fmt.Fprintf(&text, "\n%s prints its lifecycle history and every decision that names it.\n", historyCommand(view))
+	fmt.Fprintf(&text, "kubectl events -n %s --for ptahmigration/%s prints its Events.\n", view.Namespace, view.Migration)
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// historyCommand is the command that prints what this migration retained of
+// its past, in its namespace.
+func historyCommand(view View) string {
+	return fmt.Sprintf("kubectl ptah history migration/%s -n %s", view.Migration, view.Namespace)
 }
 
 // subField writes the indented "name: value" lines of one block, with the
@@ -235,7 +242,7 @@ func renderUnresolvedRun(text *strings.Builder, migrationUID, gate string, run *
 	}
 	guidance = append(guidance, `The operations guide has the procedure, under "A migration run nobody accounted for".`)
 	for _, paragraph := range guidance {
-		writeWrapped(text, "  ", 78, paragraph)
+		statusview.WriteWrapped(text, "  ", 78, paragraph)
 	}
 }
 
@@ -271,26 +278,6 @@ func readingGate(view View) string {
 		return "Blocked is True, " + blocked.Reason
 	default:
 		return ""
-	}
-}
-
-// writeWrapped writes one paragraph in lines of at most width columns, each
-// after indent. A word longer than a line, such as a digest, takes a line of
-// its own.
-func writeWrapped(text *strings.Builder, indent string, width int, paragraph string) {
-	line := indent
-	for _, word := range strings.Fields(paragraph) {
-		if line != indent && len(line)+1+len(word) > width {
-			text.WriteString(line + "\n")
-			line = indent
-		}
-		if line != indent {
-			line += " "
-		}
-		line += word
-	}
-	if line != indent {
-		text.WriteString(line + "\n")
 	}
 }
 

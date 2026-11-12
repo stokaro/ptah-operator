@@ -123,6 +123,7 @@ func TestRenderTextKeepsTheLastRunApartFromTheUnresolvedHold(t *testing.T) {
 			"  Job:                ptah-m-apply-e2e-uncertain-mysql-04d370d4ccc65a4c, UID 2cde010b-1e46-46af-a3fb-35a75edacc7f\n" +
 			"  Plan:               ptah-mplan-8f517ba4f0200f2a4e095b65, UID 04800e23-c41a-40ff-9745-c77de45237b1\n" +
 			"  Database:           sha256:dd3598d94799d326af49fb6f455ea24c3959af067ca4cff5219f1987480e4abd (target identity digest)\n",
+		"\nkubectl ptah history migration/e2e-uncertain-mysql -n team-a prints its lifecycle history and every decision that names it.\n",
 		"kubectl events -n team-a --for ptahmigration/e2e-uncertain-mysql prints its Events.\n",
 	} {
 		if !strings.Contains(text, want) {

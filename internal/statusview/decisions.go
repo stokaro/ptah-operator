@@ -42,6 +42,23 @@ func Newest[T any](items []T, created func(T) metav1.Time, name func(T) string) 
 	return &Decisions[T]{Total: len(items), Items: kept}
 }
 
+// Every orders decisions oldest first, by the creation time the API server
+// stamped and then by name, and keeps all of them: the order a history reads
+// in, where the newest few are not the question.
+func Every[T any](items []T, created func(T) metav1.Time, name func(T) string) *Decisions[T] {
+	sorted := slices.Clone(items)
+	slices.SortStableFunc(sorted, func(left, right T) int {
+		if order := created(left).Compare(created(right).Time); order != 0 {
+			return order
+		}
+		return cmp.Compare(name(left), name(right))
+	})
+	if sorted == nil {
+		sorted = []T{}
+	}
+	return &Decisions[T]{Total: len(items), Items: sorted}
+}
+
 // Unreadable is why a list the view asked for could not be read. The view
 // is still printed: what the resource itself says does not depend on it.
 type Unreadable struct {
@@ -87,32 +104,59 @@ type Approval struct {
 // follow, that there are none, or why they could not be read. It reports
 // whether entries follow.
 //
-// title names the list, resource is the plural a reader passes to `kubectl
-// get` to see them all, and namespace is where they live. That command lists
-// every one in the namespace, whichever resource it names, and the line says
-// so.
+// title names the list, resource is the plural whose list the API server was
+// asked for, and every is the command that prints every one of them that
+// names this resource: the line names it when the list was cut. It names no
+// `kubectl get`, which lists every decision in the namespace, whichever
+// resource it names, and leaves the reader to tell them apart.
 func WriteListHeading[T any](
 	text *strings.Builder,
-	title, resource, namespace string,
+	title, resource, every string,
 	decisions *Decisions[T],
 	unreadable *Unreadable,
 ) bool {
+	if writeUnlisted(text, title, resource, decisions, unreadable) {
+		return false
+	}
+	if len(decisions.Items) < decisions.Total {
+		fmt.Fprintf(text, "\n%s, the newest %d of %d; %s lists all %d:\n",
+			title, len(decisions.Items), decisions.Total, every, decisions.Total)
+	} else {
+		fmt.Fprintf(text, "\n%s, newest first:\n", title)
+	}
+	return true
+}
+
+// WriteEveryHeading writes the line that opens a list of every decision that
+// names a resource, oldest first, the way WriteListHeading opens the newest
+// few. It reports whether entries follow.
+func WriteEveryHeading[T any](
+	text *strings.Builder,
+	title, resource string,
+	decisions *Decisions[T],
+	unreadable *Unreadable,
+) bool {
+	if writeUnlisted(text, title, resource, decisions, unreadable) {
+		return false
+	}
+	fmt.Fprintf(text, "\n%s, %d in all, oldest first:\n", title, decisions.Total)
+	return true
+}
+
+// writeUnlisted writes the line for a list with nothing to follow: one that
+// could not be read, and why, or one that is empty. It reports whether it
+// wrote one.
+func writeUnlisted[T any](text *strings.Builder, title, resource string, decisions *Decisions[T], unreadable *Unreadable) bool {
 	switch {
 	case unreadable != nil && unreadable.Forbidden:
 		fmt.Fprintf(text, "\n%s: not shown; listing %s is forbidden to you (RBAC): %s\n",
 			title, resource, Clean(unreadable.Message))
-		return false
 	case unreadable != nil:
 		fmt.Fprintf(text, "\n%s: not shown; listing %s failed: %s\n", title, resource, Clean(unreadable.Message))
-		return false
 	case decisions == nil || decisions.Total == 0:
 		fmt.Fprintf(text, "\n%s: none\n", title)
-		return false
-	case len(decisions.Items) < decisions.Total:
-		fmt.Fprintf(text, "\n%s, the newest %d of %d; kubectl get %s -n %s lists all %s in the namespace:\n",
-			title, len(decisions.Items), decisions.Total, resource, namespace, strings.ToLower(title))
 	default:
-		fmt.Fprintf(text, "\n%s, newest first:\n", title)
+		return false
 	}
 	return true
 }

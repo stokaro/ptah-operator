@@ -366,8 +366,8 @@ func TestRenderBoundsTheApprovals(t *testing.T) {
 	if err := schemaview.Render(&text, view, schemaview.Text); err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("\nApprovals, the newest %d of %d; kubectl get ptahschemaapprovals -n team-a lists all approvals in the namespace:\n",
-		statusview.MaxDecisions, statusview.MaxDecisions+2)
+	want := fmt.Sprintf("\nApprovals, the newest %d of %d; kubectl ptah history schema/storefront -n team-a lists all %d:\n",
+		statusview.MaxDecisions, statusview.MaxDecisions+2, statusview.MaxDecisions+2)
 	if !strings.Contains(text.String(), want) {
 		t.Fatalf("text view does not say the list was cut; want %q:\n%s", want, text.String())
 	}
@@ -408,6 +408,10 @@ func TestRenderTextSaysWhyTheSchemaWaitsAndShowsEveryCondition(t *testing.T) {
 		"  Applying              False   OutcomeUnknown    2026-10-01T08:34:19Z  Apply outcome is uncertain; only read-only observation is permitted (written for generation 2)\n",
 		"  InSync                False   ScopedChanges     2026-10-01T08:40:40Z  The authoritative managed scope differs from the verified artifact\n",
 		"kubectl ptah plan e2e-alert-schema-postgresql -n " + recovered.Namespace + " prints the SQL this plan holds.\n",
+		// The view lists the newest decisions; the history is where the rest
+		// and the journal are, and the view says so whatever it listed.
+		"kubectl ptah history schema/e2e-alert-schema-postgresql -n " + recovered.Namespace +
+			" prints its lifecycle history and every approval that names it.\n",
 		"kubectl events -n " + recovered.Namespace + " --for ptahschema/e2e-alert-schema-postgresql prints its Events.\n",
 	} {
 		if !strings.Contains(text, want) {

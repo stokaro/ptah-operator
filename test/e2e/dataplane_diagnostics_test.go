@@ -201,25 +201,45 @@ func TestSchemaWaitReportBoundsConditionMessages(t *testing.T) {
 	}
 }
 
-// The message a wait ends on when its schema entered Failed has to carry the
-// conditions of the document it read, bounded and scanned, and nothing it can
-// not clear. The want is built from the fixture, not from schemaWaitReport.
-func TestFailedSchemaConditionsAreThoseOfTheDocumentThatEndedTheWait(t *testing.T) {
+// The message a wait ends on when its schema or migration entered Failed has to
+// carry the conditions of the document it read, bounded and scanned, and nothing
+// it can not clear. The want is built from the fixture, not from
+// boundedConditions.
+func TestFailedConditionsAreThoseOfTheDocumentThatEndedTheWait(t *testing.T) {
 	t.Parallel()
-	failed := func(messages ...string) *ptahv1alpha1.PtahSchema {
-		schema := &ptahv1alpha1.PtahSchema{
-			ObjectMeta: metav1.ObjectMeta{Name: "e2e-postgresql", Generation: 4},
-			Status:     ptahv1alpha1.PtahSchemaStatus{Phase: ptahv1alpha1.PhaseFailed, ObservedGeneration: 4},
-		}
+	conditions := func(messages ...string) []metav1.Condition {
+		var conditions []metav1.Condition
 		for i, message := range messages {
-			schema.Status.Conditions = append(schema.Status.Conditions, metav1.Condition{
+			conditions = append(conditions, metav1.Condition{
 				Type: []string{"Ready", "Stalled"}[i], Status: []metav1.ConditionStatus{metav1.ConditionFalse, metav1.ConditionTrue}[i],
 				Reason: []string{"SourceUnavailable", "ResolveFailed"}[i], Message: message,
 			})
 		}
-		return schema
+		return conditions
 	}
-	safe, err := newCredentialScanner("NEVER_MATCH_FAILED_SCHEMA_CONDITIONS")
+	// The two kinds whose waits stop on Failed. Each wait passes the
+	// conditions of the document it read.
+	documents := map[string]func(...string) []metav1.Condition{
+		"a schema": func(messages ...string) []metav1.Condition {
+			schema := &ptahv1alpha1.PtahSchema{
+				ObjectMeta: metav1.ObjectMeta{Name: "e2e-postgresql", Generation: 4},
+				Status: ptahv1alpha1.PtahSchemaStatus{
+					Phase: ptahv1alpha1.PhaseFailed, ObservedGeneration: 4, Conditions: conditions(messages...),
+				},
+			}
+			return schema.Status.Conditions
+		},
+		"a migration": func(messages ...string) []metav1.Condition {
+			migration := &ptahv1alpha1.PtahMigration{
+				ObjectMeta: metav1.ObjectMeta{Name: "e2e-migration", Generation: 2},
+				Status: ptahv1alpha1.PtahMigrationStatus{
+					Phase: ptahv1alpha1.MigrationPhaseFailed, ObservedGeneration: 2, Conditions: conditions(messages...),
+				},
+			}
+			return migration.Status.Conditions
+		},
+	}
+	safe, err := newCredentialScanner("NEVER_MATCH_FAILED_CONDITIONS")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +247,8 @@ func TestFailedSchemaConditionsAreThoseOfTheDocumentThatEndedTheWait(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	t.Run("printed", func(t *testing.T) {
-		t.Parallel()
-		long := "the source could not be read: " + strings.Repeat("é", 300)
-		schema := failed(long, "Resolve failed on the tag the spec names")
-		got := failedSchemaConditions(safe, schema)
+	printed := func(t *testing.T, got string) []conditionDiagnostic {
+		t.Helper()
 		const prefix = "its conditions: "
 		encoded, found := strings.CutPrefix(got, prefix)
 		if !found {
@@ -242,28 +258,44 @@ func TestFailedSchemaConditionsAreThoseOfTheDocumentThatEndedTheWait(t *testing.
 		if err := json.Unmarshal([]byte(encoded), &printed); err != nil {
 			t.Fatalf("decode %q: %v", encoded, err)
 		}
-		want := []conditionDiagnostic{
-			{Type: "Ready", Status: metav1.ConditionFalse, Reason: "SourceUnavailable", Message: string([]rune(long)[:conditionMessageBound])},
-			{Type: "Stalled", Status: metav1.ConditionTrue, Reason: "ResolveFailed", Message: "Resolve failed on the tag the spec names"},
-		}
-		if len(printed) != len(schema.Status.Conditions) || !slices.Equal(printed, want) {
-			t.Fatalf("printed %+v\nwant    %+v", printed, want)
-		}
-	})
-	for name, test := range map[string]struct {
-		scanner credentialScanner
-		want    string
-	}{
-		"a match":              {matching, "its conditions are withheld: they carry a protected credential"},
-		"no protected pattern": {credentialScanner{}, "its conditions are withheld: they could not be scanned"},
-	} {
-		t.Run(name, func(t *testing.T) {
+		return printed
+	}
+
+	for kind, document := range documents {
+		t.Run(kind+" printed", func(t *testing.T) {
 			t.Parallel()
-			got := failedSchemaConditions(test.scanner, failed("ok", "the URL was postgres://user:"+diagnosticSentinel+"@db"))
-			if got != test.want {
-				t.Fatalf("message = %q, want %q", got, test.want)
+			long := "the source could not be read: " + strings.Repeat("é", 300)
+			read := document(long, "Resolve failed on the tag the spec names")
+			got := printed(t, failedConditions(safe, read))
+			want := []conditionDiagnostic{
+				{Type: "Ready", Status: metav1.ConditionFalse, Reason: "SourceUnavailable", Message: string([]rune(long)[:conditionMessageBound])},
+				{Type: "Stalled", Status: metav1.ConditionTrue, Reason: "ResolveFailed", Message: "Resolve failed on the tag the spec names"},
+			}
+			if len(got) != len(read) || !slices.Equal(got, want) {
+				t.Fatalf("printed %+v\nwant    %+v", got, want)
 			}
 		})
+		t.Run(kind+" with no conditions", func(t *testing.T) {
+			t.Parallel()
+			if got, want := failedConditions(safe, document()), "its conditions: []"; got != want {
+				t.Fatalf("message = %q, want %q", got, want)
+			}
+		})
+		for name, test := range map[string]struct {
+			scanner credentialScanner
+			want    string
+		}{
+			"a match":              {matching, "its conditions are withheld: they carry a protected credential"},
+			"no protected pattern": {credentialScanner{}, "its conditions are withheld: they could not be scanned"},
+		} {
+			t.Run(kind+" "+name, func(t *testing.T) {
+				t.Parallel()
+				got := failedConditions(test.scanner, document("ok", "the URL was postgres://user:"+diagnosticSentinel+"@db"))
+				if got != test.want {
+					t.Fatalf("message = %q, want %q", got, test.want)
+				}
+			})
+		}
 	}
 }
 
