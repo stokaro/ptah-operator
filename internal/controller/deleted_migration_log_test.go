@@ -66,6 +66,8 @@ func TestADeletedMigrationsLogPointerFollowsItsJob(t *testing.T) {
 	pointer := "Anything the run wrote is in the Pod log for 24 hours after the Job finishes: " +
 		"kubectl logs -n " + migration.Namespace + " job/" + owned.Name + " -c " + executorContainerName
 	goes := "Anything the run wrote is in the Pod log of Job " + owned.Name + goesWith
+	goneNode := "Anything the run wrote was in the Pod log of Job " + owned.Name +
+		" on a node that is gone, so it can be read only from that node or from a log shipper"
 	orphaned := owned.DeepCopy()
 	orphaned.OwnerReferences = nil
 	untimed := owned.DeepCopy()
@@ -128,6 +130,18 @@ func TestADeletedMigrationsLogPointerFollowsItsJob(t *testing.T) {
 		{
 			name:      "a refused Job that goes with the resource still goes",
 			migration: deletingMigration(), job: untimed, reading: applyLogUnread, stays: true, want: goes,
+		},
+		{
+			name:      "a log on a node that is gone says so whatever becomes of the Job",
+			migration: deletingMigration(), job: owned, reading: applyLogUnreadOnGoneNode, want: goneNode,
+		},
+		{
+			name:      "a log on a node that is gone says so for a Job being deleted",
+			migration: deletingMigration(metav1.FinalizerDeleteDependents), job: going, reading: applyLogUnreadOnGoneNode, want: goneNode,
+		},
+		{
+			name:      "a log on a node that is gone says so for a resource that is not being deleted",
+			migration: migration, job: owned, reading: applyLogUnreadOnGoneNode, want: goneNode,
 		},
 		{
 			name:      "a Job already being deleted may have lost its Pod",
