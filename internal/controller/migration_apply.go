@@ -1303,27 +1303,126 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 		ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply's Pods", "error", err.Error())
 		return true, nil
 	}
+	var unconfirmed *corev1.Pod
+	var why unconfirmedStop
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			return true, nil
 		}
+		if unconfirmed == nil {
+			if stop := podStopUnconfirmed(pod); stop != stopConfirmed {
+				unconfirmed, why = pod, stop
+			}
+		}
 	}
-	if len(pods) == 0 && migrationApplyPodGone(job) {
+	if unconfirmed != nil || len(pods) == 0 && migrationApplyPodGone(job) {
 		if until := migrationApplyLeaseTermEnd(operation); r.now().Before(until) {
-			return true, &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
+			hold := &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
+			if unconfirmed != nil {
+				hold.podName, hold.podPhase, hold.stop = unconfirmed.Name, unconfirmed.Status.Phase, why
+			}
+			return true, hold
 		}
 	}
 	return false, nil
 }
 
-// applyPodGoneHold is the wait dispatchedApplyMayStillWrite reports where the
-// API server has no Pod of the claim's Job left and nothing says its executor
-// stopped (migrationApplyPodGone): the Job, by the name and the UID it asked
-// about, and the end of the claim's Lease term, when the wait ends.
+// applyPodGoneHold is the wait dispatchedApplyMayStillWrite reports where
+// nothing says the executor of the claim's Job stopped: the API server has no
+// Pod of that Job left (migrationApplyPodGone), or a Pod stands whose terminal
+// phase is not the kubelet's (podStopUnconfirmed). It names the Job, by the
+// name and the UID it asked about, the end of the claim's Lease term, when the
+// wait ends, and the standing Pod, where there is one.
 type applyPodGoneHold struct {
 	jobName string
 	jobUID  types.UID
 	until   time.Time
+	// podName and podPhase are the standing Pod, and empty where none stands.
+	podName  string
+	podPhase corev1.PodPhase
+	// stop is why nothing says that Pod's executor stopped.
+	stop unconfirmedStop
+}
+
+// unconfirmedStop is what podStopUnconfirmed finds on a Pod: whether its
+// terminal phase comes with the kubelet's account that the executor stopped,
+// and where it does not, why not.
+type unconfirmedStop int
+
+const (
+	// stopConfirmed is a Pod that has not ended, or one whose executor the
+	// kubelet accounted for.
+	stopConfirmed unconfirmedStop = iota
+	// stopUnconfirmedRunning is a terminal Pod whose executor reads running.
+	stopUnconfirmedRunning
+	// stopUnconfirmedByPodGC is a Pod under PodGC's DisruptionTarget condition
+	// whose executor never read terminated.
+	stopUnconfirmedByPodGC
+)
+
+// podGCDeletionReason is the reason of the DisruptionTarget condition PodGC
+// writes, with the Failed phase, on a Pod whose Node object is gone
+// (pkg/controller/podgc, gcOrphaned, v1.35.8, v1.36.4 and v1.37.0). k8s.io/api
+// declares no constant for it.
+const podGCDeletionReason = "DeletionByPodGC"
+
+// podStopUnconfirmed reports whether a Pod that reads Succeeded or Failed has
+// that phase without the kubelet's account that its executor stopped, and why,
+// so it is read as a Pod that is gone (migrationApplyPodGone).
+//
+// The kubelet does not publish a terminal phase for a Pod that could still have
+// a running container: mergePodStatus holds the phase back until the pod worker
+// has stopped the Pod's containers, and TerminatePod writes each container of
+// an initialized Pod that is not terminated as terminated, reason
+// ContainerStatusUnknown (pkg/kubelet/status, v1.35.8, v1.36.4 and v1.37.0). So
+// a terminal Pod whose executor reads running took its phase from something
+// else. PodGC writes it (pkg/controller/podgc, markFailedAndDeletePod, the same
+// releases), and only on a Pod that is not already Succeeded or Failed: on a
+// Pod whose Node object is still gone after its 40-second quarantine, with the
+// DisruptionTarget condition (gcOrphaned), and on a terminating Pod on a node
+// that is not ready and is tainted node.kubernetes.io/out-of-service, with no
+// condition (gcTerminating). It keeps the container statuses the kubelet last
+// reported, and then force-deletes the Pod. Where that delete fails, or succeeds
+// while another finalizer holds the Pod, the Pod stands Failed while its
+// container can still run on a machine the API server cannot reach. Under the
+// condition, an executor that reads waiting, or nothing, may have started since
+// its kubelet last reported, so anything short of terminated is unconfirmed too.
+// With no condition only a running executor is: an out-of-service taint is a
+// person's word that the node is shut down.
+//
+// A terminated executor, ContainerStatusUnknown included, is the kubelet's
+// account that the container is not running: it writes ContainerStatusUnknown
+// when it has ended the Pod, and when the runtime no longer lists a container
+// that was running (convertToAPIContainerStatuses). An executor the kubelet
+// never started, on a Pod it ended itself, is confirmed too: an admission
+// refusal such as OutOfcpu records no container, and a Pod ended before it
+// initialized leaves its executor waiting.
+func podStopUnconfirmed(pod *corev1.Pod) unconfirmedStop {
+	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+		return stopConfirmed
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != executorContainerName {
+			continue
+		}
+		if status.State.Terminated != nil {
+			return stopConfirmed
+		}
+		if status.State.Running != nil {
+			return stopUnconfirmedRunning
+		}
+		break
+	}
+	// The status is not read: the disruption controller resets a stale
+	// DisruptionTarget only on a Pod that has not ended
+	// (nonTerminatingPodHasStaleDisruptionCondition), and either way the
+	// phase is PodGC's.
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.DisruptionTarget && condition.Reason == podGCDeletionReason {
+			return stopUnconfirmedByPodGC
+		}
+	}
+	return stopConfirmed
 }
 
 // migrationApplyPodGone reports whether a Pod of the claim's Job may be gone
@@ -1332,13 +1431,16 @@ type applyPodGoneHold struct {
 //
 // A Pod is gone from the API server without its kubelet saying so when a
 // person deletes it with --force, deletes its Job and then the Pod, or deletes
-// its Node object. On a node the API server cannot reach the container can
-// still be running and writing. The Job controller keeps its job-tracking
-// finalizer on a Pod it has not accounted for, and with podReplacementPolicy
-// Failed it accounts for a Pod that is deleted but has not failed only once the
-// Job is past its deadline. Before that, a forced delete leaves the Pod standing
-// Terminating. A deleted Job's Pods lose the finalizer at once, and so does a
-// Pod PodGC marks Failed because its Node object is gone.
+// its Node object, and when PodGC force-deletes a terminating Pod on a node
+// that is not ready and is tainted node.kubernetes.io/out-of-service. On a node
+// the API server cannot reach the container can still be running and writing.
+// The Job controller keeps its job-tracking finalizer on a Pod it has not
+// accounted for, and with podReplacementPolicy Failed it accounts for a Pod
+// that is deleted but has not failed only once the Job is past its deadline.
+// Before that, a forced delete leaves the Pod standing Terminating. A deleted
+// Job's Pods lose the finalizer at once, and so does a Pod PodGC marks Failed,
+// whether because its Node object is gone or because it is terminating on an
+// out-of-service node.
 //
 // A finished Job with no Pod failed had no Pod to lose: the Job controller marks
 // a Job finished only once every Pod it created is counted, and counts a Pod

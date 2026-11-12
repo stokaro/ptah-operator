@@ -119,8 +119,9 @@ and 30 seconds no longer waits for that Job: it hands the database Lease back
 and goes while the Pod may still read, and records the proof `Unknown`. A
 script that waits for a `PtahMigration` to be deleted, for an acknowledgment of
 its run to be taken, or for its database to be free, after its Apply Pod was
-deleted with `--force` or its Apply Job was deleted, has to allow until the end
-of the Apply's term, the time the `ApplyPodGone` Warning names.
+deleted with `--force` or its Apply Job was deleted, or after PodGC marked its
+Apply Pod `Failed` over an executor it had not seen stop, has to allow until
+the end of the Apply's term, the time the `ApplyPodGone` Warning names.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -505,6 +506,20 @@ of the Apply's term, the time the `ApplyPodGone` Warning names.
   Pod counted failed, as one whose Pod the API server refused, had no Pod to
   lose and hands the Lease back at once, as before. A `PtahSchema` already held
   the Lease there, until its pending observation's `observeAfter`.
+- **A Pod PodGC marked Failed no longer frees the database.** PodGC marks a Pod
+  `Failed` when its Node object is gone, or when it is terminating on a node
+  tainted `node.kubernetes.io/out-of-service`, keeping the executor status the
+  kubelet last reported, and force-deletes it. Where the delete failed, or
+  another finalizer held the Pod, the Pod stood `Failed` with its executor still
+  reading running, and a `PtahMigration` Apply read the phase alone and handed
+  the database Lease back while the executor could still be running on that
+  machine. A `Failed` Pod whose executor reads
+  running, or one with PodGC's `DisruptionTarget` condition, reason
+  `DeletionByPodGC`, whose executor never read terminated, now counts as gone:
+  the Apply keeps the Lease until the end of its term, and the `ApplyPodGone`
+  Warning names the Pod. A Pod the kubelet ended, by an eviction, a deadline or
+  an `OutOfcpu` refusal, or whose executor reads `ContainerStatusUnknown`, still
+  hands the Lease back at once. A `PtahSchema` already held the Lease there.
 - **A deleted schema says why it waits after its Apply Pod is gone.** A
   `PtahSchema` deleted while its Apply ran keeps the database Lease until its
   pending observation's `observeAfter`, the Apply's execution deadline and its
