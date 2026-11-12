@@ -46,10 +46,13 @@ const (
 	// exitNotDone covers a decision or a change this program did not make:
 	// approve's plan or spec changed during review, the operator would not
 	// admit an approval now, the fingerprint given is not the current plan's,
-	// or the person declined; the resource suspend, resume, refresh or set-source
-	// read was deleted and created again before the change reached it; or
-	// set-source met a source that is not an OCI artifact, an Apply running,
-	// or a source another writer changed after it was read.
+	// or the person declined; the resource suspend, resume, refresh, set-source
+	// or settle read was deleted and created again before the change reached
+	// it; set-source met a source that is not an OCI artifact, an Apply
+	// running, or a source another writer changed after it was read; or
+	// settle met a schema that has not stopped on a proof whose target moved,
+	// a stop that prints no value it reads, or a value that no longer matches
+	// the resource.
 	exitNotDone = 4
 	// exitRefused covers a write the API server refused with a 4xx, in its
 	// own words: RBAC, admission, the schema, a name already taken, a
@@ -96,6 +99,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return waitCommand(ctx, arguments[1:], stdout, stderr)
 	case "set-source":
 		return setSourceCommand(ctx, arguments[1:], stdout, stderr)
+	case "settle":
+		return settleCommand(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -398,6 +403,7 @@ func usage(out io.Writer) {
        kubectl ptah resume schema/<name>|migration/<name> [flags]
        kubectl ptah refresh schema/<name>|migration/<name> [flags]
        kubectl ptah set-source schema/<name>|migration/<name> --oci <ref> [flags]
+       kubectl ptah settle schema/<name> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
@@ -570,6 +576,31 @@ Always it runs without a person, except a schema plan that is destructive or
 changes privileges. On a suspended resource nothing of this happens until it
 is resumed.
 
+settle gives up the proof a schema owes its last Apply when the URL Secret
+now names another target than the plan the Apply ran from: the schema stops
+Blocked with ReconciliationFailed reason TargetIdentityChanged, and its message
+ends with a kubectl annotate command. settle reads the value from that
+message and writes the operator.ptah.run/settled-apply annotation as that
+command does, and nothing else. It prints how the journal records the Apply's
+end and what the operator gives up when it takes the statement: the proof, the
+plan, the approval it consumed and the database lock, with no Apply recorded.
+Under apply Always the next plan then applies without a person, unless it is
+destructive or changes privileges. The operator takes the statement at the
+next read of that target, up to spec.execution.failureRetryInterval later;
+removing the annotation before then takes it back. settle sends nothing when
+the annotation already holds the value. It changes nothing on a schema that
+has not stopped there, on a stop that prints no value it reads, or on a value
+that names another Apply than the proof owed, or that another read replaced
+after settle read it.
+
+  --wait                   wait until the operator has taken the statement
+                           and given the proof up; a proof a read of the
+                           first target ends instead stops the wait
+  --wait-timeout <dur>     how long --wait waits (default 5m)
+  -o, --output <format>    text (the default), or yaml or json
+
+  kubectl ptah settle schema/storefront -n application --wait
+
 wait reads a schema or a migration until it reaches a target. Apart from a plan
 already waiting for an approval, it counts nothing that was already true when
 it began: a reading of the database has to begin after the wait does. For
@@ -609,8 +640,8 @@ date the operator's records, so a wait counts a reading by a new stamp rather
 than by which time is later, except on a run an operator older than 0.2.10
 recorded.
 
-suspend, resume, refresh and set-source patch the resource as you: they need
-get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
+suspend, resume, refresh, set-source and settle patch the resource as you:
+they need get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
 named as schema/NAME or migration/NAME, or by the kind's plural or short name
 as kubectl spells it.
 
@@ -618,9 +649,10 @@ Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
 usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
 approved or changed (the plan or the spec changed, the operator would not
 admit an approval now, the fingerprint is not the current plan's, you
-declined, the resource was deleted and created again, or set-source met a
-source that is not an OCI artifact, an Apply running, or a source changed
-after it was read), 5
+declined, the resource was deleted and created again, set-source met a source
+that is not an OCI artifact, an Apply running, or a source changed after it
+was read, or settle met a schema that has not stopped on a moved target, a
+stop that prints no value, or a value that no longer matches), 5
 refused by RBAC or the API server, 6 sent with no answer: the change may have
 been stored, 7 the wait timed out, 8 the resource will not reach the target.
 `)

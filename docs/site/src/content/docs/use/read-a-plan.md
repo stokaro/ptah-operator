@@ -21,8 +21,11 @@ database either: `kubectl ptah approve` creates the approval of a plan you
 reviewed, which [Exact-plan approvals](../approvals/) describes;
 `suspend`, `resume` and `refresh` set one field or annotation of a schema or a
 migration, which [Operations](../operations/#suspension-and-deletion)
-describes; and `set-source` points one at another artifact pinned by digest,
-which [Moving to a new artifact](../operations/#set-source) describes.
+describes; `set-source` points one at another artifact pinned by digest,
+which [Moving to a new artifact](../operations/#set-source) describes; and
+`settle` gives up the proof a schema owes its last Apply when its URL Secret
+moved to another target, which [Settle from the command line](../recovery/#settle)
+describes.
 `kubectl ptah wait` reads a resource until the operator has done what you are
 waiting for; [Waiting for the operator](../operations/#wait) has the targets.
 
@@ -195,9 +198,10 @@ verify, `2` the command line, `3` nothing stored to print, approve, change or
 wait on. The commands that write add `4` nothing approved or changed (the plan
 or the spec changed, the operator would not admit an approval now, the
 fingerprint given is not the current plan's, you declined, the resource was
-deleted and created again, or set-source met a source that is not an OCI
+deleted and created again, set-source met a source that is not an OCI
 artifact, an Apply running, or a source another writer changed after it was
-read), `5` refused by
+read, or settle met a schema that has not stopped on a moved target, a stop
+that prints no value, or a value that no longer matches), `5` refused by
 RBAC or the API server, and `6` sent with no answer: the approval or the
 change may have been stored. A wait adds `7` timed out and `8` the resource
 will not reach the target.
@@ -563,9 +567,9 @@ protection: anyone who can read them can read the SQL, with or without this
 plugin. That is why the database URL is in a Secret and the plan is not.
 :::
 
-`kubectl ptah suspend`, `resume`, `refresh` and `set-source` read the resource
-and patch it as you, so they need `get` and `patch` on `ptahschemas` or
-`ptahmigrations`:
+`kubectl ptah suspend`, `resume`, `refresh`, `set-source` and `settle` read
+the resource and patch it as you, so they need `get` and `patch` on
+`ptahschemas` or `ptahmigrations`, and `settle` takes a schema only:
 
 ```yaml
   - apiGroups: [operator.ptah.run]

@@ -1018,6 +1018,10 @@ func TestOperateUsage(t *testing.T) {
 		{"wait", "schema/storefront", "--for", "in-sync", "--timeout", "0s"},
 		{"approve", "schema/storefront", "--wait", "--dry-run", "client"},
 		{"approve", "schema/storefront", "--wait", "--dry-run", "server"},
+		{"settle"},
+		{"settle", "migration/storefront"},
+		{"settle", "schema/storefront", "--for", "in-sync"},
+		{"settle", "schema/storefront", "--wait", "--wait-timeout", "0s"},
 	} {
 		t.Run(strings.Join(arguments, " "), func(t *testing.T) {
 			t.Parallel()

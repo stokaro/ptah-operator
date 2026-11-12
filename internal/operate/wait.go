@@ -121,6 +121,9 @@ type WaitOptions struct {
 	// approval that the API server refuses, or that fails, leaves the wait to
 	// the resource alone.
 	Decision *Decision
+	// Settlement is the value Settle wrote, which TargetSettled waits on. It
+	// is required for TargetSettled and refused for any other target.
+	Settlement string
 	// Source narrows TargetInSync and TargetApproval to the OCI reference
 	// SetSource wrote, pinned by digest. A document counts only while the
 	// spec still asks for it, and only once the operator worked from it: a
@@ -642,13 +645,20 @@ type waiter struct {
 	// refused one.
 	decisionApproval *decisionApproval
 	approvalRefused  bool
+
+	// settlement is the value a wait for TargetSettled is for.
+	settlement *SettleValue
 }
 
 func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	target, err := ParseTarget(string(options.Target))
-	if options.Target == TargetPlanned && options.Source != "" {
+	switch {
+	case options.Target == TargetPlanned && options.Source != "":
 		// Not a target a command line names: the end of a change of source.
 		target, err = TargetPlanned, nil
+	case options.Target == TargetSettled && options.Settlement != "":
+		// Nor this one: the end of a settlement.
+		target, err = TargetSettled, nil
 	}
 	if err != nil {
 		return nil, err
@@ -675,6 +685,16 @@ func newWaiter(ref Ref, options WaitOptions) (*waiter, error) {
 	}
 	if options.Plan != "" && options.Target != TargetApplied {
 		return nil, fmt.Errorf("a plan narrows only a wait for target %s", TargetApplied)
+	}
+	if options.Settlement != "" {
+		if options.Target != TargetSettled || ref.Family != FamilySchema {
+			return nil, fmt.Errorf("a settlement is only waited on with target %s, on a PtahSchema", TargetSettled)
+		}
+		value, err := splitSettleValue(options.Settlement)
+		if err != nil {
+			return nil, err
+		}
+		w.settlement = &value
 	}
 	if decision := options.Decision; decision != nil {
 		switch {
@@ -768,6 +788,8 @@ func (w *waiter) checkTarget(s snapshot) verdict {
 		return w.checkApproval(s)
 	case TargetApplied:
 		return w.checkApplied(s)
+	case TargetSettled:
+		return w.checkSettled(s)
 	default:
 		return w.checkSuspended(s)
 	}
