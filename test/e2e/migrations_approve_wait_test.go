@@ -6,18 +6,19 @@ import (
 )
 
 // staleApprovalWaitStderr is what kubectl ptah approve --wait wrote in the
-// approval-artifact-change row on kind: the approved plan went stale, the
-// replacement ran, and the wait read again only after it was read.
-const staleApprovalWaitStderr = `Waiting up to 30m0s for ptahmigration/e2e-approval-artifact-postgresql in namespace ptah-e2e to reach applied.
-kubectl-ptah: ptahmigration/e2e-approval-artifact-postgresql in namespace ptah-e2e will not reach applied: OtherPlanApplied.
+// approval-artifact-change row on kind (Kubernetes 1.36.4): the approved plan went
+// stale, the replacement was approved and ran, and the wait read again only after
+// the replacement's run was read.
+const staleApprovalWaitStderr = `Waiting up to 30m0s for ptahmigration/e2e-approval-artifact-postgresql in namespace ptah-test-a-1-36-4-local-54711140fe-51037-9784552362 to reach applied.
+kubectl-ptah: ptahmigration/e2e-approval-artifact-postgresql in namespace ptah-test-a-1-36-4-local-54711140fe-51037-9784552362 will not reach applied: OtherPlanApplied.
   Phase:       InSync
-  Why:         plan e2e-approval-artifact-postgresql-mplan-b ran, not e2e-approval-artifact-postgresql-mplan-a: the run (Job e2e-approval-artifact-postgresql-apply-1) ended Applied
-kubectl ptah migration e2e-approval-artifact-postgresql -n ptah-e2e shows where it stands.
+  Why:         plan ptah-mplan-e8428b44ecab0fbae23f636b ran, not ptah-mplan-b3c000ca3d1f6c808abcd8c4: the run (Job ptah-m-apply-e2e-approval-artifact-postgresql-ed7b682e810ee53c) ended Applied
+kubectl ptah migration e2e-approval-artifact-postgresql -n ptah-test-a-1-36-4-local-54711140fe-51037-9784552362 shows where it stands.
 `
 
 const (
-	staleApprovedPlan = "e2e-approval-artifact-postgresql-mplan-a"
-	staleRanPlan      = "e2e-approval-artifact-postgresql-mplan-b"
+	staleApprovedPlan = "ptah-mplan-b3c000ca3d1f6c808abcd8c4"
+	staleRanPlan      = "ptah-mplan-e8428b44ecab0fbae23f636b"
 )
 
 func TestApproveWaitStoppedOnAnotherRun(t *testing.T) {
@@ -58,12 +59,12 @@ func TestApproveWaitStoppedOnAnotherRun(t *testing.T) {
 		},
 		{
 			name: "a third plan ran", code: approveWaitWillNotReach,
-			stderr:   reason("plan "+staleRanPlan+" ran", "plan e2e-approval-artifact-postgresql-mplan-c ran"),
+			stderr:   reason("plan "+staleRanPlan+" ran", "plan ptah-mplan-0c3a5be1d2f4e6a7b8c9d0e1 ran"),
 			approved: staleApprovedPlan, ran: staleRanPlan,
 		},
 		{
 			name: "a plan whose name the run's begins with", code: approveWaitWillNotReach,
-			stderr: staleApprovalWaitStderr, approved: staleApprovedPlan, ran: "e2e-approval-artifact-postgresql-mplan",
+			stderr: staleApprovalWaitStderr, approved: staleApprovedPlan, ran: "ptah-mplan-e8428b44ecab",
 		},
 		{
 			name: "one plan named twice", code: approveWaitWillNotReach,
