@@ -1428,13 +1428,16 @@ func podStopUnconfirmed(pod *corev1.Pod) unconfirmedStop {
 //
 // A Pod is gone from the API server without its kubelet saying so when a
 // person deletes it with --force, deletes its Job and then the Pod, or deletes
-// its Node object. On a node the API server cannot reach the container can
-// still be running and writing. The Job controller keeps its job-tracking
-// finalizer on a Pod it has not accounted for, and with podReplacementPolicy
-// Failed it accounts for a Pod that is deleted but has not failed only once the
-// Job is past its deadline. Before that, a forced delete leaves the Pod standing
-// Terminating. A deleted Job's Pods lose the finalizer at once, and so does a
-// Pod PodGC marks Failed because its Node object is gone.
+// its Node object, and when PodGC force-deletes a terminating Pod on a node
+// that is not ready and is tainted node.kubernetes.io/out-of-service. On a node
+// the API server cannot reach the container can still be running and writing.
+// The Job controller keeps its job-tracking finalizer on a Pod it has not
+// accounted for, and with podReplacementPolicy Failed it accounts for a Pod
+// that is deleted but has not failed only once the Job is past its deadline.
+// Before that, a forced delete leaves the Pod standing Terminating. A deleted
+// Job's Pods lose the finalizer at once, and so does a Pod PodGC marks Failed,
+// whether because its Node object is gone or because it is terminating on an
+// out-of-service node.
 //
 // A finished Job with no Pod failed had no Pod to lose: the Job controller marks
 // a Job finished only once every Pod it created is counted, and counts a Pod
