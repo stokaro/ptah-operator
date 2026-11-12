@@ -2686,7 +2686,9 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 // none has them listed under listed: the Job the ending found under the claim's
 // name and holds to be the claim's, or nil. It is apart from job because a
 // deleted schema's finisher is not given the Job, while its Pods are still the
-// ones that may have started.
+// ones that may have started. The pending observation names the Job they were
+// listed under, so a deletion that waits on it lists the same Pods
+// (applyPodsActive).
 func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -2712,7 +2714,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	}
 	evidence := podIdentityEvidence(pods)
 	failure := withLastPodReport(ending, report.withPodsRead(evidence))
-	return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
+	return r.finishUncertainApplyWithEvidenceAndBinding(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true, nil, jobUID)
 }
 
 func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
@@ -2755,6 +2757,7 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 		evidence.PodCount,
 		true,
 		binding,
+		"",
 	)
 }
 
@@ -2776,6 +2779,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 		podCount,
 		waitForDispatchDeadline,
 		nil,
+		"",
 	)
 }
 
@@ -2788,6 +2792,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	podCount int32,
 	waitForDispatchDeadline bool,
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
+	listedJobUID types.UID,
 ) (ctrl.Result, error) {
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 	// The claim still names the Job here, and the record below is read-only
@@ -2819,6 +2824,11 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if pending.ApplyJobUID == "" {
+		// listedJobUID is the Job the ending listed the Pods of a claim that
+		// recorded no UID under (finishUncertainApplyWithReport), or empty.
+		pending.ApplyJobUID = listedJobUID
 	}
 	schema.Status.PendingObservation = pending
 	if replacementBinding != nil {
