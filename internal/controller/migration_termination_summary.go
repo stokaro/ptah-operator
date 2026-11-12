@@ -68,7 +68,9 @@ func terminationSummaryStandIn(
 // no frame. Without a summary that may stand in, it is an Apply nobody
 // accounted for, as it always was. Its record keeps what the resource last
 // reported about a Pod that could not start, since past the Job's deadline that
-// Pod is gone and the record is what a person reads.
+// Pod is gone and the record is what a person reads. The harvest listed the
+// Job's Pods, so a Pod that shows its executor started takes the report off
+// (withPodsRead): it started after the last look, and the report is out of date.
 func (r *MigrationReconciler) settleUnreadMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -88,7 +90,7 @@ func (r *MigrationReconciler) settleUnreadMigrationApply(
 	if !standsIn {
 		return r.finishUncertainMigrationApply(ctx, migration, job,
 			withUnstartedPod(fmt.Errorf("read the Apply result: %w", parseErr),
-				migrationPodReport(migration, job)), "")
+				migrationPodReport(migration, job).withPodsRead(evidence)), "")
 	}
 	return r.settleMigrationApply(ctx, migration, job, summaryMigrationApply(summary))
 }

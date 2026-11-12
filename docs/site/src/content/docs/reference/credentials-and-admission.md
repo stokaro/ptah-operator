@@ -357,13 +357,14 @@ added when the claim's own Job reports a Pod that succeeded, and a refusal is no
 added once that Job counts a Pod in any state, since the API server created one
 after all. On the endings for more than one Pod, for a Pod that does not match
 its claim and for a lost database Lease, on a `PtahSchema`'s endings for a
-missing Job, for inputs that changed while the Job ran and for an Apply result
-that was not read, and on every ending of a deleted `PtahSchema`, nothing is
-added when a Pod the ending read shows its executor running or terminated, as a
-Pod that got its Secret and then lost its node does while its replacement waits;
-`ContainerStatusUnknown` shows neither. On a read of either kind, and on a
-`PtahMigration` Apply whose result was not read, a Pod can still start after the
-last look and fail without a result, and the failure reads the same. The
+missing Job, for inputs that changed while the Job ran, for a changed execution
+component and for an Apply result that was not read, on a `PtahMigration`
+Apply whose result was not read, and on every ending of a deleted `PtahSchema`,
+nothing is added when a Pod the ending read shows its executor running or
+terminated, as a Pod that got its Secret and then lost its node does while its
+replacement waits; `ContainerStatusUnknown` shows neither. On a read of either
+kind a Pod can still start after the last look and fail without a result, and
+the failure reads the same. The
 resource looks at an Apply's Pod every 5 seconds, also while a deleted resource
 waits for it. Some endings are recorded while the Pod can still start, and a Pod
 that starts later does not change the record. A `PtahMigration` records the run

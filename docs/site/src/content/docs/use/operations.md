@@ -1623,20 +1623,32 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 and it is a statement that nothing is executing against that database any more.
 
 A deleted `PtahSchema` waits the same way for an Apply, and for the Pod of an
-Apply that ended while it still ran, and a live `PtahSchema` waits so for the
-Job of its own Apply. Each of these waits, and the deleted `PtahMigration`'s
-above, says which Pod it waits for. Once the Job is past its own deadline, the
+Apply that ended while it still ran. A live `PtahSchema` or `PtahMigration`
+waits so for the Job of its own Apply, and a live `PtahSchema` for the Pod of an
+Apply it waits to prove. A `PtahMigration` that recorded its Apply as an
+`Unknown` run while the Job could still run, as after a release that changed
+the Job, keeps its claim and waits so for that Job, live or deleted. Each of
+these waits, and the deleted `PtahMigration`'s above, says which Pod it waits
+for. Once the Job is past its own deadline, the
 termination grace its Pods are given and 30 seconds more, a
 `PodStuckTerminating` Warning Event names each Pod of the Job that is being
-deleted, is past its own grace period and has not stopped, with its node. Its
-message starts `Deletion waits for` on a deleted resource and
-`The Apply waits for` on a live schema. A deletion whose Job was deleted by
-hand, or replaced by another Job under its name, still finds the Pods by the
-Job's UID on their owner reference, and names a Pod once it is past its own
-deadline, or the end of its deletion grace, and 30 seconds. The Event comes
-again 30 seconds later, then twice as long after each time, up to every 5
-minutes. Once the node is known to be gone, delete the Pod without waiting for
-its kubelet:
+deleted, is past its own grace period and has not stopped, with its node and
+the Job's UID, which tells the Job apart from one that took its name since. Its
+message starts `Deletion waits for` on a deleted resource,
+`The Apply waits for` on a live resource that waits for its own Apply, and
+`The Apply's proof waits for` on a live schema waiting to prove one. A deletion,
+or a migration holding a run it recorded `Unknown`, whose Job was deleted by
+hand or replaced by another Job under its name, and a schema waiting for an
+Apply that ended still find the Pods by the Job's UID on
+their owner reference, and name a Pod once it is past its own deadline, or the
+end of its deletion grace, and 30 seconds. The Event comes again 30 seconds
+later, then twice as long after each time, up to every 5 minutes. Each wait
+keeps its own count, so a deletion names a Pod at once although its live Apply
+named it a moment before. A deleted `PtahSchema` whose Apply ended still waits
+until its pending observation's `observeAfter` once no Pod of the Job is left,
+and an `ApplyPodGone` Warning Event names the Job, its UID and that time, with
+the same backoff. Once the node is known to be gone, delete the Pod without
+waiting for its kubelet:
 
 ```sh
 kubectl delete pod -n <namespace> <pod> --force --grace-period=0
@@ -2556,8 +2568,11 @@ reason `ContainerStatusUnknown`, which it gives a container it has no status for
 that never started, when the Job's deadline stops its Pod, and one the container
 runtime stopped reporting while it ran. The kubelet keeps no container for it and
 answers `kubectl logs` with an error. Nor does a Job whose every Pod ended with no
-status for its executor, as a Pod the kubelet refused at admission does, since no
-executor ran in it. A Pod that has not ended and reports no executor yet keeps the
+status for its executor, as a Pod the kubelet refused at admission does, or with
+its executor last reported waiting, as one PodGC marked `Failed` after its node
+went can: PodGC keeps the statuses the kubelet last reported and sets only the
+phase and a condition, so the executor may have started since. No status on such
+a Pod shows a run, and a log is pointed at only where one does. A Pod that has not ended and reports no executor yet keeps the
 pointer, since it can still start one. A run whose result nobody read, because its
 frame was lost or its Job ran more than one Pod, says
 `Anything the run wrote is in the Pod log`. An execution binding change during a

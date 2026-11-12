@@ -152,23 +152,38 @@ func servedLogReading(ctx context.Context, reader client.Reader, job *batchv1.Jo
 // Either the kubelet ended the executor with ContainerStatusUnknown, which it
 // writes for a container it has no status for, one that never started as well
 // as one the runtime stopped reporting while it ran, and records no container
-// ID with it. Or the Pod ended carrying no status for the executor at all, as a
-// Pod the kubelet refused at admission can, and one PodGC marked Failed after
-// its node went before the kubelet reported a container: no executor ran in
-// it. The kubelet refuses a log read of a terminated container with no
-// container ID, and of a container it has no status for
-// (validateContainerLogStatus), so `kubectl logs` gets an error for either.
+// ID with it. Or the Pod failed with no executor status that shows a run: none
+// at all, as a Pod the kubelet refused at admission carries, or a waiting one.
+// Operation Pods restart nothing (RestartPolicyNever), so a waiting executor
+// has no earlier run whose log the kubelet keeps. The kubelet refuses a log
+// read of a terminated container with no container ID, of a waiting one with
+// no earlier run, and of a container it has no status for
+// (validateContainerLogStatus), so `kubectl logs` gets an error for each.
 //
-// A Pod that has not ended and reports no executor yet is not such a Pod: one
-// still waiting for a node, or for its kubelet, can start the executor later.
+// PodGC leaves a waiting executor on a failed Pod as well. When it marks a Pod
+// Failed after its node went (DeletionByPodGC), it sets the phase and a
+// condition and keeps the statuses the kubelet last reported, so a Pod that was
+// pulling its image or waiting for a Secret keeps its executor waiting. The
+// executor may have started after that report. No status on the Pod shows that
+// it ran, operation Pods restart nothing, and the pointer names the executor's
+// container (`-c ptah`), so the status does not say whether it ran, and a log is
+// pointed at only where the Pod shows a run.
+//
+// Only a failed Pod is asked about. One that has not ended can start the
+// executor later, whether it reports it waiting or not yet at all, and the
+// kubelet marks a Pod Succeeded only once every container in it terminated, so a
+// succeeded Pod always reports its executor terminated.
 func executorLogUnserved(pod *corev1.Pod) bool {
+	failed := pod.Status.Phase == corev1.PodFailed
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.Name == executorContainerName {
-			terminated := status.State.Terminated
-			return terminated != nil && terminated.Reason == "ContainerStatusUnknown"
+			if terminated := status.State.Terminated; terminated != nil {
+				return terminated.Reason == "ContainerStatusUnknown"
+			}
+			return failed && status.State.Waiting != nil
 		}
 	}
-	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	return failed
 }
 
 // executorLogsLost is a list of Pods none of which has an executor log the API
