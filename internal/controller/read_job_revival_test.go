@@ -315,13 +315,33 @@ func startedReadPod(t *testing.T, api client.Client, job *batchv1.Job) *corev1.P
 // the same operation ID, input fingerprint and execution binding: the claim
 // names another Job. With both Jobs finished and a record stored for each, the
 // controller asks for the new Job's record and never for the old one's.
+//
+// A Resolve holds no Lease. A Plan does: its retry hands the Lease back, and
+// its next attempt takes the realm again under an epoch of its own (#1007).
 func TestARedispatchedReadIgnoresWhatItsOldPodDelivers(t *testing.T) {
 	t.Parallel()
+
+	for _, operationType := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationResolve, operatorv1alpha1.OperationPlan,
+	} {
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+			redispatchedReadIgnoresItsOldPod(t, operationType)
+		})
+	}
+}
+
+func redispatchedReadIgnoresItsOldPod(t *testing.T, operationType operatorv1alpha1.OperationType) {
+	t.Helper()
 	ctx := context.Background()
 
 	current := workloadBuilderForMigrations()
 	current.ResultEndpoint = "https://receiver.operator.svc:9444"
-	run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationResolve, runShape{dispatcher: current, recorded: true})
+	// A Plan Job carries the key its plan is sealed to, and its claim the
+	// digest of that key, as a dispatch records them.
+	current.PlanSealPublicKey = testSchemaSealKey.PublicKey()
+	run := schemaOperationDispatchedBy(t, operationType, runShape{dispatcher: current, recorded: true})
+	ensureTestPlanSealKeyDigest(run.schema)
 	readOnALostNode(run)
 	admittedReadPod(run.pod)
 	reconciler, api, recorder := run.reconciler(t, current)
@@ -375,6 +395,15 @@ func TestARedispatchedReadIgnoresWhatItsOldPodDelivers(t *testing.T) {
 		t.Fatalf("the next attempt was not dispatched under the name the claim moved to %s: claim %#v, events %q",
 			moved.JobName, claim, eventsWithPrefix(recorder, ""))
 	}
+	if schemaClaimHoldsLock(run.schema) {
+		switch {
+		case dispatched.LeaseEpoch == "":
+			t.Fatal("the first attempt held no Lease, so its next attempt took nothing back")
+		case claim.LeaseContinuityLost || claim.LeaseEpoch == "" || claim.LeaseEpoch == dispatched.LeaseEpoch:
+			t.Fatalf("the next attempt did not take an epoch of its own: lost %v, epoch %q, the first attempt's %q",
+				claim.LeaseContinuityLost, claim.LeaseEpoch, dispatched.LeaseEpoch)
+		}
+	}
 	newJob := &batchv1.Job{}
 	if err := api.Get(ctx, client.ObjectKey{Namespace: run.schema.Namespace, Name: claim.JobName}, newJob); err != nil || newJob.UID != claim.JobUID {
 		t.Fatalf("the Job the claim recorded, %s with UID %s, is not stored: %v", claim.JobName, claim.JobUID, err)
@@ -419,5 +448,10 @@ func TestARedispatchedReadIgnoresWhatItsOldPodDelivers(t *testing.T) {
 	}
 	if slices.ContainsFunc(results.requests, names(old)) {
 		t.Fatalf("the controller read the record of the Job the claim moved off: %#v", results.requests)
+	}
+	if lost := slices.DeleteFunc(eventsWithPrefix(recorder, ""), func(event string) bool {
+		return !strings.HasPrefix(event, leaseContinuityLostEvent)
+	}); len(lost) != 0 {
+		t.Fatalf("the next attempt's own epoch was reported lost: %q", lost)
 	}
 }

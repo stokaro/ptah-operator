@@ -4157,11 +4157,18 @@ func (r *SchemaReconciler) acquireActiveLock(
 
 	before := schema.DeepCopy()
 	continuityLost := expected == "" || reportedContinuityLoss || expected != epoch
-	if continuityLost && expected != "" && !schemaMayHaveDispatched(operation) {
+	if continuityLost && !schemaMayHaveDispatched(operation) && (expected != "" || !schemaClaimServesProof(schema)) {
 		// The first Lease creation necessarily has a new epoch. Because the
 		// operation claim persisted its expected token before any dispatch
 		// boundary, adopting the API-assigned epoch here cannot validate stale
 		// work. Every later locked Job sets DispatchStarted before Create.
+		//
+		// A Plan retried under its next attempt has handed its Lease back
+		// and expects nothing (retryOperationReporting), and has dispatched
+		// nothing under that attempt, so the epoch it takes is its own as
+		// well (#1007). A proof is the exception: it reads under the epoch of
+		// the Apply it accounts for, so a proof with no epoch to compare has
+		// lost that epoch before it dispatches anything.
 		continuityLost = false
 	}
 	operation.LeaseEpoch = epoch
