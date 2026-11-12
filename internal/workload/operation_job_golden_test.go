@@ -38,8 +38,9 @@ type goldenJobCase struct {
 // The set covers both families, every operation type, each registry auth mode,
 // the CA snapshot with and without credentials, plain HTTP, the development
 // database and the plan fence, the Apply window and termination grace, the
-// admission snapshot, and every scheduling knob spec.execution offers, set and
-// left unset.
+// admission snapshot, every scheduling knob spec.execution offers, set and
+// left unset, and a Git source by https:// and by ssh://, resolved in the
+// operation container and fetched before it.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -280,6 +281,41 @@ func goldenJobCases() []goldenJobCase {
 					Name: "registry-docker", Mode: operatorv1alpha1.RegistryAuthDockerConfigJSON,
 				}
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
+		{
+			name: "schema-resolve-git-https",
+			build: func() (*batchv1.Job, error) {
+				return builder.Build(gitSchemaFixture(gitHTTPSSpec("db/schema.hcl")), operationFixture(operatorv1alpha1.OperationResolve), nil)
+			},
+		},
+		{
+			name: "schema-plan-git-https",
+			build: func() (*batchv1.Job, error) {
+				spec := gitHTTPSSpec("db/schema.hcl")
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				return builder.Build(gitSchemaFixture(spec), operation, nil)
+			},
+		},
+		{
+			name: "migration-resolve-git-ssh",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: gitSSHSpec("db/migrations")}
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			name: "migration-apply-git-ssh",
+			build: func() (*batchv1.Job, error) {
+				spec := gitSSHSpec("db/migrations")
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},
