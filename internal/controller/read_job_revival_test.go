@@ -10,6 +10,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -60,8 +62,14 @@ func readIdentity(t *testing.T, api client.Client, run dispatchedSchemaRead) res
 		t.Fatal(err)
 	}
 	operation := run.schema.Status.ActiveOperation
+	// A read that opens no database session, such as a Resolve, names no
+	// engine, as its claim binds no target.
+	engine := ""
+	if operation.Target != nil {
+		engine = strings.ToLower(string(operation.Target.Engine))
+	}
 	return resultdelivery.Identity{
-		Engine: strings.ToLower(string(operation.Target.Engine)),
+		Engine: engine,
 		Binding: resultstore.Binding{
 			Namespace: run.schema.Namespace, Kind: "PtahSchema", Name: run.schema.Name, UID: run.schema.UID,
 			Generation:         run.schema.Generation,
@@ -276,5 +284,140 @@ func TestARevivedReadPodPastItsDiscardDeliversNothingAnythingUses(t *testing.T) 
 				t.Fatalf("the finished Pod's identity regained authority: Check() = %v", err)
 			}
 		})
+	}
+}
+
+// startedReadPod stores the Pod the Job controller makes from job's template,
+// admitted the way admittedReadPod gives every fixture Pod, and running.
+func startedReadPod(t *testing.T, api client.Client, job *batchv1.Job) *corev1.Pod {
+	t.Helper()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: job.Namespace, Name: job.Name + "-pod", UID: types.UID(job.Name + "-pod-uid"),
+		Labels:          maps.Clone(job.Spec.Template.Labels),
+		Annotations:     maps.Clone(job.Spec.Template.Annotations),
+		OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+	}}
+	pod.Spec = *job.Spec.Template.Spec.DeepCopy()
+	admittedReadPod(pod)
+	runningExecutorPod(pod)
+	if err := api.Create(context.Background(), pod.DeepCopy()); err != nil {
+		t.Fatalf("start the Pod of Job %s: %v", job.Name, err)
+	}
+	return pod
+}
+
+// TestARedispatchedReadIgnoresWhatItsOldPodDelivers is a live read whose Job the
+// Job controller marked to fail while its Pod sat on a node that is gone. At
+// the Job's stop bound the claim runs the read again under a new Job (#997), and
+// the next passes dispatch that Job. The old Pod then comes back, delivers, and
+// its Job finishes. The authority every delivery path asks admitted that Pod
+// while the claim named its Job, and refuses it once the claim has moved, under
+// the same operation ID, input fingerprint and execution binding: the claim
+// names another Job. With both Jobs finished and a record stored for each, the
+// controller asks for the new Job's record and never for the old one's.
+func TestARedispatchedReadIgnoresWhatItsOldPodDelivers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	current := workloadBuilderForMigrations()
+	current.ResultEndpoint = "https://receiver.operator.svc:9444"
+	run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationResolve, runShape{dispatcher: current, recorded: true})
+	readOnALostNode(run)
+	admittedReadPod(run.pod)
+	reconciler, api, recorder := run.reconciler(t, current)
+	// The API server stamps a UID on the Job the next attempt creates.
+	reconciler.Client = &durableTestAPI{Client: reconciler.Client}
+	results := &countingResults{reader: controllerConsumer(t, api)}
+	reconciler.Results = results
+	reconciler.Logs = forbiddenResultLogs{t}
+	clock := &safetyClock{now: jobStopBound(run.job)}
+	reconciler.Clock = clock.Now
+	reconciler.Locks = targetlock.New(api, api, clock)
+	if !durableDeliveryRequested(run.job) {
+		t.Fatal("the read's Job delivers no durable result, so nothing below measures one")
+	}
+	old := readIdentity(t, api, run)
+	authority := resultauthority.Authorizer{Reader: api}
+	if err := authority.Check(ctx, old); err != nil {
+		t.Fatalf("the read's Pod could not deliver while its claim stood, so the refusal below proves nothing: %v", err)
+	}
+	dispatched := safetyGetSchema(t, api, run.schema).Status.ActiveOperation.DeepCopy()
+
+	// At the bound the claim moves to its next attempt.
+	if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+		t.Fatalf("Reconcile() at the bound: %v", err)
+	}
+	moved := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
+	if moved == nil || moved.Attempt != dispatched.Attempt+1 || moved.JobName == dispatched.JobName || moved.ID != dispatched.ID ||
+		moved.InputFingerprint != dispatched.InputFingerprint || moved.ExecutionBindingID != dispatched.ExecutionBindingID {
+		t.Fatalf("at the Job's stop bound the claim did not move to a new Job under the same operation: %#v, events %q",
+			moved, eventsWithPrefix(recorder, ""))
+	}
+	if events := readJobOverdueEvents(recorder); len(events) != 1 {
+		t.Fatalf("the claim moved without one ReadJobOverdue Warning, so it did not move at the bound: %q", events)
+	}
+	if err := authority.Check(ctx, old); !errors.Is(err, resultdelivery.ErrAuthority) {
+		t.Fatalf("the old Pod could still deliver once the claim moved: Check() = %v, want %v", err, resultdelivery.ErrAuthority)
+	}
+
+	// The retry dispatches the new attempt once its backoff has passed.
+	clock.now = clock.now.Add(failureRetry(safetyGetSchema(t, api, run.schema)))
+	claim := moved
+	for pass := 0; pass < 4 && claim.JobUID == ""; pass++ {
+		if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+			t.Fatalf("Reconcile() %d after the backoff: %v", pass, err)
+		}
+		if claim = safetyGetSchema(t, api, run.schema).Status.ActiveOperation; claim == nil {
+			t.Fatalf("the claim went before its next attempt was dispatched: events %q", eventsWithPrefix(recorder, ""))
+		}
+	}
+	if claim.JobName != moved.JobName || claim.Attempt != moved.Attempt || claim.JobUID == "" {
+		t.Fatalf("the next attempt was not dispatched under the name the claim moved to %s: claim %#v, events %q",
+			moved.JobName, claim, eventsWithPrefix(recorder, ""))
+	}
+	newJob := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKey{Namespace: run.schema.Namespace, Name: claim.JobName}, newJob); err != nil || newJob.UID != claim.JobUID {
+		t.Fatalf("the Job the claim recorded, %s with UID %s, is not stored: %v", claim.JobName, claim.JobUID, err)
+	}
+	// The API server gives a created Job the selector and template labels of its
+	// own UID, which the fake client does not.
+	newJob.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{batchv1.ControllerUidLabel: string(newJob.UID)}}
+	newJob.Spec.Template.Labels[batchv1.ControllerUidLabel] = string(newJob.UID)
+	newJob.Spec.Template.Labels[batchv1.JobNameLabel] = newJob.Name
+	if err := api.Update(ctx, newJob); err != nil {
+		t.Fatal(err)
+	}
+	newRun := dispatchedSchemaRead{schema: safetyGetSchema(t, api, run.schema), job: newJob, pod: startedReadPod(t, api, newJob)}
+	fresh := readIdentity(t, api, newRun)
+	if err := authority.Check(ctx, fresh); err != nil {
+		t.Fatalf("the new attempt's Pod could not deliver, so the old one's refusal is not about its Job: %v", err)
+	}
+
+	// The old Pod comes back and delivers, and its Job finishes; so does the
+	// new attempt's.
+	if err := authority.Check(ctx, old); !errors.Is(err, resultdelivery.ErrAuthority) {
+		t.Fatalf("the old Pod could deliver beside the new attempt: Check() = %v, want %v", err, resultdelivery.ErrAuthority)
+	}
+	plantReadResult(t, api, old)
+	finishSchemaRead(t, api, run)
+	plantReadResult(t, api, fresh)
+	finishSchemaRead(t, api, newRun)
+	results.requests = nil
+	for pass := 0; pass < 3; pass++ {
+		if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+			t.Fatalf("Reconcile() %d after both Jobs finished: %v", pass, err)
+		}
+	}
+	names := func(identity resultdelivery.Identity) func(resultconsumer.Request) bool {
+		return func(request resultconsumer.Request) bool {
+			return request.JobName == identity.Binding.JobName || request.JobUID == identity.Binding.JobUID
+		}
+	}
+	if !slices.ContainsFunc(results.requests, names(fresh)) {
+		t.Fatalf("the controller did not read the new attempt's record, so finding no read of the old one proves nothing: %#v",
+			results.requests)
+	}
+	if slices.ContainsFunc(results.requests, names(old)) {
+		t.Fatalf("the controller read the record of the Job the claim moved off: %#v", results.requests)
 	}
 }
