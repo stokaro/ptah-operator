@@ -19,7 +19,19 @@ import (
 // claim it matched it against.
 func applyPodGoneDeletionReading(t *testing.T) applyPodGoneReading {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "apply-pod-gone-deletion.json"))
+	return applyPodGoneReadingFrom(t, "apply-pod-gone-deletion.json")
+}
+
+// applyPodGoneLiveReading is the reading the unresolved-alert row printed on a
+// kind run, of a live migration whose Apply Job it deleted.
+func applyPodGoneLiveReading(t *testing.T) applyPodGoneReading {
+	t.Helper()
+	return applyPodGoneReadingFrom(t, "apply-pod-gone-live.json")
+}
+
+func applyPodGoneReadingFrom(t *testing.T, name string) applyPodGoneReading {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +101,26 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		found := applyPodGoneWarnings([]corev1.Event{reading.Event}, applyPodGoneMigration(reading), applyPodGoneDeletionWaits, reading.Claim.JobName, reading.Claim.JobUID, term)
 		if len(found) != 1 {
 			t.Fatalf("applyPodGoneWarnings() = %v, want the one Warning", found)
+		}
+	})
+	// The live row's own reading counts for the waiter it names, and not for
+	// a deletion's.
+	t.Run("the live reading", func(t *testing.T) {
+		t.Parallel()
+		live := applyPodGoneLiveReading(t)
+		liveTerm, err := applyLeaseTerm(&live.Claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		migration := applyPodGoneMigration(live)
+		if found := applyPodGoneWarnings([]corev1.Event{live.Event}, migration, applyPodGoneApplyWaits, live.Claim.JobName, live.Claim.JobUID, liveTerm); len(found) != 1 {
+			t.Fatalf("applyPodGoneWarnings() = %v, want the one Warning", found)
+		}
+		if found := applyPodGoneWarnings([]corev1.Event{live.Event}, migration, applyPodGoneDeletionWaits, live.Claim.JobName, live.Claim.JobUID, liveTerm); len(found) != 0 {
+			t.Fatalf("applyPodGoneWarnings() counted %v for a deletion", found)
+		}
+		if err := applyPodGoneWarnedInTerm([]corev1.Event{live.Event}, live.Claim.StartedAt.Time, liveTerm); err != nil {
+			t.Fatalf("applyPodGoneWarnedInTerm() refused the reading: %v", err)
 		}
 	})
 	for _, row := range []struct {
