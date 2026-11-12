@@ -60,9 +60,9 @@ func failReadJob(run dispatchedSchemaRead) time.Time {
 	return failed.Time
 }
 
-// retriedPlan is a Plan claim whose attempt ended and whose next attempt the
+// retriedRead is a read claim whose attempt ended and whose next attempt the
 // claim then dispatched, with what it saw on the way.
-type retriedPlan struct {
+type retriedRead struct {
 	run        dispatchedSchemaRead
 	reconciler *SchemaReconciler
 	api        client.WithWatch
@@ -80,11 +80,25 @@ type retriedPlan struct {
 // failing first. It reconciles until the claim's next attempt is dispatched,
 // and fails the test unless the claim moved to that attempt, under the same
 // operation, with nothing held, and then dispatched it.
-func redispatchPlan(t *testing.T, failed bool) retriedPlan {
+func redispatchPlan(t *testing.T, failed bool) retriedRead {
+	t.Helper()
+	return redispatchRead(t, false, failed)
+}
+
+// redispatchRead is redispatchPlan for a Plan, and with proof for the Observe
+// that proves an Apply. A proof's retry hands nothing back: the Lease is the
+// Apply's pending observation's, and the claim keeps expecting its epoch.
+func redispatchRead(t *testing.T, proof, failed bool) retriedRead {
 	t.Helper()
 	ctx := context.Background()
-	run := failingSchemaRead(t, operatorv1alpha1.OperationPlan, false)
-	run.schema.Status.Plan = waitingPlan(run.schema)
+	operationType := operatorv1alpha1.OperationPlan
+	if proof {
+		operationType = operatorv1alpha1.OperationObserve
+	}
+	run := failingSchemaRead(t, operationType, proof)
+	if !proof {
+		run.schema.Status.Plan = waitingPlan(run.schema)
+	}
 	at := jobStopBound(run.job)
 	if failed {
 		// The Job failed with no result frame, and the window for one to
@@ -100,7 +114,7 @@ func redispatchPlan(t *testing.T, failed bool) retriedPlan {
 	clock := &safetyClock{now: at}
 	reconciler.Clock = clock.Now
 	reconciler.Locks = targetlock.New(api, api, clock)
-	plan := retriedPlan{run: run, reconciler: reconciler, api: api, recorder: recorder, clock: clock,
+	plan := retriedRead{run: run, reconciler: reconciler, api: api, recorder: recorder, clock: clock,
 		dispatched: run.schema.Status.ActiveOperation.DeepCopy()}
 	if plan.dispatched.LeaseEpoch == "" || leaseHolder(testDatabaseLease(t, api, reconciler.LockNamespace)) == "" {
 		t.Fatal("the first attempt holds no Lease, so its retry hands nothing back")
@@ -110,14 +124,19 @@ func redispatchPlan(t *testing.T, failed bool) retriedPlan {
 		t.Fatalf("Reconcile() at the end of the attempt: %v", err)
 	}
 	plan.events = append(plan.events, eventsWithPrefix(recorder, "")...)
+	// A Plan hands its own epoch back; a proof keeps expecting the Apply's.
+	expects := ""
+	if proof {
+		expects = plan.dispatched.LeaseEpoch
+	}
 	moved := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
 	if moved == nil || moved.ID != plan.dispatched.ID || moved.Attempt != plan.dispatched.Attempt+1 ||
-		moved.JobUID != "" || moved.DispatchStarted || moved.LeaseEpoch != "" {
-		t.Fatalf("the attempt's end did not move the claim to its next attempt with nothing dispatched or held: claim %#v, events %q",
-			moved, plan.events)
+		moved.JobUID != "" || moved.DispatchStarted || moved.LeaseEpoch != expects {
+		t.Fatalf("the attempt's end did not move the claim to its next attempt with nothing dispatched, expecting epoch %q: claim %#v, events %q",
+			expects, moved, plan.events)
 	}
-	if holder := leaseHolder(testDatabaseLease(t, api, reconciler.LockNamespace)); holder != "" {
-		t.Fatalf("the retry kept the Lease for %q", holder)
+	if holder := leaseHolder(testDatabaseLease(t, api, reconciler.LockNamespace)); proof == (holder == "") {
+		t.Fatalf("after the retry the Lease is held for %q, want it held only for a proof", holder)
 	}
 
 	clock.now = clock.now.Add(failureRetry(safetyGetSchema(t, api, run.schema)))
@@ -192,6 +211,45 @@ func TestARetriedPlanTakesItsNextAttemptsEpochAsItsOwn(t *testing.T) {
 				t.Fatalf("the Job the claim recorded, %s with UID %s, is not stored: %v", claim.JobName, claim.JobUID, err)
 			}
 		})
+	}
+}
+
+// TestARetriedProofDispatchesUnderTheApplysEpoch is the Observe that proves an
+// Apply, let go of at its Job's stop bound. Its retry hands nothing back,
+// since the Lease is the Apply's pending observation's, and the claim goes on
+// expecting that epoch. The next attempt dispatches under it: the proof keeps
+// its outcome, and nothing reports a lost epoch.
+func TestARetriedProofDispatchesUnderTheApplysEpoch(t *testing.T) {
+	t.Parallel()
+
+	read := redispatchRead(t, true, false)
+	claim := read.claim
+	want := read.run.schema.Status.PendingObservation
+	schema := safetyGetSchema(t, read.api, read.run.schema)
+	pending := schema.Status.PendingObservation
+	lease := testDatabaseLease(t, read.api, read.reconciler.LockNamespace)
+	switch {
+	case claim.LeaseContinuityLost:
+		t.Fatalf("the next attempt's epoch was taken as lost: claim %#v, events %q", claim, read.events)
+	case claim.LeaseEpoch == "" || claim.LeaseEpoch != read.dispatched.LeaseEpoch:
+		t.Fatalf("the next attempt dispatched under epoch %q, want the Apply's %q", claim.LeaseEpoch, read.dispatched.LeaseEpoch)
+	case pending == nil || pending.LeaseEpoch != claim.LeaseEpoch || pending.Outcome != want.Outcome || pending.PlanRequired != want.PlanRequired:
+		t.Fatalf("the proof did not go on under the Apply's epoch %q with its outcome %q: %#v", claim.LeaseEpoch, want.Outcome, pending)
+	case leaseHolder(lease) == "" || lease.Annotations[leaseEpochAnnotation] != claim.LeaseEpoch:
+		t.Fatalf("the Lease is not held under the Apply's epoch %q: holder %q, epoch %q",
+			claim.LeaseEpoch, leaseHolder(lease), lease.Annotations[leaseEpochAnnotation])
+	case !claim.DispatchStarted:
+		t.Fatalf("the next attempt was created without its dispatch marker: %#v", claim)
+	}
+	if lost := slices.DeleteFunc(slices.Clone(read.events), func(event string) bool {
+		return !strings.HasPrefix(event, leaseContinuityLostEvent)
+	}); len(lost) != 0 {
+		t.Fatalf("the retry reported a lost epoch: %q", lost)
+	}
+	for _, condition := range schema.Status.Conditions {
+		if condition.Reason == string(operatorv1alpha1.ReasonLeaseContinuityLost) {
+			t.Fatalf("condition %s reads %s: %s", condition.Type, condition.Reason, condition.Message)
+		}
 	}
 }
 
