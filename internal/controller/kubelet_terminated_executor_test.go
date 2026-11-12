@@ -526,6 +526,16 @@ func TestTheLiveEndingsLeaveOutAReportAStartedPodOutdated(t *testing.T) {
 				endedWithoutAResult(t, run.api, run.job, run.pod)
 			},
 		},
+		{
+			// The harvest reads this terminal Pod, and its Pods read come
+			// from that listing.
+			name: "its result was not read", ended: unreadApplyResult, pointed: true,
+			lose: func(t *testing.T, run unstartedSchema) {
+				run.reconciler.Logs = &countedLogs{content: []byte("connection reset by peer\n")}
+				endedWithoutAResult(t, run.api, run.job, run.pod)
+				datedJobEnd(t, run.api, run.job, run.reconciler.now().Add(-frameArrivalWindow))
+			},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()

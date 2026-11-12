@@ -1286,7 +1286,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if failure == nil {
 				failure = fmt.Errorf("Apply Job did not complete successfully")
 			}
-			failure = withUnstartedPod(failure, schemaPodReport(schema, job))
+			// terminalLogs listed the Job's Pods, so a Pod whose executor
+			// started after the last look takes the report off here, as
+			// finishUncertainApplyWithReport does on the endings that read no
+			// terminal Pod. That finisher is not used: it would list the Pods
+			// again, and it always waits for the Apply's horizon, where this
+			// ending does not wait for an executor that ran and stopped.
+			failure = withUnstartedPod(failure, schemaPodReport(schema, job).withPodsRead(evidence))
 			return r.finishUncertainApplyWithEvidence(
 				ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure),
 				evidence.PodUIDs, evidence.PodCount, waitForHorizon,
