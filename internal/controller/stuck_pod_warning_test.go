@@ -40,31 +40,38 @@ const stuckPodEvent = "Warning PodStuckTerminating "
 func stuckOnAGoneNode(t *testing.T, run unstartedSchema) (*batchv1.Job, time.Time) {
 	t.Helper()
 
+	return jobPodStuckOnAGoneNode(t, run.api, run.job, run.pod)
+}
+
+// jobPodStuckOnAGoneNode is stuckOnAGoneNode for any Job and its Pod.
+func jobPodStuckOnAGoneNode(t *testing.T, api client.Client, dispatched *batchv1.Job, dispatchedPod *corev1.Pod) (*batchv1.Job, time.Time) {
+	t.Helper()
+
 	ctx := context.Background()
 	pod := &corev1.Pod{}
-	if err := run.api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
+	if err := api.Get(ctx, client.ObjectKeyFromObject(dispatchedPod), pod); err != nil {
 		t.Fatal(err)
 	}
 	pod.Spec.NodeName = "node-gone"
 	pod.Finalizers = append(pod.Finalizers, "example.invalid/kubelet-confirmation")
-	if err := run.api.Update(ctx, pod); err != nil {
+	if err := api.Update(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
-	if err := run.api.Delete(ctx, pod.DeepCopy()); err != nil {
+	if err := api.Delete(ctx, pod.DeepCopy()); err != nil {
 		t.Fatal(err)
 	}
-	if err := run.api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
+	if err := api.Get(ctx, client.ObjectKeyFromObject(dispatchedPod), pod); err != nil {
 		t.Fatal(err)
 	}
 	if pod.DeletionTimestamp == nil {
 		t.Fatal("the Pod is not being deleted, so it is not the Pod the deadline leaves")
 	}
 	runningExecutorPod(pod)
-	if err := run.api.Status().Update(ctx, pod); err != nil {
+	if err := api.Status().Update(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
 	job := &batchv1.Job{}
-	if err := run.api.Get(ctx, client.ObjectKeyFromObject(run.job), job); err != nil {
+	if err := api.Get(ctx, client.ObjectKeyFromObject(dispatched), job); err != nil {
 		t.Fatal(err)
 	}
 	failed := pod.DeletionTimestamp.Add(-time.Duration(*job.Spec.Template.Spec.TerminationGracePeriodSeconds) * time.Second)
@@ -74,7 +81,7 @@ func stuckOnAGoneNode(t *testing.T, run unstartedSchema) (*batchv1.Job, time.Tim
 		Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: batchv1.JobReasonDeadlineExceeded,
 		LastTransitionTime: metav1.NewTime(failed),
 	}}}
-	if err := run.api.Status().Update(ctx, job); err != nil {
+	if err := api.Status().Update(ctx, job); err != nil {
 		t.Fatal(err)
 	}
 	return job, failed
@@ -144,6 +151,100 @@ func TestADeletedSchemaWaitingOnAStuckPodNamesIt(t *testing.T) {
 		if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.ActiveOperation == nil {
 			t.Fatalf("the deletion stopped waiting %s from the Job's stop bound while the Pod may still run", step.at)
 		}
+	}
+}
+
+// A live schema supervises its Apply until the Job stops, and renews the
+// database Lease for as long, so a Pod on a node that is gone holds it with no
+// bound, as it holds a deleted schema. The claim names the Pod past the Job's
+// stop bound in the same Warning, worded for an Apply, and keeps the claim and
+// the Lease.
+func TestALiveApplyWaitingOnAStuckPodNamesIt(t *testing.T) {
+	t.Parallel()
+
+	run := admittedUnstartedSchemaApplyRun(t)
+	claim := safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation
+	if claim == nil || claim.Type != operatorv1alpha1.OperationApply || claim.JobUID != run.job.UID {
+		t.Fatalf("the run is not an Apply claim that recorded its Job: %#v", claim)
+	}
+	holder := leaseHolder(testDatabaseLease(t, run.api, run.reconciler.LockNamespace))
+	if holder == "" {
+		t.Fatal("the Apply holds no database Lease, so the row cannot show it kept one")
+	}
+	job, _ := stuckOnAGoneNode(t, run)
+	bound := jobStopBound(job)
+	pod := &corev1.Pod{}
+	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), pod); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%sThe Apply waits for Pod %s of Job %s on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+		"The database Lease stays held while the Pod may still run. "+
+		"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
+		stuckPodEvent, pod.Name, job.Name, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+	stuckPodEvents(run.recorder)
+
+	for _, step := range []struct {
+		at    time.Duration
+		named bool
+	}{
+		{at: -time.Second},
+		{at: 0, named: true},
+		{at: 0},
+		{at: 29 * time.Second},
+		{at: 30 * time.Second, named: true},
+	} {
+		at := bound.Add(step.at)
+		if !podStuckTerminating(pod, at) {
+			t.Fatalf("the Pod is not stuck terminating %s from the Job's stop bound, so the step measures nothing", step.at)
+		}
+		run.reconciler.Clock = func() time.Time { return at }
+		run.reconcileOnce(t)
+		events := stuckPodEvents(run.recorder)
+		switch {
+		case !step.named && len(events) != 0:
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want nothing", step.at, events)
+		case step.named && (len(events) != 1 || events[0] != want):
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want one %q", step.at, events, want)
+		}
+		supervising := safetyGetSchema(t, run.api, run.schema)
+		if supervising.Status.ActiveOperation == nil || supervising.Status.ActiveOperation.ID != claim.ID {
+			t.Fatalf("the Apply stopped supervising its Job %s from the Job's stop bound while the Pod may still run: %#v",
+				step.at, supervising.Status.ActiveOperation)
+		}
+		if held := leaseHolder(testDatabaseLease(t, run.api, run.reconciler.LockNamespace)); held != holder {
+			t.Fatalf("the database Lease is held by %q %s from the Job's stop bound, want the Apply's %q", held, step.at, holder)
+		}
+	}
+}
+
+// A live Apply past its Job's stop bound names no Pod that nothing deleted. A
+// read is never named (TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound).
+func TestALiveApplyNamesNoPodNothingDeleted(t *testing.T) {
+	t.Parallel()
+
+	run := admittedUnstartedSchemaApplyRun(t)
+	firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+	job := &batchv1.Job{}
+	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.job), job); err != nil {
+		t.Fatal(err)
+	}
+	started := metav1.NewTime(run.reconciler.now().Add(-time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second))
+	job.Status = batchv1.JobStatus{Active: 1, StartTime: &started}
+	if err := run.api.Status().Update(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	past := jobStopBound(job).Add(time.Minute)
+	if !past.After(run.reconciler.now()) {
+		t.Fatalf("the Job's stop bound %s is not a time the row can pass", past)
+	}
+	run.reconciler.Clock = func() time.Time { return past }
+	stuckPodEvents(run.recorder)
+	run.reconcileOnce(t)
+	if events := stuckPodEvents(run.recorder); len(events) != 0 {
+		t.Fatalf("a pass past the Job's stop bound recorded %q for a running Pod nothing deleted", events)
+	}
+	if supervising := safetyGetSchema(t, run.api, run.schema); supervising.Status.ActiveOperation == nil {
+		t.Fatal("the Apply stopped supervising a Job that has not finished, so the row read no wait")
 	}
 }
 
@@ -288,7 +389,7 @@ func TestAPodIsNamedOnlyOnceItsOwnGraceRunsOut(t *testing.T) {
 		{at: goneBy.Time, named: true},
 	} {
 		at = step.at
-		if err := r.warnStuckPods(context.Background(), schema, job); err != nil {
+		if err := r.warnStuckPods(context.Background(), schema, job, deletionWaits); err != nil {
 			t.Fatal(err)
 		}
 		if events := stuckPodEvents(recorder); len(events) != map[bool]int{true: 1, false: 0}[step.named] {
@@ -300,19 +401,24 @@ func TestAPodIsNamedOnlyOnceItsOwnGraceRunsOut(t *testing.T) {
 
 // The deletion of a schema whose Apply ended while its Pod still ran waits on
 // that Pod from the pending observation, with no bound either, so it names a Pod
-// stuck terminating there as the claim's wait does. It names it only under the
-// Job the record names: a Job that took the name since bounds nothing of the
-// Pod's.
+// stuck terminating there as the claim's wait does: past the Job's stop bound
+// while the Job the record names stands. The wait lists the Pods by the Job's
+// UID on their owner reference, so a Pod still stands, and still holds the
+// wait, after a person deleted its Job or another Job took the name. Nothing is
+// past that Job's bound then, and the Pod is named once it is past its own
+// (podStopBound): the end of its deletion grace and 30 seconds.
 func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
 		name string
-		// replace puts another Job under the recorded Job's name.
-		replace bool
+		// gone deletes the recorded Job, and replace then puts another Job
+		// under its name.
+		gone, replace bool
 	}{
 		{name: "under the Job the record names"},
-		{name: "under a Job that took its name", replace: true},
+		{name: "after the Job was deleted", gone: true},
+		{name: "under a Job that took its name", gone: true, replace: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -336,10 +442,24 @@ func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T
 			if err := run.api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
 				t.Fatal(err)
 			}
-			if row.replace {
+			if row.gone {
+				// The Pod started ten seconds after its Job, so the Job
+				// controller deleted it at the Job's deadline, before its
+				// own, and the end of its deletion grace is its bound.
+				started := metav1.NewTime(job.Status.StartTime.Add(10 * time.Second))
+				pod.Status.StartTime = &started
+				if err := run.api.Status().Update(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
 				if err := run.api.Delete(ctx, job.DeepCopy()); err != nil {
 					t.Fatal(err)
 				}
+				bound = podStopBound(pod)
+				if want := pod.DeletionTimestamp.Add(jobStopReportSlack); !bound.Equal(want) {
+					t.Fatalf("the Pod's stop bound is %s, want the end of its deletion grace and the slack, %s", bound, want)
+				}
+			}
+			if row.replace {
 				later := job.DeepCopy()
 				later.ResourceVersion, later.UID = "", "later-job-uid"
 				later.Status = batchv1.JobStatus{}
@@ -349,26 +469,32 @@ func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T
 			}
 			stuckPodEvents(run.recorder)
 
+			// The Pod is stuck terminating from the end of its grace, thirty
+			// seconds before either bound, so the first step separates the
+			// bound from the stuck Pod alone.
 			for _, step := range []struct {
 				at    time.Duration
 				named bool
 			}{
 				{at: -time.Second},
-				{at: 0, named: !row.replace},
+				{at: 0, named: true},
 			} {
 				at := bound.Add(step.at)
+				if !podStuckTerminating(pod, at) {
+					t.Fatalf("the Pod is not stuck terminating %s from the bound, so the step measures nothing", step.at)
+				}
 				run.reconciler.Clock = func() time.Time { return at }
 				run.reconcileOnce(t)
 				events := stuckPodEvents(run.recorder)
-				want := stuckPodEvent + stuckPodWarningText(job, pod)
+				want := stuckPodEvent + stuckPodWarningText(deletionWaits, job.Name, pod)
 				switch {
 				case !step.named && len(events) != 0:
-					t.Fatalf("a pass %s from the Job's stop bound recorded %q, want nothing", step.at, events)
+					t.Fatalf("a pass %s from the bound recorded %q, want nothing", step.at, events)
 				case step.named && (len(events) != 1 || events[0] != want):
-					t.Fatalf("a pass %s from the Job's stop bound recorded %q, want one %q", step.at, events, want)
+					t.Fatalf("a pass %s from the bound recorded %q, want one %q", step.at, events, want)
 				}
 				if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.PendingObservation == nil {
-					t.Fatalf("the deletion stopped waiting %s from the Job's stop bound while the Pod may still run", step.at)
+					t.Fatalf("the deletion stopped waiting %s from the bound while the Pod may still run", step.at)
 				}
 			}
 		})

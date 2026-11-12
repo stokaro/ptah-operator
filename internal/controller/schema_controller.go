@@ -887,7 +887,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			// bound, so a person is told which Pod it is. A list that fails
 			// warns about nothing, for the reason the look above is not
 			// returned. A read's wait ends at the bound this warns past.
-			if err := r.warnStuckPods(ctx, schema, job); err != nil {
+			if err := r.warnStuckPods(ctx, schema, job, deletionWaits); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -1172,6 +1172,17 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if !jobTerminal(job) {
 		if err := r.reportPodAdmission(ctx, schema, job); err != nil {
 			return ctrl.Result{}, err
+		}
+		// An Apply is supervised until its Job stops, and the Lease renewed
+		// above for as long, since its Pod may still write. A Pod on a node
+		// that is gone keeps the Job from stopping with no bound, so a person
+		// is told which Pod it is, as a deleted schema's wait tells them. A
+		// list that fails warns about nothing and is not returned: an error
+		// requeue backs off, and this pass is what renews the Lease.
+		if schemaOperation(operation).Mutating {
+			if err := r.warnStuckPods(ctx, schema, job, applyWaits); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod", "error", err.Error())
+			}
 		}
 		if durableDeliveryRequested(job) {
 			engine := ""
