@@ -29,15 +29,35 @@ func applyLeaseTerm(claim *ptahv1alpha1.MigrationOperationStatus) (time.Time, er
 	return claim.StartedAt.Add(time.Duration(claim.LeaseDurationSeconds) * time.Second), nil
 }
 
+// applyLeaseTermMargin is how far short of the claim's term a hold stops
+// looking. The manager hands the Lease back on its first pass at the term,
+// passes a few seconds apart, so a look in the last seconds could read the
+// release that follows rather than the hold.
+const applyLeaseTermMargin = 15 * time.Second
+
+// applyLeaseTermSlack is how long after the claim's term a row allows the
+// manager to let the claim go: a pass at the term, which the hold requeues
+// every five seconds, then the status writes that retire the claim and hand
+// the Lease back. It bounds those passes and nothing else, since the term
+// itself is read from the claim.
+const applyLeaseTermSlack = 2 * time.Minute
+
+// The words an ApplyPodGone Warning opens with, by who waits: a deleted
+// migration's finalizer, or a live migration's Apply.
+const (
+	applyPodGoneDeletionWaits = "Deletion waits"
+	applyPodGoneApplyWaits    = "The Apply waits"
+)
+
 // applyPodGoneWarnings returns the ApplyPodGone Warnings recorded against this
-// exact migration that say its deletion waits for the claim's Job, by name and
-// UID, until term. A migration of the same name from an earlier row, a Normal
-// Event, another reason, another Job under the same name, a live migration's
+// exact migration that say waiter waits for the claim's Job, by name and UID,
+// until term. A migration of the same name from an earlier row, a Normal
+// Event, another reason, another Job under the same name, the other waiter's
 // words and another end of the wait do not count.
 func applyPodGoneWarnings(events []corev1.Event, migration *ptahv1alpha1.PtahMigration,
-	jobName string, jobUID types.UID, term time.Time,
+	waiter, jobName string, jobUID types.UID, term time.Time,
 ) []corev1.Event {
-	says := fmt.Sprintf("Deletion waits for Job %s, UID %s, until %s: ", jobName, jobUID, term.UTC().Format(time.RFC3339))
+	says := fmt.Sprintf("%s for Job %s, UID %s, until %s: ", waiter, jobName, jobUID, term.UTC().Format(time.RFC3339))
 	var warnings []corev1.Event
 	for _, event := range events {
 		reference := event.InvolvedObject
@@ -75,8 +95,9 @@ func applyPodGoneWarnedInTerm(warnings []corev1.Event, startedAt, term time.Time
 	return nil
 }
 
-// applyPodGoneReading is what the deletion row prints of the ApplyPodGone
-// Warning it matched, with the migration and the claim it matched it against.
+// applyPodGoneReading is what a row that holds a claim to its term prints of
+// the ApplyPodGone Warning it matched, with the migration and the claim it
+// matched it against.
 type applyPodGoneReading struct {
 	MigrationName string                                `json:"migrationName"`
 	MigrationUID  types.UID                             `json:"migrationUID"`

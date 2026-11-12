@@ -80,12 +80,13 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		t.Fatal(err)
 	}
 	type inputs struct {
+		waiter string
 		jobUID types.UID
 		term   time.Time
 	}
 	t.Run("the reading", func(t *testing.T) {
 		t.Parallel()
-		found := applyPodGoneWarnings([]corev1.Event{reading.Event}, applyPodGoneMigration(reading), reading.Claim.JobName, reading.Claim.JobUID, term)
+		found := applyPodGoneWarnings([]corev1.Event{reading.Event}, applyPodGoneMigration(reading), applyPodGoneDeletionWaits, reading.Claim.JobName, reading.Claim.JobUID, term)
 		if len(found) != 1 {
 			t.Fatalf("applyPodGoneWarnings() = %v, want the one Warning", found)
 		}
@@ -103,6 +104,8 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		{name: "a live migration's words", event: func(event *corev1.Event) {
 			event.Message = "The Apply waits for" + event.Message[len("Deletion waits for"):]
 		}},
+		// The same Warning read by a row that waits on a live migration.
+		{name: "a deletion's words for a live migration", inputs: func(in *inputs) { in.waiter = applyPodGoneApplyWaits }},
 		// client-go folds Warnings of one reason with different messages into
 		// this. A hold repeats one message, so a combined one is not its own.
 		{name: "a combination of similar Warnings", event: func(event *corev1.Event) {
@@ -122,11 +125,11 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 			if row.event != nil {
 				row.event(&event)
 			}
-			in := inputs{jobUID: reading.Claim.JobUID, term: term}
+			in := inputs{waiter: applyPodGoneDeletionWaits, jobUID: reading.Claim.JobUID, term: term}
 			if row.inputs != nil {
 				row.inputs(&in)
 			}
-			if found := applyPodGoneWarnings([]corev1.Event{event}, applyPodGoneMigration(reading), reading.Claim.JobName, in.jobUID, in.term); len(found) != 0 {
+			if found := applyPodGoneWarnings([]corev1.Event{event}, applyPodGoneMigration(reading), in.waiter, reading.Claim.JobName, in.jobUID, in.term); len(found) != 0 {
 				t.Fatalf("applyPodGoneWarnings() counted %v", found)
 			}
 		})

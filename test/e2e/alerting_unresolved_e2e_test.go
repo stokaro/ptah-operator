@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/url"
@@ -17,7 +18,9 @@ import (
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -278,9 +281,16 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 			a.fatalf("unresolved alert acquired an unbounded label")
 		}
 	}
+	// The Job and its Pod are gone, and nothing says the executor stopped, so
+	// the claim keeps the database to the end of the term it took the realm
+	// Lease for (ApplyPodGone). The term is read from the claim, and so is
+	// every bound below that waits on it.
+	term, err := applyLeaseTerm(original)
+	a.check(err, "read the interrupted Apply's Lease term")
+	a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
 	// A missing Job alone cannot authorize repair. Require retirement of the
 	// original claim, terminal/absent Pods, and no database session of that user.
-	a.check(harness.Wait(a.ctx, "the interrupted executor to become unable to write", alTimeout+time.Minute, time.Second, func(context.Context) (bool, string, error) {
+	a.check(harness.Wait(a.ctx, "the interrupted executor to become unable to write", time.Until(term)+applyLeaseTermSlack, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		v := read()
 		list := &corev1.PodList{}
@@ -375,6 +385,72 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		a.fatalf("fresh recovery created another Apply or unresolved incident")
 	}
 	a.logf("PASS %s unresolved migration: uid=%s operation=%s jobUID=%s podUID=%s recordedAt=%s firing=%s accountedAt=%s resolved=%s; fresh approval applied only version 3", m.engine.name, uid, original.ID, original.JobUID, originalPod.UID, recorded, firing.ReceivedAt, accounted, resolved.ReceivedAt)
+}
+
+// holdUnresolvedApplyToItsTerm holds a migration whose Apply Job and Pod were
+// deleted to keeping its claim and the realm Lease's holder until
+// applyLeaseTermMargin short of term, and to saying so in an ApplyPodGone
+// Warning that names the Job, its UID and that term. The Warning is dated by its
+// own timestamps, not by the look that found it. Each look also runs check, so
+// the hold is read under the managers, scrape targets and watches the rest of
+// the row is read under.
+func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string, original *ptahv1.MigrationOperationStatus,
+	term time.Time, read func() *ptahv1.PtahMigration, check func(),
+) {
+	a.t.Helper()
+	until := term.Add(-applyLeaseTermMargin)
+	if !time.Now().Before(until) {
+		a.fatalf("the %s Apply was recorded unresolved only at %s, within %s of its Lease term at %s, so no hold could be read",
+			m.engine.name, time.Now().UTC().Format(time.RFC3339), applyLeaseTermMargin, term.UTC().Format(time.RFC3339))
+	}
+	leases := &coordinationv1.LeaseList{}
+	a.check(a.cluster.Client.List(a.ctx, leases), "list the realm Leases")
+	leaseNamespace, leaseName, holder, err := leaseAtEpoch(leases.Items, original.LeaseEpoch)
+	if err != nil || holder == "" {
+		a.fatalf("no single realm Lease with a holder carries the epoch the %s Apply claimed under: %v", m.engine.name, err)
+	}
+	lease := types.NamespacedName{Namespace: leaseNamespace, Name: leaseName}
+	a.logf("holding %s to its Apply's Lease term, which ends at %s", name, term.UTC().Format(time.RFC3339))
+	var warnings []corev1.Event
+	var warned *ptahv1.PtahMigration
+	looks := 0
+	for time.Now().Before(until) {
+		left := time.Until(term).Round(time.Second)
+		check()
+		v := read()
+		pods := &corev1.PodList{}
+		a.check(m.list(pods), "read the interrupted workload while its claim is held")
+		settled, err := uncertainApplySettled(v.Status, original, pods.Items)
+		a.check(err, "hold the interrupted %s Apply to its claim", m.engine.name)
+		if settled || !equality.Semantic.DeepEqual(v.Status.ActiveOperation, original) {
+			a.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped", name, left)
+		}
+		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
+			a.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		}
+		events := &corev1.EventList{}
+		a.check(m.list(events), "list the Events of %s", name)
+		if found := applyPodGoneWarnings(events.Items, v, applyPodGoneApplyWaits, original.JobName, original.JobUID, term); len(found) > 0 {
+			warnings, warned = found, v
+		}
+		looks++
+		a.sleep(5 * time.Second)
+	}
+	if looks == 0 {
+		a.fatalf("the hold of %s was never looked at before its Lease term", name)
+	}
+	if err := applyPodGoneWarnedInTerm(warnings, original.StartedAt.Time, term); err != nil {
+		a.fatalf("%s held its claim to the Lease term, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	// The reading the predicates' unit tests hold them to, printed once.
+	reading, err := json.Marshal(applyPodGoneReading{
+		MigrationName: warned.Name, MigrationUID: warned.UID, Claim: *original, Event: warnings[0],
+	})
+	a.check(err, "encode the ApplyPodGone reading")
+	m.scan(reading, "the ApplyPodGone reading")
+	a.logf("ApplyPodGone reading: %s", reading)
+	a.logf("%s kept its claim and the realm Lease through %d looks to %s before the end of its Lease term", name, looks, applyLeaseTermMargin)
 }
 
 func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, started time.Time, label string) alUnresolvedHistory {
