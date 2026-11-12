@@ -7,6 +7,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
@@ -20,10 +21,13 @@ import (
 // when it refuses a Pod at admission: Failed, with its reason and message and
 // no container status. Under backoffLimit 0 the Job fails on its backoff
 // limit, and the failed Pod of a failed Job stays where a harvest reads it.
-// Neither family points such a run at a Pod log (executorLogUnserved). The
-// control rows are the same Job with an executor that exited 1 without a
-// result, whose log holds whatever it wrote. The fake client runs no Job
-// controller and no kubelet, so each row writes the state a cluster leaves.
+// PodGC leaves another: a Pod it marked Failed after its node went, over the
+// statuses the kubelet last reported, which can show the executor waiting
+// whether or not it started since. Neither family points such a run at a Pod
+// log, since there is none `kubectl logs` can serve (executorLogUnserved). The control rows are the same Job with an executor
+// that exited 1 without a result, whose log holds whatever it wrote. The fake
+// client runs no Job controller, no kubelet and no PodGC, so each row writes
+// the state a cluster leaves.
 
 // rejectedByTheKubelet is the status the kubelet gives a Pod it refuses at
 // admission because the node has no room for it.
@@ -32,6 +36,30 @@ func rejectedByTheKubelet() corev1.PodStatus {
 		Phase: corev1.PodFailed, Reason: "OutOfcpu",
 		Message: "Pod was rejected: Node didn't have enough resource: cpu, requested: 100, used: 3950, capacity: 4000",
 	}
+}
+
+// failedByPodGCOverAWaitingExecutor is the status PodGC leaves on a Pod whose
+// node went after the kubelet last reported it pulling the executor's image:
+// the phase and the DisruptionTarget condition it writes, over the waiting
+// executor of that report. The executor may have started after it.
+func failedByPodGCOverAWaitingExecutor() corev1.PodStatus {
+	return corev1.PodStatus{
+		Phase: corev1.PodFailed,
+		Conditions: []corev1.PodCondition{{
+			Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: "DeletionByPodGC",
+			Message: "PodGC: node no longer exists",
+		}},
+		ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  executorContainerName,
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}},
+		}},
+	}
+}
+
+// kubeletRefusesAWaitingContainer is the kubelet's answer to a log read of a
+// container it reports waiting, with no earlier run.
+func kubeletRefusesAWaitingContainer() error {
+	return apierrors.NewBadRequest(`container "ptah" in pod "apply" is waiting to start: ContainerCreating`)
 }
 
 // exitedWithoutAResult is the status of a Pod whose executor started and exited
@@ -97,6 +125,10 @@ func TestASchemaApplyWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.T
 		ran bool
 	}{
 		{name: "a Pod the kubelet refused at admission", status: rejectedByTheKubelet(), logs: &countedLogs{err: kubeletRefusesALostContainer()}},
+		{
+			name: "a Pod PodGC failed over its executor last reported waiting", status: failedByPodGCOverAWaitingExecutor(),
+			logs: &countedLogs{err: kubeletRefusesAWaitingContainer()},
+		},
 		{name: "a Pod whose executor exited", status: exitedWithoutAResult(), logs: &countedLogs{content: []byte("connection reset by peer\n")}, ran: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -140,7 +172,7 @@ func TestASchemaApplyWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.T
 			case row.ran && reads == 0:
 				t.Error("the harvest read no log of an executor that exited, so the row that reads none proves nothing")
 			case !row.ran && reads != 0:
-				t.Errorf("the harvest read the log of an executor that never ran %d times, want none", reads)
+				t.Errorf("the harvest read the log of an executor that reports no run %d times, want none", reads)
 			}
 		})
 	}
@@ -159,6 +191,10 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 		ran bool
 	}{
 		{name: "a Pod the kubelet refused at admission", status: rejectedByTheKubelet(), logs: &countedLogs{err: kubeletRefusesALostContainer()}},
+		{
+			name: "a Pod PodGC failed over its executor last reported waiting", status: failedByPodGCOverAWaitingExecutor(),
+			logs: &countedLogs{err: kubeletRefusesAWaitingContainer()},
+		},
 		{name: "a Pod whose executor exited", status: exitedWithoutAResult(), logs: &countedLogs{content: []byte("connection reset by peer\n")}, ran: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -181,7 +217,7 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 			case row.ran && reads == 0:
 				t.Error("the harvest read no log of an executor that exited, so the row that reads none proves nothing")
 			case !row.ran && reads != 0:
-				t.Errorf("the harvest read the log of an executor that never ran %d times, want none", reads)
+				t.Errorf("the harvest read the log of an executor that reports no run %d times, want none", reads)
 			}
 			event := findEvent(run.recorder, "Warning MigrationRunUncertain ")
 			if event == "" {
@@ -194,6 +230,55 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 				if logs := strings.Contains(text, "kubectl logs"); logs != row.ran {
 					t.Errorf("%s = %q, names kubectl logs: %t, want %t", subject, text, logs, row.ran)
 				}
+			}
+		})
+	}
+}
+
+// TestAnExecutorLogIsUnservedOnlyWhereThePodReportsNone holds executorLogUnserved
+// to the states a cluster leaves on a Pod: what the kubelet writes, and what
+// PodGC writes over it. A Pod that has not ended can still start its executor,
+// whether it reports it waiting or not yet at all, and an executor reported
+// running or exited ran and wrote a log, so neither is unserved. PodGC can mark
+// a Pod Failed over an executor last reported running too.
+func TestAnExecutorLogIsUnservedOnlyWhereThePodReportsNone(t *testing.T) {
+	t.Parallel()
+
+	executor := func(state corev1.ContainerState) []corev1.ContainerStatus {
+		return []corev1.ContainerStatus{{Name: executorContainerName, State: state}}
+	}
+	waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	for _, row := range []struct {
+		name     string
+		status   corev1.PodStatus
+		unserved bool
+	}{
+		{name: "a Pod the kubelet refused at admission", status: rejectedByTheKubelet(), unserved: true},
+		{name: "a Pod PodGC failed over its executor last reported waiting", status: failedByPodGCOverAWaitingExecutor(), unserved: true},
+		{name: "a Pod whose executor the kubelet lost", unserved: true, status: corev1.PodStatus{
+			Phase: corev1.PodFailed, ContainerStatuses: executor(corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 137, Reason: "ContainerStatusUnknown",
+			}}),
+		}},
+		{name: "a Pod whose executor exited", status: exitedWithoutAResult()},
+		{name: "a Pod PodGC failed over its executor last reported running", status: corev1.PodStatus{
+			Phase: corev1.PodFailed, ContainerStatuses: executor(running),
+		}},
+		{name: "a pending Pod whose executor waits", status: corev1.PodStatus{
+			Phase: corev1.PodPending, ContainerStatuses: executor(waiting),
+		}},
+		{name: "a pending Pod no kubelet reported yet", status: corev1.PodStatus{Phase: corev1.PodPending}},
+		{name: "a pending Pod that reports only another container", status: corev1.PodStatus{
+			Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "sidecar", State: running}},
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			pod := &corev1.Pod{Status: row.status}
+			if got := executorLogUnserved(pod); got != row.unserved {
+				t.Fatalf("executorLogUnserved() = %t, want %t", got, row.unserved)
 			}
 		})
 	}
