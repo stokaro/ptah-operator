@@ -69,11 +69,13 @@ did in that scenario, and they are not a statement about every workload.
 
 ## Where SchemaHero is simpler
 
-`kubectl schemahero install` is one command with no values. From v0.2.10 a published
-release of this operator is [one `helm` command with no values](../install/), with
-every image still pinned by digest, and a release before that takes four values
-from its release manifest. An install command in the plugin is
-[tracked](https://github.com/stokaro/ptah-operator/issues/789).
+`kubectl schemahero install` is one command with no values, and needs nothing
+beside the plugin. From v0.2.11 `kubectl ptah install` is
+[one command with no values](../install/) as well, with every image still pinned
+by digest, and `--yaml --out-dir` writes the objects for a GitOps repository as
+SchemaHero's does. It runs Helm 4 to do it, which SchemaHero's does not need. A
+release from v0.2.10 installs with the same `helm` command and no values, and a
+release before that takes four values from its release manifest.
 
 SchemaHero's `Database` resource has connection types for PostgreSQL, MySQL,
 CockroachDB, TimescaleDB, SQLite, RQLite and Cassandra. We ran only PostgreSQL,

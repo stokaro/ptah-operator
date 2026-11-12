@@ -98,6 +98,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return waitCommand(ctx, arguments[1:], stdout, stderr)
 	case "set-source":
 		return setSourceCommand(ctx, arguments[1:], stdout, stderr)
+	case "install":
+		return installCommand(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -402,6 +404,7 @@ func usage(out io.Writer) {
        kubectl ptah refresh schema/<name>|migration/<name> [flags]
        kubectl ptah set-source schema/<name>|migration/<name> --oci <ref> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
+       kubectl ptah install [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
 own checks on it have held, each statement under a line that gives its severity
@@ -628,19 +631,50 @@ date the operator's records, so a wait counts a reading by a new stamp rather
 than by which time is later, except on a run an operator older than 0.2.10
 recorded.
 
-suspend, resume, refresh and set-source patch the resource as you: they need
-get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
-named as schema/NAME or migration/NAME, or by the kind's plural or short name
-as kubectl spells it.
+install puts the operator into the cluster from the chart a release published
+to oci://ghcr.io/stokaro/charts/ptah-operator. That chart carries its release's
+manager, runner and executor digests and the verified Ptah version, so install
+passes no image and every image stays pinned by digest. It runs helm upgrade
+--install with Helm 4 or newer from PATH, prints that command line first, and
+waits for the release to become ready. Run again with the same flags, it
+applies the same objects as a new Helm revision; a run without --approver
+removes the binding an earlier --approver made. Verify the chart first, as the install page shows.
 
-Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
-usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
-approved or changed (the plan or the spec changed, the operator would not
-admit an approval now, the fingerprint is not the current plan's, you
-declined, the resource was deleted and created again, or set-source met a
-source that is not an OCI artifact, an Apply running, or a source changed
-after it was read), 5
-refused by RBAC or the API server, 6 sent with no answer: the change may have
-been stored, 7 the wait timed out, 8 the resource will not reach the target.
+  --version <version>      the release to install (default: this plugin's
+                           own; a build from a checkout has none, so it needs
+                           this)
+  -n, --namespace <name>   the release namespace (default ptah-system)
+  --approver <username>    bind the chart's approver ClusterRole to this user
+                           in every namespace; repeat it for more
+  -f, --values <file>      a values file for the chart; repeat it for more.
+                           The chart takes an image only with its pair, as
+                           it does from helm
+  --yaml                   print the objects install would apply instead,
+                           rendered by helm template from the same chart,
+                           version and values; reads no cluster, so the
+                           chart's cluster checks do not run
+  --out-dir <dir>          with --yaml, write them under <dir>/ptah-operator
+                           rather than to standard output
+  --timeout <duration>     how long helm waits for the release (default 5m)
+
+  kubectl ptah install --version 0.2.11
+  kubectl ptah install --version 0.2.11 --approver alice@example.com
+  kubectl ptah install --version 0.2.11 --yaml --out-dir ./deploy
+
+suspend, resume, refresh and set-source patch the resource as you: they need
+get and patch on ptahschemas or ptahmigrations. wait needs get. install needs
+what the chart needs, which is cluster-admin. The resource is named as
+schema/NAME or migration/NAME, or by the kind's plural or short name as kubectl
+spells it.
+
+Exit status: 0 printed, changed, reached or installed, 1 could not read or
+verify, or helm did not install or render, 2 usage, 3 nothing stored to print,
+approve, change or wait on, 4 nothing approved or changed (the plan or the spec
+changed, the operator would not admit an approval now, the fingerprint is not
+the current plan's, you declined, the resource was deleted and created again,
+or set-source met a source that is not an OCI artifact, an Apply running, or a
+source changed after it was read), 5 refused by RBAC or the API server, 6 sent
+with no answer: the change may have been stored, 7 the wait timed out, 8 the
+resource will not reach the target.
 `)
 }
