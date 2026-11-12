@@ -134,6 +134,22 @@ A script that reads the text of `kubectl ptah schema` or `migration`, rather
 than `-o json`, finds the `kubectl ptah history` command where it found a
 `kubectl get` of the namespace, when more than five approvals or acknowledgments
 name the resource, and one more line before the closing `kubectl events` line.
+Operation Pods now read every credential from a file in a Secret volume, so a
+policy that refuses a Secret volume in a Pod, or admits only the volumes it
+knows, has to admit `database-url`, `development-database-url`,
+`registry-credentials` and `git-credentials`, each of them keys of a Secret the
+resource already names. A script or an alert that matches the text of a
+`PodConfigurationError` Event or condition has to match
+`MountVolume.SetUp failed for volume "database-url" : secret "<name>" not found`
+in place of `secret "<name>" not found`, and
+`references non-existent secret key: url (volume database-url reads Secret <namespace>/<name>)`
+in place of `couldn't find key url in Secret <namespace>/<name>`. A missing
+database Secret or key now stops the Pod before its init containers run, where it
+stopped only the operation container once the source was fetched. A Job 0.2.10
+dispatched is adopted and supervised as before. After a
+[rollback](../../use/operations/#rollback) to 0.2.10, a Job 0.2.11 created that
+has no cleanup TTL yet keeps none: the 0.2.10 Job guard refuses every write to a
+Job that mounts a credential volume, so delete such a Job once it has finished.
 
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
@@ -639,6 +655,22 @@ name the resource, and one more line before the closing `kubectl events` line.
   any other failure keeps the code it had
   ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
   that `ptah schema push` built carries its rows and reads no row file.
+- **Credentials reach the Pod as files.** Every operation Pod read its database
+  URL, and a registry or Git credential, from a `secretKeyRef` in its container's
+  environment, and the container runtime keeps a container's environment on the
+  node until the Pod is removed, which for a failed Apply is a day. Each
+  credential is now a file in a read-only Secret volume mounted in the one
+  container that needs it, mode `0440` for the Pod's `fsGroup`, and the
+  container's environment names the file. The runner reads it and gives the value
+  to Ptah's environment alone, since Ptah `v0.23.0` takes a database URL and a
+  registry or Git credential from nowhere else, and the OCI fetch init container
+  now runs Ptah's pull through the runner for the same reason. The kubelet
+  unmounts the volumes once the Pod's containers stop. The registry and Git
+  grants stay `secretKeyRef` variables, since they hold no credential. The Job
+  admission guard refuses a credential variable on a Job the manager creates,
+  and still admits the cleanup TTL of a Job 0.2.10 created.
+  [Credentials are files](../../reference/credentials-and-admission/#credential-files)
+  has the detail.
 
 ## 0.2.10
 
