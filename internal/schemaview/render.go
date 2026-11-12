@@ -77,7 +77,7 @@ func renderText(out io.Writer, view View) error {
 		field("Applied", name+" at "+statusview.Time(applied.CompletedAt))
 	}
 	renderPlan(&text, view.Plan, statusview.Find(view.Conditions, "ApprovalRequired"))
-	if statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals", view.Namespace,
+	if statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals", historyCommand(view),
 		view.Approvals, view.ApprovalsUnreadable) {
 		for _, approval := range view.Approvals.Items {
 			statusview.WriteApproval(&text, approval, "no condition written yet")
@@ -91,9 +91,16 @@ func renderText(out io.Writer, view View) error {
 	if view.Plan != nil {
 		fmt.Fprintf(&text, "kubectl ptah plan %s -n %s prints the SQL this plan holds.\n", view.Schema, view.Namespace)
 	}
+	fmt.Fprintf(&text, "%s prints its lifecycle history and every approval that names it.\n", historyCommand(view))
 	fmt.Fprintf(&text, "kubectl events -n %s --for ptahschema/%s prints its Events.\n", view.Namespace, view.Schema)
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// historyCommand is the command that prints what this schema retained of its
+// past, in its namespace.
+func historyCommand(view View) string {
+	return fmt.Sprintf("kubectl ptah history schema/%s -n %s", view.Schema, view.Namespace)
 }
 
 // policyLine names the policy fields by their spec names, so a reader who

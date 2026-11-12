@@ -84,6 +84,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return migration(ctx, arguments[1:], stdout, stderr)
 	case "schema":
 		return schema(ctx, arguments[1:], stdout, stderr)
+	case "history":
+		return historyCommand(ctx, arguments[1:], stdout, stderr)
 	case "approve":
 		return approveCommand(ctx, arguments[1:], os.Stdin, stdinIsTerminal(), stdout, stderr)
 	case "suspend":
@@ -393,6 +395,7 @@ func usage(out io.Writer) {
 	fmt.Fprint(out, `usage: kubectl ptah plan <schema> [flags]
        kubectl ptah schema <schema> [flags]
        kubectl ptah migration <migration> [flags]
+       kubectl ptah history schema/<name>|migration/<name> [flags]
        kubectl ptah approve schema/<name>|migration/<name> [flags]
        kubectl ptah suspend schema/<name>|migration/<name> [flags]
        kubectl ptah resume schema/<name>|migration/<name> [flags]
@@ -451,10 +454,26 @@ data plan is reading values.
 
 Listing the approvals and acknowledgments takes list on them, which reading the
 resource does not. Without it the command still prints the resource, with one
-line that says why they are missing, and exits 0. Events are kubectl's own:
+line that says why they are missing, and exits 0. Each view prints the five
+newest; history prints them all. Events are kubectl's own:
 
   kubectl events -n application --for ptahschema/storefront
   kubectl events -n application --for ptahmigration/orders
+
+history prints what a schema or a migration retained of its past: the
+lifecycle journal the operator keeps in its status, entry by entry in the
+order it recorded them, and every approval and run acknowledgment that names
+this resource by name and UID, oldest first. It says from when the journal is
+complete, tells a status with no journal from a journal with no entries, and
+marks a plan or a decision an entry names that is no longer stored. The
+journal keeps at most 64 entries, none more than 30 days older than the
+newest: it is the operator's record, not an audit archive. It takes -o text
+(the default) or json, and the same -n, --kubeconfig, --context and --timeout
+flags. It needs get on the resource; listing its plans, approvals and
+acknowledgments is optional, the way it is for schema and migration.
+
+  kubectl ptah history schema/storefront -n application
+  kubectl ptah history migration/orders -n application -o json
 
 approve shows the current plan of a schema or a migration and the identities
 an approval of it carries, asks for a decision, and creates the approval as
