@@ -626,7 +626,10 @@ func TestAReadRefusedUntilItsDeadlineKeepsTheRefusal(t *testing.T) {
 // a Pod that starts and dies without a result can fall inside one look, and the
 // terminal pass reads the Job's result rather than its Pod's waiting state. The
 // condition then still says the Pod cannot start, about a Pod that did, so the
-// failure has to say whose words those are and when they were true.
+// failure has to say whose words those are and when they were true. A schema
+// Apply is the exception: its ending reads the Pods the harvest listed, as its
+// other endings do (withPodsRead), so a Pod whose executor started takes the
+// report off (TestTheLiveEndingsLeaveOutAReportAStartedPodOutdated).
 func TestAFailureSaysItsPodReportIsTheLastOne(t *testing.T) {
 	t.Parallel()
 
@@ -669,8 +672,8 @@ func TestAFailureSaysItsPodReportIsTheLastOne(t *testing.T) {
 			t.Fatalf("Reconcile() error = %v", err)
 		}
 		failed := meta.FindStatusCondition(safetyGetSchema(t, api, schema).Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-		if failed == nil || !strings.Contains(failed.Message, lastReported+said) {
-			t.Fatalf("ReconciliationFailed = %#v, want %q", failed, lastReported+said)
+		if want := "apply result is uncertain: " + runner.ErrFrameNotFound.Error(); failed == nil || failed.Message != want {
+			t.Fatalf("ReconciliationFailed = %#v, want %q alone: the Pod the harvest read started", failed, want)
 		}
 	})
 	t.Run("a migration read", func(t *testing.T) {
@@ -802,7 +805,8 @@ func TestALostFrameFromAPodThatRanRepeatsNoStaleReport(t *testing.T) {
 // A migration Apply whose log held no frame is a run nobody accounted for, and
 // its record is what a person reads once the Pod is gone. It keeps what the
 // resource last reported about the Pod, worded as that, the way a read's failure
-// and a schema Apply's do.
+// does, also for a Pod that started between two looks. A schema Apply's ending
+// drops the report for such a Pod (withPodsRead).
 func TestAnUnreadMigrationApplyKeepsWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
@@ -860,7 +864,9 @@ func podStarted(t *testing.T, pod *corev1.Pod) {
 }
 
 // An Apply in the same place owes the read-only proof every Apply owes, and the
-// reason its outcome is unknown says what stopped it.
+// reason its outcome is unknown says what stopped it. The Pod is what the Job's
+// deadline leaves of one whose executor waited on the Secret: the kubelet ends
+// the container that never started with ContainerStatusUnknown.
 func TestAnApplyPastItsDeadlineKeepsSayingWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
@@ -868,6 +874,12 @@ func TestAnApplyPastItsDeadlineKeepsSayingWhyItsPodNeverStarted(t *testing.T) {
 	said := "Job " + schema.Status.ActiveOperation.JobName + " cannot start its Pod: " + missingSecretText
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPodConfigurationError, said)
 	job, pod := terminalWorkload(schema, batchv1.JobFailed)
+	pod.Status = corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{{
+		Name: executorContainerName,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 137, Reason: "ContainerStatusUnknown", Message: lostKubeletContainer,
+		}},
+	}}}
 	reconciler, api := fakeReconciler(t, staticLogs{content: []byte("no frame here\n")}, schema, plan, policy, job, pod)
 	reconciler.Locks = targetlock.New(api, api, nil)
 
