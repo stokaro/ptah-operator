@@ -19,7 +19,19 @@ import (
 // claim it matched it against.
 func applyPodGoneDeletionReading(t *testing.T) applyPodGoneReading {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "apply-pod-gone-deletion.json"))
+	return applyPodGoneReadingFrom(t, "apply-pod-gone-deletion.json")
+}
+
+// applyPodGoneLiveReading is the reading the unresolved-alert row printed on a
+// kind run, of a live migration whose Apply Job it deleted.
+func applyPodGoneLiveReading(t *testing.T) applyPodGoneReading {
+	t.Helper()
+	return applyPodGoneReadingFrom(t, "apply-pod-gone-live.json")
+}
+
+func applyPodGoneReadingFrom(t *testing.T, name string) applyPodGoneReading {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,14 +92,35 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		t.Fatal(err)
 	}
 	type inputs struct {
+		waiter string
 		jobUID types.UID
 		term   time.Time
 	}
 	t.Run("the reading", func(t *testing.T) {
 		t.Parallel()
-		found := applyPodGoneWarnings([]corev1.Event{reading.Event}, applyPodGoneMigration(reading), reading.Claim.JobName, reading.Claim.JobUID, term)
+		found := applyPodGoneWarnings([]corev1.Event{reading.Event}, applyPodGoneMigration(reading), applyPodGoneDeletionWaits, reading.Claim.JobName, reading.Claim.JobUID, term)
 		if len(found) != 1 {
 			t.Fatalf("applyPodGoneWarnings() = %v, want the one Warning", found)
+		}
+	})
+	// The live row's own reading counts for the waiter it names, and not for
+	// a deletion's.
+	t.Run("the live reading", func(t *testing.T) {
+		t.Parallel()
+		live := applyPodGoneLiveReading(t)
+		liveTerm, err := applyLeaseTerm(&live.Claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		migration := applyPodGoneMigration(live)
+		if found := applyPodGoneWarnings([]corev1.Event{live.Event}, migration, applyPodGoneApplyWaits, live.Claim.JobName, live.Claim.JobUID, liveTerm); len(found) != 1 {
+			t.Fatalf("applyPodGoneWarnings() = %v, want the one Warning", found)
+		}
+		if found := applyPodGoneWarnings([]corev1.Event{live.Event}, migration, applyPodGoneDeletionWaits, live.Claim.JobName, live.Claim.JobUID, liveTerm); len(found) != 0 {
+			t.Fatalf("applyPodGoneWarnings() counted %v for a deletion", found)
+		}
+		if err := applyPodGoneWarnedInTerm([]corev1.Event{live.Event}, live.Claim.StartedAt.Time, liveTerm); err != nil {
+			t.Fatalf("applyPodGoneWarnedInTerm() refused the reading: %v", err)
 		}
 	})
 	for _, row := range []struct {
@@ -103,6 +136,8 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 		{name: "a live migration's words", event: func(event *corev1.Event) {
 			event.Message = "The Apply waits for" + event.Message[len("Deletion waits for"):]
 		}},
+		// The same Warning read by a row that waits on a live migration.
+		{name: "a deletion's words for a live migration", inputs: func(in *inputs) { in.waiter = applyPodGoneApplyWaits }},
 		// client-go folds Warnings of one reason with different messages into
 		// this. A hold repeats one message, so a combined one is not its own.
 		{name: "a combination of similar Warnings", event: func(event *corev1.Event) {
@@ -122,11 +157,11 @@ func TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm(t *testing.T) {
 			if row.event != nil {
 				row.event(&event)
 			}
-			in := inputs{jobUID: reading.Claim.JobUID, term: term}
+			in := inputs{waiter: applyPodGoneDeletionWaits, jobUID: reading.Claim.JobUID, term: term}
 			if row.inputs != nil {
 				row.inputs(&in)
 			}
-			if found := applyPodGoneWarnings([]corev1.Event{event}, applyPodGoneMigration(reading), reading.Claim.JobName, in.jobUID, in.term); len(found) != 0 {
+			if found := applyPodGoneWarnings([]corev1.Event{event}, applyPodGoneMigration(reading), in.waiter, reading.Claim.JobName, in.jobUID, in.term); len(found) != 0 {
 				t.Fatalf("applyPodGoneWarnings() counted %v", found)
 			}
 		})

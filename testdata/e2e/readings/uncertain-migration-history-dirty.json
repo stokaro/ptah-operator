@@ -1,0 +1,270 @@
+{
+  "postgresql": {
+    "metadata": {
+      "name": "e2e-uncertain-postgresql"
+    },
+    "status": {
+      "phase": "Blocked",
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:51:35Z",
+          "reason": "HistoryDirty",
+          "message": "Nothing runs while a revision is recorded dirty"
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:51:22Z",
+          "reason": "PolicySatisfied",
+          "message": "The resolved artifact satisfied its verification policy"
+        },
+        {
+          "type": "Blocked",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:44:05Z",
+          "reason": "HistoryDirty",
+          "message": "Revision 3 is recorded dirty; a person has to decide what the interrupted run did"
+        },
+        {
+          "type": "Ready",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:44:00Z",
+          "reason": "HistoryDirty",
+          "message": "The revision table holds a dirty row"
+        },
+        {
+          "type": "DatabaseReachable",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:44:00Z",
+          "reason": "Observed",
+          "message": "The migration history was read"
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:44:00Z",
+          "reason": "HistoryDirty",
+          "message": "This reading published no plan, so nothing waits for an approval"
+        }
+      ],
+      "lastRun": {
+        "outcome": "Unknown",
+        "jobName": "ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54",
+        "jobUID": "33329e39-67a6-405a-8670-f45c958724c5",
+        "operationID": "sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce",
+        "planRef": {
+          "name": "ptah-mplan-a3e24329265a76331906c4c0",
+          "uid": "90a5ffc1-7574-4f41-a799-65333f997828"
+        },
+        "planFingerprint": "sha256:a3e24329265a76331906c4c06707257f2fb4549785c62ee286ec0491d3340325",
+        "authorization": {
+          "kind": "Policy"
+        },
+        "artifactDigest": "sha256:2882b27b3b66a06768a7141e9d52073978c355e297f3734b97932778bc2217c4",
+        "executionBindingID": "v1-e4d9866a8e7b819658b5e8aabd925c95",
+        "startedAt": "2026-11-12T06:44:00Z",
+        "finishedAt": "2026-11-12T06:44:05Z",
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758",
+          "controllerRevision": "af82127405996d3833b5b5520061bc310f38e9a6",
+          "runnerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758"
+        },
+        "message": "dispatched Apply Job intent changed: the Job's labels or annotations are not the ones its claim builds"
+      },
+      "unresolvedRun": {
+        "outcome": "Unknown",
+        "operationID": "sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce",
+        "jobName": "ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54",
+        "jobUID": "33329e39-67a6-405a-8670-f45c958724c5",
+        "planRef": {
+          "name": "ptah-mplan-a3e24329265a76331906c4c0",
+          "uid": "90a5ffc1-7574-4f41-a799-65333f997828"
+        },
+        "targetIdentityDigest": "sha256:1d36d957aa3188f71caeaa5c43fabfd6fc2c6db5cba78bf6264571248fa4cbcb",
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758",
+          "controllerRevision": "af82127405996d3833b5b5520061bc310f38e9a6",
+          "runnerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758"
+        },
+        "recordedAt": "2026-11-12T06:44:05Z"
+      },
+      "history": {
+        "observedAt": "2026-11-12T06:51:35Z",
+        "contractVersion": 2,
+        "currentVersion": 2,
+        "appliedCount": 2,
+        "pendingCount": 1,
+        "fingerprint": "sha256:dd7ddf4b4dabf45e7f41345d7c72b25276875e6376afc4ab0630f83c68f829fa",
+        "targetIdentityDigest": "sha256:1d36d957aa3188f71caeaa5c43fabfd6fc2c6db5cba78bf6264571248fa4cbcb",
+        "dirty": true,
+        "revisions": [
+          {
+            "version": 3,
+            "description": "Settle Slowly",
+            "state": "dirty",
+            "appliedAt": "2026-11-12T06:44:05Z",
+            "executionMillis": 2264
+          },
+          {
+            "version": 2,
+            "description": "Add Widget Color",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "state": "applied",
+            "appliedAt": "2026-11-12T06:44:05Z",
+            "executionMillis": 13
+          },
+          {
+            "version": 1,
+            "description": "Create Widgets",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "state": "applied",
+            "appliedAt": "2026-11-12T06:44:05Z",
+            "executionMillis": 94
+          }
+        ]
+      }
+    }
+  },
+  "mysql": {
+    "metadata": {
+      "name": "e2e-uncertain-mysql"
+    },
+    "status": {
+      "phase": "Blocked",
+      "conditions": [
+        {
+          "type": "Progressing",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:54:45Z",
+          "reason": "HistoryDirty",
+          "message": "Nothing runs while a revision is recorded dirty"
+        },
+        {
+          "type": "ArtifactVerified",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:54:31Z",
+          "reason": "PolicySatisfied",
+          "message": "The resolved artifact satisfied its verification policy"
+        },
+        {
+          "type": "Blocked",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:47:14Z",
+          "reason": "HistoryDirty",
+          "message": "Revision 3 is recorded dirty; a person has to decide what the interrupted run did"
+        },
+        {
+          "type": "Ready",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:47:07Z",
+          "reason": "HistoryDirty",
+          "message": "The revision table holds a dirty row"
+        },
+        {
+          "type": "DatabaseReachable",
+          "status": "True",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:47:07Z",
+          "reason": "Observed",
+          "message": "The migration history was read"
+        },
+        {
+          "type": "ApprovalRequired",
+          "status": "False",
+          "observedGeneration": 1,
+          "lastTransitionTime": "2026-11-12T06:47:07Z",
+          "reason": "HistoryDirty",
+          "message": "This reading published no plan, so nothing waits for an approval"
+        }
+      ],
+      "lastRun": {
+        "outcome": "Unknown",
+        "jobName": "ptah-m-apply-e2e-uncertain-mysql-37c2a9b138038992",
+        "jobUID": "af5b8f0c-f878-4e53-8801-e018b4c44b4e",
+        "operationID": "sha256:b25170ce9be8ef8d71c97584e236384169c9edc6ac6d54abe71bb73c9378aabe",
+        "planRef": {
+          "name": "ptah-mplan-e3438155ad2eb0b6b83f15f3",
+          "uid": "5cbd2b61-b6de-4022-85c6-9d527474e0ef"
+        },
+        "planFingerprint": "sha256:e3438155ad2eb0b6b83f15f35761e108c055d6061b5fc07cedb3025bdb4b2cb5",
+        "authorization": {
+          "kind": "Policy"
+        },
+        "artifactDigest": "sha256:19303ec1e34fcbfd99e2d909f6d509c664b47e2e6a869b5c5a2cb46ce7326739",
+        "executionBindingID": "v1-76dac85e43e14470fce04476a4826f10",
+        "startedAt": "2026-11-12T06:47:07Z",
+        "finishedAt": "2026-11-12T06:47:14Z",
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-3f83b5af77.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758",
+          "controllerRevision": "af82127405996d3833b5b5520061bc310f38e9a6",
+          "runnerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-3f83b5af77.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758"
+        },
+        "message": "dispatched Apply Job intent changed: the Job's labels or annotations are not the ones its claim builds"
+      },
+      "unresolvedRun": {
+        "outcome": "Unknown",
+        "operationID": "sha256:b25170ce9be8ef8d71c97584e236384169c9edc6ac6d54abe71bb73c9378aabe",
+        "jobName": "ptah-m-apply-e2e-uncertain-mysql-37c2a9b138038992",
+        "jobUID": "af5b8f0c-f878-4e53-8801-e018b4c44b4e",
+        "planRef": {
+          "name": "ptah-mplan-e3438155ad2eb0b6b83f15f3",
+          "uid": "5cbd2b61-b6de-4022-85c6-9d527474e0ef"
+        },
+        "targetIdentityDigest": "sha256:2eb129efaa19359b89f5575e4d5676a0d8f527fd281f166875b0e47e0e02a3c6",
+        "dispatchedBy": {
+          "controllerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-3f83b5af77.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758",
+          "controllerRevision": "af82127405996d3833b5b5520061bc310f38e9a6",
+          "runnerImage": "e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-3f83b5af77.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758"
+        },
+        "recordedAt": "2026-11-12T06:47:14Z"
+      },
+      "history": {
+        "observedAt": "2026-11-12T06:54:45Z",
+        "contractVersion": 2,
+        "currentVersion": 2,
+        "appliedCount": 2,
+        "pendingCount": 1,
+        "fingerprint": "sha256:8b3e5c7daffbd0524d39d0d5f05141966270837570300665aed15de2b8aa0170",
+        "targetIdentityDigest": "sha256:2eb129efaa19359b89f5575e4d5676a0d8f527fd281f166875b0e47e0e02a3c6",
+        "dirty": true,
+        "revisions": [
+          {
+            "version": 3,
+            "description": "Settle Slowly",
+            "state": "dirty",
+            "appliedAt": "2026-11-12T06:47:14Z",
+            "executionMillis": 0
+          },
+          {
+            "version": 2,
+            "description": "Add Widget Color",
+            "checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+            "state": "applied",
+            "appliedAt": "2026-11-12T06:47:14Z",
+            "executionMillis": 113
+          },
+          {
+            "version": 1,
+            "description": "Create Widgets",
+            "checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+            "state": "applied",
+            "appliedAt": "2026-11-12T06:47:14Z",
+            "executionMillis": 99
+          }
+        ]
+      }
+    }
+  }
+}

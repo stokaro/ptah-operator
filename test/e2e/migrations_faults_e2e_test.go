@@ -228,12 +228,6 @@ func (m *migrationRun) assertDeletionRetainsItsRunningApply(name, job string) {
 	}
 }
 
-// applyLeaseTermMargin is how far short of the claim's term the hold stops
-// looking. The manager hands the Lease back on its first pass at the term,
-// passes a few seconds apart, so a look in the last seconds could read the
-// release that follows rather than the hold.
-const applyLeaseTermMargin = 15 * time.Second
-
 // assertDeletionHoldsToTheLeaseTerm holds a deleted migration whose Apply Job
 // and Pod are gone to keeping its claim, its finalizer and the realm Lease's
 // holder until the end of the term the claim took the Lease for, and to saying
@@ -268,7 +262,7 @@ func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *pta
 		}
 		events := &corev1.EventList{}
 		m.check(m.list(events), "the Events of %s could not be listed", name)
-		if found := applyPodGoneWarnings(events.Items, migration, claim.JobName, claim.JobUID, term); len(found) > 0 {
+		if found := applyPodGoneWarnings(events.Items, migration, applyPodGoneDeletionWaits, claim.JobName, claim.JobUID, term); len(found) > 0 {
 			warnings, warned = found, migration
 		}
 		looks++
