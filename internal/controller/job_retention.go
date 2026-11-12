@@ -161,13 +161,13 @@ func servedLogReading(ctx context.Context, reader client.Reader, job *batchv1.Jo
 // (validateContainerLogStatus), so `kubectl logs` gets an error for each.
 //
 // PodGC leaves a waiting executor on a failed Pod as well. When it marks a Pod
-// Failed after its node went (DeletionByPodGC), it writes the phase over the
-// statuses the kubelet last reported, so a Pod that was pulling its image or
-// waiting for a Secret keeps its executor waiting. The executor may have
-// started after that report, so the status does not say whether it ran. What
-// it does say is that there is no log `kubectl logs` can serve: the kubelet
-// refuses a read of a container it last reported waiting, and a node that is
-// gone serves nothing.
+// Failed after its node went (DeletionByPodGC), it sets the phase and a
+// condition and keeps the statuses the kubelet last reported, so a Pod that was
+// pulling its image or waiting for a Secret keeps its executor waiting. The
+// executor may have started after that report. No status on the Pod shows that
+// it ran, operation Pods restart nothing, and the pointer names the executor's
+// container (`-c ptah`), so the status does not say whether it ran, and a log is
+// pointed at only where the Pod shows a run.
 //
 // Only a failed Pod is asked about. One that has not ended can start the
 // executor later, whether it reports it waiting or not yet at all, and the

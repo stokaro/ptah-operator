@@ -21,11 +21,12 @@ import (
 // when it refuses a Pod at admission: Failed, with its reason and message and
 // no container status. Under backoffLimit 0 the Job fails on its backoff
 // limit, and the failed Pod of a failed Job stays where a harvest reads it.
-// PodGC leaves another: a Pod it marked Failed after its node went, over the
+// PodGC leaves another: a Pod it marked Failed after its node went, keeping the
 // statuses the kubelet last reported, which can show the executor waiting
 // whether or not it started since. Neither family points such a run at a Pod
-// log, since there is none `kubectl logs` can serve (executorLogUnserved). The control rows are the same Job with an executor
-// that exited 1 without a result, whose log holds whatever it wrote. The fake
+// log, since no status on the Pod shows a run (executorLogUnserved). The
+// control rows are the same Job with an executor that exited 1 without a
+// result, whose log holds whatever it wrote. The fake
 // client runs no Job controller, no kubelet and no PodGC, so each row writes
 // the state a cluster leaves.
 
@@ -236,11 +237,12 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 }
 
 // TestAnExecutorLogIsUnservedOnlyWhereThePodReportsNone holds executorLogUnserved
-// to the states a cluster leaves on a Pod: what the kubelet writes, and what
-// PodGC writes over it. A Pod that has not ended can still start its executor,
-// whether it reports it waiting or not yet at all, and an executor reported
-// running or exited ran and wrote a log, so neither is unserved. PodGC can mark
-// a Pod Failed over an executor last reported running too.
+// to the states a cluster leaves on a Pod: what the kubelet writes, and the
+// phase and condition PodGC sets beside the statuses it keeps. A Pod that has
+// not ended can still start its executor, whether it reports it waiting or not
+// yet at all, so it is not unserved. An executor reported running or exited
+// shows a run, so the log is pointed at. PodGC can mark a Pod Failed over an
+// executor last reported running too, and that Pod shows a run as well.
 func TestAnExecutorLogIsUnservedOnlyWhereThePodReportsNone(t *testing.T) {
 	t.Parallel()
 

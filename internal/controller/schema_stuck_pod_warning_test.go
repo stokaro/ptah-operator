@@ -492,9 +492,11 @@ func TestASchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T) {
 			ctx := context.Background()
 
 			run := admittedUnstartedSchemaApplyRun(t)
-			waiter := proofWaits
+			// The words are written out, so a change to the waiters' constants
+			// fails these rows.
+			waiter := "The Apply's proof waits"
 			if !row.live {
-				waiter = deletionWaits
+				waiter = "Deletion waits"
 				deleteSchemaWhileItsApplyRuns(t, run)
 			}
 			firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})

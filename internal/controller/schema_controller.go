@@ -780,9 +780,11 @@ func hasExecutionBindingEvidence(schema *operatorv1alpha1.PtahSchema) bool {
 // for the proof. A Job lookup that fails warns about nothing and is not
 // returned, for the reason the claim's own wait does not return it.
 //
-// Both waits that ask meet such a Pod only through the pending observation:
-// the proof claim is taken once this said no Pod was active, and under the
-// Job's backoffLimit 0 no later Pod comes.
+// Both waits that ask go through here. The proof claim is taken once this said
+// no Pod was active, and a Pod that comes later cannot dispatch: under the
+// Job's backoffLimit 0 the one Pod that can still come is the Job's first,
+// created late by a Job that was active with no Pod when its Apply ended, and
+// the runner refuses it past the Apply's DispatchNotAfter.
 func (r *SchemaReconciler) possibleApplyPodActive(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -1031,9 +1033,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.recoverLeaseContinuity(ctx, schema)
 	}
 	if schemaClaimServesProof(schema) {
-		// A Job controller can create another exact-owner Apply Pod after the
-		// first terminal attempt was recorded. Refresh that immutable evidence
-		// before inspecting or consuming any post-Apply proof result. An active
+		// A Job that was active with no Pod when its Apply ended can create
+		// its first exact-owner Apply Pod after that ending was recorded. That
+		// Pod cannot dispatch past the Apply's DispatchNotAfter, but it is
+		// evidence all the same. Refresh that immutable evidence before
+		// inspecting or consuming any post-Apply proof result. An active
 		// attempt blocks proof consumption; newly observed terminal evidence
 		// changes the proof fingerprint and makes the current result stale.
 		acquired, requeue, lockErr := r.acquirePendingObservationLock(ctx, schema)

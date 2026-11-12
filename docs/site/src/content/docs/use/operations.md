@@ -2553,9 +2553,9 @@ runtime stopped reporting while it ran. The kubelet keeps no container for it an
 answers `kubectl logs` with an error. Nor does a Job whose every Pod ended with no
 status for its executor, as a Pod the kubelet refused at admission does, or with
 its executor last reported waiting, as one PodGC marked `Failed` after its node
-went can: PodGC writes over the statuses the kubelet last reported, so the
-executor may have started since, and either way there is no log `kubectl logs`
-can serve. A Pod that has not ended and reports no executor yet keeps the
+went can: PodGC keeps the statuses the kubelet last reported and sets only the
+phase and a condition, so the executor may have started since. No status on such
+a Pod shows a run, and a log is pointed at only where one does. A Pod that has not ended and reports no executor yet keeps the
 pointer, since it can still start one. A run whose result nobody read, because its
 frame was lost or its Job ran more than one Pod, says
 `Anything the run wrote is in the Pod log`. An execution binding change during a
