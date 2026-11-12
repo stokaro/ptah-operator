@@ -235,7 +235,7 @@ func gitJobFixture(initContainers []string, mainEnv []corev1.EnvVar, mounts []co
 func TestGitFetchJobNeedsTheFetchToHoldTheCredential(t *testing.T) {
 	t.Parallel()
 	readOnly := []corev1.VolumeMount{{Name: "schema-source", MountPath: "/source", ReadOnly: true}}
-	database := []corev1.EnvVar{{Name: "PTAH_DB_URL", Value: "from a Secret"}}
+	database := []corev1.EnvVar{{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"}}
 	if err := gitFetchJob(gitJobFixture([]string{"install-runner", gitFetchInit}, database, readOnly), testGitCommit); err != nil {
 		t.Fatal(err)
 	}
@@ -245,6 +245,16 @@ func TestGitFetchJobNeedsTheFetchToHoldTheCredential(t *testing.T) {
 		"a credential in the main": gitJobFixture([]string{"install-runner", gitFetchInit}, append(database, corev1.EnvVar{Name: "PTAH_GIT_PASSWORD"}), readOnly),
 		"a writable source":        gitJobFixture([]string{"install-runner", gitFetchInit}, database, []corev1.VolumeMount{{Name: "schema-source", MountPath: "/source"}}),
 		"the trust in the main":    gitJobFixture([]string{"install-runner", gitFetchInit}, database, append(readOnly, corev1.VolumeMount{Name: "git-ca", ReadOnly: true})),
+		"the database URL in the main's environment": gitJobFixture([]string{"install-runner", gitFetchInit},
+			[]corev1.EnvVar{{Name: "PTAH_DB_URL", Value: "postgres://from-a-secret"}}, readOnly),
+		"the Git password in the fetch's environment": func() *batchv1.Job {
+			job := gitJobFixture([]string{"install-runner", gitFetchInit}, database, readOnly)
+			fetch := &job.Spec.Template.Spec.InitContainers[1]
+			fetch.Env = append(fetch.Env, corev1.EnvVar{Name: "PTAH_GIT_PASSWORD", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: gitTokenCredential}, Key: "password"},
+			}})
+			return job
+		}(),
 	} {
 		if gitFetchJob(job, testGitCommit) == nil {
 			t.Errorf("gitFetchJob accepted %s", name)
@@ -265,6 +275,10 @@ func TestGitResolveJobNeedsTheRepositoryAndNoDatabase(t *testing.T) {
 		"a fetch first":  gitJobFixture([]string{"install-runner", gitFetchInit}, repository, nil),
 		"no repository":  gitJobFixture([]string{"install-runner"}, nil, nil),
 		"a database URL": gitJobFixture([]string{"install-runner"}, append(repository, corev1.EnvVar{Name: "PTAH_DB_URL"}), nil),
+		"a database URL file": gitJobFixture([]string{"install-runner"},
+			append(repository, corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"}), nil),
+		"a database URL mount": gitJobFixture([]string{"install-runner"}, repository,
+			[]corev1.VolumeMount{{Name: "database-url", MountPath: "/credentials/database", ReadOnly: true}}),
 	} {
 		if gitResolveJob(job) == nil {
 			t.Errorf("gitResolveJob accepted %s", name)

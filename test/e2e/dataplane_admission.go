@@ -21,9 +21,11 @@ import (
 
 // rewriteMySQLRefusalJob turns a completed MySQL Observe or Plan Job into one
 // the phase runs itself against a Secret whose URL carries a server-session
-// payload: the same Pod template, with the database URL read from that
-// Secret, the operation ID a literal, and labels that keep the operator's
-// selectors and webhooks off it. The original operation's result credential
+// payload: the same Pod template, with the database URL file projected from
+// that Secret, the operation ID a literal, and labels that keep the
+// operator's selectors and webhooks off it. A source that names the database
+// URL in a container's environment, or has no database URL volume, is
+// refused: the copy would read the source's own database. The original operation's result credential
 // is removed: this standalone refusal uses the legacy frame and cannot
 // publish as the original operation. The executor inputs remain the
 // operator's, so the refusal the row reads is the runner's own.
@@ -77,17 +79,20 @@ func rewriteMySQLRefusalJob(source map[string]any, namespace, name, schema, oper
 	if !ok {
 		return nil, errors.New("the source Job's template has no container list")
 	}
-	rewritten, err := rewriteRefusalContainers(containers, operationID, secret)
+	rewritten, err := rewriteRefusalContainers(containers, operationID)
 	if err != nil {
 		return nil, err
 	}
 	podSpec["containers"] = rewritten
+	if err := rewriteRefusalDatabaseVolume(podSpec, secret); err != nil {
+		return nil, err
+	}
 	if initContainers, present := podSpec["initContainers"]; present && initContainers != nil {
 		list, ok := initContainers.([]any)
 		if !ok {
 			return nil, errors.New("the source Job's initContainers is not a list")
 		}
-		if podSpec["initContainers"], err = rewriteRefusalContainers(list, operationID, secret); err != nil {
+		if podSpec["initContainers"], err = rewriteRefusalContainers(list, operationID); err != nil {
 			return nil, err
 		}
 	}
@@ -100,10 +105,38 @@ func rewriteMySQLRefusalJob(source map[string]any, namespace, name, schema, oper
 	}, nil
 }
 
-// rewriteRefusalContainers points each container's database URL at the
-// Secret and fixes its operation ID. A container whose env is absent or null
-// keeps it as it is.
-func rewriteRefusalContainers(containers []any, operationID, secret string) ([]any, error) {
+// rewriteRefusalDatabaseVolume projects the database URL file from the
+// Secret. The source has exactly one database URL volume, a Secret volume,
+// or the copy is refused.
+func rewriteRefusalDatabaseVolume(podSpec map[string]any, secret string) error {
+	volumes, _ := podSpec["volumes"].([]any)
+	rewritten := 0
+	for _, entry := range volumes {
+		volume, ok := entry.(map[string]any)
+		if !ok {
+			return errors.New("a source volume is not an object")
+		}
+		if volume["name"] != "database-url" {
+			continue
+		}
+		source, ok := volume["secret"].(map[string]any)
+		if !ok {
+			return errors.New("the source's database URL volume is not a Secret volume")
+		}
+		source["secretName"] = secret
+		rewritten++
+	}
+	if rewritten != 1 {
+		return fmt.Errorf("the source has %d database URL volumes, want 1", rewritten)
+	}
+	return nil
+}
+
+// rewriteRefusalContainers fixes each container's operation ID, and refuses a
+// container that names the database URL in its environment, which the
+// rewrite would leave reading the source's database. A container whose env
+// is absent or null keeps it as it is.
+func rewriteRefusalContainers(containers []any, operationID string) ([]any, error) {
 	for _, entry := range containers {
 		container, ok := entry.(map[string]any)
 		if !ok {
@@ -122,9 +155,8 @@ func rewriteRefusalContainers(containers []any, operationID, secret string) ([]a
 				return nil, errors.New("a source environment variable is not an object")
 			}
 			switch variable["name"] {
-			case "PTAH_DB_URL":
-				delete(variable, "value")
-				variable["valueFrom"] = map[string]any{"secretKeyRef": map[string]any{"name": secret, "key": "url"}}
+			case runner.EnvDatabaseURL:
+				return nil, errors.New("a source container names the database URL in its environment")
 			case "PTAH_OPERATION_ID":
 				variable["value"] = operationID
 				delete(variable, "valueFrom")
