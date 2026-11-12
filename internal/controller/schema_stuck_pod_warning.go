@@ -93,8 +93,11 @@ func (r *SchemaReconciler) warnAboutStuckPods(
 // proof waits for before it reads the database. A live schema shows that
 // instant in status.pendingObservation.observeAfter. A deleted one only stays
 // Terminating, so this Warning says why it waits and until when. It is repeated
-// with the backoff a PodStuckTerminating Warning has, by the Job's UID, which
-// it names because another Job can hold the name.
+// with the backoff a PodStuckTerminating Warning has, kept for the wait and the
+// Job's UID as every Apply wait's is. Only a deletion records it, so one key
+// per Job would do today; the wait's own words keep a live wait added later
+// from taking the deletion's turn. It names the UID because another Job can
+// hold the name.
 //
 // A record that names no Job UID warns about nothing: its create may never
 // have landed, so there is no Job to name and no Pod the API server could have
@@ -109,7 +112,7 @@ func (r *SchemaReconciler) warnApplyPodGone(
 	if pending.ApplyJobUID == "" || len(pods) != 0 {
 		return
 	}
-	if !stuckPodWarningsOf(&r.goneApplyPods).due(pending.ApplyJobUID, r.now()) {
+	if !stuckPodWarningsOf(&r.goneApplyPods).dueFor(deletionWaits, pending.ApplyJobUID, r.now()) {
 		return
 	}
 	r.event(schema, corev1.EventTypeWarning, "ApplyPodGone",

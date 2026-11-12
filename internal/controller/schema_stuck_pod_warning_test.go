@@ -598,7 +598,7 @@ func TestAStuckPodWarningBacksOffToFiveMinutes(t *testing.T) {
 	warnings := &stuckPodWarnings{}
 	var due []time.Duration
 	for at := time.Duration(0); at <= 1100*time.Second; at += time.Second {
-		if warnings.due("stuck-pod", start.Add(at)) {
+		if warnings.dueFor(deletionWaits, "stuck-pod", start.Add(at)) {
 			due = append(due, at)
 		}
 	}
@@ -643,12 +643,12 @@ func TestStuckPodWarningsStayBounded(t *testing.T) {
 	start := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	warnings := &stuckPodWarnings{}
 	for index := range maxStuckPodWarnings {
-		if !warnings.due(types.UID(fmt.Sprintf("pod-%d", index)), start) {
+		if !warnings.dueFor(deletionWaits, types.UID(fmt.Sprintf("pod-%d", index)), start) {
 			t.Fatalf("the first Warning about Pod %d was not due", index)
 		}
 	}
 	for _, at := range []time.Duration{0, time.Second} {
-		if !warnings.due("one-too-many", start.Add(at)) {
+		if !warnings.dueFor(deletionWaits, "one-too-many", start.Add(at)) {
 			t.Fatalf("a Pod the full table cannot hold was not warned about %s in", at)
 		}
 	}
@@ -659,10 +659,10 @@ func TestStuckPodWarningsStayBounded(t *testing.T) {
 	// Every entry was due stuckPodWarningFirst after start. Past that by more
 	// than the longest wait, nothing has looked at them.
 	later := start.Add(stuckPodWarningFirst + stuckPodWarningMax + time.Second)
-	if !warnings.due("arrived-later", later) {
+	if !warnings.dueFor(deletionWaits, "arrived-later", later) {
 		t.Fatal("the first Warning about a new Pod was not due")
 	}
-	if warnings.due("arrived-later", later) {
+	if warnings.dueFor(deletionWaits, "arrived-later", later) {
 		t.Fatal("a new Pod was warned about twice at once, so the stale entries made no room for it")
 	}
 	if held := len(warnings.next); held != 1 {

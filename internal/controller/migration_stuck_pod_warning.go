@@ -83,7 +83,9 @@ func (r *MigrationReconciler) warnStuckUnaccountedMigrationApplyPods(
 // dispatchedApplyMayStillWrite returned, where it returned one: the API server
 // has no Pod of the claim's Job left, nothing says its executor stopped, and the
 // claim waits until its Lease term ends (migrationApplyPodGone). It is repeated
-// with the backoff a PodStuckTerminating Warning has, by the Job's UID.
+// with the backoff a PodStuckTerminating Warning has, kept for each wait and
+// Job UID, so a deletion says so at once although its live Apply said so a
+// moment before.
 //
 // The UID is named because the name is not enough: another Job can hold the
 // name the claim reserved, with Pods of its own.
@@ -91,13 +93,12 @@ func (r *MigrationReconciler) warnMigrationApplyPodGone(migration *operatorv1alp
 	if hold == nil {
 		return
 	}
-	now := r.now()
-	if !stuckPodWarningsOf(&r.goneApplyPods).due(hold.jobUID, now) {
-		return
-	}
 	waiter := applyWaits
 	if migration.DeletionTimestamp != nil {
 		waiter = deletionWaits
+	}
+	if !stuckPodWarningsOf(&r.goneApplyPods).dueFor(waiter, hold.jobUID, r.now()) {
+		return
 	}
 	r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
 		"%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+

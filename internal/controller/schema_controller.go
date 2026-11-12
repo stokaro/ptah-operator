@@ -153,8 +153,8 @@ type SchemaReconciler struct {
 	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
-	// Pods are gone.
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the wait and
+	// the Job whose Pods are gone.
 	goneApplyPods *stuckPodWarnings
 	Jobs          JobBuilder
 	// SealKey is this manager process's key pair. The Plan Job builder is

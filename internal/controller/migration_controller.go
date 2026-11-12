@@ -112,11 +112,11 @@ type MigrationReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
-	// deletion waits for is due. It is made on first use, by
+	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
-	// Pods are gone.
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the wait and
+	// the Job whose Pods are gone.
 	goneApplyPods *stuckPodWarnings
 	Jobs          MigrationJobBuilder
 	Locks         *targetlock.Locker
@@ -563,7 +563,7 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 	case apierrors.IsNotFound(err):
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf("read the dispatched Apply Job during deletion: %w", err)
+		return nil, fmt.Errorf("read the dispatched Apply Job: %w", err)
 	}
 	if operation.JobUID != "" && job.UID != operation.JobUID {
 		return nil, nil

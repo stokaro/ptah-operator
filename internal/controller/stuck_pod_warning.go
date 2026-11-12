@@ -93,11 +93,6 @@ func stuckPodWarningsOf(field **stuckPodWarnings) *stuckPodWarnings {
 	return *field
 }
 
-// due is dueFor in a table only one wait keeps.
-func (w *stuckPodWarnings) due(uid types.UID, now time.Time) bool {
-	return w.dueFor("", uid, now)
-}
-
 // dueFor reports whether the Warning waiter records about the object uid is due
 // at now, and when it is, records when the next one is.
 func (w *stuckPodWarnings) dueFor(waiter string, uid types.UID, now time.Time) bool {
