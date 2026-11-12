@@ -155,6 +155,21 @@ func readOnALostNode(run dispatchedSchemaRead) {
 	}}}
 }
 
+// theJobControllerNeverMarked takes back what readOnALostNode had the Job
+// controller and the node do: the Job keeps its start and carries no condition,
+// and its Pod runs, not deleted, on a node that answers. That is a Job past its
+// deadline while the Job controller is down, and its stop bound is still its
+// deadline plus the grace and the slack (#1006).
+func theJobControllerNeverMarked(run dispatchedSchemaRead) {
+	run.job.Status.Conditions = nil
+	run.job.Status.Terminating = nil
+	run.pod.DeletionTimestamp = nil
+	run.pod.Finalizers = slices.DeleteFunc(run.pod.Finalizers, func(finalizer string) bool {
+		return finalizer == "example.invalid/kubelet-confirmation"
+	})
+	run.pod.Spec.NodeName = "node-a"
+}
+
 // TestADeletedSchemaStopsWaitingForAReadAtItsStopBound is the deletion of a
 // schema whose Plan, or whose read that proves an Apply, runs on a node that is
 // gone. A read writes nothing to the database, so deletion waits for its Job
@@ -394,13 +409,7 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			}
 			bound := jobStopBound(run.job)
 			if row.unmarked {
-				run.job.Status.Conditions = nil
-				run.job.Status.Terminating = nil
-				run.pod.DeletionTimestamp = nil
-				run.pod.Finalizers = slices.DeleteFunc(run.pod.Finalizers, func(finalizer string) bool {
-					return finalizer == "example.invalid/kubelet-confirmation"
-				})
-				run.pod.Spec.NodeName = "node-a"
+				theJobControllerNeverMarked(run)
 				if unmarked := jobStopBound(run.job); !unmarked.Equal(bound) {
 					t.Fatalf("the unmarked Job's stop bound %s is not the marked one's %s, so the row compares two instants", unmarked, bound)
 				}

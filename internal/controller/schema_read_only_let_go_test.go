@@ -1040,7 +1040,8 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 // that waits no longer, at its Job's stop bound or over a Job that stopped, does
 // not ask (#1006): it is discarded on that pass and the sibling keeps the Lease,
 // since the release names the claim's own epoch. A claim that asked first would
-// wait for the sibling past its own bound.
+// wait for the sibling past its own bound. The claim that waits asks again when
+// the sibling's Lease would run out, not later.
 func TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease(t *testing.T) {
 	t.Parallel()
 
@@ -1067,9 +1068,21 @@ func TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease(t *testing.T) {
 				finishSchemaRead(t, api, run)
 			}
 			stopBy := jobStopBound(run.job)
-			clock := &safetyClock{now: stopBy.Add(-time.Second)}
+			measured := stopBy.Add(-time.Second)
 			if row.past {
-				clock.now = stopBy
+				measured = stopBy
+			}
+			// A claim that waits first meets the sibling's Lease two seconds
+			// short of that Lease's term (takeRealmForASibling takes it for five
+			// minutes) before the pass measured. The locker honors a Lease it
+			// did not take for its full term from the moment it first saw it, so
+			// two seconds of it are left at the measured pass, under the poll a
+			// contended claim waits at most (maxLockContentionPoll): the pass
+			// waits as long as the Lease says, not as long as the poll.
+			const siblingTerm, siblingLeft = 5 * time.Minute, 2 * time.Second
+			clock := &safetyClock{now: measured}
+			if !row.discarded {
+				clock.now = measured.Add(-siblingTerm + siblingLeft)
 			}
 			reconciler.Clock = clock.Now
 			reconciler.Locks = targetlock.New(api, api, clock)
@@ -1079,8 +1092,16 @@ func TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease(t *testing.T) {
 			if claimed == "" || sibling == "" || sibling == claimed {
 				t.Fatalf("the claim held the Lease as %q and the sibling as %q, so nothing below measures a sibling's Lease", claimed, sibling)
 			}
+			if !row.discarded {
+				if result, err := reconciler.Reconcile(ctx, run.request()); err != nil || result.RequeueAfter != maxLockContentionPoll {
+					t.Fatalf("Reconcile() on first meeting the sibling's Lease = %#v, %v; want a wait of %s",
+						result, err, maxLockContentionPoll)
+				}
+				clock.now = measured
+			}
 
-			if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+			result, err := reconciler.Reconcile(ctx, run.request())
+			if err != nil {
 				t.Fatalf("Reconcile(): %v", err)
 			}
 			operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
@@ -1091,6 +1112,10 @@ func TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease(t *testing.T) {
 			if !row.discarded {
 				if operation == nil || operation.ID != run.schema.Status.ActiveOperation.ID {
 					t.Fatalf("the claim inside its Job's stop bound did not wait for the Lease: %#v", operation)
+				}
+				if result.RequeueAfter != siblingLeft {
+					t.Fatalf("the claim waiting for the sibling asks again after %s, want the %s the sibling's Lease has left",
+						result.RequeueAfter, siblingLeft)
 				}
 				return
 			}
