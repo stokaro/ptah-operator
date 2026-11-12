@@ -229,8 +229,9 @@ func TestTheLogPointerSaysOnlyWhatTheReadingAllows(t *testing.T) {
 // TestAFailureSaysWhatItsLogHolds reads the choke point. A result's code decides,
 // because the runner writes Ptah's sentence for two codes and no others; a failure
 // with no result may have written anything, unless the Job has no Pod, an init
-// container ended the Pod, or the kubelet ended every Pod's executor with
-// ContainerStatusUnknown, which it serves no log for.
+// container ended the Pod, the kubelet ended every Pod's executor with
+// ContainerStatusUnknown, which it serves no log for, or every Pod ended with
+// no status for its executor, so none ran.
 func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +268,9 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		noJob   bool
 		noPod   bool
 		initEnd bool
+		// ended is a Pod that ended with no status for its executor, as one the
+		// kubelet refused at admission does.
+		ended bool
 		// executors are the reasons each of the Job's Pods' executor ended for,
 		// one Pod per entry.
 		executors []string
@@ -279,7 +283,10 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "a refusal", failure: coded("apply_refused"), want: applyLogSaysNothing},
 		{name: "a stale plan", failure: coded("stale_plan"), want: applyLogSaysNothing},
 		{name: "a report that does not decode", failure: coded("invalid_apply_output"), want: applyLogSaysNothing},
-		{name: "no result", failure: errors.New("apply result is uncertain"), want: applyLogUnread},
+		// A Pod that has not ended and reports no executor yet can still start
+		// one.
+		{name: "no result and a Pod that has not reported its executor yet", failure: errors.New("apply result is uncertain"), want: applyLogUnread},
+		{name: "no result and a Pod that ended before its executor ran", failure: errors.New("apply result is uncertain"), ended: true, want: applyLogSaysNothing},
 		{name: "no result and no Job", failure: errors.New("apply result is uncertain"), noJob: true, want: applyLogSaysNothing},
 		{name: "no result and a failed init container", failure: errors.New("apply result is uncertain"), initEnd: true, want: applyLogSaysNothing},
 		{
@@ -302,6 +309,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "a failure before any statement, one executor lost and one that exited", failure: coded("apply_failed"), executors: []string{lost, "Error"}, want: applyLogHoldsReport},
 		{name: "a failure before any statement from an executor that exited", failure: coded("apply_failed"), executors: []string{"Error"}, want: applyLogHoldsReport},
 		{name: "a refusal from an executor the kubelet lost", failure: coded("apply_refused"), executors: []string{lost}, want: applyLogSaysNothing},
+		{name: "a failure before any statement from a Pod that ended before its executor ran", failure: coded("apply_failed"), ended: true, want: applyLogSaysNothing},
 		// A durable result is read after its Pod is gone as well. Pods that are
 		// gone say nothing about the log they had.
 		{name: "an outcome that is unknown and no Pod", failure: coded("apply_outcome_unknown"), noPod: true, want: applyLogHoldsReport},
@@ -314,6 +322,10 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			switch {
 			case test.initEnd:
 				builder = builder.WithObjects(jobPod(job, 2))
+			case test.ended:
+				pod := jobPod(job, 0)
+				pod.Status = corev1.PodStatus{Phase: corev1.PodFailed, Reason: "OutOfcpu"}
+				builder = builder.WithObjects(pod)
 			case len(test.executors) > 0:
 				for index, reason := range test.executors {
 					builder = builder.WithObjects(executorPod(job, index, reason))

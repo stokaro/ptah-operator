@@ -116,7 +116,7 @@ type MigrationReconciler struct {
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
 	Jobs      MigrationJobBuilder
-	Locks      *targetlock.Locker
+	Locks     *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.

@@ -104,8 +104,9 @@ func (e resultCodeError) Error() string { return e.message }
 // migration's when no report of the run was read. A failure with no result behind
 // it may have written anything, unless the Job has no Pod, as one admission refused
 // until its deadline has, or an init container ended the Pod first: then there is
-// no operation container to ask for a log. Nor is there one when the kubelet lost
-// every Pod's executor (executorLogsLost), and that holds for a coded failure as
+// no operation container to ask for a log. Nor is there one when no Pod's executor
+// has a log the API server serves (executorLogsLost), because the kubelet lost it
+// or the Pod ended before any executor ran, and that holds for a coded failure as
 // well: a durable result outlives the log the runner also wrote it to.
 func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, failure error) applyLogReading {
 	// A target the run could not open has its sentence whole in status.
@@ -133,9 +134,8 @@ func failedApplyLogReading(ctx context.Context, reader client.Reader, job *batch
 
 // servedLogReading is reading once the Job's Pods have been asked whether the
 // API server serves the executor's log: a reading that promises a log promises
-// nothing when the kubelet lost every Pod's executor (executorLogsLost). A Job
-// whose Pods are gone, or a list that fails, leaves the reading as the result
-// gave it.
+// nothing when no Pod's executor has one (executorLogsLost). A Job whose Pods
+// are gone, or a list that fails, leaves the reading as the result gave it.
 func servedLogReading(ctx context.Context, reader client.Reader, job *batchv1.Job, reading applyLogReading) applyLogReading {
 	if reading == applyLogSaysNothing || job == nil {
 		return reading
@@ -147,33 +147,42 @@ func servedLogReading(ctx context.Context, reader client.Reader, job *batchv1.Jo
 	return reading
 }
 
-// executorStatusLost is a Pod whose executor the kubelet ended with
-// ContainerStatusUnknown. The kubelet writes that termination for a container
-// it has no status for, one that never started as well as one the runtime
-// stopped reporting while it ran, and records no container ID with it. It
-// refuses a log read of a terminated container with no container ID
-// (validateContainerLogStatus), so `kubectl logs` gets 400 for this one.
-func executorStatusLost(pod *corev1.Pod) bool {
+// executorLogUnserved is a Pod whose executor has no log the API server serves.
+//
+// Either the kubelet ended the executor with ContainerStatusUnknown, which it
+// writes for a container it has no status for, one that never started as well
+// as one the runtime stopped reporting while it ran, and records no container
+// ID with it. Or the Pod ended carrying no status for the executor at all, as a
+// Pod the kubelet refused at admission can, and one PodGC marked Failed after
+// its node went before the kubelet reported a container: no executor ran in
+// it. The kubelet refuses a log read of a terminated container with no
+// container ID, and of a container it has no status for
+// (validateContainerLogStatus), so `kubectl logs` gets an error for either.
+//
+// A Pod that has not ended and reports no executor yet is not such a Pod: one
+// still waiting for a node, or for its kubelet, can start the executor later.
+func executorLogUnserved(pod *corev1.Pod) bool {
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.Name == executorContainerName {
 			terminated := status.State.Terminated
 			return terminated != nil && terminated.Reason == "ContainerStatusUnknown"
 		}
 	}
-	return false
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
 // executorLogsLost is a list of Pods none of which has an executor log the API
-// server serves, because the kubelet lost every one (executorStatusLost). It is
-// the one answer every family gives before it reads an executor's log or points
-// a person at one. An empty list is not such a list: Pods that are gone say
-// nothing about the log they had.
+// server serves (executorLogUnserved). It is the one answer every family gives
+// before it reads an executor's log or points a person at one. A harvest asks
+// it only of a Pod whose executor terminated, so there it is the kubelet's
+// ContainerStatusUnknown (lostExecutorLog). An empty list is not such a list:
+// Pods that are gone say nothing about the log they had.
 func executorLogsLost(pods []*corev1.Pod) bool {
 	if len(pods) == 0 {
 		return false
 	}
 	for _, pod := range pods {
-		if !executorStatusLost(pod) {
+		if !executorLogUnserved(pod) {
 			return false
 		}
 	}
