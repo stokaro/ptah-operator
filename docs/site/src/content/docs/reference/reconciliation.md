@@ -69,12 +69,14 @@ itself, run by the operator in a Job.
 | [3 Decision](../../use/approvals/) | `kubectl ptah approve`, when the policy asks | `PtahSchemaApproval` or `PtahMigrationApproval`, stamped by admission | Applies `spec.policy`: refuses, waits for an approval of this exact plan, or proceeds | Runs nothing |
 | [4 Execution](../../use/operations/#wait) | `kubectl ptah wait`, or `approve --wait` | An Apply Job and the database-realm Lease | Creates the Job once every gate holds | Runs the plan or the approved sequence |
 | [5 Verification](../../use/operations/#normal-status-progression) | `kubectl ptah schema` or `migration` | Status conditions | Takes this read as the proof, not the Job's exit | Reads the database or the revision table again |
-| [6 History](#the-lifecycle-journal) | `kubectl get`, `kubectl ptah plan --applied`, `kubectl events` | Status, stored plans and approvals, Events | Writes the record in the status writes it already makes | Runs nothing |
+| [6 History](#the-lifecycle-journal) | `kubectl ptah history`, `kubectl ptah plan --applied`, `kubectl events` | Status, stored plans and approvals, Events | Writes the record in the status writes it already makes | Runs nothing |
 
 History is not a step after verification, and reading it changes nothing.
 `status.journal` records when a plan was published, approved and applied and
 how each attempt ended. [The lifecycle journal](#the-lifecycle-journal) says how
-far back it reaches, and how much sooner Events and finished Jobs go. A migration
+far back it reaches, and how much sooner Events and finished Jobs go.
+[`kubectl ptah history`](../../use/read-a-plan/#history) prints it with every
+approval and run acknowledgment that names the resource. A migration
 also keeps the newest rows of its revision table in `status.history.revisions`,
 and its last run in `status.lastRun`. A schema keeps what its last confirmed
 Apply ran in `status.applied`, and `kubectl ptah plan --applied` prints that
@@ -729,6 +731,9 @@ planned, approved and applied, how long it took and how it ended, and how
 often something failed, after the Events Kubernetes keeps for about an hour
 and the finished Jobs it keeps for five minutes, or 24 hours after
 [a failed Apply that keeps its log](../../use/operations/#failed-apply-log), are gone.
+[`kubectl ptah history`](../../use/read-a-plan/#history) prints it in the order it
+was recorded, says from when it is complete, and marks whether each plan and
+decision an entry names is still stored.
 
 | Entry | Written when |
 | --- | --- |

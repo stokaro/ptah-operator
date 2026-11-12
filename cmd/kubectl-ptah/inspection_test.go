@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -136,10 +139,6 @@ func (s *fakeAPIServer) refused() []string {
 // every decision kind as empty, and refuses with 403 the lists named.
 func newFakeAPIServer(t *testing.T, forbidden ...string) *fakeAPIServer {
 	t.Helper()
-	server := &fakeAPIServer{forbidden: map[string]bool{}, namespaced: map[string]any{}}
-	for _, resource := range forbidden {
-		server.forbidden[resource] = true
-	}
 	plan := &operatorv1alpha1.PtahMigrationPlan{
 		TypeMeta:   metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigrationPlan"},
 		ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "ptah-mplan-orders", UID: "plan-uid"},
@@ -149,20 +148,51 @@ func newFakeAPIServer(t *testing.T, forbidden ...string) *fakeAPIServer {
 			Migrations:   []operatorv1alpha1.PlannedMigration{{Version: 3, Description: "add the orders index", Checksum: "c"}},
 		},
 	}
-	server.namespaced["ptahschemas/storefront"] = &operatorv1alpha1.PtahSchema{
-		TypeMeta:   metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahSchema"},
+	schema := &operatorv1alpha1.PtahSchema{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "storefront", UID: "schema-uid"},
 		Status:     operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhaseInSync},
 	}
-	server.namespaced["ptahmigrations/orders"] = &operatorv1alpha1.PtahMigration{
-		TypeMeta:   metav1.TypeMeta{APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigration"},
+	migration := &operatorv1alpha1.PtahMigration{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "application", Name: "orders", UID: "migration-uid"},
 		Status: operatorv1alpha1.PtahMigrationStatus{
 			Phase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
 			Plan:  &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 		},
 	}
-	server.namespaced["ptahmigrationplans/"+plan.Name] = plan
+	return newFakeAPIServerWith(t, []client.Object{schema, migration, plan}, forbidden...)
+}
+
+// newFakeAPIServerWith serves the objects given in the namespace
+// "application", by kind, answers discovery for the operator's group, lists
+// each kind as the objects of that kind it holds, and refuses with 403 the
+// lists named. A list asked for as metadata gets the whole objects, which the
+// metadata client reads as their metadata, as it does any list it has no type
+// registered for.
+func newFakeAPIServerWith(t *testing.T, objects []client.Object, forbidden ...string) *fakeAPIServer {
+	t.Helper()
+	server := &fakeAPIServer{forbidden: map[string]bool{}, namespaced: map[string]any{}}
+	for _, resource := range forbidden {
+		server.forbidden[resource] = true
+	}
+	for _, object := range objects {
+		kind := reflect.TypeOf(object).Elem().Name()
+		served := false
+		for _, resource := range operatorResources {
+			if resource.kind != kind {
+				continue
+			}
+			object.GetObjectKind().SetGroupVersionKind(operatorv1alpha1.GroupVersion.WithKind(kind))
+			server.namespaced[resource.plural+"/"+object.GetName()] = object
+			served = true
+		}
+		if !served {
+			t.Fatalf("the fake API server serves no %s", kind)
+		}
+		if object.GetNamespace() != "application" {
+			t.Fatalf("%s %s is in namespace %q, and the fake API server serves only \"application\"",
+				kind, object.GetName(), object.GetNamespace())
+		}
+	}
 	server.Server = httptest.NewServer(http.HandlerFunc(server.serve))
 	t.Cleanup(server.Close)
 	return server
@@ -170,6 +200,7 @@ func newFakeAPIServer(t *testing.T, forbidden ...string) *fakeAPIServer {
 
 var operatorResources = []struct{ plural, singular, kind string }{
 	{"ptahschemas", "ptahschema", "PtahSchema"},
+	{"ptahschemaplans", "ptahschemaplan", "PtahSchemaPlan"},
 	{"ptahschemaapprovals", "ptahschemaapproval", "PtahSchemaApproval"},
 	{"ptahmigrations", "ptahmigration", "PtahMigration"},
 	{"ptahmigrationplans", "ptahmigrationplan", "PtahMigrationPlan"},
@@ -221,7 +252,7 @@ func (s *fakeAPIServer) serve(w http.ResponseWriter, r *http.Request) {
 			if resource.plural == path {
 				reply(w, http.StatusOK, map[string]any{
 					"apiVersion": group.String(), "kind": resource.kind + "List",
-					"metadata": map[string]any{}, "items": []any{},
+					"metadata": map[string]any{}, "items": s.itemsOf(resource.plural),
 				})
 				return
 			}
@@ -230,6 +261,22 @@ func (s *fakeAPIServer) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		replyStatus(w, http.StatusNotFound, metav1.StatusReasonNotFound, r.URL.Path+" not found")
 	}
+}
+
+// itemsOf is every object the server holds of one resource, in name order.
+func (s *fakeAPIServer) itemsOf(plural string) []any {
+	var keys []string
+	for key := range s.namespaced {
+		if strings.HasPrefix(key, plural+"/") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	items := make([]any, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, s.namespaced[key])
+	}
+	return items
 }
 
 func reply(w http.ResponseWriter, status int, body any) {

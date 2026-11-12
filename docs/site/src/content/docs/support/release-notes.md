@@ -127,7 +127,25 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
 for a read tried again after a failure, the failure's reason, which
 `ReconciliationFailed` still carries. After a rollback, an earlier manager
 leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
+A script that reads the text of `kubectl ptah schema` or `migration`, rather
+than `-o json`, finds the `kubectl ptah history` command where it found a
+`kubectl get` of the namespace, when more than five approvals or acknowledgments
+name the resource, and one more line before the closing `kubectl events` line.
 
+- **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
+  `migration/NAME` prints the lifecycle journal the resource's status keeps, in
+  the order the operator recorded it and from when it is complete, then every
+  approval and run acknowledgment that names the resource by name and UID,
+  oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
+  with more than five decisions sent the reader to a list of the whole
+  namespace. Each entry shows its plan, decision, Job and outcome, folded
+  failures show their count and the last time, and each plan and decision an
+  entry names is marked as still stored or not. An entry an earlier release
+  wrote without the UIDs that would join it says so, and a status with no
+  journal reads differently from an empty one. `-o json` carries every field of
+  every entry. It needs `get` on the resource; listing plans and decisions is
+  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
+  has the rest.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
   readers then needed rights of their own on the tables it reads, so a read that
