@@ -512,7 +512,7 @@ func (m *migrationRun) modifiedFileBlocksEverything() {
 			break
 		}
 		if observed == ptahv1alpha1.MigrationPhaseFailed {
-			m.fatalf("%s failed instead of refusing an edited applied migration", migration)
+			m.fatalf("%s failed instead of refusing an edited applied migration; %s", migration, failedConditions(m.scanner, current.Status.Conditions))
 		}
 		m.sleep(migrationPoll)
 	}
