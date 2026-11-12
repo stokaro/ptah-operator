@@ -3,6 +3,7 @@ package dataplane_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -301,5 +302,109 @@ func TestACheckSaysWhatTheFailedCommandSaid(t *testing.T) {
 	}
 	if said := failedSentence(t, "plan-foreign-key.json"); said != "compare database schema: "+foreignKey {
 		t.Errorf("schema plan said %q of the foreign key", said)
+	}
+}
+
+// boundaryMessage is the sentence a failed command in testdata/boundaries
+// holds, which `make runner-harness-write` regenerates from the pinned image.
+func boundaryMessage(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "boundaries", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(name, "drift-") {
+		failure, err := dataplane.DecodeDriftFailure(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return failure.Message
+	}
+	report, err := dataplane.DecodeSchemaPlan(data)
+	if err != nil || report.Error == nil {
+		t.Fatalf("DecodeSchemaPlan() = %#v, %v, want a failed plan", report, err)
+	}
+	return report.Error.Message
+}
+
+func TestRowFileOutsideRootReadsTheGuardsSentence(t *testing.T) {
+	t.Parallel()
+
+	climbs := `managed data file "../../proc/self/environ" for table public.regions: "/proc/<pid>/environ" is outside allowed root "/work"`
+	rooted := `managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"`
+	beside := `managed data file "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is outside allowed root "/work"`
+	processID := regexp.MustCompile(`/proc/\d+/`)
+	for fixture, want := range map[string]string{
+		"drift-row-file.json":        climbs,
+		"plan-row-file.json":         climbs,
+		"drift-row-file-rooted.json": rooted,
+		"plan-row-file-rooted.json":  rooted,
+		"drift-row-file-beside.json": beside,
+		"plan-row-file-beside.json":  beside,
+	} {
+		t.Run(fixture, func(t *testing.T) {
+			t.Parallel()
+			message := boundaryMessage(t, fixture)
+			got, found := dataplane.RowFileOutsideRoot(message)
+			if !found || processID.ReplaceAllString(got, "/proc/<pid>/") != want {
+				t.Fatalf("RowFileOutsideRoot(%q) = %q, %v, want %q", message, got, found, want)
+			}
+		})
+	}
+	// What a declaration can put in the parts Ptah quotes or leaves bare.
+	for name, sentence := range map[string]string{
+		"a quote in the declared path":   `managed data file "a\": \"/b\" is outside allowed root \"/c" for table t: "/d" is outside allowed root "/work"`,
+		"a colon and quote in the table": `managed data file "x" for table s.t: "y: "/d" is outside allowed root "/work"`,
+		"a table named like the words":   `managed data file "/x" for table a path starting at a root: a path starting at a root is outside allowed root "/work"`,
+		"escapes in the resolved path":   `managed data file "x" for table t: "/d\té" is outside allowed root "/w\"x"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got, found := dataplane.RowFileOutsideRoot("error comparing declared rows: " + sentence); !found || got != sentence {
+				t.Fatalf("RowFileOutsideRoot() = %q, %v, want %q", got, found, sentence)
+			}
+		})
+	}
+}
+
+// TestRowFileOutsideRootRefusesAnythingElse holds the reader to the guard's own
+// form. Each refusal is a sentence that differs from it where a database's answer
+// or another failure would: another wrapper, words or a line after the root, a
+// part that is not one quoted string, or another refusal of a row file.
+func TestRowFileOutsideRootRefusesAnythingElse(t *testing.T) {
+	t.Parallel()
+
+	const tail = ` for table public.regions: "/x" is outside allowed root "/work"`
+	for name, failed := range map[string]string{
+		"nothing":                          "",
+		"another wrapper":                  `error reading database schema: managed data file "../x"` + tail,
+		"a doubled wrapper":                `error comparing declared rows: error comparing declared rows: managed data file "../x"` + tail,
+		"a statement after the root":       `managed data file "../x"` + tail + "\nSQL: SELECT 1",
+		"a carriage return":                `managed data file "../x"` + tail + "\r",
+		"a newline in the table":           "managed data file \"../x\" for table pub\nlic: \"/x\" is outside allowed root \"/work\"",
+		"words after the root":             `managed data file "../x"` + tail + `: permission denied`,
+		"a second quoted string":           `managed data file "../x"` + tail + ` "/y"`,
+		"a root that is not quoted":        `managed data file "../x" for table t: "/x" is outside allowed root /work`,
+		"a root that is relative":          `managed data file "../x" for table t: "/x" is outside allowed root "work"`,
+		"a root in backquotes":             "managed data file \"../x\" for table t: \"/x\" is outside allowed root `/work`",
+		"a root that does not unquote":     `managed data file "../x" for table t: "/x" is outside allowed root "/wo\qrk"`,
+		"a resolved path not quoted":       `managed data file "../x" for table t: /x is outside allowed root "/work"`,
+		"a resolved path that is relative": `managed data file "../x" for table t: "x" is outside allowed root "/work"`,
+		"no table":                         `managed data file "../x" for table : "/x" is outside allowed root "/work"`,
+		"no table before a rooted path":    `managed data file "/x" for table : a path starting at a root is outside allowed root "/work"`,
+		"a declared path not quoted":       `managed data file ../x` + tail,
+		"a declared path cut short":        `managed data file "../x` + tail,
+		"no root was given":                `managed data file "../x" for table t: outside allowed root: no root was given`,
+		"a file that is not there":         `read managed data file "/work/x" for table "regions": open /work/x: no such file or directory`,
+		"a file that does not parse":       `parse managed data file "/work/x" for table "regions": yaml: line 1: did not find expected key`,
+		"the guard's words alone":          `"/x" is outside allowed root "/work"`,
+		"a lookup on the way":              `managed data file "../x" for table t: resolve path relative to allowed root: lstat /x: permission denied`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got, found := dataplane.RowFileOutsideRoot(failed); found {
+				t.Fatalf("RowFileOutsideRoot(%q) = %q, want no reason", failed, got)
+			}
+		})
 	}
 }

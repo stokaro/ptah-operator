@@ -2481,7 +2481,9 @@ carry Ptah's words:
   no database URL and no credential, so they cannot quote the database. They can
   quote a fragment of the file.
   [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
-  says what a person does with them.
+  says what a person does with them. A row file outside Ptah's working directory
+  is under the same code, in the words of the command that failed, which name
+  the file and the paths in the Pod.
 - A desired schema Ptah read and refuses as a whole, under
   `desired_schema_invalid`, when that fault is the one the failed command stopped
   on. The words come from the same second run and name what the file declares.

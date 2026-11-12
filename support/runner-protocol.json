@@ -382,6 +382,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:b60e45ab3d4aa8115dcb912496652ff8de5c0a5c6696080d495cde700d9aeb35",
       "reason": "Stop reading a stored result record without the attempt label as the publication it would be with one (#928). The change is in internal/resultstore, which the runner links for the delivery receipt and binding types; the comparison runs in the manager's receiver and collector, and no release wrote such a record. Commands, payloads, result frames, delivery identity and SQL authority are the same, a manager of any release reads this runner's output as it read the last one, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c8071c0a316890efd44e5083cb4ed09e0971bbb875df5cf11aa4d7897ae75a7c",
+      "reason": "Name a row file Ptah refuses as outside its working directory (#939). When drift or a Plan fails with no target failure kind and its own sentence is the refusal Ptah's row-file guard writes, on one line, whole and in the guard's form, the runner reports that sentence behind the schema's file name under desired_source_unreadable, redacted and cut at 485 bytes, and runs no schema validate child, which reads no row file and could not say it. Any other sentence is compared and not copied, as before. No argument, field, retry or plan binding changes, and no child runs that did not run before. A manager of this protocol reads a result code as text and writes it with its message to the condition and the Event, so a manager of any release reads this frame, and protocol 1 stays."
     }
   ]
 }

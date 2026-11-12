@@ -195,16 +195,21 @@ func TestRenderTextSaysAnUnresolvedRunRecordsNoJob(t *testing.T) {
 }
 
 // A Partial last run that nothing holds any more is an outcome, not a hold:
-// the reading below kept its last run after the record was settled. The
-// acknowledgment that settled it is still there, consumed, and names a run
-// that is not unresolved any more.
+// the reading below holds a partial run unresolved, and settling it moves the
+// record to resolvedRun and keeps the last run. The acknowledgment that settled
+// it is still there, consumed, and names a run that is not unresolved any more.
 func TestRenderTextShowsNoHoldWithoutAnUnresolvedRun(t *testing.T) {
 	t.Parallel()
 
-	operation := "sha256:" + strings.Repeat("1", 64)
 	settled := &operatorv1alpha1.PtahMigration{}
 	readReading(t, "partial-run-left-a-dirty-revision.json", settled)
 	settled.Namespace, settled.Name, settled.UID = "team-a", "orders", "migration-uid"
+	if settled.Status.UnresolvedRun == nil || settled.Status.LastRun == nil || settled.Status.LastRun.FinishedAt == nil {
+		t.Fatal("the reading holds no finished partial run left unresolved")
+	}
+	operation := settled.Status.UnresolvedRun.OperationID
+	settled.Status.UnresolvedRun = nil
+	resolvedAt := metav1.NewTime(settled.Status.LastRun.FinishedAt.Add(5 * time.Minute).UTC())
 	consumed := &operatorv1alpha1.PtahMigrationRunAcknowledgment{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "orders-run-accounted-for", UID: "acknowledgment-uid"},
 		Spec: operatorv1alpha1.PtahMigrationRunAcknowledgmentSpec{
@@ -225,7 +230,7 @@ func TestRenderTextShowsNoHoldWithoutAnUnresolvedRun(t *testing.T) {
 			Name: "orders-run-accounted-for", UID: "acknowledgment-uid",
 		},
 		AcknowledgedBy: &operatorv1alpha1.ApprovalIdentity{Username: "alice"},
-		ResolvedAt:     metav1.NewTime(time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)),
+		ResolvedAt:     resolvedAt,
 	}
 	view, err := migrationview.Load(context.Background(), readerWith(t, settled, consumed), "team-a", "orders")
 	if err != nil {
@@ -238,9 +243,10 @@ func TestRenderTextShowsNoHoldWithoutAnUnresolvedRun(t *testing.T) {
 	for _, want := range []string{
 		"    operation " + operation + "\n",
 		"    Consumed  True    RunAcknowledged  -      The acknowledgment settled the run it names\n",
-		"\nLast run:             Partial, started 2026-01-01T00:00:00Z, finished 2026-01-01T00:00:00Z\n",
-		"\nSettled run:          Partial run sha256:" + strings.Repeat("1", 64) +
-			", by acknowledgment orders-run-accounted-for from alice at 2026-01-01T00:05:00Z\n",
+		"\nLast run:             Partial, started " + settled.Status.LastRun.StartedAt.UTC().Format(time.RFC3339) +
+			", finished " + settled.Status.LastRun.FinishedAt.UTC().Format(time.RFC3339) + "\n",
+		"\nSettled run:          Partial run " + operation +
+			", by acknowledgment orders-run-accounted-for from alice at " + resolvedAt.Format(time.RFC3339) + "\n",
 		"Blocked:              True, HistoryDirty: Revision 4 is recorded dirty; a person has to decide what the interrupted run did\n",
 	} {
 		if !strings.Contains(text, want) {
@@ -258,7 +264,7 @@ func TestRenderTextShowsNoHoldWithoutAnUnresolvedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := ", by a history read at 2026-01-01T00:05:00Z\n"; !strings.Contains(render(t, view, migrationview.Text), want) {
+	if want := ", by a history read at " + resolvedAt.Format(time.RFC3339) + "\n"; !strings.Contains(render(t, view, migrationview.Text), want) {
 		t.Fatalf("text view is missing %q", want)
 	}
 }

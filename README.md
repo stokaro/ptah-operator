@@ -81,8 +81,9 @@ client platforms. Its read commands only read; `kubectl ptah approve` creates
 the approval of a plan you reviewed, as you, and needs `create` on the approval
 kinds. `kubectl ptah suspend`, `resume` and `refresh` patch a schema or a
 migration, as you, `kubectl ptah set-source` points one at another artifact
-pinned by digest, and `kubectl ptah wait` waits for the operator to act on a
-change. [Read a
+pinned by digest, `kubectl ptah settle` gives up the proof of a schema whose
+database target moved, and `kubectl ptah wait` waits for the operator to act on
+a change. [Read a
 plan](https://operator.ptah.run/edge/use/read-a-plan/#install) carries the
 installation and the namespace-scoped RBAC it needs.
 

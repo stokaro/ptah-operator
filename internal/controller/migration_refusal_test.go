@@ -251,10 +251,10 @@ func TestMigrationResumesAfterAPolicyRefusalAtItsInterval(t *testing.T) {
 	}
 }
 
-// The acceptance row for a refusal that ends is held to this reading before any
-// cluster runs it, so a predicate cannot pass a document the controller never
-// writes. A change that moves these conditions has to move the reading and say
-// what the row now waits for.
+// The acceptance row for a refusal that ends printed this reading on kind, and
+// TestRecoveredFromRefusal holds the row's predicate to it. This test holds the
+// reconciler to the same phase and conditions, so a change that moves them has
+// to move the reading too and say what the row now waits for.
 //
 // The row recovers under apply policy Always into InSync, as here. Whether Blocked
 // went False with the Verify that ended the refusal or only with the history read
