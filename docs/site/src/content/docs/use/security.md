@@ -778,7 +778,7 @@ emit, recorded in `support/ptah-drift-categories.json`, and a Ptah pin that grow
 that list cannot merge until the vocabulary, the status enum and the CRD schema
 version follow it. The frame never carries
 object names, SQL, schema literals, or the native diff. The vocabulary fits
-under the frame's and the status's bound of 64 aggregates, so none is ever
+under the frame's and the status's bound of 128 aggregates, so none is ever
 left out and `driftFindingCount` is their sum. Drift the report has no
 category for, such as a grant, crosses as drift with no aggregates at all: a
 zero count and a `safe` highest severity, and nothing that names the grant.

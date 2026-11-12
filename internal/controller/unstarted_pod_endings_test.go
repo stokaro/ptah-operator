@@ -170,6 +170,9 @@ func TestAMigrationApplyWhoseJobWentKeepsWhyItsPodNeverStarted(t *testing.T) {
 	if err := api.Delete(ctx, pod.DeepCopy()); err != nil {
 		t.Fatal(err)
 	}
+	// With its Job and Pod gone, nothing says the Pod did not start, so the
+	// claim stays to the end of its Lease term, and goes there.
+	toTheApplyLeaseTerm(t, reconciler, api, migration)
 	reconcileMigration(t, reconciler, api, migration)
 
 	run := settledMigrationRun(t, api, migration)
@@ -503,6 +506,9 @@ func TestAMigrationApplyWhoseJobWasReplacedKeepsWhyItsPodNeverStarted(t *testing
 	if err := api.Delete(ctx, pod.DeepCopy()); err != nil {
 		t.Fatal(err)
 	}
+	// The claim's own Job and Pod are gone, so the claim stays to the end of
+	// its Lease term, and goes there.
+	toTheApplyLeaseTerm(t, reconciler, api, migration)
 	reconcileMigration(t, reconciler, api, migration)
 
 	run := settledMigrationRun(t, api, migration)

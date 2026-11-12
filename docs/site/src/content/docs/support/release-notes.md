@@ -109,14 +109,18 @@ log read. A script that reads the `kubectl logs` command out of an
 ended that way, or where every Pod of the Job ended with no status for its
 executor or with its executor last reported waiting, and an alert on Warning
 Events can see the new reasons `PodStuckTerminating`, on a `PtahMigration` and
-on a live `PtahSchema` as well, `ReadJobOverdue`, and `ApplyPodGone` on a
-deleted `PtahSchema`. Where a Job's cleanup TTL could not
+on a live `PtahSchema` as well, `ReadJobOverdue`, and `ApplyPodGone`, on a
+`PtahMigration` and on a deleted `PtahSchema`. Where a Job's cleanup TTL could not
 be set, as for a Job the deletion of a `PtahMigration` orphaned, that pointer is
 no longer left out: it says the log is there `until the Job is deleted`, with
 the same `kubectl logs` command. A deleted `PtahSchema` whose Plan, or whose
 read that proves an Apply, runs past its Job's deadline, the grace of its Pods
 and 30 seconds no longer waits for that Job: it hands the database Lease back
-and goes while the Pod may still read, and records the proof `Unknown`.
+and goes while the Pod may still read, and records the proof `Unknown`. A
+script that waits for a `PtahMigration` to be deleted, for an acknowledgment of
+its run to be taken, or for its database to be free, after its Apply Pod was
+deleted with `--force` or its Apply Job was deleted, has to allow until the end
+of the Apply's term, the time the `ApplyPodGone` Warning names.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -482,6 +486,20 @@ and goes while the Pod may still read, and records the proof `Unknown`.
   Job's UID, and whose Lease changed hands, now records the UID of the Job
   whose Pods it listed, and waits for those Pods as it waits for a recorded
   Job's.
+- **A migration keeps its database while a gone Pod may still write.** A
+  `PtahMigration` Apply whose Job had finished and whose Pod object was gone,
+  deleted with `--force` or with its Job, handed the database Lease back at
+  once, although its container could still be running on a node the API server
+  cannot reach. It now keeps the Lease, renewing it, until the end of the term
+  the Apply took it for: the claim's `startedAt` plus `leaseDurationSeconds`,
+  which is `spec.execution.activeDeadlineSeconds` and 2 minutes. That holds for
+  a deleted resource waiting for its Apply, for a live one recording its run
+  `Unknown`, and for an Apply whose recorded Job is gone or whose name another
+  Job holds. An `ApplyPodGone` Warning Event names the Job, its UID and when
+  the wait ends, with the backoff `PodStuckTerminating` has. A Job that finished with no
+  Pod counted failed, as one whose Pod the API server refused, had no Pod to
+  lose and hands the Lease back at once, as before. A `PtahSchema` already held
+  the Lease there, until its pending observation's `observeAfter`.
 - **A deleted schema says why it waits after its Apply Pod is gone.** A
   `PtahSchema` deleted while its Apply ran keeps the database Lease until its
   pending observation's `observeAfter`, the Apply's execution deadline and its

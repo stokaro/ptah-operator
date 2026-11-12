@@ -115,8 +115,11 @@ type MigrationReconciler struct {
 	// deletion waits for is due. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	Jobs      MigrationJobBuilder
-	Locks     *targetlock.Locker
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
+	// Pods are gone.
+	goneApplyPods *stuckPodWarnings
+	Jobs          MigrationJobBuilder
+	Locks         *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
@@ -359,6 +362,8 @@ func (r *MigrationReconciler) answerMigrationReadRequest(
 // activeDeadlineSeconds ends a run that hangs, so that much of the wait is
 // bounded; a Pod on a node the API server cannot reach is not, and it takes
 // the node going, the Pod force-deleted, or a person removing the finalizer.
+// A Pod gone from the API server that way can still be running, so the wait
+// then lasts out the rest of the claim's Lease term (migrationApplyPodGone).
 func (r *MigrationReconciler) reconcileMigrationDeletion(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -369,7 +374,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
+			if mayStillWrite, gone := r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job); mayStillWrite {
 				// Renew while waiting, the way every other pass over a live
 				// Apply does. The Lease is sized to outlive the Job's own
 				// deadline and no further, and this wait can outlast that: a
@@ -406,6 +411,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				if err := r.warnStuckMigrationApplyPods(ctx, migration, operation, job, deletionWaits); err != nil {
 					ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 				}
+				r.warnMigrationApplyPodGone(migration, gone)
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			// A dispatch this claim started, or a Job it can account for under

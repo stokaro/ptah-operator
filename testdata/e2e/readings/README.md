@@ -132,3 +132,31 @@ migration 2, beside an unresolved run, because Ptah v0.23.0 reports such a
 statement's outcome as unknown. `TestStoppedRunPredicatesAcceptTheKindReadings`
 holds `stoppedRunRecorded` and `stoppedRunNamesItsMigration` to them. They name
 the test namespace, the Job and the images, and hold no credentials or SQL.
+
+`apply-pod-gone-deletion.json` is what the deletion row in
+`migration-faults-postgresql` printed on Kubernetes 1.36.4 with the Ptah v0.23.0
+executor, on a local kind run on November 12, 2026 that built `81fd99bb`. It is
+stored as the row printed it, one line: the deleted migration's name and UID,
+its Apply claim, and the `ApplyPodGone` Warning the row matched after it deleted
+the running Apply's Job and the Pod went with it. The claim started at 05:16:12Z
+with a 420-second Lease, so its term ended at 05:23:12Z. The Warning names the
+Job, its UID and that term, and was first recorded at 05:16:44Z and last at
+05:20:16Z, four times. `TestApplyLeaseTermIsTheClaimsStartPlusItsLeaseDuration`,
+`TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm` and
+`TestApplyPodGoneWarnedInTermDatesTheWarningByItsOwnTimes` hold the row's
+predicates to it, and to copies of it with the one field each mistake would
+change. It names the test namespace, the registry, the Job and Secrets by name
+and key, and holds no credentials or SQL.
+
+`apply-pod-gone-live.json` is what the unresolved-alert row in
+`alerting-operations` printed for its PostgreSQL migration on Kubernetes 1.36.4
+with the Ptah v0.23.0 executor, on a local kind run on November 12, 2026 that
+built `87c1cc56`. It has the same shape, of a migration that was not deleted:
+the row deleted the running Apply's Job and the Pod went with it. The claim
+started at 06:53:53Z with a 420-second Lease, so its term ended at 07:00:53Z.
+The Warning says the Apply waits for the Job, by UID, until that term, and was
+first recorded at 06:54:03Z and last at 06:57:34Z, four times.
+`TestApplyPodGoneWarningsCountOnlyTheClaimsWarningToItsTerm` holds
+`applyPodGoneWarnings` to counting it for a live Apply and not for a deletion,
+and `applyPodGoneWarnedInTerm` to accepting it. It names what the deletion
+reading names, and holds no credentials or SQL.

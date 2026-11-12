@@ -33,6 +33,26 @@ func uncertainApplyClaimed(migration *ptahv1alpha1.PtahMigration) (jobName, jobU
 	return active.JobName, string(active.JobUID), true
 }
 
+// uncertainRunRefusals are the reasons a Blocked condition may give for a run
+// nobody could read once its claim is retired: the run's own, and the dirty
+// revision a history read finds when the interrupted migration left one. A
+// resource whose interval came due while the claim held its Lease term reads
+// its history the moment the claim retires, so the first settled reading may
+// carry either.
+var uncertainRunRefusals = []string{"ApplyOutcomeUnknown", "HistoryDirty"}
+
+// uncertainRefusalReason says whether the Blocked condition is True for one of
+// uncertainRunRefusals. A refusal for any other reason belongs to something
+// else, which holds only while that thing lasts.
+func uncertainRefusalReason(conditions []metav1.Condition) error {
+	for _, reason := range uncertainRunRefusals {
+		if conditionIs(conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, reason) {
+			return nil
+		}
+	}
+	return fmt.Errorf("it is not Blocked by %s: %v", strings.Join(uncertainRunRefusals, " or "), conditionSummary(conditions))
+}
+
 // uncertainRunRefused is the settled refusal after the original workload
 // stopped and its claim was retired. An Unknown outcome alone does not say
 // whether the Pod can still write.
@@ -48,12 +68,10 @@ func uncertainRunRefused(status ptahv1alpha1.PtahMigrationStatus) error {
 		return errors.New("it published a plan")
 	case status.Conditions == nil:
 		return errors.New("it carries no conditions")
-	case !conditionIs(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown"):
-		return fmt.Errorf("it is not Blocked by ApplyOutcomeUnknown: %v", conditionSummary(status.Conditions))
 	case conditionStatus(status.Conditions, ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue):
 		return errors.New("it is Ready")
 	}
-	return nil
+	return uncertainRefusalReason(status.Conditions)
 }
 
 // uncertainApplySettled waits through asynchronous Job garbage collection.
@@ -62,6 +80,11 @@ func uncertainRunRefused(status ptahv1alpha1.PtahMigrationStatus) error {
 // without losing the refusal or the record of what remains unknown. The
 // caller reads status before listing Pods, so retirement cannot be excused
 // by a Pod reading taken before that status was written.
+//
+// Nothing reads the database while the claim holds it, so until the claim
+// retires the refusal is the run's own, ApplyOutcomeUnknown. After it, a
+// history read may give the refusal the dirty revision's reason instead
+// (uncertainRunRefusals); the record of the run is what keeps it either way.
 func uncertainApplySettled(status ptahv1alpha1.PtahMigrationStatus, original *ptahv1alpha1.MigrationOperationStatus, pods []corev1.Pod) (bool, error) {
 	if original == nil || original.Type != ptahv1alpha1.MigrationOperationApply || !original.DispatchStarted ||
 		!sha256Pattern.MatchString(original.ID) || original.JobName == "" || original.JobUID == "" ||
@@ -86,14 +109,20 @@ func uncertainApplySettled(status ptahv1alpha1.PtahMigrationStatus, original *pt
 		unresolved.OperationID != original.ID || !equality.Semantic.DeepEqual(unresolved.PlanRef, *original.PlanRef) {
 		return false, errors.New("the unknown record no longer names the original Apply")
 	}
-	if !blockedRefusalHeld(status) || !conditionIs(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") {
+	if !blockedRefusalHeld(status) {
 		return false, errors.New("the interrupted Apply lost its refusal while still unaccounted for")
 	}
 	if active != nil && active.Type == ptahv1alpha1.MigrationOperationApply {
 		if !equality.Semantic.DeepEqual(active, original) || status.PendingLockRelease != nil {
 			return false, errors.New("the unknown Apply changed its protected claim or started releasing its realm")
 		}
+		if !conditionIs(status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") {
+			return false, fmt.Errorf("the unknown Apply holds its claim under another refusal: %v", conditionSummary(status.Conditions))
+		}
 		return false, nil
+	}
+	if err := uncertainRefusalReason(status.Conditions); err != nil {
+		return false, fmt.Errorf("the interrupted Apply's refusal became another's once its claim retired: %w", err)
 	}
 	for _, pod := range ownedPods(pods, original.JobUID) {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {

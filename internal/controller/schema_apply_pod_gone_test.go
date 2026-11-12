@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,24 +28,8 @@ import (
 // the Job's deadline leaves. A Pod the kubelet stopped is often removed before
 // the pass the Job's update wakes reads it, and a Pod force-deleted, or removed
 // with its Node object, is gone as well. Where the Pod still stands, stopped,
-// or the claim never recorded its Job's UID, nothing is named.
-
-const applyPodGoneEvent = "Warning ApplyPodGone "
-
-// applyPodGoneEvents is every ApplyPodGone Event recorded since the last call.
-func applyPodGoneEvents(recorder *record.FakeRecorder) []string {
-	var found []string
-	for {
-		select {
-		case event := <-recorder.Events:
-			if strings.HasPrefix(event, applyPodGoneEvent) {
-				found = append(found, event)
-			}
-		default:
-			return found
-		}
-	}
-}
+// or the claim never recorded its Job's UID, nothing is named. The Events are
+// read with applyPodGoneEvents (migration_apply_pod_gone_test.go).
 
 // unrecordedSchemaApplyRun is a schema Apply whose claim never recorded its
 // Job's UID, over a Pod waiting on its Secret.
