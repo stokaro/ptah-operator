@@ -7,7 +7,7 @@ import json
 import pathlib
 import re
 import time
-from result_runner_loss import snapshot_migration
+from result_runner_loss import seconds_to_lease_term, snapshot_migration
 
 
 def has_condition(obj, kind, reason=None):
@@ -161,7 +161,9 @@ def run(*, k, get, create, wait, save, witness, records, open_gate, resource, po
             evidence['unknown'] = snapshot_migration(wait(unknown, 120))
             k('delete', 'resourcequota', 'hold-partial-result')
             quota_created = False
-            wait(lambda: get('ptahmigration', name).get('status', {}).get('history', {}).get('dirty'), 120)
+            # The history read that finds the dirty revision waits for the claim's term.
+            wait(lambda: get('ptahmigration', name).get('status', {}).get('history', {}).get('dirty'),
+                 seconds_to_lease_term(operation, dt.datetime.now(dt.timezone.utc)) + 120)
             print('Partial SQL and dirty revision retained after original Job/Pod loss; holding against replay', flush=True)
             evidence['beforeAcknowledgment'] = hold(True)
             # A person's explicit repair removes only the failed operation's effect;

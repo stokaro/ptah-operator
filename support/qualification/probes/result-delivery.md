@@ -147,7 +147,11 @@ The controller must record the exact operation and Job UID as `Unknown`, with
 an identical unresolved-run copy in metadata. Only after retaining that record
 does the probe remove the quota. A fresh native history reading must resolve
 the same operation through `HistoryRead`, reach current-generation
-`HistoryMatched`, and leave the calibrated SQL counter at one. No replacement
+`HistoryMatched`, and leave the calibrated SQL counter at one. Nothing says the
+executor stopped, so the claim keeps the realm Lease, and no history is read,
+until the claim's Lease term ends: its `startedAt` plus `leaseDurationSeconds`,
+about 17 minutes for the probe's 900-second deadline. The probe allows its 240
+seconds for that reading from the term. No replacement
 Apply Job may exist, and the original Apply publication must still be absent.
 `runner-loss.json` retains these observations and both procedure hashes;
 `result_runner_loss.verify_evidence` and its refusal tests replay the verdict.
@@ -171,7 +175,9 @@ original approval, the later run acknowledgment, and the separate fresh approval
 The migration commits a calibrated allocation-counter insert outside a
 transaction, then fails on a missing table. With result publication blocked by
 quota, the probe removes the original Job and Pod and retains their exact
-`Unknown` execution. A 90-second hold requires dirty native history, no new
+`Unknown` execution. The history reading that finds the dirty revision comes
+only after the claim's Lease term, so the probe allows its 120 seconds for it
+from the term. A 90-second hold then requires dirty native history, no new
 Apply Job, and an unchanged counter. A person then removes the partial effect
 and dirty revision without resetting the counter. The corrected artifact uses
 a distinct immutable tag. Publisher failure stops the probe immediately.
