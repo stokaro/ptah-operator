@@ -56,6 +56,12 @@ type markedClaim struct {
 	restart func()
 	// state reads what the API server holds about the claim.
 	state func() markedClaimState
+	// heldFor is how long after the start a family keeps a claim whose
+	// recorded Job is lost, renewing the database Lease: a Pod of that Job can
+	// be gone with it and still running. A PtahMigration keeps it to the end
+	// of the claim's Lease term (migrationApplyPodGone). It is zero for a
+	// PtahSchema, which hands that wait to its pending observation.
+	heldFor time.Duration
 }
 
 // markedClaimState is the part of a resource these rows judge.
@@ -152,6 +158,25 @@ func (c *markedClaim) loses(at time.Duration) {
 	}
 }
 
+// losesAtOnce holds the first pass to calling the claim's recorded Job lost,
+// with no grace. A family that keeps such a claim (heldFor) keeps it, lost,
+// on a pass a second before heldFor, and retires it at heldFor.
+func (c *markedClaim) losesAtOnce() {
+	c.t.Helper()
+	if c.heldFor == 0 {
+		c.loses(0)
+		return
+	}
+	for _, at := range []time.Duration{0, c.heldFor - time.Second} {
+		c.pass(at)
+		if state := c.state(); !state.present || !state.lost || state.jobs != 0 {
+			c.t.Fatalf("the pass %s after the first sighting left %+v; want the claim lost, kept to %s, and no Job created",
+				at, state, c.heldFor)
+		}
+	}
+	c.loses(c.heldFor)
+}
+
 func markedSchemaApply(t *testing.T, jobUID types.UID) *markedClaim {
 	t.Helper()
 	schema := safetyApplySchema(t)
@@ -186,10 +211,14 @@ func markedMigrationApply(t *testing.T, jobUID types.UID) *markedClaim {
 	holdMigrationApplyLease(t, reconciler, api, migration)
 	clock := &safetyClock{now: reconciler.now()}
 	reconciler.Clock = clock.Now
+	// The Lease is renewed on the same clock, so a pass at the end of the term
+	// finds it running out there.
+	reconciler.Locks = targetlock.New(api, api, clock)
 	request := migrationRequest(migration)
 	manager := reconciler
 	return &markedClaim{
 		t: t, clock: clock, start: clock.now,
+		heldFor:   operation.StartedAt.Add(time.Duration(operation.LeaseDurationSeconds) * time.Second).Sub(clock.now),
 		reconcile: func() (ctrl.Result, error) { return manager.Reconcile(context.Background(), request) },
 		restart: func() {
 			restarted := *reconciler
@@ -228,14 +257,16 @@ func TestAMarkedApplyWithNoJobIsLostOnlyAfterTheGrace(t *testing.T) {
 }
 
 // A claim that recorded its Job's UID saw its create return, so a missing Job
-// is lost on the first pass, as it always was.
+// is lost on the first pass, as it always was. A PtahMigration keeps the lost
+// claim, and the database, to the end of its Lease term: a Pod the Job had can
+// be gone with it and still running (migrationApplyPodGone).
 func TestARecordedApplyJobThatIsMissingIsLostAtOnce(t *testing.T) {
 	t.Parallel()
 
 	for _, family := range markedClaimFamilies {
 		t.Run(family.name, func(t *testing.T) {
 			t.Parallel()
-			family.marked(t, "recorded-apply-job-uid").loses(0)
+			family.marked(t, "recorded-apply-job-uid").losesAtOnce()
 		})
 	}
 }
