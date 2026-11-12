@@ -769,14 +769,15 @@ func (m *migrationRun) unknownLayerProof() {
 	name := "e2e-unknown-layer-" + m.engine.name
 	database, secret := "ptah_e2e_unknown_layer", "e2e-"+m.engine.name+"-unknown-layer-db"
 	m.isolatedDatabase(database, secret)
-	m.publishUnknownLayerArtifact()
+	reference := m.reference("-unknown")
+	m.publishUnknownLayerArtifact(reference)
 	// The database server's own journal is the witness that nothing connected:
 	// a Pod of this resource that sent a statement shows up in it, whatever the
 	// statement did.
 	audit := &databaseSQLAudit{t: m.t, ctx: m.ctx, cluster: m.cluster, namespace: m.in.TestNamespace, engine: m.engine.name}
 	before := audit.snapshot()
 	m.mustCreate(m.migrationDocument(migrationSpec{
-		name: name, secret: secret, reference: m.reference("-unknown"),
+		name: name, secret: secret, reference: reference,
 		coordinationKey: "e2e/unknown-layer/" + m.engine.name, apply: "Always", interval: "30s",
 	}))
 
@@ -987,12 +988,15 @@ func (m *migrationRun) recordMigrationJobs(name string, jobs map[types.UID]batch
 
 // publishUnknownLayerArtifact builds the artifact no product command builds:
 // the engine's migrations with a layer of the next version of the format. It
-// runs on the host, against the registry as the host reaches it.
-func (m *migrationRun) publishUnknownLayerArtifact() {
+// runs on the host, against the registry as the host reaches it, and pushes to
+// the reference the cluster reads it by.
+func (m *migrationRun) publishUnknownLayerArtifact(reference string) {
 	m.t.Helper()
 	if m.in.RegistryHostAddress == "" {
 		m.fatalf("the harness published no registry address, so the unknown-layer artifact cannot be built")
 	}
+	host, err := hostReference(reference, m.registryHost, m.in.RegistryHostAddress)
+	m.check(err, "address the unknown-layer artifact from the host")
 	if info, err := os.Stat(m.in.RegistryCredentialsFile); m.in.RegistryCredentialsFile == "" || err != nil || info.Size() == 0 {
 		m.fatalf("the harness published no registry credentials file")
 	}
@@ -1006,7 +1010,7 @@ func (m *migrationRun) publishUnknownLayerArtifact() {
 	fixtures, err := filepath.Abs(m.fixtureDir(""))
 	m.check(err, "resolve the migration fixtures")
 	command := exec.CommandContext(m.ctx, "go", "-C", root, "run", "./hack/unknownlayerfixture", //nolint:gosec // Arguments, not a shell.
-		"--reference", m.in.RegistryHostAddress+"/"+m.repository+"/"+m.engine.name+"-unknown:stable",
+		"--reference", host,
 		"--dir", fixtures,
 		"--unknown-media-type", unknownLayerMediaType,
 		"--username", credentials.Username,
