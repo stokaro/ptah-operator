@@ -287,7 +287,7 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 	// every bound below that waits on it.
 	term, err := applyLeaseTerm(original)
 	a.check(err, "read the interrupted Apply's Lease term")
-	a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
+	warned := a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
 	// A missing Job alone cannot authorize repair. Require retirement of the
 	// original claim, terminal/absent Pods, and no database session of that user.
 	a.check(harness.Wait(a.ctx, "the interrupted executor to become unable to write", time.Until(term)+applyLeaseTermSlack, time.Second, func(context.Context) (bool, string, error) {
@@ -306,6 +306,10 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		body, err := serverSQL(a.ctx, a.cluster, a.in.TestNamespace, m.engine, statement)
 		return err == nil && trimmedSQL(body) == "0", "waiting for every old database session to finish", err
 	}), "establish the runbook repair boundary")
+	if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
+		a.fatalf("%s retired its claim, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
 	if sql("SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state='applied'") != "2" || sql("SELECT count(*) FROM schema_migrations WHERE version=3 AND state='applied'") != "0" || sql("SELECT count(*) FROM e2e_migration_widgets") != "3" {
 		a.fatalf("interruption changed the accounted database effects")
 	}
@@ -393,10 +397,11 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 // Warning that names the Job, its UID and that term. The Warning is dated by its
 // own timestamps, not by the look that found it. Each look also runs check, so
 // the hold is read under the managers, scrape targets and watches the rest of
-// the row is read under.
+// the row is read under. It returns the migration as the look that found the
+// Warning read it.
 func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string, original *ptahv1.MigrationOperationStatus,
 	term time.Time, read func() *ptahv1.PtahMigration, check func(),
-) {
+) *ptahv1.PtahMigration {
 	a.t.Helper()
 	until := term.Add(-applyLeaseTermMargin)
 	if !time.Now().Before(until) {
@@ -460,6 +465,7 @@ func (a *alertingRun) holdUnresolvedApplyToItsTerm(m *migrationRun, name string,
 	m.scan(reading, "the ApplyPodGone reading")
 	a.logf("ApplyPodGone reading: %s", reading)
 	a.logf("%s kept its claim and the realm Lease through %d looks to %s before the end of its Lease term", name, looks, applyLeaseTermMargin)
+	return warned
 }
 
 func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, started time.Time, label string) alUnresolvedHistory {

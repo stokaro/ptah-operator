@@ -74,7 +74,8 @@ func applyPodGoneWarnings(events []corev1.Event, migration *ptahv1alpha1.PtahMig
 // having been recorded inside the claim's term, by the Events' own times: at or
 // after the claim started, and before the term ended. A Warning dated at the
 // term or after it would be one the manager recorded while it was handing the
-// Lease back.
+// Lease back. Only Warnings listed once the claim has let go can show one, so
+// a row holds the set it lists then, as well as the set its hold found.
 func applyPodGoneWarnedInTerm(warnings []corev1.Event, startedAt, term time.Time) error {
 	if len(warnings) == 0 {
 		return errors.New("no ApplyPodGone Warning names the Job and the end of its term")
