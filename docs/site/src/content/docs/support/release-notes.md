@@ -121,12 +121,42 @@ script that waits for a `PtahMigration` to be deleted, for an acknowledgment of
 its run to be taken, or for its database to be free, after its Apply Pod was
 deleted with `--force` or its Apply Job was deleted, or after PodGC marked its
 Apply Pod `Failed` over an executor it had not seen stop, has to allow until
-the end of the Apply's term, the time the `ApplyPodGone` Warning names.
+the end of the Apply's term, the time the `ApplyPodGone` Warning names. A script
+that reads a `PtahSchema`'s `Ready` while its claim waits for the database lock
+sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
+for a read tried again after a failure, the failure's reason, which
+`ReconciliationFailed` still carries. After a rollback, an earlier manager
+leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
 A script that reads the text of `kubectl ptah schema` or `migration`, rather
 than `-o json`, finds the `kubectl ptah history` command where it found a
 `kubectl get` of the namespace, when more than five approvals or acknowledgments
 name the resource, and one more line before the closing `kubectl events` line.
 
+- **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
+  `migration/NAME` prints the lifecycle journal the resource's status keeps, in
+  the order the operator recorded it and from when it is complete, then every
+  approval and run acknowledgment that names the resource by name and UID,
+  oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
+  with more than five decisions sent the reader to a list of the whole
+  namespace. Each entry shows its plan, decision, Job and outcome, folded
+  failures show their count and the last time, and each plan and decision an
+  entry names is marked as still stored or not. An entry an earlier release
+  wrote without the UIDs that would join it says so, and a status with no
+  journal reads differently from an empty one. `-o json` carries every field of
+  every entry. It needs `get` on the resource; listing plans and decisions is
+  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
+  has the rest.
+- **`kubectl ptah schema --details` and `migration --details`.** The views
+  printed none of the operation a resource has claimed, a schema's proof still
+  owed after an Apply, a Lease release or binding retirement still owed, or a
+  migration's revision rows, and `-o json` carried only the view. `--details`
+  prints every record the status holds after the view, each field labeled by
+  its API name, with a line that says whether a claim's Job is only reserved by
+  name or confirmed by UID, that an Apply's own result is not the reading that
+  proves it, and that an acknowledgment is a statement rather than proof. With
+  `-o json` it adds `details.status`, the status as stored. Without the flag
+  neither output changes. [Every record the status
+  holds](../../use/read-a-plan/#details) has the rest.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
   readers then needed rights of their own on the tables it reads, so a read that
@@ -533,15 +563,17 @@ name the resource, and one more line before the closing `kubectl events` line.
   Warning names the Pod. A Pod the kubelet ended, by an eviction, a deadline or
   an `OutOfcpu` refusal, or whose executor reads `ContainerStatusUnknown`, still
   hands the Lease back at once. A `PtahSchema` already held the Lease there.
-- **A deleted schema says why it waits after its Apply Pod is gone.** A
-  `PtahSchema` deleted while its Apply ran keeps the database Lease until its
-  pending observation's `observeAfter`, the Apply's execution deadline and its
-  Pod's termination grace, since a container on a node the API server cannot
-  reach can outlive its Pod object. Once no Pod of the Job was left, as after a
-  forced delete, it stayed `Terminating` with no word about it. An
-  `ApplyPodGone` Warning Event now names the Job, its UID and when the wait
-  ends, with the backoff `PodStuckTerminating` has. The wait itself is
-  unchanged.
+- **A deleted schema says why it waits after its Apply Pod is gone or
+  stopped.** A `PtahSchema` deleted while its Apply ran keeps the database
+  Lease until its pending observation's `observeAfter`, the Apply's execution
+  deadline and its Pod's termination grace, since a container on a node the
+  API server cannot reach can outlive its Pod object. Once no Pod of the Job
+  was left, as after a forced delete, or once the Pods left had all stopped, as
+  one PodGC marked `Failed` whose delete did not succeed, it stayed
+  `Terminating` with no word about it. An `ApplyPodGone` Warning Event now
+  names the Job, its UID, when the wait ends and a Pod that still stands, with
+  its phase. It repeats with the backoff `PodStuckTerminating` has. The wait
+  itself is unchanged.
 - **A Pod log is pointed at only where the Pod shows an executor ran.** A Pod
   that ended with no status for its executor, as one the kubelet refused at
   admission, had no log for `kubectl logs` to read, yet the record of its Apply
@@ -552,6 +584,18 @@ name the resource, and one more line before the closing `kubectl events` line.
   repeats the report that the Pod could not start, and neither does a
   `PtahMigration` Apply whose result was not read, nor a schema Apply that a
   changed execution component ended. A read still does.
+- **A schema waiting for the database lock says so.** A `PtahSchema` Apply, a
+  Plan or the Observe that proves an Apply that found another operation holding
+  the realm's Lease asked for it every five seconds, and its `Ready` went on
+  reading `OperationInProgress`, as it does over a Job at work, with no Event.
+  `Ready=False` now reads reason `WaitingForDatabaseLock` and names the Lease
+  while the claim waits, as a `PtahMigration`'s `Progressing` does, and names
+  the Job where the claim started one before it lost the Lease, since an
+  Apply's SQL may still be running then. A read that proves an Apply names the
+  Apply's Job until it starts one of its own. A read tried again after a
+  failure says so in place of the failure, and `Ready` reads the failure again
+  once the read holds the Lease. A report that the claim's Pod cannot start
+  stays on `Ready` instead. The wait itself is unchanged.
 - **A stop says when the annotation already settles it.** A statement in the
   `operator.ptah.run/settled-apply` annotation holds until the proof ends, so a
   store that flips from the first target to another and back, A, B, A, B, stops
@@ -575,31 +619,6 @@ name the resource, and one more line before the closing `kubectl events` line.
   `MigrationRunUncertain` Event of a `PtahMigration`, whatever the Job's TTL. A
   script that matches `is in the Pod log` there has to match `was in the Pod
   log of Job` as well.
-- **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
-  `migration/NAME` prints the lifecycle journal the resource's status keeps, in
-  the order the operator recorded it and from when it is complete, then every
-  approval and run acknowledgment that names the resource by name and UID,
-  oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
-  with more than five decisions sent the reader to a list of the whole
-  namespace. Each entry shows its plan, decision, Job and outcome, folded
-  failures show their count and the last time, and each plan and decision an
-  entry names is marked as still stored or not. An entry an earlier release
-  wrote without the UIDs that would join it says so, and a status with no
-  journal reads differently from an empty one. `-o json` carries every field of
-  every entry. It needs `get` on the resource; listing plans and decisions is
-  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
-  has the rest.
-- **`kubectl ptah schema --details` and `migration --details`.** The views
-  printed none of the operation a resource has claimed, a schema's proof still
-  owed after an Apply, a Lease release or binding retirement still owed, or a
-  migration's revision rows, and `-o json` carried only the view. `--details`
-  prints every record the status holds after the view, each field labeled by
-  its API name, with a line that says whether a claim's Job is only reserved by
-  name or confirmed by UID, that an Apply's own result is not the reading that
-  proves it, and that an acknowledgment is a statement rather than proof. With
-  `-o json` it adds `details.status`, the status as stored. Without the flag
-  neither output changes. [Every record the status
-  holds](../../use/read-a-plan/#details) has the rest.
 
 ## 0.2.10
 
