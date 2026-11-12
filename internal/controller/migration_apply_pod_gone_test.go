@@ -102,6 +102,20 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 			}, batchv1.JobReasonBackoffLimitExceeded),
 		},
 		{
+			// The kubelet's own DisruptionTarget, on a Pod it ended before its
+			// executor started, is not PodGC's.
+			name: "a Pod the kubelet evicted before it initialized",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: ephemeral-storage.",
+				Conditions: []corev1.PodCondition{{
+					Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: corev1.PodReasonTerminationByKubelet,
+				}},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
 			name: "a Pod the kubelet stopped at its deadline",
 			end: podStandsFailed(corev1.PodStatus{
 				Phase: corev1.PodFailed, Reason: "DeadlineExceeded", Message: "Pod was active on the node longer than the specified deadline",

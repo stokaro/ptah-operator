@@ -1388,9 +1388,12 @@ func podStopUnconfirmed(pod *corev1.Pod) bool {
 		}
 		break
 	}
+	// The status is not read: the disruption controller resets a stale
+	// DisruptionTarget only on a Pod that has not ended
+	// (nonTerminatingPodHasStaleDisruptionCondition), and either way the
+	// phase is PodGC's.
 	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.DisruptionTarget && condition.Status == corev1.ConditionTrue &&
-			condition.Reason == podGCDeletionReason {
+		if condition.Type == corev1.DisruptionTarget && condition.Reason == podGCDeletionReason {
 			return true
 		}
 	}
