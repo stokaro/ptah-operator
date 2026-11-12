@@ -752,7 +752,8 @@ type ConfigMapSourceInputs struct {
 // in the condition and the Event, for a schema and a migration, and the fault
 // of a schema it read and refuses; and a statement
 // the database refuses, whose answer is in the Pod log and nowhere else, read by
-// running the command the status and the Event print. The Job carries the 24 hour
+// running the command the status and the Event print, as the diagnostic reader
+// examples/diagnostic-reader-role.yaml is written for. The Job carries the 24 hour
 // TTL, and the command still reads it past the five minutes any other Job keeps,
 // counted from the Job's own finish time; the row does not wait for the 24 hours.
 // On the same sources it proves DatabaseReachable: a wrong

@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -891,11 +892,16 @@ func (c *configMapRun) waitForUnreadableEvent(owner types.UID, reason, file, wan
 // while it did not. Nothing here waits for the collection at 24 hours, or shows that a
 // node keeps the log that long: that rests on the controller honoring the field.
 //
+// The person runs each command as the diagnostic reader examples/diagnostic-reader-role.yaml
+// describes, bound here as the example is written, and nothing more. A Role that loses
+// a rule the command needs fails the row at the command.
+//
 // The resources are removed afterward, and their Jobs with them. The Job audit
 // (auditCompletedJobs) belongs to the data plane's phases, which run before this one,
 // and no Job of this row outlives it for a rerun of one of them to find.
 func (c *configMapRun) refusedStatements() {
 	c.t.Helper()
+	c.installDiagnosticReader()
 	c.createDatabase(configMapRefusedDatabase, configMapRefusedSecret)
 	c.createDatabase(configMapRefusedMigrationDatabase, configMapRefusedMigrationSecret)
 	schema, collected := c.refusedSchemaStatement()
@@ -969,17 +975,70 @@ func (c *configMapRun) keptPastShortTTL(run *refusedRun) {
 	c.readPrintedLogs(run)
 }
 
-// readPrintedLogs runs the command each message prints and holds what it wrote to the
-// claim. The Job has one Pod, asserted where the row first reads it, so kubectl's
-// choice among a Job's Pods is no choice here.
+// The diagnostic reader is a member of the group the example binds its Role to. The
+// outsider is the same kind of user in no group of the row's, so a command the API
+// server answers for it was not authorized by the Role.
+const (
+	diagnosticReaderUser     = "e2e-diagnostic-reader"
+	diagnosticReaderGroup    = "e2e:diagnostic-reader"
+	diagnosticReaderOutsider = "e2e-diagnostic-outsider"
+)
+
+// installDiagnosticReader binds examples/diagnostic-reader-role.yaml to the reader's
+// group, and waits until the API server grants the reader a read the printed command
+// does not make. A rule the command needs is then refused at the command, and nowhere
+// before it. The row's first command runs minutes later, after two Applies, so every
+// API server behind the cluster's endpoint has observed the binding by then.
+func (c *configMapRun) installDiagnosticReader() {
+	c.t.Helper()
+	const file = "diagnostic-reader-role.yaml"
+	c.check(installRoleExample(c.t, c.ctx, c.cluster, c.in.TestNamespace, file, "<diagnostic-reader-group>", diagnosticReaderGroup),
+		"install %s", file)
+	reader, err := c.cluster.As(rest.ImpersonationConfig{
+		UserName: diagnosticReaderUser, Groups: []string{"system:authenticated", diagnosticReaderGroup},
+	})
+	c.check(err, "construct the diagnostic reader")
+	c.wait("the diagnostic reader's RoleBinding to grant reading the namespace's schemas", func() (bool, string) {
+		err := reader.List(c.ctx, &ptahv1alpha1.PtahSchemaList{}, client.InNamespace(c.in.TestNamespace))
+		if err != nil {
+			return false, err.Error()
+		}
+		return true, ""
+	})
+}
+
+// kubectlAs is the cluster's kubectl run as an identity the administrator
+// impersonates: it adds the kubeconfig and the identity, and nothing else.
+func (c *configMapRun) kubectlAs(user string, groups ...string) func(arguments ...string) ([]byte, []byte, error) {
+	return func(arguments ...string) ([]byte, []byte, error) {
+		identity := []string{"--as", user}
+		for _, group := range groups {
+			identity = append(identity, "--as-group", group)
+		}
+		ctx, cancel := context.WithTimeout(c.ctx, time.Minute)
+		defer cancel()
+		return c.cluster.Kubectl(ctx, append(identity, arguments...)...)
+	}
+}
+
+// readPrintedLogs runs the command each message prints as the diagnostic reader and
+// holds what it wrote to the claim. The Job has one Pod, asserted where the row first
+// reads it, so kubectl's choice among a Job's Pods is no choice here. Each command
+// also runs as the outsider, which the API server has to refuse: that is what shows
+// the reader's identity reached it, rather than the administrator's.
 func (c *configMapRun) readPrintedLogs(run *refusedRun) {
 	c.t.Helper()
+	if len(run.printed) == 0 {
+		c.fatalf("the refused run of Job %s printed no message to run a command from", run.job.Name)
+	}
+	reader := c.kubectlAs(diagnosticReaderUser, "system:authenticated", diagnosticReaderGroup)
+	outsider := c.kubectlAs(diagnosticReaderOutsider, "system:authenticated")
 	for where, message := range run.printed {
-		log, err := readPrintedLog(message, func(arguments ...string) ([]byte, []byte, error) {
-			return c.cluster.Kubectl(c.ctx, arguments...)
-		})
-		c.check(err, "run the command %s prints", where)
+		log, err := readPrintedLog(message, reader)
+		c.check(err, "run the command %s prints as the diagnostic reader", where)
 		c.check(failedApplyLogSays(log), "what the command %s prints wrote", where)
+		_, err = readPrintedLog(message, outsider)
+		c.check(printedLogRefused(err, diagnosticReaderOutsider), "run the command %s prints as a user the Role is not bound to", where)
 	}
 }
 
