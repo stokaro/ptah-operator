@@ -8,7 +8,8 @@
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
-    "postgresql-18": "postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5"
+    "postgresql-18": "postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5",
+    "postgresql-16": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28"
   },
   "clientAddress": "172.19.0.3",
   "control": "The same procedure run with the executor of the previous pin, the Ptah v0.22.0 release image, reproduced every checked-in reading record for record, the three PostgreSQL 18 witnesses included, and all four saved exclusion plans byte for byte. The v0.23.0 image reproduced both migration History readings and both restored-history refusals, and changed every schema reading. Each MySQL schema command now asks who the session is and what it holds, with SELECT CURRENT_USER(), VERSION(), SHOW GRANTS and a read of the partial_revokes and lower_case_table_names settings, so that it can refuse a read of what the account cannot see (stokaro/ptah#5545), and it lists the database's events (stokaro/ptah#5552). Each PostgreSQL schema command reads what an object's owner holds apart from its grants (stokaro/ptah#5528), which constraints a table inherits (stokaro/ptah#5529) and the role it runs as (stokaro/ptah#5542). The table, column, index, constraint and view reads of both engines leave out Ptah's seed ledger schema_seeds (stokaro/ptah#5641). The allowed Apply executes the same statements as before. Three saved exclusion plans carry the same statements under new fingerprints and plan names; the wide MySQL plan is unchanged.",
@@ -138,6 +139,21 @@
       "exitCode": 0,
       "records": 85,
       "sha256": "4954f1e8e7f166170b0f32d61360370ddb953e52393201f1099398ed68d5edc2"
+    },
+    "postgresql-16-schema-drift-observe.jsonl": {
+      "exitCode": 1,
+      "records": 53,
+      "sha256": "37dc5c89669ff96be0532ce622e0ed17705d945594929b31603ea0a8be503a9c"
+    },
+    "postgresql-16-schema-drift-plan.jsonl": {
+      "exitCode": 0,
+      "records": 95,
+      "sha256": "42df06e64b4a6a156369d678d3c24bb2e384fe78f24da364ab010abbb0f2bca9"
+    },
+    "postgresql-16-schema-drift-stale-apply.jsonl": {
+      "exitCode": 2,
+      "records": 50,
+      "sha256": "2d87c5b1750d9c805bc4841a1a66bc195981aae6d5efe3d77a7d2a265b0be807"
     },
     "postgresql-18-schema-drift-observe.jsonl": {
       "exitCode": 1,

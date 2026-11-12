@@ -68,6 +68,27 @@
           "reason": "Its one phase is the migration approval and runtime rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
         }
       ]
+    },
+    {
+      "engine": "postgresql",
+      "line": "16.x",
+      "image": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28",
+      "imageCreated": "2026-10-21",
+      "state": "pending",
+      "leftOut": [
+        {
+          "suite": "migrations-mysql",
+          "reason": "Its one phase is the versioned migration rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        },
+        {
+          "suite": "migration-faults-mysql",
+          "reason": "Its one phase is the versioned migration fault rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        },
+        {
+          "suite": "migration-authority-mysql",
+          "reason": "Its one phase is the migration approval and runtime rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        }
+      ]
     }
   ]
 }
