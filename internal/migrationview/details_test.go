@@ -130,6 +130,19 @@ func TestDetailsSayWhatEachRecordMeans(t *testing.T) {
 			denies: []string{"not dispatched before", "waits until"},
 		},
 		{
+			// A read-only claim records no dispatch mark, so its UID alone
+			// says the attempt dispatched.
+			name: "a History retry whose Job is confirmed",
+			change: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+					Type: operatorv1alpha1.MigrationOperationHistory, ID: "op-4", Attempt: 2,
+					JobName: "ptah-m-history-orders-4", JobUID: "job-uid", RetryNotBefore: &retryAt,
+				}
+			},
+			says:   []string{"Its Job ptah-m-history-orders-4 is confirmed"},
+			denies: []string{"not dispatched before", "waits until"},
+		},
+		{
 			name: "a retry whose one create was attempted",
 			change: func(migration *operatorv1alpha1.PtahMigration) {
 				migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
