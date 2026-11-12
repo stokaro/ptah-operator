@@ -115,8 +115,11 @@ type MigrationReconciler struct {
 	// deletion waits for is due. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	Jobs      MigrationJobBuilder
-	Locks     *targetlock.Locker
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
+	// Pods are gone.
+	goneApplyPods *stuckPodWarnings
+	Jobs          MigrationJobBuilder
+	Locks         *targetlock.Locker
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
@@ -369,7 +372,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
+			if r.dispatchedApplyMayStillWrite(ctx, migration, operation, job) {
 				// Renew while waiting, the way every other pass over a live
 				// Apply does. The Lease is sized to outlive the Job's own
 				// deadline and no further, and this wait can outlast that: a

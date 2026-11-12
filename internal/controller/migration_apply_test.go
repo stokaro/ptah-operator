@@ -907,9 +907,11 @@ func TestUncertainMigrationApplyHandsTheDatabaseBackWhenNothingWasCreated(t *tes
 // A Job under the claim's name is this claim's Job only if its UID says so. The
 // name is derived from the claim, so a later Job holds it too -- and reading
 // that Job's condition would keep the database over a run this claim never
-// dispatched, until a lease duration expired. The identity check is what sends
-// the gate to the Pod read instead, where the UID the claim recorded owns
-// nothing and the database goes back to whoever asks for it next.
+// dispatched, for as long as that Job ran. The identity check is what sends the
+// gate to the Pod read instead, where the UID the claim recorded owns nothing.
+// The claim's own Job is gone, and a Pod it had can be gone with it and still
+// running, so the database stays held to the end of the claim's Lease term
+// (migrationApplyPodGone), and goes back there while the later Job still runs.
 func TestUncertainMigrationApplyHandsTheDatabaseBackWhenAnotherJobHoldsTheName(t *testing.T) {
 	t.Parallel()
 
@@ -939,6 +941,12 @@ func TestUncertainMigrationApplyHandsTheDatabaseBackWhenAnotherJobHoldsTheName(t
 	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
 		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
 	}
+	assertDatabaseStillHeld(t, reconciler, api)
+
+	toTheApplyLeaseTerm(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() at the end of the Lease term error = %v", err)
+	}
 	assertDatabaseHandedBack(t, reconciler, api)
 }
 
@@ -957,7 +965,7 @@ func TestDispatchedApplyMayStillWriteReadsTheJobTheCallerDidNotPass(t *testing.T
 	job.Status.Conditions = nil
 	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job)
 
-	if !reconciler.dispatchedApplyMayStillWrite(context.Background(), migration.Namespace, operation, nil) {
+	if !reconciler.dispatchedApplyMayStillWrite(context.Background(), migration, operation, nil) {
 		t.Fatal("the gate handed the database back for a dispatched Job it never read")
 	}
 }
@@ -1732,12 +1740,18 @@ func TestDeletingAMigrationWaitsForAPodItsTerminalJobStillOwns(t *testing.T) {
 // Each row is a different way of learning that nothing can write any more, and
 // the third is the one a UID decides: a Job under the reserved name that this
 // claim never dispatched owns a Pod of its own, and waiting for it would hold
-// the resource for a run it cannot account for.
+// the resource for a run it cannot account for. Where the claim's own Job is
+// gone, a Pod it had can be gone with it and still running, so those rows
+// settle at the end of the claim's Lease term and not before
+// (migrationApplyPodGone).
 func TestDeletingAMigrationSettlesAnApplyItCannotAccountFor(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
 		name string
+		// held is a row whose claim's Job is gone, which keeps the claim and
+		// the database to the end of its Lease term.
+		held bool
 		// wantJobUID is the Job the record attributes the run to. It is the
 		// one this claim dispatched wherever the claim recorded a UID, whether
 		// or not that object still stands -- the claim is the remaining
@@ -1760,6 +1774,7 @@ func TestDeletingAMigrationSettlesAnApplyItCannotAccountFor(t *testing.T) {
 		},
 		{
 			name:       "the dispatched Job is gone",
+			held:       true,
 			wantJobUID: "job-uid",
 			workload: func(_ *operatorv1alpha1.MigrationOperationStatus, _ *batchv1.Job, _ *corev1.Pod) []client.Object {
 				return nil
@@ -1770,6 +1785,7 @@ func TestDeletingAMigrationSettlesAnApplyItCannotAccountFor(t *testing.T) {
 			// dispatched, and a later attempt under the same name did not
 			// perform this run.
 			name:       "another Job holds the name the claim reserved",
+			held:       true,
 			wantJobUID: "job-uid",
 			workload: func(_ *operatorv1alpha1.MigrationOperationStatus, job *batchv1.Job, pod *corev1.Pod) []client.Object {
 				job.UID = "replacement-job-uid"
@@ -1822,6 +1838,22 @@ func TestDeletingAMigrationSettlesAnApplyItCannotAccountFor(t *testing.T) {
 			holdMigrationApplyLease(t, reconciler, api, migration)
 			if err := api.Delete(ctx, migration); err != nil {
 				t.Fatal(err)
+			}
+
+			if row.held {
+				result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+				if err != nil {
+					t.Fatalf("Reconcile() inside the Lease term error = %v", err)
+				}
+				waiting := readMigration(t, api, migration)
+				if waiting.Status.ActiveOperation == nil || !contains(waiting.Finalizers, migrationOperationFinalizer) {
+					t.Fatalf("deletion let the claim go inside its Lease term with its Job gone: %#v", waiting.Status)
+				}
+				assertDatabaseStillHeld(t, reconciler, api)
+				if result.RequeueAfter <= 0 {
+					t.Fatalf("the waiting pass asked for nothing to follow it: result = %#v", result)
+				}
+				toTheApplyLeaseTerm(t, reconciler, api, migration)
 			}
 
 			result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
@@ -2435,6 +2467,10 @@ func TestAnUncertainApplyRecordsItsRunEvenWhenCleanupIsRefused(t *testing.T) {
 
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, verificationPolicyConfigMap())
 	reconciler.Client = refusingJobPatches{Client: reconciler.Client}
+	// terminalMigrationWorkload records its Job's UID, job-uid, on the claim,
+	// and no object holds it. The claim's own Job is gone, so it would stay to
+	// the end of its Lease term (migrationApplyPodGone), and the call runs there.
+	toTheApplyLeaseTerm(t, reconciler, api, migration)
 
 	if _, err := reconciler.finishUncertainMigrationApply(ctx, migration, job,
 		errors.New("the created Apply Job failed immutable intent validation"), ""); err != nil {

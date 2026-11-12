@@ -1063,7 +1063,7 @@ func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
 ) (ctrl.Result, error) {
 	// The common gate treats failed Job/Pod reads as still writing. Renewal
 	// must continue there too: an unreadable workload is not a stopped one.
-	if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, nil) {
+	if r.dispatchedApplyMayStillWrite(ctx, migration, migration.Status.ActiveOperation, nil) {
 		if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1221,10 +1221,11 @@ func (r *MigrationReconciler) migrationJobCleanupNotScheduled(
 
 // dispatchedApplyMayStillWrite reports whether the Apply this claim dispatched
 // could still be executing SQL: its Job has not reached a terminal condition,
-// or a Pod that Job owns has not stopped. The identity it asks that about comes
-// from the claim, from the Job the caller already read, or -- when the claim
-// never recorded a UID -- from the API server under the name the claim
-// reserved.
+// a Pod that Job owns has not stopped, or a Pod it had is gone with nothing to
+// say it stopped and the claim's Lease term has not ended
+// (migrationApplyPodGone). The identity it asks that about comes from the
+// claim, from the Job the caller already read, or -- when the claim never
+// recorded a UID -- from the API server under the name the claim reserved.
 //
 // It decides whether the database may be handed back. An uncertain outcome
 // says nothing about whether the executor is still running, and releasing the
@@ -1235,10 +1236,11 @@ func (r *MigrationReconciler) migrationJobCleanupNotScheduled(
 // if no manager can continue the renewal.
 func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 	ctx context.Context,
-	namespace string,
+	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	job *batchv1.Job,
 ) bool {
+	namespace := migration.Namespace
 	jobName, jobUID := operation.JobName, operation.JobUID
 	if jobUID == "" && job != nil {
 		jobName, jobUID = job.Name, job.UID
@@ -1299,7 +1301,48 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 			return true
 		}
 	}
+	if len(pods) == 0 && migrationApplyPodGone(job) {
+		if until := migrationApplyLeaseTermEnd(operation); r.now().Before(until) {
+			r.warnMigrationApplyPodGone(migration, jobName, jobUID, until)
+			return true
+		}
+	}
 	return false
+}
+
+// migrationApplyPodGone reports whether a Pod of the claim's Job may be gone
+// with nothing to say that its executor stopped, where the claim lists none.
+// job is the claim's Job, which has finished here, or nil where it is gone.
+//
+// A Pod is gone from the API server without its kubelet saying so when a
+// person deletes it with --force, deletes its Job and then the Pod, or deletes
+// its Node object. On a node the API server cannot reach the container can
+// still be running and writing. The Job controller keeps its job-tracking
+// finalizer on a Pod it has not accounted for, and with podReplacementPolicy
+// Failed it accounts for a Pod that is deleted but has not failed only once the
+// Job is past its deadline. Before that, a forced delete leaves the Pod standing
+// Terminating. A deleted Job's Pods lose the finalizer at once, and so does a
+// Pod PodGC marks Failed because its Node object is gone.
+//
+// A finished Job with no Pod failed had no Pod to lose: the Job controller marks
+// a Job finished only once every Pod it created is counted, and counts a Pod
+// that did not succeed as failed (pkg/controller/job, enactJobFinished and
+// trackJobStatusAndRemoveFinalizers, 1.35 and 1.37). That is a Job whose Pod the
+// API server refused, or one that completed. A Job that is gone says nothing,
+// so it is read as one that had a Pod.
+func migrationApplyPodGone(job *batchv1.Job) bool {
+	return job == nil || job.Status.Failed > 0
+}
+
+// migrationApplyLeaseTermEnd is when the Lease an Apply claim took runs out if
+// it is never renewed: the claim's start plus the duration it took the Lease
+// for. migrationLeaseDuration sizes that duration so the Apply's Pod cannot
+// still be running at its end: the window, which the runner holds its child to,
+// the Job's deadline grace and migrationApplyLeaseGrace, which covers the Pod's
+// termination grace. Both fields are written with the claim, so a later release
+// reads the term the claim was dispatched under.
+func migrationApplyLeaseTermEnd(operation *operatorv1alpha1.MigrationOperationStatus) time.Time {
+	return operation.StartedAt.Add(time.Duration(operation.LeaseDurationSeconds) * time.Second)
 }
 
 // finishUncertainMigrationApply is where an Apply goes when the controller
@@ -1328,7 +1371,7 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		return ctrl.Result{}, err
 	}
 	mayStillWrite := unread ||
-		r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, job)
+		r.dispatchedApplyMayStillWrite(ctx, migration, migration.Status.ActiveOperation, job)
 	return r.retireUncertainMigrationApply(ctx, migration, job, failure, reportedTarget, mayStillWrite)
 }
 
