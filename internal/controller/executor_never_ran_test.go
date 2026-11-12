@@ -190,11 +190,15 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 		// ran is an executor that started and stopped, whose log is read and
 		// pointed at.
 		ran bool
+		// heldToTerm is a Pod nothing says stopped: its executor can have
+		// started since its kubelet last reported, so the claim keeps the Lease
+		// to the end of its term, and the record that stays is written there.
+		heldToTerm bool
 	}{
 		{name: "a Pod the kubelet refused at admission", status: rejectedByTheKubelet(), logs: &countedLogs{err: kubeletRefusesALostContainer()}},
 		{
 			name: "a Pod PodGC failed over its executor last reported waiting", status: failedByPodGCOverAWaitingExecutor(),
-			logs: &countedLogs{err: kubeletRefusesAWaitingContainer()},
+			logs: &countedLogs{err: kubeletRefusesAWaitingContainer()}, heldToTerm: true,
 		},
 		{name: "a Pod whose executor exited", status: exitedWithoutAResult(), logs: &countedLogs{content: []byte("connection reset by peer\n")}, ran: true},
 	} {
@@ -212,6 +216,13 @@ func TestAMigrationRunWhosePodEndedBeforeItsExecutorRanPointsAtNoLog(t *testing.
 			reconciler.Recorder = run.recorder
 			reconciler.Logs = row.logs
 			failedOnItsBackoffLimit(t, api, run.job)
+			if row.heldToTerm {
+				reconcileMigrationOrGone(t, run)
+				if claim := readMigration(t, api, run.migration).Status.ActiveOperation; claim == nil {
+					t.Fatal("the claim went before its Lease term over a Pod nothing says stopped")
+				}
+				toTheApplyLeaseTerm(t, reconciler, api, run.migration)
+			}
 
 			record := run.settle(t, 3)
 			switch reads := row.logs.count(); {
