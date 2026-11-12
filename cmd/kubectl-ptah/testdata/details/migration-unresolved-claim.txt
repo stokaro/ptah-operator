@@ -1,0 +1,138 @@
+Migration:            application/orders
+Phase:                Blocked
+Ready:                False, ApplyOutcomeUnknown: What the dispatched run did is unknown until the database is read
+Blocked:              True, ApplyOutcomeUnknown: the dispatched Apply Job is missing and will not be recreated
+
+Last run:             Unknown, started 2026-09-30T06:30:48Z, finished 2026-09-30T06:30:56Z
+  Job:                ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb, UID dc1d113d-8bde-4744-92a9-dab7f3f31d0e
+  Message:            the dispatched Apply Job is missing and will not be recreated
+
+Unresolved run:       Unknown, recorded 2026-09-30T06:30:56Z
+  Operation:          sha256:503c240dfe36ed98988ebe3c64de83bdb9b518b8a8069725654ac2874313cfb7
+  Job:                ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb, UID dc1d113d-8bde-4744-92a9-dab7f3f31d0e
+  Plan:               ptah-mplan-f116e9cc757f94e9f6fef4f0, UID ffcbeac0-d6ca-4bdf-8d34-d5706fb40915
+  Database:           sha256:7a3b9def066c0191aeb5cd1dd6542edb3803e898961e35b8acb1afd593438b08 (target identity digest)
+  While this record stands no plan is published and no Apply is dispatched;
+  resolve, verify and the history read go on.
+  The database is the one the run named or, where it named none, the one its
+  plan was computed against. The runner starts nothing against a database
+  other than its plan's, so the run changed this one or none. A reader who
+  inspects another database, such as a replica or a restored copy, finds
+  nothing wrong and settles a record that was telling the truth.
+  Establish what the run did there first. A history read of that database that
+  finds nothing of the artifact left to apply clears the record by itself. If
+  the database is accounted for and still has work pending, settle it with a
+  PtahMigrationRunAcknowledgment naming migration UID details-uid and the
+  operation above.
+  The operations guide has the procedure, under "A migration run nobody
+  accounted for".
+
+No plan is published.
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE              STATUS  REASON               SINCE                 MESSAGE
+  Progressing       False   ApplyOutcomeUnknown  2026-09-30T06:30:56Z  The dispatched run's outcome is unknown and may not be retried
+  ArtifactVerified  True    PolicySatisfied      2026-09-30T06:30:38Z  The resolved artifact satisfied its verification policy
+  Blocked           True    ApplyOutcomeUnknown  2026-09-30T06:30:56Z  the dispatched Apply Job is missing and will not be recreated
+  Ready             False   ApplyOutcomeUnknown  2026-09-30T06:30:48Z  What the dispatched run did is unknown until the database is read
+  ApprovalRequired  False   Satisfied            2026-09-30T06:30:48Z  The plan's approval requirements are satisfied
+
+Details, every record the status holds:
+
+Status:               no generation yet; the spec is at generation 1
+  Phase: Blocked
+
+Active operation:     Apply, attempt 1, claimed 2026-09-30T06:30:48Z
+  Its Job ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb is confirmed:
+  the claim records the Job's UID dc1d113d-8bde-4744-92a9-dab7f3f31d0e, and a
+  Job of that name with another UID is not this one.
+  Type: Apply
+  ID: sha256:503c240dfe36ed98988ebe3c64de83bdb9b518b8a8069725654ac2874313cfb7
+  Input fingerprint: sha256:2fc45defdde4f403bcd31f8aeb631d3b853b8185101b747ce2581dd764288c96
+  Job name: ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb
+  Job UID: dc1d113d-8bde-4744-92a9-dab7f3f31d0e
+  Started at: 2026-09-30T06:30:48Z
+  Attempt: 1
+  Execution binding ID: v1-2378fe76629347da25ca3a9be5a9dcca
+  Source:
+    Resolved reference: oci://e2e-registry.ptah-test-a-1-37-0-ci-36675116019-1-1-37-migrations-56d60f3073.svc.cluster.local:5000/migrations/postgresql-uncertain@sha256:55a5de0d16a7be13825a5628797d7e26d209c41c0726c49dbeddb7030b39c65e
+    Digest: sha256:55a5de0d16a7be13825a5628797d7e26d209c41c0726c49dbeddb7030b39c65e
+    Registry auth from:
+      Name: e2e-registry-auth
+      Mode: Environment
+      Username key: username
+      Password key: password
+      Token key: token
+      Docker config j s o n key: .dockerconfigjson
+    Transport:
+      Plain h t t p: true
+  Target:
+    Engine: PostgreSQL
+    URL from:
+      Name: e2e-postgresql-uncertain-db
+      Key: url
+  Coordination digest: sha256:738c34fbc6396582445d3ca92baffe3f17ce25c8088a258549983406d8a11c7d
+  Plan ref:
+    Name: ptah-mplan-f116e9cc757f94e9f6fef4f0
+    UID: ffcbeac0-d6ca-4bdf-8d34-d5706fb40915
+  Dispatch started: true
+  Dispatch not after: 2026-09-30T06:35:48Z
+  Execution not after: 2026-09-30T06:35:48Z
+  Lease epoch: v1-0a2670c577ba5ee809e8a79d0fb585d2
+  Lease duration seconds: 420
+  Admission snapshot:
+    Version: v1
+    Digest: sha256:8607ce6a41fefdc6f8e1cc6ac43a308eaab44bbfefb19865ae66077aba4083ce
+    Template digest: sha256:61c01f27290d120b8fd9e8adef010e5f1543bdaf4239b4a35b1c379da3a0bd10
+    Service account:
+      Object:
+        Name: default
+        UID: 71b40e92-23b2-42d7-b0f4-e6628a0073ca
+        Resource version: 1875
+      Image pull secrets:
+        - Name: e2e-registry-pull
+    Limit ranges:
+      - Object:
+          Name: ptah-operation-defaults
+          UID: 55087b5c-9afa-4176-b727-42a6c89218f7
+          Resource version: 1873
+        Default requests: cpu=10m, memory=16Mi
+        Default limits: cpu=100m, memory=64Mi
+    Priority class:
+      Value: 0
+      Preemption policy: PreemptLowerPriority
+    Default tolerations enabled: true
+    Default not ready toleration seconds: 300
+    Default unreachable toleration seconds: 300
+    Extended resource toleration enabled: false
+    Always pull images enabled: false
+
+Last run:             Unknown
+  The most recent run. A run nobody has accounted for is the unresolved run, a
+  record of its own.
+  Outcome: Unknown
+  Job name: ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb
+  Job UID: dc1d113d-8bde-4744-92a9-dab7f3f31d0e
+  Started at: 2026-09-30T06:30:48Z
+  Finished at: 2026-09-30T06:30:56Z
+  Message: the dispatched Apply Job is missing and will not be recreated
+
+Unresolved run:       Unknown
+  It holds the migration whatever the last run or the conditions say, until a
+  reading of the database or a person's acknowledgment settles it.
+  Outcome: Unknown
+  Operation ID: sha256:503c240dfe36ed98988ebe3c64de83bdb9b518b8a8069725654ac2874313cfb7
+  Job name: ptah-m-apply-e2e-uncertain-postgresql-5c51b18210a7b3bb
+  Job UID: dc1d113d-8bde-4744-92a9-dab7f3f31d0e
+  Plan ref:
+    Name: ptah-mplan-f116e9cc757f94e9f6fef4f0
+    UID: ffcbeac0-d6ca-4bdf-8d34-d5706fb40915
+  Target identity digest: sha256:7a3b9def066c0191aeb5cd1dd6542edb3803e898961e35b8acb1afd593438b08
+  Recorded at: 2026-09-30T06:30:56Z
+
+kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
+kubectl events -n application --for ptahmigration/orders prints its Events.

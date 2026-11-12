@@ -1,0 +1,86 @@
+Migration:            application/orders
+Phase:                InSync
+Ready:                True, HistoryMatched: The database has every migration this artifact carries
+Artifact:             oci://e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/migrations/postgresql-uncertain@sha256:256ad7f18b5da5d4b118bee249daabf507a1d42eae17f880a17ce743616d5498
+History read:         2026-10-03T22:35:29Z
+Current version:      3
+Applied:              3
+Pending:              0
+
+Last run:             Applied, started 2026-10-03T22:29:41Z, finished 2026-10-03T22:35:11Z
+  Job:                ptah-m-apply-e2e-isolated-node-postgresql-170e4f5607192611, UID c77f2c0b-225b-4e69-920a-48031b44a498
+  Versions:           1, 2, 3
+  Message:            3 migrations are recorded applied
+
+No plan is published.
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE              STATUS  REASON           SINCE                 MESSAGE
+  Progressing       False   HistoryMatched   2026-10-03T22:35:29Z  Nothing is pending
+  ArtifactVerified  True    PolicySatisfied  2026-10-03T22:29:26Z  The resolved artifact satisfied its verification policy
+  Blocked           False   HistoryMatched   2026-10-03T22:29:41Z  The history continues this artifact
+  Ready             True    HistoryMatched   2026-10-03T22:35:29Z  The database has every migration this artifact carries
+  ApprovalRequired  False   Satisfied        2026-10-03T22:29:41Z  The plan's approval requirements are satisfied
+
+Details, every record the status holds:
+
+Status:               generation 1; the spec is at generation 1
+  Observed generation: 1
+  Phase: InSync
+  Next reconciliation time: 2026-10-03T22:37:29Z
+
+Active operation:     none
+
+Execution binding:    v1-6efba0790f83db0d65c74b38134fa85b
+  Epoch: v1-6efba0790f83db0d65c74b38134fa85b
+  Controller state version: 1
+  Ptah version: f6e562c
+  Executor image: e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-executor@sha256:1c3285babea31d2e1a303a00fa8c2e586c84b1f005561312e0bc48c13e7d5504
+  Runner protocol version: 1
+
+Artifact:
+  Resolved reference: oci://e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/migrations/postgresql-uncertain@sha256:256ad7f18b5da5d4b118bee249daabf507a1d42eae17f880a17ce743616d5498
+  Digest: sha256:256ad7f18b5da5d4b118bee249daabf507a1d42eae17f880a17ce743616d5498
+  Registry auth from:
+    Name: e2e-registry-auth
+    Mode: Environment
+    Username key: username
+    Password key: password
+    Token key: token
+    Docker config j s o n key: .dockerconfigjson
+  Transport:
+    Plain h t t p: true
+
+History read:         2026-10-03T22:35:29Z
+  The database's revision table as the operator last read it, with its newest
+  rows. It is the database's record of what ran, apart from the operator's
+  journal.
+  Observed at: 2026-10-03T22:35:29Z
+  Contract version: 1
+  Current version: 3
+  Applied count: 3
+  Pending count: 0
+  Fingerprint: sha256:94ade4630b1cbb88d1f38183deff4d5a6d0ad30e19052bb5c0dbbb02eadc0d71
+  Target identity digest: sha256:63a7462ae05ee92cbdb6f121560563d0857577b4c99111b898fe1e8c7b85bd63
+
+Last run:             Applied
+  The most recent run. A run nobody has accounted for is the unresolved run, a
+  record of its own.
+  Outcome: Applied
+  Job name: ptah-m-apply-e2e-isolated-node-postgresql-170e4f5607192611
+  Job UID: c77f2c0b-225b-4e69-920a-48031b44a498
+  Started at: 2026-10-03T22:29:41Z
+  Finished at: 2026-10-03T22:35:11Z
+  Applied versions: 1, 2, 3
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-operator@sha256:322d011bf416903ffcb31b387f2edce551c133d1c577f85f79e8198685a1ed28
+    Controller revision: 0c2b9cc3ddb4c55f8a8fcd7abd48e5cf3fb06c23
+    Runner image: e2e-registry.ptah-test-a-1-37-0-ci-37154162826-1-1-37-migrations-a5dd11db68.svc.cluster.local:5000/ptah-runner@sha256:322d011bf416903ffcb31b387f2edce551c133d1c577f85f79e8198685a1ed28
+  Message: 3 migrations are recorded applied
+
+kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
+kubectl events -n application --for ptahmigration/orders prints its Events.

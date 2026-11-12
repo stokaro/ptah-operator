@@ -589,6 +589,17 @@ name the resource, and one more line before the closing `kubectl events` line.
   every entry. It needs `get` on the resource; listing plans and decisions is
   optional. [What a resource kept of its past](../../use/read-a-plan/#history)
   has the rest.
+- **`kubectl ptah schema --details` and `migration --details`.** The views
+  printed none of the operation a resource has claimed, a schema's proof still
+  owed after an Apply, a Lease release or binding retirement still owed, or a
+  migration's revision rows, and `-o json` carried only the view. `--details`
+  prints every record the status holds after the view, each field labeled by
+  its API name, with a line that says whether a claim's Job is only reserved by
+  name or confirmed by UID, that an Apply's own result is not the reading that
+  proves it, and that an acknowledgment is a statement rather than proof. With
+  `-o json` it adds `details.status`, the status as stored. Without the flag
+  neither output changes. [Every record the status
+  holds](../../use/read-a-plan/#details) has the rest.
 
 ## 0.2.10
 

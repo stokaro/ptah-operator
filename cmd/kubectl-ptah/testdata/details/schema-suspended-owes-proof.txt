@@ -1,0 +1,206 @@
+Schema:               application/storefront
+Phase:                Suspended
+Ready:                False, Suspended: Reconciliation is suspended
+ReconciliationFailed: True, ApplyOutcomeUnknown: dispatched Apply Job is missing and will not be recreated
+Suspended:            True, Requested: New database operations are suspended
+Suspend:              requested
+Policy:               apply OnApproval, allowDestructive true, driftSeverity all
+Artifact:             oci://e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/e2e-alert-schema@sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+Verified:             true
+Observed:             2026-10-02T00:06:20Z
+Drift:                1 in 1 categories, highest warning
+  columns_added                           1  warning
+
+Plan ptah-plan-c2dc44db7340fe78d0485dff, 1 statement, stored 2026-10-02T00:06:31Z
+  approved by e2e-alert-schema-postgresql-original at 2026-10-02T00:06:32Z by kubernetes-admin
+  ApprovalRequired: False, Satisfied: Current plan approval requirements are satisfied
+
+Approvals: none
+
+Conditions:
+  TYPE                  STATUS  REASON               SINCE                 MESSAGE
+  EngineSupported       True    SupportedEngine      2026-10-02T00:06:01Z  Database engine "PostgreSQL" is supported (written for generation 2)
+  Ready                 False   Suspended            2026-10-02T00:06:01Z  Reconciliation is suspended (written for generation 2)
+  ReconciliationFailed  True    ApplyOutcomeUnknown  2026-10-02T00:06:35Z  dispatched Apply Job is missing and will not be recreated (written for generation 2)
+  ArtifactResolved      True    DigestPinned         2026-10-02T00:06:07Z  Desired OCI reference resolved to immutable content
+  ArtifactVerified      True    PolicySatisfied      2026-10-02T00:06:12Z  Artifact type and verification policy were satisfied
+  DatabaseReachable     True    Observed             2026-10-02T00:06:20Z  Database schema was observed
+  DriftDetected         True    ScopedChanges        2026-10-02T00:06:31Z  Managed scope requires 1 schema statements; highest severity safe
+  InSync                False   ScopedChanges        2026-10-02T00:06:31Z  The authoritative managed scope differs from the verified artifact
+  ApprovalRequired      False   Satisfied            2026-10-02T00:06:32Z  Current plan approval requirements are satisfied
+  PlanReady             True    Published            2026-10-02T00:06:31Z  Exact plan bytes are stored in immutable chunks
+  Suspended             True    Requested            2026-10-02T00:06:35Z  New database operations are suspended (written for generation 2)
+  Applying              False   OutcomeUnknown       2026-10-02T00:06:35Z  Apply outcome is uncertain; only read-only observation is permitted (written for generation 2)
+
+Details, every record the status holds:
+
+Status:               generation 1; the spec is at generation 1
+  Observed generation: 1
+  Phase: Suspended
+  Last attempt time: 2026-10-02T00:06:32Z
+
+Active operation:     none
+
+Pending proof:        the reading that proves an Apply is owed
+  Nobody can say how the Apply ended. The reading of the database after it is
+  what settles it, and it has not settled yet. It waits until
+  2026-10-02T00:12:02Z, while the Apply's Pod could still be within its
+  deadline. Suspension does not end it: nothing else changes the database until
+  it settles.
+  Outcome: OutcomeUnknown
+  Apply operation ID: sha256:c5e971dd64240369ef10c0434ac7765f24eaa3f72b92d89377c597c6c21c6fc1
+  Apply job name: ptah-apply-e2e-alert-schema-postgresql-8774dbfe222e29a5
+  Apply job UID: 05c157ef-1d64-4ca5-827f-b6830d6dbedd
+  Admission snapshot:
+    Version: v1
+    Digest: sha256:d2f3f8e1c875e6af02637e471c985176760764c67c98891d5e5a957d14865cad
+    Template digest: sha256:24ec19ba066ed63223dff390d48bd69720da6ad2dc71da4ce42452b3f6dcc2ca
+    Service account:
+      Object:
+        Name: default
+        UID: d8691e34-e533-473d-bc90-d86f59f63eed
+        Resource version: 2960
+      Image pull secrets:
+        - Name: e2e-registry-pull
+    Limit ranges:
+      - Object:
+          Name: ptah-operation-defaults
+          UID: aaa81a56-d42c-4102-9929-4fc7a1ccd566
+          Resource version: 2958
+        Default requests: cpu=10m, memory=16Mi
+        Default limits: cpu=100m, memory=64Mi
+    Priority class:
+      Value: 0
+      Preemption policy: PreemptLowerPriority
+    Default tolerations enabled: true
+    Default not ready toleration seconds: 300
+    Default unreachable toleration seconds: 300
+    Extended resource toleration enabled: false
+    Always pull images enabled: false
+  Apply pod UIDs: c9b25be5-d206-4971-b9e8-01790963afa3
+  Apply pod count: 1
+  Apply generation: 1
+  Observe after: 2026-10-02T00:12:02Z
+  Plan:
+    Name: ptah-plan-c2dc44db7340fe78d0485dff
+    UID: 2ad1da21-0483-4321-b9d9-0e808419143d
+    Fingerprint: sha256:c2dc44db7340fe78d0485dffac23d28e776e90452904d41126dd7ddbde4cc760
+    Content digest: sha256:b472165ca1b93d800b1c9b5ebd36550ef5d513077536f5fa63dcc0e7f2d91b4d
+    Artifact digest: sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+    Coordination digest: sha256:e90e7c32522a458e2bb00e09ade4ab288e1c54c56b14d61b7395adfea8f1cb38
+    Target identity digest: sha256:55ba911d383d9e8382bf7bdde71f1b53c969fef5eb3268c164a0d9fa043c4080
+    Actual state fingerprint: sha256:0b474b8d2de1db4ec74dcb9f8a70a99e2fb470d05388db099e5ecaea1141b98a
+    Desired state fingerprint: sha256:0f3d48ec90edb54f8b96c29f8310fbda05ebae5c364c18eacf4f659771bf5681
+    Policy fingerprint: sha256:a45ed7e2113da756719140634ec19fb90d9c98e2be1620659fc75b57fa0c3c58
+    Verification policy UID: c1fefd03-fb7f-4e69-a375-5ddea6f1b7fb
+    Verification policy digest: sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007
+    Execution binding ID: v1-31153a70c2beca10f36e297aa714f850
+    Controller image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-operator@sha256:c05f18e82fae79d75fc012c3ee961a0b3476842e32da5c9c8f521b1cdbcd4f17
+    Controller revision: b1a2e99c1ad121bb2103e9f15b82cf47679307ce
+    Controller state version: 1
+    Ptah version: v0.9.0-73-gf6e562c5b
+    Executor image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-executor@sha256:efba33c9d6a44fb1924ebfd3654ee5d7c012a833a5efd792ffb920d013dbe828
+    Runner image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-runner@sha256:c05f18e82fae79d75fc012c3ee961a0b3476842e32da5c9c8f521b1cdbcd4f17
+    Runner protocol version: 1
+    Destructive: false
+    Statement count: 1
+    Created at: 2026-10-02T00:06:31Z
+    Approval:
+      Name: e2e-alert-schema-postgresql-original
+      UID: 902a32a3-b566-4acd-abd3-5dece0410623
+      Approver:
+        Username: kubernetes-admin
+        Groups: kubeadm:cluster-admins, system:authenticated
+      Approved at: 2026-10-02T00:06:32Z
+  Target:
+    Engine: PostgreSQL
+    URL from:
+      Name: e2e-alert-schema-postgresql-db
+      Key: url
+  Coordination digest: sha256:e90e7c32522a458e2bb00e09ade4ab288e1c54c56b14d61b7395adfea8f1cb38
+  Source:
+    Resolved reference: oci://e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/e2e-alert-schema@sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+    Digest: sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+    Registry auth from:
+      Name: e2e-registry-auth
+      Mode: Environment
+      Username key: username
+      Password key: password
+      Token key: token
+      Docker config j s o n key: .dockerconfigjson
+    Transport:
+      Plain h t t p: true
+  Drift severity: all
+  Connect timeout: 10s
+  Lock timeout: 4m0s
+  Lease duration seconds: 360
+  Lease epoch: v1-47d67f8a140d7df529c1cdb61dee209c
+
+Execution binding:    v1-31153a70c2beca10f36e297aa714f850
+  Epoch: v1-31153a70c2beca10f36e297aa714f850
+  Controller state version: 1
+  Ptah version: v0.9.0-73-gf6e562c5b
+  Executor image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-executor@sha256:efba33c9d6a44fb1924ebfd3654ee5d7c012a833a5efd792ffb920d013dbe828
+  Runner protocol version: 1
+
+Source:
+  Requested reference: oci://e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/e2e-alert-schema:postgresql@sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+  Resolved reference: oci://e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/e2e-alert-schema@sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+  Digest: sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+  Media type: application/vnd.oci.image.manifest.v1+json
+  Artifact type: application/vnd.stokaro.ptah.schema.v1
+  Size: 799
+  Verified: true
+  Verification policy UID: c1fefd03-fb7f-4e69-a375-5ddea6f1b7fb
+  Verification policy digest: sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007
+  Resolved at: 2026-10-02T00:06:07Z
+  Verified at: 2026-10-02T00:06:12Z
+
+Target:
+  Engine: PostgreSQL
+  Coordination digest: sha256:e90e7c32522a458e2bb00e09ade4ab288e1c54c56b14d61b7395adfea8f1cb38
+  Identity digest: sha256:55ba911d383d9e8382bf7bdde71f1b53c969fef5eb3268c164a0d9fa043c4080
+  Drift report digest: sha256:b13e969b7d70d1ec6870a2b92f430a0015e45a8a5efb1986219c19dae901dfda
+  Last observed at: 2026-10-02T00:06:20Z
+  Highest drift severity: warning
+  Drift finding count: 1
+  Drift findings:
+    - Category: columns_added
+      Count: 1
+      Severity: warning
+
+Plan:                 ptah-plan-c2dc44db7340fe78d0485dff
+  Name: ptah-plan-c2dc44db7340fe78d0485dff
+  UID: 2ad1da21-0483-4321-b9d9-0e808419143d
+  Fingerprint: sha256:c2dc44db7340fe78d0485dffac23d28e776e90452904d41126dd7ddbde4cc760
+  Content digest: sha256:b472165ca1b93d800b1c9b5ebd36550ef5d513077536f5fa63dcc0e7f2d91b4d
+  Artifact digest: sha256:9da1e17a362904446eebadedc9f2bb32568d026100c00b7db02ccb3fe3016b1d
+  Coordination digest: sha256:e90e7c32522a458e2bb00e09ade4ab288e1c54c56b14d61b7395adfea8f1cb38
+  Target identity digest: sha256:55ba911d383d9e8382bf7bdde71f1b53c969fef5eb3268c164a0d9fa043c4080
+  Actual state fingerprint: sha256:0b474b8d2de1db4ec74dcb9f8a70a99e2fb470d05388db099e5ecaea1141b98a
+  Desired state fingerprint: sha256:0f3d48ec90edb54f8b96c29f8310fbda05ebae5c364c18eacf4f659771bf5681
+  Policy fingerprint: sha256:a45ed7e2113da756719140634ec19fb90d9c98e2be1620659fc75b57fa0c3c58
+  Verification policy UID: c1fefd03-fb7f-4e69-a375-5ddea6f1b7fb
+  Verification policy digest: sha256:c84039b250125e32f0d51caea6afd1d13ebe4e5e0f90d382ee3be2c027574007
+  Execution binding ID: v1-31153a70c2beca10f36e297aa714f850
+  Controller image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-operator@sha256:c05f18e82fae79d75fc012c3ee961a0b3476842e32da5c9c8f521b1cdbcd4f17
+  Controller revision: b1a2e99c1ad121bb2103e9f15b82cf47679307ce
+  Controller state version: 1
+  Ptah version: v0.9.0-73-gf6e562c5b
+  Executor image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-executor@sha256:efba33c9d6a44fb1924ebfd3654ee5d7c012a833a5efd792ffb920d013dbe828
+  Runner image: e2e-registry.ptah-test-a-1-37-0-sql-life-retry-b1a2-54dfe93b6d.svc.cluster.local:5000/ptah-runner@sha256:c05f18e82fae79d75fc012c3ee961a0b3476842e32da5c9c8f521b1cdbcd4f17
+  Runner protocol version: 1
+  Destructive: false
+  Statement count: 1
+  Created at: 2026-10-02T00:06:31Z
+  Approval:
+    Name: e2e-alert-schema-postgresql-original
+    UID: 902a32a3-b566-4acd-abd3-5dece0410623
+    Approver:
+      Username: kubernetes-admin
+      Groups: kubeadm:cluster-admins, system:authenticated
+    Approved at: 2026-10-02T00:06:32Z
+
+kubectl ptah plan storefront -n application prints the SQL this plan holds.
+kubectl ptah history schema/storefront -n application prints its lifecycle history and every approval that names it.
+kubectl events -n application --for ptahschema/storefront prints its Events.

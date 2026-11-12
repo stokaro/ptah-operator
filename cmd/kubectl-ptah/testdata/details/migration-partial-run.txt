@@ -1,0 +1,120 @@
+Migration:            application/orders
+Phase:                Resolving
+Ready:                False, HistoryDirty: The revision table holds a dirty row
+Blocked:              True, HistoryDirty: Revision 4 is recorded dirty; a person has to decide what the interrupted run did
+Artifact:             oci://registry.example:5000/migrations/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000
+History read:         2026-01-01T00:00:00Z
+Current version:      3
+Applied:              3
+Pending:              1
+Dirty:                true
+
+Last run:             Partial, started 2026-01-01T00:00:00Z, finished 2026-01-01T00:00:00Z
+  Job:                ptah-m-apply-e2e-migrations-postgresql-300c6910991650c8, UID 00000000-0000-0000-0000-000000000000
+  Message:            A migration committed some of its statements and not the rest; retrying the file would run them twice
+
+No plan is published.
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE              STATUS  REASON               SINCE                 MESSAGE
+  Progressing       True    OperationInProgress  2026-01-01T00:00:00Z  Resolve operation is in progress
+  ArtifactVerified  True    PolicySatisfied      2026-01-01T00:00:00Z  The resolved artifact satisfied its verification policy
+  Blocked           True    HistoryDirty         2026-01-01T00:00:00Z  Revision 4 is recorded dirty; a person has to decide what the interrupted run did
+  Ready             False   HistoryDirty         2026-01-01T00:00:00Z  The revision table holds a dirty row
+  ApprovalRequired  False   Satisfied            2026-01-01T00:00:00Z  The plan's approval requirements are satisfied
+
+Details, every record the status holds:
+
+Status:               generation 2; the spec is at generation 2
+  Observed generation: 2
+  Phase: Resolving
+
+Active operation:     Resolve, attempt 1, claimed 2026-01-01T00:00:00Z
+  Its Job ptah-m-resolve-e2e-migrations-postgresql-cd27f210111a471b is
+  confirmed: the claim records the Job's UID
+  00000000-0000-0000-0000-000000000000, and a Job of that name with another UID
+  is not this one.
+  Type: Resolve
+  ID: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Input fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Job name: ptah-m-resolve-e2e-migrations-postgresql-cd27f210111a471b
+  Job UID: 00000000-0000-0000-0000-000000000000
+  Started at: 2026-01-01T00:00:00Z
+  Attempt: 1
+  Execution binding ID: v1-fc38bc8939c0a258fe469f8707978a63
+  Admission snapshot:
+    Version: v1
+    Digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    Template digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    Service account:
+      Object:
+        Name: default
+        UID: 00000000-0000-0000-0000-000000000000
+        Resource version: 8115
+      Image pull secrets:
+        - Name: e2e-registry-pull
+    Limit ranges:
+      - Object:
+          Name: ptah-operation-defaults
+          UID: 00000000-0000-0000-0000-000000000000
+          Resource version: 8113
+        Default requests: cpu=10m, memory=16Mi
+        Default limits: cpu=100m, memory=64Mi
+    Priority class:
+      Value: 0
+      Preemption policy: PreemptLowerPriority
+    Default tolerations enabled: true
+    Default not ready toleration seconds: 300
+    Default unreachable toleration seconds: 300
+    Extended resource toleration enabled: false
+    Always pull images enabled: false
+
+Execution binding:    v1-fc38bc8939c0a258fe469f8707978a63
+  Epoch: v1-fc38bc8939c0a258fe469f8707978a63
+  Controller state version: 1
+  Ptah version: 939c2fb
+  Executor image: registry.example:5000/ptah-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Runner protocol version: 6
+
+Artifact:
+  Resolved reference: oci://registry.example:5000/migrations/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Registry auth from:
+    Name: e2e-registry-auth
+    Mode: Environment
+    Username key: username
+    Password key: password
+    Token key: token
+    Docker config j s o n key: .dockerconfigjson
+  Transport:
+    Plain h t t p: true
+
+History read:         2026-01-01T00:00:00Z
+  The database's revision table as the operator last read it, with its newest
+  rows. It is the database's record of what ran, apart from the operator's
+  journal.
+  Observed at: 2026-01-01T00:00:00Z
+  Contract version: 1
+  Current version: 3
+  Applied count: 3
+  Pending count: 1
+  Fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Target identity digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  Dirty: true
+
+Last run:             Partial
+  The most recent run. A run nobody has accounted for is the unresolved run, a
+  record of its own.
+  Outcome: Partial
+  Job name: ptah-m-apply-e2e-migrations-postgresql-300c6910991650c8
+  Job UID: 00000000-0000-0000-0000-000000000000
+  Started at: 2026-01-01T00:00:00Z
+  Finished at: 2026-01-01T00:00:00Z
+  Message: A migration committed some of its statements and not the rest; retrying the file would run them twice
+
+kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
+kubectl events -n application --for ptahmigration/orders prints its Events.

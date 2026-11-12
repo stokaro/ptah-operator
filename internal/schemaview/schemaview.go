@@ -71,6 +71,9 @@ type View struct {
 	// ApprovalsUnreadable says why: no list is not an empty list.
 	Approvals           *statusview.Decisions[ApprovalView] `json:"approvals,omitempty"`
 	ApprovalsUnreadable *statusview.Unreadable              `json:"approvalsUnreadable,omitempty"`
+	// Details is the whole status, present only when it was asked for, so
+	// the view without it reads as it always has.
+	Details *Details `json:"details,omitempty"`
 }
 
 // PolicyView is the spec's policy as far as it decides whether a plan runs:
@@ -163,6 +166,16 @@ type ConditionView = statusview.Condition
 // readable. The approvals are listed after it, and a list that fails leaves
 // the rest of the view as it was.
 func Load(ctx context.Context, reader client.Reader, namespace, name string) (View, error) {
+	return load(ctx, reader, namespace, name, false)
+}
+
+// LoadWithDetails reads the view and the whole status beside it, from the
+// same read of the schema.
+func LoadWithDetails(ctx context.Context, reader client.Reader, namespace, name string) (View, error) {
+	return load(ctx, reader, namespace, name, true)
+}
+
+func load(ctx context.Context, reader client.Reader, namespace, name string, details bool) (View, error) {
 	if reader == nil {
 		return View{}, errors.New("a cluster reader is required")
 	}
@@ -218,6 +231,9 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 	}
 	view.Conditions = statusview.FromConditions(schema.Status.Conditions)
 	view.Approvals, view.ApprovalsUnreadable = approvalsOf(ctx, reader, schema)
+	if details {
+		view.Details = detailsOf(schema)
+	}
 	return view, nil
 }
 

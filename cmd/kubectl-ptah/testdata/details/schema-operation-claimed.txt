@@ -1,0 +1,132 @@
+Schema:               application/storefront
+Phase:                Planning
+Ready:                False, OperationInProgress: Plan operation is in progress
+Policy:               allowDestructive false
+Source:               ConfigMap e2e-reachability-schema-source
+Snapshot:             ptah-src-4e3a8c461a04db069291c364
+Content:              sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+Observed:             2026-11-06T18:28:31Z
+Drift:                1 in 1 categories, highest safe
+  tables_added                            1  safe
+
+No plan is published.
+
+Approvals: none
+
+Conditions:
+  TYPE                  STATUS   REASON               SINCE                 MESSAGE
+  EngineSupported       True     SupportedEngine      2026-11-06T18:28:03Z  Database engine "PostgreSQL" is supported
+  Suspended             False    Active               2026-11-06T18:28:03Z  Reconciliation is active
+  ReconciliationFailed  False    Succeeded            2026-11-06T18:28:31Z  The latest operation completed
+  ArtifactResolved      True     SnapshotTaken        2026-11-06T18:28:03Z  ConfigMap e2e-reachability-schema-source was copied into snapshot ptah-src-4e3a8c461a04db069291c364
+  Ready                 False    OperationInProgress  2026-11-06T18:28:03Z  Plan operation is in progress
+  DatabaseReachable     True     Observed             2026-11-06T18:28:31Z  Database schema was observed
+  DriftDetected         Unknown  ScopedPlanPending    2026-11-06T18:28:31Z  Raw drift was recorded; the authoritative managed scope is being planned
+  InSync                Unknown  ScopedPlanPending    2026-11-06T18:28:31Z  Convergence is unknown until scoped planning completes
+
+Details, every record the status holds:
+
+Status:               generation 1; the spec is at generation 1
+  Observed generation: 1
+  Phase: Planning
+  Last attempt time: 2026-11-06T18:28:32Z
+
+Active operation:     Plan, attempt 1, claimed 2026-11-06T18:28:32Z
+  Its Job ptah-plan-e2e-reachability-schema-34384286f231cabe is confirmed: the
+  claim records the Job's UID 14b582bd-f281-4ad6-89a3-8b3bd98211ed, and a Job of
+  that name with another UID is not this one.
+  Type: Plan
+  ID: sha256:f49642093dedf55bc0ae146de470c267da44b6274ee4ef23a409861aab3bf003
+  Input fingerprint: sha256:02521953b54ab533d844cb6a93feac89cd52279467f07e5b93c9e3ad8cbf5c0e
+  Job name: ptah-plan-e2e-reachability-schema-34384286f231cabe
+  Job UID: 14b582bd-f281-4ad6-89a3-8b3bd98211ed
+  Started at: 2026-11-06T18:28:32Z
+  Attempt: 1
+  Execution binding ID: v1-18efdea243379129254e48ced5a75184
+  Admission snapshot:
+    Version: v1
+    Digest: sha256:3ebc915ca25e2027baf8f869f992f5360e4bdb5708fb20cb501f10c05c21ed37
+    Template digest: sha256:ab9a3daab54cf75e5ae908c7b8352227f4ba441bd504fc3698a94814a09a9964
+    Service account:
+      Object:
+        Name: default
+        UID: 9cb0aa5f-8b2f-470c-ae82-98fdee47da1d
+        Resource version: 1515
+      Image pull secrets:
+        - Name: e2e-registry-pull
+    Limit ranges:
+      - Object:
+          Name: ptah-operation-defaults
+          UID: 65ce1d6f-763a-40c5-9f93-1e3cd1721ace
+          Resource version: 1513
+        Default requests: cpu=10m, memory=16Mi
+        Default limits: cpu=100m, memory=128Mi
+    Priority class:
+      Value: 0
+      Preemption policy: PreemptLowerPriority
+    Default tolerations enabled: true
+    Default not ready toleration seconds: 300
+    Default unreachable toleration seconds: 300
+    Extended resource toleration enabled: false
+    Always pull images enabled: false
+  Dispatch started: true
+  Coordination digest: sha256:6cfe8502a614a20b26e24af313087e9e2c5c95cd5a5545f5f71689ad428b3266
+  Target identity digest: sha256:2dd7c0f72a03e284973e2a25febfeaebecba2b1da1c668d3adf0aeb0e07427a1
+  Target:
+    Engine: PostgreSQL
+    URL from:
+      Name: e2e-reachability-schema-database
+      Key: url
+  Observation severity: all
+  Observation connect timeout: 10s
+  Observation lock timeout: 30s
+  Source:
+    Snapshot:
+      Name: ptah-src-4e3a8c461a04db069291c364
+      UID: 752e6734-e025-4296-8dcf-0bcc912c3868
+      Content digest: sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+      Schema file: schema.sql
+  Lease duration seconds: 660
+  Lease epoch: v1-9ba9ef6f44c33a475ed2e3c88bf9658e
+  Plan seal public key digest: sha256:1015d2fafd6c326fc78e600821bdcfcfbb6d637b96817ff2ee1fc67ad9eb04cf
+
+Pending proof:        none
+
+Execution binding:    v1-18efdea243379129254e48ced5a75184
+  Epoch: v1-18efdea243379129254e48ced5a75184
+  Controller state version: 1
+  Ptah version: v0.18.0
+  Executor image: e2e-registry.ptah-test-a-1-35-8-ci-42261374839-1-1-35-data-plane-9359a2bc5e.svc.cluster.local:5000/ptah-executor@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303
+  Runner protocol version: 1
+
+Source:
+  Resolved at: 2026-11-06T18:28:03Z
+  Config map:
+    Name: e2e-reachability-schema-source
+    UID: ca1f2f7c-a1eb-447f-8b2a-744c5f7a849c
+    Resource version: 18703
+  Snapshot:
+    Name: ptah-src-4e3a8c461a04db069291c364
+    UID: 752e6734-e025-4296-8dcf-0bcc912c3868
+    Content digest: sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+    Schema file: schema.sql
+
+Target:
+  Engine: PostgreSQL
+  Coordination digest: sha256:6cfe8502a614a20b26e24af313087e9e2c5c95cd5a5545f5f71689ad428b3266
+  Identity digest: sha256:2dd7c0f72a03e284973e2a25febfeaebecba2b1da1c668d3adf0aeb0e07427a1
+  Drift report digest: sha256:e5b96843b22d40af0e0a329ec651d978663b9ce02aa2181f232546cf4a7a09a8
+  Last observed at: 2026-11-06T18:28:31Z
+  Highest drift severity: safe
+  Drift finding count: 1
+  Drift findings:
+    - Category: tables_added
+      Count: 1
+      Severity: safe
+  Inventory:
+    - Kind: tables
+      Desired: 1
+      Observed: 0
+
+kubectl ptah history schema/storefront -n application prints its lifecycle history and every approval that names it.
+kubectl events -n application --for ptahschema/storefront prints its Events.

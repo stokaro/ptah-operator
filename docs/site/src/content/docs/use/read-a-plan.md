@@ -360,6 +360,51 @@ command still prints the schema, says in one line that the approvals are not
 shown because listing them is forbidden, and exits 0; `-o json` carries the
 same answer as `approvalsUnreadable`, in place of `approvals`.
 
+### Every record the status holds {#details}
+
+```sh
+kubectl ptah schema storefront -n application --details
+kubectl ptah migration orders -n application --details
+```
+
+`--details` prints the view and then every record of the status the view
+summarizes or leaves out, each with every field it holds, labeled by the name
+the [API reference](../../reference/ptahschema/) lists it under, in words:
+`jobUID` reads `Job UID`. A field the record leaves unset is not printed. It
+reads the same object as the view and nothing more, so it needs the same `get`.
+
+`Status` is the status's own fields: the generation it was written for, the
+phase, when it reads next, and for a schema when it last attempted a read and
+last succeeded. `Read requested` says whether the read `kubectl ptah refresh` asked for
+has been answered.
+
+`Active operation` is the operation the resource has claimed. A claim names its
+Job before it creates it, so the details say whether the Job is only reserved by
+name, whether its one create was attempted with no Job confirmed yet, or whether
+the claim records the Job's UID; a Job of that name with another UID is not
+this one. A migration's attempt that waits out the delay the attempt before it
+asked for says until when. `Active operation: none` is a resource that has
+claimed nothing.
+
+A schema's `Pending proof` is an Apply that ended and the reading of the
+database that proves it, still owed. It keeps the Apply's own result,
+`ApplySucceeded` or `OutcomeUnknown`, apart from that verdict, says until when
+the reading waits while the Apply's Pod could still run, and on a suspended
+schema says that suspension does not end it. `Lock release` is a database
+Lease the operation held that is still to be handed back, and
+`Binding retirement` the cleanup an execution-binding change still owes.
+
+A migration's details add `History read`, the revision table as the operator
+last read it with its newest rows, which is the database's record and not the
+operator's journal, and `Last run`, `Unresolved run` and `Settled run` each
+whole. A settled run says whether a reading of the database settled it or a
+person's acknowledgment did, which is a statement that the run is accounted for
+and not proof that the data is correct.
+
+With `-o json`, `--details` adds `details.status`, the status as stored, field
+for field, and `details.readRequested`, the annotation it answers. Without the
+flag neither the text nor the JSON changes.
+
 ## A migration, not a plan {#migration}
 
 A `PtahMigration` runs SQL that is already written. There is no generated plan
@@ -490,7 +535,9 @@ A ConfigMap or Git source prints the same lines as
 
 `-o json` prints the same view as a document, for a script that wants the
 pending count, the last run's outcome and Job, or the unresolved run without
-parsing text.
+parsing text. `--details` adds every record the status holds, the operation
+claimed and the revision rows among them: [Every record the status
+holds](#details).
 
 What it never prints is SQL or a table row. A migration plan records versions,
 descriptions and checksums; reading the statements means reading the artifact,

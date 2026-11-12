@@ -1,0 +1,132 @@
+Migration:            application/orders
+Phase:                Blocked
+Ready:                False, HistoryDirty: The revision table holds a dirty row
+Blocked:              True, HistoryDirty: Revision 3 is recorded dirty; a person has to decide what the interrupted run did
+History read:         2026-11-12T06:51:35Z
+Current version:      2
+Applied:              2
+Pending:              1
+Dirty:                true
+
+Last run:             Unknown, started 2026-11-12T06:44:00Z, finished 2026-11-12T06:44:05Z
+  Job:                ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54, UID 33329e39-67a6-405a-8670-f45c958724c5
+  Operation:          sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce
+  Plan:               ptah-mplan-a3e24329265a76331906c4c0, fingerprint sha256:a3e24329265a76331906c4c06707257f2fb4549785c62ee286ec0491d3340325
+  Authorized:         spec.policy.apply Always, with no approval
+  Message:            dispatched Apply Job intent changed: the Job's labels or annotations are not the ones its claim builds
+
+Unresolved run:       Unknown, recorded 2026-11-12T06:44:05Z
+  Operation:          sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce
+  Job:                ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54, UID 33329e39-67a6-405a-8670-f45c958724c5
+  Plan:               ptah-mplan-a3e24329265a76331906c4c0, UID 90a5ffc1-7574-4f41-a799-65333f997828
+  Database:           sha256:1d36d957aa3188f71caeaa5c43fabfd6fc2c6db5cba78bf6264571248fa4cbcb (target identity digest of its plan: the run named none, and the runner starts nothing against another)
+  While this record stands no plan is published and no Apply is dispatched;
+  resolve, verify and the history read go on.
+  The database is the one the run named or, where it named none, the one its
+  plan was computed against. The runner starts nothing against a database
+  other than its plan's, so the run changed this one or none. A reader who
+  inspects another database, such as a replica or a restored copy, finds
+  nothing wrong and settles a record that was telling the truth.
+  Establish what the run did there first. A history read of that database that
+  finds nothing of the artifact left to apply clears the record by itself. If
+  the database is accounted for and still has work pending, settle it with a
+  PtahMigrationRunAcknowledgment naming migration UID details-uid and the
+  operation above.
+  The operations guide has the procedure, under "A migration run nobody
+  accounted for".
+
+No plan is published.
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE               STATUS  REASON           SINCE                 MESSAGE
+  Progressing        False   HistoryDirty     2026-11-12T06:51:35Z  Nothing runs while a revision is recorded dirty
+  ArtifactVerified   True    PolicySatisfied  2026-11-12T06:51:22Z  The resolved artifact satisfied its verification policy
+  Blocked            True    HistoryDirty     2026-11-12T06:44:05Z  Revision 3 is recorded dirty; a person has to decide what the interrupted run did
+  Ready              False   HistoryDirty     2026-11-12T06:44:00Z  The revision table holds a dirty row
+  DatabaseReachable  True    Observed         2026-11-12T06:44:00Z  The migration history was read
+  ApprovalRequired   False   HistoryDirty     2026-11-12T06:44:00Z  This reading published no plan, so nothing waits for an approval
+
+Details, every record the status holds:
+
+Status:               no generation yet; the spec is at generation 1
+  Phase: Blocked
+
+Active operation:     none
+
+History read:         2026-11-12T06:51:35Z
+  The database's revision table as the operator last read it, with its newest
+  rows. It is the database's record of what ran, apart from the operator's
+  journal.
+  Observed at: 2026-11-12T06:51:35Z
+  Contract version: 2
+  Current version: 2
+  Applied count: 2
+  Pending count: 1
+  Fingerprint: sha256:dd7ddf4b4dabf45e7f41345d7c72b25276875e6376afc4ab0630f83c68f829fa
+  Target identity digest: sha256:1d36d957aa3188f71caeaa5c43fabfd6fc2c6db5cba78bf6264571248fa4cbcb
+  Dirty: true
+  Revisions:
+    - Version: 3
+      Description: Settle Slowly
+      State: dirty
+      Applied at: 2026-11-12T06:44:05Z
+      Execution millis: 2264
+    - Version: 2
+      Description: Add Widget Color
+      Checksum: 7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc
+      State: applied
+      Applied at: 2026-11-12T06:44:05Z
+      Execution millis: 13
+    - Version: 1
+      Description: Create Widgets
+      Checksum: 2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6
+      State: applied
+      Applied at: 2026-11-12T06:44:05Z
+      Execution millis: 94
+
+Last run:             Unknown
+  The most recent run. A run nobody has accounted for is the unresolved run, a
+  record of its own.
+  Outcome: Unknown
+  Job name: ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54
+  Job UID: 33329e39-67a6-405a-8670-f45c958724c5
+  Operation ID: sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce
+  Plan ref:
+    Name: ptah-mplan-a3e24329265a76331906c4c0
+    UID: 90a5ffc1-7574-4f41-a799-65333f997828
+  Plan fingerprint: sha256:a3e24329265a76331906c4c06707257f2fb4549785c62ee286ec0491d3340325
+  Authorization:
+    Kind: Policy
+  Artifact digest: sha256:2882b27b3b66a06768a7141e9d52073978c355e297f3734b97932778bc2217c4
+  Execution binding ID: v1-e4d9866a8e7b819658b5e8aabd925c95
+  Started at: 2026-11-12T06:44:00Z
+  Finished at: 2026-11-12T06:44:05Z
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758
+    Controller revision: af82127405996d3833b5b5520061bc310f38e9a6
+    Runner image: e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758
+  Message: dispatched Apply Job intent changed: the Job's labels or annotations are not the ones its claim builds
+
+Unresolved run:       Unknown
+  It holds the migration whatever the last run or the conditions say, until a
+  reading of the database or a person's acknowledgment settles it.
+  Outcome: Unknown
+  Operation ID: sha256:9d6eed031c255462fa7be3ebd8b1da40609e865bfc29b3ee81096fe2fc5f0bce
+  Job name: ptah-m-apply-e2e-uncertain-postgresql-0d90463ff4ddce54
+  Job UID: 33329e39-67a6-405a-8670-f45c958724c5
+  Plan ref:
+    Name: ptah-mplan-a3e24329265a76331906c4c0
+    UID: 90a5ffc1-7574-4f41-a799-65333f997828
+  Target identity digest: sha256:1d36d957aa3188f71caeaa5c43fabfd6fc2c6db5cba78bf6264571248fa4cbcb
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-operator@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758
+    Controller revision: af82127405996d3833b5b5520061bc310f38e9a6
+    Runner image: e2e-registry.ptah-test-a-1-36-4-ci-43164616178-1-1-36-migrations-9f9bd02074.svc.cluster.local:5000/ptah-runner@sha256:a157f1bc453a38ed6fb6cabf8206501b5379b3538b0dc42c804a01d0e294e758
+  Recorded at: 2026-11-12T06:44:05Z
+
+kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
+kubectl events -n application --for ptahmigration/orders prints its Events.
