@@ -394,9 +394,14 @@ over a Job the Job controller has marked `FailureTarget` (`readJobStopOverdue`),
 which runs again under a new Job, and of a claim whose recorded Job is gone over
 the Pods that Job owned (`podsStillStopping`: each Pod's own deadline, or the end
 of its deletion grace, plus 30 seconds). A Job the Job controller has not marked
-is still running as far as it is concerned, and its own deadline stops it. Each
-of these waits checks the bound before it renews a Lease, so none renews it
-past the bound. A claim that stops waiting names the Job it leaves running in a
+is still running as far as it is concerned, and its own deadline stops it. A
+Plan's wait checks the bound before it renews the Lease, so its Lease is not
+renewed past the bound. A proof read's Lease is different: whether the proof is
+an Observe or a Plan, the Lease is the Apply's pending observation's. The pass
+renews it before it reaches the bound check (`acquirePendingObservationLock`),
+and it stays held under the next attempt until a proof settles the Apply, so
+for a proof the bound ends the wait for one Job, not the hold. A migration read
+holds no Lease. A claim that stops waiting names the Job it leaves running in a
 Warning Event: `ReadJobOverdue` for a deleted schema's read and for the two
 just named, with the Pod that may still read and its node.
 

@@ -1563,9 +1563,17 @@ Job stops. A Plan or the proof Observe writes nothing to the database
 so deletion waits for its Job only until the Job's stop bound: its own
 deadline, the termination grace its Pods are given and 30 seconds more. Past
 the bound it discards the claim, records a proof it had not taken as unknown,
-hands the database Lease back without renewing it again, and names the Job and
-a Pod still running in a `ReadJobOverdue` Warning Event. A Resolve, a Verify or
-any other Observe holds nothing, so deletion drops its claim without waiting,
+and names the Job and a Pod still running in a `ReadJobOverdue` Warning Event.
+A Plan's claim hands the database Lease back without renewing it again, unless
+the Plan serves a proof. A proof's Lease belongs to the Apply it proves:
+deletion renews it once more, and hands it back on the same pass once no Pod of
+the Apply is running and the Apply's execution deadline and grace period have
+passed, which they have by the time its proof runs. A Plan that outlives its
+claim cannot write, but its session can still hold the lock a later Apply
+needs, for hours when the node has lost its route to the database as well;
+[What a read can still hold](../../reference/execution/#what-a-read-can-still-hold)
+says what that costs and how to end the session. A Resolve, a Verify or any
+other Observe holds nothing, so deletion drops its claim without waiting,
 including one whose Pod a policy refuses. Once an Apply's Job has stopped, the
 deletion records the outcome as unknown, because nothing read the result, in an
 `ApplyOutcomeUnknown` Warning Event that names how the Apply ended. It then
