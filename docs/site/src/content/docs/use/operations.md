@@ -1623,12 +1623,18 @@ unaccounted for -- which is the reason the wait is worth its cost. Recover the n
 and it is a statement that nothing is executing against that database any more.
 
 A deleted `PtahSchema` waits the same way for an Apply, and for the Pod of an
-Apply that ended while it still ran, and says which Pod it waits for. Once the
-Job is past its own deadline, the termination grace its Pods are given and 30
-seconds more, a
+Apply that ended while it still ran, and a live `PtahSchema` waits so for the
+Job of its own Apply. Each of these waits, and the deleted `PtahMigration`'s
+above, says which Pod it waits for. Once the Job is past its own deadline, the
+termination grace its Pods are given and 30 seconds more, a
 `PodStuckTerminating` Warning Event names each Pod of the Job that is being
-deleted, is past its own grace period and has not stopped, with its node. It
-comes again 30 seconds later, then twice as long after each time, up to every 5
+deleted, is past its own grace period and has not stopped, with its node. Its
+message starts `Deletion waits for` on a deleted resource and
+`The Apply waits for` on a live schema. A deletion whose Job was deleted by
+hand, or replaced by another Job under its name, still finds the Pods by the
+Job's UID on their owner reference, and names a Pod once it is past its own
+deadline, or the end of its deletion grace, and 30 seconds. The Event comes
+again 30 seconds later, then twice as long after each time, up to every 5
 minutes. Once the node is known to be gone, delete the Pod without waiting for
 its kubelet:
 
@@ -2536,7 +2542,10 @@ status points at none. Neither does a Job whose every executor the kubelet ended
 reason `ContainerStatusUnknown`, which it gives a container it has no status for: one
 that never started, when the Job's deadline stops its Pod, and one the container
 runtime stopped reporting while it ran. The kubelet keeps no container for it and
-answers `kubectl logs` with an error. A run whose result nobody read, because its
+answers `kubectl logs` with an error. Nor does a Job whose every Pod ended with no
+status for its executor, as a Pod the kubelet refused at admission does, since no
+executor ran in it. A Pod that has not ended and reports no executor yet keeps the
+pointer, since it can still start one. A run whose result nobody read, because its
 frame was lost or its Job ran more than one Pod, says
 `Anything the run wrote is in the Pod log`. An execution binding change during a
 running Apply retires the claim with no Job to name,
