@@ -619,8 +619,11 @@ Journal:              9 entries, complete since 2026-11-10T09:00:00Z
 `Journal` says how many entries the status holds and from when the journal is
 complete, its `coveredSince`. The journal is bounded, and
 [the lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
-says by what. The one kind of entry older than `coveredSince` is a plan nothing
-has carried out yet, which the bounds keep; such an entry is marked
+says by what. An event before `coveredSince` may be missing. Entries dated
+before it are ones the bounds keep, the plan nothing has carried out yet and its
+newest approval, or ones dated by a time their status carried from before the
+journal began, as the first journal written after an upgrade from a release
+before 0.2.7 can be; such an entry is marked
 `(dated before the journal's coverage begins)`. `Journal: none` is a status with
 no journal at all, as a manager before 0.2.7 wrote it or as one nobody has
 written yet, and `Journal: no entries` is a journal that has recorded nothing.
@@ -649,6 +652,13 @@ the decisions, says which list and why, and the rest still prints.
 say what an acknowledgment is: a person's statement that the run is accounted
 for. It is not a reading of the database, and not proof that the data is
 correct.
+
+`Proof` on a schema's `ApplyFinished` entry says where the verdict on that Apply
+is, since the Apply's own outcome is not it: the `Verified` entry of its plan
+that follows it, with how that reading ended; `still owed` where none follows
+and `status.pendingObservation` still owes the reading; or `not in the journal`
+where neither holds, as when the journal began between the Apply and its proof.
+The JSON carries the same as `proof`.
 
 The decisions after the journal are every approval and acknowledgment the
 namespace still stores for this resource, with what admission stamped on each

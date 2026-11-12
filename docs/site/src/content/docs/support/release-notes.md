@@ -139,13 +139,15 @@ name the resource, and one more line before the closing `kubectl events` line.
   oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
   with more than five decisions sent the reader to a list of the whole
   namespace. Each entry shows its plan, decision, Job and outcome, folded
-  failures show their count and the last time, and each plan and decision an
-  entry names is marked as still stored or not. An entry an earlier release
-  wrote without the UIDs that would join it says so, and a status with no
-  journal reads differently from an empty one. `-o json` carries every field of
-  every entry. It needs `get` on the resource; listing plans and decisions is
-  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
-  has the rest.
+  failures show their count and the last time, a schema's Apply names the
+  `Verified` entry that proved it or says the proof is still owed, and each
+  plan and decision an entry names is marked as still stored or not. An entry
+  an earlier release wrote without the UIDs that would join it says so, and a
+  status with no journal reads differently from an empty one. `-o json`
+  carries every field of every entry. It needs `get` on the resource; listing
+  plans and decisions is optional.
+  [What a resource kept of its past](../../use/read-a-plan/#history) has the
+  rest.
 - **`kubectl ptah schema --details` and `migration --details`.** The views
   printed none of the operation a resource has claimed, a schema's proof still
   owed after an Apply, a Lease release or binding retirement still owed, or a

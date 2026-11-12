@@ -107,6 +107,35 @@ type Entry struct {
 	AcknowledgmentStored *bool `json:"acknowledgmentStored,omitempty"`
 	// BeforeCoverage marks an entry dated before CoveredSince.
 	BeforeCoverage bool `json:"beforeCoverage,omitempty"`
+	// Proof says what became of the reading of the database that proves a
+	// PtahSchema's Apply, on its ApplyFinished entry and no other. An Apply's
+	// own outcome is not the verdict; this is where the verdict is.
+	Proof *Proof `json:"proof,omitempty"`
+}
+
+// ProofState is what a schema Apply's proof came to, as far as the journal
+// and the status say.
+type ProofState string
+
+const (
+	// ProofVerified is an Apply a Verified entry for its plan follows, before
+	// another Apply of that plan.
+	ProofVerified ProofState = "Verified"
+	// ProofOwed is the newest Apply, no Verified entry follows it, and
+	// status.pendingObservation still owes the reading of its plan.
+	ProofOwed ProofState = "Owed"
+	// ProofNotInJournal is an Apply the journal records no proof of and the
+	// status owes none for, as when the journal started or was restored
+	// between the Apply and its proof.
+	ProofNotInJournal ProofState = "NotInJournal"
+)
+
+// Proof is the reading that proves one schema Apply.
+type Proof struct {
+	State ProofState `json:"state"`
+	// At and Outcome are the Verified entry's, where State is Verified.
+	At      *metav1.Time                    `json:"at,omitempty"`
+	Outcome operatorv1alpha1.JournalOutcome `json:"outcome,omitempty"`
 }
 
 // Approval is one approval of either family, with its own UID, which is what
@@ -153,6 +182,7 @@ func Load(ctx context.Context, reader client.Reader, kind Kind, namespace, name 
 	var (
 		object  client.Object
 		journal *operatorv1alpha1.LifecycleJournal
+		pending *operatorv1alpha1.PendingObservationStatus
 	)
 	switch kind {
 	case Schema:
@@ -162,6 +192,7 @@ func Load(ctx context.Context, reader client.Reader, kind Kind, namespace, name 
 			return View{}, err
 		}
 		journal = schema.Status.Journal
+		pending = schema.Status.PendingObservation
 	case Migration:
 		migration := &operatorv1alpha1.PtahMigration{}
 		object = migration
@@ -219,8 +250,48 @@ func Load(ctx context.Context, reader client.Reader, kind Kind, namespace, name 
 			}
 			view.Journal.Entries = append(view.Journal.Entries, entry)
 		}
+		if kind == Schema {
+			joinProofs(view.Journal.Entries, pending)
+		}
 	}
 	return view, nil
+}
+
+// joinProofs sets the Proof of every ApplyFinished entry. A schema journal
+// joins an Apply to its proof by plan name alone, and only forward: the
+// Verified entry that settles an Apply comes after it, and no other Apply of
+// that plan can come between, since an Apply is not claimed while a proof is
+// owed. An earlier Verified entry of the same plan proved an earlier Apply.
+func joinProofs(entries []Entry, pending *operatorv1alpha1.PendingObservationStatus) {
+	newest := -1
+	for index, entry := range entries {
+		if entry.Type == operatorv1alpha1.JournalApplyFinished {
+			newest = index
+		}
+	}
+	for index := range entries {
+		apply := &entries[index]
+		if apply.Type != operatorv1alpha1.JournalApplyFinished {
+			continue
+		}
+		apply.Proof = &Proof{State: ProofNotInJournal}
+		for _, later := range entries[index+1:] {
+			if later.Plan != apply.Plan {
+				continue
+			}
+			if later.Type == operatorv1alpha1.JournalApplyFinished {
+				break
+			}
+			if later.Type == operatorv1alpha1.JournalVerified {
+				at := later.At
+				apply.Proof = &Proof{State: ProofVerified, At: &at, Outcome: later.Outcome}
+				break
+			}
+		}
+		if apply.Proof.State == ProofNotInJournal && index == newest && pending != nil && pending.Plan.Name == apply.Plan {
+			apply.Proof = &Proof{State: ProofOwed}
+		}
+	}
 }
 
 func get(ctx context.Context, reader client.Reader, key client.ObjectKey, object client.Object, kind Kind) error {

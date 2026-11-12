@@ -769,7 +769,10 @@ The plan nothing has carried out yet stays past the age and the count, because a
 plan can wait for a person longer than they last and a later plan has to be able
 to say what it replaced. The entry that published it and the newest approval of
 it stay until an Apply or a run ends it or another plan is published, so those
-two can be older than `coveredSince`.
+two can be older than `coveredSince`. So can an entry dated by a time its status
+carried from before the journal began: the first status write that starts a
+journal, as after an upgrade from a release before 0.2.7, dates a plan by its
+creation and a run by when its hold was recorded.
 
 The journal is written in the status write that records the transition, so it
 costs no request of its own. Its times come from that status, such as a plan's
