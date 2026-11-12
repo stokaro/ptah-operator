@@ -44,8 +44,9 @@ var uncertainRunRefusals = []string{"ApplyOutcomeUnknown", "HistoryDirty"}
 // uncertainRefusalReason says whether the Blocked condition is True for one of
 // uncertainRunRefusals. A refusal for any other reason belongs to something
 // else, which holds only while that thing lasts. The dirty revision's reason
-// counts only beside the history reading that found the revision: the reason
-// alone could outlive a later reading that found none.
+// counts only beside the history reading that found the revision, written in
+// the same status: the row claims that reading, and the reason is only the
+// operator's name for it.
 func uncertainRefusalReason(status ptahv1alpha1.PtahMigrationStatus) error {
 	conditions := status.Conditions
 	if conditionIs(conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") {
