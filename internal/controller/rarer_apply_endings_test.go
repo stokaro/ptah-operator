@@ -325,7 +325,12 @@ func TestRarerMigrationApplyEndingsKeepWhyItsPodNeverRan(t *testing.T) {
 			end: func(t *testing.T, run unstartedMigration) {
 				aSecondPod(t, run.api, run.job, run.pod)
 			},
-			stop: func(t *testing.T, run unstartedMigration) { podsGone(t, run.api, run.job) },
+			// Pods that went with nothing to say they stopped keep the claim
+			// to the end of its Lease term.
+			stop: func(t *testing.T, run unstartedMigration) {
+				podsGone(t, run.api, run.job)
+				toTheApplyLeaseTerm(t, run.reconciler, run.api, run.migration)
+			},
 		},
 		{
 			name: "its Pod was refused until the deadline", refused: true,
@@ -1025,6 +1030,9 @@ func TestTwoPodsOneOfWhichStartedRepeatNoStaleReport(t *testing.T) {
 				t.Fatalf("the ending did not record the run: claim %#v", stored.Status.ActiveOperation)
 			}
 			podsGone(t, run.api, run.job)
+			// The Pods went with nothing to say the first one's executor
+			// stopped, so the claim stays to the end of its Lease term.
+			toTheApplyLeaseTerm(t, run.reconciler, run.api, run.migration)
 
 			record := run.settle(t, 3)
 			if !strings.Contains(record.Message, errTerminalPodMultiplicity.Error()) {
