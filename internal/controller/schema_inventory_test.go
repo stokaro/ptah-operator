@@ -12,7 +12,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-// A report the Ptah v0.22.0 release image printed crosses the decoder and the
+// A report the pinned Ptah release image printed crosses the decoder and the
 // frame, and status keeps what the manager read, feature kinds included. The
 // reading the extension row's predicate is held to is what a run on kind printed,
 // and this says the operator writes the same inventory from the capture.
