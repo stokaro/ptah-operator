@@ -965,7 +965,7 @@ func TestDispatchedApplyMayStillWriteReadsTheJobTheCallerDidNotPass(t *testing.T
 	job.Status.Conditions = nil
 	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job)
 
-	if !reconciler.dispatchedApplyMayStillWrite(context.Background(), migration, operation, nil) {
+	if mayStillWrite, _ := reconciler.dispatchedApplyMayStillWrite(context.Background(), migration.Namespace, operation, nil); !mayStillWrite {
 		t.Fatal("the gate handed the database back for a dispatched Job it never read")
 	}
 }

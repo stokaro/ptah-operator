@@ -103,10 +103,11 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 				if path.deleted {
 					waiter = deletionWaits
 				}
-				want := fmt.Sprintf("%s%s for Job %s until %s: the Job has no Pod left, and no Pod reported that its executor stopped. "+
-					"A Pod removed by a forced delete, or with its Job, can still be running on a node the API server cannot reach, "+
-					"so the database Lease stays held until the term the Apply took it for ends.",
-					applyPodGoneEvent, waiter, run.job.Name, term.UTC().Format(time.RFC3339))
+				want := fmt.Sprintf("%s%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
+					"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
+					"still runs on a node the API server cannot reach, so the database Lease stays held until the term "+
+					"the Apply took it for ends.",
+					applyPodGoneEvent, waiter, run.job.Name, run.job.UID, term.UTC().Format(time.RFC3339))
 				for _, step := range []struct {
 					at    time.Time
 					named bool

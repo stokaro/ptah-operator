@@ -35,9 +35,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-// migrationApplyLeaseGrace is how much of the Lease is held back from the Pod's
-// own deadline, so the Pod cannot still be running when the Lease it was
-// dispatched under expires.
+// migrationApplyLeaseGrace is how much the Lease outlasts the Job's own
+// deadline, so the executor cannot still be running when the Lease it was
+// dispatched under expires. The runner holds its child to the claim's absolute
+// execution deadline on its own clock and kills it runner.ChildStopDelay later,
+// whether or not the API server can still reach the Pod.
 const migrationApplyLeaseGrace = time.Minute
 
 // reconcileMigrationApplyDecision decides what a published plan may do next.
@@ -1063,10 +1065,11 @@ func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
 ) (ctrl.Result, error) {
 	// The common gate treats failed Job/Pod reads as still writing. Renewal
 	// must continue there too: an unreadable workload is not a stopped one.
-	if r.dispatchedApplyMayStillWrite(ctx, migration, migration.Status.ActiveOperation, nil) {
+	if mayStillWrite, gone := r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, nil); mayStillWrite {
 		if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
 			return ctrl.Result{}, err
 		}
+		r.warnMigrationApplyPodGone(migration, gone)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 	if err := r.scheduleStoppedMigrationJobCleanup(ctx, migration); err != nil {
@@ -1226,6 +1229,8 @@ func (r *MigrationReconciler) migrationJobCleanupNotScheduled(
 // (migrationApplyPodGone). The identity it asks that about comes from the
 // claim, from the Job the caller already read, or -- when the claim never
 // recorded a UID -- from the API server under the name the claim reserved.
+// Where the Pod-gone hold is what keeps it, it also returns that hold, so the
+// caller can say why it waits and until when; it is nil otherwise.
 //
 // It decides whether the database may be handed back. An uncertain outcome
 // says nothing about whether the executor is still running, and releasing the
@@ -1236,18 +1241,17 @@ func (r *MigrationReconciler) migrationJobCleanupNotScheduled(
 // if no manager can continue the renewal.
 func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 	ctx context.Context,
-	migration *operatorv1alpha1.PtahMigration,
+	namespace string,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	job *batchv1.Job,
-) bool {
-	namespace := migration.Namespace
+) (bool, *applyPodGoneHold) {
 	jobName, jobUID := operation.JobName, operation.JobUID
 	if jobUID == "" && job != nil {
 		jobName, jobUID = job.Name, job.UID
 	}
 	if jobUID == "" && jobName == "" {
 		// Nothing was named and nothing was created, so nothing can be writing.
-		return false
+		return false, nil
 	}
 	if job == nil || job.UID != jobUID {
 		// The caller had no snapshot of this claim's Job, or held a different
@@ -1274,11 +1278,11 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 				// Pods it owned can still be running, which the read below
 				// settles.
 				if jobUID == "" {
-					return false
+					return false, nil
 				}
 			case err != nil:
 				ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job", "error", err.Error())
-				return true
+				return true, nil
 			default:
 				if jobUID == "" || dispatched.UID == jobUID {
 					job, jobName, jobUID = dispatched, dispatched.Name, dispatched.UID
@@ -1289,25 +1293,34 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 		}
 	}
 	if job != nil && job.UID == jobUID && !jobTerminal(job) {
-		return true
+		return true, nil
 	}
 	pods, err := podsOwnedByJob(ctx, r.directReader(), namespace, jobName, jobUID)
 	if err != nil {
 		ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply's Pods", "error", err.Error())
-		return true
+		return true, nil
 	}
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-			return true
+			return true, nil
 		}
 	}
 	if len(pods) == 0 && migrationApplyPodGone(job) {
 		if until := migrationApplyLeaseTermEnd(operation); r.now().Before(until) {
-			r.warnMigrationApplyPodGone(migration, jobName, jobUID, until)
-			return true
+			return true, &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
 		}
 	}
-	return false
+	return false, nil
+}
+
+// applyPodGoneHold is the wait dispatchedApplyMayStillWrite reports where the
+// API server has no Pod of the claim's Job left and nothing says its executor
+// stopped (migrationApplyPodGone): the Job, by the name and the UID it asked
+// about, and the end of the claim's Lease term, when the wait ends.
+type applyPodGoneHold struct {
+	jobName string
+	jobUID  types.UID
+	until   time.Time
 }
 
 // migrationApplyPodGone reports whether a Pod of the claim's Job may be gone
@@ -1336,11 +1349,12 @@ func migrationApplyPodGone(job *batchv1.Job) bool {
 
 // migrationApplyLeaseTermEnd is when the Lease an Apply claim took runs out if
 // it is never renewed: the claim's start plus the duration it took the Lease
-// for. migrationLeaseDuration sizes that duration so the Apply's Pod cannot
-// still be running at its end: the window, which the runner holds its child to,
-// the Job's deadline grace and migrationApplyLeaseGrace, which covers the Pod's
-// termination grace. Both fields are written with the claim, so a later release
-// reads the term the claim was dispatched under.
+// for. migrationLeaseDuration sizes that duration so the Apply's executor cannot
+// still be running at its end, wherever its Pod is. The window ends at the
+// claim's absolute execution deadline, which the runner holds its child to on
+// its own clock, killing it runner.ChildStopDelay later, and the Job's deadline
+// grace and migrationApplyLeaseGrace follow it. Both fields are written with the
+// claim, so a later release reads the term the claim was dispatched under.
 func migrationApplyLeaseTermEnd(operation *operatorv1alpha1.MigrationOperationStatus) time.Time {
 	return operation.StartedAt.Add(time.Duration(operation.LeaseDurationSeconds) * time.Second)
 }
@@ -1370,8 +1384,12 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	mayStillWrite := unread ||
-		r.dispatchedApplyMayStillWrite(ctx, migration, migration.Status.ActiveOperation, job)
+	mayStillWrite := unread
+	if !unread {
+		var gone *applyPodGoneHold
+		mayStillWrite, gone = r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, migration.Status.ActiveOperation, job)
+		r.warnMigrationApplyPodGone(migration, gone)
+	}
 	return r.retireUncertainMigrationApply(ctx, migration, job, failure, reportedTarget, mayStillWrite)
 }
 

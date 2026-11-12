@@ -495,8 +495,8 @@ of the Apply's term, the time the `ApplyPodGone` Warning names.
   which is `spec.execution.activeDeadlineSeconds` and 2 minutes. That holds for
   a deleted resource waiting for its Apply, for a live one recording its run
   `Unknown`, and for an Apply whose recorded Job is gone or whose name another
-  Job holds. An `ApplyPodGone` Warning Event names the Job and when the wait
-  ends, with the backoff `PodStuckTerminating` has. A Job that finished with no
+  Job holds. An `ApplyPodGone` Warning Event names the Job, its UID and when
+  the wait ends, with the backoff `PodStuckTerminating` has. A Job that finished with no
   Pod counted failed, as one whose Pod the API server refused, had no Pod to
   lose and hands the Lease back at once, as before. A `PtahSchema` already held
   the Lease there, until its pending observation's `observeAfter`.

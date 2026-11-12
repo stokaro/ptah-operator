@@ -1652,8 +1652,8 @@ there. A `PtahSchema` keeps it until `status.pendingObservation.observeAfter`,
 the end of the Apply's execution window and its Pods' termination grace. A
 `PtahMigration` keeps it until its claim's `startedAt` plus
 `leaseDurationSeconds`, which is `spec.execution.activeDeadlineSeconds` and 2
-minutes, and an `ApplyPodGone` Warning Event names the Job and when the wait
-ends. The same holds where its Job was deleted, or another Job took the Job's
+minutes, and an `ApplyPodGone` Warning Event names the Job, its UID and when
+the wait ends. The same holds where its Job was deleted, or another Job took the Job's
 name. A `PodStuckTerminating` Warning about a migration's Job that still stands
 comes only past that term, so there the Lease goes back once the Job finishes.
 For a Job deleted by hand a Pod is named sooner, and the wait runs out the rest
