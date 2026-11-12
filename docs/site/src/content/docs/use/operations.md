@@ -1625,14 +1625,17 @@ and it is a statement that nothing is executing against that database any more.
 A deleted `PtahSchema` waits the same way for an Apply, and for the Pod of an
 Apply that ended while it still ran. A live `PtahSchema` or `PtahMigration`
 waits so for the Job of its own Apply, and a live `PtahSchema` for the Pod of an
-Apply it waits to prove. Each of these waits, and the deleted `PtahMigration`'s
-above, says which Pod it waits for. Once the Job is past its own deadline, the
+Apply it waits to prove. A `PtahMigration` that recorded its Apply as an
+`Unknown` run while the Job could still run, as after a release that changed
+the Job, keeps its claim and waits so for that Job, live or deleted. Each of
+these waits, and the deleted `PtahMigration`'s above, says which Pod it waits
+for. Once the Job is past its own deadline, the
 termination grace its Pods are given and 30 seconds more, a
 `PodStuckTerminating` Warning Event names each Pod of the Job that is being
 deleted, is past its own grace period and has not stopped, with its node and
 the Job's UID, which tells the Job apart from one that took its name since. Its
 message starts `Deletion waits for` on a deleted resource,
-`The Apply waits for` on a live resource that supervises its Apply, and
+`The Apply waits for` on a live resource that waits for its own Apply, and
 `The Apply's proof waits for` on a live schema waiting to prove one. A deletion
 whose Job was deleted by hand, or replaced by another Job under its name, and a
 schema waiting for an Apply that ended still find the Pods by the Job's UID on

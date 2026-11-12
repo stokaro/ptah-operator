@@ -467,11 +467,13 @@ of the Apply's term, the time the `ApplyPodGone` Warning names.
   again. A proof keeps the Apply's Lease across its attempts and was not
   affected, and a claim whose Lease went while its Job could run still reports
   the loss.
-- **Waits on a stuck Apply Pod name it.** A Pod on a node that is gone
+- **Every wait on a stuck Apply Pod names it.** A Pod on a node that is gone
   keeps an Apply's Job from stopping. A deleted `PtahMigration` waiting for its
-  Apply, a live `PtahSchema` or `PtahMigration` supervising its own, and a live
-  `PtahSchema` waiting to prove an Apply that ended, waited for such a Pod in
-  silence and renewed the database Lease all along. All of them now record the
+  Apply, a live `PtahSchema` or `PtahMigration` supervising its own, a live
+  `PtahSchema` waiting to prove an Apply that ended, and a live or deleted
+  `PtahMigration` that keeps its claim after recording its Apply as an
+  `Unknown` run, waited for such a Pod in silence and renewed the database
+  Lease all along. All of them now record the
   `PodStuckTerminating` Warning Event a deleted `PtahSchema` records, with the
   same backoff, once the Job is past its deadline, the grace of its Pods and 30
   seconds. A live resource's message starts `The Apply waits for`, and a

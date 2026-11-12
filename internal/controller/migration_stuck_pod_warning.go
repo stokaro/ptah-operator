@@ -6,6 +6,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -51,6 +52,31 @@ func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 		}
 	}
 	return nil
+}
+
+// warnStuckUnaccountedMigrationApplyPods is warnStuckMigrationApplyPods for a
+// claim kept after its run was recorded Unknown (reconcileUnaccountedMigrationApply).
+// That wait comes ahead of deletion, so it speaks for a live migration and for a
+// deleted one, in the words each waits in. It reads the claim's Job as a
+// deletion does (dispatchedMigrationApplyJob), since the gate it follows reads
+// the Job for itself. A read or a list that fails warns about nothing and is not
+// returned: an error requeue backs off, and this wait is what renews the Lease.
+func (r *MigrationReconciler) warnStuckUnaccountedMigrationApplyPods(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) {
+	operation := migration.Status.ActiveOperation
+	waiter := applyWaits
+	if migration.DeletionTimestamp != nil {
+		waiter = deletionWaits
+	}
+	job, err := r.dispatchedMigrationApplyJob(ctx, migration, operation)
+	if err == nil {
+		err = r.warnStuckMigrationApplyPods(ctx, migration, operation, job, waiter)
+	}
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod of a run recorded Unknown", "error", err.Error())
+	}
 }
 
 // warnMigrationApplyPodGone records an ApplyPodGone Warning about the hold
