@@ -544,7 +544,7 @@ func (m *migrationRun) assertRepeatedReconciliationRunsNothing(settled *ptahv1al
 			return true
 		}
 		if phase == ptahv1alpha1.MigrationPhaseFailed || phase == ptahv1alpha1.MigrationPhaseBlocked {
-			m.fatalf("%s left InSync on a repeated reconciliation: %s", name, phase)
+			m.fatalf("%s left InSync on a repeated reconciliation: %s; %s", name, phase, failedConditions(m.scanner, current.Status.Conditions))
 		}
 		return false
 	})

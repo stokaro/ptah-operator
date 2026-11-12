@@ -565,15 +565,6 @@ func (r *referenceRun) status() *ptahv1alpha1.PtahSchema {
 	return schema
 }
 
-// phase is the schema's phase, or nothing when it cannot be read.
-func (r *referenceRun) phase() ptahv1alpha1.ReconciliationPhase {
-	schema := &ptahv1alpha1.PtahSchema{}
-	if r.get(r.names.schema, schema) != nil {
-		return ""
-	}
-	return schema.Status.Phase
-}
-
 // waitForPhase waits for the schema to reach a phase. A schema that fails is
 // not waited out unless Failed is what the wait is for.
 func (r *referenceRun) waitForPhase(want ptahv1alpha1.ReconciliationPhase) {
@@ -581,12 +572,19 @@ func (r *referenceRun) waitForPhase(want ptahv1alpha1.ReconciliationPhase) {
 	var observed ptahv1alpha1.ReconciliationPhase
 	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
-		observed = r.phase()
+		// The schema is read here rather than as a bare phase, so a Failed
+		// reading can say why with the conditions of that same document. A
+		// schema that cannot be read has no phase.
+		schema := &ptahv1alpha1.PtahSchema{}
+		observed = ""
+		if r.get(r.names.schema, schema) == nil {
+			observed = schema.Status.Phase
+		}
 		if observed == want {
 			return
 		}
 		if observed == ptahv1alpha1.PhaseFailed && want != ptahv1alpha1.PhaseFailed {
-			r.fatalf("%s failed while waiting for %s", r.names.schema, want)
+			r.fatalf("%s failed while waiting for %s; %s", r.names.schema, want, failedConditions(r.scanner, schema.Status.Conditions))
 		}
 		r.sleep(referencePoll)
 	}
@@ -841,7 +839,7 @@ func (r *referenceRun) assertRemovedDeclarationKeepsRows() {
 			// A failure on the withdrawn declaration is its verdict; one on the
 			// revision before it is not.
 			if schema.Status.Phase == ptahv1alpha1.PhaseFailed && schema.Status.Source.Digest == digest {
-				r.fatalf("%s failed while waiting for InSync", r.names.schema)
+				r.fatalf("%s failed while waiting for InSync; %s", r.names.schema, failedConditions(r.scanner, schema.Status.Conditions))
 			}
 		}
 		r.sleep(referencePoll)

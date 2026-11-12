@@ -65,6 +65,8 @@ type configMapRun struct {
 	cluster  *harness.Cluster
 	engine   migrationEngine
 	password string
+	// scanner looks for the password in what a failed wait prints.
+	scanner credentialScanner
 }
 
 func newConfigMapRun(t *testing.T, run *harness.Run, in phases.ConfigMapSourceInputs) *configMapRun {
@@ -87,6 +89,9 @@ func newConfigMapRun(t *testing.T, run *harness.Run, in phases.ConfigMapSourceIn
 	}
 	if c.password = string(secret.Data["password"]); c.password == "" {
 		c.fatalf("the data plane PostgreSQL Secret carries no password")
+	}
+	if c.scanner, err = newCredentialScanner(c.password); err != nil {
+		c.fatalf("build the credential scanner: %v", err)
 	}
 	return c
 }
@@ -178,7 +183,7 @@ func (c *configMapRun) waitForSchemaThrough(what string, retrying bool, done fun
 			return false, err.Error()
 		}
 		if schema.Status.Phase == ptahv1alpha1.PhaseFailed && !retrying {
-			c.fatalf("%s failed while waiting for %s: %v", configMapSchema, what, schema.Status.Conditions)
+			c.fatalf("%s failed while waiting for %s; %s", configMapSchema, what, failedConditions(c.scanner, schema.Status.Conditions))
 		}
 		if done(schema) {
 			matched = schema
@@ -198,7 +203,7 @@ func (c *configMapRun) waitForMigration(what string, done func(*ptahv1alpha1.Pta
 			return false, err.Error()
 		}
 		if migration.Status.Phase == ptahv1alpha1.MigrationPhaseFailed {
-			c.fatalf("%s failed while waiting for %s: %v", configMapMigration, what, migration.Status.Conditions)
+			c.fatalf("%s failed while waiting for %s; %s", configMapMigration, what, failedConditions(c.scanner, migration.Status.Conditions))
 		}
 		if done(migration) {
 			matched = migration

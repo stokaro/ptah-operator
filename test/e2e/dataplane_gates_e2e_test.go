@@ -96,7 +96,7 @@ func (d *dataPlane) captureBlockedRefreshBoundary(schema string, generationCheck
 				break
 			}
 			if failedForCurrentSpec(candidate) {
-				d.fatalf("%s entered Failed before the blocked refresh boundary; %s", schema, failedSchemaConditions(d.scanner, candidate))
+				d.fatalf("%s entered Failed before the blocked refresh boundary; %s", schema, failedConditions(d.scanner, candidate.Status.Conditions))
 			}
 		}
 		d.sleep(time.Second)
