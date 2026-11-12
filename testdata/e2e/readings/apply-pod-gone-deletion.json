@@ -1,0 +1,38 @@
+{
+  "migrationName": "e2e-deletion-postgresql",
+  "migrationUID": "6f1c2a4e-0b8d-4c39-9a51-3f2e7d1b8c40",
+  "claim": {
+    "type": "Apply",
+    "id": "sha256:provisional",
+    "inputFingerprint": "sha256:provisional",
+    "startedAt": "2026-11-12T10:00:00Z",
+    "jobName": "ptah-m-apply-e2e-deletion-postgresql-0123456789abcdef",
+    "jobUID": "9d3e5b7a-2c41-4f86-b0e9-7a1c3d5f2e68",
+    "executionNotAfter": "2026-11-12T10:05:00Z",
+    "dispatchNotAfter": "2026-11-12T10:05:00Z",
+    "leaseDurationSeconds": 420
+  },
+  "event": {
+    "metadata": {
+      "name": "e2e-deletion-postgresql.provisional",
+      "namespace": "ptah-test"
+    },
+    "involvedObject": {
+      "kind": "PtahMigration",
+      "namespace": "ptah-test",
+      "name": "e2e-deletion-postgresql",
+      "uid": "6f1c2a4e-0b8d-4c39-9a51-3f2e7d1b8c40",
+      "apiVersion": "operator.ptah.run/v1alpha1"
+    },
+    "reason": "ApplyPodGone",
+    "message": "Deletion waits for Job ptah-m-apply-e2e-deletion-postgresql-0123456789abcdef, UID 9d3e5b7a-2c41-4f86-b0e9-7a1c3d5f2e68, until 2026-11-12T10:07:00Z: the API server has no Pod of the Job with that UID, and nothing says its executor stopped. A Pod can be gone from the API server while its container still runs on a node the API server cannot reach, so the database Lease stays held until the term the Apply took it for ends.",
+    "source": {
+      "component": "ptah-operator"
+    },
+    "firstTimestamp": "2026-11-12T10:01:40Z",
+    "lastTimestamp": "2026-11-12T10:05:40Z",
+    "count": 4,
+    "type": "Warning",
+    "eventTime": null
+  }
+}

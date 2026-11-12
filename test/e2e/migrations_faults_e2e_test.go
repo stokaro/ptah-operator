@@ -97,9 +97,12 @@ func (m *migrationRun) mfDeleteMigration(name string) {
 
 // deletionDuringApplyProof deletes a migration while its Apply is still
 // running, in the background, which is kubectl's default. The resource has to
-// stay, holding the claim, while the executor keeps running inside it; and
-// once the Job is gone -- the case nothing wakes the controller for -- it has
-// to go on its own, leaving what the run committed where it is. Foreground
+// stay, holding the claim, while the executor keeps running inside it. Once
+// the Job and its Pod are gone, nothing in the API server says the executor
+// stopped, so it has to stay, holding the claim and the realm Lease, to the
+// end of the term the claim took the Lease for, and say so in an ApplyPodGone
+// Warning. Then -- the case nothing wakes the controller for -- it has to go
+// on its own, leaving what the run committed where it is. Foreground
 // propagation removes the resource's dependents first, the Apply Job among
 // them, and is documented rather than asserted.
 func (m *migrationRun) deletionDuringApplyProof() {
@@ -139,19 +142,42 @@ func (m *migrationRun) deletionDuringApplyProof() {
 		m.sleep(5 * time.Second)
 	}
 
-	// Now take the Job away, which is the case nothing wakes the controller
-	// for: no Job left to change, and a status write the primary watch
-	// discards.
-	m.logf("removing the %s Apply Job so only the settling pass is left", m.engine.kind)
+	// What the hold below is measured against, read from what the claim
+	// persisted rather than worked out here: the end of the term it took the
+	// realm Lease for, and that Lease, by the epoch the claim recorded.
+	claim := m.migration(name).Status.ActiveOperation.DeepCopy()
+	term, err := applyLeaseTerm(claim)
+	m.check(err, "read the Lease term of the %s Apply", m.engine.name)
+	if claim.JobName != job || claim.JobUID == "" {
+		m.fatalf("the %s Apply claim names Job %q, UID %q, not the Job it dispatched, %s", m.engine.name, claim.JobName, claim.JobUID, job)
+	}
+	leases := &coordinationv1.LeaseList{}
+	m.check(m.cluster.Client.List(m.ctx, leases), "the Leases could not be listed")
+	leaseNamespace, leaseName, holder, err := leaseAtEpoch(leases.Items, claim.LeaseEpoch)
+	if err != nil || holder == "" {
+		m.fatalf("no single realm Lease with a holder carries the epoch the %s Apply claimed under: %v", m.engine.name, err)
+	}
+	lease := types.NamespacedName{Namespace: leaseNamespace, Name: leaseName}
+
+	// Now take the Job away, and its Pod with it. Nothing the API server holds
+	// then says the executor stopped, and nothing wakes the controller once
+	// the term ends: no Job left to change, and a status write the primary
+	// watch discards.
+	m.logf("removing the %s Apply Job so only the hold to its Lease term is left", m.engine.kind)
 	applyJob := &batchv1.Job{}
 	applyJob.Namespace, applyJob.Name = m.in.TestNamespace, job
 	m.deleteAndWait(applyJob, "the "+m.engine.name+" Apply Job")
+	m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
 
 	// The resource has to go on its own. A manager whose settling pass asked
 	// for nothing to follow it would sit here holding the finalizer.
 	release := time.Now().Add(waitTimeout)
 	for time.Now().Before(release) {
 		if err := m.get(name, &ptahv1alpha1.PtahMigration{}); apierrors.IsNotFound(err) {
+			if current, err := m.realmLeaseHolder(lease); err != nil || current == holder {
+				m.fatalf("the deleted %s migration went and the realm Lease %s still names %q (read error %v)",
+					m.engine.name, lease, current, err)
+			}
 			m.logf("PASS %s held a deleted migration until its Apply could not write", m.engine.kind)
 			// The rows the run committed are still the database's own
 			// business: deletion accounts for the run, it does not undo it.
@@ -200,6 +226,87 @@ func (m *migrationRun) assertDeletionRetainsItsRunningApply(name, job string) {
 	if m.get(job, &batchv1.Job{}) != nil {
 		m.fatalf("the %s Apply Job was collected while the deletion was still waiting on it", m.engine.name)
 	}
+}
+
+// applyLeaseTermMargin is how far short of the claim's term the hold stops
+// looking. The manager hands the Lease back on its first pass at the term,
+// passes a few seconds apart, so a look in the last seconds could read the
+// release that follows rather than the hold.
+const applyLeaseTermMargin = 15 * time.Second
+
+// assertDeletionHoldsToTheLeaseTerm holds a deleted migration whose Apply Job
+// and Pod are gone to keeping its claim, its finalizer and the realm Lease's
+// holder until the end of the term the claim took the Lease for, and to saying
+// so in an ApplyPodGone Warning that names the Job, its UID and that term. The
+// Warning is dated by its own timestamps, not by the look that found it.
+func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *ptahv1alpha1.MigrationOperationStatus,
+	term time.Time, lease types.NamespacedName, holder string,
+) {
+	m.t.Helper()
+	until := term.Add(-applyLeaseTermMargin)
+	if !time.Now().Before(until) {
+		m.fatalf("the %s Apply Job was gone only at %s, within %s of its Lease term at %s, so no hold could be read",
+			m.engine.name, time.Now().UTC().Format(time.RFC3339), applyLeaseTermMargin, term.UTC().Format(time.RFC3339))
+	}
+	m.logf("holding the deleted %s PtahMigration to its Apply's Lease term, which ends at %s", m.engine.kind, term.UTC().Format(time.RFC3339))
+	var warnings []corev1.Event
+	var warned *ptahv1alpha1.PtahMigration
+	looks := 0
+	for time.Now().Before(until) {
+		left := time.Until(term).Round(time.Second)
+		migration := &ptahv1alpha1.PtahMigration{}
+		if err := m.get(name, migration); err != nil {
+			m.fatalf("%s could not be read %s before its Apply's Lease term ended: %v", name, left, err)
+		}
+		m.scanObject(migration, name+" status")
+		if !deletionRetainsClaim(migration) || migration.Status.ActiveOperation.ID != claim.ID {
+			m.fatalf("%s let go of its Apply's claim %s before the Lease term, with nothing to say the executor stopped: finalizers %q, claim present %t",
+				name, left, migration.Finalizers, migration.Status.ActiveOperation != nil)
+		}
+		if current, err := m.realmLeaseHolder(lease); err != nil || current != holder {
+			m.fatalf("the realm Lease %s names %q %s before the term, want the Apply's %q (read error %v)", lease, current, left, holder, err)
+		}
+		events := &corev1.EventList{}
+		m.check(m.list(events), "the Events of %s could not be listed", name)
+		if found := applyPodGoneWarnings(events.Items, migration, claim.JobName, claim.JobUID, term); len(found) > 0 {
+			warnings, warned = found, migration
+		}
+		looks++
+		m.sleep(5 * time.Second)
+	}
+	if looks == 0 {
+		m.fatalf("the hold of %s was never looked at before its Lease term", name)
+	}
+	if err := applyPodGoneWarnedInTerm(warnings, claim.StartedAt.Time, term); err != nil {
+		m.fatalf("%s held its claim to the Lease term, but %v: Job %s, UID %s, term %s",
+			name, err, claim.JobName, claim.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	// The reading the predicates' unit tests hold them to, printed once.
+	reading, err := json.Marshal(applyPodGoneReading{
+		MigrationName: warned.Name, MigrationUID: warned.UID, Claim: *claim, Event: warnings[0],
+	})
+	m.check(err, "encode the ApplyPodGone reading")
+	m.scan(reading, "the ApplyPodGone reading")
+	m.logf("ApplyPodGone reading: %s", reading)
+	m.logf("%s kept its claim and the realm Lease through %d looks to %s before the end of its Lease term",
+		name, looks, applyLeaseTermMargin)
+}
+
+// realmLeaseHolder is the holder a realm Lease names now: empty once released,
+// and empty if the Lease is gone, which a release also allows. A read that
+// failed for any other reason is an error, so it never reads as a release.
+func (m *migrationRun) realmLeaseHolder(lease types.NamespacedName) (string, error) {
+	current := &coordinationv1.Lease{}
+	err := m.cluster.Client.Get(m.ctx, lease, current)
+	switch {
+	case apierrors.IsNotFound(err):
+		return "", nil
+	case err != nil:
+		return "", err
+	case current.Spec.HolderIdentity == nil:
+		return "", nil
+	}
+	return *current.Spec.HolderIdentity, nil
 }
 
 // stopRowResource creates the migration the stopped and lost-log rows run:
