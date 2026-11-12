@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-owner-revoked-postgres@sha256:6d1309d1a5982505b2dd1791346e76e9bcf1f06d2acee30bf5e2ea02e6211e72",
+  "digest": "sha256:6d1309d1a5982505b2dd1791346e76e9bcf1f06d2acee30bf5e2ea02e6211e72",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}
