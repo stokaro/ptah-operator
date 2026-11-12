@@ -658,6 +658,9 @@ WHERE ID = IS_USED_LOCK('ptah_schema_apply');
 ```
 
 `KILL <ID>;` ends that connection and releases the lock.
+`SELECT IS_USED_LOCK('ptah_schema_apply');` alone returns that ID. The process
+list adds who holds the lock and for how long, and is read from the Performance
+Schema; where that is off, the ID alone is enough to `KILL`.
 
 The account Ptah logs in as can see and end its own sessions. Another account
 needs privileges for each step. On PostgreSQL every role sees the lock in

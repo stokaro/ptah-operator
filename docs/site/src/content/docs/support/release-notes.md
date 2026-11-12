@@ -51,7 +51,9 @@ an approval recorded before the interval ended to be consumed by an Apply and
 then marked `Stale` by the proof after it, as every applied approval is, rather
 than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
-one `stale` outcome, where it took two of each. A script that acts on the exit
+one `stale` outcome, where it took two of each. A Plan retried after a failure
+no longer counts a `stale` outcome or records a `LeaseContinuityLost` Warning
+Event. A script that acts on the exit
 status of a `kubectl ptah` wait on a migration run has to expect the statuses
 the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
@@ -449,10 +451,10 @@ and goes while the Pod may still read, and records the proof `Unknown`.
   [What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)
   says what it can still hold. An Apply is still waited for until its Job
   stops.
-- **A retried Plan runs again.** A Plan that failed, or that ran past its Job's
-  stop bound, hands its database Lease back and moves to its next attempt. When
-  that attempt took the Lease again, the operator read the new epoch as lost
-  continuity: it recorded a `LeaseContinuityLost` Warning Event and
+- **A retried Plan runs again.** A Plan that failed handed its database Lease
+  back and moved to its next attempt, as one past its Job's stop bound now does
+  too. When that attempt took the Lease again, the operator read the new epoch
+  as lost continuity: it recorded a `LeaseContinuityLost` Warning Event and
   `Ready=False` with that reason, cleared `status.plan` and started over with an
   Observe. The next attempt now takes the epoch as its own and runs the Plan
   again. A proof keeps the Apply's Lease across its attempts and was not
