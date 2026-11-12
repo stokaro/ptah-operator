@@ -13,7 +13,8 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-// A PtahSchema's waits for a stuck Apply Pod (stuck_pod_warning.go).
+// A PtahSchema's waits for an Apply Pod that is stuck or gone
+// (stuck_pod_warning.go).
 
 // warnStuckPods records a PodStuckTerminating Warning, in the words of waiter,
 // for each Pod of job that is stuck terminating once job is past jobStopBound,
@@ -79,4 +80,42 @@ func (r *SchemaReconciler) warnAboutStuckPods(
 			r.event(schema, corev1.EventTypeWarning, "PodStuckTerminating", "%s", stuckPodWarningText(waiter, jobName, jobUID, pod))
 		}
 	}
+}
+
+// warnApplyPodGone records an ApplyPodGone Warning while a deleted PtahSchema
+// waits until observeAfter, its pending observation's ObserveAfter, with no Pod
+// of the Apply's Job left: pods is what the wait listed by the Job's UID.
+// Nothing says the executor stopped. A Pod force-deleted, or removed by PodGC
+// once its Node object went, can still run on a node the API server cannot
+// reach, so the deletion holds the database Lease until the Apply's execution
+// deadline and its Pod's termination grace have passed
+// (finishUncertainApplyWithEvidenceAndBinding), the instant a live schema's
+// proof waits for before it reads the database. A live schema shows that
+// instant in status.pendingObservation.observeAfter. A deleted one only stays
+// Terminating, so this Warning says why it waits and until when. It is repeated
+// with the backoff a PodStuckTerminating Warning has, by the Job's UID, which
+// it names because another Job can hold the name.
+//
+// A record that names no Job UID warns about nothing: its create may never
+// have landed, so there is no Job to name and no Pod the API server could have
+// lost. Nor does one whose Pods still stand, stopped or not: a stuck one is
+// what PodStuckTerminating names.
+func (r *SchemaReconciler) warnApplyPodGone(
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+	pods []*corev1.Pod,
+	observeAfter time.Time,
+) {
+	if pending.ApplyJobUID == "" || len(pods) != 0 {
+		return
+	}
+	if !stuckPodWarningsOf(&r.goneApplyPods).due(pending.ApplyJobUID, r.now()) {
+		return
+	}
+	r.event(schema, corev1.EventTypeWarning, "ApplyPodGone",
+		"%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
+			"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
+			"still runs on a node the API server cannot reach, so the database Lease stays held until the "+
+			"Apply's execution deadline and its Pod's termination grace have passed.",
+		deletionWaits, pending.ApplyJobName, pending.ApplyJobUID, observeAfter.UTC().Format(time.RFC3339))
 }

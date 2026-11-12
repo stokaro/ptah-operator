@@ -153,7 +153,10 @@ type SchemaReconciler struct {
 	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	Jobs      JobBuilder
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
+	// Pods are gone.
+	goneApplyPods *stuckPodWarnings
+	Jobs          JobBuilder
 	// SealKey is this manager process's key pair. The Plan Job builder is
 	// given its public half; this reconciler opens the Plan payload sealed
 	// to it. The private half is never persisted, so a process that
@@ -994,8 +997,12 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			if err := r.warnStuckApplyPods(ctx, schema, pending, pods, deletionWaits); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
+			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
-		if activePod || until(pending.ObserveAfter, r.now()) > 0 {
+		if until(pending.ObserveAfter, r.now()) > 0 {
+			// With no Pod left to wait for, the wait still lasts until the
+			// Apply's horizon, and a deleted schema says so nowhere else.
+			r.warnApplyPodGone(schema, pending, pods, pending.ObserveAfter.Time)
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		before := schema.DeepCopy()
