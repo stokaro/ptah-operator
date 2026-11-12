@@ -8,12 +8,15 @@ import (
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
-// Details is what --details adds: the whole status as stored, and the read
-// request the spec holds now, which the status answers.
+// Details is what --details adds: the status, and the read request the
+// resource holds now, which the status answers.
 //
-// The text prints every record of Status the view does not already print in
-// full; the JSON carries Status as it is, so a script reads the same fields
-// the API reference documents.
+// Status is decoded into the API types this plugin was built with, so it
+// holds every field this plugin's API version knows; a field a newer operator
+// added to the stored object is not in it. The text prints every record of
+// Status the view does not already print in full; the JSON carries Status as
+// decoded, so a script reads the fields the API reference of this version
+// documents.
 type Details struct {
 	// ReadRequested is the operator.ptah.run/read-requested-at annotation as
 	// the migration holds it now. status.lastReadRequest is the last value

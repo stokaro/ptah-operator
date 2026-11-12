@@ -24,7 +24,7 @@ Conditions:
   DriftDetected         Unknown  ScopedPlanPending    2026-11-06T18:28:31Z  Raw drift was recorded; the authoritative managed scope is being planned
   InSync                Unknown  ScopedPlanPending    2026-11-06T18:28:31Z  Convergence is unknown until scoped planning completes
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               generation 1; the spec is at generation 1
   Observed generation: 1

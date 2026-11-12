@@ -2157,8 +2157,8 @@ kubectl ptah migration orders -n application --details
 ```
 
 The first prints the record under `Unresolved run`, apart from the last run,
-with the migration's UID; the second adds every field of the record as
-stored, and of the last run beside it.
+with the migration's UID; the second adds every field of the record the
+plugin knows, and of the last run beside it.
 
 The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
@@ -2329,8 +2329,8 @@ kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-f
 ```
 
 `kubectl ptah migration orders -n application` prints it as a `Settled run`
-line, and lists the acknowledgment with its conditions; `--details` adds the
-record whole.
+line, and lists the acknowledgment with its conditions; `--details` adds
+every field of the record the plugin knows.
 
 The acknowledgment reads `Consumed=True`, and a Normal Event,
 `UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then

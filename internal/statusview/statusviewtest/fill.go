@@ -80,9 +80,11 @@ func (f *filler) field(value reflect.Value, path, label string) {
 		f.add(path, label, statusview.Time(at))
 		return
 	case durationType:
-		duration := metav1.Duration{Duration: time.Duration(f.next)*time.Second + 7*time.Millisecond}
+		// Whole minutes, which statusview.Duration prints as "5m" where
+		// time.Duration prints "5m0s".
+		duration := metav1.Duration{Duration: time.Duration(f.next) * time.Minute}
 		value.Set(reflect.ValueOf(duration))
-		f.add(path, label, duration.Duration.String())
+		f.add(path, label, statusview.Duration(duration.Duration))
 		return
 	case quantityType:
 		quantity := resource.MustParse(fmt.Sprintf("%dMi", 1000+f.next))

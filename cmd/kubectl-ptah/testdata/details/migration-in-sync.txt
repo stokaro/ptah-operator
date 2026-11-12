@@ -26,7 +26,7 @@ Conditions:
   Ready             True    HistoryMatched   2026-10-03T22:35:29Z  The database has every migration this artifact carries
   ApprovalRequired  False   Satisfied        2026-10-03T22:29:41Z  The plan's approval requirements are satisfied
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               generation 1; the spec is at generation 1
   Observed generation: 1
@@ -51,9 +51,9 @@ Artifact:
     Username key: username
     Password key: password
     Token key: token
-    Docker config j s o n key: .dockerconfigjson
+    Docker config JSON key: .dockerconfigjson
   Transport:
-    Plain h t t p: true
+    Plain HTTP: true
 
 History read:         2026-10-03T22:35:29Z
   The database's revision table as the operator last read it, with its newest

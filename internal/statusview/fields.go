@@ -103,6 +103,11 @@ func writeField(text *strings.Builder, indent, label string, value reflect.Value
 		for index := range value.Len() {
 			var item strings.Builder
 			writeRecord(&item, indent+"    ", value.Index(index))
+			if item.Len() == 0 {
+				// An item whose fields are all unset is still an item.
+				fmt.Fprintf(text, "%s  - (empty)\n", indent)
+				continue
+			}
 			fmt.Fprintf(text, "%s  - %s", indent, strings.TrimPrefix(item.String(), indent+"    "))
 		}
 	case reflect.Map:
@@ -142,7 +147,7 @@ func scalar(value reflect.Value) (rendered string, ok bool) {
 			}
 			return Time(typed), true
 		case metav1.Duration:
-			return typed.Duration.String(), true
+			return Duration(typed.Duration), true
 		case resource.Quantity:
 			return Clean(typed.String()), true
 		}
@@ -214,12 +219,17 @@ func jsonField(field reflect.StructField) (name string, omitEmpty, inline bool) 
 }
 
 // acronyms are the words an API name spells in capitals, longest first so
-// "UIDs" is not read as "UID" and a stray "s".
-var acronyms = []string{"UIDs", "UID", "IDs", "ID", "SQL", "URL", "TTL", "OCI", "TLS", "API"}
+// "UIDs" is not read as "UID" and a stray "s", nor "HTTPS" as "HTTP".
+var acronyms = []string{
+	"HTTPS", "HTTP", "JSON", "UIDs", "UID", "IDs", "ID", "SQL", "URL", "TTL", "OCI", "TLS", "API",
+}
 
 // lowerAcronyms are the same words where a name starts with them in lower
 // case, as sqlState does.
-var lowerAcronyms = map[string]string{"uid": "UID", "id": "ID", "sql": "SQL", "url": "URL", "ttl": "TTL", "oci": "OCI"}
+var lowerAcronyms = map[string]string{
+	"uid": "UID", "id": "ID", "sql": "SQL", "url": "URL", "ttl": "TTL", "oci": "OCI",
+	"json": "JSON", "http": "HTTP", "https": "HTTPS",
+}
 
 // Label turns an API field name into the words a reader sees: jobUID is
 // "Job UID", applyPodUIDs "Apply pod UIDs", dispatchNotAfter "Dispatch not

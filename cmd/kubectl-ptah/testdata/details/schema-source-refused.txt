@@ -21,7 +21,7 @@ Conditions:
   Ready                 False   OperationFailed       2026-11-06T18:28:03Z  Reconciliation did not complete
   DatabaseReachable     False   AuthenticationFailed  2026-11-06T18:28:15Z  authentication_failed: the target database refused the credentials. Check the user and password in the URL that Secret "e2e-reachability-schema-database" holds under key "url"
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               generation 1; the spec is at generation 1
   Observed generation: 1

@@ -60,8 +60,9 @@ type View struct {
 	ApprovalsUnreadable       *statusview.Unreadable                    `json:"approvalsUnreadable,omitempty"`
 	Acknowledgments           *statusview.Decisions[AcknowledgmentView] `json:"acknowledgments,omitempty"`
 	AcknowledgmentsUnreadable *statusview.Unreadable                    `json:"acknowledgmentsUnreadable,omitempty"`
-	// Details is the whole status, present only when it was asked for, so
-	// the view without it reads as it always has.
+	// Details is the status as this plugin's API version decodes it, present
+	// only when it was asked for, so the view without it reads as it always
+	// has.
 	Details *Details `json:"details,omitempty"`
 }
 
@@ -210,8 +211,8 @@ func Load(
 	return load(ctx, reader, namespace, name, false)
 }
 
-// LoadWithDetails reads the view and the whole status beside it, from the
-// same read of the migration.
+// LoadWithDetails reads the view and the status beside it, from the same
+// read of the migration.
 func LoadWithDetails(ctx context.Context, reader client.Reader, namespace, name string) (View, error) {
 	return load(ctx, reader, namespace, name, true)
 }

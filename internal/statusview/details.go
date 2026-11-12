@@ -11,8 +11,9 @@ import (
 )
 
 // DetailsHeading opens the part of a view --details adds, after everything
-// the view prints without it.
-const DetailsHeading = "\nDetails, every record the status holds:\n"
+// the view prints without it. The status is decoded into the API types this
+// plugin was built with, so a field a newer operator added is not among them.
+const DetailsHeading = "\nDetails, every status field this plugin's API version knows:\n"
 
 // WriteRecord writes one status record a details view prints: a "Label:"
 // line with what the record is in a few words, a sentence that says what it

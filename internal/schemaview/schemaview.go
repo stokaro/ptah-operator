@@ -71,8 +71,9 @@ type View struct {
 	// ApprovalsUnreadable says why: no list is not an empty list.
 	Approvals           *statusview.Decisions[ApprovalView] `json:"approvals,omitempty"`
 	ApprovalsUnreadable *statusview.Unreadable              `json:"approvalsUnreadable,omitempty"`
-	// Details is the whole status, present only when it was asked for, so
-	// the view without it reads as it always has.
+	// Details is the status as this plugin's API version decodes it, present
+	// only when it was asked for, so the view without it reads as it always
+	// has.
 	Details *Details `json:"details,omitempty"`
 }
 
@@ -169,8 +170,8 @@ func Load(ctx context.Context, reader client.Reader, namespace, name string) (Vi
 	return load(ctx, reader, namespace, name, false)
 }
 
-// LoadWithDetails reads the view and the whole status beside it, from the
-// same read of the schema.
+// LoadWithDetails reads the view and the status beside it, from the same
+// read of the schema.
 func LoadWithDetails(ctx context.Context, reader client.Reader, namespace, name string) (View, error) {
 	return load(ctx, reader, namespace, name, true)
 }

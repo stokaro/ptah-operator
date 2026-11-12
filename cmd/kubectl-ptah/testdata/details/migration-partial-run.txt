@@ -27,7 +27,7 @@ Conditions:
   Ready             False   HistoryDirty         2026-01-01T00:00:00Z  The revision table holds a dirty row
   ApprovalRequired  False   Satisfied            2026-01-01T00:00:00Z  The plan's approval requirements are satisfied
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               generation 2; the spec is at generation 2
   Observed generation: 2
@@ -89,9 +89,9 @@ Artifact:
     Username key: username
     Password key: password
     Token key: token
-    Docker config j s o n key: .dockerconfigjson
+    Docker config JSON key: .dockerconfigjson
   Transport:
-    Plain h t t p: true
+    Plain HTTP: true
 
 History read:         2026-01-01T00:00:00Z
   The database's revision table as the operator last read it, with its newest

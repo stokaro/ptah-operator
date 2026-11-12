@@ -41,7 +41,7 @@ Conditions:
   Ready             False   ApplyOutcomeUnknown  2026-09-30T06:30:48Z  What the dispatched run did is unknown until the database is read
   ApprovalRequired  False   Satisfied            2026-09-30T06:30:48Z  The plan's approval requirements are satisfied
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               no generation yet; the spec is at generation 1
   Phase: Blocked
@@ -67,9 +67,9 @@ Active operation:     Apply, attempt 1, claimed 2026-09-30T06:30:48Z
       Username key: username
       Password key: password
       Token key: token
-      Docker config j s o n key: .dockerconfigjson
+      Docker config JSON key: .dockerconfigjson
     Transport:
-      Plain h t t p: true
+      Plain HTTP: true
   Target:
     Engine: PostgreSQL
     URL from:

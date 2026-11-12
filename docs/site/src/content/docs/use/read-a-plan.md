@@ -360,7 +360,7 @@ command still prints the schema, says in one line that the approvals are not
 shown because listing them is forbidden, and exits 0; `-o json` carries the
 same answer as `approvalsUnreadable`, in place of `approvals`.
 
-### Every record the status holds {#details}
+### Every status field the plugin knows {#details}
 
 ```sh
 kubectl ptah schema storefront -n application --details
@@ -372,6 +372,9 @@ summarizes or leaves out, each with every field it holds, labeled by the name
 the [API reference](../../reference/ptahschema/) lists it under, in words:
 `jobUID` reads `Job UID`. A field the record leaves unset is not printed. It
 reads the same object as the view and nothing more, so it needs the same `get`.
+The plugin decodes the status into the API version it was built with, so these
+are the fields that version knows: a field a newer operator added to the
+stored object is not printed, and `kubectl get -o yaml` shows it.
 
 `Status` is the status's own fields: the generation it was written for, the
 phase, when it reads next, and for a schema when it last attempted a read and
@@ -406,9 +409,9 @@ whole. A settled run says whether a reading of the database settled it or a
 person's acknowledgment did, which is a statement that the run is accounted for
 and not proof that the data is correct.
 
-With `-o json`, `--details` adds `details.status`, the status as stored, field
-for field, and `details.readRequested`, the annotation it answers. Without the
-flag neither the text nor the JSON changes.
+With `-o json`, `--details` adds `details.status`, the status as the plugin
+decodes it, field for field, and `details.readRequested`, the annotation it
+answers. Without the flag neither the text nor the JSON changes.
 
 ## A migration, not a plan {#migration}
 
@@ -540,9 +543,9 @@ A ConfigMap or Git source prints the same lines as
 
 `-o json` prints the same view as a document, for a script that wants the
 pending count, the last run's outcome and Job, or the unresolved run without
-parsing text. `--details` adds every record the status holds, the operation
-claimed and the revision rows among them: [Every record the status
-holds](#details).
+parsing text. `--details` adds every status field the plugin knows, the
+operation claimed and the revision rows among them: [Every status field the
+plugin knows](#details).
 
 What it never prints is SQL or a table row. A migration plan records versions,
 descriptions and checksums; reading the statements means reading the artifact,

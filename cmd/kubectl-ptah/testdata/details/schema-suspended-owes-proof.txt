@@ -32,7 +32,7 @@ Conditions:
   Suspended             True    Requested            2026-10-02T00:06:35Z  New database operations are suspended (written for generation 2)
   Applying              False   OutcomeUnknown       2026-10-02T00:06:35Z  Apply outcome is uncertain; only read-only observation is permitted (written for generation 2)
 
-Details, every record the status holds:
+Details, every status field this plugin's API version knows:
 
 Status:               generation 1; the spec is at generation 1
   Observed generation: 1
@@ -127,12 +127,12 @@ Pending proof:        the reading that proves an Apply is owed
       Username key: username
       Password key: password
       Token key: token
-      Docker config j s o n key: .dockerconfigjson
+      Docker config JSON key: .dockerconfigjson
     Transport:
-      Plain h t t p: true
+      Plain HTTP: true
   Drift severity: all
   Connect timeout: 10s
-  Lock timeout: 4m0s
+  Lock timeout: 4m
   Lease duration seconds: 360
   Lease epoch: v1-47d67f8a140d7df529c1cdb61dee209c
 

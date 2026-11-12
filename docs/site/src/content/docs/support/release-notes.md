@@ -150,13 +150,14 @@ name the resource, and one more line before the closing `kubectl events` line.
   printed none of the operation a resource has claimed, a schema's proof still
   owed after an Apply, a Lease release or binding retirement still owed, or a
   migration's revision rows, and `-o json` carried only the view. `--details`
-  prints every record the status holds after the view, each field labeled by
-  its API name, with a line that says whether a claim's Job is only reserved by
-  name or confirmed by UID, that an Apply's own result is not the reading that
-  proves it, and that an acknowledgment is a statement rather than proof. With
-  `-o json` it adds `details.status`, the status as stored. Without the flag
-  neither output changes. [Every record the status
-  holds](../../use/read-a-plan/#details) has the rest.
+  prints every status field the plugin's API version knows after the view,
+  each labeled by its API name, with a line that says what a claim knows of its
+  Job (confirmed by UID, a create attempted, not created yet, or not confirmed
+  for a claim that marks nothing before its create), that an Apply's own result
+  is not the reading that proves it, and that an acknowledgment is a statement
+  rather than proof. With `-o json` it adds `details.status`, the status as the
+  plugin decodes it. Without the flag neither output changes. [Every status
+  field the plugin knows](../../use/read-a-plan/#details) has the rest.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
   readers then needed rights of their own on the tables it reads, so a read that
