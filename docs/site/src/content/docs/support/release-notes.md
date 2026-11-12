@@ -149,6 +149,18 @@ name the resource, and one more line before the closing `kubectl events` line.
   every entry. It needs `get` on the resource; listing plans and decisions is
   optional. [What a resource kept of its past](../../use/read-a-plan/#history)
   has the rest.
+- **`kubectl ptah settle` gives up a proof whose target moved.** A schema whose
+  URL Secret names another target than the plan its Apply ran from stops with a
+  `kubectl annotate` command in its message, and the value had to be copied out
+  of it. `kubectl ptah settle schema/NAME` reads the value from the message and
+  writes the same annotation, and nothing else. It prints how the journal
+  records the Apply's end and what the operator gives up when it takes the
+  statement, and changes nothing, with exit status 4, on a schema that has not
+  stopped there or a value that no longer matches it. `--expect` names the
+  value you read, so a stop that moved to another target since is refused
+  rather than settled. `--wait` waits until the operator has taken the
+  statement.
+  [Settle from the command line](../../use/recovery/#settle) has the details.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
   readers then needed rights of their own on the tables it reads, so a read that
