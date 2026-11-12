@@ -2739,7 +2739,9 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 	// finisher still gets none: the retired-Job record the rotation writes
 	// schedules its cleanup once it stops. A read that fails does not hold the
 	// retirement back: the words then stay as the last report, which is what
-	// they were before the read.
+	// they were before the read. The Pods listed above answer it as well: one
+	// whose executor started since the last look takes the words off, as it does
+	// on the other endings that list them (withPodsRead).
 	job := &batchv1.Job{}
 	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -2752,7 +2754,7 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 		ctx,
 		schema,
 		nil,
-		withLastPodReport(failure, schemaPodReport(schema, job)),
+		withLastPodReport(failure, schemaPodReport(schema, job).withPodsRead(evidence)),
 		evidence.PodUIDs,
 		evidence.PodCount,
 		true,
