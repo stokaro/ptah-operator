@@ -63,15 +63,15 @@ func (a *alertingRun) unresolvedApply() {
 	}
 }
 
-// PostgreSQL scopes advisory locks to each database, and these families own
-// different databases and alert series. MySQL's server-wide migration lock
-// keeps its cases sequential. Neither lane changes shared manager settings.
+// The two families own different databases and alert series, and on each
+// engine they run side by side. Neither can wait on the other's lock. A
+// PostgreSQL advisory lock is scoped to its database. A MySQL GET_LOCK name is
+// server-wide, but the families take different ones: Ptah's migrator takes
+// ptah_migrate and its schema apply ptah_schema_apply (migration/migrator and
+// internal/atlasschema at the pinned f47b2bfa), and the operator names neither.
+// Every database read either case makes is filtered by its own database.
+// Neither lane changes shared manager settings.
 func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.PtahMigration) {
-	if m.engine.name != "postgresql" {
-		a.unresolvedMigrationCase(m, template)
-		a.unresolvedSchemaCase(m)
-		return
-	}
 	var cases [2]harness.ParallelCase
 	for i, family := range []string{"migration", "schema"} {
 		cases[i] = harness.ParallelCase{Name: family, Run: func(t *testing.T) {
@@ -86,7 +86,7 @@ func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.Pt
 			}
 		}}
 	}
-	if !harness.ParallelPair(a.t, "independent-postgresql-families", cases) {
+	if !harness.ParallelPair(a.t, "independent-"+m.engine.name+"-families", cases) {
 		a.t.FailNow()
 	}
 }
