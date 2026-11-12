@@ -99,7 +99,7 @@ decision.
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |
 | `Waiting` | The controller is waiting for an approval bound to the current plan. |
-| `WaitingForDatabaseLock` | A migration's Apply is claimed and another operation on this database holds the realm's Lease, which the message names. The claim asks for the Lease every five seconds, so it goes on within seconds of the Lease coming free. Usually no Job exists yet. A message that names a Job means the Apply started it and then lost the Lease, as when the manager was down for longer than the Lease lasts: its SQL may still be running, so read the Job before you act on the database. A wait that does not end is what `PtahOperatorOperationStalled` covers. |
+| `WaitingForDatabaseLock` | A claim that holds the realm's Lease is waiting for it, because another operation on this database holds it, and the message names the Lease. That is a migration's Apply, on `Progressing=True`, or a schema's Apply, Plan or the Observe that proves an Apply, on `Ready=False`. The claim asks for the Lease every five seconds, so it goes on within seconds of the Lease coming free. Usually no Job exists yet. A message that names a Job means the claim started it and then lost the Lease, as when the manager was down for longer than the Lease lasts: an Apply's SQL may still be running, so read the Job before you act on the database. A wait that does not end is what `PtahOperatorOperationStalled` covers. |
 
 ## A migration history that stops everything
 

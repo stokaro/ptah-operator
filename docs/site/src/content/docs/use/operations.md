@@ -2873,9 +2873,12 @@ so each sums them. The operation label on a state gauge is the API's type
 A claimed Apply that is waiting for its realm's Lease holds its operation
 claim while it waits, so contention for a realm reads as an Apply in flight for
 longer than its Job would take, and `PtahOperatorOperationStalled` covers a
-wait that does not end. A `PtahMigration` also says so itself: `Progressing=True`
-with reason `WaitingForDatabaseLock`, naming the Lease, and the Job when one may
-still be running. Either family asks for the
+wait that does not end. The resource also says so itself, with reason
+`WaitingForDatabaseLock`, naming the Lease, and the Job when one may still be
+running: a `PtahMigration` on `Progressing=True`, and a `PtahSchema` on
+`Ready=False`, for its Apply, its Plan and the Observe that proves an Apply. A
+schema whose `Ready` reports a Pod that cannot start keeps that report while it
+waits. Either family asks for the
 Lease every five seconds, so it goes on within seconds of the Lease coming free.
 The Lease names its holder: `kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
 one realm without `spec.target.sharedRealm` is a refusal instead, and reads as

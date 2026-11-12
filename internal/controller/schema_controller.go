@@ -1040,7 +1040,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		// inspecting or consuming any post-Apply proof result. An active
 		// attempt blocks proof consumption; newly observed terminal evidence
 		// changes the proof fingerprint and makes the current result stale.
-		acquired, requeue, lockErr := r.acquirePendingObservationLock(ctx, schema)
+		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
 		}
@@ -1188,7 +1188,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.retryPastOverdueSchemaJob(ctx, schema, job)
 	}
 	if schemaClaimHoldsLock(schema) {
-		acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
+		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
 		}
@@ -4105,18 +4105,26 @@ func (r *SchemaReconciler) acquireApplyLock(ctx context.Context, schema *operato
 // acquireClaimLock takes the realm under the active claim's own identity, the
 // way a claim holds it when no proof is outstanding.
 func (r *SchemaReconciler) acquireClaimLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
+	request, err := r.claimLockRequest(schema)
+	if err != nil {
+		return false, 0, err
+	}
+	return r.acquireActiveLock(ctx, schema, request)
+}
+
+func (r *SchemaReconciler) claimLockRequest(schema *operatorv1alpha1.PtahSchema) (targetlock.Request, error) {
 	operation := schema.Status.ActiveOperation
 	if operation == nil {
-		return false, 0, fmt.Errorf("active operation is missing")
+		return targetlock.Request{}, fmt.Errorf("active operation is missing")
 	}
 	if operation.CoordinationDigest == "" || operation.LeaseDurationSeconds == 0 {
-		return false, 0, fmt.Errorf("%s target lock inputs are incomplete", strings.ToLower(string(operation.Type)))
+		return targetlock.Request{}, fmt.Errorf("%s target lock inputs are incomplete", strings.ToLower(string(operation.Type)))
 	}
-	return r.acquireActiveLock(ctx, schema, targetlock.Request{
+	return targetlock.Request{
 		CoordinationNamespace: r.LockNamespace, CoordinationDigest: operation.CoordinationDigest,
 		Holder:   targetlock.Holder{SchemaUID: schema.UID, OperationID: operation.ID},
 		Duration: time.Duration(operation.LeaseDurationSeconds) * time.Second,
-	})
+	}, nil
 }
 
 // acquireOperationLock takes the realm the way the active claim holds it: on
@@ -4124,17 +4132,34 @@ func (r *SchemaReconciler) acquireClaimLock(ctx context.Context, schema *operato
 // The operation type's descriptor answers which, as it does when the claim is
 // retired.
 func (r *SchemaReconciler) acquireOperationLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
+	acquired, _, requeue, err := r.tryOperationLock(ctx, schema)
+	return acquired, requeue, err
+}
+
+// tryOperationLock is one attempt at the Lease acquireOperationLock takes.
+// contended is a Lease another operation holds, as apart from the write this
+// pass makes to record an epoch, which also ends the pass without the Lease in
+// hand.
+func (r *SchemaReconciler) tryOperationLock(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+) (acquired, contended bool, requeue time.Duration, err error) {
 	if schema.Status.ActiveOperation == nil {
-		return false, 0, fmt.Errorf("active operation is missing")
+		return false, false, 0, fmt.Errorf("active operation is missing")
 	}
+	var request targetlock.Request
 	switch {
 	case schemaClaimServesProof(schema):
-		return r.acquirePendingObservationLock(ctx, schema)
+		request, err = r.proofLockRequest(schema)
 	case schemaClaimHoldsLock(schema):
-		return r.acquireClaimLock(ctx, schema)
+		request, err = r.claimLockRequest(schema)
 	default:
-		return true, 0, nil
+		return true, false, 0, nil
 	}
+	if err != nil {
+		return false, false, 0, err
+	}
+	return r.tryActiveLock(ctx, schema, request)
 }
 
 // planSealPublicKeyDigest is the digest recorded on a Plan claim and compared
@@ -4145,12 +4170,22 @@ func planSealPublicKeyDigest(key planseal.PublicKey) string {
 }
 
 func (r *SchemaReconciler) acquirePendingObservationLock(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (bool, time.Duration, error) {
+	request, err := r.proofLockRequest(schema)
+	if err != nil {
+		return false, 0, err
+	}
+	return r.acquireActiveLock(ctx, schema, request)
+}
+
+// proofLockRequest is the Lease request of a claim that carries out the proof
+// a pending observation owes: the Apply's, under the Apply's identity.
+func (r *SchemaReconciler) proofLockRequest(schema *operatorv1alpha1.PtahSchema) (targetlock.Request, error) {
 	pending := schema.Status.PendingObservation
 	operation := schema.Status.ActiveOperation
 	if pending == nil || operation == nil || !schemaOperation(operation).ServesProof {
-		return false, 0, fmt.Errorf("pending observation lock inputs are incomplete")
+		return targetlock.Request{}, fmt.Errorf("pending observation lock inputs are incomplete")
 	}
-	return r.acquireActiveLock(ctx, schema, r.pendingLockRequest(schema, pending))
+	return r.pendingLockRequest(schema, pending), nil
 }
 
 func (r *SchemaReconciler) acquirePendingLock(
@@ -4193,14 +4228,30 @@ func (r *SchemaReconciler) acquireActiveLock(
 	schema *operatorv1alpha1.PtahSchema,
 	request targetlock.Request,
 ) (bool, time.Duration, error) {
+	acquired, _, requeue, err := r.tryActiveLock(ctx, schema, request)
+	return acquired, requeue, err
+}
+
+// tryActiveLock is acquireActiveLock, and says whether a pass that ends without
+// the Lease ends there because another operation holds it.
+func (r *SchemaReconciler) tryActiveLock(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	request targetlock.Request,
+) (acquired, contended bool, requeue time.Duration, err error) {
 	operation := schema.Status.ActiveOperation
 	if operation == nil {
-		return false, 0, fmt.Errorf("active operation is required for database lock acquisition")
+		return false, false, 0, fmt.Errorf("active operation is required for database lock acquisition")
 	}
 	request.ExpectedEpoch = operation.LeaseEpoch
 	acquired, requeue, epoch, reportedContinuityLoss, err := r.acquireLockEpoch(ctx, request)
-	if err != nil || !acquired {
-		return acquired, requeue, err
+	if err != nil {
+		return false, false, 0, err
+	}
+	if !acquired {
+		// acquireLockEpoch ends without the Lease and without an error only
+		// when another operation holds it.
+		return false, true, requeue, nil
 	}
 	expected := operation.LeaseEpoch
 	pending := schema.Status.PendingObservation
@@ -4213,10 +4264,13 @@ func (r *SchemaReconciler) acquireActiveLock(
 		}
 	}
 	if expected == epoch && operation.LeaseEpoch == epoch {
-		return true, 0, nil
+		return true, false, 0, nil
 	}
 
 	before := schema.DeepCopy()
+	// A wait ends here: taking the Lease from anybody else rotates its epoch,
+	// so a claim that was waiting always reaches this write.
+	endLockWait(schema)
 	continuityLost := expected == "" || reportedContinuityLoss || expected != epoch
 	if continuityLost && !schemaMayHaveDispatched(operation) && (expected != "" || !schemaClaimServesProof(schema)) {
 		// The first Lease creation necessarily has a new epoch. Because the
@@ -4257,12 +4311,12 @@ func (r *SchemaReconciler) acquireActiveLock(
 		}
 	}
 	if err := r.patchStatus(ctx, before, schema); err != nil {
-		return false, 0, err
+		return false, false, 0, err
 	}
 	if continuityLost {
 		r.event(schema, corev1.EventTypeWarning, "LeaseContinuityLost", "Database lock continuity changed; the active result will be discarded")
 	}
-	return false, statusPatchRequeue, nil
+	return false, false, statusPatchRequeue, nil
 }
 
 func (r *SchemaReconciler) acquireLockEpoch(ctx context.Context, request targetlock.Request) (bool, time.Duration, string, bool, error) {

@@ -358,22 +358,11 @@ func (r *MigrationReconciler) waitForMigrationApplyLock(
 	return false, requeue, nil
 }
 
-// migrationLockWaitMessage says what a claim is waiting for. It names the Lease,
-// which names its holder to whoever may read the operator's namespace, and not
-// the holder: the holder can be another team's resource in a shared realm. It also
-// says when the claim may have started its Job, because a reader who took the
-// wait for an Apply that has not started could act while its SQL runs.
+// migrationLockWaitMessage says what a claim is waiting for, in the words a
+// schema uses (lockWaitMessage).
 func migrationLockWaitMessage(operation *operatorv1alpha1.MigrationOperationStatus) string {
-	lease, err := targetlock.LeaseName(operation.CoordinationDigest)
-	if err != nil {
-		lease = "of this database's realm"
-	}
-	if migrationMayHaveDispatched(operation) {
-		return fmt.Sprintf("%s is waiting for the database lock it lost, and Job %s may still be running: another operation on this database holds Lease %s. It asks again every %s",
-			operation.Type, operation.JobName, lease, maxLockContentionPoll)
-	}
-	return fmt.Sprintf("%s is waiting for the database lock: another operation on this database holds Lease %s. It asks again every %s",
-		operation.Type, lease, maxLockContentionPoll)
+	return lockWaitMessage(string(operation.Type), operation.JobName, operation.CoordinationDigest,
+		migrationMayHaveDispatched(operation))
 }
 
 // acquireMigrationApplyLock serializes execution against every other operator

@@ -121,7 +121,9 @@ script that waits for a `PtahMigration` to be deleted, for an acknowledgment of
 its run to be taken, or for its database to be free, after its Apply Pod was
 deleted with `--force` or its Apply Job was deleted, or after PodGC marked its
 Apply Pod `Failed` over an executor it had not seen stop, has to allow until
-the end of the Apply's term, the time the `ApplyPodGone` Warning names.
+the end of the Apply's term, the time the `ApplyPodGone` Warning names. A script
+that reads a `PtahSchema`'s `Ready` while its claim waits for the database lock
+sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -539,6 +541,15 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   repeats the report that the Pod could not start, and neither does a
   `PtahMigration` Apply whose result was not read, nor a schema Apply that a
   changed execution component ended. A read still does.
+- **A schema waiting for the database lock says so.** A `PtahSchema` Apply, a
+  Plan or the Observe that proves an Apply that found another operation holding
+  the realm's Lease asked for it every five seconds, and its `Ready` went on
+  reading `OperationInProgress`, as it does over a Job at work, with no Event.
+  `Ready=False` now reads reason `WaitingForDatabaseLock` and names the Lease
+  while the claim waits, as a `PtahMigration`'s `Progressing` does, and names
+  the Job where the claim started one before it lost the Lease, since an
+  Apply's SQL may still be running then. A report that the claim's Pod cannot
+  start stays on `Ready` instead. The wait itself is unchanged.
 
 ## 0.2.10
 
