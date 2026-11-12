@@ -193,8 +193,9 @@ func mtStatus(t *testing.T, document string) ptahv1alpha1.PtahMigrationStatus {
 }
 
 // The cases the migration filter self-test held
-// migration-partial-refusal.jq to, and the reading the operator produced when
-// a lifecycle failed on it: the phase is Resolving while the refusal holds.
+// migration-partial-refusal.jq to, and the reading the partial row printed
+// while a cycle read the database again: the phase is Resolving while the
+// refusal holds.
 func TestBlockedRefusalHeld(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "partial-run-left-a-dirty-revision.json"))
@@ -708,7 +709,7 @@ func mtSyncedView(versions ...int64) migrationview.View {
 	}
 	view.Conditions = statusview.FromConditions([]metav1.Condition{
 		{Type: "Ready", Status: "True", Reason: "HistoryMatched", Message: "The database has every migration this artifact carries", LastTransitionTime: observed},
-		{Type: "ApprovalRequired", Status: "False", Reason: "Satisfied", Message: "The plan's approval requirements are satisfied", LastTransitionTime: observed},
+		{Type: "ApprovalRequired", Status: "False", Reason: "HistoryMatched", Message: "This reading published no plan, so nothing waits for an approval", LastTransitionTime: observed},
 	})
 	view.Approvals = &statusview.Decisions[migrationview.ApprovalView]{Total: 1, Items: []migrationview.ApprovalView{{
 		Name: "e2e-migrations-postgresql-approval", PlanRef: ptahv1alpha1.ImmutableObjectReference{Name: "ptah-mplan-abc", UID: "plan-uid"},

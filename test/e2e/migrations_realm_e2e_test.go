@@ -394,13 +394,24 @@ func (m *migrationRun) partialRunBlocksAndRecovers() {
 	// Apply ones, recorded here with the partial run's own Job already in it.
 	// What is held is the refusal, not the phase.
 	applies := m.applyJobUIDs(migration)
+	var reading *ptahv1alpha1.PtahMigration
 	for hold := time.Now().Add(90 * time.Second); time.Now().Before(hold); {
 		m.recordJobs()
-		if !blockedRefusalHeld(m.migration(migration).Status) {
+		current := m.migration(migration)
+		if !blockedRefusalHeld(current.Status) {
 			m.fatalf("%s stopped refusing while a partial migration stood unresolved", migration)
+		}
+		// A reading taken while a cycle reads again is the one the unit tests hold
+		// the refusal predicates to: the phase is the cycle's, and the refusal is
+		// the dirty revision's.
+		if reading == nil && current.Status.Phase != ptahv1alpha1.MigrationPhaseBlocked && dirtyReading(current.Status, 3) {
+			reading = current
 		}
 		m.assertNoNewApplyJob(applies, "after a partial one", migration)
 		m.sleep(10 * time.Second)
+	}
+	if reading != nil {
+		m.printReading("partial run refusal", map[string]any{"metadata": readingMetadata(reading), "status": reading.Status})
 	}
 
 	// The person's decision: the half is undone, the revision row goes with

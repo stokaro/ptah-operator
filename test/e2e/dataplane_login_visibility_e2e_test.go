@@ -3,10 +3,6 @@
 package e2e
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
@@ -68,7 +64,7 @@ func (d *dataPlane) postgresqlLoginVisibilityDrift() {
 	}
 	drifted := d.waitForSchema(schemaName, "an Observe under the documented login to count the hand-made table and its primary key",
 		func(s *ptahv1alpha1.PtahSchema) bool { return unreadableTableObserved(s, digest) })
-	d.printLoginVisibilityDriftReading(drifted)
+	d.printReading("login-visibility drift", map[string]any{"status": drifted.Status})
 	d.logf("PASS a table the documented login holds nothing on is reported as tables_removed and constraints_removed")
 }
 
@@ -106,20 +102,4 @@ func (d *dataPlane) loginVisibilitySQL(statement string) string {
 	output, err := d.psql(loginVisibilityPGDatabase, statement)
 	d.check(err, "run %q in %s", statement, loginVisibilityPGDatabase)
 	return removeWhitespace(output)
-}
-
-// printLoginVisibilityDriftReading prints the status that satisfied the wait,
-// so a run's log holds the document the predicate's unit test reads. It is
-// scanned like every other document the phase prints, and withheld on a match.
-func (d *dataPlane) printLoginVisibilityDriftReading(schema *ptahv1alpha1.PtahSchema) {
-	d.t.Helper()
-	reading, err := json.Marshal(map[string]any{"status": schema.Status})
-	if err != nil || !d.scanner.ready() {
-		return
-	}
-	if d.scanner.leaks(reading) {
-		_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the login-visibility drift reading is withheld: it matched a protected credential\n")
-		return
-	}
-	_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the login-visibility drift reading\n%s\n", reading)
 }
