@@ -1,0 +1,27 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "unknown",
+  "plan_name": "plan_dcbfdfb2109f",
+  "plan_digest": "sha256:47e3258c03e3bf66d0e831a74969257d69043d1bf5bde8be07cd6330429044cf",
+  "units": [
+    {
+      "sql": "DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`"
+    },
+    {
+      "sql": "DROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`"
+    },
+    {
+      "sql": "DROP TRIGGER `differs_hand_trigger`"
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`"
+  },
+  "failure": {
+    "statement": 1,
+    "statements": 3,
+    "sqlstate": "42000",
+    "error_number": 1370
+  }
+}

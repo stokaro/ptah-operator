@@ -2350,6 +2350,329 @@
     }
   },
   {
+    "name": "differs-fk-index-takeover-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:d8ecbd1d48b426454c8d99eb7f193d7c99b9099634c29077de29223a77015d90",
+      "planContentDigest": "sha256:144c663c73dffb93e8f46562ebf9fab7bd429839fc97cd9c14de9a0741206204",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:ee2ab5c9d4920b6be2e445119207e1039eb55b6326e11f2062043602ae5f331d"
+    }
+  },
+  {
+    "name": "differs-fk-index-takeover-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "constraints_added",
+          "count": 1,
+          "severity": "warning"
+        },
+        {
+          "category": "indexes_removed",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 3
+        },
+        {
+          "desired": 4,
+          "kind": "constraints",
+          "observed": 3
+        },
+        {
+          "desired": 0,
+          "kind": "indexes",
+          "observed": 1
+        },
+        {
+          "desired": 2,
+          "kind": "tables",
+          "observed": 2
+        }
+      ],
+      "driftReportDigest": "sha256:6d87ada19166d52fb83c933dbd42b3955ed14be04397ae38539762c53087d6fe",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:75d421ca091c25abcca3bc57dca9329ae700a4be90202a6210b3c327630ab976",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:ee2ab5c9d4920b6be2e445119207e1039eb55b6326e11f2062043602ae5f331d"
+    }
+  },
+  {
+    "name": "differs-fk-index-takeover-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 3
+        },
+        {
+          "desired": 4,
+          "kind": "constraints",
+          "observed": 4
+        },
+        {
+          "desired": 2,
+          "kind": "tables",
+          "observed": 2
+        }
+      ],
+      "driftReportDigest": "sha256:af68ba46a4d95ab8cfbb2c2c338bf411c522cf359f311c7878f020312338b779",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:91e61df020b51e71a3c520fd2e7a14db5cc33ede99b358489329876bb33517b2",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:ee2ab5c9d4920b6be2e445119207e1039eb55b6326e11f2062043602ae5f331d"
+    }
+  },
+  {
+    "name": "differs-fk-index-takeover-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`);\n",
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:c23e8d1f7d7e10a835c92b57df4b51a17cd78feabc9854dc12075168571622eb",
+      "planContentDigest": "sha256:144c663c73dffb93e8f46562ebf9fab7bd429839fc97cd9c14de9a0741206204",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:ee2ab5c9d4920b6be2e445119207e1039eb55b6326e11f2062043602ae5f331d"
+    },
+    "savedPlan": "runner-harness/documents/differs-fk-index-takeover-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-fk-index-takeover-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:c240badbda488ca9f5d00f490e8722342bcfdc78de5a6b210f780a06a1d47620",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-fk-index-takeover-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-fk-index-takeover-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:4c1ab68eaf0a838478a0e57a4264ac69cc4fb51d3c0bd07c0f6788b971ea1dbb",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
     "name": "differs-foreign-table-own-wrapper-postgres/observe",
     "operation": "observe",
     "source": "oci",
@@ -3376,6 +3699,185 @@
     }
   },
   {
+    "name": "differs-login-before-view-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-before-view-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error reading database schema: the account harness_login_before_view@% cannot see everything in database \"harness_differs_login_before_view_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views differs_notes_view: SELECT and SHOW VIEW on `harness_differs_login_before_view_mysql`.*\n  - triggers: TRIGGER on `harness_differs_login_before_view_mysql`.*\n  - procedures and functions: SHOW_ROUTINE on *.*\n",
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every view definition, trigger and routine in the database",
+        "unseenObjects": [
+          "views",
+          "triggers",
+          "routines"
+        ]
+      },
+      "operation": "observe",
+      "operationId": "sha256:d21e0a2dfcf0647b3539d75fd8cdf08d7db00f46e23c5efb4f2b263282b98760",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:43ca7d9a2410c8caae24435ea0f5ad3c249da2a151570544fd48d8e4c4c62931"
+    }
+  },
+  {
+    "name": "differs-login-before-view-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-before-view-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: read database schema: the account harness_login_before_view@% cannot see everything in database \"harness_differs_login_before_view_mysql\": information_schema lists only what an account holds a privilege on, and a comparison reads a hidden object as absent. The account needs:\n  - the definitions of views differs_notes_view: SELECT and SHOW VIEW on `harness_differs_login_before_view_mysql`.*\n  - triggers: TRIGGER on `harness_differs_login_before_view_mysql`.*\n  - procedures and functions: SHOW_ROUTINE on *.*\n",
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "permission_denied",
+        "message": "the target database server accepted the credentials, and the user cannot see every view definition, trigger and routine in the database",
+        "unseenObjects": [
+          "views",
+          "triggers",
+          "routines"
+        ]
+      },
+      "operation": "plan",
+      "operationId": "sha256:2be29a1004b25d3a8edd7167e90e0ef9f4ea43c28dae416e78d7a31eb8a73553",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:43ca7d9a2410c8caae24435ea0f5ad3c249da2a151570544fd48d8e4c4c62931"
+    }
+  },
+  {
+    "name": "differs-login-before-view-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-before-view-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:3461b01670628c1c5e65ed2a41b0daab6c57971213bed994978e9b2c741b365a",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-before-view-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-before-view-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-before-view-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-before-view-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-before-view-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:e08fce253b3b6d3c23c87d3ca48eabf79098f733165806868293fca851429e8b",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
     "name": "differs-login-documented-mysql/apply",
     "operation": "apply",
     "source": "none",
@@ -4042,6 +4544,364 @@
       "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
       "operation": "verify",
       "operationId": "sha256:40498068667e6dd0a2a34bc24589fc0f4b8c17940ef4685b35503a728aabdbbe",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-login-show-routine-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`\n",
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "apply_outcome_unknown",
+        "message": "ptah sent the statements and returned an error, so how far they got is unknown"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:4b3da82c4ff26d5cf45df841b0b9d6049bdba9e45d65c2f73d718f14567d8f0a",
+      "planContentDigest": "sha256:47e3258c03e3bf66d0e831a74969257d69043d1bf5bde8be07cd6330429044cf",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9ec550ea40e75e9e63901c250a459354449ddd89ac981dd540c822b51da4bff8",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "differs-login-show-routine-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 3,
+      "driftFindings": [
+        {
+          "category": "functions_removed",
+          "count": 2,
+          "severity": "destructive"
+        },
+        {
+          "category": "triggers_removed",
+          "count": 1,
+          "severity": "destructive"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 0,
+          "kind": "functions",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 0,
+          "kind": "triggers",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:e7360d96b4e34320f8a42cff429d81842fc9a8b732ecc5a58bb54731209e1260",
+      "highestDriftSeverity": "destructive",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:3e3c849ba6088d8bebca68aa84344dd48d3da6c9d41f3e412de32f2e98b131e0",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9ec550ea40e75e9e63901c250a459354449ddd89ac981dd540c822b51da4bff8"
+    }
+  },
+  {
+    "name": "differs-login-show-routine-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 3,
+      "driftFindings": [
+        {
+          "category": "functions_removed",
+          "count": 2,
+          "severity": "destructive"
+        },
+        {
+          "category": "triggers_removed",
+          "count": 1,
+          "severity": "destructive"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 0,
+          "kind": "functions",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 0,
+          "kind": "triggers",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:e7360d96b4e34320f8a42cff429d81842fc9a8b732ecc5a58bb54731209e1260",
+      "highestDriftSeverity": "destructive",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:00ca66a718b97d35b208b8508478516b87ef783be0d0121539a2d7272d555c48",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9ec550ea40e75e9e63901c250a459354449ddd89ac981dd540c822b51da4bff8"
+    }
+  },
+  {
+    "name": "differs-login-show-routine-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\n",
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:6e56e706ceb0fe4fce7abe30723253a6a90b3e5e45756b3508654094c58d974a",
+      "planContentDigest": "sha256:47e3258c03e3bf66d0e831a74969257d69043d1bf5bde8be07cd6330429044cf",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:9ec550ea40e75e9e63901c250a459354449ddd89ac981dd540c822b51da4bff8"
+    },
+    "savedPlan": "runner-harness/documents/differs-login-show-routine-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-login-show-routine-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:1d8a114e2903a513ed60da64e389184d552ef175f42f71c97e756a008652adb8",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-login-show-routine-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-login-show-routine-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-login-show-routine-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:00537094c5d28b14e5c28c52f55b7b4b57192a2a885b7640f56d6a2c83eff953",
       "protocolVersion": 1,
       "resolvedDigest": "<volatile>",
       "stdout": "",
@@ -6488,6 +7348,102 @@
       "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
     },
     "savedPlan": "differing/plan-partition-detach.json"
+  },
+  {
+    "name": "differs-partition-dump-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-dump-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 3,
+          "kind": "columns",
+          "observed": 3
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "indexes",
+          "observed": 1
+        },
+        {
+          "desired": 3,
+          "kind": "tables",
+          "observed": 3
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:7016b68d307bd3985b6ac4d2a22300c5afa3552373463ba1a819bb27d8e174b0",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6b1763e602d3bb1b1f9b44b88b716543660bc34c63ca55cff3b71000a67c8039"
+    }
+  },
+  {
+    "name": "differs-partition-dump-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-partition-dump-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\n",
+        "stdout": "runner-harness/documents/differs-partition-dump-postgres/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:51d0bc01f056966583c13102be8707a18f914bada940daa3a406da1824960ab0",
+      "planOutcome": "NoChanges",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:6b1763e602d3bb1b1f9b44b88b716543660bc34c63ca55cff3b71000a67c8039"
+    }
   },
   {
     "name": "differs-partition-parent-postgres/apply",
