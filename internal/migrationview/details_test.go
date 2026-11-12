@@ -87,7 +87,8 @@ func TestDetailsJSONCarriesTheWholeStatus(t *testing.T) {
 }
 
 // Each record says what it is where its fields alone would not: an attempt
-// that waits out the delay the one before it asked for, the latest run apart
+// not dispatched before the delay the one before it asked for, a Job a claim
+// that marks nothing may have created, the latest run apart
 // from the hold nobody has accounted for, and an acknowledgment that is a
 // statement and not proof.
 func TestDetailsSayWhatEachRecordMeans(t *testing.T) {
@@ -111,9 +112,48 @@ func TestDetailsSayWhatEachRecordMeans(t *testing.T) {
 			says: []string{
 				"Active operation:     Apply, attempt 3\n",
 				"Its Job ptah-m-apply-orders-3 is reserved by name and not created yet",
-				"This attempt waits until 2026-03-01T09:05:00Z before it starts",
+				"This attempt is not dispatched before 2026-03-01T09:05:00Z, the delay the earlier one asked for.",
 			},
 			denies: []string{"claimed", "is confirmed"},
+		},
+		{
+			// retryNotBefore stays on the claim after the attempt dispatched,
+			// so a confirmed Job says nothing about it.
+			name: "a retry whose Job is confirmed",
+			change: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+					Type: operatorv1alpha1.MigrationOperationApply, ID: "op-3", Attempt: 3,
+					JobName: "ptah-m-apply-orders-3", JobUID: "job-uid", DispatchStarted: true, RetryNotBefore: &retryAt,
+				}
+			},
+			says:   []string{"Its Job ptah-m-apply-orders-3 is confirmed"},
+			denies: []string{"not dispatched before", "waits until"},
+		},
+		{
+			name: "a retry whose one create was attempted",
+			change: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+					Type: operatorv1alpha1.MigrationOperationApply, ID: "op-3", Attempt: 3,
+					JobName: "ptah-m-apply-orders-3", DispatchStarted: true, RetryNotBefore: &retryAt,
+				}
+			},
+			says:   []string{"its one create was attempted"},
+			denies: []string{"not dispatched before"},
+		},
+		{
+			// A History claim holds no realm and marks nothing before its
+			// create, so a Job with no UID may exist.
+			name: "a History claim with no UID",
+			change: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
+					Type: operatorv1alpha1.MigrationOperationHistory, ID: "op-4", Attempt: 1,
+					JobName: "ptah-m-history-orders-4",
+				}
+			},
+			says: []string{
+				"Its Job ptah-m-history-orders-4 is named, and no UID is recorded: whether it was created is not confirmed yet.",
+			},
+			denies: []string{"not created yet", "reserved"},
 		},
 		{
 			name: "a run held unresolved",

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -42,7 +43,9 @@ func renderDetails(text *strings.Builder, view View) {
 	if operation := status.ActiveOperation; operation != nil {
 		statusview.WriteRecord(text, "Active operation",
 			statusview.Claimed(string(operation.Type), operation.Attempt, operation.StartedAt),
-			statusview.JobLead(operation.JobName, operation.JobUID, operation.DispatchStarted), operation)
+			statusview.JobLead(operation.JobName, operation.JobUID, operation.DispatchStarted,
+				mutationlifecycle.SchemaOperation(operation.Type).HoldsLock(status.PendingObservation != nil)),
+			operation)
 	} else {
 		statusview.WriteRecord(text, "Active operation", "none", "", nil)
 	}
@@ -93,7 +96,8 @@ func pendingProofLead(pending operatorv1alpha1.PendingObservationStatus, suspend
 		lead = "The reading of the database after the Apply has not settled yet."
 	}
 	if after := statusview.After(pending.ObserveAfter); after != "" {
-		lead += " It waits until " + after + ", while the Apply's Pod could still be within its deadline."
+		lead += " The database is not read for it before " + after +
+			", while the Apply's Pod could still be within its deadline."
 	}
 	if suspended {
 		lead += " Suspension does not end it: nothing else changes the database until it settles."

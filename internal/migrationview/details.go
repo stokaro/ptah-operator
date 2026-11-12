@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/statusview"
 )
 
@@ -40,9 +41,14 @@ func renderDetails(text *strings.Builder, view View) {
 		statusview.ReadRequested(details.ReadRequested, status.LastReadRequest))
 
 	if operation := status.ActiveOperation; operation != nil {
-		lead := statusview.JobLead(operation.JobName, operation.JobUID, operation.DispatchStarted)
-		if retry := statusview.After(operation.RetryNotBefore); retry != "" {
-			lead += " This attempt waits until " + retry + " before it starts, the delay the earlier one asked for."
+		lead := statusview.JobLead(operation.JobName, operation.JobUID, operation.DispatchStarted,
+			mutationlifecycle.MigrationOperation(operation.Type).HoldsLock(false))
+		// retryNotBefore stays on the claim once it has passed, so it is said
+		// only of an attempt that has not dispatched, and in words that hold
+		// before the time and after it.
+		if retry := statusview.After(operation.RetryNotBefore); retry != "" &&
+			operation.JobUID == "" && !operation.DispatchStarted {
+			lead += " This attempt is not dispatched before " + retry + ", the delay the earlier one asked for."
 		}
 		statusview.WriteRecord(text, "Active operation",
 			statusview.Claimed(string(operation.Type), operation.Attempt, operation.StartedAt),

@@ -43,9 +43,13 @@ func detailsCases() []detailsCase {
 			says: []string{"Active operation:", "is confirmed: the claim records the Job's UID", "Pending proof: none"},
 		},
 		{
-			// An Apply that reported success, and the reading after it owed.
+			// An Apply nobody can account for, OutcomeUnknown, and the reading
+			// after it owed.
 			name: "schema-apply-owes-proof", reading: "alert-schema-recovery-wait.json", schema: true,
-			says: []string{"Pending proof: the reading that proves an Apply is owed", "Apply pod UIDs:"},
+			says: []string{
+				"Pending proof: the reading that proves an Apply is owed", "Nobody can say how the Apply ended.",
+				"Apply pod UIDs:",
+			},
 		},
 		{
 			// The same, suspended: suspension does not end the proof.
@@ -54,8 +58,10 @@ func detailsCases() []detailsCase {
 		},
 		{
 			// A known failure: the source refused, and the claim that read it.
+			// An ordinary Observe marks nothing before its create, so its Job
+			// with no UID may exist.
 			name: "schema-source-refused", reading: "configmap-refused-schema.json", schema: true,
-			says: []string{"Active operation:"},
+			says: []string{"Active operation:", "is named, and no UID is recorded: whether it was created is not confirmed yet."},
 		},
 		{
 			// A run nobody can account for, its claim retained.

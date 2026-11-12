@@ -43,8 +43,8 @@ Active operation:     none
 
 Pending proof:        the reading that proves an Apply is owed
   Nobody can say how the Apply ended. The reading of the database after it is
-  what settles it, and it has not settled yet. It waits until
-  2026-10-02T00:12:02Z, while the Apply's Pod could still be within its
+  what settles it, and it has not settled yet. The database is not read for it
+  before 2026-10-02T00:12:02Z, while the Apply's Pod could still be within its
   deadline. Suspension does not end it: nothing else changes the database until
   it settles.
   Outcome: OutcomeUnknown

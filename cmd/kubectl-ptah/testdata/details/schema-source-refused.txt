@@ -30,8 +30,8 @@ Status:               generation 1; the spec is at generation 1
   Next reconciliation time: 2026-11-06T18:28:20Z
 
 Active operation:     Observe, attempt 2, claimed 2026-11-06T18:28:03Z
-  Its Job ptah-observe-e2e-reachability-schema-8064d4f5ae543de6 is reserved by
-  name and not created yet: no UID is recorded.
+  Its Job ptah-observe-e2e-reachability-schema-8064d4f5ae543de6 is named, and no
+  UID is recorded: whether it was created is not confirmed yet.
   Type: Observe
   ID: sha256:ed9c3d34a07a28340f0f2138c5f98ede989f804fc767a039de3f89660da2dbfb
   Input fingerprint: sha256:11d9934e7777c6bddd627fc4c1ebd7ee80d3f50ff57c5cb3a3e8cf22e4245545

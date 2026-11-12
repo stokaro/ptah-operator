@@ -379,18 +379,23 @@ last succeeded. `Read requested` says whether the read `kubectl ptah refresh` as
 has been answered.
 
 `Active operation` is the operation the resource has claimed. A claim names its
-Job before it creates it, so the details say whether the Job is only reserved by
-name, whether its one create was attempted with no Job confirmed yet, or whether
-the claim records the Job's UID; a Job of that name with another UID is not
-this one. A migration's attempt that waits out the delay the attempt before it
-asked for says until when. `Active operation: none` is a resource that has
-claimed nothing.
+Job before it creates it, and the details say what the claim knows of that Job.
+A claim that records the Job's UID has confirmed it; a Job of that name with
+another UID is not this one. An Apply, a Plan, and an Observe that proves an
+Apply mark the claim before their one create, so with no UID they say whether
+that create was attempted or the Job is not created yet. A claim of any other
+kind (a Resolve, a Verify, an ordinary Observe, a migration's History) has no
+such mark, and with no UID its Job may exist, created by a pass that could not
+read it back, so the details say only that it is not confirmed yet. A
+migration's attempt that has not dispatched names the time it is not
+dispatched before, the delay the attempt before it asked for.
+`Active operation: none` is a resource that has claimed nothing.
 
 A schema's `Pending proof` is an Apply that ended and the reading of the
 database that proves it, still owed. It keeps the Apply's own result,
-`ApplySucceeded` or `OutcomeUnknown`, apart from that verdict, says until when
-the reading waits while the Apply's Pod could still run, and on a suspended
-schema says that suspension does not end it. `Lock release` is a database
+`ApplySucceeded` or `OutcomeUnknown`, apart from that verdict, names the time
+the database is not read for it before, while the Apply's Pod could still run,
+and on a suspended schema says that suspension does not end it. `Lock release` is a database
 Lease the operation held that is still to be handed back, and
 `Binding retirement` the cleanup an execution-binding change still owes.
 

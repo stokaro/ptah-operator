@@ -6,6 +6,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 // DetailsHeading opens the part of a view --details adds, after everything
@@ -81,14 +83,17 @@ func ReadRequested(requested, answered string) string {
 
 // ReadRequest says whether the read a person asked for with the
 // read-request annotation has been answered: requested is the annotation as
-// the spec holds it now, answered the last value the controller answered.
+// the resource holds it now, answered is status.lastReadRequest. The status
+// records an answer as operatorv1alpha1.ReadRequestToken of the value, which
+// is a digest for a value longer than MaxReadRequestLength, so the annotation
+// is compared through the same token.
 func ReadRequest(requested, answered string) string {
 	switch {
 	case requested == "" && answered == "":
 		return ""
 	case requested == "":
 		return "none now; the last one answered was " + Clean(answered)
-	case requested == answered:
+	case operatorv1alpha1.ReadRequestToken(requested) == answered:
 		return Clean(requested) + ", answered"
 	case answered == "":
 		return Clean(requested) + ", not answered yet"
@@ -100,7 +105,14 @@ func ReadRequest(requested, answered string) string {
 // JobLead says what an operation claim knows about its Job. The claim names
 // the Job before it creates it, so a name alone is a reservation; the UID,
 // recorded once the Job exists, is what confirms which Job it is.
-func JobLead(name string, uid types.UID, dispatchStarted bool) string {
+//
+// marksDispatch says the claim records dispatchStarted before its one create,
+// as every claim that holds the database realm does. Only such a claim is
+// known not to have created a Job it has no mark for. A claim that does not
+// mark can have created its Job and then failed the read that confirms it, or
+// stopped between the create and the write that records the UID; the next
+// pass adopts that Job by name.
+func JobLead(name string, uid types.UID, dispatchStarted, marksDispatch bool) string {
 	switch {
 	case uid != "":
 		return "Its Job " + Clean(name) + " is confirmed: the claim records the Job's UID " + Clean(string(uid)) +
@@ -108,8 +120,11 @@ func JobLead(name string, uid types.UID, dispatchStarted bool) string {
 	case dispatchStarted:
 		return "Its Job " + Clean(name) + " is reserved and its one create was attempted, but no UID is recorded: " +
 			"whether the Job exists is not yet confirmed, and it is never created a second time."
-	default:
+	case marksDispatch:
 		return "Its Job " + Clean(name) + " is reserved by name and not created yet: no UID is recorded."
+	default:
+		return "Its Job " + Clean(name) + " is named, and no UID is recorded: whether it was created is not " +
+			"confirmed yet."
 	}
 }
 

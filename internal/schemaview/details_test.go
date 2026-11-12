@@ -86,7 +86,8 @@ func TestDetailsJSONCarriesTheWholeStatus(t *testing.T) {
 }
 
 // Each record says what it is where its fields alone would not: a Job named
-// by a claim and not yet confirmed by UID, a Job confirmed, an Apply whose
+// by a claim and not yet confirmed by UID, whether the claim marks its one
+// create, a Job confirmed, an Apply whose
 // own result is not the verdict, and a proof a suspension does not end.
 func TestDetailsSayWhatEachClaimMeans(t *testing.T) {
 	t.Parallel()
@@ -124,6 +125,46 @@ func TestDetailsSayWhatEachClaimMeans(t *testing.T) {
 			denies: []string{"is confirmed", "not created yet"},
 		},
 		{
+			// A Resolve holds no realm and marks nothing before its create, so a
+			// Job with no UID may exist: the create can succeed and the read
+			// that confirms it fail.
+			name: "a Resolve claim with no UID",
+			change: func(schema *operatorv1alpha1.PtahSchema) {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+					Type: operatorv1alpha1.OperationResolve, ID: "op-5", Attempt: 1, JobName: "ptah-resolve-storefront-5",
+				}
+			},
+			says: []string{
+				"Its Job ptah-resolve-storefront-5 is named, and no UID is recorded: whether it was created is not confirmed yet.",
+			},
+			denies: []string{"not created yet", "reserved", "is confirmed"},
+		},
+		{
+			name: "an ordinary Observe claim with no UID",
+			change: func(schema *operatorv1alpha1.PtahSchema) {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+					Type: operatorv1alpha1.OperationObserve, ID: "op-6", Attempt: 1, JobName: "ptah-observe-storefront-6",
+				}
+			},
+			says:   []string{"whether it was created is not confirmed yet"},
+			denies: []string{"not created yet"},
+		},
+		{
+			// The Observe that proves an Apply holds the realm and marks the
+			// claim before its create, so no mark means no Job.
+			name: "an Observe that proves an Apply, with no UID",
+			change: func(schema *operatorv1alpha1.PtahSchema) {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+					Type: operatorv1alpha1.OperationObserve, ID: "op-7", Attempt: 1, JobName: "ptah-observe-storefront-7",
+				}
+				schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+					Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: "op-1",
+				}
+			},
+			says:   []string{"Its Job ptah-observe-storefront-7 is reserved by name and not created yet"},
+			denies: []string{"not confirmed yet", "is not read for it before"},
+		},
+		{
 			name: "a confirmed Job",
 			change: func(schema *operatorv1alpha1.PtahSchema) {
 				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
@@ -145,7 +186,7 @@ func TestDetailsSayWhatEachClaimMeans(t *testing.T) {
 			says: []string{
 				"Pending proof:        the reading that proves an Apply is owed\n",
 				"The Apply reported success. That is the Apply's own result, not the verdict",
-				"It waits until 2026-03-01T09:30:00Z",
+				"The database is not read for it before 2026-03-01T09:30:00Z,",
 				"\nActive operation:     none\n",
 			},
 			denies: []string{"Suspension does not end it"},
@@ -162,7 +203,7 @@ func TestDetailsSayWhatEachClaimMeans(t *testing.T) {
 				"Nobody can say how the Apply ended.",
 				"Suspension does not end it: nothing else changes the database until it settles.",
 			},
-			denies: []string{"reported success", "It waits until"},
+			denies: []string{"reported success", "is not read for it before"},
 		},
 	}
 	for _, test := range tests {

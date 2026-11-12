@@ -42,8 +42,8 @@ Active operation:     none
 
 Pending proof:        the reading that proves an Apply is owed
   Nobody can say how the Apply ended. The reading of the database after it is
-  what settles it, and it has not settled yet. It waits until
-  2026-10-02T00:12:02Z, while the Apply's Pod could still be within its
+  what settles it, and it has not settled yet. The database is not read for it
+  before 2026-10-02T00:12:02Z, while the Apply's Pod could still be within its
   deadline.
   Outcome: OutcomeUnknown
   Apply operation ID: sha256:c5e971dd64240369ef10c0434ac7765f24eaa3f72b92d89377c597c6c21c6fc1
