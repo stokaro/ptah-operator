@@ -69,6 +69,9 @@ type gitRun struct {
 	cluster  *harness.Cluster
 	engine   migrationEngine
 	password string
+	// scanner looks for the password and the Git token in what a failed wait
+	// prints.
+	scanner credentialScanner
 
 	host  string
 	keys  gitServerKeys
@@ -101,6 +104,9 @@ func newGitRun(t *testing.T, run *harness.Run, in phases.GitSourceInputs) *gitRu
 	c.https = "https://" + c.host + "/" + gitRepository
 	c.ssh = "ssh://git@" + c.host + "/" + gitRepository
 	c.standUp()
+	if c.scanner, err = newCredentialScanner(c.password, c.keys.Token); err != nil {
+		c.fatalf("build the credential scanner: %v", err)
+	}
 	return c
 }
 
@@ -327,7 +333,7 @@ func (c *gitRun) waitForSchemaNamed(name, what string, done func(*ptahv1alpha1.P
 			return false, err.Error()
 		}
 		if schema.Status.Phase == ptahv1alpha1.PhaseFailed {
-			c.fatalf("%s failed while waiting for %s: %v", name, what, schema.Status.Conditions)
+			c.fatalf("%s failed while waiting for %s; %s", name, what, failedConditions(c.scanner, schema.Status.Conditions))
 		}
 		if done(schema) {
 			matched = schema
@@ -347,7 +353,7 @@ func (c *gitRun) waitForMigration(what string, done func(*ptahv1alpha1.PtahMigra
 			return false, err.Error()
 		}
 		if migration.Status.Phase == ptahv1alpha1.MigrationPhaseFailed {
-			c.fatalf("%s failed while waiting for %s: %v", gitMigration, what, migration.Status.Conditions)
+			c.fatalf("%s failed while waiting for %s; %s", gitMigration, what, failedConditions(c.scanner, migration.Status.Conditions))
 		}
 		if done(migration) {
 			matched = migration
@@ -731,7 +737,7 @@ func (c *gitRun) sourcePolicy() {
 	c.wait("the open policy to hold again", func() (bool, string) {
 		schema := c.schemaNamed(gitSchema)
 		if schema.Status.ObservedGeneration >= reopened && schema.Status.Phase == ptahv1alpha1.PhaseFailed {
-			c.fatalf("%s failed under the open policy again: %v", gitSchema, schema.Status.Conditions)
+			c.fatalf("%s failed under the open policy again; %s", gitSchema, failedConditions(c.scanner, schema.Status.Conditions))
 		}
 		return schema.Status.ObservedGeneration >= reopened && schema.Status.Source.SourcePolicy != nil &&
 			schema.Status.Source.SourcePolicy.UID == open.UID && inSyncSchema(schema), string(schema.Status.Phase)

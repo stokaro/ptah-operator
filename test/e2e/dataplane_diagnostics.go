@@ -312,7 +312,7 @@ func schemaWaitReport(schema *ptahv1alpha1.PtahSchema) schemaWaitDiagnostic {
 	report := schemaWaitDiagnostic{
 		Name: schema.Name, Generation: schema.Generation, ObservedGeneration: status.ObservedGeneration,
 		Phase: status.Phase, NextReconciliationTime: status.NextReconciliationTime,
-		Conditions: []conditionDiagnostic{},
+		Conditions: boundedConditions(status.Conditions),
 	}
 	if status.ActiveOperation != nil {
 		report.ActiveOperation = &activeOperationDiagnostic{Type: status.ActiveOperation.Type, JobName: status.ActiveOperation.JobName}
@@ -320,25 +320,33 @@ func schemaWaitReport(schema *ptahv1alpha1.PtahSchema) schemaWaitDiagnostic {
 	if status.Plan != nil {
 		report.Plan = &planDiagnostic{Name: status.Plan.Name, Destructive: status.Plan.Destructive}
 	}
-	for _, condition := range status.Conditions {
+	return report
+}
+
+// boundedConditions is conditions as a wait report prints them: each message
+// bounded to conditionMessageBound characters, and an empty list for none.
+func boundedConditions(conditions []metav1.Condition) []conditionDiagnostic {
+	bounded := []conditionDiagnostic{}
+	for _, condition := range conditions {
 		message := []rune(condition.Message)
 		if len(message) > conditionMessageBound {
 			message = message[:conditionMessageBound]
 		}
-		report.Conditions = append(report.Conditions, conditionDiagnostic{
+		bounded = append(bounded, conditionDiagnostic{
 			Type: condition.Type, Status: condition.Status, Reason: condition.Reason, Message: string(message),
 		})
 	}
-	return report
+	return bounded
 }
 
-// failedSchemaConditions is what a wait says after the reading that ended it
-// entered Failed: the conditions of that document, each message bounded as a
-// timeout report bounds it, so a failed row says why without the run's
-// artifacts. They are scanned like every other diagnostic and withheld when
-// there is nothing to scan them with or they carry a protected credential.
-func failedSchemaConditions(scanner credentialScanner, schema *ptahv1alpha1.PtahSchema) string {
-	encoded, err := canonicalJSON(schemaWaitReport(schema).Conditions)
+// failedConditions is what a wait says after the reading that ended it entered
+// Failed, for a PtahSchema or a PtahMigration: the conditions of that
+// document, each message bounded as a timeout report bounds it
+// (boundedConditions), so a failed row says why without the run's artifacts.
+// They are scanned like every other diagnostic and withheld when there is
+// nothing to scan them with or they carry a protected credential.
+func failedConditions(scanner credentialScanner, conditions []metav1.Condition) string {
+	encoded, err := canonicalJSON(boundedConditions(conditions))
 	switch {
 	case err != nil || !scanner.ready():
 		return "its conditions are withheld: they could not be scanned"
