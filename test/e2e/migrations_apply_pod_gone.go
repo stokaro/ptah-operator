@@ -38,8 +38,13 @@ const applyLeaseTermMargin = 15 * time.Second
 // applyLeaseTermSlack is how long after the claim's term a row allows the
 // manager to let the claim go: a pass at the term, which the hold requeues
 // every five seconds, then the status writes that retire the claim and hand
-// the Lease back. It bounds those passes and nothing else, since the term
-// itself is read from the claim.
+// the Lease back. The term itself is read from the claim, so the slack bounds
+// what follows it and nothing before.
+//
+// In the uncertain row it also covers one reading cycle. That resource's next
+// reading came due while the claim held the term, so it runs Resolve, Verify
+// and History the moment the claim retires, and the row settles only on the
+// refusal that reading leaves: 35 to 38 seconds after the term on CI.
 const applyLeaseTermSlack = 2 * time.Minute
 
 // The words an ApplyPodGone Warning opens with, by who waits: a deleted
