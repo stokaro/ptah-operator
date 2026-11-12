@@ -2590,7 +2590,13 @@ status for its executor, as a Pod the kubelet refused at admission does, or with
 its executor last reported waiting, as one PodGC marked `Failed` after its node
 went can: PodGC keeps the statuses the kubelet last reported and sets only the
 phase and a condition, so the executor may have started since. No status on such
-a Pod shows a run, and a log is pointed at only where one does. A Pod that has not ended and reports no executor yet keeps the
+a Pod shows a run, and a log is pointed at only where one does. Where such a Pod
+does show one, as when PodGC kept the executor reported running, the log was
+written on the node that went, and the API server answers `kubectl logs` for it
+with NotFound for the node. So the message names no command there and says where
+the log was:
+`Anything the run wrote was in the Pod log of Job ptah-apply-orders-5d06b0eaaa30addb on a node that is gone, so it can be read only from that node or from a log shipper`.
+A Pod that has not ended and reports no executor yet keeps the
 pointer, since it can still start one. A run whose result nobody read, because its
 frame was lost or its Job ran more than one Pod, says
 `Anything the run wrote is in the Pod log`. An execution binding change during a
