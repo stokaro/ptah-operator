@@ -15,6 +15,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -168,8 +169,10 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 	name := m.uncertainMigration()
 	// The Job and its Pod are gone, and nothing says the executor stopped, so
 	// the claim keeps the database to the end of the term it took the realm
-	// Lease for (ApplyPodGone). The wait is read from that term, and a claim
-	// seen retired before it is refused.
+	// Lease for (ApplyPodGone). Until shortly before that term the claim has
+	// to read exactly as it was dispatched, and the wait is read from the term.
+	// The time is taken after the status is read, so a reading that passes as
+	// early was taken early.
 	term, err := applyLeaseTerm(original)
 	m.check(err, "read the Lease term of the interrupted %s Apply", m.engine.name)
 	settled := false
@@ -179,8 +182,8 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
 		settled, err = uncertainApplySettled(current.Status, original, pods.Items)
 		m.check(err, "%s violated its interrupted Apply boundary", name)
-		if settled && time.Now().Before(term.Add(-applyLeaseTermMargin)) {
-			m.fatalf("%s retired its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
+		if time.Now().Before(term.Add(-applyLeaseTermMargin)) && !equality.Semantic.DeepEqual(current.Status.ActiveOperation, original) {
+			m.fatalf("%s let go of its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
 				name, time.Until(term).Round(time.Second), term.UTC().Format(time.RFC3339))
 		}
 		m.assertNoNewApplyJob([]string{string(original.JobUID)}, "while its interrupted workload was settling", name)

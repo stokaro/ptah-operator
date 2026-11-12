@@ -90,8 +90,11 @@ func TestUncertainRunRefused(t *testing.T) {
 		"a plan":              func(s *ptahv1alpha1.PtahMigrationStatus) { s.Plan = &ptahv1alpha1.ImmutableObjectReference{Name: "p"} },
 		"no conditions":       func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions = nil },
 		"blocked for a realm": func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions[0].Reason = "RealmConflict" },
-		"not blocked":         func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions[0].Status = metav1.ConditionFalse },
-		"called ready":        func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions[1].Status = metav1.ConditionTrue },
+		"blocked by a modified history": func(s *ptahv1alpha1.PtahMigrationStatus) {
+			s.Conditions[0].Reason = "HistoryModified"
+		},
+		"not blocked":  func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions[0].Status = metav1.ConditionFalse },
+		"called ready": func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions[1].Status = metav1.ConditionTrue },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -101,6 +104,25 @@ func TestUncertainRunRefused(t *testing.T) {
 				t.Fatalf("a refusal with %s was accepted", name)
 			}
 		})
+	}
+	// A history read that finds the dirty revision the run left gives the
+	// refusal that revision's reason, and the refusal still holds.
+	t.Run("blocked by the dirty revision", func(t *testing.T) {
+		t.Parallel()
+		migration := muRefused()
+		migration.Status.Conditions[0].Reason = "HistoryDirty"
+		if err := uncertainRunRefused(migration.Status); err != nil {
+			t.Fatalf("the dirty revision's refusal was not accepted: %v", err)
+		}
+	})
+}
+
+// muBlockedFor gives the Blocked condition another reason.
+func muBlockedFor(s *ptahv1alpha1.PtahMigrationStatus, reason string) {
+	for i := range s.Conditions {
+		if s.Conditions[i].Type == ptahv1alpha1.ConditionMigrationBlocked {
+			s.Conditions[i].Reason = reason
+		}
 	}
 }
 
@@ -172,6 +194,9 @@ func TestUncertainApplySettled(t *testing.T) {
 				"another last run":             func(s *ptahv1alpha1.PtahMigrationStatus) { s.LastRun.JobUID = "replacement" },
 				"lost refusal":                 func(s *ptahv1alpha1.PtahMigrationStatus) { s.Conditions = nil },
 				"published plan":               func(s *ptahv1alpha1.PtahMigrationStatus) { s.Plan = original.PlanRef.DeepCopy() },
+				// Nothing reads the database while the claim holds it, so a
+				// history reason under the held claim came from somewhere else.
+				"history reason under the claim": func(s *ptahv1alpha1.PtahMigrationStatus) { muBlockedFor(s, "HistoryDirty") },
 			} {
 				t.Run(name, func(t *testing.T) {
 					current := reading.Status.DeepCopy()
@@ -207,6 +232,78 @@ func TestUncertainApplySettled(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// The failing CI statuses of the head that holds a gone Apply's claim to its
+// Lease term: the resource's next reading was overdue when the claim retired,
+// and the History read gave the refusal the dirty revision's reason.
+func TestUncertainApplySettledAfterAHistoryRead(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("../../testdata/e2e/readings/uncertain-migration-history-dirty.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readings map[string]*ptahv1alpha1.PtahMigration
+	if err := json.Unmarshal(content, &readings); err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 2 || readings["postgresql"] == nil || readings["mysql"] == nil {
+		t.Fatal("both native engine readings are required")
+	}
+	for engine, reading := range readings {
+		t.Run(engine, func(t *testing.T) {
+			t.Parallel()
+			if !conditionIs(reading.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty") {
+				t.Fatal("the native failure no longer carries the dirty revision's refusal")
+			}
+			original := muClaimOf(t, reading.Status)
+			if settled, err := uncertainApplySettled(reading.Status, original, nil); err != nil || !settled {
+				t.Fatalf("the refusal a history read rewrote did not settle: settled=%t err=%v", settled, err)
+			}
+			for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigrationStatus){
+				"blocked for a realm":            func(s *ptahv1alpha1.PtahMigrationStatus) { muBlockedFor(s, "RealmConflict") },
+				"blocked by a modified history":  func(s *ptahv1alpha1.PtahMigrationStatus) { muBlockedFor(s, "HistoryModified") },
+				"history reason under the claim": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation = original.DeepCopy() },
+				"lost unresolved record":         func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun = nil },
+				"not blocked": func(s *ptahv1alpha1.PtahMigrationStatus) {
+					for i := range s.Conditions {
+						if s.Conditions[i].Type == ptahv1alpha1.ConditionMigrationBlocked {
+							s.Conditions[i].Status = metav1.ConditionFalse
+						}
+					}
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					current := reading.Status.DeepCopy()
+					mutate(current)
+					if settled, err := uncertainApplySettled(*current, original, nil); err == nil || settled {
+						t.Fatalf("an unsafe %s was accepted: settled=%t err=%v", name, settled, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+// muClaimOf rebuilds the Apply claim a retired reading's own records name: the
+// operation, the Job by name and UID, the plan and the start. The deadlines and
+// the realm acquisition are not in the reading, and the predicate only needs
+// them present.
+func muClaimOf(t *testing.T, status ptahv1alpha1.PtahMigrationStatus) *ptahv1alpha1.MigrationOperationStatus {
+	t.Helper()
+	run := status.LastRun
+	if run == nil || run.PlanRef == nil || run.OperationID == "" || run.JobUID == "" {
+		t.Fatal("the reading records no run to rebuild its claim from")
+	}
+	dispatch := metav1.NewTime(run.StartedAt.Add(time.Minute))
+	execution := metav1.NewTime(run.StartedAt.Add(6 * time.Minute))
+	return &ptahv1alpha1.MigrationOperationStatus{
+		Type: ptahv1alpha1.MigrationOperationApply, ID: run.OperationID,
+		JobName: run.JobName, JobUID: run.JobUID, StartedAt: run.StartedAt,
+		PlanRef: run.PlanRef.DeepCopy(), DispatchStarted: true,
+		LeaseEpoch: "rebuilt", LeaseDurationSeconds: 420,
+		DispatchNotAfter: &dispatch, ExecutionNotAfter: &execution,
 	}
 }
 
