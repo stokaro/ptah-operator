@@ -91,6 +91,33 @@ func redispatchPlan(t *testing.T, failed bool) retriedRead {
 func redispatchRead(t *testing.T, proof, failed bool) retriedRead {
 	t.Helper()
 	ctx := context.Background()
+	plan := endReadAttempt(t, proof, failed)
+	reconciler, api, run, clock, moved := plan.reconciler, plan.api, plan.run, plan.clock, plan.claim
+
+	clock.now = clock.now.Add(failureRetry(safetyGetSchema(t, api, run.schema)))
+	claim := moved
+	for pass := 0; pass < 4 && claim.JobUID == ""; pass++ {
+		if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
+			t.Fatalf("Reconcile() %d after the backoff: %v", pass, err)
+		}
+		plan.events = append(plan.events, eventsWithPrefix(plan.recorder, "")...)
+		if claim = safetyGetSchema(t, api, run.schema).Status.ActiveOperation; claim == nil {
+			t.Fatalf("the claim went before its next attempt was dispatched: events %q", plan.events)
+		}
+	}
+	if claim.ID != moved.ID || claim.Attempt != moved.Attempt || claim.JobName != moved.JobName || claim.JobUID == "" {
+		t.Fatalf("the claim did not dispatch the attempt it moved to: moved %#v, claim %#v, events %q", moved, claim, plan.events)
+	}
+	plan.claim = claim
+	return plan
+}
+
+// endReadAttempt is redispatchRead up to the end of the first attempt: the
+// claim moved to its next attempt, which waits out the failure backoff, and
+// claim is that attempt as the move left it.
+func endReadAttempt(t *testing.T, proof, failed bool) retriedRead {
+	t.Helper()
+	ctx := context.Background()
 	operationType := operatorv1alpha1.OperationPlan
 	if proof {
 		operationType = operatorv1alpha1.OperationObserve
@@ -139,21 +166,7 @@ func redispatchRead(t *testing.T, proof, failed bool) retriedRead {
 		t.Fatalf("after the retry the Lease is held for %q, want it held only for a proof", holder)
 	}
 
-	clock.now = clock.now.Add(failureRetry(safetyGetSchema(t, api, run.schema)))
-	claim := moved
-	for pass := 0; pass < 4 && claim.JobUID == ""; pass++ {
-		if _, err := reconciler.Reconcile(ctx, run.request()); err != nil {
-			t.Fatalf("Reconcile() %d after the backoff: %v", pass, err)
-		}
-		plan.events = append(plan.events, eventsWithPrefix(recorder, "")...)
-		if claim = safetyGetSchema(t, api, run.schema).Status.ActiveOperation; claim == nil {
-			t.Fatalf("the claim went before its next attempt was dispatched: events %q", plan.events)
-		}
-	}
-	if claim.ID != moved.ID || claim.Attempt != moved.Attempt || claim.JobName != moved.JobName || claim.JobUID == "" {
-		t.Fatalf("the claim did not dispatch the attempt it moved to: moved %#v, claim %#v, events %q", moved, claim, plan.events)
-	}
-	plan.claim = claim
+	plan.claim = moved
 	return plan
 }
 

@@ -250,7 +250,9 @@ func TestALockWaitLeavesAPodReportStanding(t *testing.T) {
 }
 
 // The Observe that proves an Apply holds the Apply's Lease, and asks for it
-// before anything else it does.
+// before anything else it does: before it looks at the Apply's Pods, one of
+// which can start after the Apply ended. The wait names the Apply's Job, which
+// may still run while the Observe has dispatched nothing.
 func TestAProofThatLostTheLockSaysSo(t *testing.T) {
 	t.Parallel()
 
@@ -274,12 +276,186 @@ func TestAProofThatLostTheLockSaysSo(t *testing.T) {
 		t.Fatalf("requeue with the Lease held = %s, want %s", result.RequeueAfter, maxLockContentionPoll)
 	}
 	after := safetyGetSchema(t, api, run.schema)
+	applyJob := after.Status.PendingObservation.ApplyJobName
+	if applyJob == "" || applyJob == claim.JobName {
+		t.Fatalf("the pending observation names Apply Job %q beside the Observe's %q, so the row cannot tell them apart", applyJob, claim.JobName)
+	}
+	want := "Observe is waiting for the database lock it lost, and Job " + applyJob + " may still be running:"
 	ready := findCondition(after.Status.Conditions, operatorv1alpha1.ConditionReady)
-	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonWaitingForDatabaseLock) ||
-		!strings.HasPrefix(ready.Message, "Observe is waiting for the database lock:") {
-		t.Fatalf("Ready with the Lease held = %#v, want the proof's wait", ready)
+	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonWaitingForDatabaseLock) || !strings.HasPrefix(ready.Message, want) {
+		t.Fatalf("Ready with the Lease held = %#v, want the proof's wait starting %q", ready, want)
 	}
 	heldUnchanged(t, reconciler, api, after, claim, holder)
+}
+
+// A claim renews the Lease before it reads whether its Job finished. The
+// wait of a claim whose Job has finished does not say the Job may run.
+func TestASchemaApplyWithAFinishedJobThatLostTheLockSaysNoJobRuns(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	schema, plan, policy := dispatchedApplyWithPlan(t)
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonOperationInProgress, "Apply operation is in progress")
+	job, _ := terminalWorkload(schema, batchv1.JobFailed)
+	if !jobTerminal(job) {
+		t.Fatalf("the fixture's Job is not finished: %#v", job.Status)
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policy, job)
+	reconciler.Locks = targetlock.New(api, api, nil)
+	claim := safetyGetSchema(t, api, schema).Status.ActiveOperation
+	if !schemaMayHaveDispatched(claim) {
+		t.Fatalf("the claim %#v dispatched nothing, so the row cannot show a finished Job is not named", claim)
+	}
+	takeRealmForASibling(t, reconciler, api, claim.CoordinationDigest)
+	holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, claim.CoordinationDigest)
+
+	result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("requeue with the Lease lost = %s, want %s", result.RequeueAfter, maxLockContentionPoll)
+	}
+	stored := safetyGetSchema(t, api, schema)
+	ready := findCondition(stored.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonWaitingForDatabaseLock) ||
+		!strings.HasPrefix(ready.Message, "Apply is waiting for the database lock: another operation") {
+		t.Fatalf("Ready with a finished Job and the Lease lost = %#v, want the wait with no Job named", ready)
+	}
+	heldUnchanged(t, reconciler, api, stored, claim, holder)
+}
+
+// A read that failed is tried again under the failure it left on Ready, and
+// ReconciliationFailed keeps the failure itself. A retry that waits for the
+// Lease says so in place of the failure on Ready, and once it holds the Lease
+// Ready reads the failure again, as for a retry that never waited.
+func TestARetriedPlanWaitingForTheLockSaysSoAndKeepsItsFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	read := endReadAttempt(t, false, true)
+	retried := safetyGetSchema(t, read.api, read.run.schema)
+	claim := retried.Status.ActiveOperation
+	failedReady := findCondition(retried.Status.Conditions, operatorv1alpha1.ConditionReady)
+	failure := findCondition(retried.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	switch {
+	case retried.Status.Phase != operatorv1alpha1.PhaseFailed || claim == nil || claim.Attempt < 2:
+		t.Fatalf("the Plan was not tried again: phase %s, claim %#v", retried.Status.Phase, claim)
+	case failure == nil || failure.Status != metav1.ConditionTrue || failure.Reason != string(operatorv1alpha1.ReasonOperationFailed):
+		t.Fatalf("ReconciliationFailed after the failed attempt = %#v, want True/OperationFailed", failure)
+	case failedReady == nil || failedReady.Reason != failure.Reason || failedReady.Message != reconciliationIncomplete:
+		t.Fatalf("Ready after the failed attempt = %#v, want the failure, or the row does not start where a retry does", failedReady)
+	}
+	failedReady, failure = failedReady.DeepCopy(), failure.DeepCopy()
+	release := takeRealmForASibling(t, read.reconciler, read.api, claim.CoordinationDigest)
+	holder := safetyLeaseHolder(t, read.api, read.reconciler.LockNamespace, claim.CoordinationDigest)
+	read.clock.now = read.clock.now.Add(failureRetry(retried))
+
+	var ready *metav1.Condition
+	for pass := 0; pass < 4; pass++ {
+		if _, err := read.reconciler.Reconcile(ctx, read.run.request()); err != nil {
+			t.Fatalf("Reconcile() %d after the backoff: %v", pass, err)
+		}
+		waiting := safetyGetSchema(t, read.api, read.run.schema)
+		heldUnchanged(t, read.reconciler, read.api, waiting, claim, holder)
+		if ready = findCondition(waiting.Status.Conditions, operatorv1alpha1.ConditionReady); ready.Reason == string(operatorv1alpha1.ReasonWaitingForDatabaseLock) {
+			if kept := findCondition(waiting.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); !reflect.DeepEqual(kept, failure) {
+				t.Fatalf("the wait moved ReconciliationFailed:\n got %#v\nwant %#v", kept, failure)
+			}
+			break
+		}
+	}
+	if ready.Reason != string(operatorv1alpha1.ReasonWaitingForDatabaseLock) ||
+		!strings.HasPrefix(ready.Message, "Plan is waiting for the database lock: another operation") {
+		t.Fatalf("Ready of a retried Plan behind a sibling = %#v, want the wait with no Job named", ready)
+	}
+
+	release()
+	for pass := 0; pass < 4 && !schemaMayHaveDispatched(safetyGetSchema(t, read.api, read.run.schema).Status.ActiveOperation); pass++ {
+		if _, err := read.reconciler.Reconcile(ctx, read.run.request()); err != nil {
+			t.Fatalf("Reconcile() %d with the Lease free: %v", pass, err)
+		}
+		taken := safetyGetSchema(t, read.api, read.run.schema)
+		if ready = findCondition(taken.Status.Conditions, operatorv1alpha1.ConditionReady); ready.Reason == string(operatorv1alpha1.ReasonWaitingForDatabaseLock) {
+			t.Fatalf("Ready still reads the wait with the Lease free, pass %d: %#v, claim %#v", pass, ready, taken.Status.ActiveOperation)
+		}
+	}
+	taken := safetyGetSchema(t, read.api, read.run.schema)
+	ready = findCondition(taken.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if !schemaMayHaveDispatched(taken.Status.ActiveOperation) {
+		t.Fatalf("the retried Plan did not dispatch once the Lease was free: %#v", taken.Status.ActiveOperation)
+	}
+	if ready.Reason != failedReady.Reason || ready.Message != failedReady.Message {
+		t.Fatalf("Ready once the retry holds the Lease = %#v, want the failure %#v back", ready, failedReady)
+	}
+}
+
+// What a wait may replace on Ready, and what Ready reads once the wait ends,
+// is decided by the claim's own record. Each row refuses what another accepts.
+func TestALockWaitReplacesOnlyWhatAClaimInFlightSays(t *testing.T) {
+	t.Parallel()
+
+	failed := metav1.Condition{Type: operatorv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue,
+		Reason: string(operatorv1alpha1.ReasonOperationFailed), Message: "connection_refused: no database"}
+	cleared := failed
+	cleared.Status = metav1.ConditionFalse
+	ready := func(reason operatorv1alpha1.ConditionReason, message string) metav1.Condition {
+		return metav1.Condition{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(reason), Message: message}
+	}
+	inProgress := ready(operatorv1alpha1.ReasonOperationInProgress, "Plan operation is in progress")
+	failure := ready(operatorv1alpha1.ReasonOperationFailed, reconciliationIncomplete)
+	for _, row := range []struct {
+		name       string
+		phase      operatorv1alpha1.ReconciliationPhase
+		conditions []metav1.Condition
+		replaces   bool
+		// ends is what Ready reads once the wait ends, by reason.
+		ends operatorv1alpha1.ConditionReason
+	}{
+		{name: "no Ready yet", phase: operatorv1alpha1.PhasePlanning, replaces: true, ends: operatorv1alpha1.ReasonOperationInProgress},
+		{name: "a claim in flight", phase: operatorv1alpha1.PhasePlanning, conditions: []metav1.Condition{inProgress},
+			replaces: true, ends: operatorv1alpha1.ReasonOperationInProgress},
+		{name: "a failure an earlier claim left", phase: operatorv1alpha1.PhasePlanning, conditions: []metav1.Condition{failed, inProgress},
+			replaces: true, ends: operatorv1alpha1.ReasonOperationInProgress},
+		{name: "a retry under its failure", phase: operatorv1alpha1.PhaseFailed, conditions: []metav1.Condition{failed, failure},
+			replaces: true, ends: operatorv1alpha1.ReasonOperationFailed},
+		{name: "a retry whose failure was cleared", phase: operatorv1alpha1.PhaseFailed, conditions: []metav1.Condition{cleared, failure},
+			ends: operatorv1alpha1.ReasonOperationInProgress},
+		{name: "the failure's words outside a retry", phase: operatorv1alpha1.PhasePlanning, conditions: []metav1.Condition{failed, failure},
+			ends: operatorv1alpha1.ReasonOperationInProgress},
+		{name: "a retry Ready says more about", phase: operatorv1alpha1.PhaseFailed,
+			conditions: []metav1.Condition{failed, ready(operatorv1alpha1.ReasonOperationFailed, "The proof needs a person")},
+			ends:       operatorv1alpha1.ReasonOperationFailed},
+		{name: "a retry under another failure", phase: operatorv1alpha1.PhaseFailed,
+			conditions: []metav1.Condition{failed, ready(operatorv1alpha1.ReasonConfigurationError, reconciliationIncomplete)},
+			ends:       operatorv1alpha1.ReasonOperationFailed},
+		{name: "a Pod that cannot start", phase: operatorv1alpha1.PhaseFailed,
+			conditions: []metav1.Condition{failed, ready(operatorv1alpha1.ReasonPodConfigurationError, "Job plan-job cannot start its Pod")},
+			ends:       operatorv1alpha1.ReasonOperationFailed},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			schema := &operatorv1alpha1.PtahSchema{Status: operatorv1alpha1.PtahSchemaStatus{
+				Phase:           row.phase,
+				ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationPlan, JobName: "plan-job"},
+				Conditions:      append([]metav1.Condition(nil), row.conditions...),
+			}}
+			if got := lockWaitReplacesReady(schema); got != row.replaces {
+				t.Fatalf("lockWaitReplacesReady() = %t, want %t", got, row.replaces)
+			}
+			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonWaitingForDatabaseLock, schemaLockWaitMessage(schema, false))
+			endLockWait(schema)
+			ended := findCondition(schema.Status.Conditions, operatorv1alpha1.ConditionReady)
+			if ended.Reason != string(row.ends) {
+				t.Fatalf("Ready once the wait ends = %#v, want reason %s", ended, row.ends)
+			}
+			if row.ends == operatorv1alpha1.ReasonOperationFailed && ended.Message != reconciliationIncomplete {
+				t.Fatalf("Ready once a retry's wait ends = %#v, want the failure's words", ended)
+			}
+		})
+	}
 }
 
 // A deleted schema renews the Lease only to keep it while a Pod may still write,
@@ -352,24 +528,51 @@ func TestAFailedLockWaitReportDoesNotSlowTheClaim(t *testing.T) {
 func TestSchemaLockWaitMessageSaysWhetherAJobMayBeRunning(t *testing.T) {
 	t.Parallel()
 
+	proving := func(applyJob string) *operatorv1alpha1.PendingObservationStatus {
+		return &operatorv1alpha1.PendingObservationStatus{ApplyJobName: applyJob}
+	}
 	for _, row := range []struct {
-		name      string
-		operation operatorv1alpha1.ActiveOperationStatus
-		wantJob   bool
+		name       string
+		operation  operatorv1alpha1.ActiveOperationStatus
+		pending    *operatorv1alpha1.PendingObservationStatus
+		jobStopped bool
+		// wantJob is the Job the message says may still be running, or empty.
+		wantJob string
 	}{
-		{name: "no dispatch yet", operation: operatorv1alpha1.ActiveOperationStatus{JobName: "apply-job"}},
-		{name: "a dispatch begun", operation: operatorv1alpha1.ActiveOperationStatus{JobName: "apply-job", DispatchStarted: true}, wantJob: true},
-		{name: "a Job on record", operation: operatorv1alpha1.ActiveOperationStatus{JobName: "apply-job", JobUID: "job-uid"}, wantJob: true},
+		{name: "no dispatch yet", operation: operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationApply, JobName: "own-job"}},
+		{name: "a dispatch begun", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationApply, JobName: "own-job", DispatchStarted: true}, wantJob: "own-job"},
+		{name: "a Job on record", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationApply, JobName: "own-job", JobUID: "job-uid"}, wantJob: "own-job"},
+		{name: "a Job read finished", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationApply, JobName: "own-job", JobUID: "job-uid"}, jobStopped: true},
+		{name: "a proof that dispatched nothing", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, JobName: "own-job"}, pending: proving("apply-job"), wantJob: "apply-job"},
+		{name: "a proof whose Apply recorded no Job", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, JobName: "own-job"}, pending: proving("")},
+		{name: "a proof with a Job of its own", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationObserve, JobName: "own-job", JobUID: "job-uid"}, pending: proving("apply-job"), wantJob: "own-job"},
+		{name: "a Plan an Apply's proof requires", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationPlan, JobName: "own-job"}, pending: proving("apply-job"), wantJob: "apply-job"},
+		{name: "a Plan with no proof owed", operation: operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationPlan, JobName: "own-job"}},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			row.operation.Type = operatorv1alpha1.OperationApply
 			row.operation.CoordinationDigest = testCoordinationDigest
-			message := schemaLockWaitMessage(&row.operation)
-			if got := strings.Contains(message, "Job apply-job may still be running"); got != row.wantJob {
-				t.Fatalf("message %q names a Job that may be running: %t, want %t", message, got, row.wantJob)
+			schema := &operatorv1alpha1.PtahSchema{Status: operatorv1alpha1.PtahSchemaStatus{
+				ActiveOperation: &row.operation, PendingObservation: row.pending,
+			}}
+			message := schemaLockWaitMessage(schema, row.jobStopped)
+			for _, job := range []string{"own-job", "apply-job"} {
+				if got := strings.Contains(message, "Job "+job+" may still be running"); got != (job == row.wantJob) {
+					t.Fatalf("message %q says Job %s may be running: %t, want %t", message, job, got, job == row.wantJob)
+				}
 			}
-			if !strings.HasPrefix(message, "Apply is waiting for the database lock") ||
+			if row.wantJob == "" && strings.Contains(message, "may still be running") {
+				t.Fatalf("message %q names a Job that may be running, want none", message)
+			}
+			if !strings.HasPrefix(message, string(row.operation.Type)+" is waiting for the database lock") ||
 				!strings.Contains(message, lockWaitLease(t, testCoordinationDigest)) {
 				t.Fatalf("message %q does not say what it waits for", message)
 			}

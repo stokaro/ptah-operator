@@ -1040,7 +1040,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		// inspecting or consuming any post-Apply proof result. An active
 		// attempt blocks proof consumption; newly observed terminal evidence
 		// changes the proof fingerprint and makes the current result stale.
-		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema)
+		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema, false)
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
 		}
@@ -1188,7 +1188,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.retryPastOverdueSchemaJob(ctx, schema, job)
 	}
 	if schemaClaimHoldsLock(schema) {
-		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema)
+		acquired, requeue, lockErr := r.waitForOperationLock(ctx, schema, jobTerminal(job))
 		if lockErr != nil {
 			return ctrl.Result{}, lockErr
 		}
@@ -5352,12 +5352,16 @@ func markExecutionBindingRefreshRequired(schema *operatorv1alpha1.PtahSchema) {
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "A complete read-only reconciliation is required under the current execution binding")
 }
 
+// reconciliationIncomplete is what setFailure writes on Ready, with the
+// failure's reason. ReconciliationFailed carries the failure itself.
+const reconciliationIncomplete = "Reconciliation did not complete"
+
 // setFailure records why an operation failed. reason answers whether the
 // operation failed, and DatabaseReachable answers whether the target could be
 // opened, so a failure that names a kind moves the second in the same write.
 func setFailure(schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, failure error) {
 	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, reason, bounded(failure.Error(), 1024))
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, "Reconciliation did not complete")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, reconciliationIncomplete)
 	if unreached, message, named := databaseUnreached(failure); named {
 		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionFalse, unreached, message)
 	}

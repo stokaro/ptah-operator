@@ -2877,8 +2877,11 @@ wait that does not end. The resource also says so itself, with reason
 `WaitingForDatabaseLock`, naming the Lease, and the Job when one may still be
 running: a `PtahMigration` on `Progressing=True`, and a `PtahSchema` on
 `Ready=False`, for its Apply, its Plan and the Observe that proves an Apply. A
-schema whose `Ready` reports a Pod that cannot start keeps that report while it
-waits. Either family asks for the
+read that proves an Apply names the Apply's Job until it starts one of its own.
+A schema whose `Ready` reports a Pod that cannot start keeps that report while
+it waits. A read tried again after a failure reports the wait in place of the
+failure, which `ReconciliationFailed` keeps, and `Ready` reads the failure
+again once the read holds the Lease. Either family asks for the
 Lease every five seconds, so it goes on within seconds of the Lease coming free.
 The Lease names its holder: `kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
 one realm without `spec.target.sharedRealm` is a refusal instead, and reads as
