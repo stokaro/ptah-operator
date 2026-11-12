@@ -47,7 +47,9 @@ class LeaseTermTests(unittest.TestCase):
                              ('a string duration', {'leaseDurationSeconds': '420'})]:
             with self.subTest(name):
                 claim = {**self.claim(), **change}
-                with self.assertRaises(ValueError):
+                # The refusal names what the claim lacks, rather than the
+                # parser's complaint about an empty time.
+                with self.assertRaisesRegex(ValueError, '^The Apply claim records no '):
                     seconds_to_lease_term(claim, now)
 
 
