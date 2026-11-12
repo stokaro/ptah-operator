@@ -150,10 +150,13 @@ func TestReadPrintedLogRunsWhatTheMessagePrints(t *testing.T) {
 	}
 }
 
-// outsiderRefusal is what kubectl wrote when the row ran a printed command as a user
-// no Role of the row is bound to.
-const outsiderRefusal = `Error from server (Forbidden): jobs.batch "ptah-apply-orders-0123" is forbidden: ` +
-	`User "e2e-diagnostic-outsider" cannot get resource "jobs" in API group "batch" in the namespace "team-a"`
+// outsiderRefusal is what kubectl wrote on kind when a printed command ran as the
+// diagnostic reader under a Role that had lost its batch jobs rule, with the outsider's
+// name in place of the reader's. Getting the Job is the command's first request, and
+// the outsider is refused it the same way.
+const outsiderRefusal = `Error from server (Forbidden): jobs.batch "ptah-apply-e2e-configmap-refused-schema-491536d3b7fdc341" ` +
+	`is forbidden: User "e2e-diagnostic-outsider" cannot get resource "jobs" in API group "batch" ` +
+	`in the namespace "ptah-test-a-1-36-4-local-52ec5dd439-34811-41ccc3bc0f"`
 
 func TestPrintedLogRefusedNamesTheUser(t *testing.T) {
 	t.Parallel()
