@@ -106,15 +106,31 @@ func TestUncertainRunRefused(t *testing.T) {
 		})
 	}
 	// A history read that finds the dirty revision the run left gives the
-	// refusal that revision's reason, and the refusal still holds.
+	// refusal that revision's reason, and the refusal still holds. The reason
+	// counts only beside the reading that found the revision.
 	t.Run("blocked by the dirty revision", func(t *testing.T) {
 		t.Parallel()
 		migration := muRefused()
 		migration.Status.Conditions[0].Reason = "HistoryDirty"
+		migration.Status.History = &ptahv1alpha1.MigrationHistoryStatus{Dirty: true}
 		if err := uncertainRunRefused(migration.Status); err != nil {
 			t.Fatalf("the dirty revision's refusal was not accepted: %v", err)
 		}
 	})
+	for name, history := range map[string]*ptahv1alpha1.MigrationHistoryStatus{
+		"blocked by the dirty revision with no history read": nil,
+		"blocked by the dirty revision over a clean history": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			migration := muRefused()
+			migration.Status.Conditions[0].Reason = "HistoryDirty"
+			migration.Status.History = history
+			if uncertainRunRefused(migration.Status) == nil {
+				t.Fatalf("a refusal %s was accepted", name)
+			}
+		})
+	}
 }
 
 // muBlockedFor gives the Blocked condition another reason.
@@ -254,8 +270,9 @@ func TestUncertainApplySettledAfterAHistoryRead(t *testing.T) {
 	for engine, reading := range readings {
 		t.Run(engine, func(t *testing.T) {
 			t.Parallel()
-			if !conditionIs(reading.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty") {
-				t.Fatal("the native failure no longer carries the dirty revision's refusal")
+			if !conditionIs(reading.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty") ||
+				reading.Status.History == nil || !reading.Status.History.Dirty {
+				t.Fatal("the native failure no longer carries the dirty revision's refusal and the reading that found it")
 			}
 			original := muClaimOf(t, reading.Status)
 			if settled, err := uncertainApplySettled(reading.Status, original, nil); err != nil || !settled {
@@ -266,6 +283,9 @@ func TestUncertainApplySettledAfterAHistoryRead(t *testing.T) {
 				"blocked by a modified history":  func(s *ptahv1alpha1.PtahMigrationStatus) { muBlockedFor(s, "HistoryModified") },
 				"history reason under the claim": func(s *ptahv1alpha1.PtahMigrationStatus) { s.ActiveOperation = original.DeepCopy() },
 				"lost unresolved record":         func(s *ptahv1alpha1.PtahMigrationStatus) { s.UnresolvedRun = nil },
+				// The reason a later reading could leave behind.
+				"dirty reason over a clean history": func(s *ptahv1alpha1.PtahMigrationStatus) { s.History.Dirty = false },
+				"dirty reason with no history read": func(s *ptahv1alpha1.PtahMigrationStatus) { s.History = nil },
 				"not blocked": func(s *ptahv1alpha1.PtahMigrationStatus) {
 					for i := range s.Conditions {
 						if s.Conditions[i].Type == ptahv1alpha1.ConditionMigrationBlocked {

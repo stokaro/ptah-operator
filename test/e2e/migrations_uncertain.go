@@ -43,12 +43,19 @@ var uncertainRunRefusals = []string{"ApplyOutcomeUnknown", "HistoryDirty"}
 
 // uncertainRefusalReason says whether the Blocked condition is True for one of
 // uncertainRunRefusals. A refusal for any other reason belongs to something
-// else, which holds only while that thing lasts.
-func uncertainRefusalReason(conditions []metav1.Condition) error {
-	for _, reason := range uncertainRunRefusals {
-		if conditionIs(conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, reason) {
-			return nil
+// else, which holds only while that thing lasts. The dirty revision's reason
+// counts only beside the history reading that found the revision: the reason
+// alone could outlive a later reading that found none.
+func uncertainRefusalReason(status ptahv1alpha1.PtahMigrationStatus) error {
+	conditions := status.Conditions
+	if conditionIs(conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") {
+		return nil
+	}
+	if conditionIs(conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty") {
+		if status.History == nil || !status.History.Dirty {
+			return fmt.Errorf("it is Blocked by HistoryDirty, but its history reading records no dirty revision: %v", conditionSummary(conditions))
 		}
+		return nil
 	}
 	return fmt.Errorf("it is not Blocked by %s: %v", strings.Join(uncertainRunRefusals, " or "), conditionSummary(conditions))
 }
@@ -71,7 +78,7 @@ func uncertainRunRefused(status ptahv1alpha1.PtahMigrationStatus) error {
 	case conditionStatus(status.Conditions, ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue):
 		return errors.New("it is Ready")
 	}
-	return uncertainRefusalReason(status.Conditions)
+	return uncertainRefusalReason(status)
 }
 
 // uncertainApplySettled waits through asynchronous Job garbage collection.
@@ -121,7 +128,7 @@ func uncertainApplySettled(status ptahv1alpha1.PtahMigrationStatus, original *pt
 		}
 		return false, nil
 	}
-	if err := uncertainRefusalReason(status.Conditions); err != nil {
+	if err := uncertainRefusalReason(status); err != nil {
 		return false, fmt.Errorf("the interrupted Apply's refusal became another's once its claim retired: %w", err)
 	}
 	for _, pod := range ownedPods(pods, original.JobUID) {
