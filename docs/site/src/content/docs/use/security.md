@@ -819,6 +819,7 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | --- | --- | --- | --- |
 | A desired file Ptah cannot read | `desired_source_unreadable` | A second child with no database URL and no credential | 485 bytes, so the code and the reason fit an Event's 512 |
 | A desired schema Ptah read and refuses as a whole | `desired_schema_invalid` | The same second child, when its words end the failed command's own sentence | 485 bytes, as above |
+| A row file outside Ptah's working directory | `desired_source_unreadable` | The `error.message` of the failed `schema drift` or `schema plan`, only in the form Ptah's row-file guard writes | 485 bytes, as above |
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
 
@@ -841,6 +842,18 @@ failed command's own error is not copied: it had a connection, and its sentence
 could repeat what the database answered. When the second child reports that the
 files do not load, the frame carries its reason, and the controller writes that
 reason to the condition and the Event.
+
+A row file a `data` block names outside Ptah's working directory is the one
+failure whose sentence is copied from the failed command, since `schema
+validate` reads no row file and cannot say it. Ptah's guard writes that sentence
+from the declaration and the paths in the Pod before it opens the file. The
+runner copies it only on one line and whole, in that form: the declared path and
+the root are each one quoted string, as is the path it led to when Ptah names
+one, the root and that path are absolute, and nothing follows the root. A database's answer reaches a failed
+sentence in another form, under another prefix or with a line of SQL after it,
+and leaves the failure with the code it had. The sentence names paths inside the
+operation container, which mounts no credential; the function above removes a
+credential that appears in it anyway.
 
 When the second child reports a fault of the schema as a whole, the frame carries
 its words only if they end the failed command's sentence. That sentence is

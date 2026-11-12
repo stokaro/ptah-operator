@@ -314,6 +314,23 @@ path a ConfigMap item names or the last part of a Git path. SQL names the line
 and the column after the path, as `schema.sql:2:29` above, and YAML, HCL and
 DBML name a line.
 
+A `data` block whose row file Ptah refuses reads the same way, with the schema's
+file in front of Ptah's refusal. Ptah reads a row file only inside its working
+directory, `/work`, and names where the declared path led, or says the path
+starts at `/`:
+
+```
+desired_source_unreadable: schema.hcl: managed data file "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is outside allowed root "/work"
+desired_source_unreadable: schema.hcl: managed data file "../../proc/self/environ" for table public.regions: "/proc/14/environ" is outside allowed root "/work"
+desired_source_unreadable: schema.hcl: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"
+```
+
+The operator puts the source under `/source`, outside that root, so Ptah v0.23.0
+refuses a row file beside the schema too, as the first line shows.
+An artifact that `ptah schema push` built carries its rows in the declaration
+and reads no row file, as [Manage reference data](../../use/reference-data/)
+describes.
+
 | Stage | Where the reason appears, and what follows |
 | --- | --- |
 | `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. |
@@ -334,7 +351,10 @@ A `ReadRestarted` Event says the failed operation gave way and why, and
 
 The reason comes from a second run of Ptah that holds no database URL and no
 credential, so it cannot quote the database. It can quote a fragment of the file,
-as [Output handling](../../use/security/#output-handling) describes.
+as [Output handling](../../use/security/#output-handling) describes. A row file's
+refusal is the exception: the second run reads no row file, so the reason is the
+sentence of the command that failed, taken only in the form Ptah's guard writes
+it, from the declaration and the paths in the Pod.
 
 Not everything that stops a desired file reaches this code. Ptah reads no SQL
 statement of a migration file until it runs it, so a statement that does not

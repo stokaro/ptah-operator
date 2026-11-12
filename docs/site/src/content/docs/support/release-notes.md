@@ -127,6 +127,9 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
 for a read tried again after a failure, the failure's reason, which
 `ReconciliationFailed` still carries. After a rollback, an earlier manager
 leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
+A script or an alert that reads `child_exit` from an Observe or
+`invalid_plan_output` from a Plan of a schema whose row file Ptah refuses as
+outside its working directory reads `desired_source_unreadable` now.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -590,6 +593,19 @@ leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
   `MigrationRunUncertain` Event of a `PtahMigration`, whatever the Job's TTL. A
   script that matches `is in the Pod log` there has to match `was in the Pod
   log of Job` as well.
+- **A refused row file is named.** Ptah reads a row file that a `data` block
+  names only inside its working directory, `/work`, and the operator puts the
+  source under `/source`, so Ptah refuses a row file beside the schema as well
+  as one that climbs out of it. The Observe failed with `child_exit: ptah exited
+  with code 2` and the Plan with `invalid_plan_output`, and neither said which
+  file. Both now fail with `desired_source_unreadable` and Ptah's sentence
+  behind the schema's file name, such as `schema.hcl: managed data file
+  "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is
+  outside allowed root "/work"`. The runner copies that sentence only whole and
+  in the form Ptah's guard writes it, which holds nothing the database answered;
+  any other failure keeps the code it had
+  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
+  that `ptah schema push` built carries its rows and reads no row file.
 
 ## 0.2.10
 
