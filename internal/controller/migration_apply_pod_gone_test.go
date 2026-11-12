@@ -90,6 +90,22 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 			}, batchv1.JobReasonBackoffLimitExceeded),
 		},
 		{
+			// The kubelet reached the Pod after PodGC marked it, and its
+			// runtime no longer had the container: ContainerStatusUnknown is
+			// still the kubelet's word that the executor is not running.
+			name: "a Pod PodGC marked Failed whose kubelet then lost the executor",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase:      corev1.PodFailed,
+				Conditions: []corev1.PodCondition{podGCCondition()},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 137, Reason: "ContainerStatusUnknown",
+						Message: "The container could not be located when the pod was terminated",
+					},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
 			name: "a Pod the kubelet evicted",
 			end: podStandsFailed(corev1.PodStatus{
 				Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: memory.",
@@ -467,4 +483,49 @@ func readyCondition(status corev1.ConditionStatus) corev1.PodCondition {
 
 func executorIn(state corev1.ContainerState) corev1.ContainerStatus {
 	return corev1.ContainerStatus{Name: executorContainerName, State: state}
+}
+
+// podStopUnconfirmed answers about an ended Pod's executor container and no
+// other. A Pod still running has its own wait, and is not unconfirmed. Another
+// container's state says nothing about the executor's, whichever is listed
+// first.
+func TestPodStopUnconfirmedReadsOnlyTheExecutorOfAnEndedPod(t *testing.T) {
+	t.Parallel()
+
+	running := corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+	stopped := corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed"}}
+	other := func(state corev1.ContainerState) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "sidecar", State: state}
+	}
+	for _, row := range []struct {
+		name   string
+		status corev1.PodStatus
+		want   bool
+	}{
+		{
+			name:   "a running Pod",
+			status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{executorIn(running)}},
+		},
+		{
+			name: "an executor running behind another container that stopped",
+			status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{
+				other(stopped), executorIn(running),
+			}},
+			want: true,
+		},
+		{
+			name: "an executor stopped behind another container that runs",
+			status: corev1.PodStatus{Phase: corev1.PodFailed, ContainerStatuses: []corev1.ContainerStatus{
+				other(running), executorIn(stopped),
+			}},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := podStopUnconfirmed(&corev1.Pod{Status: row.status}); got != row.want {
+				t.Fatalf("podStopUnconfirmed() = %t, want %t", got, row.want)
+			}
+		})
+	}
 }
