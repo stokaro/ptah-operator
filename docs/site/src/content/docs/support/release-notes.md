@@ -481,7 +481,7 @@ and goes while the Pod may still read, and records the proof `Unknown`.
   `Anything the run wrote is in the Pod log`. Neither family points at a log
   there now. A schema Apply whose Pod started after the last look and then
   failed without a result no longer repeats the report that the Pod could not
-  start, as the other live endings already did not.
+  start. A read and a `PtahMigration` Apply still do.
 
 ## 0.2.10
 
