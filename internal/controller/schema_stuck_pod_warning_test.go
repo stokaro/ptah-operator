@@ -117,10 +117,10 @@ func TestADeletedSchemaWaitingOnAStuckPodNamesIt(t *testing.T) {
 	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), pod); err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("%sDeletion waits for Pod %s of Job %s on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+	want := fmt.Sprintf("%sDeletion waits for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
 		"The database Lease stays held while the Pod may still run. "+
 		"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
-		stuckPodEvent, pod.Name, job.Name, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+		stuckPodEvent, pod.Name, job.Name, job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
 	stuckPodEvents(run.recorder)
 
 	// Each step is a pass at an offset from the Job's stop bound, and whether
@@ -177,10 +177,10 @@ func TestALiveApplyWaitingOnAStuckPodNamesIt(t *testing.T) {
 	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), pod); err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("%sThe Apply waits for Pod %s of Job %s on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+	want := fmt.Sprintf("%sThe Apply waits for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
 		"The database Lease stays held while the Pod may still run. "+
 		"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
-		stuckPodEvent, pod.Name, job.Name, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+		stuckPodEvent, pod.Name, job.Name, job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
 	stuckPodEvents(run.recorder)
 
 	for _, step := range []struct {
@@ -213,6 +213,63 @@ func TestALiveApplyWaitingOnAStuckPodNamesIt(t *testing.T) {
 		}
 		if held := leaseHolder(testDatabaseLease(t, run.api, run.reconciler.LockNamespace)); held != holder {
 			t.Fatalf("the database Lease is held by %q %s from the Job's stop bound, want the Apply's %q", held, step.at, holder)
+		}
+	}
+}
+
+// The Pod a live Apply warned about is the Pod the deletion that follows waits
+// for. The deletion's first Warning says something the Apply's did not, that
+// the deletion now waits, so it is due at once, not when the Apply's next one
+// would have been: each wait keeps its own backoff for the Pod. The deletion's
+// backoff then runs from its own first Warning.
+func TestADeletionAfterALiveApplysWarningNamesItsPodAtOnce(t *testing.T) {
+	t.Parallel()
+
+	run := admittedUnstartedSchemaApplyRun(t)
+	job, _ := stuckOnAGoneNode(t, run)
+	bound := jobStopBound(job)
+	pod := &corev1.Pod{}
+	if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), pod); err != nil {
+		t.Fatal(err)
+	}
+	text := func(waiter string) string {
+		return fmt.Sprintf("%s%s for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+			"The database Lease stays held while the Pod may still run. "+
+			"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
+			stuckPodEvent, waiter, pod.Name, job.Name, job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339), pod.Namespace, pod.Name)
+	}
+	stuckPodEvents(run.recorder)
+
+	for _, step := range []struct {
+		at time.Duration
+		// deleted is a schema deleted before this pass.
+		deleted bool
+		want    string
+	}{
+		{at: 0, want: text("The Apply waits")},
+		{at: time.Second, deleted: true, want: text("Deletion waits")},
+		{at: 2 * time.Second},
+		// The Apply's next Warning would be due here, and the deletion's
+		// is not yet.
+		{at: 30 * time.Second},
+		{at: 31 * time.Second, want: text("Deletion waits")},
+	} {
+		if step.deleted {
+			if err := run.api.Delete(context.Background(), safetyGetSchema(t, run.api, run.schema)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		at := bound.Add(step.at)
+		run.reconciler.Clock = func() time.Time { return at }
+		run.reconcileOnce(t)
+		switch events := stuckPodEvents(run.recorder); {
+		case step.want == "" && len(events) != 0:
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want nothing", step.at, events)
+		case step.want != "" && (len(events) != 1 || events[0] != step.want):
+			t.Fatalf("a pass %s from the Job's stop bound recorded %q, want one %q", step.at, events, step.want)
+		}
+		if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.ActiveOperation == nil {
+			t.Fatalf("the wait ended %s from the Job's stop bound while the Pod may still run", step.at)
 		}
 	}
 }
@@ -407,7 +464,13 @@ func TestAPodIsNamedOnlyOnceItsOwnGraceRunsOut(t *testing.T) {
 // wait, after a person deleted its Job or another Job took the name. Nothing is
 // past that Job's bound then, and the Pod is named once it is past its own
 // (podStopBound): the end of its deletion grace and 30 seconds.
-func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T) {
+//
+// A live schema's proof waits on the same Pod before it reads the database,
+// with the database Lease renewed all along, and names it the same way, in
+// words of its own. The Warning names the Job by the UID the record holds as
+// well as by its name: where another Job took the name, `kubectl get job` on
+// the name alone shows that Job.
+func TestASchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
@@ -415,17 +478,27 @@ func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T
 		// gone deletes the recorded Job, and replace then puts another Job
 		// under its name.
 		gone, replace bool
+		// live leaves the schema in place, so its proof is what waits.
+		live bool
 	}{
-		{name: "under the Job the record names"},
-		{name: "after the Job was deleted", gone: true},
-		{name: "under a Job that took its name", gone: true, replace: true},
+		{name: "a deletion, under the Job the record names"},
+		{name: "a deletion, after the Job was deleted", gone: true},
+		{name: "a deletion, under a Job that took its name", gone: true, replace: true},
+		{name: "a live proof, under the Job the record names", live: true},
+		{name: "a live proof, under a Job that took its name", gone: true, replace: true, live: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
 			run := admittedUnstartedSchemaApplyRun(t)
-			deleteSchemaWhileItsApplyRuns(t, run)
+			// The words are written out, so a change to the waiters' constants
+			// fails these rows.
+			waiter := "The Apply's proof waits"
+			if !row.live {
+				waiter = "Deletion waits"
+				deleteSchemaWhileItsApplyRuns(t, run)
+			}
 			firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
 			databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
 			// One pass records the lost continuity, and the next ends the Apply.
@@ -466,18 +539,32 @@ func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T
 				if err := run.api.Create(ctx, later); err != nil {
 					t.Fatal(err)
 				}
+				named := &batchv1.Job{}
+				if err := run.api.Get(ctx, client.ObjectKeyFromObject(job), named); err != nil || named.UID == run.job.UID {
+					t.Fatalf("the name %s holds Job %q (error %v), want the later Job, or the name alone would still say which Job it is",
+						job.Name, named.UID, err)
+				}
 			}
+			want := fmt.Sprintf("%s%s for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
+				"The database Lease stays held while the Pod may still run. "+
+				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
+				stuckPodEvent, waiter, pod.Name, run.job.Name, run.job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339),
+				pod.Namespace, pod.Name)
 			stuckPodEvents(run.recorder)
 
 			// The Pod is stuck terminating from the end of its grace, thirty
 			// seconds before either bound, so the first step separates the
-			// bound from the stuck Pod alone.
+			// bound from the stuck Pod alone. The steps after it are the
+			// backoff.
 			for _, step := range []struct {
 				at    time.Duration
 				named bool
 			}{
 				{at: -time.Second},
 				{at: 0, named: true},
+				{at: 0},
+				{at: 29 * time.Second},
+				{at: 30 * time.Second, named: true},
 			} {
 				at := bound.Add(step.at)
 				if !podStuckTerminating(pod, at) {
@@ -486,15 +573,16 @@ func TestADeletedSchemaWaitingOnItsPendingObservationNamesAStuckPod(t *testing.T
 				run.reconciler.Clock = func() time.Time { return at }
 				run.reconcileOnce(t)
 				events := stuckPodEvents(run.recorder)
-				want := stuckPodEvent + stuckPodWarningText(deletionWaits, job.Name, pod)
 				switch {
 				case !step.named && len(events) != 0:
 					t.Fatalf("a pass %s from the bound recorded %q, want nothing", step.at, events)
 				case step.named && (len(events) != 1 || events[0] != want):
 					t.Fatalf("a pass %s from the bound recorded %q, want one %q", step.at, events, want)
 				}
-				if waiting := safetyGetSchema(t, run.api, run.schema); waiting.Status.PendingObservation == nil {
-					t.Fatalf("the deletion stopped waiting %s from the bound while the Pod may still run", step.at)
+				waiting := safetyGetSchema(t, run.api, run.schema)
+				if waiting.Status.PendingObservation == nil || waiting.Status.ActiveOperation != nil {
+					t.Fatalf("the wait ended %s from the bound while the Pod may still run: claim %#v, pending %#v",
+						step.at, waiting.Status.ActiveOperation, waiting.Status.PendingObservation)
 				}
 			}
 		})
@@ -510,13 +598,39 @@ func TestAStuckPodWarningBacksOffToFiveMinutes(t *testing.T) {
 	warnings := &stuckPodWarnings{}
 	var due []time.Duration
 	for at := time.Duration(0); at <= 1100*time.Second; at += time.Second {
-		if warnings.due("stuck-pod", start.Add(at)) {
+		if warnings.dueFor(deletionWaits, "stuck-pod", start.Add(at)) {
 			due = append(due, at)
 		}
 	}
 	want := []time.Duration{0, 30 * time.Second, 90 * time.Second, 210 * time.Second, 450 * time.Second, 750 * time.Second, 1050 * time.Second}
 	if !slices.Equal(due, want) {
 		t.Fatalf("the Warning was due at %v, want %v", due, want)
+	}
+}
+
+// Each wait keeps its own backoff for a Pod, so a Warning one wait recorded does
+// not delay another wait's first one, and does not move its next.
+func TestAStuckPodWarningBacksOffForEachWait(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	warnings := &stuckPodWarnings{}
+	for _, step := range []struct {
+		waiter string
+		at     time.Duration
+		due    bool
+	}{
+		{waiter: applyWaits, at: 0, due: true},
+		{waiter: deletionWaits, at: time.Second, due: true},
+		{waiter: proofWaits, at: 2 * time.Second, due: true},
+		{waiter: applyWaits, at: 29 * time.Second},
+		{waiter: applyWaits, at: 30 * time.Second, due: true},
+		{waiter: deletionWaits, at: 30 * time.Second},
+		{waiter: deletionWaits, at: 31 * time.Second, due: true},
+	} {
+		if due := warnings.dueFor(step.waiter, "stuck-pod", start.Add(step.at)); due != step.due {
+			t.Fatalf("%q about the Pod %s in: due %t, want %t", step.waiter, step.at, due, step.due)
+		}
 	}
 }
 
@@ -529,12 +643,12 @@ func TestStuckPodWarningsStayBounded(t *testing.T) {
 	start := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	warnings := &stuckPodWarnings{}
 	for index := range maxStuckPodWarnings {
-		if !warnings.due(types.UID(fmt.Sprintf("pod-%d", index)), start) {
+		if !warnings.dueFor(deletionWaits, types.UID(fmt.Sprintf("pod-%d", index)), start) {
 			t.Fatalf("the first Warning about Pod %d was not due", index)
 		}
 	}
 	for _, at := range []time.Duration{0, time.Second} {
-		if !warnings.due("one-too-many", start.Add(at)) {
+		if !warnings.dueFor(deletionWaits, "one-too-many", start.Add(at)) {
 			t.Fatalf("a Pod the full table cannot hold was not warned about %s in", at)
 		}
 	}
@@ -545,10 +659,10 @@ func TestStuckPodWarningsStayBounded(t *testing.T) {
 	// Every entry was due stuckPodWarningFirst after start. Past that by more
 	// than the longest wait, nothing has looked at them.
 	later := start.Add(stuckPodWarningFirst + stuckPodWarningMax + time.Second)
-	if !warnings.due("arrived-later", later) {
+	if !warnings.dueFor(deletionWaits, "arrived-later", later) {
 		t.Fatal("the first Warning about a new Pod was not due")
 	}
-	if warnings.due("arrived-later", later) {
+	if warnings.dueFor(deletionWaits, "arrived-later", later) {
 		t.Fatal("a new Pod was warned about twice at once, so the stale entries made no room for it")
 	}
 	if held := len(warnings.next); held != 1 {

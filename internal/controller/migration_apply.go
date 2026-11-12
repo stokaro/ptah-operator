@@ -1069,6 +1069,9 @@ func (r *MigrationReconciler) reconcileUnaccountedMigrationApply(
 		if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
 			return ctrl.Result{}, err
 		}
+		// A Pod on a node that is gone keeps this wait going with no bound, as
+		// it keeps a deletion's, so a person is told which Pod it is.
+		r.warnStuckUnaccountedMigrationApplyPods(ctx, migration)
 		r.warnMigrationApplyPodGone(migration, gone)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}

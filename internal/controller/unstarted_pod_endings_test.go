@@ -773,23 +773,50 @@ func TestASchemaApplyWhoseJobWasReplacedKeepsWhyItsPodNeverStarted(t *testing.T)
 	}
 }
 
+// A release that moves an execution component under a dispatched Apply ends it
+// with its Pods listed, so the ending reads the Pod the last report was about.
+// It keeps the report while the Pod still waits for its Secret, and drops it
+// once the Pod shows its executor started after the last look, with the Job
+// still running and nothing yet to say it ran to success (withPodsRead).
 func TestASchemaApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	api, schema, _, _, said, reconcileOnce := unstartedSchemaApply(t)
+	const ended = "execution binding changed after Apply dispatch"
+	for _, row := range []struct {
+		name string
+		// started is a Pod that got its Secret after the last look.
+		started bool
+	}{
+		{name: "while its Pod waits for its Secret"},
+		{name: "after its Pod started since the last look", started: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
 
-	// A release moved the executor while the Pod waited for its Secret.
-	moved := safetyGetSchema(t, api, schema)
-	moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
-	if err := api.Status().Update(ctx, moved); err != nil {
-		t.Fatal(err)
-	}
-	reconcileOnce()
+			run := unstartedSchemaApplyRun(t)
+			if row.started {
+				startedAfterAll(t, run.api, run.job, run.pod)
+			}
+			// A release moved the executor before the next look.
+			moved := safetyGetSchema(t, run.api, run.schema)
+			moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+			if err := run.api.Status().Update(ctx, moved); err != nil {
+				t.Fatal(err)
+			}
+			run.reconcileOnce(t)
 
-	failed := settledSchemaFailure(t, api, schema)
-	if want := "execution binding changed after Apply dispatch" + lastReportedBefore + said; !strings.Contains(failed.Message, want) {
-		t.Fatalf("ReconciliationFailed = %q, want it to carry %q", failed.Message, want)
+			failed := settledSchemaFailure(t, run.api, run.schema)
+			if !strings.Contains(failed.Message, ended) {
+				t.Fatalf("ReconciliationFailed = %q, want the sentence this ending writes, %q", failed.Message, ended)
+			}
+			if carried := strings.Contains(failed.Message, ended+lastReportedBefore+run.said); carried == row.started {
+				t.Fatalf("ReconciliationFailed = %q carries the last report: %t, want %t", failed.Message, carried, !row.started)
+			}
+			if row.started && strings.Contains(failed.Message, run.said) {
+				t.Fatalf("ReconciliationFailed = %q repeats a report the started Pod proved out of date", failed.Message)
+			}
+		})
 	}
 }
 

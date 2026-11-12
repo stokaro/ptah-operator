@@ -289,6 +289,79 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 	}
 }
 
+// A migration deleted a moment after its live Apply said its Pod was gone says
+// so again at once, in the words of the deletion. Each wait keeps its own
+// backoff, so the live Warning neither delays the deletion's first nor moves
+// its next.
+func TestADeletionAfterALiveApplyPodGoneWarningSaysSoAtOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	run := unstartedMigrationApplyRun(t)
+	podForceDeletedPastTheDeadline(t, run)
+	claim := readMigration(t, run.api, run.migration).Status.ActiveOperation
+	if claim == nil || claim.JobUID != run.job.UID || claim.LeaseDurationSeconds < 1 {
+		t.Fatalf("the row needs the Apply's claim with its Job and Lease term: %#v", claim)
+	}
+	term := claim.StartedAt.Add(time.Duration(claim.LeaseDurationSeconds) * time.Second)
+	holder := leaseHolder(migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest))
+	if holder == "" {
+		t.Fatal("the Apply holds no database Lease, so the row cannot show it is kept")
+	}
+	text := func(waiter string) string {
+		return fmt.Sprintf("%s%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
+			"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
+			"still runs on a node the API server cannot reach, so the database Lease stays held until the term "+
+			"the Apply took it for ends.",
+			applyPodGoneEvent, waiter, run.job.Name, run.job.UID, term.UTC().Format(time.RFC3339))
+	}
+	clock := movableMigrationClock(run.reconciler, run.api)
+	first := term.Add(-3 * time.Minute)
+	if !first.After(claim.StartedAt.Add(terminalPodGrace)) {
+		t.Fatalf("the first pass at %s is inside the harvest's Pod grace", first)
+	}
+	applyPodGoneEvents(run.recorder)
+
+	for _, step := range []struct {
+		at time.Duration
+		// deleted is a migration deleted before this pass.
+		deleted bool
+		want    string
+	}{
+		{at: 0, want: text("The Apply waits")},
+		{at: time.Second, deleted: true, want: text("Deletion waits")},
+		{at: 2 * time.Second},
+		// The live Apply's next Warning would be due here, and the
+		// deletion's is not yet.
+		{at: 30 * time.Second},
+		{at: 31 * time.Second, want: text("Deletion waits")},
+	} {
+		if step.deleted {
+			if err := run.api.Delete(ctx, readMigration(t, run.api, run.migration)); err != nil {
+				t.Fatal(err)
+			}
+			if readMigration(t, run.api, run.migration).DeletionTimestamp == nil {
+				t.Fatal("the migration is not being deleted, so the row reads no deletion")
+			}
+		}
+		clock.now = first.Add(step.at)
+		waiting := reconcileMigration(t, run.reconciler, run.api, run.migration)
+		switch events := applyPodGoneEvents(run.recorder); {
+		case step.want == "" && len(events) != 0:
+			t.Fatalf("a pass %s after the first recorded %q, want nothing", step.at, events)
+		case step.want != "" && (len(events) != 1 || events[0] != step.want):
+			t.Fatalf("a pass %s after the first recorded %q, want one %q", step.at, events, step.want)
+		}
+		if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != claim.ID {
+			t.Fatalf("the claim went %s after the first pass, before its Lease term: %#v", step.at, waiting.Status.ActiveOperation)
+		}
+		lease := migrationDatabaseLease(t, run.api, run.reconciler.LockNamespace, claim.CoordinationDigest)
+		if held := leaseHolder(lease); held != holder {
+			t.Fatalf("the database Lease is held by %q %s after the first pass, want the Apply's %q", held, step.at, holder)
+		}
+	}
+}
+
 // podForceDeletedPastTheDeadline is what a forced delete leaves of an Apply
 // Pod on a node that is gone, once the Job controller has accounted for it:
 // the Pod object is gone, and the Job failed on its deadline with that Pod

@@ -452,7 +452,7 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 				// this bound once the Job controller marks the Job, and its
 				// ReadJobOverdue Warning names the Pod then.
 				stuck := slices.DeleteFunc(slices.Clone(all), func(event string) bool { return !strings.HasPrefix(event, stuckPodEvent) })
-				switch want := stuckPodEvent + stuckPodWarningText(applyWaits, run.job.Name, pod); {
+				switch want := stuckPodEvent + stuckPodWarningText(applyWaits, run.job.Name, run.job.UID, pod); {
 				case apply && (len(stuck) != 1 || stuck[0] != want):
 					t.Fatalf("PodStuckTerminating Events at the Job's stop bound = %q, want one %q", stuck, want)
 				case !apply && len(stuck) != 0:

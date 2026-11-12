@@ -805,17 +805,27 @@ func TestALostFrameFromAPodThatRanRepeatsNoStaleReport(t *testing.T) {
 // A migration Apply whose log held no frame is a run nobody accounted for, and
 // its record is what a person reads once the Pod is gone. It keeps what the
 // resource last reported about the Pod, worded as that, the way a read's failure
-// does, also for a Pod that started between two looks. A schema Apply's ending
-// drops the report for such a Pod (withPodsRead).
+// does.
+//
+// It used to keep it for a Pod that started between two looks as well. The
+// harvest that finds no frame has listed the Job's Pods, and one that shows its
+// executor ran says the report is out of date: the Pod did start, and the record
+// would tell a person to look for a Secret that was there. The ending now drops
+// the report there, as a schema Apply's does (withPodsRead).
 func TestAnUnreadMigrationApplyKeepsWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
-	const lastReported = "ptah runner result frame not found; last reported before that: "
+	const (
+		unread       = "read the Apply result: ptah runner result frame not found"
+		lastReported = "ptah runner result frame not found; last reported before that: "
+	)
 	for _, row := range []struct {
 		name    string
 		podLeft bool
+		// kept is a record that carries the report.
+		kept bool
 	}{
-		{name: "past its Job's deadline, with the Pod gone"},
+		{name: "past its Job's deadline, with the Pod gone", kept: true},
 		{name: "with a Pod that started between two looks", podLeft: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -840,12 +850,20 @@ func TestAnUnreadMigrationApplyKeepsWhyItsPodNeverStarted(t *testing.T) {
 			}
 			stored := readMigration(t, api, migration)
 			run := stored.Status.LastRun
-			if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown || !strings.Contains(run.Message, lastReported+said) {
-				t.Fatalf("last run = %#v, want an unknown outcome whose message carries %q", run, lastReported+said)
+			if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown || !strings.HasPrefix(run.Message, unread) {
+				t.Fatalf("last run = %#v, want an unknown outcome whose message starts %q", run, unread)
 			}
 			blocked := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
-			if blocked == nil || blocked.Status != metav1.ConditionTrue || !strings.Contains(blocked.Message, lastReported+said) {
-				t.Fatalf("Blocked = %#v, want %q", blocked, lastReported+said)
+			if blocked == nil || blocked.Status != metav1.ConditionTrue || !strings.HasPrefix(blocked.Message, unread) {
+				t.Fatalf("Blocked = %#v, want a message that starts %q", blocked, unread)
+			}
+			for subject, message := range map[string]string{"status.lastRun.message": run.Message, "Blocked": blocked.Message} {
+				if carried := strings.Contains(message, lastReported+said); carried != row.kept {
+					t.Errorf("%s = %q carries %q: %t, want %t", subject, message, lastReported+said, carried, row.kept)
+				}
+				if !row.kept && strings.Contains(message, said) {
+					t.Errorf("%s = %q repeats the report a started Pod proved out of date", subject, message)
+				}
 			}
 		})
 	}

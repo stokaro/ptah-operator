@@ -150,10 +150,13 @@ type SchemaReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
-	// deletion waits for is due. It is made on first use, by
+	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	Jobs      JobBuilder
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the wait and
+	// the Job whose Pods are gone.
+	goneApplyPods *stuckPodWarnings
+	Jobs          JobBuilder
 	// SealKey is this manager process's key pair. The Plan Job builder is
 	// given its public half; this reconciler opens the Plan payload sealed
 	// to it. The private half is never persisted, so a process that
@@ -769,12 +772,30 @@ func hasExecutionBindingEvidence(schema *operatorv1alpha1.PtahSchema) bool {
 		!reflect.DeepEqual(schema.Status.Target, operatorv1alpha1.TargetStatus{})
 }
 
+// possibleApplyPodActive is whether a live schema's proof waits for a Pod of
+// the Apply it proves, which applyPodsActive answers. The proof does not read
+// the database while one may still run, and the database Lease is renewed for as
+// long, so a Pod on a node that is gone holds it with no bound, as it holds a
+// deleted schema. A person is told which Pod it is in the same Warning, worded
+// for the proof. A Job lookup that fails warns about nothing and is not
+// returned, for the reason the claim's own wait does not return it.
+//
+// Both waits that ask go through here. The proof claim is taken once this said
+// no Pod was active, and a Pod that comes later cannot dispatch: under the
+// Job's backoffLimit 0 the one Pod that can still come is the Job's first,
+// created late by a Job that was active with no Pod when its Apply ended, and
+// the runner refuses it past the Apply's DispatchNotAfter.
 func (r *SchemaReconciler) possibleApplyPodActive(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 ) (bool, error) {
-	active, _, err := r.applyPodsActive(ctx, schema, pending)
+	active, pods, err := r.applyPodsActive(ctx, schema, pending)
+	if active {
+		if warnErr := r.warnStuckApplyPods(ctx, schema, pending, pods, proofWaits); warnErr != nil {
+			ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod the proof waits for", "error", warnErr.Error())
+		}
+	}
 	return active, err
 }
 
@@ -975,11 +996,15 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			// A Pod on a node that is gone keeps this wait going with no
 			// bound, as it does the claim's wait above, so a person is told
 			// which Pod it is.
-			if err := r.warnStuckApplyPods(ctx, schema, pending, pods); err != nil {
+			if err := r.warnStuckApplyPods(ctx, schema, pending, pods, deletionWaits); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
+			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
-		if activePod || until(pending.ObserveAfter, r.now()) > 0 {
+		if until(pending.ObserveAfter, r.now()) > 0 {
+			// With no Pod left to wait for, the wait still lasts until the
+			// Apply's horizon, and a deleted schema says so nowhere else.
+			r.warnApplyPodGone(schema, pending, pods, pending.ObserveAfter.Time)
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		before := schema.DeepCopy()
@@ -1008,9 +1033,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.recoverLeaseContinuity(ctx, schema)
 	}
 	if schemaClaimServesProof(schema) {
-		// A Job controller can create another exact-owner Apply Pod after the
-		// first terminal attempt was recorded. Refresh that immutable evidence
-		// before inspecting or consuming any post-Apply proof result. An active
+		// A Job that was active with no Pod when its Apply ended can create
+		// its first exact-owner Apply Pod after that ending was recorded. That
+		// Pod cannot dispatch past the Apply's DispatchNotAfter, but it is
+		// evidence all the same. Refresh that immutable evidence before
+		// inspecting or consuming any post-Apply proof result. An active
 		// attempt blocks proof consumption; newly observed terminal evidence
 		// changes the proof fingerprint and makes the current result stale.
 		acquired, requeue, lockErr := r.acquirePendingObservationLock(ctx, schema)
@@ -1405,6 +1432,11 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 		if honestJob {
 			listed = job
 		}
+		// A deleted schema's record then names no dispatcher, which
+		// pendingObservationFor reads from the Job it is given. Nothing reads
+		// it there: only a proof that completes carries it into
+		// status.applied, and a deleted schema runs no proof, so the record
+		// goes with it once its wait is over.
 		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
@@ -2739,7 +2771,9 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 	// finisher still gets none: the retired-Job record the rotation writes
 	// schedules its cleanup once it stops. A read that fails does not hold the
 	// retirement back: the words then stay as the last report, which is what
-	// they were before the read.
+	// they were before the read. The Pods listed above answer it as well: one
+	// whose executor started since the last look takes the words off, as it does
+	// on the other endings that list them (withPodsRead).
 	job := &batchv1.Job{}
 	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job); err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -2752,7 +2786,7 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 		ctx,
 		schema,
 		nil,
-		withLastPodReport(failure, schemaPodReport(schema, job)),
+		withLastPodReport(failure, schemaPodReport(schema, job).withPodsRead(evidence)),
 		evidence.PodUIDs,
 		evidence.PodCount,
 		true,

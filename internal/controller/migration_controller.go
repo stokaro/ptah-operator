@@ -112,11 +112,11 @@ type MigrationReconciler struct {
 	// on first use, by resultLogFailuresOf.
 	resultLogs *resultLogFailures
 	// stuckPods is when the next PodStuckTerminating Warning about each Pod a
-	// deletion waits for is due. It is made on first use, by
+	// wait holds for is due, for each wait. It is made on first use, by
 	// stuckPodWarningsOf.
 	stuckPods *stuckPodWarnings
-	// goneApplyPods is the same for the ApplyPodGone Warning, by the Job whose
-	// Pods are gone.
+	// goneApplyPods is the same for the ApplyPodGone Warning, by the wait and
+	// the Job whose Pods are gone.
 	goneApplyPods *stuckPodWarnings
 	Jobs          MigrationJobBuilder
 	Locks         *targetlock.Locker
@@ -408,7 +408,7 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				// bound, so a person is told which Pod it is, as a deleted
 				// PtahSchema tells them. A list that fails warns about nothing,
 				// for the reason the look above is not returned.
-				if err := r.warnStuckMigrationApplyPods(ctx, migration, operation, job); err != nil {
+				if err := r.warnStuckMigrationApplyPods(ctx, migration, operation, job, deletionWaits); err != nil {
 					ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 				}
 				r.warnMigrationApplyPodGone(migration, gone)
@@ -563,7 +563,7 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 	case apierrors.IsNotFound(err):
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf("read the dispatched Apply Job during deletion: %w", err)
+		return nil, fmt.Errorf("read the dispatched Apply Job: %w", err)
 	}
 	if operation.JobUID != "" && job.UID != operation.JobUID {
 		return nil, nil
@@ -984,6 +984,18 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	if !jobTerminal(job) {
 		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
+		}
+		// An Apply is supervised until its Job stops, and the Lease renewed
+		// above for as long, since its Pod may still write. A Pod on a node
+		// that is gone keeps the Job from stopping with no bound, so a person
+		// is told which Pod it is, as a live PtahSchema tells them. A list
+		// that fails warns about nothing and is not returned: an error requeue
+		// backs off, and this pass is what renews the Lease. A read's Job is
+		// let go of at its stop bound instead (readJobStopOverdue).
+		if mutating {
+			if err := r.warnStuckMigrationApplyPods(ctx, migration, operation, job, applyWaits); err != nil {
+				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Apply Pod", "error", err.Error())
+			}
 		}
 		if durableDeliveryRequested(job) {
 			engine := ""

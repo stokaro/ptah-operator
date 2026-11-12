@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -2443,60 +2444,83 @@ func TestAReplacedPolicyRetiresAMigrationClaimWaitingOutItsRetry(t *testing.T) {
 	}
 }
 
-// A cleanup the guard refuses must not take the record with it.
+// An Apply claim that never recorded its Job's UID keeps the claim over a Job
+// running under the name it reserved, and still records the run.
 //
-// An Apply Job that fails immutable intent validation before its create was
-// confirmed has no UID on the claim, and the controller-write guard refuses a
-// cleanup patch whose claim does not name the Job by UID. Returning that error
-// left the claim active over the very Job the branch meant to disown, which a
-// later pass could bind and process -- the replay this path exists to refuse.
-func TestAnUncertainApplyRecordsItsRunEvenWhenCleanupIsRefused(t *testing.T) {
+// A create that fails with anything but AlreadyExists leaves the claim with no
+// UID, and a client timeout or a 5xx after the write persisted leaves a Job
+// running under the reserved name (dispatchedApplyMayStillWrite). Whose Job it
+// is does not change that it may be writing, so the database stays held. The
+// row's Job is not one the claim fixes, so the claim records no UID for it
+// (unrecordedMigrationJobRefusal), and no cleanup is asked for: admission admits
+// a TTL only on a Job the claim names, and the pass that retires the claim says
+// the Job stays. The record is written all the same, so no later pass can bind
+// the Job and process it as this claim's run.
+//
+// The row once wrote the fixture's Job UID back onto the claim, so it measured a
+// claim whose Job was gone, and its expectation that the claim goes held only
+// because of that (#1011).
+func TestAnUncertainApplyKeepsAClaimWithNoJobUIDOverAJobRunningUnderItsName(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	migration, plan := awaitingApprovalFixture(t)
 	operation := applyClaimFor(t, migration, plan)
 	operation.DispatchStarted = true
-	operation.JobUID = ""
-	// A Job that is not terminal and that the claim does not name by UID: the
-	// two things the guard refuses a cleanup patch for.
+	// A Job running under the reserved name, which the claim never named.
 	job, _ := terminalMigrationWorkload(migration, batchv1.JobComplete)
 	job.Status.Conditions = nil
 	job.Status.Active = 1
 	job.UID = "a-job-this-claim-never-bound"
+	// terminalMigrationWorkload records its Job's UID on the claim; this claim
+	// recorded none.
+	operation.JobUID = ""
+	if unrecordedMigrationJobRefusal(migration, job) == nil {
+		t.Fatal("the claim would record the row's Job, so the row would not measure a claim with no UID")
+	}
 
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, job, verificationPolicyConfigMap())
-	reconciler.Client = refusingJobPatches{Client: reconciler.Client}
-	// terminalMigrationWorkload records its Job's UID, job-uid, on the claim,
-	// and no object holds it. The claim's own Job is gone, so it would stay to
-	// the end of its Lease term (migrationApplyPodGone), and the call runs there.
-	toTheApplyLeaseTerm(t, reconciler, api, migration)
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+	var recordings, jobPatches int
+	reconciler.Client = countingMigrationWrites(reconciler.Client.(client.WithWatch), &recordings, &jobPatches)
+	if stored := readMigration(t, api, migration).Status.ActiveOperation; stored == nil || stored.JobUID != "" {
+		t.Fatalf("the stored claim = %#v, want one that recorded no Job UID", stored)
+	}
 
-	if _, err := reconciler.finishUncertainMigrationApply(ctx, migration, job,
-		errors.New("the created Apply Job failed immutable intent validation"), ""); err != nil {
+	result, err := reconciler.finishUncertainMigrationApply(ctx, migration, job,
+		errors.New("the created Apply Job failed immutable intent validation"), "")
+	if err != nil {
 		t.Fatalf("finishUncertainMigrationApply() error = %v", err)
 	}
 
 	actual := readMigration(t, api, migration)
+	switch kept := actual.Status.ActiveOperation; {
+	case kept == nil || kept.ID != operation.ID:
+		t.Fatalf("the claim = %#v, want claim %s kept over the Job running under its name", kept, operation.ID)
+	case kept.JobUID != "" || recordings != 0:
+		t.Fatalf("the claim records Job UID %q in %d writes, want none for a Job outside what it fixes", kept.JobUID, recordings)
+	}
+	if result.RequeueAfter != 5*time.Second {
+		t.Fatalf("RequeueAfter = %s, want the 5s a kept claim asks for", result.RequeueAfter)
+	}
 	if actual.Status.UnresolvedRun == nil {
-		t.Fatal("a refused cleanup patch took the record with it, leaving the run unaccounted for")
+		t.Fatal("the kept claim left the run unrecorded")
 	}
-	if actual.Status.ActiveOperation != nil {
-		t.Fatalf("the claim stayed active over the Job this path disowns: %#v", actual.Status.ActiveOperation)
+	if run := actual.Status.LastRun; run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown ||
+		run.JobName != job.Name || run.JobUID != job.UID {
+		t.Fatalf("status.lastRun = %#v, want an unknown run naming Job %s by UID %s", run, job.Name, job.UID)
 	}
-}
-
-// refusingJobPatches is the controller-write guard's answer to a cleanup patch
-// it will not admit.
-type refusingJobPatches struct{ client.Client }
-
-func (c refusingJobPatches) Patch(
-	ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption,
-) error {
-	if _, ok := object.(*batchv1.Job); ok {
-		return errors.New("admission refused the Job cleanup patch")
+	if blocked := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked); blocked == nil ||
+		blocked.Status != metav1.ConditionTrue || blocked.Reason != string(operatorv1alpha1.ReasonApplyOutcomeUnknown) {
+		t.Fatalf("the Blocked condition = %#v, want True with reason %s", blocked, operatorv1alpha1.ReasonApplyOutcomeUnknown)
 	}
-	return c.Client.Patch(ctx, object, patch, options...)
+	if jobPatches != 0 {
+		t.Fatalf("%d patches reached a Job the claim never named, want none", jobPatches)
+	}
+	if named := cleanupDeferredEvents(migrationEvents(recorder), job.Name); len(named) != 0 {
+		t.Fatalf("the pass that kept the claim said the Job stays: %q", named)
+	}
 }
 
 // The record clears from a reading, and this is where that reading is asked
