@@ -201,7 +201,7 @@ func TestARefusedProofReadStopsAndIsSettledAsAReadOfAnotherTargetWas(t *testing.
 			blocked := reconcileSchema(t, reconciler, api, schema)
 
 			value := settledApplyValue("apply-operation", movedDigest)
-			assertStopPrints(t, blocked, value, false)
+			assertStopPrints(t, blocked, value, heldNothing)
 			if blocked.Status.ActiveOperation == nil || blocked.Status.ActiveOperation.Type != operation ||
 				blocked.Status.ActiveOperation.Attempt != schema.Status.ActiveOperation.Attempt+1 {
 				t.Fatalf("the read does not go on: %#v", blocked.Status.ActiveOperation)

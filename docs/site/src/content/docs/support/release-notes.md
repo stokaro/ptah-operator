@@ -539,6 +539,16 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   repeats the report that the Pod could not start, and neither does a
   `PtahMigration` Apply whose result was not read, nor a schema Apply that a
   changed execution component ended. A read still does.
+- **A stop says when the annotation already settles it.** A statement in the
+  `operator.ptah.run/settled-apply` annotation holds until the proof ends, so a
+  store that flips from the first target to another and back, A, B, A, B, stops
+  on B a second time with the value already written, and the next read gives the
+  proof up with no new write. That stop printed the command as if a person still
+  had to run it. It now says `the annotation already holds this value, so the
+  next read of this target gives the proof up`, and never together with the
+  clause for another value.
+  [A schema whose target moved](../../use/recovery/#a-schema-whose-target-moved)
+  says how to take the statement back.
 
 ## 0.2.10
 

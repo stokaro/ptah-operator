@@ -31,6 +31,21 @@ const thirdTargetDigest = "sha256:3333333333333333333333333333333333333333333333
 // What a stop says when the annotation holds a value that is not the one it prints.
 const anotherValueClause = "the settled-apply annotation holds another value, which settles nothing on this target; "
 
+// What a stop says when the annotation already holds the value it prints.
+const thisValueClause = "the annotation already holds this value, so the next read of this target gives the proof up; "
+
+// annotationHeld is what a stop says the settled-apply annotation holds.
+type annotationHeld int
+
+const (
+	// heldNothing is a stop that says nothing about the annotation.
+	heldNothing annotationHeld = iota
+	// heldAnother is a stop that says the annotation holds another value.
+	heldAnother
+	// heldThis is a stop that says the annotation already holds its value.
+	heldThis
+)
+
 // movedTargetFrame is what a proof's read says when the URL Secret names digest:
 // a read the child finished, or one it could not, whose error is childError.
 func movedTargetFrame(
@@ -221,8 +236,8 @@ func settledApplyCommand(schema *operatorv1alpha1.PtahSchema, value string) stri
 }
 
 // assertStopPrints holds a resource to a stop whose message ends with the command
-// for value, and to the clause about another value being there or not.
-func assertStopPrints(t *testing.T, actual *operatorv1alpha1.PtahSchema, value string, anotherValue bool) {
+// for value, and to the clause, if any, about what the annotation holds.
+func assertStopPrints(t *testing.T, actual *operatorv1alpha1.PtahSchema, value string, held annotationHeld) {
 	t.Helper()
 	assertProofStillOwed(t, actual)
 	if !schemaProofBlocked(actual) {
@@ -235,8 +250,17 @@ func assertStopPrints(t *testing.T, actual *operatorv1alpha1.PtahSchema, value s
 	if !strings.HasSuffix(failed.Message, settledApplyCommand(actual, value)) {
 		t.Fatalf("the stop prints %q, want it to end with the command for %q", failed.Message, value)
 	}
-	if said := strings.Contains(failed.Message, anotherValueClause); said != anotherValue {
-		t.Fatalf("says the annotation holds another value = %t, want %t: %q", said, anotherValue, failed.Message)
+	assertHeldClause(t, failed.Message, held)
+}
+
+// assertHeldClause holds a stop's message to what it says the annotation holds.
+func assertHeldClause(t *testing.T, message string, held annotationHeld) {
+	t.Helper()
+	if said := strings.Contains(message, anotherValueClause); said != (held == heldAnother) {
+		t.Fatalf("says the annotation holds another value = %t, want %t: %q", said, held == heldAnother, message)
+	}
+	if said := strings.Contains(message, thisValueClause); said != (held == heldThis) {
+		t.Fatalf("says the annotation already holds this value = %t, want %t: %q", said, held == heldThis, message)
 	}
 }
 
@@ -333,23 +357,70 @@ func TestAProofThatReadsAnotherTargetStopsAndSaysHowToEndIt(t *testing.T) {
 
 // The command is the last thing the message says, a person runs it as it stands,
 // and a settlement reads its value back from there. So it has to fit at the longest
-// name and namespace the API admits, with the clause about another value as well.
+// name and namespace the API admits, with either clause about the annotation.
 func TestTheStopPrintsTheWholeCommandAtTheLongestNames(t *testing.T) {
 	t.Parallel()
-	schema := safetyPostApplyObserveSchema(t)
-	schema.Name, schema.Namespace = strings.Repeat("n", 253), strings.Repeat("s", 63)
-	schema.Status.PendingObservation.ApplyOperationID = "sha256:" + strings.Repeat("a", 64)
-	schema.Annotations = map[string]string{operatorv1alpha1.SettledApplyAnnotation: "another value"}
 	digest := "sha256:" + strings.Repeat("b", 64)
-	message := movedTargetFailure(schema, digest).Error()
-	if !strings.Contains(message, anotherValueClause) {
-		t.Fatalf("the fixture is not the longest message: %q", message)
+	operationID := "sha256:" + strings.Repeat("a", 64)
+	for _, row := range []struct {
+		name string
+		held string
+		says annotationHeld
+	}{
+		{name: "another value", held: "another value", says: heldAnother},
+		{name: "this value", held: settledApplyValue(operationID, digest), says: heldThis},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			schema := safetyPostApplyObserveSchema(t)
+			schema.Name, schema.Namespace = strings.Repeat("n", 253), strings.Repeat("s", 63)
+			schema.Status.PendingObservation.ApplyOperationID = operationID
+			schema.Annotations = map[string]string{operatorv1alpha1.SettledApplyAnnotation: row.held}
+			message := movedTargetFailure(schema, digest).Error()
+			assertHeldClause(t, message, row.says)
+			if bounded(message, 1024) != message {
+				t.Fatalf("the message is %d bytes, and a condition keeps 1024", len(message))
+			}
+			if command := settledApplyCommand(schema, settledApplyValue(operationID, digest)); !strings.HasSuffix(message, command) {
+				t.Fatalf("the message does not end with %q: %q", command, message)
+			}
+		})
 	}
-	if bounded(message, 1024) != message {
-		t.Fatalf("the message is %d bytes, and a condition keeps 1024", len(message))
-	}
-	if command := settledApplyCommand(schema, settledApplyValue(schema.Status.PendingObservation.ApplyOperationID, digest)); !strings.HasSuffix(message, command) {
-		t.Fatalf("the message does not end with %q: %q", command, message)
+}
+
+// stokaro/ptah-operator#894. A statement holds until the proof ends, so a stop can
+// find the annotation already holding the value it prints, and the next read of
+// the target gives the proof up with no new write. The stop says so, rather than
+// ask for a command already run. Any other value is one the stop does not print,
+// and settles nothing. A value is one or the other, so a stop says one clause at
+// most, and none when nothing is written.
+func TestAStopSaysWhatTheAnnotationAlreadyHolds(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name  string
+		value *string
+		says  annotationHeld
+	}{
+		{name: "nothing written", says: heldNothing},
+		{name: "the value the stop prints", value: ptr(movedValue()), says: heldThis},
+		{name: "an empty value", value: ptr(""), says: heldAnother},
+		{name: "the Apply's ID alone", value: ptr("apply-operation"), says: heldAnother},
+		{name: "another Apply on this target", value: ptr(settledApplyValue("an-earlier-apply", safetyOtherDigest)), says: heldAnother},
+		{name: "this Apply on another target", value: ptr(settledApplyValue("apply-operation", thirdTargetDigest)), says: heldAnother},
+		{name: "a value cut short", value: ptr(movedValue()[:len(movedValue())-1]), says: heldAnother},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			schema := safetyPostApplyObserveSchema(t)
+			if row.value != nil {
+				schema.Annotations = map[string]string{operatorv1alpha1.SettledApplyAnnotation: *row.value}
+			}
+			message := movedTargetFailure(schema, safetyOtherDigest).Error()
+			assertHeldClause(t, message, row.says)
+			if command := settledApplyCommand(schema, movedValue()); !strings.HasSuffix(message, command) {
+				t.Fatalf("the message does not end with %q: %q", command, message)
+			}
+		})
 	}
 }
 
@@ -614,10 +685,10 @@ func TestTheApplysIDAloneArmsNothing(t *testing.T) {
 	assertProofStillOwed(t, reconcileSchema(t, reconciler, api, schema))
 
 	first := nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil)
-	assertStopPrints(t, first, movedValue(), true)
+	assertStopPrints(t, first, movedValue(), heldAnother)
 	// Every pass and every later read, with no write by anyone.
 	assertProofStillOwed(t, reconcileSchema(t, reconciler, api, schema))
-	assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil), movedValue(), true)
+	assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil), movedValue(), heldAnother)
 }
 
 // The digest is a plain SHA-256 of the URL, so a person can work the value out and
@@ -628,7 +699,7 @@ func TestAValueWorkedOutInAdvanceStillMeetsTheStop(t *testing.T) {
 	t.Parallel()
 	schema, reconciler, api := proofFixture(t, operatorv1alpha1.PendingObservationApplySucceeded, nil)
 	setSettledApply(t, api, schema, movedValue())
-	assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), movedValue(), false)
+	assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), movedValue(), heldThis)
 	assertSettled(t, nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil))
 }
 
@@ -641,10 +712,10 @@ func TestASettlementWaitsForAStopThatPrintedItsValue(t *testing.T) {
 		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
 		setSettledApply(t, api, blocked, movedValue())
 		third := settledApplyValue("apply-operation", thirdTargetDigest)
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", thirdTargetDigest, nil), third, true)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", thirdTargetDigest, nil), third, heldAnother)
 		// The condition prints the third target's value, so this read of the second
 		// target is no read a person has seen a stop for.
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), heldThis)
 		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
 	})
 	t.Run("a value worked out for a target the only stop did not name", func(t *testing.T) {
@@ -653,8 +724,8 @@ func TestASettlementWaitsForAStopThatPrintedItsValue(t *testing.T) {
 		reconciler.Logs = staticLogs{content: movedTargetFrame(t, schema, thirdTargetDigest, nil)}
 		setSettledApply(t, api, schema, movedValue())
 		third := settledApplyValue("apply-operation", thirdTargetDigest)
-		assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), third, true)
-		assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil), movedValue(), false)
+		assertStopPrints(t, reconcileSchema(t, reconciler, api, schema), third, heldAnother)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil), movedValue(), heldThis)
 		assertSettled(t, nextProofRead(t, reconciler, api, schema, "third", safetyOtherDigest, nil))
 	})
 }
@@ -662,13 +733,15 @@ func TestASettlementWaitsForAStopThatPrintedItsValue(t *testing.T) {
 // The value is a person's statement about this Apply and this target, and it holds
 // until the proof ends. A store that goes back to the first target and then to the
 // second again stops there and settles, with no new write, because that is what the
-// statement said. Taking the annotation off is how to take it back.
+// statement said. That stop says the annotation already holds its value (#894).
+// Taking the annotation off is how to take it back.
 func TestAStatementHoldsUntilTheProofEnds(t *testing.T) {
 	t.Parallel()
 	failure := &runner.ResultError{Code: "execution_error", Message: "the server went away"}
 	t.Run("the first target answered in between", func(t *testing.T) {
 		t.Parallel()
 		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+		assertStopPrints(t, blocked, movedValue(), heldNothing)
 		setSettledApply(t, api, blocked, movedValue())
 		observed := nextProofRead(t, reconciler, api, blocked, "second", testDigest, nil)
 		safetyAssertPendingProof(t, observed)
@@ -680,7 +753,7 @@ func TestAStatementHoldsUntilTheProofEnds(t *testing.T) {
 		if claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan {
 			t.Fatalf("the proof did not go on to its Plan: %#v", claimed.Status.ActiveOperation)
 		}
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), heldThis)
 		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
 	})
 	t.Run("the first target was down in between", func(t *testing.T) {
@@ -692,7 +765,7 @@ func TestAStatementHoldsUntilTheProofEnds(t *testing.T) {
 		if down.Status.Phase != operatorv1alpha1.PhaseFailed {
 			t.Fatalf("phase %s, want Failed", down.Status.Phase)
 		}
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), heldThis)
 		assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
 	})
 	t.Run("the annotation came off", func(t *testing.T) {
@@ -704,7 +777,7 @@ func TestAStatementHoldsUntilTheProofEnds(t *testing.T) {
 		if err := api.Update(context.Background(), stored); err != nil {
 			t.Fatal(err)
 		}
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), false)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), heldNothing)
 	})
 }
 
@@ -762,7 +835,7 @@ func TestAReadWhoseJobFailedNamesNoTarget(t *testing.T) {
 				!strings.Contains(condition.Message, row.says) || strings.Contains(condition.Message, "kubectl") {
 				t.Fatalf("ReconciliationFailed = %#v, want OperationFailed saying %q and no command", condition, row.says)
 			}
-			assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), false)
+			assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "third", safetyOtherDigest, nil), movedValue(), heldThis)
 			assertSettled(t, nextProofRead(t, reconciler, api, blocked, "fourth", safetyOtherDigest, nil))
 		})
 	}
@@ -802,7 +875,7 @@ func TestAStopKeepsItsCommandWhileThePodCannotStart(t *testing.T) {
 
 	actual := reconcileSchema(t, reconciler, api, blocked)
 
-	assertStopPrints(t, actual, movedValue(), false)
+	assertStopPrints(t, actual, movedValue(), heldNothing)
 	ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady)
 	if ready == nil || ready.Reason != string(operatorv1alpha1.ReasonPodConfigurationError) {
 		t.Fatalf("Ready = %#v, want PodConfigurationError", ready)
@@ -833,7 +906,11 @@ func TestWhatASettlementRefuses(t *testing.T) {
 				setSettledApply(t, api, blocked, row.value)
 			}
 			actual := nextProofRead(t, reconciler, api, blocked, "second", row.read, nil)
-			assertStopPrints(t, actual, settledApplyValue("apply-operation", row.read), row.value != "")
+			held := heldNothing
+			if row.value != "" {
+				held = heldAnother
+			}
+			assertStopPrints(t, actual, settledApplyValue("apply-operation", row.read), held)
 		})
 	}
 
@@ -841,7 +918,7 @@ func TestWhatASettlementRefuses(t *testing.T) {
 		t.Parallel()
 		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
 		setSettledApply(t, api, blocked, "")
-		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), true)
+		assertStopPrints(t, nextProofRead(t, reconciler, api, blocked, "second", safetyOtherDigest, nil), movedValue(), heldAnother)
 	})
 
 	t.Run("the first target back", func(t *testing.T) {
