@@ -218,7 +218,10 @@ leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
   the request names, and the API server's `code` and `reason`, such as `403`
   and `Forbidden`, or `deadlineExceeded` where no status came back. It never
   logs the token or the text of an answer: a review that returns an error says
-  so without its text.
+  so without its text. An authority check that reached no verdict after the
+  runner authenticated, with either Pod tokens or client certificates, answered
+  503 silently as well, and now logs `result authorization reached no verdict`
+  the same way, or that it is waiting for the Job's adoption or the Pod's pin.
 - **Result cleanup under a full quota.** A quota that refused the `retired` record
   stopped cleanup in a live namespace: the collector asked again every 30 seconds,
   nothing started the retention window, and the operation's records stayed. Once the

@@ -102,7 +102,14 @@ func (r noSecrets) Get(ctx context.Context, key client.ObjectKey, obj client.Obj
 }
 func running(t *testing.T, s *Service) func() {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
+	return runningIn(t, t.Context(), s)
+}
+
+// runningIn starts s under ctx, which every request the receiver serves
+// inherits, so a test can hand the service a logger.
+func runningIn(t *testing.T, parent context.Context, s *Service) func() {
+	t.Helper()
+	ctx, cancel := context.WithCancel(parent)
 	done := make(chan error, 1)
 	go func() { done <- s.Start(ctx) }()
 	deadline := time.Now().Add(3 * time.Second)
