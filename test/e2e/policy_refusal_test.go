@@ -9,60 +9,102 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-func refusedConditions(verifiedType, readyType string) []metav1.Condition {
-	return []metav1.Condition{
-		{Type: verifiedType, Status: metav1.ConditionFalse, Reason: "PolicyRefused",
-			Message: "Verification policy refused the artifact with 1 finding(s): artifact_types"},
-		{Type: readyType, Status: metav1.ConditionFalse, Reason: "PolicyRefused",
-			Message: "Artifact verification policy must be satisfied before database access"},
+// nrReadingFile names a document a native refusal row printed: the resource
+// Ptah's own verification refused and, beside it, what the row matched it with.
+// testdata/e2e/readings/README.md says in which run.
+func nrReadingFile(name string) string { return "../../testdata/e2e/readings/" + name }
+
+// nrMatched is what a native refusal row printed beside the resource: the
+// Verify's result frame, where the row reads one, and the refusal's Warning
+// Events.
+type nrMatched struct {
+	VerifyResult *runner.Result `json:"verifyResult"`
+	Events       []corev1.Event `json:"events"`
+}
+
+// nrRead decodes one reading afresh, so a mutation changes one copy only. The
+// file is read once, before any subtest, so a fixture called from a subtest
+// cannot fail on it.
+func nrRead[T any](t *testing.T, name string) func() (T, nrMatched) {
+	t.Helper()
+	content, err := os.ReadFile(nrReadingFile(name))
+	if err != nil {
+		t.Fatal(err)
 	}
+	decode := func() (T, nrMatched, error) {
+		var resource T
+		var matched nrMatched
+		if err := json.Unmarshal(content, &resource); err != nil {
+			return resource, matched, err
+		}
+		return resource, matched, json.Unmarshal(content, &matched)
+	}
+	if _, _, err := decode(); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	return func() (T, nrMatched) {
+		resource, matched, _ := decode()
+		return resource, matched
+	}
+}
+
+// nrCondition is the condition a mutation changes; the fixture was accepted
+// with it, so it is there.
+func nrCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	return meta.FindStatusCondition(conditions, conditionType)
 }
 
 func TestNativelyRefusedSchema(t *testing.T) {
 	t.Parallel()
+	read := nrRead[ptahv1alpha1.PtahSchema](t, "native-refusal-schema.json")
+	verified := func(s *ptahv1alpha1.PtahSchema) *metav1.Condition {
+		return nrCondition(s.Status.Conditions, ptahv1alpha1.ConditionArtifactVerified)
+	}
+	ready := func(s *ptahv1alpha1.PtahSchema) *metav1.Condition {
+		return nrCondition(s.Status.Conditions, ptahv1alpha1.ConditionReady)
+	}
 	mtRefusesEach(t,
 		func() *ptahv1alpha1.PtahSchema {
-			schema := &ptahv1alpha1.PtahSchema{}
-			schema.Status.Phase = ptahv1alpha1.PhaseBlocked
-			schema.Status.Conditions = refusedConditions(ptahv1alpha1.ConditionArtifactVerified, ptahv1alpha1.ConditionReady)
-			return schema
+			schema, _ := read()
+			return &schema
 		},
 		nativelyRefusedSchema,
 		map[string]func(*ptahv1alpha1.PtahSchema){
 			"the operation failure this row was written for": func(s *ptahv1alpha1.PtahSchema) {
 				s.Status.Phase = ptahv1alpha1.PhaseFailed
-				s.Status.Conditions[0].Reason = "OperationFailed"
+				verified(s).Reason = "OperationFailed"
 			},
 			"an operation in flight": func(s *ptahv1alpha1.PtahSchema) {
 				s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationVerify}
 			},
-			"a plan published":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Plan = &ptahv1alpha1.CurrentPlanStatus{} },
-			"a verified source": func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Verified = true },
-			"no conditions":     func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions = nil },
-			"verified as True":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[0].Status = metav1.ConditionTrue },
-			"another reason":    func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[0].Reason = "OperationFailed" },
-			"no requirement": func(s *ptahv1alpha1.PtahSchema) {
-				s.Status.Conditions[0].Message = "Verification policy refused the artifact"
-			},
-			"Ready as a failure": func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[1].Reason = "OperationFailed" },
-			"Ready as True":      func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions[1].Status = metav1.ConditionTrue },
+			"a plan published":   func(s *ptahv1alpha1.PtahSchema) { s.Status.Plan = &ptahv1alpha1.CurrentPlanStatus{} },
+			"a verified source":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Verified = true },
+			"no conditions":      func(s *ptahv1alpha1.PtahSchema) { s.Status.Conditions = nil },
+			"verified as True":   func(s *ptahv1alpha1.PtahSchema) { verified(s).Status = metav1.ConditionTrue },
+			"another reason":     func(s *ptahv1alpha1.PtahSchema) { verified(s).Reason = "OperationFailed" },
+			"no requirement":     func(s *ptahv1alpha1.PtahSchema) { verified(s).Message = "Verification policy refused the artifact" },
+			"Ready as a failure": func(s *ptahv1alpha1.PtahSchema) { ready(s).Reason = "OperationFailed" },
+			"Ready as True":      func(s *ptahv1alpha1.PtahSchema) { ready(s).Status = metav1.ConditionTrue },
 		})
 }
 
 func TestNativelyRefusedMigration(t *testing.T) {
 	t.Parallel()
+	read := nrRead[ptahv1alpha1.PtahMigration](t, "native-refusal-migration.json")
+	verified := func(m *ptahv1alpha1.PtahMigration) *metav1.Condition {
+		return nrCondition(m.Status.Conditions, ptahv1alpha1.ConditionMigrationArtifactVerified)
+	}
 	mtRefusesEach(t,
 		func() *ptahv1alpha1.PtahMigration {
-			migration := &ptahv1alpha1.PtahMigration{}
-			migration.Status.Phase = ptahv1alpha1.MigrationPhaseBlocked
-			migration.Status.Conditions = refusedConditions(ptahv1alpha1.ConditionMigrationArtifactVerified, ptahv1alpha1.ConditionMigrationReady)
-			return migration
+			migration, _ := read()
+			return &migration
 		},
 		nativelyRefusedMigration,
 		map[string]func(*ptahv1alpha1.PtahMigration){
@@ -78,30 +120,42 @@ func TestNativelyRefusedMigration(t *testing.T) {
 			},
 			"a history read": func(m *ptahv1alpha1.PtahMigration) { m.Status.History = &ptahv1alpha1.MigrationHistoryStatus{} },
 			"no conditions":  func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions = nil },
-			"another reason": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions[0].Reason = "OperationFailed" },
-			"no requirement": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions[0].Message = "refused" },
+			"another reason": func(m *ptahv1alpha1.PtahMigration) { verified(m).Reason = "OperationFailed" },
+			"no requirement": func(m *ptahv1alpha1.PtahMigration) { verified(m).Message = "refused" },
 			"Ready as a failure": func(m *ptahv1alpha1.PtahMigration) {
-				m.Status.Conditions[1].Reason = "OperationFailed"
+				nrCondition(m.Status.Conditions, ptahv1alpha1.ConditionMigrationReady).Reason = "OperationFailed"
 			},
 		})
 }
 
 func TestNativeRefusalResult(t *testing.T) {
 	t.Parallel()
+	read := nrRead[ptahv1alpha1.PtahSchema](t, "native-refusal-schema.json")
+	policy, err := os.ReadFile("../../testdata/e2e/" + otherTypePolicyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused, matched := read()
+	if matched.VerifyResult == nil {
+		t.Fatal("the reading holds no Verify result")
+	}
+	// The row passes the digest it published and the policy's own digest; the
+	// schema's source names both.
+	digest, policyDigest := refused.Status.Source.Digest, sha256Digest(policy)
+	if refused.Status.Source.VerificationPolicyDigest != policyDigest {
+		t.Fatalf("the schema read policy %s, not %s, the digest of %s", refused.Status.Source.VerificationPolicyDigest, policyDigest, otherTypePolicyFile)
+	}
 	mtRefusesEach(t,
 		func() *runner.Result {
-			return &runner.Result{
-				ChildExitCode: 2, ResolvedDigest: testGateDigest, VerificationPolicyDigest: testGateFingerprint,
-				VerificationRequirements: []string{"artifact_types"},
-				Error:                    &runner.ResultError{Code: "verification_refused", Message: refusalFrameMessage},
-			}
+			_, matched := read()
+			return matched.VerifyResult
 		},
 		func(result *runner.Result) error {
-			return nativeRefusalResult(*result, testGateDigest, testGateFingerprint)
+			return nativeRefusalResult(*result, digest, policyDigest)
 		},
 		map[string]func(*runner.Result){
 			"the digest-pin refusal's exit status": func(r *runner.Result) { r.ChildExitCode = 0 },
-			"another digest":                       func(r *runner.Result) { r.ResolvedDigest = testGateFingerprint },
+			"another digest":                       func(r *runner.Result) { r.ResolvedDigest = testGateDigest },
 			"another policy":                       func(r *runner.Result) { r.VerificationPolicyDigest = testGateDigest },
 			"another requirement":                  func(r *runner.Result) { r.VerificationRequirements = []string{"require_signature"} },
 			"no requirement":                       func(r *runner.Result) { r.VerificationRequirements = nil },
@@ -224,7 +278,7 @@ func TestRereadAtItsDeadlineAndReadAtOnce(t *testing.T) {
 func TestRefusalTransitionsNamesBothTimes(t *testing.T) {
 	t.Parallel()
 	said := refusalTransitions(recoveredFromRefusalReading(t))
-	for _, want := range []string{"ArtifactVerified=True/PolicySatisfied since 2026-11-07T10:31:12Z", "Blocked=False/HistoryMatched since 2026-11-07T10:31:12Z"} {
+	for _, want := range []string{"ArtifactVerified=True/PolicySatisfied since 2026-11-12T18:35:01Z", "Blocked=False/HistoryMatched since 2026-11-12T18:35:01Z"} {
 		if !strings.Contains(said, want) {
 			t.Errorf("refusalTransitions says %q, want %q", said, want)
 		}
@@ -234,9 +288,9 @@ func TestRefusalTransitionsNamesBothTimes(t *testing.T) {
 	}
 }
 
-// recoveredFromRefusalReading is what the reconciler wrote for a resource past
-// its refusal. TestTheRefusalRecoveryReadingIsTheReconcilers in internal/controller
-// holds it to that, because this row has not seen a cluster when it is written.
+// recoveredFromRefusalReading is what the refusal row printed for a resource
+// past its refusal. TestTheRefusalRecoveryReadingIsTheReconcilers in
+// internal/controller holds the reconciler to its phase and conditions.
 func recoveredFromRefusalReading(t *testing.T) *ptahv1alpha1.PtahMigration {
 	t.Helper()
 	content, err := os.ReadFile("../../testdata/e2e/readings/native-refusal-recovered-migration.json")
@@ -305,30 +359,36 @@ func TestRecoveredFromRefusal(t *testing.T) {
 
 func TestNativeRefusalEvent(t *testing.T) {
 	t.Parallel()
-	const owner = "owner-uid"
-	event := func(mutate func(*corev1.Event)) []corev1.Event {
-		each := corev1.Event{
-			InvolvedObject: corev1.ObjectReference{UID: owner}, Type: corev1.EventTypeWarning, Reason: "ArtifactVerificationRefused",
-			Message: "Verification policy refused the artifact with 1 finding(s): artifact_types", LastTimestamp: metav1.NewTime(time.Unix(0, 0)),
-		}
-		if mutate != nil {
-			mutate(&each)
-		}
-		return []corev1.Event{each}
-	}
-	if err := nativeRefusalEvent(event(nil), owner); err != nil {
-		t.Fatalf("the Event was refused: %v", err)
-	}
-	for name, events := range map[string][]corev1.Event{
-		"no Event":          nil,
-		"another resource":  event(func(e *corev1.Event) { e.InvolvedObject.UID = "other" }),
-		"another reason":    event(func(e *corev1.Event) { e.Reason = "OperationRetried" }),
-		"a Normal Event":    event(func(e *corev1.Event) { e.Type = corev1.EventTypeNormal }),
-		"no requirement":    event(func(e *corev1.Event) { e.Message = "Verification policy refused the artifact" }),
-		"a mismatched word": event(func(e *corev1.Event) { e.Message = "require_signature" }),
-	} {
-		if nativeRefusalEvent(events, owner) == nil {
-			t.Errorf("%s was accepted", name)
-		}
+	for _, name := range []string{"native-refusal-schema.json", "native-refusal-migration.json"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			read := nrRead[metav1.PartialObjectMetadata](t, name)
+			refused, matched := read()
+			if len(matched.Events) == 0 {
+				t.Fatal("the reading holds no Event")
+			}
+			if err := nativeRefusalEvent(matched.Events, refused.UID); err != nil {
+				t.Fatalf("the Event was refused: %v", err)
+			}
+			each := func(mutate func(*corev1.Event)) []corev1.Event {
+				_, matched := read()
+				for index := range matched.Events {
+					mutate(&matched.Events[index])
+				}
+				return matched.Events
+			}
+			for name, events := range map[string][]corev1.Event{
+				"no Event":          nil,
+				"another resource":  each(func(e *corev1.Event) { e.InvolvedObject.UID = "other" }),
+				"another reason":    each(func(e *corev1.Event) { e.Reason = "OperationRetried" }),
+				"a Normal Event":    each(func(e *corev1.Event) { e.Type = corev1.EventTypeNormal }),
+				"no requirement":    each(func(e *corev1.Event) { e.Message = "Verification policy refused the artifact" }),
+				"a mismatched word": each(func(e *corev1.Event) { e.Message = "require_signature" }),
+			} {
+				if nativeRefusalEvent(events, refused.UID) == nil {
+					t.Errorf("%s was accepted", name)
+				}
+			}
+		})
 	}
 }

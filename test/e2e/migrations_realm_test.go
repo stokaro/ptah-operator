@@ -13,10 +13,10 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-// mrReading is the reading a failing lifecycle printed for the partial row,
-// with that cluster's digests, times and names scrubbed out: the document
-// that broke two proofs at once, whose phase is Resolving while the refusal
-// holds and whose pending count is one.
+// mrReading is what the partial row printed while a cycle read the database
+// again: the shape that once broke two proofs at once, whose phase is
+// Resolving while the refusal holds and whose pending count is one.
+// testdata/e2e/readings/README.md says in which run.
 const mrReading = "../../testdata/e2e/readings/partial-run-left-a-dirty-revision.json"
 
 func mrMigrationStatus(t *testing.T, document string) ptahv1alpha1.PtahMigrationStatus {

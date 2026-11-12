@@ -212,9 +212,10 @@ func TestIsolatedRunSettled(t *testing.T) {
 	})
 }
 
-func TestIsolatedDurableRunCIReading(t *testing.T) {
-	// CI run 37154162826, job 111295506918: the Apply receipt survived
-	// node isolation even though the original Pod and its logs were gone.
+func TestIsolatedDurableRunReading(t *testing.T) {
+	// What the isolated-node row printed once its migration settled: the Apply
+	// receipt survived node isolation even though the original Pod and its logs
+	// were gone. testdata/e2e/readings/README.md says in which run.
 	data, err := os.ReadFile(filepath.Join("../..", "testdata/e2e/readings/isolated-node-durable-migration.json"))
 	if err != nil {
 		t.Fatal(err)
