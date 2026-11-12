@@ -545,12 +545,12 @@ The audit reaches as far as the fixtures do. It holds the statements the
 acceptance schemas and migrations produce and says nothing about any other: a
 declaration they do not contain can send a statement no audit has seen. The
 MySQL probe for non-ASCII index names is one, and so are the CHECK, view and
-trigger probes on PostgreSQL for objects the fixtures leave out. The History
-list also admits the `CREATE TABLE IF NOT EXISTS` of the revision table,
-because one list governs History and the migration Apply that sends it, so that
-History does not send it rests on the recorded readings and on Ptah's source,
-not on the acceptance run. A revision table under another name or schema is
-outside both.
+trigger probes on PostgreSQL for objects the fixtures leave out. Both History
+lists also admit the `CREATE TABLE IF NOT EXISTS` of the revision table
+(`postgresHistoryCreate`, `mysqlHistoryCreate`), because each list governs
+History and the migration Apply that sends it, so that History does not send it
+rests on the recorded readings and on Ptah's source, not on the acceptance run.
+A revision table under another name or schema is outside both.
 
 ### What a read can still hold
 
@@ -578,15 +578,30 @@ one.
 
 How long the server keeps the lock depends on what the node lost. A node cut
 off from the API server alone still reaches the database: Ptah finishes and
-lets go, or the kubelet stops the Pod at its `activeDeadlineSeconds`, which is
-the Job's, and the session ends with the process, at the latest close to the
-bound the operator stops waiting at. A node cut off from the database, or a
-node that is gone, leaves the session to the server, which keeps it and its
-lock until it notices the peer has gone. PostgreSQL notices through TCP
-keepalive; with `tcp_keepalives_idle` at its default of 0 the operating
-system's settings apply, about two hours and eleven minutes on Linux. MySQL
-ends an idle session after `wait_timeout`, eight hours by default, unless TCP
-keepalive drops it first. A managed database may set either differently.
+lets go, or the kubelet stops the Pod at its `activeDeadlineSeconds`, and the
+session ends with the process. The kubelet enforces that deadline on its own
+and counts it from the Pod's start, so the session ends no later than the
+Pod's start plus its deadline and termination grace, as `podStopBound`
+computes it. The operator's wait counts from the Job's start or from its
+`FailureTarget` condition, so the session can outlast that wait by up to the
+time the Pod took to start.
+
+A node cut off from the database, or a node that is gone, leaves the session to
+the server, which keeps it and its lock until it notices the peer has gone.
+Both servers turn on TCP keepalive for every client connection, and the
+database host's operating system decides when it fires: PostgreSQL leaves the
+timing to it while `tcp_keepalives_idle`, `tcp_keepalives_interval` and
+`tcp_keepalives_count` are at their default of 0, and MySQL sets
+`SO_KEEPALIVE` and no timing (`vio_keepalive`, called from
+`sql/sql_connect.cc`). With Linux defaults an idle connection is dropped after
+about two hours and eleven minutes. If the server was sending when the peer
+went and the data was never acknowledged, Linux gives up sooner, after
+`net.ipv4.tcp_retries2` retransmissions, about 15 minutes by default. A server
+setting can end an idle session sooner: on PostgreSQL
+`idle_in_transaction_session_timeout` for a session inside a transaction and
+`idle_session_timeout` for one outside, both off by default, and on MySQL
+`wait_timeout`, eight hours by default, which comes first only where keepalive
+is off or slower. A managed database may set any of these differently.
 
 While a cut-off session holds the lock, the realm Lease no longer covers it:
 the operator let the claim go at the bound, and the database lock is what the
@@ -638,8 +653,17 @@ server rolls the transaction back and releases the lock. On MySQL,
 
 ```sql
 SELECT ID, USER, HOST, TIME, STATE
-FROM information_schema.PROCESSLIST
+FROM performance_schema.processlist
 WHERE ID = IS_USED_LOCK('ptah_schema_apply');
 ```
 
 `KILL <ID>;` ends that connection and releases the lock.
+
+The account Ptah logs in as can see and end its own sessions. Another account
+needs privileges for each step. On PostgreSQL every role sees the lock in
+`pg_locks`, but only superuser, `pg_read_all_stats` or a role with the
+privileges of Ptah's login sees the session's address and state in
+`pg_stat_activity`, and only superuser, `pg_signal_backend` or such a role can
+end it; `pg_signal_backend` cannot end a superuser's session. On MySQL another
+account needs `PROCESS` to see the connection in the process list and
+`CONNECTION_ADMIN` to `KILL` it.

@@ -437,16 +437,27 @@ and goes while the Pod may still read, and records the proof `Unknown`.
   deleted `PtahSchema` waited for such a Plan, or for the read that proves an
   Apply, with no bound and renewed the database Lease all along, so neither the
   resource nor the realm was let go. It now waits no longer than the Job's
-  deadline, the grace of its Pods and 30 seconds, checked before it renews the
-  Lease, and then discards the claim, records the proof `Unknown`, hands the
-  Lease back and goes. A live read in either kind that supervised a Job marked
-  `FailureTarget`, or waited for the Pods of a recorded Job that is gone, had no
-  bound either; it now runs again under a new Job at that bound. Each records a
-  `ReadJobOverdue` Warning Event that names the Job, the Pod that may still
-  read, its node and the forced delete. Nothing uses what such a Pod reads, and
+  deadline, the grace of its Pods and 30 seconds, and then discards the claim,
+  records the proof `Unknown` and goes. A Plan hands the Lease back without
+  renewing it past the bound. A proof's Lease is the Apply's: deletion renews
+  it once more and hands it back on the same pass. A live read in either kind
+  that supervised a Job marked `FailureTarget`, or waited for the Pods of a
+  recorded Job that is gone, had no bound either; it now runs again under a new
+  Job at that bound. Each records a `ReadJobOverdue` Warning Event that names
+  the Job, the Pod that may still read, its node and the forced delete. Nothing
+  uses what such a Pod reads, and
   [What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)
   says what it can still hold. An Apply is still waited for until its Job
   stops.
+- **A retried Plan runs again.** A Plan that failed, or that ran past its Job's
+  stop bound, hands its database Lease back and moves to its next attempt. When
+  that attempt took the Lease again, the operator read the new epoch as lost
+  continuity: it recorded a `LeaseContinuityLost` Warning Event and
+  `Ready=False` with that reason, cleared `status.plan` and started over with an
+  Observe. The next attempt now takes the epoch as its own and runs the Plan
+  again. A proof keeps the Apply's Lease across its attempts and was not
+  affected, and a claim whose Lease went while its Job could run still reports
+  the loss.
 
 ## 0.2.10
 

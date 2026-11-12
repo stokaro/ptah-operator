@@ -165,6 +165,13 @@ again with the stale expectation. Before dispatch that is adopted silently,
 because nothing ran; after dispatch it latches continuity loss, and the run
 becomes unreadable rather than retryable.
 
+A retried Plan expects no epoch at all. The retry hands the failed attempt's
+Lease back in the write that moves the claim to its next attempt, and that
+attempt has dispatched nothing when it takes the realm again, so the epoch it
+gets is adopted the same way. A proof is not: it reads under the epoch of the
+Apply it accounts for, so a proof with no epoch to compare has lost
+continuity before it dispatches anything.
+
 ## Resolve the admission envelope
 
 The Pod admission snapshot is durable before any Job carries its digest, and

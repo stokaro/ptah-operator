@@ -1570,7 +1570,8 @@ deletion renews it once more, and hands it back on the same pass once no Pod of
 the Apply is running and the Apply's execution deadline and grace period have
 passed, which they have by the time its proof runs. A Plan that outlives its
 claim cannot write, but its session can still hold the lock a later Apply
-needs, for hours when the node has lost its route to the database as well;
+needs, for over two hours under Linux defaults when the node has lost its
+route to the database as well;
 [What a read can still hold](../../reference/execution/#what-a-read-can-still-hold)
 says what that costs and how to end the session. A Resolve, a Verify or any
 other Observe holds nothing, so deletion drops its claim without waiting,
