@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "name": "plan_dcbfdfb2109f",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:c86fc1374d20b7b4e7fcfb1ad740830c8e89c27312f9489431c66b1519c4a429",
+  "to_fingerprint": "sha256:d613394cc3c2cf3b9439059cc5702f6f9a18a7d763fa0b82fd3fc4f6a603c59b",
+  "scope": {
+    "kind": "schema",
+    "name": "harness_differs_login_show_routine_mysql"
+  },
+  "destructive": true,
+  "statements": [
+    {
+      "sql": "DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`",
+      "severity": "destructive",
+      "reason": "DROP FUNCTION removes executable database behavior"
+    },
+    {
+      "sql": "DROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    },
+    {
+      "sql": "DROP TRIGGER `differs_hand_trigger`",
+      "severity": "destructive",
+      "reason": "DROP TRIGGER removes executable behavior from every write to its table"
+    }
+  ]
+}

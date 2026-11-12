@@ -1,6 +1,8 @@
 package runnerharness_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -55,6 +57,8 @@ type differingReading struct {
 	// findings are the categories of the first drift report, sorted. None means
 	// that report reads as converged, so observed has to show what it did read.
 	findings []string
+	// counts holds the first report's count for each category it names.
+	counts map[string]int32
 	// observed counts the first report's inventory by kind.
 	observed map[string]int32
 	// driftRefusal is what the first read says instead of a report.
@@ -314,6 +318,23 @@ func differingRows() []differingRow {
 				driftsAfterApply: true,
 			},
 		},
+		// MySQL builds an index for a foreign key and drops it once another index
+		// begins with the key's columns, so Ptah replaces it in the statement that
+		// adds the unique key (stokaro/ptah#5695). Ptah rates that statement safe,
+		// and the manager holds it as destructive for its DROP INDEX.
+		{
+			name: "fk-index-takeover", engine: engineMySQL, declared: "fk-unique-mysql.sql",
+			seed: []string{
+				"CREATE TABLE differs_parent (id bigint NOT NULL PRIMARY KEY)",
+				"CREATE TABLE differs_child (id bigint NOT NULL PRIMARY KEY, parent_id bigint NOT NULL, " +
+					"CONSTRAINT differs_child_parent FOREIGN KEY (parent_id) REFERENCES differs_parent (id))",
+			},
+			want: differingReading{
+				findings:    []string{"constraints_added", "indexes_removed"},
+				statements:  []string{"ALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`)"},
+				destructive: true,
+			},
+		},
 	}
 	return append(rows, append(partitionRows(), authorityRows()...)...)
 }
@@ -363,6 +384,22 @@ func partitionRows() []differingRow {
 			findings:   []string{moved},
 			statements: []string{`ALTER TABLE "differs_events" ATTACH PARTITION "differs_loose" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')`},
 		}),
+		// What `pg_dump --schema-only --no-owner --no-privileges` of PostgreSQL 17
+		// writes for a partitioned table with a key and an index: each partition
+		// as a plain table, then its attachment, and a copy of the key and the
+		// index on each partition, attached to the parent's. Ptah reads it as the
+		// declaration PARTITION OF makes (stokaro/ptah#5722), so the database it
+		// was dumped from reads clean and plans nothing.
+		{
+			name: "partition-dump", engine: enginePostgres, declared: "partition-dump-postgresql.sql", git: true,
+			seed: []string{
+				"CREATE TABLE differs_events (id bigint NOT NULL, at date NOT NULL, note text DEFAULT 'x', PRIMARY KEY (id, at)) PARTITION BY RANGE (at)",
+				"CREATE TABLE differs_events_2026 PARTITION OF differs_events FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')",
+				"CREATE TABLE differs_events_rest PARTITION OF differs_events DEFAULT",
+				"CREATE INDEX differs_events_note ON differs_events (note)",
+			},
+			want: differingReading{observed: map[string]int32{"tables": 3, "constraints": 1, "indexes": 1}},
+		},
 		// The new bound leaves the row out, so the attachment fails and the
 		// transaction takes the detachment back with it.
 		row("partition-bound-excludes-row", differingReading{
@@ -388,6 +425,8 @@ func authorityRows() []differingRow {
 		notes      = "CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, owner_name varchar(64) NOT NULL)"
 		view       = "CREATE VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes"
 		function   = "CREATE FUNCTION differs_hand_fn() RETURNS int DETERMINISTIC RETURN 1"
+		procedure  = "CREATE PROCEDURE differs_hand_proc() SELECT 1"
+		trigger    = "CREATE TRIGGER differs_hand_trigger BEFORE INSERT ON differs_kept FOR EACH ROW SET NEW.id = NEW.id"
 		refused    = "cannot see everything in database"
 	)
 	account := func(name, grants string) []string {
@@ -418,6 +457,16 @@ func authorityRows() []differingRow {
 				unseen: []string{dataplane.UnseenTriggers, dataplane.UnseenRoutines},
 			},
 		},
+		// The same login refuses a view too: the read names each kind it cannot
+		// see, as the first row of the databases page's MySQL table says.
+		{
+			name: "login-before-view", engine: engineMySQL, declared: "view-mysql.sql", seed: []string{notes, view},
+			server: account("harness_login_before_view", before), login: "harness_login_before_view",
+			want: differingReading{
+				driftRefusal: refused, planRefusal: refused, planCode: string(dataplane.TargetPermissionDenied),
+				unseen: []string{dataplane.UnseenViews, dataplane.UnseenTriggers, dataplane.UnseenRoutines},
+			},
+		},
 		// The documented login reads a view and changes the table under it.
 		{
 			name: "login-documented", engine: engineMySQL, declared: "login-mysql.sql", seed: []string{notes, view},
@@ -437,6 +486,29 @@ func authorityRows() []differingRow {
 				driftRefusal: "the bodies of routines differs_hand_fn",
 				planRefusal:  "the bodies of routines differs_hand_fn", planCode: string(dataplane.TargetPermissionDenied),
 				unseen: []string{dataplane.UnseenRoutines},
+			},
+		},
+		// SHOW_ROUTINE on *.* shows the bodies of routines another account defined,
+		// so the documented login with that one global grant reads the trigger and
+		// both routines root made, and reads them as removed: the fourth row of the
+		// databases page's MySQL table. The login holds no ALTER ROUTINE, which
+		// that page adds only where routines are managed, so the Apply stops at
+		// the first DROP FUNCTION.
+		{
+			name: "login-show-routine", engine: engineMySQL, declared: "kept-mysql.sql", seed: []string{kept, trigger, function, procedure},
+			server: append(account("harness_login_show_routine", documented), "GRANT SHOW_ROUTINE ON *.* TO 'harness_login_show_routine'@'%'"),
+			login:  "harness_login_show_routine",
+			want: differingReading{
+				findings: []string{"functions_removed", "triggers_removed"},
+				counts:   map[string]int32{"functions_removed": 2, "triggers_removed": 1},
+				statements: []string{
+					"DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`",
+					"DROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`",
+					"DROP TRIGGER `differs_hand_trigger`",
+				},
+				destructive:      true,
+				applyRefusal:     "alter routine command denied to user 'harness_login_show_routine'",
+				driftsAfterApply: true,
 			},
 		},
 		{
@@ -595,6 +667,15 @@ func (row differingRow) checkFirstRead(captures runnerharness.Captures) error {
 	slices.Sort(categories)
 	if !slices.Equal(categories, row.want.findings) {
 		problems = append(problems, fmt.Errorf("%s: the first read finds %q, want %q", row.family(), categories, row.want.findings))
+	}
+	for category, want := range row.want.counts {
+		index := slices.IndexFunc(report.Findings, func(finding dataplane.DriftFinding) bool { return finding.Category == category })
+		switch {
+		case index < 0:
+			problems = append(problems, fmt.Errorf("%s: the first read has no %s to count", row.family(), category))
+		case report.Findings[index].Count != want:
+			problems = append(problems, fmt.Errorf("%s: the first read counts %d %s, want %d", row.family(), report.Findings[index].Count, category, want))
+		}
 	}
 	if len(row.want.findings) == 0 && len(row.want.observed) == 0 {
 		problems = append(problems, fmt.Errorf("%s: a clean report has to show what it read, and the row names no inventory", row.family()))
@@ -826,6 +907,40 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			captures.Documents[row.Children[index].Stdout] = captures.Documents[source.Stdout]
 		})
 	}
+	// editDocument rewrites what one row's child printed, the way a release
+	// that read the database differently would have printed it.
+	editDocument := func(captures *runnerharness.Captures, name, command string, edit func(map[string]any)) {
+		t.Helper()
+		child, err := capturedChild(*captures, name, command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(captures.Documents[child.Stdout]))
+		decoder.UseNumber()
+		var document map[string]any
+		if err := decoder.Decode(&document); err != nil {
+			t.Fatal(err)
+		}
+		edit(document)
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		captures.Documents[child.Stdout] = encoded
+	}
+	// setEntry sets one field of the entry of a document's list whose key
+	// field has the given value.
+	setEntry := func(document map[string]any, list, key, value, field string, to any) {
+		t.Helper()
+		entries, _ := document[list].([]any)
+		for _, entry := range entries {
+			if fields, _ := entry.(map[string]any); fields[key] == value {
+				fields[field] = to
+				return
+			}
+		}
+		t.Fatalf("the document's %s holds no %s %q", list, key, value)
+	}
 	usePlan := func(captures *runnerharness.Captures, from, into string) {
 		t.Helper()
 		source, err := capturedRow(*captures, from+"/plan")
@@ -974,6 +1089,44 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			name: "an Apply where the plan should have stopped the row", row: "differs-view-invoker-unstated-mysql", want: "a row that plans nothing applied",
 			edit: func(captures *runnerharness.Captures) {
 				captures.Rows = append(captures.Rows, runnerharness.Row{Name: "differs-view-invoker-unstated-mysql/apply"})
+			},
+		},
+		{
+			name: "a routine the read did not count", row: "differs-login-show-routine-mysql", want: "counts 1 functions_removed, want 2",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-login-show-routine-mysql/observe", "schema drift", func(document map[string]any) {
+					setEntry(document, "findings", "category", "functions_removed", "count", 1)
+				})
+			},
+		},
+		{
+			name: "a read that found no routine to count", row: "differs-login-show-routine-mysql", want: "has no functions_removed to count",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-login-show-routine-mysql/observe", "schema drift", func(document map[string]any) {
+					setEntry(document, "findings", "category", "functions_removed", "category", "views_removed")
+				})
+			},
+		},
+		{
+			name: "a refused read that does not name the view", row: "differs-login-before-view-mysql", want: "the frame says the account cannot see",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-login-before-view-mysql/observe", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "permission_denied", "unseenObjects": []any{"triggers", "routines"}}}
+				})
+			},
+		},
+		{
+			name: "a key takeover the manager runs unattended", row: "differs-fk-index-takeover-mysql", want: "the manager reads destructive=false",
+			edit: func(captures *runnerharness.Captures) {
+				usePlan(captures, "differs-login-documented-mysql", "differs-fk-index-takeover-mysql")
+			},
+		},
+		{
+			name: "a dump whose index copies read as indexes of their own", row: "differs-partition-dump-postgres", want: "observes 3 indexes, want 1",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-partition-dump-postgres/observe", "schema drift", func(document map[string]any) {
+					setEntry(document, "inventory", "kind", "indexes", "observed", 3)
+				})
 			},
 		},
 		{

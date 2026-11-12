@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@sha256:a7b395302c7696586a5d28517d189071126dfbece8b3125fbe3deb16fbc17810",
+  "digest": "sha256:a7b395302c7696586a5d28517d189071126dfbece8b3125fbe3deb16fbc17810",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

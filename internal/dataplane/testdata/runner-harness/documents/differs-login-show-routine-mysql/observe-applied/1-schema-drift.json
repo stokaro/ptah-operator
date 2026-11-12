@@ -1,0 +1,116 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "drift": true,
+  "failed": true,
+  "failure_threshold": "all",
+  "highest_severity": "destructive",
+  "dialect": "mysql",
+  "findings": [
+    {
+      "category": "functions_removed",
+      "count": 2,
+      "severity": "destructive"
+    },
+    {
+      "category": "triggers_removed",
+      "count": 1,
+      "severity": "destructive"
+    }
+  ],
+  "inventory": [
+    {
+      "kind": "columns",
+      "desired": 1,
+      "observed": 1
+    },
+    {
+      "kind": "constraints",
+      "desired": 1,
+      "observed": 1
+    },
+    {
+      "kind": "functions",
+      "desired": 0,
+      "observed": 2
+    },
+    {
+      "kind": "tables",
+      "desired": 1,
+      "observed": 1
+    },
+    {
+      "kind": "triggers",
+      "desired": 0,
+      "observed": 1
+    }
+  ],
+  "not_compared": [
+    {
+      "kind": "event",
+      "reason": "the account harness_login_show_routine@% holds no EVENT privilege on `harness_differs_login_show_routine_mysql`.*, and information_schema.EVENTS lists only what an account holds it on"
+    }
+  ],
+  "diff": {
+    "identifier_semantics": {
+      "default_schema": "harness_differs_login_show_routine_mysql",
+      "index_namespace": "table",
+      "index_names": "ascii_folded_non_ascii_unknown",
+      "table_names": "exact",
+      "column_names": "ascii_folded_non_ascii_unknown"
+    },
+    "tables_added": null,
+    "tables_removed": null,
+    "tables_modified": null,
+    "enums_added": null,
+    "enums_removed": null,
+    "enums_modified": null,
+    "indexes_added": null,
+    "indexes_removed": null,
+    "index_visibility_changed": null,
+    "functions_added": null,
+    "functions_removed": [
+      "harness_differs_login_show_routine_mysql.differs_hand_fn"
+    ],
+    "procedures_removed": [
+      "harness_differs_login_show_routine_mysql.differs_hand_proc"
+    ],
+    "functions_modified": null,
+    "sequences_added": null,
+    "sequences_removed": null,
+    "sequences_modified": null,
+    "views_added": null,
+    "views_removed": null,
+    "views_modified": null,
+    "materialized_views_added": null,
+    "materialized_views_removed": null,
+    "materialized_views_modified": null,
+    "triggers_added": null,
+    "triggers_removed": [
+      {
+        "trigger_name": "differs_hand_trigger",
+        "table_name": "differs_kept"
+      }
+    ],
+    "triggers_modified": null,
+    "rls_policies_added": null,
+    "rls_policies_removed": null,
+    "rls_policies_modified": null,
+    "object_comments_changed": null,
+    "rls_enabled_tables_added": null,
+    "rls_enabled_tables_removed": null,
+    "rls_force_changed": null,
+    "roles_added": null,
+    "roles_removed": null,
+    "roles_modified": null,
+    "grants_added": null,
+    "grants_removed": null,
+    "grant_options_added": null,
+    "grant_options_revoked": null,
+    "constraints_added": null,
+    "constraints_removed": null,
+    "foreign_keys_removed_with_tables": null,
+    "constraint_comments_changed": null,
+    "constraints_validated": null
+  }
+}
