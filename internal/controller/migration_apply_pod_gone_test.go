@@ -27,6 +27,12 @@ const applyPodGoneEvent = "Warning ApplyPodGone "
 // Job deleted with its Pods. A Job that finished with no Pod failed had none
 // to lose, and hands the Lease back at once, as before.
 //
+// A Pod that stands Failed with a phase the kubelet did not write holds the
+// same way (podStopUnconfirmed): PodGC marks a Pod Failed when its Node object
+// is gone, keeping the executor status the kubelet last reported, and a Pod
+// whose delete then failed stands. A Pod the kubelet ended itself reads its
+// executor terminated, or never started, and hands the Lease back at once.
+//
 // Each row runs through the deletion of the resource, which waits for its
 // Apply (reconcileMigrationDeletion), and through the live harvest, which
 // records the run Unknown (finishUncertainMigrationApply) and keeps the claim
@@ -40,9 +46,98 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 		end  func(t *testing.T, run unstartedMigration)
 		// held is a state the claim waits on until its Lease term ends.
 		held bool
+		// standing is how the Warning names the Pod that still stands, and
+		// empty where none does.
+		standing string
 	}{
 		{name: "a Pod force-deleted past its Job's deadline", held: true, end: podForceDeletedPastTheDeadline},
 		{name: "a Job deleted with its Pod", held: true, end: jobDeletedWithItsPod},
+		{
+			name: "a Pod PodGC marked Failed over a running executor", held: true, standing: standingRunning,
+			end: podStandsFailed(corev1.PodStatus{
+				Phase:             corev1.PodFailed,
+				Conditions:        []corev1.PodCondition{podGCCondition(), readyCondition(corev1.ConditionTrue)},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod PodGC marked Failed before its executor reported a start", held: true, standing: standingPodGC,
+			end: podStandsFailed(corev1.PodStatus{
+				Phase:      corev1.PodFailed,
+				Conditions: []corev1.PodCondition{podGCCondition()},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			// The kubelet's own Running report, from before PodGC, is what the
+			// Pod reads; no DisruptionTarget condition says who wrote Failed.
+			name: "a Pod marked Failed over a running executor with no condition", held: true, standing: standingRunning,
+			end: podStandsFailed(corev1.PodStatus{
+				Phase:             corev1.PodFailed,
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod PodGC marked Failed after its executor stopped",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase:      corev1.PodFailed,
+				Conditions: []corev1.PodCondition{podGCCondition()},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error"},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod the kubelet evicted",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "Evicted", Message: "The node was low on resource: memory.",
+				Conditions: []corev1.PodCondition{{
+					Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: corev1.PodReasonTerminationByKubelet,
+				}, readyCondition(corev1.ConditionFalse)},
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: "Error"},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod the kubelet stopped at its deadline",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "DeadlineExceeded", Message: "Pod was active on the node longer than the specified deadline",
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{ExitCode: 143, Reason: "Error"},
+				})},
+			}, batchv1.JobReasonDeadlineExceeded),
+		},
+		{
+			name: "a Pod the kubelet refused for OutOfcpu",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "OutOfcpu",
+				Message: "Pod was rejected: Node didn't have enough resource: cpu, requested: 100, used: 1950, capacity: 2000",
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod whose executor the kubelet lost",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed,
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 137, Reason: "ContainerStatusUnknown",
+						Message: "The container could not be located when the pod was terminated",
+					},
+				})},
+			}, batchv1.JobReasonBackoffLimitExceeded),
+		},
+		{
+			name: "a Pod the kubelet ended before it initialized",
+			end: podStandsFailed(corev1.PodStatus{
+				Phase: corev1.PodFailed, Reason: "DeadlineExceeded", Message: "Pod was active on the node longer than the specified deadline",
+				ContainerStatuses: []corev1.ContainerStatus{executorIn(corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"},
+				})},
+			}, batchv1.JobReasonDeadlineExceeded),
+		},
 		{name: "a Job whose Pod the API server refused", end: func(t *testing.T, run unstartedMigration) {
 			refusedPodCreation(t, run.api, run.job, run.pod, metav1.NewTime(run.reconciler.now()))
 			pastTheDeadlineWithoutAPod(t, run.api, run.job)
@@ -103,11 +198,7 @@ func TestAnApplyWhosePodIsGoneHoldsTheLeaseToItsTerm(t *testing.T) {
 				if path.deleted {
 					waiter = deletionWaits
 				}
-				want := fmt.Sprintf("%s%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
-					"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
-					"still runs on a node the API server cannot reach, so the database Lease stays held until the term "+
-					"the Apply took it for ends.",
-					applyPodGoneEvent, waiter, run.job.Name, run.job.UID, term.UTC().Format(time.RFC3339))
+				want := applyPodGoneWant(waiter, run, term, state.standing)
 				for _, step := range []struct {
 					at    time.Time
 					named bool
@@ -287,4 +378,79 @@ func applyPodGoneEvents(recorder *record.FakeRecorder) []string {
 			return found
 		}
 	}
+}
+
+// How the ApplyPodGone Warning names a Pod that still stands: one whose
+// executor reads running, and one PodGC marked Failed whose executor never
+// read terminated.
+const (
+	standingRunning = "running"
+	standingPodGC   = "podgc"
+)
+
+// applyPodGoneWant is the ApplyPodGone Warning a held row expects, written out
+// here rather than through the reconciler's own text.
+func applyPodGoneWant(waiter string, run unstartedMigration, term time.Time, standing string) string {
+	until := term.UTC().Format(time.RFC3339)
+	switch standing {
+	case standingRunning:
+		return fmt.Sprintf("%s%s for Job %s, UID %s, until %s: Pod %s of the Job reads Failed while its executor container reads running. "+
+			"The kubelet does not write that phase before the container stops, so nothing says the executor stopped. "+
+			"PodGC writes it on a Pod whose Node object is gone, while the container can still run on a node the API "+
+			"server cannot reach, so the database Lease stays held until the term the Apply took it for ends.",
+			applyPodGoneEvent, waiter, run.job.Name, run.job.UID, until, run.pod.Name)
+	case standingPodGC:
+		return fmt.Sprintf("%s%s for Job %s, UID %s, until %s: Pod %s of the Job reads Failed, which PodGC wrote when the Pod's Node object "+
+			"went, and its executor container never read terminated, so nothing says the executor stopped. "+
+			"The container can have started since its kubelet last reported, on a node the API server cannot reach, "+
+			"so the database Lease stays held until the term the Apply took it for ends.",
+			applyPodGoneEvent, waiter, run.job.Name, run.job.UID, until, run.pod.Name)
+	}
+	return fmt.Sprintf("%s%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
+		"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
+		"still runs on a node the API server cannot reach, so the database Lease stays held until the term "+
+		"the Apply took it for ends.",
+		applyPodGoneEvent, waiter, run.job.Name, run.job.UID, until)
+}
+
+// podStandsFailed leaves the Apply's Pod standing with status, and its Job
+// failed for reason with that Pod counted failed, which is what the Job
+// controller does with a Pod that reads Failed whoever wrote the phase. The Pod
+// first reads its executor running, as the kubelet reported it, so a status
+// that says otherwise replaces a report rather than starting from none.
+func podStandsFailed(status corev1.PodStatus, reason string) func(t *testing.T, run unstartedMigration) {
+	return func(t *testing.T, run unstartedMigration) {
+		t.Helper()
+
+		firstPodStarted(t, run.api, run.pod, corev1.ContainerState{Running: &corev1.ContainerStateRunning{}})
+		stored := &corev1.Pod{}
+		if err := run.api.Get(context.Background(), client.ObjectKeyFromObject(run.pod), stored); err != nil {
+			t.Fatal(err)
+		}
+		stored.Status = *status.DeepCopy()
+		if err := run.api.Status().Update(context.Background(), stored); err != nil {
+			t.Fatal(err)
+		}
+		podGoneJobStatus(t, run, batchv1.JobStatus{Failed: 1, Conditions: []batchv1.JobCondition{
+			{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, Reason: reason},
+			{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: reason},
+		}})
+	}
+}
+
+// podGCCondition is the condition PodGC writes, with the Failed phase, on a Pod
+// whose Node object is gone (pkg/controller/podgc, gcOrphaned).
+func podGCCondition() corev1.PodCondition {
+	return corev1.PodCondition{
+		Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue,
+		Reason: "DeletionByPodGC", Message: "PodGC: node no longer exists",
+	}
+}
+
+func readyCondition(status corev1.ConditionStatus) corev1.PodCondition {
+	return corev1.PodCondition{Type: corev1.PodReady, Status: status}
+}
+
+func executorIn(state corev1.ContainerState) corev1.ContainerStatus {
+	return corev1.ContainerStatus{Name: executorContainerName, State: state}
 }

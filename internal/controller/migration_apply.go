@@ -1300,27 +1300,112 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 		ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply's Pods", "error", err.Error())
 		return true, nil
 	}
+	var unconfirmed *corev1.Pod
 	for _, pod := range pods {
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			return true, nil
 		}
+		if unconfirmed == nil && podStopUnconfirmed(pod) {
+			unconfirmed = pod
+		}
 	}
-	if len(pods) == 0 && migrationApplyPodGone(job) {
+	if unconfirmed != nil || len(pods) == 0 && migrationApplyPodGone(job) {
 		if until := migrationApplyLeaseTermEnd(operation); r.now().Before(until) {
-			return true, &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
+			hold := &applyPodGoneHold{jobName: jobName, jobUID: jobUID, until: until}
+			if unconfirmed != nil {
+				hold.podName, hold.podPhase = unconfirmed.Name, unconfirmed.Status.Phase
+				hold.executorRunning = executorContainerRunning(unconfirmed)
+			}
+			return true, hold
 		}
 	}
 	return false, nil
 }
 
-// applyPodGoneHold is the wait dispatchedApplyMayStillWrite reports where the
-// API server has no Pod of the claim's Job left and nothing says its executor
-// stopped (migrationApplyPodGone): the Job, by the name and the UID it asked
-// about, and the end of the claim's Lease term, when the wait ends.
+// applyPodGoneHold is the wait dispatchedApplyMayStillWrite reports where
+// nothing says the executor of the claim's Job stopped: the API server has no
+// Pod of that Job left (migrationApplyPodGone), or a Pod stands whose terminal
+// phase is not the kubelet's (podStopUnconfirmed). It names the Job, by the
+// name and the UID it asked about, the end of the claim's Lease term, when the
+// wait ends, and the standing Pod, where there is one.
 type applyPodGoneHold struct {
 	jobName string
 	jobUID  types.UID
 	until   time.Time
+	// podName and podPhase are the standing Pod, and empty where none stands.
+	podName  string
+	podPhase corev1.PodPhase
+	// executorRunning is set where that Pod's executor container reads
+	// running, and unset where PodGC wrote the phase over one that never read
+	// terminated.
+	executorRunning bool
+}
+
+// podGCDeletionReason is the reason of the DisruptionTarget condition PodGC
+// writes, with the Failed phase, on a Pod whose Node object is gone
+// (pkg/controller/podgc, gcOrphaned, v1.35.8, v1.36.4 and v1.37.0). k8s.io/api
+// declares no constant for it.
+const podGCDeletionReason = "DeletionByPodGC"
+
+// podStopUnconfirmed reports whether a Pod that reads Succeeded or Failed has
+// that phase without the kubelet's account that its executor stopped, so it
+// is read as a Pod that is gone (migrationApplyPodGone).
+//
+// The kubelet does not publish a terminal phase for a Pod that could still have
+// a running container: mergePodStatus holds the phase back until the pod worker
+// has stopped the Pod's containers, and TerminatePod writes each container of
+// an initialized Pod that is not terminated as terminated, reason
+// ContainerStatusUnknown (pkg/kubelet/status, v1.35.8, v1.36.4 and v1.37.0). So
+// a terminal Pod whose executor reads running took its phase from something
+// else. PodGC is what writes it: it patches Failed onto a Pod whose Node object
+// is gone, keeping the container statuses the kubelet last reported, and then
+// force-deletes it. Where that delete fails, the Pod stands Failed while its
+// container can still run on a machine the API server cannot reach. On such a
+// Pod an executor that reads waiting, or nothing, may have started since its
+// kubelet last reported, so under PodGC's condition anything short of
+// terminated is unconfirmed too.
+//
+// A terminated executor, ContainerStatusUnknown included, is the kubelet's
+// account that the container is not running: it writes ContainerStatusUnknown
+// when it has ended the Pod, and when the runtime no longer lists a container
+// that was running (convertToAPIContainerStatuses). An executor the kubelet
+// never started, on a Pod it ended itself, is confirmed too: an admission
+// refusal such as OutOfcpu records no container, and a Pod ended before it
+// initialized leaves its executor waiting.
+func podStopUnconfirmed(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name != executorContainerName {
+			continue
+		}
+		if status.State.Terminated != nil {
+			return false
+		}
+		if status.State.Running != nil {
+			return true
+		}
+		break
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.DisruptionTarget && condition.Status == corev1.ConditionTrue &&
+			condition.Reason == podGCDeletionReason {
+			return true
+		}
+	}
+	return false
+}
+
+// executorContainerRunning reports whether a Pod's executor container reads
+// running.
+func executorContainerRunning(pod *corev1.Pod) bool {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == executorContainerName {
+			return status.State.Running != nil
+		}
+	}
+	return false
 }
 
 // migrationApplyPodGone reports whether a Pod of the claim's Job may be gone

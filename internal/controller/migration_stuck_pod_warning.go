@@ -51,10 +51,13 @@ func (r *MigrationReconciler) warnStuckMigrationApplyPods(
 }
 
 // warnMigrationApplyPodGone records an ApplyPodGone Warning about the hold
-// dispatchedApplyMayStillWrite returned, where it returned one: the API server
-// has no Pod of the claim's Job left, nothing says its executor stopped, and the
-// claim waits until its Lease term ends (migrationApplyPodGone). It is repeated
-// with the backoff a PodStuckTerminating Warning has, by the Job's UID.
+// dispatchedApplyMayStillWrite returned, where it returned one: nothing says
+// the executor of the claim's Job stopped, and the claim waits until its Lease
+// term ends. Either the API server has no Pod of that Job left
+// (migrationApplyPodGone), or a Pod of it stands with a terminal phase that is
+// not the kubelet's (podStopUnconfirmed), which the Warning names. It is
+// repeated with the backoff a PodStuckTerminating Warning has, by the Job's
+// UID, so a Pod that stands and then goes does not start the backoff again.
 //
 // The UID is named because the name is not enough: another Job can hold the
 // name the claim reserved, with Pods of its own.
@@ -70,10 +73,29 @@ func (r *MigrationReconciler) warnMigrationApplyPodGone(migration *operatorv1alp
 	if migration.DeletionTimestamp != nil {
 		waiter = deletionWaits
 	}
+	until := hold.until.UTC().Format(time.RFC3339)
+	switch {
+	case hold.podName != "" && hold.executorRunning:
+		r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
+			"%s for Job %s, UID %s, until %s: Pod %s of the Job reads %s while its executor container reads running. "+
+				"The kubelet does not write that phase before the container stops, so nothing says the executor stopped. "+
+				"PodGC writes it on a Pod whose Node object is gone, while the container can still run on a node the API "+
+				"server cannot reach, so the database Lease stays held until the term the Apply took it for ends.",
+			waiter, hold.jobName, hold.jobUID, until, hold.podName, hold.podPhase)
+		return
+	case hold.podName != "":
+		r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
+			"%s for Job %s, UID %s, until %s: Pod %s of the Job reads %s, which PodGC wrote when the Pod's Node object "+
+				"went, and its executor container never read terminated, so nothing says the executor stopped. "+
+				"The container can have started since its kubelet last reported, on a node the API server cannot reach, "+
+				"so the database Lease stays held until the term the Apply took it for ends.",
+			waiter, hold.jobName, hold.jobUID, until, hold.podName, hold.podPhase)
+		return
+	}
 	r.event(migration, corev1.EventTypeWarning, "ApplyPodGone",
 		"%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
 			"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
 			"still runs on a node the API server cannot reach, so the database Lease stays held until the term "+
 			"the Apply took it for ends.",
-		waiter, hold.jobName, hold.jobUID, hold.until.UTC().Format(time.RFC3339))
+		waiter, hold.jobName, hold.jobUID, until)
 }
