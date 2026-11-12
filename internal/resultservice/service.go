@@ -101,6 +101,9 @@ func New(config Config, writer client.Client, reader client.Reader) (*Service, e
 			return nil
 		}
 	}
+	// A 503 tells the runner only to retry. The line says why, for whoever
+	// reads the manager's log after a delivery that never landed.
+	receiverConfig.Authorize = resultauthority.LogTransientFailures(receiverConfig.Authorize)
 	receiver, err := resultdelivery.NewReceiver(receiverConfig)
 	if err != nil {
 		return nil, err

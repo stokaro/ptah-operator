@@ -30,9 +30,11 @@ waiting for; [Waiting for the operator](../operations/#wait) has the targets.
 kubectl ptah plan storefront -n application
 ```
 
-Three verbs read three different things: `plan` reads the SQL a stored plan
-holds, `schema` reads where a `PtahSchema` stands, what holds it and who
-approved what, and `migration` reads the same for a `PtahMigration`.
+`plan` reads the SQL a stored plan holds, `schema` reads where a `PtahSchema`
+stands, what holds it and who approved what, and `migration` reads the same for
+a `PtahMigration`. [`history`](#history) reads what either one kept of its past:
+the lifecycle journal in its status, and every approval and run acknowledgment
+that names it.
 
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 shows where each command fits in a change's life: these read stages 2, 5 and 6,
@@ -286,7 +288,7 @@ Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:01:0
 
 `Approvals` lists the `PtahSchemaApproval` objects that name this schema by
 name and UID, newest first. It shows the five newest and, when there are more,
-how many, and the `kubectl get` that lists every approval in the namespace.
+how many, and the [`kubectl ptah history`](#history) command that lists them all.
 Each shows the identity admission stamped on it, the plan it names and whether
 that is the current plan or the one the last confirmed apply ran, and every
 condition the controller wrote on it -- `Accepted`, `Consumed` and `Stale`,
@@ -514,6 +516,98 @@ SQL of its own. Listing its approvals and run acknowledgments needs `list` on
 same way as for a schema: a list the reader may not read is one line saying so,
 and the command still exits 0.
 
+## What a resource kept of its past {#history}
+
+```sh
+kubectl ptah history schema/storefront -n application
+kubectl ptah history migration/orders -n application
+```
+
+`history` prints the lifecycle journal the resource's status keeps, in the
+order the operator recorded it, then every approval and, for a migration, every
+run acknowledgment that names the resource by name and UID, oldest first. It
+takes the same `-n`, `--context`, `--kubeconfig` and `--timeout` as the views,
+and `-o json` prints the same view as a document: each entry as the status holds
+it, with what the command found beside it.
+
+A migration whose second run ended `Partial`, read three times without reaching
+its database, and was then acknowledged reads, in part:
+
+```text
+History of:           ptahmigration/orders in namespace application
+UID:                  orders-uid
+Created:              2026-11-10T08:59:55Z
+Journal:              9 entries, complete since 2026-11-10T09:00:00Z
+...
+2026-11-10T09:12:00Z  RunFinished, Partial
+  Started:            2026-11-10T09:11:00Z, 1m before it ended
+  Operation:          sha256:2222222222222222222222222222222222222222222222222222222222222222
+  Plan:               ptah-mplan-orders-2, UID plan-2-uid, fingerprint sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (stored)
+  Authorized:         an approval
+  Approval:           orders-approval-2, UID approval-2-uid (no longer stored)
+  Approver:           bob@example.com
+  Job:                ptah-m-apply-orders-2, UID job-2-uid
+  Versions applied:   1
+  Stopped at:         version 5, statement 2 of 3, SQLSTATE 23505
+2026-11-10T09:15:00Z  OperationFailed, History, DatabaseUnreachable
+  Attempts:           3 in a row, the last at 2026-11-10T09:25:00Z
+2026-11-10T09:40:00Z  RunAcknowledged, Partial
+  Operation:          sha256:2222222222222222222222222222222222222222222222222222222222222222
+  Plan:               ptah-mplan-orders-2, UID plan-2-uid (stored)
+  Job:                ptah-m-apply-orders-2, UID job-2-uid
+  Acknowledgment:     orders-run-2-accounted (stored)
+  Acknowledged by:    carol@example.com
+  Settled:            by a person's statement that the run is accounted for, not by a reading of the database
+...
+```
+
+`Journal` says how many entries the status holds and from when the journal is
+complete, its `coveredSince`. The journal is bounded, and
+[the lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
+says by what. The one kind of entry older than `coveredSince` is a plan nothing
+has carried out yet, which the bounds keep; such an entry is marked
+`(dated before the journal's coverage begins)`. `Journal: none` is a status with
+no journal at all, as a manager before 0.2.7 wrote it or as one nobody has
+written yet, and `Journal: no entries` is a journal that has recorded nothing.
+
+The heading of an entry is its time, its type and how it ended, or for
+`OperationFailed` which operation failed and the condition reason. Failures with
+the same operation and reason in a row are one entry, and `Attempts` says how
+many and when the last one was. On a migration, `Operation` is the Apply claim:
+the `RunFinished`, `Verified` and `RunAcknowledged` entries of one run carry the
+same one.
+
+Every entry is printed as it was recorded. The command does not merge two
+entries that record the same event, and does not fill in what an entry lacks.
+An entry a release before 0.2.10 wrote names no approval UID and no operation,
+and says that it is therefore joined to nothing that holds the name today.
+
+`(stored)` and `(no longer stored)` say whether the plan, approval or
+acknowledgment an entry names is still in the namespace. A plan counts only if
+this resource, by its UID, owns it; an approval only by the UID the entry
+recorded; an acknowledgment only by its name and the run's operation. An entry
+that recorded too little to tell carries no mark, and neither does one whose
+list you may not read or that failed: a line under the header, or in place of
+the decisions, says which list and why, and the rest still prints.
+
+`Settled` on a `RunAcknowledged` entry, and the line under each acknowledgment,
+say what an acknowledgment is: a person's statement that the run is accounted
+for. It is not a reading of the database, and not proof that the data is
+correct.
+
+The decisions after the journal are every approval and acknowledgment the
+namespace still stores for this resource, with what admission stamped on each
+and every condition the controller wrote on it. One of a resource that was
+deleted and created again under the same name is not listed: it names the
+predecessor's UID.
+
+What `history` does not print is the database's revision table, which
+[`kubectl ptah migration`](#migration) summarizes as its history read, or the
+resource's Events, which `kubectl events` prints for about an hour. The journal
+is the operator's own record and not an audit archive: a record that has to
+outlive its bounds, or the cluster, is the API server's audit log kept outside
+it, if its audit policy records writes to these kinds.
+
 ## What it needs to be allowed to do
 
 Reading a plan is reading three kinds of object in one namespace, all of them
@@ -536,7 +630,7 @@ The rule names no object, so it reads the next plan as well as this one.
 `examples/approver-plan-reader-role.yaml` is the same Role with a binding, and
 the chart's approver ClusterRole carries the same read.
 
-`kubectl ptah schema` and `kubectl ptah migration` also list the approvals and
+`kubectl ptah schema`, `migration` and `history` also list the approvals and
 run acknowledgments that name a resource, when the reader may. That is one more
 rule, and an optional one; a reader without it gets everything else:
 
@@ -548,6 +642,19 @@ rule, and an optional one; a reader without it gets everything else:
 
 The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
 carry it.
+
+`kubectl ptah history` needs `get` on the resource and nothing else. It also
+lists the plans of the resource's kind, to say whether each plan an entry names
+is still stored; that is `list`, optional the same way, and it reads no chunk:
+
+```yaml
+  - apiGroups: [operator.ptah.run]
+    resources: [ptahschemaplans, ptahmigrationplans]
+    verbs: [list]
+```
+
+The chart's approver ClusterRole and `examples/diagnostic-reader-role.yaml`
+carry this one too.
 
 `kubectl ptah approve` reads the resource and its current plan with `get`,
 and for a schema the plan's chunks too, to show the SQL. It lists no

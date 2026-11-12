@@ -259,14 +259,14 @@ func TestWriteListHeadingSaysWhatFollows(t *testing.T) {
 		{name: "every one", decisions: two, follows: true, want: "\nApprovals, newest first:\n"},
 		{
 			name: "cut", decisions: cut, follows: true,
-			want: "\nApprovals, the newest 5 of 9; kubectl get ptahschemaapprovals -n application lists all approvals in the namespace:\n",
+			want: "\nApprovals, the newest 5 of 9; kubectl ptah history schema/storefront -n application lists all 9:\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var text strings.Builder
-			follows := statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals", "application",
-				test.decisions, test.unreadable)
+			follows := statusview.WriteListHeading(&text, "Approvals", "ptahschemaapprovals",
+				"kubectl ptah history schema/storefront -n application", test.decisions, test.unreadable)
 			if follows != test.follows || text.String() != test.want {
 				t.Fatalf("WriteListHeading() = %t, %q; want %t, %q", follows, text.String(), test.follows, test.want)
 			}

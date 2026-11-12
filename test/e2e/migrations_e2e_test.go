@@ -631,7 +631,7 @@ func (m *migrationRun) waitForPhase(phase ptahv1alpha1.MigrationPhase) {
 			return
 		}
 		if observed == ptahv1alpha1.MigrationPhaseFailed && phase != ptahv1alpha1.MigrationPhaseFailed {
-			m.fatalf("%s failed while waiting for %s", name, phase)
+			m.fatalf("%s failed while waiting for %s; %s", name, phase, failedConditions(m.scanner, migration.Status.Conditions))
 		}
 		m.sleep(migrationPoll)
 	}

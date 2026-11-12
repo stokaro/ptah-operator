@@ -9,10 +9,8 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // TokenReviewer submits a TokenReview to the API server. The receiver's own
@@ -89,22 +87,4 @@ func (v TokenVerifier) Verify(ctx context.Context, token string, identity result
 		return resultdelivery.ErrAuthority
 	}
 	return ctx.Err()
-}
-
-// logUnavailable says why a verification reached no verdict, which the
-// receiver answers with 503. It logs the API server's status code and reason,
-// or for an error without a status whether the deadline passed, and never an
-// error's text or a review's status.error: an API error can repeat submitted
-// fields, and status.error is the authenticator's own diagnostic. The Pod is
-// the one the request names, which nothing has proved yet.
-func logUnavailable(ctx context.Context, identity resultdelivery.Identity, message string, err error) {
-	values := []any{"namespace", identity.Binding.Namespace, "pod", identity.Binding.PodName}
-	var status apierrors.APIStatus
-	switch {
-	case errors.As(err, &status):
-		values = append(values, "code", status.Status().Code, "reason", string(status.Status().Reason))
-	case err != nil:
-		values = append(values, "deadlineExceeded", errors.Is(err, context.DeadlineExceeded))
-	}
-	logf.FromContext(ctx).WithName("result-receiver").Info(message, values...)
 }

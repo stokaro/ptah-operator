@@ -103,6 +103,17 @@ on Pods. A line with `deadlineExceeded` in place of a code got no status from
 the API server, and `true` there means no answer came in time. The line never
 holds the token or the text of an answer.
 
+A receiver that authenticated the runner but could not finish the authority
+check answers 503 as well, and logs `result authorization reached no verdict`
+with the same `code` and `reason`, or `deadlineExceeded`. The check reads the
+Job, its Pods and the `PtahSchema` or `PtahMigration`, and with Pod tokens the
+`PtahResultRecord` that pins the Pod, so `403` there means the manager cannot
+read one of them, and `429` means the API server is throttling it.
+`result authorization is waiting for the Job's adoption or the Pod's pin` means
+the runner asked before the controller recorded the Job it created, or before
+the Pod's binding record existed; the runner retries. A refusal answers 403
+and logs nothing.
+
 Restoring receiver/API connectivity lets the original runner retry delivery
 within its bounds. It does not rerun SQL. If the Pod was lost before publishing,
 follow the resource's unknown-outcome recovery and inspect database history;

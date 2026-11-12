@@ -281,7 +281,7 @@ func (d *dataPlane) waitForHeldPlan(schema string, applyCheckpoint checkpoint, g
 				return candidate
 			}
 			if failedForCurrentSpec(candidate) {
-				d.fatalf("%s entered Failed while waiting for %s; %s", schema, messages.failedWhile, failedSchemaConditions(d.scanner, candidate))
+				d.fatalf("%s entered Failed while waiting for %s; %s", schema, messages.failedWhile, failedConditions(d.scanner, candidate.Status.Conditions))
 			}
 		}
 		d.sleep(2 * time.Second)
