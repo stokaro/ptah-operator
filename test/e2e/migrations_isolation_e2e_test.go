@@ -623,15 +623,17 @@ func (r *isolatedNodeRow) assertSettles() {
 		m.fatalf("the %s realm Lease was handed back while a Pod of the isolated Apply still exists", m.engine.name)
 	}
 
+	var settled *ptahv1alpha1.PtahMigration
 	if !m.miUntil(5*time.Second, func() bool {
-		migration := m.migration(r.name)
+		settled = m.migration(r.name)
 		m.assertNoNewApplyJob(r.seen, "after its isolated Apply", r.name)
 		r.assertRanOnce()
-		return isolatedRunSettled(migration.Status, r.claim.jobUID, recorded.Status.LastRun.Outcome)
+		return isolatedRunSettled(settled.Status, r.claim.jobUID, recorded.Status.LastRun.Outcome)
 	}) {
 		r.report()
 		m.fatalf("%s did not settle its isolated Apply by reading the database within %s", r.name, waitTimeout)
 	}
+	m.printReading("isolated node settled", map[string]any{"metadata": readingMetadata(settled), "status": settled.Status})
 
 	// The database holds the three migrations, each once, and the rows the
 	// first one inserted, once.
@@ -905,14 +907,19 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	jobs := map[types.UID]batchv1.Job{}
 	m.recordMigrationJobs(name, jobs)
 	var lastEvent error
+	events := &corev1.EventList{}
 	if !m.miUntil(migrationPoll, func() bool {
-		events := &corev1.EventList{}
+		events = &corev1.EventList{}
 		m.check(m.list(events), "read the Events of %s", name)
 		lastEvent = nativeRefusalEvent(events.Items, refused.UID)
 		return lastEvent == nil
 	}) {
 		m.fatalf("%s has no Event naming what the policy refused: %v", name, lastEvent)
 	}
+	m.printReading("native refusal", map[string]any{
+		"metadata": readingMetadata(refused), "status": refused.Status,
+		"events": readingEvents(events.Items, refused.UID, "ArtifactVerificationRefused"),
+	})
 	// Up to the deadline the refusal persisted and not past it: the read it
 	// schedules there is not the one this row is about.
 	if refused.Status.NextReconciliationTime == nil {
@@ -965,6 +972,7 @@ func (m *migrationRun) nativePolicyRefusalProof() {
 	}) {
 		m.fatalf("%s did not rest in sync past its refusal within %s: %v; %s", name, waitTimeout, last, refusalTransitions(recovered))
 	}
+	m.printReading("native refusal recovered", map[string]any{"metadata": readingMetadata(recovered), "status": recovered.Status})
 	m.finishFixture(name)
 	m.logf("PASS a %s migration stopped at Ptah's own refusal of its artifact, read again at its deadline, and went on at once when the policy accepted it (generation %d)",
 		m.engine.kind, recovered.Generation)
