@@ -409,11 +409,15 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.row(policyenv.Row{
 		Name: gitCredentialAsConfig, Deny: []string{jobGuard}, Message: "rejected an unsafe workload shape",
 		Do: as(manager, dryRunCreate(gitSchemaJob(operatorv1alpha1.OperationResolve, func(job *batchv1.Job) {
-			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
-				Name: "git-credentials", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "git-token"},
-				}},
-			})
+			// The https credential is already a volume of its own: its source
+			// becomes the ConfigMap.
+			for index := range job.Spec.Template.Spec.Volumes {
+				if volume := &job.Spec.Template.Spec.Volumes[index]; volume.Name == "git-credentials" {
+					volume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "git-token"},
+					}}
+				}
+			}
 		}))),
 	})
 	c.row(policyenv.Row{Name: sourceMigrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {

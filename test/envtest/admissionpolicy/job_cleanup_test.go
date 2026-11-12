@@ -2,6 +2,7 @@ package admissionpolicy_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -28,6 +29,9 @@ const (
 // with the status the Job controller would have written.
 type cleanupJobs struct {
 	readOnly, migrationReadOnly, schemaApply, migrationApply, alreadyHarvested *batchv1.Job
+	// released is a Job a release before file delivery created: its
+	// database URL in its environment.
+	released *batchv1.Job
 }
 
 var cleanupFixtures cleanupJobs
@@ -116,19 +120,27 @@ func setupCleanupJobs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	released, err := build(migrationHistoryJob())
+	if err != nil {
+		return err
+	}
+	if !workload.CarryCredentialDelivery(released, &batchv1.Job{}) {
+		return errors.New("the migration history Job names no credential by file, so it has no released shape")
+	}
 	cleanupFixtures = cleanupJobs{
 		readOnly:          renamedJob(readOnly, "ptah-resolve-", "cleanup"),
 		migrationReadOnly: renamedJob(migrationReadOnly, "ptah-m-resolve-", "cleanup"),
 		schemaApply:       asApplyJob(schemaApply, "ptah-", "resolve", "cleanup"),
 		migrationApply:    asApplyJob(migrationApply, "ptah-m-", "history", "cleanup"),
 		alreadyHarvested:  asApplyJob(harvested, "ptah-", "resolve", "harvested"),
+		released:          renamedJob(released, "ptah-m-history-", "released"),
 	}
 	cleanupFixtures.alreadyHarvested.Spec.TTLSecondsAfterFinished = ptr.To(int32(300))
 	start := metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	finish := metav1.NewTime(start.Add(time.Minute))
 	for _, job := range []*batchv1.Job{
 		cleanupFixtures.readOnly, cleanupFixtures.migrationReadOnly, cleanupFixtures.schemaApply,
-		cleanupFixtures.migrationApply, cleanupFixtures.alreadyHarvested,
+		cleanupFixtures.migrationApply, cleanupFixtures.alreadyHarvested, cleanupFixtures.released,
 	} {
 		if err := env.Admin.Create(ctx, job); err != nil {
 			return fmt.Errorf("store Job %s: %w", job.Name, err)

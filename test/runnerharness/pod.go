@@ -256,11 +256,17 @@ func translateVolume(volume corev1.Volume, cluster Cluster, group int) (Volume, 
 			out.SizeBytes = source.EmptyDir.SizeLimit.Value()
 		}
 	case source.Secret != nil:
+		// An optional Secret the row did not provide is an empty volume, and
+		// an optional key it lacks is a file the kubelet does not write.
+		optional := source.Secret.Optional != nil && *source.Secret.Optional
 		data, ok := cluster.Secrets[source.Secret.SecretName]
-		if !ok {
+		if !ok && !optional {
 			return Volume{}, fmt.Errorf("the row did not provide the Secret %s", source.Secret.SecretName)
 		}
-		files, err := project(volume.Name, data, source.Secret.Items, source.Secret.DefaultMode, group)
+		if !ok {
+			break
+		}
+		files, err := project(volume.Name, data, source.Secret.Items, source.Secret.DefaultMode, group, optional)
 		if err != nil {
 			return Volume{}, err
 		}
@@ -270,7 +276,7 @@ func translateVolume(volume corev1.Volume, cluster Cluster, group int) (Volume, 
 		if !ok {
 			return Volume{}, fmt.Errorf("the row did not provide the ConfigMap %s", source.ConfigMap.Name)
 		}
-		files, err := project(volume.Name, data, source.ConfigMap.Items, source.ConfigMap.DefaultMode, group)
+		files, err := project(volume.Name, data, source.ConfigMap.Items, source.ConfigMap.DefaultMode, group, false)
 		if err != nil {
 			return Volume{}, err
 		}
@@ -284,7 +290,7 @@ func translateVolume(volume corev1.Volume, cluster Cluster, group int) (Volume, 
 			if !ok {
 				return Volume{}, fmt.Errorf("the row did not provide the ConfigMap %s", projection.ConfigMap.Name)
 			}
-			files, err := project(volume.Name, data, projection.ConfigMap.Items, source.Projected.DefaultMode, group)
+			files, err := project(volume.Name, data, projection.ConfigMap.Items, source.Projected.DefaultMode, group, false)
 			if err != nil {
 				return Volume{}, err
 			}
@@ -307,8 +313,9 @@ func sourceKind(source corev1.VolumeSource) string {
 }
 
 // project is what the kubelet writes for a Secret or a ConfigMap: each item at
-// its path, or every key at its own name, owned by root and the Pod's group.
-func project(volume string, data map[string][]byte, items []corev1.KeyToPath, defaultMode *int32, group int) ([]volumes.Entry, error) {
+// its path, or every key at its own name, owned by root and the Pod's group. A
+// key an optional source lacks is left out.
+func project(volume string, data map[string][]byte, items []corev1.KeyToPath, defaultMode *int32, group int, optional bool) ([]volumes.Entry, error) {
 	if len(items) == 0 {
 		for key := range data {
 			items = append(items, corev1.KeyToPath{Key: key, Path: key})
@@ -322,6 +329,9 @@ func project(volume string, data map[string][]byte, items []corev1.KeyToPath, de
 	entries := make([]volumes.Entry, 0, len(items))
 	for _, item := range items {
 		content, present := data[item.Key]
+		if !present && optional {
+			continue
+		}
 		if !present {
 			return nil, fmt.Errorf("the key %s is missing", item.Key)
 		}

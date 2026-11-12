@@ -71,6 +71,34 @@
             }
           },
           {
+            "name": "database-url",
+            "secret": {
+              "secretName": "database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
+            "name": "development-database-url",
+            "secret": {
+              "secretName": "development-database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
             "name": "schema-source",
             "emptyDir": {
               "medium": "Memory",
@@ -82,6 +110,26 @@
             "emptyDir": {
               "medium": "Memory",
               "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "git-credentials",
+            "secret": {
+              "secretName": "git-token",
+              "items": [
+                {
+                  "key": "username",
+                  "path": "username",
+                  "mode": 288
+                },
+                {
+                  "key": "password",
+                  "path": "password",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420,
+              "optional": true
             }
           },
           {
@@ -155,26 +203,6 @@
                 "value": "/fetch-work"
               },
               {
-                "name": "PTAH_GIT_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "git-token",
-                    "key": "password",
-                    "optional": true
-                  }
-                }
-              },
-              {
-                "name": "PTAH_GIT_USERNAME",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "git-token",
-                    "key": "username",
-                    "optional": true
-                  }
-                }
-              },
-              {
                 "name": "PTAH_OPERATOR_EXPECTED_CONTENT_DIGEST",
                 "value": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
               },
@@ -209,6 +237,10 @@
                 }
               },
               {
+                "name": "PTAH_OPERATOR_GIT_PASSWORD_FILE",
+                "value": "/credentials/git/password"
+              },
+              {
                 "name": "PTAH_OPERATOR_GIT_PATH",
                 "value": "db/schema.hcl"
               },
@@ -219,6 +251,10 @@
               {
                 "name": "PTAH_OPERATOR_GIT_URL",
                 "value": "https://git.example.com/acme/app.git"
+              },
+              {
+                "name": "PTAH_OPERATOR_GIT_USERNAME_FILE",
+                "value": "/credentials/git/username"
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
@@ -243,6 +279,11 @@
               {
                 "name": "fetch-work",
                 "mountPath": "/fetch-work"
+              },
+              {
+                "name": "git-credentials",
+                "readOnly": true,
+                "mountPath": "/credentials/git"
               },
               {
                 "name": "git-ca",
@@ -302,24 +343,6 @@
                 "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
               },
               {
-                "name": "PTAH_DB_URL",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "database",
-                    "key": "url"
-                  }
-                }
-              },
-              {
-                "name": "PTAH_DEV_URL",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "development-database",
-                    "key": "url"
-                  }
-                }
-              },
-              {
                 "name": "PTAH_EXCLUDE",
                 "value": "archive.*,\"column,with-comma\""
               },
@@ -334,6 +357,14 @@
               {
                 "name": "PTAH_OPERATION_ID",
                 "value": "operation-01"
+              },
+              {
+                "name": "PTAH_OPERATOR_DB_URL_FILE",
+                "value": "/credentials/database/url"
+              },
+              {
+                "name": "PTAH_OPERATOR_DEV_URL_FILE",
+                "value": "/credentials/development-database/url"
               },
               {
                 "name": "PTAH_PLAN_SEAL_PUBLIC_KEY",
@@ -365,6 +396,16 @@
               {
                 "name": "work",
                 "mountPath": "/work"
+              },
+              {
+                "name": "database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/database"
+              },
+              {
+                "name": "development-database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/development-database"
               },
               {
                 "name": "schema-source",

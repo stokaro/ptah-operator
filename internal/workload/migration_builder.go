@@ -221,8 +221,8 @@ func migrationDataPlane(
 		if target == nil {
 			return nil, nil, nil, nil, errors.New("migration operation reaching the database carries no target binding")
 		}
+		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, operation.CoordinationDigest),
 			literalEnv(runner.EnvMigrationsDir, migrationsPath),

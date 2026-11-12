@@ -7,6 +7,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -324,5 +325,94 @@ func TestAdoptedJobIntentTakesOnlyTheRecordedManager(t *testing.T) {
 		if err := validateAdoptedJobIntent(edited, rebuild(), schema, operation); err == nil {
 			t.Fatalf("a Job whose own %s was edited outside the pinned template was adopted", key)
 		}
+	}
+}
+
+// TestAdoptedJobIntentTakesAReleasedCredentialDelivery is an upgrade from
+// 0.2.10 that finds a Job that release dispatched still running: its registry
+// credential in the container's environment, where this release builds the
+// same Job with the credential in a file. internal/workload holds the rewrite
+// that takes the delivery from the live Job to the bytes v0.2.10 writes, and
+// it is how the released Job is made here.
+//
+// The Job is adopted when its claim's snapshot recorded that release's
+// template. A claim whose snapshot recorded this release's template is a claim
+// this release made, and a Job in the released shape is not one it built: the
+// same Job is refused there, and so is a released Job that reads its
+// credential from another key.
+func TestAdoptedJobIntentTakesAReleasedCredentialDelivery(t *testing.T) {
+	t.Parallel()
+
+	builder := workload.Builder{
+		ExecutorImage:          "example.invalid/ptah@" + testDigest,
+		RunnerImage:            testRunnerImage,
+		PtahVersion:            "v0.3.0",
+		ControllerImage:        testControllerImage,
+		ControllerRevision:     testControllerRevision,
+		ControllerStateVersion: testControllerStateVersion,
+	}
+	schema := schemaFixture()
+	schema.Spec.Desired.RegistryAuthFrom = &operatorv1alpha1.RegistryAuthSource{
+		Name: "registry", Mode: operatorv1alpha1.RegistryAuthEnvironment,
+	}
+	unclaimed := &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationResolve, ID: "resolve-dispatched-by-0.2.10",
+		InputFingerprint: testDigest, StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
+		Attempt: 1, ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
+	}
+	name, err := workload.NameFor(schema, *unclaimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unclaimed.JobName = name
+	build := func(operation *operatorv1alpha1.ActiveOperationStatus) *batchv1.Job {
+		t.Helper()
+		job, err := builder.Build(schema, *operation, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	asReleased := func(job *batchv1.Job) *batchv1.Job {
+		t.Helper()
+		if !workload.CarryCredentialDelivery(job, &batchv1.Job{}) {
+			t.Fatal("the Job this release builds names no credential by file, so nothing below proves anything")
+		}
+		return job
+	}
+	claimed := func(template *corev1.PodTemplateSpec) *operatorv1alpha1.ActiveOperationStatus {
+		operation := unclaimed.DeepCopy()
+		operation.AdmissionSnapshot = testAdmissionSnapshotOf(template)
+		return operation
+	}
+	releasedClaim := claimed(&asReleased(build(unclaimed)).Spec.Template)
+	currentClaim := claimed(&build(unclaimed).Spec.Template)
+	live := asReleased(build(releasedClaim))
+	live.UID = "live-job-uid"
+
+	schema.Status.ActiveOperation = releasedClaim
+	if validateJobIntent(live, build(releasedClaim), schema) == nil {
+		t.Fatal("the released Job is the Job this release builds, so nothing below proves anything")
+	}
+	if err := validateAdoptedJobIntent(live, build(releasedClaim), schema, releasedClaim); err != nil {
+		t.Fatalf("a Job 0.2.10 dispatched under its own claim was refused: %v", err)
+	}
+	schema.Status.ActiveOperation = currentClaim
+	underCurrent := asReleased(build(currentClaim))
+	underCurrent.UID = live.UID
+	if err := validateAdoptedJobIntent(underCurrent, build(currentClaim), schema, currentClaim); err == nil ||
+		!strings.Contains(err.Error(), "admission snapshot") {
+		t.Fatalf("a released Job under a claim this release made = %v, want a snapshot refusal", err)
+	}
+
+	schema.Status.ActiveOperation = releasedClaim
+	edited := live.DeepCopy()
+	for index, variable := range edited.Spec.Template.Spec.Containers[0].Env {
+		if variable.Name == runner.EnvOCIPassword {
+			edited.Spec.Template.Spec.Containers[0].Env[index].ValueFrom.SecretKeyRef.Key = "username"
+		}
+	}
+	if err := validateAdoptedJobIntent(edited, build(releasedClaim), schema, releasedClaim); err == nil {
+		t.Fatal("a released Job reading its registry password from another key was adopted")
 	}
 }

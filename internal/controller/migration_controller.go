@@ -2985,11 +2985,15 @@ func validateMigrationJobIntent(actual, expected *batchv1.Job, migration *operat
 // taken to the claim rather than to the object being checked.
 //
 // That identity is the only value two managers of one execution binding write
-// differently into a migration Job. Two processes of one release write
-// nothing differently: a schema Plan Job carries its process's own seal key
-// (workload.CarrySealedPlanKey), and no migration operation seals anything.
+// differently into a migration Job, beside where a Job 0.2.10 dispatched
+// reads its credentials (workload.CarryCredentialDelivery), which the
+// snapshot pins to a claim that release made. Two processes of one release
+// write nothing differently: a schema Plan Job carries its process's own seal
+// key (workload.CarrySealedPlanKey), and no migration operation seals
+// anything.
 func validateAdoptedMigrationJobIntent(actual, expected *batchv1.Job, migration *operatorv1alpha1.PtahMigration) error {
 	workload.CarryManagerIdentity(expected, actual)
+	workload.CarryCredentialDelivery(expected, actual)
 	return validateMigrationJobIntent(actual, expected, migration)
 }
 

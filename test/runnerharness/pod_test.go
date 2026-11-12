@@ -142,21 +142,34 @@ func TestRunArgsAreTheJobsShape(t *testing.T) {
 		}
 	}
 	values := map[string]string{}
-	secrets := 0
 	for _, variable := range main.Env {
 		values[variable.Name] = variable.Value
-		if variable.Secret {
-			secrets++
-			if strings.Contains(joined, variable.Name+"=") {
-				t.Errorf("the Secret value of %s is on the command line", variable.Name)
+	}
+	// A credential is a file; what a container still reads from a Secret into
+	// its environment is a grant, and it goes by name as a credential did.
+	secrets := 0
+	for _, container := range pod.Containers {
+		containerArgs, err := container.RunArgs("a-name", "a-network", func(mount runnerharness.Mount) ([]string, error) {
+			return []string{"--mount", mount.Volume + ":" + mount.Path}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, variable := range container.Env {
+			if !variable.Secret {
+				continue
 			}
-			if !slices.Contains(main.SecretEnv(), variable.Name+"="+variable.Value) {
-				t.Errorf("the docker client is not given %s", variable.Name)
+			secrets++
+			if strings.Contains(strings.Join(containerArgs, " "), variable.Name+"=") {
+				t.Errorf("the Secret value of %s is on the command line of %s", variable.Name, container.Name)
+			}
+			if !slices.Contains(container.SecretEnv(), variable.Name+"="+variable.Value) {
+				t.Errorf("the docker client is not given %s for %s", variable.Name, container.Name)
 			}
 		}
 	}
 	if secrets == 0 {
-		t.Error("the row shows nothing: the Job reads no Secret")
+		t.Error("the row shows nothing: the Job reads no Secret into an environment")
 	}
 	for _, name := range []string{"HOME", "TMPDIR"} {
 		mounted := slices.ContainsFunc(main.Mounts, func(mount runnerharness.Mount) bool {

@@ -71,6 +71,26 @@
             }
           },
           {
+            "name": "git-credentials",
+            "secret": {
+              "secretName": "git-token",
+              "items": [
+                {
+                  "key": "username",
+                  "path": "username",
+                  "mode": 288
+                },
+                {
+                  "key": "password",
+                  "path": "password",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420,
+              "optional": true
+            }
+          },
+          {
             "name": "git-ca",
             "configMap": {
               "name": "git-ca",
@@ -147,26 +167,6 @@
                 "value": "/work"
               },
               {
-                "name": "PTAH_GIT_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "git-token",
-                    "key": "password",
-                    "optional": true
-                  }
-                }
-              },
-              {
-                "name": "PTAH_GIT_USERNAME",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "git-token",
-                    "key": "username",
-                    "optional": true
-                  }
-                }
-              },
-              {
                 "name": "PTAH_OPERATION_ID",
                 "value": "operation-01"
               },
@@ -197,6 +197,10 @@
                 }
               },
               {
+                "name": "PTAH_OPERATOR_GIT_PASSWORD_FILE",
+                "value": "/credentials/git/password"
+              },
+              {
                 "name": "PTAH_OPERATOR_GIT_PATH",
                 "value": "db/schema.hcl"
               },
@@ -207,6 +211,10 @@
               {
                 "name": "PTAH_OPERATOR_GIT_URL",
                 "value": "https://git.example.com/acme/app.git"
+              },
+              {
+                "name": "PTAH_OPERATOR_GIT_USERNAME_FILE",
+                "value": "/credentials/git/username"
               },
               {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
@@ -227,6 +235,11 @@
               {
                 "name": "work",
                 "mountPath": "/work"
+              },
+              {
+                "name": "git-credentials",
+                "readOnly": true,
+                "mountPath": "/credentials/git"
               },
               {
                 "name": "git-ca",

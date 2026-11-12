@@ -193,6 +193,14 @@ func withAnExecutorSetting(job *batchv1.Job) {
 	panic("the built Job has no executor container to change")
 }
 
+// deliveredByEnvironment is the Job 0.2.10 built: every credential in a
+// secretKeyRef of its container's environment rather than in a file.
+func deliveredByEnvironment(job *batchv1.Job) {
+	if !workload.CarryCredentialDelivery(job, &batchv1.Job{}) {
+		panic("the built Job names no credential by file, so it has no released shape to take")
+	}
+}
+
 // underAnotherEpoch is a Job that carries an execution epoch its claim was
 // not made under.
 func underAnotherEpoch(job *batchv1.Job) {
@@ -353,6 +361,15 @@ func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 			{name: "built by this manager", dispatcher: current, adopted: true},
 			{name: "built by a release that differs in the recorded manager alone", dispatcher: predecessor, adopted: true},
 			{name: "built by a release that also changed the Pod template", dispatcher: predecessor, alter: withAnExecutorSetting},
+			{name: "built by a release that read its credentials from the environment", dispatcher: predecessor, alter: deliveredByEnvironment, adopted: true},
+			{
+				name:       "built by a release that read its credentials from the environment and changed the Pod template",
+				dispatcher: predecessor,
+				alter: func(job *batchv1.Job) {
+					deliveredByEnvironment(job)
+					withAnExecutorSetting(job)
+				},
+			},
 		} {
 			t.Run(claim.name+"/"+row.name, func(t *testing.T) {
 				t.Parallel()

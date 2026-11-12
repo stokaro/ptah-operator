@@ -138,9 +138,11 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	entries := testControllerObjectGuard().entries()
 	for _, entry := range entries {
 		for index, validation := range entry.validations {
-			// The two cleanup TTL validations say why in words of their own.
-			ttlValidation := validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage
-			if validation.Message != entry.denialMessage && !(entry.resource == "jobs" && ttlValidation) {
+			// The two cleanup TTL validations and the credential one say why
+			// in words of their own.
+			ownWords := validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage ||
+				validation.Message == controllerJobCredentialEnvironmentMessage
+			if validation.Message != entry.denialMessage && !(entry.resource == "jobs" && ownWords) {
 				t.Fatalf("%s validation %d lacks its typed denial message", entry.resource, index)
 			}
 			assertCELExpressionHeadroom(t, entry.resource, validation.Expression)
@@ -159,9 +161,11 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(object).spec.template.spec.automountServiceAccountToken`,
 		`container.securityContext.allowPrivilegeEscalation`,
 		`container.image.matches`,
-		`dyn(object).spec.template.spec.volumes.filter(volume, volume.name != "result-credentials").size() <= 7`,
+		`dyn(object).spec.template.spec.volumes.filter(volume, volume.name != "result-credentials").size() <= 9`,
 		`dyn(object).spec.template.spec.volumes.filter(v, v.name == "result-credentials").size() <= 1`,
-		`volume.name in ["registry-docker-config", "git-credentials"] && has(volume.secret)`,
+		`volume.name in ["registry-docker-config", "registry-credentials", "git-credentials"] && has(volume.secret)`,
+		`volume.name == "development-database-url" && has(volume.secret) && object.metadata.labels["operator.ptah.run/operation"] == "plan"`,
+		`!(variable.name in ["PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD"])`,
 		`["install-runner", "fetch-git-source"]`,
 		`container.securityContext.capabilities.add.size() == 0`,
 		`["install-runner", "validate-source-authority", "fetch-schema"]`,
