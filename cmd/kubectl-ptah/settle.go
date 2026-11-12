@@ -114,7 +114,7 @@ func writeSettleReport(out io.Writer, result operate.SettleResult, waiting bool)
 		field("Holds", statement)
 	}
 	field("Apply", fmt.Sprintf("%s, plan %s", statusview.Clean(printed.ApplyOperationID), orNone(statusview.Clean(result.Plan))))
-	field("Journal", journalLine(result.Journal))
+	field("Journal", applyEndLine(result.Journal))
 	field("Target", fmt.Sprintf("the read named %s; the plan was made for %s",
 		statusview.Clean(printed.TargetDigest), orNone(statusview.Clean(result.PlanTarget))))
 	field("Observed", "phase "+orNone(statusview.Clean(result.Phase)))
@@ -149,8 +149,8 @@ func writeSettleReport(out io.Writer, result operate.SettleResult, waiting bool)
 	_, _ = io.WriteString(out, text.String())
 }
 
-// journalLine is the journal's record of how the Apply ended.
-func journalLine(entry *operatorv1alpha1.JournalEntry) string {
+// applyEndLine is the journal's record of how the Apply ended.
+func applyEndLine(entry *operatorv1alpha1.JournalEntry) string {
 	if entry == nil {
 		return "no ApplyFinished entry for the plan any more"
 	}
