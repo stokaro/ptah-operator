@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -83,42 +84,69 @@ func (r *SchemaReconciler) warnAboutStuckPods(
 }
 
 // warnApplyPodGone records an ApplyPodGone Warning while a deleted PtahSchema
-// waits until observeAfter, its pending observation's ObserveAfter, with no Pod
-// of the Apply's Job left: pods is what the wait listed by the Job's UID.
-// Nothing says the executor stopped. A Pod force-deleted, or removed by PodGC
-// once its Node object went, can still run on a node the API server cannot
-// reach, so the deletion holds the database Lease until the Apply's execution
-// deadline and its Pod's termination grace have passed
+// waits until observeAfter, its pending observation's ObserveAfter, with no
+// active Pod of the Apply's Job left: pods is what the wait listed by the Job's
+// UID, and every one of them reads Succeeded or Failed (applyPodsActive). The
+// Apply's ending read nothing that says its executor ran and stopped, so the
+// deletion holds the database Lease until the Apply's execution deadline and
+// its Pod's termination grace have passed
 // (finishUncertainApplyWithEvidenceAndBinding), the instant a live schema's
 // proof waits for before it reads the database. A live schema shows that
 // instant in status.pendingObservation.observeAfter. A deleted one only stays
-// Terminating, so this Warning says why it waits and until when. It is repeated
-// with the backoff a PodStuckTerminating Warning has, kept for the wait and the
-// Job's UID as every Apply wait's is. Only a deletion records it, so one key
-// per Job would do today; the wait's own words keep a live wait added later
-// from taking the deletion's turn. It names the UID because another Job can
-// hold the name.
+// Terminating, so this Warning says why it waits and until when.
+//
+// Where no Pod is left, the Warning says the API server has none: a Pod
+// force-deleted, or removed by PodGC once its Node object went, can still run
+// on a node the API server cannot reach. Where a Pod stands, the Warning names
+// it and its phase, and says that a terminal phase does not prove a stop
+// either: PodGC writes Failed on a Pod whose Node object is gone, over the statuses the
+// kubelet last reported, and the Pod stands where the delete that follows fails
+// or another finalizer holds it. The Job runs one Pod (backoffLimit 0, Pods
+// replaced only once Failed), so the first Pod in podsOwnedByJob's order is
+// named and any others are counted, which keeps the message bounded. A Pod
+// stuck terminating is not here: it is active, and PodStuckTerminating names it.
+//
+// It is repeated with the backoff a PodStuckTerminating Warning has, kept for
+// the wait and the Job's UID as every Apply wait's is, so a Pod that stands and
+// then goes does not start the count again: the wait is the same. Only a
+// deletion records it, so one key per Job would do today; the wait's own words
+// keep a live wait added later from taking the deletion's turn. It names the
+// UID because another Job can hold the name.
 //
 // A record that names no Job UID warns about nothing: its create may never
 // have landed, so there is no Job to name and no Pod the API server could have
-// lost. Nor does one whose Pods still stand, stopped or not: a stuck one is
-// what PodStuckTerminating names.
+// lost.
 func (r *SchemaReconciler) warnApplyPodGone(
 	schema *operatorv1alpha1.PtahSchema,
 	pending *operatorv1alpha1.PendingObservationStatus,
 	pods []*corev1.Pod,
 	observeAfter time.Time,
 ) {
-	if pending.ApplyJobUID == "" || len(pods) != 0 {
+	if pending.ApplyJobUID == "" {
 		return
 	}
 	if !stuckPodWarningsOf(&r.goneApplyPods).dueFor(deletionWaits, pending.ApplyJobUID, r.now()) {
 		return
 	}
+	until := observeAfter.UTC().Format(time.RFC3339)
+	if len(pods) == 0 {
+		r.event(schema, corev1.EventTypeWarning, "ApplyPodGone",
+			"%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
+				"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
+				"still runs on a node the API server cannot reach, so the database Lease stays held until the "+
+				"Apply's execution deadline and its Pod's termination grace have passed.",
+			deletionWaits, pending.ApplyJobName, pending.ApplyJobUID, until)
+		return
+	}
+	others := ""
+	if len(pods) > 1 {
+		others = fmt.Sprintf(" (one of %d Pods of the Job, none of them active)", len(pods))
+	}
 	r.event(schema, corev1.EventTypeWarning, "ApplyPodGone",
-		"%s for Job %s, UID %s, until %s: the API server has no Pod of the Job with that UID, "+
-			"and nothing says its executor stopped. A Pod can be gone from the API server while its container "+
-			"still runs on a node the API server cannot reach, so the database Lease stays held until the "+
-			"Apply's execution deadline and its Pod's termination grace have passed.",
-		deletionWaits, pending.ApplyJobName, pending.ApplyJobUID, observeAfter.UTC().Format(time.RFC3339))
+		"%s for Job %s, UID %s, until %s: Pod %s of the Job reads %s%s, and nothing the Apply's ending read says "+
+			"its executor ran and stopped. A terminal phase does not say so either: PodGC writes Failed on a Pod "+
+			"whose Node object is gone while its container can still run on a node the API server cannot reach, "+
+			"so the database Lease stays held until the Apply's execution deadline and its Pod's termination grace "+
+			"have passed.",
+		deletionWaits, pending.ApplyJobName, pending.ApplyJobUID, until, pods[0].Name, pods[0].Status.Phase, others)
 }

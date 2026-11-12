@@ -1646,8 +1646,9 @@ later, then twice as long after each time, up to every 5 minutes. Each wait
 keeps its own count, so a deletion names a Pod at once although its live Apply
 named it a moment before. A deleted `PtahSchema` whose Apply ended still waits
 until its pending observation's `observeAfter` once no Pod of the Job is left,
-and an `ApplyPodGone` Warning Event names the Job, its UID and that time, with
-the same backoff. Once the node is known to be gone, delete the Pod without
+or once every Pod left reads `Succeeded` or `Failed`, and an `ApplyPodGone`
+Warning Event names the Job, its UID, that time and a Pod that stands, with the
+same backoff. Once the node is known to be gone, delete the Pod without
 waiting for its kubelet:
 
 ```sh
@@ -1688,7 +1689,8 @@ waiting one is released. A Pod the kubelet ended, as by an eviction, a deadline 
 an `OutOfcpu` refusal, reads its executor terminated or never started, and the
 Lease goes back at once. A `PtahSchema` already holds such a Pod to
 `observeAfter`: it counts an executor as stopped only where the Pod reads it
-terminated after it started.
+terminated after it started. A deleted one names the Pod, with its phase, in an
+`ApplyPodGone` Warning while it waits.
 
 A read's Pod on such a node is not waited for past its Job's stop bound, in
 either kind. A deleted schema lets go of a Plan or a proof read as above. A live
@@ -2879,9 +2881,15 @@ so each sums them. The operation label on a state gauge is the API's type
 A claimed Apply that is waiting for its realm's Lease holds its operation
 claim while it waits, so contention for a realm reads as an Apply in flight for
 longer than its Job would take, and `PtahOperatorOperationStalled` covers a
-wait that does not end. A `PtahMigration` also says so itself: `Progressing=True`
-with reason `WaitingForDatabaseLock`, naming the Lease, and the Job when one may
-still be running. Either family asks for the
+wait that does not end. The resource also says so itself, with reason
+`WaitingForDatabaseLock`, naming the Lease, and the Job when one may still be
+running: a `PtahMigration` on `Progressing=True`, and a `PtahSchema` on
+`Ready=False`, for its Apply, its Plan and the Observe that proves an Apply. A
+read that proves an Apply names the Apply's Job until it starts one of its own.
+A schema whose `Ready` reports a Pod that cannot start keeps that report while
+it waits. A read tried again after a failure reports the wait in place of the
+failure, which `ReconciliationFailed` keeps, and `Ready` reads the failure
+again once the read holds the Lease. Either family asks for the
 Lease every five seconds, so it goes on within seconds of the Lease coming free.
 The Lease names its holder: `kubectl -n <operator namespace> get leases -o wide`. Two resources claiming
 one realm without `spec.target.sharedRealm` is a refusal instead, and reads as
