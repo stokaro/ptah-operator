@@ -219,6 +219,23 @@ func TestTheLogPointerSaysOnlyWhatTheReadingAllows(t *testing.T) {
 			t.Errorf("%s under a refused cleanup: failedApplyLogPointer() = %q, want nothing", name, got)
 		}
 	}
+	// A log that was on a node that is gone has no command that reads it, so
+	// the pointer says where it was whatever the Job's TTL, and names none.
+	const gone = " was in the Pod log of Job ptah-apply-orders-0123 on a node that is gone, " +
+		"so it can be read only from that node or from a log shipper"
+	for name, job := range map[string]*batchv1.Job{"a Job with a TTL": finishedJob(&long), "a Job no TTL reached": finishedJob(nil)} {
+		for _, stays := range []bool{false, true} {
+			if got := failedApplyLogPointer(job, applyLogHoldsReportOnGoneNode, stays); got != "What Ptah reported"+gone {
+				t.Errorf("%s, stays %t, on a gone node: failedApplyLogPointer() = %q", name, stays, got)
+			}
+			if got := withLogPointer("Apply failed", job, applyLogUnreadOnGoneNode, stays); got != "Apply failed. Anything the run wrote"+gone {
+				t.Errorf("%s, stays %t, on a gone node: withLogPointer() = %q", name, stays, got)
+			}
+		}
+	}
+	if got := failedApplyLogPointer(nil, applyLogUnreadOnGoneNode, true); got != "" {
+		t.Errorf("no Job, on a gone node: failedApplyLogPointer() = %q, want nothing", got)
+	}
 	for seconds, want := range map[int32]string{86400: "24 hours", 7200: "2 hours", 300: "5 minutes", 90: "90 seconds", 0: "0 seconds"} {
 		if got := retentionWords(seconds); got != want {
 			t.Errorf("retentionWords(%d) = %q, want %q", seconds, got, want)
@@ -249,13 +266,22 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			}}},
 		}
 	}
-	// executorPod is a Pod of job whose executor ended for reason.
+	// gone is no reason an executor ends for: it is a Pod PodGC marked Failed
+	// after its node went, over an executor last reported running.
+	const gone = "a node that is gone"
+	// executorPod is a Pod of job whose executor ended for reason, or the Pod
+	// gone names.
 	executorPod := func(job *batchv1.Job, index int, reason string) *corev1.Pod {
 		pod := jobPod(job, 0)
 		pod.Name = fmt.Sprintf("%s-%d", pod.Name, index)
 		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
 			Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 137, Reason: reason}},
 		}}
+		if reason == gone {
+			pod.Status.Phase = corev1.PodFailed
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.DisruptionTarget, Status: corev1.ConditionTrue, Reason: podGCDeletionReason}}
+			pod.Status.ContainerStatuses[0].State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
+		}
 		return pod
 	}
 	coded := func(code string) error {
@@ -272,7 +298,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		// kubelet refused at admission does.
 		ended bool
 		// executors are the reasons each of the Job's Pods' executor ended for,
-		// one Pod per entry.
+		// one Pod per entry, in the order the list returns them.
 		executors []string
 		want      applyLogReading
 	}{
@@ -314,6 +340,20 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		// gone say nothing about the log they had.
 		{name: "an outcome that is unknown and no Pod", failure: coded("apply_outcome_unknown"), noPod: true, want: applyLogHoldsReport},
 		{name: "an outcome that is unknown and no Job", failure: coded("apply_outcome_unknown"), noJob: true, want: applyLogHoldsReport},
+		// A log that was on a node that is gone holds what it held, and says
+		// where it was, only when every log there is was on one.
+		{name: "no result and a Pod whose node went", failure: errors.New("apply result is uncertain"), executors: []string{gone}, want: applyLogUnreadOnGoneNode},
+		{name: "no failure to read and a Pod whose node went", executors: []string{gone}, want: applyLogUnreadOnGoneNode},
+		{name: "no result and two Pods whose node went", failure: errors.New("apply result is uncertain"), executors: []string{gone, gone}, want: applyLogUnreadOnGoneNode},
+		{name: "no result, an executor the kubelet lost and a Pod whose node went", failure: errors.New("apply result is uncertain"), executors: []string{lost, gone}, want: applyLogUnreadOnGoneNode},
+		{name: "no result, a Pod whose node went and an executor the kubelet lost", failure: errors.New("apply result is uncertain"), executors: []string{gone, lost}, want: applyLogUnreadOnGoneNode},
+		{name: "no result, an executor that exited and a Pod whose node went", failure: errors.New("apply result is uncertain"), executors: []string{"Error", gone}, want: applyLogUnread},
+		{name: "no result, a Pod whose node went and an executor that exited", failure: errors.New("apply result is uncertain"), executors: []string{gone, "Error"}, want: applyLogUnread},
+		{name: "a failure before any statement from a Pod whose node went", failure: coded("apply_failed"), executors: []string{gone}, want: applyLogHoldsReportOnGoneNode},
+		{name: "a failure before any statement, an executor that exited and a Pod whose node went", failure: coded("apply_failed"), executors: []string{"Error", gone}, want: applyLogHoldsReport},
+		{name: "a failure before any statement, a Pod whose node went and an executor that exited", failure: coded("apply_failed"), executors: []string{gone, "Error"}, want: applyLogHoldsReport},
+		{name: "a refusal from a Pod whose node went", failure: coded("apply_refused"), executors: []string{gone}, want: applyLogSaysNothing},
+		{name: "a target that could not be opened from a Pod whose node went", failure: coded("database_unreachable"), executors: []string{gone}, want: applyLogSaysNothing},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -366,6 +406,66 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 			t.Fatalf("failedApplyLogReading() = %v", got)
 		}
 	})
+}
+
+// TestAServedReadingSaysWhereALogOnAGoneNodeWas holds servedLogReading, which a
+// migration's reported run passes its reading through, to the Pods it lists:
+// a log every copy of which was on a node that is gone keeps what it holds and
+// says where it was, a Pod that serves its log keeps the reading as it is, and
+// a reading that promises nothing promises nothing still.
+func TestAServedReadingSaysWhereALogOnAGoneNodeWas(t *testing.T) {
+	t.Parallel()
+
+	pod := func(job *batchv1.Job, name string, status corev1.PodStatus) *corev1.Pod {
+		controller := true
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: job.Namespace, Name: job.Name + "-" + name, Labels: map[string]string{"job-name": job.Name},
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller, BlockOwnerDeletion: &controller,
+				}},
+			},
+			Status: status,
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		pods   map[string]corev1.PodStatus
+		onGone bool
+	}{
+		{name: "a Pod whose node went", pods: map[string]corev1.PodStatus{"a": failedByPodGCOverARunningExecutor()}, onGone: true},
+		{name: "a Pod whose node went and one PodGC failed before its executor ran", pods: map[string]corev1.PodStatus{
+			"a": failedByPodGCOverAWaitingExecutor(), "b": failedByPodGCOverARunningExecutor(),
+		}, onGone: true},
+		{name: "a Pod whose node went and one whose executor exited", pods: map[string]corev1.PodStatus{
+			"a": failedByPodGCOverARunningExecutor(), "b": exitedWithoutAResult(),
+		}},
+		{name: "a Pod whose executor exited", pods: map[string]corev1.PodStatus{"a": exitedWithoutAResult()}},
+		{name: "no Pod"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			job := finishedJob(nil)
+			builder := fake.NewClientBuilder().WithScheme(jobAndPodScheme(t))
+			for name, status := range test.pods {
+				builder = builder.WithObjects(pod(job, name, status))
+			}
+			reader := builder.Build()
+			for reading, onGone := range map[applyLogReading]applyLogReading{
+				applyLogHoldsReport: applyLogHoldsReportOnGoneNode,
+				applyLogUnread:      applyLogUnreadOnGoneNode,
+				applyLogSaysNothing: applyLogSaysNothing,
+			} {
+				want := reading
+				if test.onGone {
+					want = onGone
+				}
+				if got := servedLogReading(context.Background(), reader, job, reading); got != want {
+					t.Errorf("servedLogReading(%v) = %v, want %v", reading, got, want)
+				}
+			}
+		})
+	}
 }
 
 func jobAndPodScheme(t *testing.T) *runtime.Scheme {

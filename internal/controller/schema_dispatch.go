@@ -126,7 +126,7 @@ func (d *schemaDispatch) AcquireLease(ctx context.Context) mutationlifecycle.Out
 	if operation := d.operation(); operation.JobUID != "" && isReadOnlyOperation(operation) {
 		return mutationlifecycle.Stop(d.r.retryLostReadOnlyJob(ctx, d.schema))
 	}
-	acquired, requeue, err := d.r.acquireOperationLock(ctx, d.schema)
+	acquired, requeue, err := d.r.waitForOperationLock(ctx, d.schema, false)
 	if err != nil {
 		return mutationlifecycle.Stop(ctrl.Result{}, err)
 	}

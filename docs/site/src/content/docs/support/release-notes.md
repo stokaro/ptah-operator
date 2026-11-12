@@ -121,7 +121,12 @@ script that waits for a `PtahMigration` to be deleted, for an acknowledgment of
 its run to be taken, or for its database to be free, after its Apply Pod was
 deleted with `--force` or its Apply Job was deleted, or after PodGC marked its
 Apply Pod `Failed` over an executor it had not seen stop, has to allow until
-the end of the Apply's term, the time the `ApplyPodGone` Warning names.
+the end of the Apply's term, the time the `ApplyPodGone` Warning names. A script
+that reads a `PtahSchema`'s `Ready` while its claim waits for the database lock
+sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
+for a read tried again after a failure, the failure's reason, which
+`ReconciliationFailed` still carries. After a rollback, an earlier manager
+leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
 
 - **`kubectl ptah settle` gives up a proof whose target moved.** A schema whose
   URL Secret names another target than the plan its Apply ran from stops with a
@@ -539,15 +544,17 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   Warning names the Pod. A Pod the kubelet ended, by an eviction, a deadline or
   an `OutOfcpu` refusal, or whose executor reads `ContainerStatusUnknown`, still
   hands the Lease back at once. A `PtahSchema` already held the Lease there.
-- **A deleted schema says why it waits after its Apply Pod is gone.** A
-  `PtahSchema` deleted while its Apply ran keeps the database Lease until its
-  pending observation's `observeAfter`, the Apply's execution deadline and its
-  Pod's termination grace, since a container on a node the API server cannot
-  reach can outlive its Pod object. Once no Pod of the Job was left, as after a
-  forced delete, it stayed `Terminating` with no word about it. An
-  `ApplyPodGone` Warning Event now names the Job, its UID and when the wait
-  ends, with the backoff `PodStuckTerminating` has. The wait itself is
-  unchanged.
+- **A deleted schema says why it waits after its Apply Pod is gone or
+  stopped.** A `PtahSchema` deleted while its Apply ran keeps the database
+  Lease until its pending observation's `observeAfter`, the Apply's execution
+  deadline and its Pod's termination grace, since a container on a node the
+  API server cannot reach can outlive its Pod object. Once no Pod of the Job
+  was left, as after a forced delete, or once the Pods left had all stopped, as
+  one PodGC marked `Failed` whose delete did not succeed, it stayed
+  `Terminating` with no word about it. An `ApplyPodGone` Warning Event now
+  names the Job, its UID, when the wait ends and a Pod that still stands, with
+  its phase. It repeats with the backoff `PodStuckTerminating` has. The wait
+  itself is unchanged.
 - **A Pod log is pointed at only where the Pod shows an executor ran.** A Pod
   that ended with no status for its executor, as one the kubelet refused at
   admission, had no log for `kubectl logs` to read, yet the record of its Apply
@@ -558,6 +565,18 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   repeats the report that the Pod could not start, and neither does a
   `PtahMigration` Apply whose result was not read, nor a schema Apply that a
   changed execution component ended. A read still does.
+- **A schema waiting for the database lock says so.** A `PtahSchema` Apply, a
+  Plan or the Observe that proves an Apply that found another operation holding
+  the realm's Lease asked for it every five seconds, and its `Ready` went on
+  reading `OperationInProgress`, as it does over a Job at work, with no Event.
+  `Ready=False` now reads reason `WaitingForDatabaseLock` and names the Lease
+  while the claim waits, as a `PtahMigration`'s `Progressing` does, and names
+  the Job where the claim started one before it lost the Lease, since an
+  Apply's SQL may still be running then. A read that proves an Apply names the
+  Apply's Job until it starts one of its own. A read tried again after a
+  failure says so in place of the failure, and `Ready` reads the failure again
+  once the read holds the Lease. A report that the claim's Pod cannot start
+  stays on `Ready` instead. The wait itself is unchanged.
 - **A stop says when the annotation already settles it.** A statement in the
   `operator.ptah.run/settled-apply` annotation holds until the proof ends, so a
   store that flips from the first target to another and back, A, B, A, B, stops
@@ -568,6 +587,19 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names.
   clause for another value.
   [A schema whose target moved](../../use/recovery/#a-schema-whose-target-moved)
   says how to take the statement back.
+- **A log on a node that is gone names no command.** A Pod PodGC marked
+  `Failed` after its node went, over an executor the kubelet last reported
+  running, shows a run, and the record of its Apply still pointed at the log
+  with a `kubectl logs` command. The API server answers that command with
+  NotFound for the node, since no kubelet is left to serve the log. Where the
+  Pod carries PodGC's `DisruptionTarget` condition, reason `DeletionByPodGC`,
+  both families now say instead that the log was on a node that is gone, so it
+  can be read only from that node or from a log shipper. That holds for the
+  `Applying` condition and the `ApplyOutcomeUnknown` and `RetiredApplyLogKept`
+  Events of a `PtahSchema`, and for `status.lastRun.message` and the
+  `MigrationRunUncertain` Event of a `PtahMigration`, whatever the Job's TTL. A
+  script that matches `is in the Pod log` there has to match `was in the Pod
+  log of Job` as well.
 
 ## 0.2.10
 

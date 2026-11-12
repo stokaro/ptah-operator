@@ -397,7 +397,8 @@ func (s snapshot) inSyncCondition() string {
 // recorded failure or refusal first, then a Ready that is not True.
 //
 // A schema records a failed attempt on ReconciliationFailed, and a Pod
-// admission refusal or a Pod the kubelet cannot configure on Ready. A migration
+// admission refusal, a Pod the kubelet cannot configure or a claim waiting for
+// the database lock on Ready. A migration
 // records all of them on Progressing, which a retried attempt leaves True with
 // the failure as its message, and a claim waiting for the database lock says so
 // there too.
