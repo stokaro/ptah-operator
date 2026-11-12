@@ -15,14 +15,17 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
-// A deleted PtahSchema waits for the Job of a claim that holds the database
-// lock, and renews the Lease while it waits. Since Kubernetes 1.31 a Job past
-// its deadline is marked Failed only once its Pods have terminated, and a Pod
-// on a node that is gone stays Terminating until the node object goes or
-// somebody force-deletes the Pod. Holding the Lease is right, since such a Pod
-// may still be running SQL on a node that is only cut off, but nothing else
-// says why the resource stays. warnStuckPods says it: a PodStuckTerminating
-// Warning names each such Pod, its node, and the delete that ends the wait.
+// A deleted PtahSchema waits for the Job of an Apply, and renews the Lease
+// while it waits. Since Kubernetes 1.31 a Job past its deadline is marked
+// Failed only once its Pods have terminated, and a Pod on a node that is gone
+// stays Terminating until the node object goes or somebody force-deletes the
+// Pod. Holding the Lease is right, since such a Pod may still be running SQL on
+// a node that is only cut off, but nothing else says why the resource stays.
+// warnStuckPods says it: a PodStuckTerminating Warning names each such Pod, its
+// node, and the delete that ends the wait. A read that holds the lock, a Plan
+// or the read that proves an Apply, is waited for only until jobStopBound,
+// where the deletion discards its claim and says so in a ReadJobOverdue
+// Warning instead (#997).
 //
 // It warns only once the Job is past jobStopBound, its own deadline plus the
 // grace its Pods are given and the slack, when the Job controller has already

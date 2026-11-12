@@ -161,7 +161,9 @@ func TestDeletingASchemaSettlesAnApplyItCannotAccountFor(t *testing.T) {
 // resource for the Job's whole deadline.
 //
 // A Plan holds the lock, and the last row keeps it: the resource stays, and
-// so does the claim that names the lock's epoch.
+// so does the claim that names the lock's epoch. Its Job started a minute
+// before the pass, well inside its deadline, so the bound a read's wait ends
+// at is not what the row measures.
 func TestDeletingASchemaWaitsOnlyForAJobThatHoldsTheLock(t *testing.T) {
 	t.Parallel()
 
@@ -184,6 +186,7 @@ func TestDeletingASchemaWaitsOnlyForAJobThatHoldsTheLock(t *testing.T) {
 			operation.DispatchStarted = true
 			deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
 			schema.DeletionTimestamp = &deletedAt
+			started := metav1.NewTime(deletedAt.Add(-time.Minute))
 			job := &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace:       schema.Namespace,
@@ -191,9 +194,14 @@ func TestDeletingASchemaWaitsOnlyForAJobThatHoldsTheLock(t *testing.T) {
 					UID:             operation.JobUID,
 					OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
 				},
+				Spec:   batchv1.JobSpec{ActiveDeadlineSeconds: ptr(int64(900))},
+				Status: batchv1.JobStatus{StartTime: &started},
 			}
 
 			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+			if bound := jobStopBound(job); !reconciler.now().Before(bound) {
+				t.Fatalf("the pass at %s is past the Job's stop bound %s, so the Plan row measures the bound", reconciler.now(), bound)
+			}
 			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
 			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 				t.Fatalf("Reconcile() deleting a schema with a %s Job standing = %v", row.operation, err)

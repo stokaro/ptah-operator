@@ -119,6 +119,13 @@ func (d *schemaDispatch) Authorize(ctx context.Context) mutationlifecycle.Outcom
 }
 
 func (d *schemaDispatch) AcquireLease(ctx context.Context) mutationlifecycle.Outcome {
+	// A read whose recorded Job is gone waits for that Job's Pods, and renews
+	// the Lease only while it may still wait for them, so the wait is settled
+	// before the renewal rather than in Build after it. Build settles it for a
+	// read that holds no Lease, which never comes here.
+	if operation := d.operation(); operation.JobUID != "" && isReadOnlyOperation(operation) {
+		return mutationlifecycle.Stop(d.r.retryLostReadOnlyJob(ctx, d.schema))
+	}
 	acquired, requeue, err := d.r.acquireOperationLock(ctx, d.schema)
 	if err != nil {
 		return mutationlifecycle.Stop(ctrl.Result{}, err)
@@ -326,18 +333,39 @@ func (d *schemaDispatch) Retry(ctx context.Context, failure error) (ctrl.Result,
 // crossed its dispatch boundary, and Job admission permits CREATE only while
 // the claim records no UID, so the attempt advances to a fresh name before
 // anything is created again.
+//
+// The claim waits no longer than the Pods' stop bound (podsStillStopping): a
+// Pod on a node that is gone may never be reported stopped. A Plan's claim
+// renews the realm Lease while it waits, and not past the bound. Past it, a
+// ReadJobOverdue Warning names the Pod, and the claim moves on.
 func (r *SchemaReconciler) retryLostReadOnlyJob(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 ) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
-	stopped, err := podsStopped(ctx, r.directReader(), schema.Namespace, operation.JobName, operation.JobUID)
+	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, operation.JobName, operation.JobUID)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if !stopped {
+	missing := fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID)
+	running, stopBy := podsStillStopping(pods)
+	if len(running) == 0 {
+		return r.retryOperation(ctx, schema, nil, missing)
+	}
+	if r.now().Before(stopBy) {
+		if schemaClaimHoldsLock(schema) {
+			acquired, requeue, err := r.acquireOperationLock(ctx, schema)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if !acquired {
+				return ctrl.Result{RequeueAfter: requeue}, nil
+			}
+		}
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
-	return r.retryOperation(ctx, schema, nil,
-		fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID))
+	r.event(schema, corev1.EventTypeWarning, "ReadJobOverdue", "%s",
+		readJobOverdueText(lostReadJobOverdueLead(string(operation.Type), operation.JobName, stopBy), running))
+	return r.retryOperation(ctx, schema, nil, fmt.Errorf("%w, and its Pods did not stop by %s, their own deadline plus the grace they are given",
+		missing, stopBy.UTC().Format(time.RFC3339)))
 }

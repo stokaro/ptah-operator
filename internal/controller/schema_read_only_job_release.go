@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -154,6 +155,47 @@ func (r *SchemaReconciler) schemaJobCleanupDeferred(
 	r.event(schema, corev1.EventTypeWarning, "SchemaJobCleanupDeferred",
 		"%s Job %q has no cleanup scheduled, so it stays until it is deleted by hand or with its owner: %s",
 		operation, job.Name, bounded(err.Error(), 512))
+}
+
+// warnReadJobOverdue records the ReadJobOverdue Warning for the running Job of
+// the active read-only claim, which the claim stops waiting for at the Job's stop
+// bound, and then does what then says. It names the Job's first Pod that has not
+// stopped. A failed list names no Pod and is logged: the claim does not wait for
+// a Pod it cannot name either.
+func (r *SchemaReconciler) warnReadJobOverdue(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	then string,
+) {
+	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, job.Name, job.UID)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not list the Pods of a read Job past its stop bound", "job", job.Name, "error", err.Error())
+	}
+	running, _ := podsStillStopping(pods)
+	r.event(schema, corev1.EventTypeWarning, "ReadJobOverdue", "%s", readJobOverdueText(
+		readJobOverdueLead(string(schema.Status.ActiveOperation.Type), job.Name, jobStopBound(job), then), running))
+}
+
+// retryPastOverdueSchemaJob moves a read-only claim to its next attempt past the
+// running Job it supervised, once the Job is past its stop bound
+// (stopWaitingForJob). Since Kubernetes 1.31 a Job past its deadline carries only
+// FailureTarget until every Pod has terminated, and a Pod on a node that is gone
+// may never terminate, so the claim would supervise the Job forever. The Job has
+// not finished, so admission refuses its cleanup TTL, and it stays until it is
+// deleted by hand or with its owner; the Warning says so.
+func (r *SchemaReconciler) retryPastOverdueSchemaJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	stopBy := jobStopBound(job)
+	r.warnReadJobOverdue(ctx, schema, job, fmt.Sprintf(
+		"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner.",
+		operation.Type, job.Name))
+	return r.retryOperation(ctx, schema, nil, fmt.Errorf("%s Job %q did not stop by %s, its own deadline plus the grace its Pods are given",
+		operation.Type, job.Name, stopBy.UTC().Format(time.RFC3339)))
 }
 
 // schemaJobClaim describes job, standing under the name the active claim

@@ -1391,6 +1391,9 @@ func TestMissingReadOnlyJobWaitsForItsExactOwnerPod(t *testing.T) {
 		Name:      jobName,
 		UID:       schema.Status.ActiveOperation.JobUID,
 	}}
+	// The Pod started with the operation, inside the deadline its Job gave it,
+	// so the bound the wait ends at is not what the row measures.
+	started := schema.Status.ActiveOperation.StartedAt
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       schema.Namespace,
@@ -1398,11 +1401,15 @@ func TestMissingReadOnlyJobWaitsForItsExactOwnerPod(t *testing.T) {
 			UID:             "old-resolve-pod-uid",
 			OwnerReferences: []metav1.OwnerReference{jobControllerReference(missingJob)},
 		},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		Spec:   corev1.PodSpec{ActiveDeadlineSeconds: ptr(int64(900))},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &started},
 	}
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema, pod)
 	reconciler.Jobs = attemptNamedJobs{}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	if bound := podStopBound(pod); !reconciler.now().Before(bound) {
+		t.Fatalf("the pass at %s is past the Pod's stop bound %s, so the row measures the bound", reconciler.now(), bound)
+	}
 
 	result, err := reconciler.Reconcile(context.Background(), request)
 	if err != nil {

@@ -51,7 +51,9 @@ an approval recorded before the interval ended to be consumed by an Apply and
 then marked `Stale` by the proof after it, as every applied approval is, rather
 than marked `Stale` before any Apply. Read `Consumed` to tell the two apart. A
 plan approved just before its interval ended now takes one approval and counts
-one `stale` outcome, where it took two of each. A script that acts on the exit
+one `stale` outcome, where it took two of each. A Plan retried after a failure
+no longer counts a `stale` outcome or records a `LeaseContinuityLost` Warning
+Event. A script that acts on the exit
 status of a `kubectl ptah` wait on a migration run has to expect the statuses
 the bullet on waits under two managers' clocks lists. A namespace with a
 ResourceQuota on `count/ptahresultrecords.operator.ptah.run` should leave room
@@ -104,10 +106,14 @@ container and the Pod the kubelet lost rather than the refusal of a
 log read. A script that reads the `kubectl logs` command out of an
 `ApplyOutcomeUnknown`, `MigrationRunUncertain` or `MigrationRunFinished` Event,
 `Applying` or `status.lastRun.message` finds none where every executor of the Job
-ended that way, and an alert on Warning Events can see the new reason
-`PodStuckTerminating`. Where a Job's cleanup TTL could not be set, as for a Job the
-deletion of a `PtahMigration` orphaned, that pointer is no longer left out: it says
-the log is there `until the Job is deleted`, with the same `kubectl logs` command.
+ended that way, and an alert on Warning Events can see the new reasons
+`PodStuckTerminating` and `ReadJobOverdue`. Where a Job's cleanup TTL could not
+be set, as for a Job the deletion of a `PtahMigration` orphaned, that pointer is
+no longer left out: it says the log is there `until the Job is deleted`, with
+the same `kubectl logs` command. A deleted `PtahSchema` whose Plan, or whose
+read that proves an Apply, runs past its Job's deadline, the grace of its Pods
+and 30 seconds no longer waits for that Job: it hands the database Lease back
+and goes while the Pod may still read, and records the proof `Unknown`.
 
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
@@ -428,6 +434,32 @@ the log is there `until the Job is deleted`, with the same `kubectl logs` comman
   second time and named the Job in a second Warning. A run or an unknown
   outcome recorded under such a refusal points at its Pod log until the Job is
   deleted, rather than at no log, since the log stays longest then.
+- **A read is not waited for past its Job's stop bound.** A read Job whose Pod
+  sits on a node that is gone carries only `FailureTarget` and never finishes. A
+  deleted `PtahSchema` waited for such a Plan, or for the read that proves an
+  Apply, with no bound and renewed the database Lease all along, so neither the
+  resource nor the realm was let go. It now waits no longer than the Job's
+  deadline, the grace of its Pods and 30 seconds, and then discards the claim,
+  records the proof `Unknown` and goes. A Plan hands the Lease back without
+  renewing it past the bound. A proof's Lease is the Apply's: deletion renews
+  it once more and hands it back on the same pass. A live read in either kind
+  that supervised a Job marked `FailureTarget`, or waited for the Pods of a
+  recorded Job that is gone, had no bound either; it now runs again under a new
+  Job at that bound. Each records a `ReadJobOverdue` Warning Event that names
+  the Job, the Pod that may still read, its node and the forced delete. Nothing
+  uses what such a Pod reads, and
+  [What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)
+  says what it can still hold. An Apply is still waited for until its Job
+  stops.
+- **A retried Plan runs again.** A Plan that failed handed its database Lease
+  back and moved to its next attempt, as one past its Job's stop bound now does
+  too. When that attempt took the Lease again, the operator read the new epoch
+  as lost continuity: it recorded a `LeaseContinuityLost` Warning Event and
+  `Ready=False` with that reason, cleared `status.plan` and started over with an
+  Observe. The next attempt now takes the epoch as its own and runs the Plan
+  again. A proof keeps the Apply's Lease across its attempts and was not
+  affected, and a claim whose Lease went while its Job could run still reports
+  the loss.
 
 ## 0.2.10
 

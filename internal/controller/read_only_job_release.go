@@ -227,3 +227,113 @@ func jobStopBound(job *batchv1.Job) time.Time {
 	}
 	return bound
 }
+
+// readJobStopOverdue reports whether a read-only claim stops supervising job, a
+// Job it dispatched and still names, at now. Since Kubernetes 1.31 a Job the Job
+// controller has marked to fail, past its deadline or out of retries, carries
+// only FailureTarget until every Pod has terminated, and a Pod on a node that is
+// gone may never terminate, so the Job would never finish. The claim supervises
+// such a Job by the rule every read-only claim waiting for its Job keeps
+// (stopWaitingForJob), and every claim that supervises may wait: suspension lets
+// go of the one that may not before it supervises anything.
+//
+// A Job with no FailureTarget is still running as far as the Job controller is
+// concerned, and the Job controller is what enforces its deadline, so the claim
+// does not second-guess it. Its Pod's wait is not settled here either: a Pod on a
+// lost node past the deadline is what makes the Job controller write
+// FailureTarget, and the Job's stop bound is then the condition's time plus the
+// grace and the slack.
+func readJobStopOverdue(job *batchv1.Job, now time.Time) bool {
+	return !jobTerminal(job) && conditionTrue(job.Status.Conditions, batchv1.JobFailureTarget) &&
+		stopWaitingForJob(job, now, true) != nil
+}
+
+// podStopBound is jobStopBound for one Pod, for a claim whose recorded Job is
+// gone and that waits for the Pods it owned (podsStillStopping). Each Pod carries
+// the deadline and the grace of the Job's template, and the kubelet counts the
+// deadline from the Pod's start, or the Pod's creation where it never started.
+// A Pod being deleted is to be gone by its deletionTimestamp, the instant its
+// grace ends, so the bound is that instant plus jobStopReportSlack where it comes
+// first. Deleting a Job deletes its Pods this way.
+func podStopBound(pod *corev1.Pod) time.Time {
+	grace := time.Duration(corev1.DefaultTerminationGracePeriodSeconds) * time.Second
+	if seconds := pod.Spec.TerminationGracePeriodSeconds; seconds != nil {
+		grace = time.Duration(*seconds) * time.Second
+	}
+	start := pod.CreationTimestamp.Time
+	if pod.Status.StartTime != nil {
+		start = pod.Status.StartTime.Time
+	}
+	var deadline time.Duration
+	if pod.Spec.ActiveDeadlineSeconds != nil {
+		deadline = time.Duration(*pod.Spec.ActiveDeadlineSeconds) * time.Second
+	}
+	bound := start.Add(deadline + grace + jobStopReportSlack)
+	if pod.DeletionTimestamp != nil {
+		if gone := pod.DeletionTimestamp.Add(jobStopReportSlack); gone.Before(bound) {
+			bound = gone
+		}
+	}
+	return bound
+}
+
+// podsStillStopping returns the pods that have not stopped, Succeeded or Failed,
+// and the latest podStopBound among them: the instant by which every one of them
+// has had every chance to stop. A read-only claim whose recorded Job is gone
+// waits for its Pods until then, and no longer, in either family. A Pod on a node
+// that is gone may never be reported stopped, and the claim would wait forever.
+func podsStillStopping(pods []*corev1.Pod) (running []*corev1.Pod, stopBy time.Time) {
+	for _, pod := range pods {
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		running = append(running, pod)
+		if bound := podStopBound(pod); bound.After(stopBy) {
+			stopBy = bound
+		}
+	}
+	return running, stopBy
+}
+
+// readJobOverdueText is what the ReadJobOverdue Warning says, in either family,
+// when a read-only claim stops waiting for its Job at the stop bound: lead,
+// which says what the claim stopped waiting for and did instead, and then the
+// first of the Job's Pods that has not stopped, with its node and the delete
+// that removes it.
+// Such a Pod may still read the database, and whatever it reads, nothing uses.
+// A Job builds its Pods one at a time, so there is rarely a second one.
+func readJobOverdueText(lead string, running []*corev1.Pod) string {
+	if len(running) == 0 {
+		return lead
+	}
+	pod := running[0]
+	node := ""
+	if pod.Spec.NodeName != "" {
+		node = " on node " + pod.Spec.NodeName
+	}
+	more := ""
+	if len(running) > 1 {
+		more = fmt.Sprintf(", and %d more of its Pods,", len(running)-1)
+	}
+	return bounded(fmt.Sprintf("%s Pod %s%s%s has not stopped and may still read the database; nothing uses what it reads. "+
+		"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
+		lead, pod.Name, node, more, pod.Namespace, pod.Name), 1024)
+}
+
+// readJobOverdueLead is the lead of the ReadJobOverdue Warning for a claim that
+// stopped waiting for the running Job jobName of operation at stopBy, and then
+// did what then says.
+func readJobOverdueLead(operation, jobName string, stopBy time.Time, then string) string {
+	return fmt.Sprintf("Stopped waiting for %s Job %s: it did not stop by %s, "+
+		"its own deadline plus the grace its Pods are given and 30 seconds. %s",
+		operation, jobName, stopBy.UTC().Format(time.RFC3339), then)
+}
+
+// lostReadJobOverdueLead is the lead of the ReadJobOverdue Warning for a claim
+// whose recorded Job jobName of operation is gone, and that stopped waiting for
+// the Pods it owned at stopBy (podsStillStopping) to run operation again.
+func lostReadJobOverdueLead(operation, jobName string, stopBy time.Time) string {
+	return fmt.Sprintf("Stopped waiting for the Pods of %s Job %s, which is gone: they did not stop by %s, "+
+		"their own deadline plus the grace they are given and 30 seconds. The %s runs again under a new Job.",
+		operation, jobName, stopBy.UTC().Format(time.RFC3339), operation)
+}

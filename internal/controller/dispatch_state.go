@@ -6,7 +6,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -39,28 +38,6 @@ func migrationMayHaveDispatched(operation *operatorv1alpha1.MigrationOperationSt
 		DispatchStarted: operation.DispatchStarted,
 		JobUID:          string(operation.JobUID),
 	})
-}
-
-// podsStopped reports whether every Pod the Job owned has stopped. A Job's
-// deletion is not evidence that an already-created Pod has, so a read-only
-// claim whose recorded Job is gone polls the exact owner UID until each old
-// attempt is terminal or gone before it creates anything under a new name.
-func podsStopped(
-	ctx context.Context,
-	reader client.Reader,
-	namespace, jobName string,
-	jobUID types.UID,
-) (bool, error) {
-	pods, err := podsOwnedByJob(ctx, reader, namespace, jobName, jobUID)
-	if err != nil {
-		return false, err
-	}
-	for _, pod := range pods {
-		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // podAdmission is podintent through the reader, namespace and options one

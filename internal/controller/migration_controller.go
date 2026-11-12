@@ -958,6 +958,12 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		operation = migration.Status.ActiveOperation
 	}
+	// A read is supervised until its Job stops. Once the Job controller has
+	// marked the Job to fail, it is supervised no longer than the Job's stop
+	// bound (readJobStopOverdue).
+	if !mutating && readJobStopOverdue(job, r.now()) {
+		return r.retryPastOverdueMigrationJob(ctx, migration, job)
+	}
 	if !jobTerminal(job) {
 		if err := r.reportMigrationPodAdmission(ctx, migration, job); err != nil {
 			return ctrl.Result{}, err
@@ -1230,6 +1236,28 @@ func (r *MigrationReconciler) letGoOfReadOnlyMigrationJob(
 		r.migrationJobCleanupNotScheduled(migration, operation, job, reason)
 	}
 	return ctrl.Result{}, false, nil
+}
+
+// retryPastOverdueMigrationJob is retryPastOverdueSchemaJob for a PtahMigration.
+func (r *MigrationReconciler) retryPastOverdueMigrationJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	stopBy := jobStopBound(job)
+	pods, err := podsOwnedByJob(ctx, r.directReader(), migration.Namespace, job.Name, job.UID)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not list the Pods of a read Job past its stop bound", "job", job.Name, "error", err.Error())
+	}
+	running, _ := podsStillStopping(pods)
+	r.event(migration, corev1.EventTypeWarning, "ReadJobOverdue", "%s", readJobOverdueText(
+		readJobOverdueLead(string(operation.Type), job.Name, stopBy, fmt.Sprintf(
+			"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner.",
+			operation.Type, job.Name)), running))
+	return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf(
+		"%s Job %q did not stop by %s, its own deadline plus the grace its Pods are given",
+		operation.Type, job.Name, stopBy.UTC().Format(time.RFC3339)))
 }
 
 // waitForReadOnlyMigrationJob keeps the claim over the running Job it owes a

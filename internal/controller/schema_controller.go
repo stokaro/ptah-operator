@@ -851,7 +851,19 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		// discards a read-only claim. Waiting on it would hold the resource
 		// for the Job's whole deadline when its Pod is refused at admission
 		// and never runs.
-		if err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && schemaClaimHoldsLock(schema) {
+		//
+		// A Plan and a proof Observe are waited on only until the Job's stop
+		// bound (stopWaitingForJob), by the bound alone, suspended or not, as a
+		// claim whose epoch moved is (recoverLeaseContinuity). Neither writes to
+		// the database, so past the bound the Lease protects nothing but a read
+		// whose result nobody uses, and a Pod on a node that is gone would hold
+		// the realm and the resource forever. The bound is checked before the
+		// claim renews the Lease, so the claim does not renew it past the
+		// bound. An Apply is waited on until its Job stops, however long that
+		// takes.
+		waitsForJob := err == nil && !dispatchedApplyUnknown && !jobTerminal(job) && schemaClaimHoldsLock(schema)
+		readOverdue := waitsForJob && !schemaOperation(operation).Mutating && stopWaitingForJob(job, r.now(), true) != nil
+		if waitsForJob && !readOverdue {
 			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
 			if lockErr != nil {
 				return ctrl.Result{}, lockErr
@@ -871,10 +883,10 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 					ctrl.LoggerFrom(ctx).Info("could not look at the dispatched Apply Pod during deletion", "error", err.Error())
 				}
 			}
-			// A Pod on a node that is gone keeps this wait going with no
+			// A Pod on a node that is gone keeps an Apply's wait going with no
 			// bound, so a person is told which Pod it is. A list that fails
 			// warns about nothing, for the reason the look above is not
-			// returned.
+			// returned. A read's wait ends at the bound this warns past.
 			if err := r.warnStuckPods(ctx, schema, job); err != nil {
 				ctrl.LoggerFrom(ctx).Info("could not look for a stuck Pod during deletion", "error", err.Error())
 			}
@@ -929,7 +941,18 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 		// Nothing the claim dispatched can still be writing here, and no Apply
 		// ran under it: a read-only claim's Job goes with the resource, and an
 		// Apply claim that reaches here has no Job and never dispatched one.
-		err = r.retireClaim(ctx, schema.DeepCopy(), schema, mutationlifecycle.DispositionDiscard)
+		before := schema.DeepCopy()
+		if readOverdue {
+			// The read's Pod may still be running, so a Warning names it. A
+			// proof that was never read is recorded unknown on the write that
+			// discards its claim, as a lost epoch records it.
+			r.warnReadJobOverdue(ctx, schema, job, "Deletion discards the claim and goes on.")
+			if pending := schema.Status.PendingObservation; pending != nil {
+				pending.Outcome = operatorv1alpha1.PendingObservationOutcomeUnknown
+				pending.PlanRequired = false
+			}
+		}
+		err = r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionDiscard)
 		if err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -1129,6 +1152,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{}, err
 		}
 		operation = schema.Status.ActiveOperation
+	}
+	// A read is supervised until its Job stops. Once the Job controller has
+	// marked the Job to fail, it is supervised no longer than the Job's stop
+	// bound (readJobStopOverdue). The check comes before the renewal, so a
+	// Plan's Lease is not renewed past it.
+	if isReadOnlyOperation(operation) && readJobStopOverdue(job, r.now()) {
+		return r.retryPastOverdueSchemaJob(ctx, schema, job)
 	}
 	if schemaClaimHoldsLock(schema) {
 		acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
@@ -4127,11 +4157,18 @@ func (r *SchemaReconciler) acquireActiveLock(
 
 	before := schema.DeepCopy()
 	continuityLost := expected == "" || reportedContinuityLoss || expected != epoch
-	if continuityLost && expected != "" && !schemaMayHaveDispatched(operation) {
+	if continuityLost && !schemaMayHaveDispatched(operation) && (expected != "" || !schemaClaimServesProof(schema)) {
 		// The first Lease creation necessarily has a new epoch. Because the
 		// operation claim persisted its expected token before any dispatch
 		// boundary, adopting the API-assigned epoch here cannot validate stale
 		// work. Every later locked Job sets DispatchStarted before Create.
+		//
+		// A Plan retried under its next attempt has handed its Lease back
+		// and expects nothing (retryOperationReporting), and has dispatched
+		// nothing under that attempt, so the epoch it takes is its own as
+		// well (#1007). A proof is the exception: it reads under the epoch of
+		// the Apply it accounts for, so a proof with no epoch to compare has
+		// lost that epoch before it dispatches anything.
 		continuityLost = false
 	}
 	operation.LeaseEpoch = epoch

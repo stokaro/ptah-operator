@@ -483,3 +483,190 @@ person. Apply reads its own report on every exit status, and only `applied`
 naming the approved plan's digest is a success. A `stale-plan` refusal is
 reported as such, and every Apply failure after dispatch, that refusal
 included, stays outcome-unknown until an observation settles it.
+
+## What a read does to the database
+
+A `PtahSchema` Plan, and the Observe that proves an Apply, hold the database
+realm Lease while they run, and neither writes to the database. Nothing
+enforces that at the database: the session is not a read-only transaction, and
+the login is the one the resource names, not a read-only role. What keeps a
+read from writing is the command the runner runs, one fixed command line for
+each operation, and the audit below measures what those commands send. The
+runner opens no database connection of its own; it starts Ptah with the target
+URL in its environment. The behavior below was read from the source of the Ptah
+build [`support/ptah.json`](../../support/ptah/) pins, v0.23.0 at commit
+`f47b2bfa`.
+
+| Operation | Runner command | What reaches the database |
+| --- | --- | --- |
+| Observe | `ptah schema drift --format json` | The comparison of the live schema with the desired one: catalog queries, the managed-data comparison's reads, and the probes below. |
+| Plan | `ptah schema plan --output <file> --json`, twice, and the two files must be byte-identical | The same comparison, once for each file. A dev URL names the schema an unqualified file loads into, and the saved plan provisions nothing on it. |
+| Plan, then | `ptah schema apply --plan <first file> --auto-approve --json --dry-run`, with no schema file, dev URL or protected-table list in its environment | The apply's preview lock, a check that the plan still fits the target, and a return before any statement of the plan runs. A plan with no changes stops before this step. |
+| History, for a `PtahMigration` | `ptah migrations status --migrations-dir <dir> --json` | Catalog reads that find the revision table and its engine, on MySQL the table's definition and one session variable, and a `SELECT` of the revision rows. |
+
+Resolve and Verify, in either family, run `ptah oci resolve` and `ptah oci
+verify`, and open no database session. A `PtahMigration` runs no Plan Job.
+
+History creates nothing and takes no lock. `ptah migrations status` puts the
+connection's schema writer in dry-run mode before it reads
+(`dbcli.SuppressSchemaWrites`), so the step that would create a missing
+revision table only looks (`initializeDryRun`), and a database without the
+table reads as one with no migration applied. The command has no lock option
+and takes neither the migration lock nor the schema one, so the
+`PTAH_MIGRATION_LOCK_TIMEOUT` its Job carries goes unused, and it opens no
+transaction. When the command fails, the runner runs it again against
+`sqlite:///:memory:` to name an unreadable migration file; that run reaches no
+database of yours. A migration read holds no Lease either.
+
+The comparison asks the server to spell some things itself. On PostgreSQL it
+creates a throwaway object in a transaction it rolls back, so a CHECK or a view
+body compares in the server's own spelling. On MySQL it creates a `TEMPORARY`
+table to learn which non-ASCII index names collide, and drops it again; a
+temporary table belongs to its session and goes with it. Neither persists
+anything, and the PostgreSQL probe is why the session cannot be read-only:
+PostgreSQL refuses `CREATE` in a read-only transaction, temporary objects
+included.
+
+### The SQL audit and its limits
+
+The acceptance suites record every statement a read's session sends to an
+isolated database, on PostgreSQL and on MySQL, and hold each one byte for byte
+to an exact list. For a `PtahSchema` the list is
+`test/e2e/schema-sql-contract.json`, matched by `test/e2e/schema_sql_audit.go`:
+the statements Observe, Plan and a stale Apply send for the acceptance schemas,
+captured from Ptah `f47b2bfa`, each with the operations that may send it. For
+History the lists are in `test/e2e/migration_sql_audit.go` and
+`test/e2e/migration_mysql_audit.go`, and what History sent at `f47b2bfa` is
+recorded in `testdata/e2e/readings/postgresql-migration-history-audit.md` and
+`mysql-migration-history-audit.md`: reads only, no table created. A statement
+from a read's Pod that its list does not hold fails the suite.
+
+The audit reaches as far as the fixtures do. It holds the statements the
+acceptance schemas and migrations produce and says nothing about any other: a
+declaration they do not contain can send a statement no audit has seen. The
+MySQL probe for non-ASCII index names is one, and so are the CHECK, view and
+trigger probes on PostgreSQL for objects the fixtures leave out. Both History
+lists also admit the `CREATE TABLE IF NOT EXISTS` of the revision table
+(`postgresHistoryCreate`, `mysqlHistoryCreate`), because each list governs
+History and the migration Apply that sends it, so that History does not send it
+rests on the recorded readings and on Ptah's source, not on the acceptance run.
+A revision table under another name or schema is outside both.
+
+### What a read can still hold
+
+A read cannot change the database, and nothing uses what it reads: the
+[result receiver](#durable-result-protocol) authorizes only the Pod of the Job
+the live claim names, and the operator reads a result only for that Job. What a
+read can still do is hold things on the server for as long as its session
+lives. That matters for a read whose Pod outlives its claim, on a node the
+operator stopped waiting for ([Suspension and
+deletion](../../use/operations/#suspension-and-deletion)). The operator's wait
+ends at the Job's stop bound; the Pod and its session end when they end.
+
+The lock is the large cost. The dry run of a Plan with changes holds
+`ptah_schema_apply`, the lock every `PtahSchema` Apply takes, from its start
+to its end. On PostgreSQL it is a session advisory lock on the key
+`1237737229`, which Ptah asks for with `pg_try_advisory_lock` every 25
+milliseconds until `spec.policy.lockTimeout` (30 seconds unless set) runs out.
+On MySQL it is `GET_LOCK('ptah_schema_apply', <seconds>)`, the same timeout
+rounded up to whole seconds. A PostgreSQL
+advisory lock belongs to one database. A MySQL lock name belongs to the whole
+server, so on MySQL every database on that server shares the lock. Observe,
+the proof included, History, and a Plan with no changes take no lock, and a
+migration Apply takes its own, `ptah_migrate`, so none of them waits on this
+one.
+
+How long the server keeps the lock depends on what the node lost. A node cut
+off from the API server alone still reaches the database: Ptah finishes and
+lets go, or the kubelet stops the Pod at its `activeDeadlineSeconds`, and the
+session ends with the process. The kubelet enforces that deadline on its own
+and counts it from the Pod's start, so the session ends no later than the
+Pod's start plus its deadline and termination grace, as `podStopBound`
+computes it. The operator's wait counts from the Job's start or from its
+`FailureTarget` condition, so the session can outlast that wait by up to the
+time the Pod took to start.
+
+A node cut off from the database, or a node that is gone, leaves the session to
+the server, which keeps it and its lock until it notices the peer has gone.
+Both servers turn on TCP keepalive for every client connection, and the
+database host's operating system decides when it fires: PostgreSQL leaves the
+timing to it while `tcp_keepalives_idle`, `tcp_keepalives_interval` and
+`tcp_keepalives_count` are at their default of 0, and MySQL sets
+`SO_KEEPALIVE` and no timing (`vio_keepalive`, called from
+`sql/sql_connect.cc`). With Linux defaults an idle connection is dropped after
+about two hours and eleven minutes. If the server was sending when the peer
+went and the data was never acknowledged, Linux gives up sooner, after
+`net.ipv4.tcp_retries2` retransmissions, about 15 minutes by default. A server
+setting can end an idle session sooner: on PostgreSQL
+`idle_in_transaction_session_timeout` for a session inside a transaction and
+`idle_session_timeout` for one outside, both off by default, and on MySQL
+`wait_timeout`, eight hours by default, which comes first only where keepalive
+is off or slower. A managed database may set any of these differently.
+
+While a cut-off session holds the lock, the realm Lease no longer covers it:
+the operator let the claim go at the bound, and the database lock is what the
+next claimant meets.
+
+- An approved Apply of any `PtahSchema` on that database, and on MySQL on any
+  database of that server, takes the Lease once it is free, spends its
+  approval when it dispatches, waits `spec.policy.lockTimeout` for the lock and
+  fails before it runs a statement. Its outcome is unknown, so it takes a proof
+  Observe and, unless `spec.policy.apply` is `Always`, a new approval before
+  the plan runs again.
+- A Plan with changes there fails when its dry run's wait for the lock runs
+  out, and is tried again after `spec.execution.failureRetryInterval`. That
+  includes the stale read's own resource, whose read runs again under a new
+  Job.
+
+A Pod cut off inside the PostgreSQL probe transaction leaves that transaction
+open as well, `idle in transaction`, until the server drops the session. The
+window is short, but what it holds is real. Once the transaction has created
+its first probe object it has a transaction ID, and while it stays open it
+holds back the horizon `VACUUM` cleans up to, so dead rows newer than it stay.
+A Pod cut off in the middle of one probe also leaves that probe's locks. Each
+probe rolls back to a savepoint once it has read its answer, which releases
+what it locked, but until then it holds an `ACCESS SHARE` lock on each table
+its declaration names, such as the tables a view body reads. A statement that
+needs `ACCESS EXCLUSIVE` on one of them, as `DROP TABLE` and most forms of
+`ALTER TABLE` do, waits for it, and the queries queued behind that statement
+wait too. The MySQL index-name probe's temporary table stays with its session
+and holds nothing another session needs.
+
+To end the hold, end the session. The `ReadJobOverdue` Warning names the Pod
+and its node; the server sees the Pod's IP as the client address unless
+something between them translates it, and Ptah sets no `application_name`. On
+PostgreSQL, the lock's holder:
+
+```sql
+SELECT a.pid, a.client_addr, a.state, a.backend_start, a.xact_start
+FROM pg_locks AS l
+JOIN pg_stat_activity AS a ON a.pid = l.pid
+WHERE l.locktype = 'advisory' AND l.classid = 0 AND l.objid = 1237737229 AND l.objsubid = 1
+  AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database());
+```
+
+A probe transaction shows in `pg_stat_activity` as `idle in transaction` from
+the Pod's address. `SELECT pg_terminate_backend(<pid>);` ends either: the
+server rolls the transaction back and releases the lock. On MySQL,
+`IS_USED_LOCK` names the connection that holds the lock, and
+`performance_schema.metadata_locks` lists it as a `USER LEVEL LOCK`:
+
+```sql
+SELECT ID, USER, HOST, TIME, STATE
+FROM performance_schema.processlist
+WHERE ID = IS_USED_LOCK('ptah_schema_apply');
+```
+
+`KILL <ID>;` ends that connection and releases the lock.
+`SELECT IS_USED_LOCK('ptah_schema_apply');` alone returns that ID. The process
+list adds who holds the lock and for how long, and is read from the Performance
+Schema; where that is off, the ID alone is enough to `KILL`.
+
+The account Ptah logs in as can see and end its own sessions. Another account
+needs privileges for each step. On PostgreSQL every role sees the lock in
+`pg_locks`, but only superuser, `pg_read_all_stats` or a role with the
+privileges of Ptah's login sees the session's address and state in
+`pg_stat_activity`, and only superuser, `pg_signal_backend` or such a role can
+end it; `pg_signal_backend` cannot end a superuser's session. On MySQL another
+account needs `PROCESS` to see the connection in the process list and
+`CONNECTION_ADMIN` to `KILL` it.
