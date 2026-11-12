@@ -354,17 +354,26 @@ func heldUnknownMigrationApply(t *testing.T) (
 // ahead of deletion, so it is the one a live and a deleted migration both meet,
 // and a Pod on a node that is gone holds it with no bound. Past the Job's stop
 // bound the claim names the Pod in the Warning every other Apply wait records,
-// in the words of the resource that waits.
+// in the words of the resource that waits. Once a person deleted the Job, or
+// another Job took its name, the wait finds the Pods by the recorded UID on
+// their owner reference and names one past its own stop bound (podStopBound),
+// as a deletion does.
 func TestAMigrationApplyRecordedUnknownWaitingOnAStuckPodNamesIt(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
 		name    string
 		deleted bool
-		waiter  string
+		// gone deletes the claim's Job, and replace then puts another Job
+		// under its name.
+		gone, replace bool
+		waiter        string
 	}{
 		{name: "on a live migration", waiter: "The Apply waits"},
 		{name: "on a deleted migration", deleted: true, waiter: "Deletion waits"},
+		{name: "on a live migration after the Job was deleted", gone: true, waiter: "The Apply waits"},
+		{name: "on a deleted migration after the Job was deleted", deleted: true, gone: true, waiter: "Deletion waits"},
+		{name: "on a live migration under a Job that took its name", gone: true, replace: true, waiter: "The Apply waits"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -385,10 +394,39 @@ func TestAMigrationApplyRecordedUnknownWaitingOnAStuckPodNamesIt(t *testing.T) {
 			if err := api.Get(ctx, client.ObjectKeyFromObject(run.pod), pod); err != nil {
 				t.Fatal(err)
 			}
+			if row.gone {
+				// The Pod started ten seconds after its Job, so the Job
+				// controller deleted it at the Job's deadline, before its own,
+				// and the end of its deletion grace is its bound. Without a
+				// start the fake client's Pod has no creation time either, and
+				// its bound would fall in year 1.
+				started := metav1.NewTime(job.Status.StartTime.Add(10 * time.Second))
+				pod.Status.StartTime = &started
+				if err := api.Status().Update(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
+				if err := api.Delete(ctx, job.DeepCopy()); err != nil {
+					t.Fatal(err)
+				}
+				bound = podStopBound(pod)
+				if want := pod.DeletionTimestamp.Add(jobStopReportSlack); !bound.Equal(want) {
+					t.Fatalf("the Pod's stop bound is %s, want the end of its deletion grace and the slack, %s", bound, want)
+				}
+			}
+			if row.replace {
+				later := job.DeepCopy()
+				later.ResourceVersion, later.UID = "", "later-job-uid"
+				later.Status = batchv1.JobStatus{}
+				if err := api.Create(ctx, later); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The Job is named by the UID the claim recorded, which a Job that
+			// took the name does not have.
 			want := fmt.Sprintf("%s%s for Pod %s of Job %s (UID %s) on node node-gone: the Pod was to be gone by %s and has not stopped. "+
 				"The database Lease stays held while the Pod may still run. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
-				stuckPodEvent, row.waiter, pod.Name, job.Name, job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339),
+				stuckPodEvent, row.waiter, pod.Name, run.job.Name, run.job.UID, pod.DeletionTimestamp.UTC().Format(time.RFC3339),
 				pod.Namespace, pod.Name)
 			stuckPodEvents(recorder)
 
@@ -404,25 +442,25 @@ func TestAMigrationApplyRecordedUnknownWaitingOnAStuckPodNamesIt(t *testing.T) {
 			} {
 				at := bound.Add(step.at)
 				if !podStuckTerminating(pod, at) {
-					t.Fatalf("the Pod is not stuck terminating %s from the Job's stop bound, so the step measures nothing", step.at)
+					t.Fatalf("the Pod is not stuck terminating %s from the bound, so the step measures nothing", step.at)
 				}
 				reconciler.Clock = func() time.Time { return at }
 				waiting := reconcileMigration(t, reconciler, api, run.migration)
 				events := stuckPodEvents(recorder)
 				switch {
 				case !step.named && len(events) != 0:
-					t.Fatalf("a pass %s from the Job's stop bound recorded %q, want nothing", step.at, events)
+					t.Fatalf("a pass %s from the bound recorded %q, want nothing", step.at, events)
 				case step.named && (len(events) != 1 || events[0] != want):
-					t.Fatalf("a pass %s from the Job's stop bound recorded %q, want one %q", step.at, events, want)
+					t.Fatalf("a pass %s from the bound recorded %q, want one %q", step.at, events, want)
 				}
 				if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != claim.ID ||
 					waiting.Status.UnresolvedRun == nil || waiting.Status.UnresolvedRun.OperationID != claim.ID {
-					t.Fatalf("the claim went %s from the Job's stop bound while the Pod may still run: claim %#v, unresolved %#v",
+					t.Fatalf("the claim went %s from the bound while the Pod may still run: claim %#v, unresolved %#v",
 						step.at, waiting.Status.ActiveOperation, waiting.Status.UnresolvedRun)
 				}
 				lease := migrationDatabaseLease(t, api, reconciler.LockNamespace, claim.CoordinationDigest)
 				if held := leaseHolder(lease); held != holder {
-					t.Fatalf("the database Lease is held by %q %s from the Job's stop bound, want the claim's %q", held, step.at, holder)
+					t.Fatalf("the database Lease is held by %q %s from the bound, want the claim's %q", held, step.at, holder)
 				}
 			}
 		})

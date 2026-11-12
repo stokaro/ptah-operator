@@ -477,9 +477,10 @@ of the Apply's term, the time the `ApplyPodGone` Warning names.
   `PodStuckTerminating` Warning Event a deleted `PtahSchema` records, with the
   same backoff, once the Job is past its deadline, the grace of its Pods and 30
   seconds. A live resource's message starts `The Apply waits for`, and a
-  proof's `The Apply's proof waits for`. A deletion whose Job was deleted by
-  hand, or replaced by another Job under its name, and a schema waiting for an
-  Apply that ended still find the Pods by the Job's UID and name a Pod once it
+  proof's `The Apply's proof waits for`. A deletion, or a migration holding a
+  run it recorded `Unknown`, whose Job was deleted by hand or replaced by
+  another Job under its name, and a schema waiting for an Apply that ended
+  still find the Pods by the Job's UID and name a Pod once it
   is past its own deadline or deletion grace and 30 seconds. The message names
   the Job's UID beside its name, since another Job can hold the name by then,
   and each wait keeps its own backoff, so a deletion names a Pod at once

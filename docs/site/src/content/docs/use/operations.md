@@ -1636,9 +1636,10 @@ deleted, is past its own grace period and has not stopped, with its node and
 the Job's UID, which tells the Job apart from one that took its name since. Its
 message starts `Deletion waits for` on a deleted resource,
 `The Apply waits for` on a live resource that waits for its own Apply, and
-`The Apply's proof waits for` on a live schema waiting to prove one. A deletion
-whose Job was deleted by hand, or replaced by another Job under its name, and a
-schema waiting for an Apply that ended still find the Pods by the Job's UID on
+`The Apply's proof waits for` on a live schema waiting to prove one. A deletion,
+or a migration holding a run it recorded `Unknown`, whose Job was deleted by
+hand or replaced by another Job under its name, and a schema waiting for an
+Apply that ended still find the Pods by the Job's UID on
 their owner reference, and name a Pod once it is past its own deadline, or the
 end of its deletion grace, and 30 seconds. The Event comes again 30 seconds
 later, then twice as long after each time, up to every 5 minutes. Each wait
