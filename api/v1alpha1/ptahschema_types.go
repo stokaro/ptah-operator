@@ -1497,7 +1497,8 @@ type PendingObservationStatus struct {
 	// ApplyFailure is the statement the apply stopped at, as the run's own
 	// report named it. It is absent when the run named none: it succeeded, it
 	// stopped before a statement was sent or at the commit after them, or its
-	// report could not be read. The outcome stays OutcomeUnknown either way.
+	// report could not be read. An apply that names one is OutcomeUnknown all
+	// the same: where it stopped does not say what the database kept.
 	// +optional
 	ApplyFailure *SchemaApplyFailureStatus `json:"applyFailure,omitempty"`
 
@@ -1551,8 +1552,8 @@ type PendingObservationStatus struct {
 }
 
 // SchemaApplyFailureStatus is where a PtahSchema's Apply stopped: the
-// statement the database refused, and the code it answered with. The
-// database's message is not kept, because it can quote a row.
+// statement it stopped at, and the code the database answered with, when it
+// answered. The database's message is not kept, because it can quote a row.
 type SchemaApplyFailureStatus struct {
 	// Statement is the position of the failed statement in the plan,
 	// counting from one.

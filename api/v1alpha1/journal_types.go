@@ -221,7 +221,7 @@ type JournalEntry struct {
 	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
 	// ApplyFailure is where a PtahSchema's Apply stopped, as
 	// status.pendingObservation.applyFailure said. An Apply that ends Unknown
-	// carries it when the run named the statement the database refused.
+	// carries it when the run named the statement it stopped at.
 	// +optional
 	ApplyFailure *SchemaApplyFailureStatus `json:"applyFailure,omitempty"`
 

@@ -177,10 +177,11 @@ func (f SchemaApplyFailure) Validate() error {
 	return nil
 }
 
-// Failed reports whether the failure names a statement the database refused.
-// A failed commit, and a run that stopped with every unit confirmed, name none.
+// Failed reports whether the failure names the statement the run stopped at.
+// A failed commit, and a run that stopped with every unit confirmed, name
+// none: Validate holds both to statement zero.
 func (f SchemaApplyFailure) Failed() bool {
-	return !f.Commit && f.Statement >= 1
+	return f.Statement >= 1
 }
 
 // maxSchemaApplyStatements bounds the unit count a failure may report, so the
