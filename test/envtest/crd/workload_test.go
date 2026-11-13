@@ -301,34 +301,34 @@ func artifactRefusals(source string) []refusal {
 			name:   source + " with neither ociRef nor configMap",
 			mutate: removing("spec", source, "ociRef"),
 			want: []cause{
-				{field, "set exactly one of ociRef, configMap and git"},
-				{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"},
+				{field, "set exactly one of ociRef, configMap, git and https"},
+				{field, "verificationPolicyFrom is required with ociRef and refused with configMap, git and https"},
 			},
 		},
 		{
 			name:   source + ".configMap beside ociRef",
 			mutate: setting(configMapSource(1), "spec", source, "configMap"),
-			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
 		},
 		{
 			name:   source + ".configMap with a verification policy",
 			mutate: both(removing("spec", source, "ociRef"), setting(configMapSource(1), "spec", source, "configMap")),
-			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".configMap with registry credentials",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
-			want:   []cause{{field, "registryAuthFrom is refused with configMap and git"}},
+			want:   []cause{{field, "registryAuthFrom is refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".configMap over plain HTTP",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"plainHTTP": true}, "spec", source, "transport")),
-			want:   []cause{{field, "transport is refused with configMap and git"}},
+			want:   []cause{{field, "transport is refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".configMap with a registry CA",
 			mutate: both(asConfigMapSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "registry-ca", "key": "ca.crt"}}, "spec", source, "transport")),
-			want:   []cause{{field, "transport is refused with configMap and git"}},
+			want:   []cause{{field, "transport is refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".configMap.name outside its pattern",
@@ -359,6 +359,7 @@ func artifactRefusals(source string) []refusal {
 		})
 	}
 	rows = append(rows, gitRefusals(source)...)
+	rows = append(rows, httpsRefusals(source)...)
 	return append(rows, []refusal{
 		{
 			name:   source + ".ociRef without the oci scheme",
@@ -368,7 +369,7 @@ func artifactRefusals(source string) []refusal {
 		{
 			name:   source + ".verificationPolicyFrom is required with ociRef",
 			mutate: removing("spec", source, "verificationPolicyFrom"),
-			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".verificationPolicyFrom optional",
@@ -449,27 +450,27 @@ func gitRefusals(source string) []refusal {
 		{
 			name:   source + ".git beside ociRef",
 			mutate: setting(gitSource("db/schema.hcl"), "spec", source, "git"),
-			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
 		},
 		{
 			name:   source + ".git beside configMap",
 			mutate: both(asGitSource(source), setting(configMapSource(1), "spec", source, "configMap")),
-			want:   []cause{{field, "set exactly one of ociRef, configMap and git"}},
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
 		},
 		{
 			name:   source + ".git with a verification policy",
 			mutate: both(removing("spec", source, "ociRef"), setting(gitSource("db/schema.hcl"), "spec", source, "git")),
-			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap and git"}},
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".git with registry credentials",
 			mutate: both(asGitSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
-			want:   []cause{{field, "registryAuthFrom is refused with configMap and git"}},
+			want:   []cause{{field, "registryAuthFrom is refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".git with a registry transport",
 			mutate: both(asGitSource(source), setting(map[string]any{"plainHTTP": true}, "spec", source, "transport")),
-			want:   []cause{{field, "transport is refused with configMap and git"}},
+			want:   []cause{{field, "transport is refused with configMap, git and https"}},
 		},
 		{
 			name:   source + ".git.ref naming a branch and a tag",
@@ -523,7 +524,7 @@ func gitRefusals(source string) []refusal {
 		{
 			name:   source + ".sourcePolicyFrom beside ociRef",
 			mutate: setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", source, "sourcePolicyFrom"),
-			want:   []cause{{field, "sourcePolicyFrom is for configMap and git sources"}},
+			want:   []cause{{field, "sourcePolicyFrom is for configMap, git and https sources"}},
 		},
 		{
 			name: source + ".sourcePolicyFrom optional",
@@ -562,6 +563,132 @@ func gitRefusals(source string) []refusal {
 	return rows
 }
 
+// httpsDigest is a download digest every HTTPS rule admits.
+const httpsDigest = "sha256:9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7"
+
+// httpsSource selects path from a TarGzip download, which every rule of both
+// kinds admits.
+func httpsSource(path string) map[string]any {
+	return map[string]any{
+		"url": "https://artifacts.example.com/orders/orders-1.4.0.tar.gz", "digest": httpsDigest,
+		"format": "TarGzip", "path": path,
+	}
+}
+
+// asHTTPSSource replaces the base resource's OCI source with an HTTPS
+// download.
+func asHTTPSSource(source string) func(*testing.T, *unstructured.Unstructured) {
+	return func(t *testing.T, object *unstructured.Unstructured) {
+		unstructured.RemoveNestedField(object.Object, "spec", source, "ociRef")
+		unstructured.RemoveNestedField(object.Object, "spec", source, "verificationPolicyFrom")
+		set(t, object, httpsSource("db/schema.hcl"), "spec", source, "https")
+	}
+}
+
+// httpsRefusals are the rules of an HTTPS source, which read the same under
+// spec.desired and spec.artifact.
+func httpsRefusals(source string) []refusal {
+	field := "spec." + source
+	https := field + ".https"
+	rows := []refusal{
+		{
+			name:   source + ".https beside ociRef",
+			mutate: setting(httpsSource("db/schema.hcl"), "spec", source, "https"),
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
+		},
+		{
+			name:   source + ".https beside git",
+			mutate: both(asHTTPSSource(source), setting(gitSource("db/schema.hcl"), "spec", source, "git")),
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
+		},
+		{
+			name:   source + ".https beside configMap",
+			mutate: both(asHTTPSSource(source), setting(configMapSource(1), "spec", source, "configMap")),
+			want:   []cause{{field, "set exactly one of ociRef, configMap, git and https"}},
+		},
+		{
+			name:   source + ".https with a verification policy",
+			mutate: both(removing("spec", source, "ociRef"), setting(httpsSource("db/schema.hcl"), "spec", source, "https")),
+			want:   []cause{{field, "verificationPolicyFrom is required with ociRef and refused with configMap, git and https"}},
+		},
+		{
+			name:   source + ".https with registry credentials",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"name": "registry-credentials"}, "spec", source, "registryAuthFrom")),
+			want:   []cause{{field, "registryAuthFrom is refused with configMap, git and https"}},
+		},
+		{
+			name:   source + ".https with a registry transport",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "registry-ca", "key": "ca.crt"}}, "spec", source, "transport")),
+			want:   []cause{{field, "transport is refused with configMap, git and https"}},
+		},
+		{
+			name:   source + ".https.digest without sha256:",
+			mutate: both(asHTTPSSource(source), setting(strings.TrimPrefix(httpsDigest, "sha256:"), "spec", source, "https", "digest")),
+			want:   []cause{{https + ".digest", "should match"}},
+		},
+		{
+			name:   source + ".https.digest in uppercase",
+			mutate: both(asHTTPSSource(source), setting(strings.ToUpper(httpsDigest), "spec", source, "https", "digest")),
+			want:   []cause{{https + ".digest", "should match"}},
+		},
+		{
+			name:   source + ".https.digest is required",
+			mutate: both(asHTTPSSource(source), removing("spec", source, "https", "digest")),
+			want:   []cause{{https + ".digest", "Required value"}},
+		},
+		{
+			name:   source + ".https.format outside its enum",
+			mutate: both(asHTTPSSource(source), setting("Tar", "spec", source, "https", "format")),
+			want:   []cause{{https + ".format", "Unsupported value"}},
+		},
+		{
+			name:   source + ".https.format is required",
+			mutate: both(asHTTPSSource(source), removing("spec", source, "https", "format")),
+			want:   []cause{{https + ".format", "Required value"}},
+		},
+		{
+			name: source + ".https File with a nested path",
+			mutate: both(asHTTPSSource(source), both(setting("File", "spec", source, "https", "format"),
+				setting("db/schema.hcl", "spec", source, "https", "path"))),
+			want: []cause{{https, "with format File, path is the one name the download is given"}},
+		},
+		{
+			name:   source + ".https.transport.caFrom optional",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "artifacts-ca", "key": "ca.pem", "optional": true}}, "spec", source, "https", "transport")),
+			want:   []cause{{https + ".transport", "caFrom must name a required ConfigMap key"}},
+		},
+		{
+			name:   source + ".https.transport.caFrom without a key",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"caFrom": map[string]any{"name": "artifacts-ca", "key": ""}}, "spec", source, "https", "transport")),
+			want:   []cause{{https + ".transport", "caFrom must name a required ConfigMap key"}},
+		},
+		{
+			name:   source + ".https.authFrom.name empty",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"name": ""}, "spec", source, "https", "authFrom")),
+			want:   []cause{{https + ".authFrom.name", "should be at least 1 chars long"}},
+		},
+	}
+	for _, url := range []string{
+		"http://artifacts.example.com/orders.tar.gz", "https://bot:token@artifacts.example.com/orders.tar.gz",
+		"https://artifacts.example.com/orders.tar.gz?sig=abc", "https://artifacts.example.com/orders.tar.gz#v1",
+		"https://artifacts.example.com", "https://artifacts.example.com/", "git+https://artifacts.example.com/orders.tar.gz",
+	} {
+		rows = append(rows, refusal{
+			name:   fmt.Sprintf("%s.https.url %q", source, url),
+			mutate: both(asHTTPSSource(source), setting(url, "spec", source, "https", "url")),
+			want:   []cause{{https + ".url", "should match"}},
+		})
+	}
+	for _, path := range []string{"../schema.hcl", "/schema.hcl", "db//schema.hcl", "db/./schema.hcl", "db\\schema.hcl", "db/"} {
+		rows = append(rows, refusal{
+			name:   fmt.Sprintf("%s.https.path %q", source, path),
+			mutate: both(asHTTPSSource(source), setting(path, "spec", source, "https", "path")),
+			want:   []cause{{https + ".path", "should match"}},
+		})
+	}
+	return rows
+}
+
 func TestPtahSchemaRefusals(t *testing.T) {
 	plane.Require(t)
 	t.Parallel()
@@ -573,6 +700,20 @@ func TestPtahSchemaRefusals(t *testing.T) {
 			name:   "desired.git selecting the repository root",
 			mutate: both(asGitSource("desired"), setting(".", "spec", "desired", "git", "path")),
 			want:   []cause{{"spec", "desired.git.path selects one file for a schema"}},
+		},
+		refusal{
+			name:   "desired.https selecting the archive root",
+			mutate: both(asHTTPSSource("desired"), setting(".", "spec", "desired", "https", "path")),
+			want:   []cause{{"spec", "desired.https.path selects one file for a schema"}},
+		},
+		refusal{
+			name: "desired.https File named .",
+			mutate: both(asHTTPSSource("desired"), both(setting("File", "spec", "desired", "https", "format"),
+				setting(".", "spec", "desired", "https", "path"))),
+			want: []cause{
+				{"spec.desired.https", "with format File, path is the one name the download is given"},
+				{"spec", "desired.https.path selects one file for a schema"},
+			},
 		},
 		refusal{
 			name:   "desired.configMap selecting two files",
@@ -651,6 +792,12 @@ func TestPtahMigrationRefusals(t *testing.T) {
 			name:   "policy.transactionMode all, which only a PtahSchema takes",
 			mutate: setting("all", "spec", "policy", "transactionMode"),
 			want:   []cause{{"spec.policy.transactionMode", "Unsupported value"}},
+		},
+		refusal{
+			name: "artifact.https as a File",
+			mutate: both(asHTTPSSource("artifact"), both(setting("File", "spec", "artifact", "https", "format"),
+				setting("migrations", "spec", "artifact", "https", "path"))),
+			want: []cause{{"spec", "artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"}},
 		},
 		refusal{
 			name:   "policy.lockTimeout over 1h",

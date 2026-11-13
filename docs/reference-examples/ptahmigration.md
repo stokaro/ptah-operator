@@ -100,6 +100,45 @@ spec:
           key: known_hosts
 ```
 
+### From an archive served over HTTPS
+
+The migration directory is a directory inside a `tar.gz` archive an artifact
+server serves, pinned by the SHA-256 of the archive's exact bytes. Every
+operation downloads the archive again, holds it to that digest before reading
+any entry, and refuses selected files other than the ones Resolve recorded. A
+build that publishes the archive can print the digest with `shasum -a 256`
+and write it into the manifest.
+
+The Secret `orders-artifacts` holds `token`, sent as a Bearer token, and
+`host: artifacts.example.com`. The team's source policy allows only that
+host for an HTTPS source.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFrom:
+      name: orders-database
+      key: url
+  artifact:
+    https:
+      url: https://artifacts.example.com/orders/orders-1.4.0.tar.gz
+      digest: sha256:9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+      authFrom:
+        name: orders-artifacts
+    sourcePolicyFrom:
+      name: team-source-policy
+      key: policy.yaml
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set

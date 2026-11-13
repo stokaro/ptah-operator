@@ -66,6 +66,32 @@ func TestRangeRulesAdmitTheirBounds(t *testing.T) {
 			mutate: func(_ *testing.T, object *unstructured.Unstructured) { object.SetName(longName[:63]) },
 		},
 		{
+			// The source policy is the one rule HTTPS shares with ConfigMap
+			// and Git rather than with OCI.
+			name: "PtahSchema from an HTTPS File with a source policy, a credential and a CA",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), both(
+				setting(map[string]any{
+					"url": "https://artifacts.example.com/inventory/1.4.0/schema", "digest": httpsDigest,
+					"format": "File", "path": "schema.hcl",
+					"authFrom":  map[string]any{"name": "inventory-artifacts"},
+					"transport": map[string]any{"caFrom": map[string]any{"name": "artifacts-ca", "key": "ca.pem"}},
+				}, "spec", "desired", "https"),
+				setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", "desired", "sourcePolicyFrom"))),
+		},
+		{
+			name:   "PtahSchema from a Zip member",
+			base:   schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), setting("Zip", "spec", "desired", "https", "format")),
+		},
+		{
+			name: "PtahMigration from the root of a Zip with a source policy",
+			base: migrationBase(namespace),
+			mutate: both(asHTTPSSource("artifact"), both(
+				both(setting("Zip", "spec", "artifact", "https", "format"), setting(".", "spec", "artifact", "https", "path")),
+				setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", "artifact", "sourcePolicyFrom"))),
+		},
+		{
 			name:   "PtahSchema with 128 protected tables",
 			base:   schemaBase(namespace),
 			mutate: setting(numbered("ledger_", 128), "spec", "policy", "protectedTables"),
