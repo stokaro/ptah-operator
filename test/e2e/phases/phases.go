@@ -710,6 +710,9 @@ type UninstallInputs struct {
 	// and credentials the running Apply connects with.
 	ExternalPostgresIP              string `env:"E2E_EXTERNAL_POSTGRES_IP"`
 	ExternalPostgresCredentialsFile string `env:"E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE"`
+	// TeardownNamespace is the namespace the uninstall-first teardown runs
+	// an operation in, and deletes once the release is gone.
+	TeardownNamespace string `env:"E2E_TEARDOWN_NAMESPACE"`
 }
 
 // Uninstall proves the release transitions after the upgrade: a synthetic
@@ -717,7 +720,10 @@ type UninstallInputs struct {
 // running Apply, a rollback refused over future state and then allowed, and
 // an uninstall that removes the runtime and keeps the CRDs and live objects,
 // followed by a reinstall over drifted CRDs and a fresh install of the exact
-// exported chart bytes.
+// exported chart bytes. It ends with the teardown the operations page gives a
+// cluster that stays: a namespace holding retired result records inside their
+// retention window goes once the release is uninstalled, before that window
+// ends, and leaves none of its records or Secrets.
 var Uninstall = define[UninstallInputs](Phase{
 	Name:    "uninstall",
 	Test:    "TestUninstall",
@@ -728,6 +734,7 @@ var Uninstall = define[UninstallInputs](Phase{
 		"uninstall",
 		"reinstall-over-retained-crds",
 		"exported-chart-install",
+		"uninstall-first-teardown",
 	},
 })
 

@@ -1790,6 +1790,16 @@ old the rest of its records are.
 The manager's collector removes each record once its window has ended, and the
 namespace follows.
 
+On kind with Kubernetes 1.37.0, a namespace deleted with the operator installed
+held the records of two schemas: one deleted ten minutes earlier, whose records
+were retired, and one deleted with the namespace. The first refusal named the
+hour from the retired result's creation. When that time came, the next refusal
+named the hour from the retirement, and that schema's records were gone within
+14 seconds of it. The other schema's two records got their `DELETING` times 13
+and 28 seconds into the namespace's deletion, and the refusals named the hour
+from each in turn. The namespace was gone 61 minutes after its deletion, 59
+seconds after the last time a refusal named.
+
 A message that ends at `has not authorized deletion`, with no time, is not about
 time. The record's operation may still be pinned by its resource, its original Job
 may still exist, the records it depends on may still have to go first, or the
@@ -1871,7 +1881,12 @@ kubectl delete namespace <namespace> --wait=true
 Nothing refuses the deletion once the webhook is gone. On kind with Kubernetes
 1.37.0 the uninstall took 7 seconds, and the namespace, with 10 records inside
 their window, was gone 8 seconds later. Namespaces already `Terminating` followed
-within 40 seconds of the uninstall, including one refused for 30 minutes. Delete
+within 40 seconds of the uninstall, including one refused for 30 minutes. The
+`uninstall` acceptance phase runs these three commands on every supported
+Kubernetes minor, against a namespace holding one retired operation's records,
+deleted with nearly an hour of their window left. It fails if the namespace
+controller reports a refused deletion or a finalizer, or if the namespace outlives
+that window. Delete
 the resources first: a resource whose operation is active carries a finalizer
 only the manager removes, and with the manager gone the namespace would wait for
 that instead.

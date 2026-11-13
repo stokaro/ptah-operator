@@ -687,6 +687,7 @@ RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$
 [ "${#RUNTIME_FULLNAME}" -eq 60 ] || fail "runtime fullname boundary fixture must be exactly 60 characters"
 MANAGER_PULL_SECRET=$(dns_name ptah-manager-pull "$identity")
 HA_TEST_NAMESPACE=$(dns_name ptah-test-ha "$identity")
+TEARDOWN_NAMESPACE=$(dns_name ptah-test-teardown "$identity")
 TEST_NAMESPACE=$(dns_name ptah-test-a "$identity")
 FOREIGN_NAMESPACE=$(dns_name ptah-test-b "$identity")
 # Leave room for the chart name and its longest resource suffix.
@@ -3532,6 +3533,7 @@ E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
+E2E_TEARDOWN_NAMESPACE=$TEARDOWN_NAMESPACE \
 	run_recorded_phase uninstall run_go_phase uninstall
 
 export_release_chart

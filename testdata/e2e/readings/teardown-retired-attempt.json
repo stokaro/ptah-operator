@@ -1,0 +1,103 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-11-12T20:24:23Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-attempt": "r1h7Pk1NJe01_68vZBxLAibkzZWjRZsOp0epxAHgcj14r",
+          "operator.ptah.run/result-record": "intent"
+        },
+        "name": "ptah-result-0bfc411edeae30a52e7d75d92b71338aab33cb664ea3248174f8eb48ddd147bc",
+        "namespace": "ptah-op-enh827-window",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "teardown-a",
+            "uid": "989a4ef1-d158-4350-9401-0bbaced33b3b"
+          }
+        ],
+        "resourceVersion": "1823",
+        "uid": "5f541249-73e6-4350-9b2e-baf2f318f5ea"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtb3AtZW5oODI3LXdpbmRvdyIsImtpbmQiOiJQdGFoU2NoZW1hIiwibmFtZSI6InRlYXJkb3duLWEiLCJ1aWQiOiI5ODlhNGVmMS1kMTU4LTQzNTAtOTQwMS0wYmJhY2VkMzNiM2IiLCJnZW5lcmF0aW9uIjoxLCJleGVjdXRpb25CaW5kaW5nSUQiOiJ2MS0zMGM0NTBhNjlkZGMwZjNlMjJmM2Y5YmVmMmRhZjIxZSIsImlucHV0RmluZ2VycHJpbnQiOiJzaGEyNTY6Y2EwZDEzNmFlMjkxZWEzYmY5ZjdkMTIxMDNmZmE3OGU1OTQ5MzE0ZjE3NjJjMjViY2VlYzYyYmU2NWJiYzUzOCIsIm9wZXJhdGlvbiI6InJlc29sdmUiLCJvcGVyYXRpb25JRCI6InNoYTI1NjpjN2FlNjFmOGU3YThmNGQ0YWE0OTdiYzZhOWQ5MmRkNzE2Zjk5ZDY1NjE5ZjM1MmYzYmRjYjI5MjAwMTYzMjJiIiwiam9iTmFtZSI6InB0YWgtcmVzb2x2ZS10ZWFyZG93bi1hLWI5OThlYWM2NGZiMjliZmIiLCJqb2JVSUQiOiJiZTQ5NmZhMy00ODQ4LTRmYzItYTFjMi0zZWM5MmNlNDk3NGQiLCJwb2ROYW1lIjoicHRhaC1yZXNvbHZlLXRlYXJkb3duLWEtYjk5OGVhYzY0ZmIyOWJmYi1jNGhxcyIsInBvZFVJRCI6IjBmZTA2ZjcyLTMzOGItNGYwZS1hOTBhLTdlMmZkZTczOTY3MiJ9LCJkaWdlc3QiOiJzaGEyNTY6OTliN2U3ZjYwNmMwMDMxNTUwNTgzOTRhYmUxODU3YjIyZjgxYmMzMDBmZjM1Zjc2NDRjMzIxYzkyOGFjZWJlNSIsInNpemUiOjIyNywiY2h1bmtzIjpudWxsLCJpbmxpbmUiOiJleUp3Y205MGIyTnZiRlpsY25OcGIyNGlPakVzSW05d1pYSmhkR2x2YmlJNkluSmxjMjlzZG1VaUxDSnZjR1Z5WVhScGIyNUpaQ0k2SW5Ob1lUSTFOanBqTjJGbE5qRm1PR1UzWVRobU5HUTBZV0UwT1RkaVl6WmhPV1E1TW1Sa056RTJaams1WkRZMU5qRTVaak0xTW1ZelltUmpZakk1TWpBd01UWXpNakppSWl3aVkyaHBiR1JGZUdsMFEyOWtaU0k2TWl3aWMzUmtiM1YwSWpvaUlpd2laWEp5YjNJaU9uc2lZMjlrWlNJNkltTm9hV3hrWDJWNGFYUWlMQ0p0WlhOellXZGxJam9pY0hSaGFDQmxlR2wwWldRZ2QybDBhQ0JqYjJSbElESWlmWDA9In0=",
+        "type": "intent"
+      }
+    },
+    {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "creationTimestamp": "2026-11-12T20:29:40Z",
+        "generation": 1,
+        "labels": {
+          "operator.ptah.run/result-record": "retired"
+        },
+        "name": "ptah-result-0bfc411edeae30a52e7d75d92b71338aab33cb664ea3248174f8eb48ddd147bc-retired",
+        "namespace": "ptah-op-enh827-window",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": false,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "teardown-a",
+            "uid": "989a4ef1-d158-4350-9401-0bbaced33b3b"
+          }
+        ],
+        "resourceVersion": "2740",
+        "uid": "ef09ebca-8441-4365-8819-2a35a2dcdf7c"
+      },
+      "spec": {
+        "data": "eyJ2ZXJzaW9uIjoxLCJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtb3AtZW5oODI3LXdpbmRvdyIsImtpbmQiOiJQdGFoU2NoZW1hIiwibmFtZSI6InRlYXJkb3duLWEiLCJ1aWQiOiI5ODlhNGVmMS1kMTU4LTQzNTAtOTQwMS0wYmJhY2VkMzNiM2IiLCJnZW5lcmF0aW9uIjoxLCJleGVjdXRpb25CaW5kaW5nSUQiOiJ2MS0zMGM0NTBhNjlkZGMwZjNlMjJmM2Y5YmVmMmRhZjIxZSIsImlucHV0RmluZ2VycHJpbnQiOiJzaGEyNTY6Y2EwZDEzNmFlMjkxZWEzYmY5ZjdkMTIxMDNmZmE3OGU1OTQ5MzE0ZjE3NjJjMjViY2VlYzYyYmU2NWJiYzUzOCIsIm9wZXJhdGlvbiI6InJlc29sdmUiLCJvcGVyYXRpb25JRCI6InNoYTI1NjpjN2FlNjFmOGU3YThmNGQ0YWE0OTdiYzZhOWQ5MmRkNzE2Zjk5ZDY1NjE5ZjM1MmYzYmRjYjI5MjAwMTYzMjJiIiwiam9iTmFtZSI6InB0YWgtcmVzb2x2ZS10ZWFyZG93bi1hLWI5OThlYWM2NGZiMjliZmIiLCJqb2JVSUQiOiJiZTQ5NmZhMy00ODQ4LTRmYzItYTFjMi0zZWM5MmNlNDk3NGQiLCJwb2ROYW1lIjoicHRhaC1yZXNvbHZlLXRlYXJkb3duLWEtYjk5OGVhYzY0ZmIyOWJmYi1jNGhxcyIsInBvZFVJRCI6IjBmZTA2ZjcyLTMzOGItNGYwZS1hOTBhLTdlMmZkZTczOTY3MiJ9LCJzb3VyY2UiOnsibmFtZSI6InB0YWgtcmVzdWx0LWtleS1jNTFkMWRmZDY3ZmM1YWJkZTI5ZTQyZTM0MzJkY2I5ZiIsInVpZCI6IjA2M2ExMGMzLTk3ZTctNDU3Ni1iNTY3LWQ2MjA5NmExOTQxZSIsInR5cGUiOiJjcmVkZW50aWFsIn0sInJldGVudGlvblNlY29uZHMiOjM2MDB9",
+        "type": "retired"
+      }
+    },
+    {
+      "apiVersion": "operator.ptah.run/v1alpha1",
+      "kind": "PtahResultRecord",
+      "metadata": {
+        "annotations": {
+          "operator.ptah.run/result-job-uid": "be496fa3-4848-4fc2-a1c2-3ec92ce4974d",
+          "operator.ptah.run/result-operation-id": "sha256:c7ae61f8e7a8f4d4aa497bc6a9d92dd716f99d65619f352f3bdcb2920016322b",
+          "operator.ptah.run/result-pod-name": "ptah-resolve-teardown-a-b998eac64fb29bfb-c4hqs",
+          "operator.ptah.run/result-pod-uid": "0fe06f72-338b-4f0e-a90a-7e2fde739672"
+        },
+        "creationTimestamp": "2026-11-12T20:24:22Z",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/component": "result-credential",
+          "app.kubernetes.io/managed-by": "ptah-operator"
+        },
+        "name": "ptah-result-key-c51d1dfd67fc5abde29e42e3432dcb9f",
+        "namespace": "ptah-op-enh827-window",
+        "ownerReferences": [
+          {
+            "apiVersion": "operator.ptah.run/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "PtahSchema",
+            "name": "teardown-a",
+            "uid": "989a4ef1-d158-4350-9401-0bbaced33b3b"
+          }
+        ],
+        "resourceVersion": "1793",
+        "uid": "063a10c3-97e7-4576-b567-d62096a1941e"
+      },
+      "spec": {
+        "data": "eyJiaW5kaW5nIjp7Im5hbWVzcGFjZSI6InB0YWgtb3AtZW5oODI3LXdpbmRvdyIsImtpbmQiOiJQdGFoU2NoZW1hIiwibmFtZSI6InRlYXJkb3duLWEiLCJ1aWQiOiI5ODlhNGVmMS1kMTU4LTQzNTAtOTQwMS0wYmJhY2VkMzNiM2IiLCJnZW5lcmF0aW9uIjoxLCJleGVjdXRpb25CaW5kaW5nSUQiOiJ2MS0zMGM0NTBhNjlkZGMwZjNlMjJmM2Y5YmVmMmRhZjIxZSIsImlucHV0RmluZ2VycHJpbnQiOiJzaGEyNTY6Y2EwZDEzNmFlMjkxZWEzYmY5ZjdkMTIxMDNmZmE3OGU1OTQ5MzE0ZjE3NjJjMjViY2VlYzYyYmU2NWJiYzUzOCIsIm9wZXJhdGlvbiI6InJlc29sdmUiLCJvcGVyYXRpb25JRCI6InNoYTI1NjpjN2FlNjFmOGU3YThmNGQ0YWE0OTdiYzZhOWQ5MmRkNzE2Zjk5ZDY1NjE5ZjM1MmYzYmRjYjI5MjAwMTYzMjJiIiwiam9iTmFtZSI6InB0YWgtcmVzb2x2ZS10ZWFyZG93bi1hLWI5OThlYWM2NGZiMjliZmIiLCJqb2JVSUQiOiJiZTQ5NmZhMy00ODQ4LTRmYzItYTFjMi0zZWM5MmNlNDk3NGQiLCJwb2ROYW1lIjoicHRhaC1yZXNvbHZlLXRlYXJkb3duLWEtYjk5OGVhYzY0ZmIyOWJmYi1jNGhxcyIsInBvZFVJRCI6IjBmZTA2ZjcyLTMzOGItNGYwZS1hOTBhLTdlMmZkZTczOTY3MiJ9LCJlbmdpbmUiOiIifQ==",
+        "type": "credential"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  }
+}

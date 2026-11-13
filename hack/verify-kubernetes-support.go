@@ -4861,6 +4861,8 @@ var goPhaseBindings = map[string]string{
 	"E2E_NEXT_VALUES_FILE":      `$NEXT_VALUES_FILE`,
 	"E2E_NEXT_CONTROLLER_IMAGE": `$NEXT_CONTROLLER_IMAGE`,
 	"E2E_HA_TEST_NAMESPACE":     `$HA_TEST_NAMESPACE`,
+	// The namespace the uninstall phase tears down once the release is gone.
+	"E2E_TEARDOWN_NAMESPACE": `$TEARDOWN_NAMESPACE`,
 	// The alerting phase's monitoring path, mirrored into the registry only
 	// where a suite runs that phase.
 	"E2E_PROMETHEUS_IMAGE":          `$E2E_PROMETHEUS_IMAGE`,
