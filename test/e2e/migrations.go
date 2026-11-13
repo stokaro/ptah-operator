@@ -15,9 +15,11 @@ import (
 
 // The migration phase's fixtures and bounds.
 const (
-	// migrationDatabaseUser is the unprivileged user the migration Jobs
-	// connect as: the data plane's application user, which owns only the
-	// databases a row grants it.
+	// migrationDatabaseUser is the user the migration Jobs connect as: the
+	// data plane's application user. The PostgreSQL image makes it a
+	// superuser, and on MySQL it holds ALL PRIVILEGES on each database a row
+	// creates. A migration row reads no object another role made, so none of
+	// them needs the narrower login support/databases.md documents.
 	migrationDatabaseUser = "ptah_e2e"
 	// migrationPolicy is the verification policy the phase applies. It names
 	// the migration artifact type, where the schema path's names the schema

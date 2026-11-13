@@ -909,11 +909,15 @@ func (f *faultRun) deletionLeavesTheDatabase() {
 // changes the database by hand, and holds the approved Apply to refusing the
 // stale plan without running SQL, and the recovery to a fresh plan of the
 // changed database.
+//
+// It connects as e2e_fault_pg_manual_login, created from the statements
+// support/databases.md shows, which created the seed and owns it. The server's
+// superuser drops the column.
 func (f *faultRun) manualDrift() {
 	f.t.Helper()
 	s := &f.state
 	manual := &s.manual
-	f.createDatabase("postgresql", manual.database, manual.secret)
+	f.createDocumentedDatabase("postgresql", manual.database, manual.secret)
 	f.query("postgresql", manual.database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'drift-control', 'preserve-this-row')")
 	f.planTarget(manual, faultSchema{engine: "PostgreSQL", reference: f.pgReference},
 		"the manual-drift schema's initial Plan target lock")

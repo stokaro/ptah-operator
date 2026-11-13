@@ -48,6 +48,18 @@ The login needs only:
 - the ability to create objects in each managed schema;
 - ownership of every object the desired schema may alter or drop.
 
+For a database `app` whose managed schema is `public`, these statements create
+that login. Create the managed objects as the login, and it owns them:
+
+```sql
+CREATE ROLE ptah LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT CONNECT ON DATABASE app TO ptah;
+GRANT USAGE, CREATE ON SCHEMA public TO ptah;
+```
+
+Set its password with `\password ptah` in `psql`. The client hashes the
+password, so the server log never holds it.
+
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the
 database or a schema is more: PostgreSQL lets the owner drop what is in it, whoever
@@ -111,12 +123,16 @@ says the login found no difference. It does not say that nobody added anything.
 This section describes Ptah v0.23.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. The PostgreSQL table was measured at v0.22.0; the acceptance row that
-reads a table another role created under this login runs at the pinned build on
-PostgreSQL 17 and 18. The runner harness holds the MySQL refusals to the release
-image. Another executor build can answer differently. Neither engine reads an
-object the login cannot see as absent at this build: PostgreSQL shows the login
-every object, and MySQL refuses the read
+8.4.11. The PostgreSQL table was measured at v0.22.0. The acceptance rows that
+change a database by hand and read what the next Observe or Plan reports run at
+the pinned build on PostgreSQL 17 and 18 and on MySQL 8.4. They connect as the
+login the statements above create, with `CREATE` on the database added only where
+the artifact declares an extension, or as a MySQL account that holds the grant
+above and nothing else. Another role or account makes each change they read. The
+runner harness holds the MySQL refusals to the release image. Another executor
+build can answer differently. Neither engine reads an object the login cannot see
+as absent at this build: PostgreSQL shows the login every object, and MySQL
+refuses the read
 ([stokaro/ptah#5545](https://github.com/stokaro/ptah/pull/5545)).
 
 ### PostgreSQL

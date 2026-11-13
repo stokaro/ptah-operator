@@ -149,9 +149,10 @@ as a digest-pinned, task-labeled Docker container on the kind bridge, with a
 tmpfs on the directory its image declares as a volume, no anonymous or persistent
 volume, no restart policy, and no published host port. A selectorless Service and an exact owner-bound
 EndpointSlice with a unique managed-by label route operation Jobs to its
-captured bridge IP. The fixture role is demoted from superuser after
-initialization while retaining database ownership. The suite proves that no
-Kubernetes workload hosts that database, then, under `apply: Always`, performs
+captured bridge IP. The driver creates the fixture role `NOSUPERUSER`, with no
+other administrative attribute, and makes it the owner of the database. The
+suite proves that no Kubernetes workload hosts that database, then, under
+`apply: Always`, performs
 a focused Plan, a single Apply with no approval, a post-Apply `NoChanges`
 proof, and an independent Docker-side catalog check.
 

@@ -70,6 +70,7 @@ const (
 	podConfigurationPGSecret   = "e2e-postgresql-pod-configuration-db"
 	extensionPGDatabase        = "ptah_e2e_extension"
 	extensionPGSecret          = "e2e-postgresql-extension-db"
+	extensionPGLogin           = "ptah_e2e_extension_login"
 	unreadableOCIPGDatabase    = "ptah_e2e_unreadable_oci"
 	unreadableOCIPGSecret      = "e2e-postgresql-unreadable-oci-db"
 	loginVisibilityPGDatabase  = "ptah_e2e_login_visibility"
@@ -141,10 +142,11 @@ type fixtureCredentials struct {
 	// podConfigurationPGURL is held under another key than the Job asks for, so
 	// the row can read what the kubelet says about a Secret that has a value.
 	podConfigurationPGURL string
-	extensionPGURL        string
-	unreadableOCIPGURL    string
-	// loginVisibilityPGURL connects as the login support/databases.md documents,
-	// with the password every other PostgreSQL URL here carries.
+	// extensionPGURL and loginVisibilityPGURL connect as logins created from the
+	// statements support/databases.md shows, with the password every other
+	// PostgreSQL URL here carries.
+	extensionPGURL       string
+	unreadableOCIPGURL   string
 	loginVisibilityPGURL string
 	mysqlPassword        string
 	mysqlRootPassword    string
@@ -155,10 +157,11 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 	suffix := strconv.FormatUint(uint64(posixCksum([]byte(namespace))), 10)
 	pgPassword := "e2ePg" + suffix + "Q7"
 	mysqlPassword := "e2eMy" + suffix + "Q7"
-	pgURL := func(database string) string {
-		return "postgres://" + pgUser + ":" + pgPassword + "@" + pgService + "." + namespace +
+	loginURL := func(login, database string) string {
+		return "postgres://" + login + ":" + pgPassword + "@" + pgService + "." + namespace +
 			".svc.cluster.local:5432/" + database + "?sslmode=disable"
 	}
+	pgURL := func(database string) string { return loginURL(pgUser, database) }
 	return fixtureCredentials{
 		pgPassword:            pgPassword,
 		pgURL:                 pgURL(pgDatabase),
@@ -166,12 +169,11 @@ func deriveFixtureCredentials(namespace string) fixtureCredentials {
 		fourEyesPGURL:         pgURL(fourEyesPGDatabase),
 		podMetadataPGURL:      pgURL(podMetadataPGDatabase),
 		podConfigurationPGURL: pgURL(podConfigurationPGDatabase),
-		extensionPGURL:        pgURL(extensionPGDatabase),
+		extensionPGURL:        loginURL(extensionPGLogin, extensionPGDatabase),
 		unreadableOCIPGURL:    pgURL(unreadableOCIPGDatabase),
-		loginVisibilityPGURL: "postgres://" + loginVisibilityPGLogin + ":" + pgPassword + "@" + pgService + "." + namespace +
-			".svc.cluster.local:5432/" + loginVisibilityPGDatabase + "?sslmode=disable",
-		mysqlPassword:     mysqlPassword,
-		mysqlRootPassword: "e2eMyRoot" + suffix + "Q7",
+		loginVisibilityPGURL:  loginURL(loginVisibilityPGLogin, loginVisibilityPGDatabase),
+		mysqlPassword:         mysqlPassword,
+		mysqlRootPassword:     "e2eMyRoot" + suffix + "Q7",
 		mysqlURL: "mysql://" + mysqlUser + ":" + mysqlPassword + "@tcp(" + mysqlService + "." + namespace +
 			".svc.cluster.local:3306)/" + mysqlDatabase,
 	}
