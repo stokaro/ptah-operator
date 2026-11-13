@@ -269,6 +269,10 @@ monitoring:
       window: ""
       # The count in that window.
       count: null
+    # How long the alert stays after a manager dropped a journal line. Any
+    # dropped line is one no collector can have, so there is no count. Cover
+    # at least two scrape intervals.
+    journalLinesDroppedWithin: ""
     # How long the API server may fail to reach the admission webhooks. The
     # alert reads the API server's metrics, so it needs the API server scraped.
     admissionFailingFor: ""
