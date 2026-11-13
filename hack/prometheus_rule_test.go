@@ -143,7 +143,6 @@ var stateThresholds = []string{
 	"monitoring.prometheusRule.planStoreBytesAbove=1073741824",
 	"monitoring.prometheusRule.failures.window=30m",
 	"monitoring.prometheusRule.failures.count=20",
-	"monitoring.prometheusRule.journalLinesDroppedWithin=10m",
 	"monitoring.prometheusRule.admissionFailingFor=5m",
 }
 
@@ -155,7 +154,7 @@ func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
 	for _, alert := range []string{
 		"PtahOperatorResourceOverdue", "PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
 		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
-		"PtahOperatorPlanStoreLarge", "PtahOperatorJournalLinesDropped",
+		"PtahOperatorPlanStoreLarge",
 	} {
 		if strings.Contains(rule, alert) {
 			t.Errorf("%s rendered with no threshold set:\n%s", alert, rule)
@@ -169,6 +168,26 @@ func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
 	if err == nil || !strings.Contains(rendered, "failures.count") {
 		t.Errorf("a failure window without a count rendered, or the refusal does not name the count:\n%s", rendered)
 	}
+}
+
+// The dropped journal lines alert renders with the rules, since any drop
+// counts and its value is only how long the alert stays, and an empty value
+// leaves it out.
+func TestTheJournalAlertRendersWithTheRules(t *testing.T) {
+	t.Parallel()
+	if rule := renderedPrometheusRule(t); !strings.Contains(rule, "alert: PtahOperatorJournalLinesDropped") {
+		t.Errorf("the rules rendered without the journal alert:\n%s", rule)
+	}
+	if rule := renderedPrometheusRuleWith(t, "monitoring.prometheusRule.journalLinesDroppedWithin="); strings.Contains(rule, "PtahOperatorJournalLinesDropped") {
+		t.Errorf("an empty journalLinesDroppedWithin rendered the journal alert:\n%s", rule)
+	}
+}
+
+// The dropped journal lines alert against the case it exists for, as the
+// chart renders it by default.
+func TestTheJournalAlertFiresOnADroppedLine(t *testing.T) {
+	t.Parallel()
+	runPromtool(t, renderedPrometheusRule(t), "journal.test.yaml")
 }
 
 // The state alerts against the cases they exist for.

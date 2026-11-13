@@ -2861,7 +2861,6 @@ sets none:
 | `certificateExpiresWithinSeconds` | `PtahOperatorWebhookCertificateExpiring` |
 | `planStoreBytesAbove` | `PtahOperatorPlanStoreLarge` |
 | `failures.window` with `failures.count` | `PtahOperatorOperationsFailing` |
-| `journalLinesDroppedWithin` | `PtahOperatorJournalLinesDropped`, which reads a counter; see [Dropped journal lines](#journal-lines-dropped) |
 | `admissionFailingFor` | `PtahOperatorAdmissionUnavailable`, which reads the API server's metrics |
 
 Once `PtahOperatorPlanStoreLarge` fires, a missing state reading keeps the
@@ -2882,8 +2881,11 @@ max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
 
 `PtahOperatorJournalLinesDropped` fires when any manager replica dropped a
 journal line within the last `journalLinesDroppedWithin`, and clears once that
-window has passed the last drop. It has no count. Each dropped line is an entry
-that never reached standard output, so no collector has it. While its resource
+window has passed the last drop. It renders with the rules, whatever thresholds
+are set, because it has no threshold: each dropped line is an entry that never
+reached standard output, so no collector has it. The value is only how long the
+alert stays, 10 minutes by default; keep it above two scrape intervals, and set
+it to `""` to leave the alert out. While its resource
 exists, `status.journal` still holds the entry; once the resource is deleted,
 nothing does. Copy the journals of the resources that changed in the window
 before anyone deletes them.
@@ -2926,10 +2928,11 @@ every 30 seconds has a target larger by the same amount.
 
 The phase does not drive a certificate close to expiry, an admission webhook
 the API server cannot reach, a failed upgrade hook, or a journal line the
-manager could not write. Their rules are tested with promtool only. The
-manager's standard output stops only when the node's container runtime stops
-reading it, and stopping the runtime stops every container on that node, so
-the journal alert has no cluster row yet
+manager could not write. Their rules are tested with promtool only, and the
+phase's Prometheus holds the journal rule loaded and healthy. The manager's
+standard output stops only when the node's container runtime stops reading it,
+and stopping the runtime stops every container on that node, so the journal
+alert has no cluster row yet
 ([#1075](https://github.com/stokaro/ptah-operator/issues/1075)). `PtahOperatorAdmissionUnavailable` reads the API server's
 own `apiserver_admission_webhook_rejection_count`, and a Job that a hook left
 failed is Kubernetes object state; both come from the cluster's Kubernetes

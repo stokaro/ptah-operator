@@ -1,0 +1,35 @@
+# The dropped journal lines alert, against the rules the chart renders with
+# nothing set beyond what the rules require, so journalLinesDroppedWithin is
+# its default of 10m (hack/prometheus_rule_test.go writes them to rules.yaml
+# beside this file).
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # One dropped journal line on a follower beside a leader that dropped none.
+  # It fires on the evaluation that sees the line, however few there are, and
+  # clears once the window has passed it.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_journal_lines_dropped_total{pod="leader"}'
+        values: '0x30'
+      - series: 'ptah_operator_journal_lines_dropped_total{pod="follower"}'
+        values: '0x5 1x25'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PtahOperatorJournalLinesDropped
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PtahOperatorJournalLinesDropped
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "A manager dropped journal lines in the last 10m"
+              description: "Those entries never reached standard output, so no collector has them. status.journal still holds each one until its resource is deleted."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#journal-lines-dropped"
+      - eval_time: 28m
+        alertname: PtahOperatorJournalLinesDropped
+        exp_alerts: []

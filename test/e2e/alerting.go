@@ -624,6 +624,10 @@ func alProfileExpressionEqual(actual, expected string) bool {
 	return false
 }
 
+// alJournalLinesAlert renders with the rules at the chart's default hold, so
+// the profile loads it without naming it. No phase drives it (#1075).
+const alJournalLinesAlert = "PtahOperatorJournalLinesDropped"
+
 func alProfileRuleTargets() map[string]alProfileRule {
 	return map[string]alProfileRule{
 		alUnresolvedApply:               {Expr: "max by (family) (ptah_operator_unresolved_attempts) > 0"},
@@ -636,6 +640,7 @@ func alProfileRuleTargets() map[string]alProfileRule {
 		"PtahOperatorPlanStoreLarge":    {Expr: `max(ptah_operator_stored_plan_bytes) > 134217728 or (max(ALERTS{alertname="PtahOperatorPlanStoreLarge", alertstate="firing"}) unless max(ptah_operator_stored_plan_bytes))`},
 		"PtahOperatorOperationsFailing": {Expr: "sum by (family, stage) (increase(ptah_operator_failures_total[5m])) > 3"},
 		alAdmissionAlert:                {Expr: `sum(increase(apiserver_admission_webhook_rejection_count{name=~".*operator\\.ptah\\.run", error_type="calling_webhook_error"}[5m])) > 0`},
+		alJournalLinesAlert:             {Expr: "sum(increase(ptah_operator_journal_lines_dropped_total[10m])) > 0"},
 	}
 }
 

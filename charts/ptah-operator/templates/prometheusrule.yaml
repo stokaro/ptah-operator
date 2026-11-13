@@ -58,7 +58,24 @@ spec:
             description: "A scrape that cannot read that state publishes no counts, so PtahOperatorUnresolvedApply cannot fire while this lasts."
             runbook_url: {{ $runbook | quote }}
 {{- $rules := .Values.monitoring.prometheusRule }}
-{{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.planStoreBytesAbove $rules.failures.window $rules.journalLinesDroppedWithin $rules.admissionFailingFor }}
+{{- with $rules.journalLinesDroppedWithin }}
+    # Any dropped line counts, so this one renders with the rules rather than
+    # waiting for a threshold: a dropped line reached no collector, and once
+    # its resource is deleted nothing else holds the entry. The value is how
+    # long the alert stays after the last drop. The counter is per process, so
+    # the sum reads every replica.
+    - name: ptah-operator-journal
+      rules:
+        - alert: PtahOperatorJournalLinesDropped
+          expr: sum(increase(ptah_operator_journal_lines_dropped_total[{{ . }}])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "A manager dropped journal lines in the last {{ . }}"
+            description: "Those entries never reached standard output, so no collector has them. status.journal still holds each one until its resource is deleted."
+            runbook_url: {{ printf "%s#journal-lines-dropped" $rules.runbookBaseURL | quote }}
+{{- end }}
+{{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.planStoreBytesAbove $rules.failures.window $rules.admissionFailingFor }}
     # One alert per threshold a deployment set, and none for a threshold it left
     # empty: the chart has no number of its own for how late is too late on a
     # given cluster. Every one reads gauges the view publishes only while it is
@@ -128,19 +145,6 @@ spec:
             summary: {{ printf "%s %s failed more than %v times in %s" "{{ $labels.family }}" "{{ $labels.stage }}" $failures $rules.failures.window | quote }}
             description: "Each failure is retried on the resource's failureRetryInterval; a count this high is a dependency that stays down. The resources' Failed conditions name it."
             runbook_url: {{ printf "%s#resource-state" $rules.runbookBaseURL | quote }}
-        {{- end }}
-        {{- with $rules.journalLinesDroppedWithin }}
-        - alert: PtahOperatorJournalLinesDropped
-          # Any line counts. A dropped line reached no collector, and once its
-          # resource is deleted nothing else holds the entry. The counter is
-          # per process, so the sum reads every replica.
-          expr: sum(increase(ptah_operator_journal_lines_dropped_total[{{ . }}])) > 0
-          labels:
-            severity: warning
-          annotations:
-            summary: "A manager dropped journal lines in the last {{ . }}"
-            description: "Those entries never reached standard output, so no collector has them. status.journal still holds each one until its resource is deleted."
-            runbook_url: {{ printf "%s#journal-lines-dropped" $rules.runbookBaseURL | quote }}
         {{- end }}
         {{- with $rules.admissionFailingFor }}
         - alert: PtahOperatorAdmissionUnavailable

@@ -1,8 +1,7 @@
 # The state alerts, against the rules the chart renders with
 # overdueAfterSeconds=900, operationStalledAfterSeconds=1800,
 # lockReleaseOwedFor=15m, certificateExpiresWithinSeconds=604800,
-# failures.window=30m with failures.count=20, journalLinesDroppedWithin=10m,
-# and admissionFailingFor=5m
+# failures.window=30m with failures.count=20, and admissionFailingFor=5m
 # (hack/prometheus_rule_test.go writes them to rules.yaml beside this file).
 rule_files:
   - rules.yaml
@@ -119,32 +118,6 @@ tests:
               summary: "schema resolve failed more than 20 times in 30m"
               description: "Each failure is retried on the resource's failureRetryInterval; a count this high is a dependency that stays down. The resources' Failed conditions name it."
               runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
-
-  # One dropped journal line on a follower beside a leader that dropped none.
-  # It fires on the evaluation that sees the line, however few there are, and
-  # clears once the window has passed it.
-  - interval: 1m
-    input_series:
-      - series: 'ptah_operator_journal_lines_dropped_total{pod="leader"}'
-        values: '0x30'
-      - series: 'ptah_operator_journal_lines_dropped_total{pod="follower"}'
-        values: '0x5 1x25'
-    alert_rule_test:
-      - eval_time: 5m
-        alertname: PtahOperatorJournalLinesDropped
-        exp_alerts: []
-      - eval_time: 7m
-        alertname: PtahOperatorJournalLinesDropped
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-            exp_annotations:
-              summary: "A manager dropped journal lines in the last 10m"
-              description: "Those entries never reached standard output, so no collector has them. status.journal still holds each one until its resource is deleted."
-              runbook_url: "https://operator.ptah.run/edge/use/operations/#journal-lines-dropped"
-      - eval_time: 28m
-        alertname: PtahOperatorJournalLinesDropped
-        exp_alerts: []
 
   # The API server failing to call this operator's webhook, and another
   # webhook's failures that are not this alert's business.

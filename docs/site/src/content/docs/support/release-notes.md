@@ -18,16 +18,17 @@ out of silence.
 
 ## 0.2.12
 
-**Before you upgrade.** Nothing to change: the new alert renders only where its
-value is set.
+**Before you upgrade.** An installation that renders the chart's rules gains
+`PtahOperatorJournalLinesDropped`. Set
+`monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
 
-- **An alert for dropped journal lines.** Setting
-  `monitoring.prometheusRule.journalLinesDroppedWithin` renders
-  `PtahOperatorJournalLinesDropped`, which fires when any manager replica
-  dropped a journal line within that window. A dropped line reached no
-  collector, so the alert has no count. It is unset by default, like every
-  state alert. [Dropped journal lines](../../use/operations/#journal-lines-dropped)
-  says what to check.
+- **An alert for dropped journal lines.** `PtahOperatorJournalLinesDropped`
+  fires when any manager replica dropped a journal line within
+  `monitoring.prometheusRule.journalLinesDroppedWithin`, 10 minutes by default.
+  A dropped line reached no collector, so any drop counts, and the alert renders
+  with the rules rather than waiting for a threshold.
+  [Dropped journal lines](../../use/operations/#journal-lines-dropped) says what
+  to check.
 
 ## 0.2.11
 
