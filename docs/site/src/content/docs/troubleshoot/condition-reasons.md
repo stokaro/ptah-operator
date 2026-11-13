@@ -363,27 +363,26 @@ parse passes the history read and fails the Apply on the database.
 
 A desired schema that loads and that Ptah refuses as a whole, such as a foreign
 key to a table it does not declare, reads the same way under the code
-`desired_schema_invalid`, in the same places and on the same retry:
+`desired_schema_invalid`, in the same places and on the same retry. So does an
+index on a table no declaration defines, or on a column its table does not
+declare: since Ptah v0.26.0 drift and plan check every index before they compare
+anything, and stop on the first one they refuse
+([stokaro/ptah#5845](https://github.com/stokaro/ptah/pull/5845)):
 
 ```
 desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
 desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique
+desired_schema_invalid: schema.sql: index "i": names table "nowhere", which no declaration defines
 ```
 
 The fault comes from the same second run, and the operator reports it only when
 it is the one the failed command stopped on: the words have to end that command's
-own sentence, and nothing of that sentence is copied. Some faults of a file do
-not reach this code:
-
-- An index on a column no table declares does not stop `schema drift` or
-  `schema plan`, so the plan holds an index the server has to refuse.
-- An index on a table no declaration defines stops them in other words, so the
-  failure keeps `child_exit`, or `invalid_plan_output` from a Plan.
-- A foreign key into a schema the database holds and the file declares nothing of
-  is refused by the comparison with that database, which the second run does not
-  have. An Observe keeps `child_exit`, a Plan reads as the next paragraph says, and
-  a fault the second run finds elsewhere in the same file is not why the command
-  stopped.
+own sentence, or be the whole of it for an index, and nothing of that sentence
+is copied. A foreign key into a schema the database holds and the file declares
+nothing of does not reach this code. The comparison with that database refuses
+it, and the second run does not have that database. An Observe keeps
+`child_exit`, a Plan reads as the next paragraph says, and a fault the second run
+finds elsewhere in the same file is not why the command stopped.
 
 `schema plan` refuses such a file with the refusal code `declaration-refused`,
 and the operator asks the second run about that refusal as it asks about a

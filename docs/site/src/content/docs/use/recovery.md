@@ -512,7 +512,7 @@ The row's state and count say which path applies:
 | The row | What the database holds | `status.lastRun.outcome` | What ends it |
 | --- | --- | --- | --- |
 | `state=failed applied=0/2` | Nothing of this migration: its transaction rolled back | `Failed` | [Retry the migration](#retry-failed-migration) |
-| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Unknown`, where a MySQL DDL statement returned an error, where a stopped Pod cut short a statement that commits on its own, and where the session died | [Retry the migration](#retry-failed-migration) and acknowledge the run |
+| `state=pending applied=0/2` | Nothing, once you have [checked](#failed-pending-row) | `Unknown`, where a MySQL DDL statement other than an index build returned an error, where a stopped Pod cut short a statement that commits on its own, and where the session died | [Retry the migration](#retry-failed-migration) and acknowledge the run |
 | `state=failed applied=1/2` | The statement before the failure. MySQL commits each DDL statement on its own, and `transactionMode: none` commits every statement | `Partial` | [Finish what it started](#failed-partial) |
 
 A run that ended `Unknown` or `Partial` also leaves
@@ -522,7 +522,7 @@ the reason.
 
 Everything below was measured with Ptah v0.22.0, directly and under this operator's
 edge build on Kubernetes 1.37.0, against PostgreSQL 17.11 and MySQL 8.4.11, except
-where it names Ptah v0.23.0.
+where it names Ptah v0.23.0 or v0.26.0.
 
 ### Retry the migration {#retry-failed-migration}
 
@@ -616,19 +616,28 @@ is pending.
 
 A MySQL DDL statement that returns an error leaves this row, with the error
 `statement execution outcome is unknown after process interruption`, although the
-process was alive and heard the answer and the statement did not commit. Ptah
-keeps its in-flight mark on a DDL statement the server refused, and from v0.23.0
+process was alive and heard the answer. Ptah keeps its in-flight mark on a DDL
+statement the server refused, and from v0.23.0
 ([stokaro/ptah#5569](https://github.com/stokaro/ptah/pull/5569)) it reports the
 run `unknown` over that mark rather than `failed`
 ([stokaro/ptah#5661](https://github.com/stokaro/ptah/issues/5661)), so the run
 leaves `status.unresolvedRun` like any other unknown run and needs an
-acknowledgment. A later Ptah release is expected to read it as `failed`. `status.lastRun.message`
-names the statement and the database's answer, measured with the runner harness
-for a `CREATE UNIQUE INDEX` that met a duplicate key:
-`Migration 1 (Change) stopped at statement 1 of 1 with SQLSTATE 23000 (error 1062), and whether it committed is not recorded`.
-On PostgreSQL the same statement leaves `state=failed` and the run `Failed`. A
-MySQL statement that changes rows, or one the server refuses to parse, still
-leaves the run `Failed`.
+acknowledgment.
+
+Since v0.26.0 a `CREATE INDEX` or `CREATE UNIQUE INDEX` the server refused on an
+InnoDB table is the exception
+([stokaro/ptah#5838](https://github.com/stokaro/ptah/pull/5838)). InnoDB builds
+an index whole or not at all, so Ptah records the row `state=failed` with the
+database's answer, and the run `Failed`, as PostgreSQL does for the same
+statement. Measured with the runner harness for a `CREATE UNIQUE INDEX` that met
+a duplicate key, `status.lastRun.message` reads
+`Migration 1 (Change) failed at statement 1 of 1 with SQLSTATE 23000 (error 1062) and committed nothing; 0 migrations before it are recorded applied`.
+The row's `error` quotes the database, and MySQL's answer to a duplicate key
+names the duplicate value, so a person reading the revision table reads that
+value; the runner keeps it out of the run's record and message. Any other DDL
+statement the server refused, and an index build whose answer was lost, still
+leave the run `unknown`. A MySQL statement that changes rows, or one the server
+refuses to parse, still leaves the run `Failed`.
 
 A run whose Pod was stopped inside a statement that commits on its own leaves the
 same row: a statement outside a transaction (`-- +ptah no_transaction`, or

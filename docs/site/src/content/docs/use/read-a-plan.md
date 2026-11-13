@@ -137,13 +137,15 @@ changes, a `DISABLE ROW LEVEL SECURITY` or a `DELETE FROM pg_enum`, whatever
 Ptah said. It rates a PostgreSQL `DETACH PARTITION` destructive too, unless the
 next statement that moves the same table attaches it to the same parent, as a
 bound change does: a detached partition keeps its rows, and the parent stops
-returning them. Ptah v0.23.0 rates that statement a warning. A bound change stays
+returning them. Since v0.26.0 Ptah rates that statement destructive too
+([stokaro/ptah#5741](https://github.com/stokaro/ptah/pull/5741)); earlier
+releases rate it a warning. A bound change stays
 a warning because both statements run in one transaction, and an `ATTACH` the
 bound refuses rolls the `DETACH` back. Under `transactionMode: none` they commit
 one at a time, and a refused `ATTACH` leaves the partition detached. On MySQL,
-Ptah v0.23.0 replaces the index that backs a foreign key with one statement,
+Ptah replaces the index that backs a foreign key with one statement,
 ``ALTER TABLE `c` DROP INDEX `c_fk`, ADD CONSTRAINT `u` UNIQUE (`pid`)``, and
-rates it safe; its `DROP` makes it destructive here, so `apply: Always` asks for
+rates it safe, at v0.26.0 as at v0.23.0; its `DROP` makes it destructive here, so `apply: Always` asks for
 `allowDestructive` and an approval. Where that
 rating is higher than Ptah's, the line says whose each one is, because Ptah's
 reason still explains the lower one. It names this

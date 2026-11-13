@@ -200,12 +200,15 @@ RBAC on approval objects will, because nothing is approving anything.
 What `Always` does not waive is a change of authority. A schema plan that
 grants or revokes a privilege, changes a role or its members, hands an object
 to another owner, creates, alters or drops a row-security policy, makes code
-run with its owner's rights, or changes the rights an existing PostgreSQL view
-reads with waits for an approval under `Always` as under
+run with its owner's rights, changes the rights an existing PostgreSQL view
+reads with, creates one that reads with its readers' rights, or replaces a MySQL
+view waits for an approval under `Always` as under
 `OnApproval`, and a destructive plan still needs `allowDestructive` as well.
 Whoever can push the artifact's tag can still change the schema unattended; the
 changes of authority the operator can read in it wait for a person. The
-operator decides this from the SQL rather than from Ptah's severity, and
+operator decides this from the SQL rather than from Ptah's severity, except for
+a PostgreSQL view's `security_invoker`, which it reads from the before and after
+values Ptah records for the statement, and
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
 lists what it reads and what it cannot see: rights an engine grants by default,
 such as a view reading with its owner's rights, SQL built at run time, and every
@@ -829,7 +832,7 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | Failure | Code | Whose words | Cut at |
 | --- | --- | --- | --- |
 | A desired file Ptah cannot read | `desired_source_unreadable` | A second child with no database URL and no credential | 485 bytes, so the code and the reason fit an Event's 512 |
-| A desired schema Ptah read and refuses as a whole | `desired_schema_invalid` | The same second child, when its words end the failed command's own sentence | 485 bytes, as above |
+| A desired schema Ptah read and refuses, as a whole or for one of its indexes | `desired_schema_invalid` | The same second child, when its words end the failed command's own sentence, or are the whole of it for an index | 485 bytes, as above |
 | A row file outside Ptah's working directory | `desired_source_unreadable` | The `error.message` of the failed `schema drift` or `schema plan`, only in the form Ptah's row-file guard writes | 485 bytes, as above |
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |

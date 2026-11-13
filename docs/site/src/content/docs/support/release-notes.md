@@ -18,10 +18,98 @@ out of silence.
 
 ## 0.2.12
 
-**Before you upgrade.** An installation that renders the chart's rules gains
-`PtahOperatorJournalLinesDropped`. Set
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRD schemas do not change. An installation that renders
+the chart's rules gains `PtahOperatorJournalLinesDropped`. Set
 `monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
+The executor moves to Ptah v0.26.0, which retires the execution binding:
+approve again whatever was waiting, after the resource has read its database
+with v0.26.0 and planned. Move `kubectl ptah` with the operator. A plan with a PostgreSQL view statement
+now carries the `effects` Ptah records for it, and a plugin from an earlier
+release names that field as one it does not read and refuses to approve the
+plan or print it with `-o sql` or `-o json`. Ptah Console 0.3.2 still holds
+approval for every plan, as the 0.2.10 notes say, so approve with
+`kubectl ptah` from this release. On MySQL and MariaDB, declare the security
+mode of every view the schema manages before the upgrade, with
+`CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or
+`security="INVOKER"` on a view annotation where the view reads with its
+readers' rights. Ptah v0.26.0 reads a view's mode, and a view the database
+holds as `INVOKER` that the declaration leaves without one is replaced as a
+`DEFINER` view, whose definer is the login the Apply runs as. Under
+`apply: Always`, a plan that replaces or alters a MySQL or MariaDB view now
+waits for an approval. An alert or a script that matches `child_exit` or
+`invalid_plan_output` to find an index on a table no declaration defines has to
+match `desired_schema_invalid`, and an index on a column its table does not
+declare now stops the Observe and the Plan with that reason rather than
+reaching the database at Apply. A database audit that lists what the executor
+sends has to expect the reads the executor bullet names. Nothing else.
 
+- **Executor.** The verified executor is now Ptah v0.26.0. Each PostgreSQL
+  schema read now also reads the inherit and set options of a role membership,
+  whether the role it runs as is a superuser, the foreign tables that keep an
+  extension's foreign-data wrapper in use, the aggregates, collations, foreign
+  tables, event triggers and publications it does not compare, and each
+  trigger's arguments, all from `pg_catalog`. Each MySQL view read selects
+  `SECURITY_TYPE`. A MySQL revision table Ptah creates is now
+  `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`; one that exists keeps its own.
+  Ptah now rates a partition `DETACH` that leaves its parent destructive
+  itself, which the operator already did, so such a plan is held as before.
+- **A view's invoker rights are read from what the plan does.** 0.2.11 raised
+  `security_invoker` named by `CREATE OR REPLACE VIEW` whatever its value, so a
+  plan that changed the body of a view stating the option waited for an
+  approval under `apply: Always` even where the option kept its value. Ptah
+  v0.26.0 records what each PostgreSQL view statement does to the view's
+  security options, before and after, read from the database the plan was
+  computed against, and the operator reads `security_invoker` from that record.
+  A change on a view that existed is raised in either direction, a view the
+  plan creates with its readers' rights is raised, and an option that keeps its
+  value raises nothing, so such a body change now runs unattended. A
+  `CREATE VIEW` that states `security_invoker=false` is no longer raised: the
+  view has no readers yet and reads with its owner's rights, as one that states
+  nothing. A statement Ptah records nothing for is read from its SQL as before.
+  [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
+  has the rule.
+- **Every MySQL view a plan replaces waits under `apply: Always`.** A MySQL or
+  MariaDB view runs with its definer's rights unless it says
+  `SQL SECURITY INVOKER`, and `CREATE OR REPLACE VIEW` and `ALTER VIEW` set the
+  mode afresh. Ptah records no effect for a MySQL view, and the statement does
+  not say what the view held, so the operator now records `SecurityDefiner` for
+  every such statement. A new view is raised only when it states
+  `SQL SECURITY DEFINER`. Before, no MySQL view was raised.
+- **An index fault is `desired_schema_invalid`.** Ptah v0.26.0 checks every
+  index of the desired schema before drift and plan compare anything, and stops
+  on the first one it refuses
+  ([stokaro/ptah#5845](https://github.com/stokaro/ptah/pull/5845)). The
+  Observe or the Plan fails with `desired_schema_invalid` and validate's line,
+  such as
+  `schema.sql: index "i": names table "nowhere", which no declaration defines`,
+  on the same retry as any other fault of the file.
+- **A refused MySQL index build ends `Failed`.** A MySQL migration whose
+  `CREATE INDEX` or `CREATE UNIQUE INDEX` the server refuses on an InnoDB table
+  now ends `Failed` rather than `Unknown`
+  ([stokaro/ptah#5838](https://github.com/stokaro/ptah/pull/5838)): it leaves no
+  `status.unresolvedRun` and takes no acknowledgment, and the revision row
+  reads `state=failed`. That row's `error` quotes the database, and MySQL's
+  answer to a duplicate key names the duplicate value; the runner keeps it out
+  of the run's record and message, but a person or a tool that reads the
+  revision table reads it. Any other DDL statement the server refuses, and an
+  index build whose answer was lost, still end `Unknown`.
+  [A row in `state=pending`](../../use/recovery/#failed-pending-row) has both.
+- **A plan that would drop an extension under a foreign table is refused.**
+  Where the database holds a foreign table on an extension's foreign-data
+  wrapper and the declaration drops the extension, the Plan fails with
+  `invalid_plan_output` and Ptah's sentence, which names the extension and the
+  foreign table and says to drop the foreign table first
+  ([stokaro/ptah#5898](https://github.com/stokaro/ptah/pull/5898)). Before, the
+  plan held `DROP EXTENSION` and the server refused it at Apply.
+- **A PostgreSQL Apply the database rolled back still reads `Unknown`.** Ptah
+  v0.26.0 reports a schema Apply as `failed` once the database confirmed it
+  rolled back every statement it sent
+  ([stokaro/ptah#5737](https://github.com/stokaro/ptah/pull/5737)). The runner
+  passes that on as `apply_failed` where it said `apply_outcome_unknown`, and
+  the journal, the `ApplyOutcomeUnknown` Event and the observation that follows
+  are as before: Kubernetes can start more than one Pod for a Job, and one
+  Pod's report does not speak for the others.
 - **An alert for dropped journal lines.** `PtahOperatorJournalLinesDropped`
   fires when any manager replica dropped a journal line within
   `monitoring.prometheusRule.journalLinesDroppedWithin`, 10 minutes by default.
