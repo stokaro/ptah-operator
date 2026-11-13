@@ -46,13 +46,15 @@ kubectl ptah install --version "$VERSION"
 `kubectl ptah install` installs that chart with Helm, passes it no image, and
 waits until the manager and the certificate rotator are available. Without
 `--version` it installs the release the plugin came from; a plugin built from a
-checkout names no release and asks for one. It prints the Helm command before
-it runs it, and that command is all it does:
+checkout names no release and asks for one. It checks that Helm is version 4
+or newer and reads the release already in the namespace, then prints the Helm
+command and runs it:
 
 ```sh
 helm upgrade --install ptah-operator oci://ghcr.io/stokaro/charts/ptah-operator \
   --version "$VERSION" \
   --namespace ptah-system \
+  --reset-values \
   --create-namespace \
   --wait \
   --timeout 5m0s
@@ -68,16 +70,21 @@ verifies the chart against the release manifest and installs it by digest, with
 its signature checked, for an installation that wants to pin that too. An upgrade
 that moves to a release with a new manager image also needs `--force-conflicts`,
 as [Upgrade](../../use/operations/#upgrade-run) says, so upgrade with Helm
-rather than with the plugin.
+rather than with the plugin: `kubectl ptah install` refuses a namespace whose
+release is another version, and changes nothing there.
 
-`kubectl ptah install` takes a few more flags:
+`--reset-values` makes each run install exactly its own flags. A run keeps no
+value an earlier run set, so give it every flag the installation needs.
+
+Other flags:
 
 - `--approver <username>` binds the chart's approver ClusterRole to that user in
   every namespace, through the `approverClusterRole.subjects` value, so the
   person can approve the first plan without another step. Repeat it for more
   people. A RoleBinding of your own keeps an approver to fewer namespaces, as
   [Approvals](../../use/approvals/) describes. Run the command again without
-  the flag and the binding goes.
+  the flag and the binding goes. The flag replaces any
+  `approverClusterRole.subjects` a values file sets.
 - `--yaml` prints the objects the install would apply, rendered by
   `helm template` from the same chart, version and values, and `--out-dir <dir>`
   writes them under `<dir>/ptah-operator` instead, for a GitOps repository. The
@@ -86,7 +93,9 @@ rather than with the plugin.
   certificate yourself before committing a render, as
   [Operations](../../use/operations/#install-before) describes.
 - `-f, --values <file>` hands the chart a values file. The chart takes other
-  images only as the next section says.
+  images only as the next section says. Helm reads the flag as a
+  comma-separated list and the plugin gives it no standard input, so a path
+  holding a comma or a double quote, and `-`, are refused.
 - `-n, --namespace`, `--kubeconfig`, `--context` and `--timeout` mean what they
   mean to Helm.
 

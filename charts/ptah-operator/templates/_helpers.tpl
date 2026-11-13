@@ -808,6 +808,13 @@ with a version or a build it was not released with.
 {{- if has $name (list "system:authenticated" "system:unauthenticated" "system:anonymous") -}}
 {{- fail (printf "%s names %s, and an approval anyone can make is no approval" $where $name) -}}
 {{- end -}}
+{{- /* Kubernetes reserves system: and puts identities into those groups
+      itself: system:serviceaccounts holds every Pod's token. A user named
+      system:serviceaccount:<namespace>:<name> is one ServiceAccount, and
+      stays allowed. */ -}}
+{{- if and (eq $kind "Group") (hasPrefix "system:" $name) -}}
+{{- fail (printf "%s is the group %s, which Kubernetes fills itself; name the users or ServiceAccounts who approve" $where $name) -}}
+{{- end -}}
 {{- if or (eq $kind "User") (eq $kind "Group") -}}
 {{- if $namespace -}}
 {{- fail (printf "%s is a %s, which has no namespace" $where $kind) -}}

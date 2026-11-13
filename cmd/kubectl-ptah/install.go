@@ -50,6 +50,11 @@ const (
 // registry. An older one installs from its assets, as the install page says.
 var firstPublishedChart = chartVersion{0, 2, 10}
 
+// upgradePage is where a person upgrades the operator. install does not: an
+// upgrade to a new manager image also needs --force-conflicts, which an
+// install must not pass.
+const upgradePage = "Upgrade in the Operations page"
+
 // chartVersion is a release's version as the chart and its registry tag carry
 // it: three numbers, with no leading v.
 type chartVersion [3]int
@@ -165,6 +170,14 @@ func (i installer) run(ctx context.Context, arguments []string, stdout, stderr i
 		}
 	}
 
+	if !request.yaml {
+		status, problem := i.checkInstalled(ctx, request, stderr)
+		if problem != "" {
+			fmt.Fprintf(stderr, "kubectl-ptah: %s\n", problem)
+			return status
+		}
+	}
+
 	command := i.helmArguments(request)
 	fmt.Fprintf(stderr, "kubectl-ptah: running %s\n", shellQuote(append([]string{"helm"}, command...)))
 	if err := i.helm(ctx, command, stdout, stderr); err != nil {
@@ -206,6 +219,13 @@ func (i installer) settle(request *installation, requested string, versionGiven 
 			return fmt.Sprintf("--approver %q is not a username: it is empty or has leading or trailing space", approver)
 		}
 	}
+	for _, file := range request.valuesFiles {
+		// helm reads --values as a comma-separated list, so a comma or a quote
+		// would make one path two or none, and helm is not handed standard input.
+		if file == "-" || strings.ContainsAny(file, `,"`) {
+			return fmt.Sprintf("--values %q is not a path install can hand helm: it is - or holds a comma or a double quote", file)
+		}
+	}
 	if request.outDir != "" && !request.yaml {
 		return "--out-dir is where --yaml writes; without --yaml nothing is written"
 	}
@@ -235,6 +255,57 @@ func (i installer) chartArguments(request installation) []string {
 	return arguments
 }
 
+// listArguments asks helm for the release install would write, in any state an
+// upgrade would act on.
+func (i installer) listArguments(request installation) []string {
+	command := []string{"list", "--namespace", request.namespace, "--filter", "^" + releaseName + "$",
+		"--deployed", "--failed", "--pending", "--output", "json"}
+	return append(command, i.clusterArguments(request)...)
+}
+
+// clusterArguments name the cluster a command reads or writes.
+func (i installer) clusterArguments(request installation) []string {
+	var arguments []string
+	if request.kubeconfig != "" {
+		arguments = append(arguments, "--kubeconfig", request.kubeconfig)
+	}
+	if request.kubeContext != "" {
+		arguments = append(arguments, "--kube-context", request.kubeContext)
+	}
+	return arguments
+}
+
+// checkInstalled reads the release install would write. A release of another
+// chart version is an upgrade, and install refuses it: it returns the exit
+// status and what is wrong, or "".
+func (i installer) checkInstalled(ctx context.Context, request installation, stderr io.Writer) (int, string) {
+	var listed bytes.Buffer
+	if err := i.helm(ctx, i.listArguments(request), &listed, stderr); err != nil {
+		return exitFailed, fmt.Sprintf("read the installed release: %v", err)
+	}
+	var releases []struct {
+		Name  string `json:"name"`
+		Chart string `json:"chart"`
+	}
+	if err := json.Unmarshal(listed.Bytes(), &releases); err != nil {
+		return exitFailed, fmt.Sprintf("read the installed release: helm list printed what install cannot read: %v", err)
+	}
+	for _, release := range releases {
+		if release.Name != releaseName {
+			continue
+		}
+		installed, ok := parseChartVersion(strings.TrimPrefix(release.Chart, releaseChartName+"-"))
+		if !ok || !strings.HasPrefix(release.Chart, releaseChartName+"-") {
+			return exitUsage, fmt.Sprintf("release %s in namespace %s is chart %s, which install did not put there", releaseName, request.namespace, release.Chart)
+		}
+		if installed != request.version {
+			return exitUsage, fmt.Sprintf("release %s in namespace %s is %s, and this is %s: install does not upgrade. "+
+				"Upgrade with helm as %s says", releaseName, request.namespace, installed, request.version, upgradePage)
+		}
+	}
+	return exitOK, ""
+}
+
 // helmArguments is the whole helm command line for request.
 func (i installer) helmArguments(request installation) []string {
 	shared := i.chartArguments(request)
@@ -248,15 +319,12 @@ func (i installer) helmArguments(request installation) []string {
 	// --wait: helm otherwise returns once its hooks are done, which is not the
 	// manager serving admission. The chart finishes replacing its bootstrap
 	// certificate before the rotator reports ready, so the wait covers that.
+	// --reset-values: an upgrade given no values keeps the last run's, so a run
+	// without --approver would keep the approvers an earlier run bound. With
+	// it, each run installs exactly its own flags.
 	command := append([]string{"upgrade", "--install"}, shared...)
-	command = append(command, "--create-namespace", "--wait", "--timeout", request.timeout.String())
-	if request.kubeconfig != "" {
-		command = append(command, "--kubeconfig", request.kubeconfig)
-	}
-	if request.kubeContext != "" {
-		command = append(command, "--kube-context", request.kubeContext)
-	}
-	return command
+	command = append(command, "--reset-values", "--create-namespace", "--wait", "--timeout", request.timeout.String())
+	return append(command, i.clusterArguments(request)...)
 }
 
 // approverSubjects is the chart value for usernames, as JSON, so that a name

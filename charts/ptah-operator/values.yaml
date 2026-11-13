@@ -361,9 +361,10 @@ approverClusterRole:
   # name, or kind ServiceAccount with a name and a namespace. Empty binds
   # nobody. To keep an approver to the namespaces they decide for, bind the
   # role there with a RoleBinding of your own instead. kubectl ptah install
-  # --approver fills this with users. system:authenticated,
-  # system:unauthenticated and system:anonymous are refused: an approval
-  # anyone can make is no approval.
+  # --approver fills this with users. system:anonymous and every group whose
+  # name starts with system: are refused: Kubernetes fills those groups
+  # itself, and system:authenticated or system:serviceaccounts would let
+  # anyone, or any Pod, approve.
   subjects: []
 
 # A PodDisruptionBudget for the manager, so a drain cannot take every replica

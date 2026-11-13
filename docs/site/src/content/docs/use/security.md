@@ -151,9 +151,15 @@ The operator separates five authorities:
    schema plan's SQL is stored in, and create immutable approvals for either
    family, and the acknowledgment that settles a migration run nobody
    accounted for. The chart creates an optional
-   ClusterRole but never binds it automatically. RBAC decides who may
-   approve; it does not by itself decide that the approver is a second
-   person rather than the author. See
+   ClusterRole and binds it only to the subjects
+   `approverClusterRole.subjects` names, which `kubectl ptah install
+   --approver` fills, with one ClusterRoleBinding. That binding reaches every
+   namespace, including those created later: a subject bound there reads
+   every namespace's plan SQL in its chunks, may approve any plan waiting for
+   an approval, and may settle another namespace's unresolved migration run.
+   A RoleBinding in each namespace keeps an approver to fewer. RBAC decides
+   who may approve; it does not by itself decide that the approver is a
+   second person rather than the author. See
    [Refusing a self-approval](#refusing-a-self-approval).
 3. The controller may manage plans and their chunks, Jobs, Leases, status, and
    Events, and create the ConfigMaps an Apply mounts its plan through. Its
@@ -607,7 +613,9 @@ intentionally inspectable by independently authorized approvers, but arbitrary
 schema names, defaults, comments, and literals may still be sensitive. Restrict
 `PtahSchemaPlanChunk` read access in application namespaces accordingly. One
 rule on that kind reads every plan in the namespace, and the built-in approver
-role carries it, as described in [Exact-plan approvals](../approvals/). What
+role carries it, as described in [Exact-plan approvals](../approvals/). A
+subject in `approverClusterRole.subjects` holds that rule in every namespace,
+as [trust boundary 2](#trust-boundaries) says. What
 that access is used with is `kubectl ptah`. Its read commands only read: they
 need `get` on the schema, the plan and its chunks and nothing else, and list
 approvals only where `list` on them is granted. `kubectl ptah approve` creates

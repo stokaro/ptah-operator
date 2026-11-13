@@ -14,16 +14,41 @@ import (
 	"github.com/stokaro/ptah-operator/hack/chartstamp"
 )
 
-// recordingHelm stands in for helm: it keeps every argument list it was handed
-// and answers with err.
+// recordingHelm stands in for helm: it keeps every argument list it was handed.
+// It answers helm list with listed, no release when that is empty, or with
+// listErr, and every other command with err.
 type recordingHelm struct {
-	calls [][]string
-	err   error
+	calls   [][]string
+	listed  string
+	listErr error
+	err     error
 }
 
-func (h *recordingHelm) run(_ context.Context, arguments []string, _, _ io.Writer) error {
+func (h *recordingHelm) run(_ context.Context, arguments []string, stdout, _ io.Writer) error {
 	h.calls = append(h.calls, slices.Clone(arguments))
-	return h.err
+	if arguments[0] != "list" {
+		return h.err
+	}
+	if h.listErr != nil {
+		return h.listErr
+	}
+	listed := h.listed
+	if listed == "" {
+		listed = "[]"
+	}
+	_, err := io.WriteString(stdout, listed)
+	return err
+}
+
+// writes is the commands that were not helm list.
+func (h *recordingHelm) writes() [][]string {
+	var writes [][]string
+	for _, call := range h.calls {
+		if call[0] != "list" {
+			writes = append(writes, call)
+		}
+	}
+	return writes
 }
 
 func releasedInstaller(helm *recordingHelm) installer {
@@ -71,6 +96,9 @@ func TestInstallRefusesBeforeHelm(t *testing.T) {
 		{name: "an argument", arguments: []string{"ptah-operator"}, says: `install takes no arguments, and was given ["ptah-operator"]`},
 		{name: "a flag install does not take", arguments: []string{"--set", "image.digest=x"}, says: "unknown flag: --set"},
 		{name: "an out-dir an earlier render wrote", arguments: []string{"--yaml", "--out-dir", existing}, says: "already exists; remove it first"},
+		{name: "values from standard input", arguments: []string{"-f", "-"}, says: `--values "-" is not a path install can hand helm`},
+		{name: "values with a comma", arguments: []string{"-f", "team,a.yaml"}, says: `--values "team,a.yaml" is not a path install can hand helm`},
+		{name: "values with a quote", arguments: []string{"-f", `a"b.yaml`}, says: `is not a path install can hand helm`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -112,7 +140,7 @@ func TestInstallHandsHelmTheseArguments(t *testing.T) {
 		{
 			name: "the plugin's own release",
 			want: []string{"upgrade", "--install", "ptah-operator", chart, "--version", "0.2.11", "--namespace", "ptah-system",
-				"--create-namespace", "--wait", "--timeout", "5m0s"},
+				"--reset-values", "--create-namespace", "--wait", "--timeout", "5m0s"},
 		},
 		{
 			name: "the plugin's own release, rendered", arguments: []string{"--yaml"},
@@ -121,12 +149,12 @@ func TestInstallHandsHelmTheseArguments(t *testing.T) {
 		{
 			name: "a release named, with a v", pluginVersion: "dev", arguments: []string{"--version", "v0.2.12"},
 			want: []string{"upgrade", "--install", "ptah-operator", chart, "--version", "0.2.12", "--namespace", "ptah-system",
-				"--create-namespace", "--wait", "--timeout", "5m0s"},
+				"--reset-values", "--create-namespace", "--wait", "--timeout", "5m0s"},
 		},
 		{
 			name: "the first published release", arguments: []string{"--version", "0.2.10"},
 			want: []string{"upgrade", "--install", "ptah-operator", chart, "--version", "0.2.10", "--namespace", "ptah-system",
-				"--create-namespace", "--wait", "--timeout", "5m0s"},
+				"--reset-values", "--create-namespace", "--wait", "--timeout", "5m0s"},
 		},
 		{
 			name: "every flag",
@@ -135,7 +163,7 @@ func TestInstallHandsHelmTheseArguments(t *testing.T) {
 			want: []string{"upgrade", "--install", "ptah-operator", chart, "--version", "0.2.11", "--namespace", "operators",
 				"--values", "first.yaml", "--values", "second.yaml",
 				"--set-json", `approverClusterRole.subjects=[{"kind":"User","name":"alice@example.com"},{"kind":"User","name":"o'brien, \"ops\""}]`,
-				"--create-namespace", "--wait", "--timeout", "1m30s", "--kubeconfig", "/tmp/config", "--kube-context", "kind-lab"},
+				"--reset-values", "--create-namespace", "--wait", "--timeout", "1m30s", "--kubeconfig", "/tmp/config", "--kube-context", "kind-lab"},
 		},
 		{
 			name:      "every flag, rendered into a directory",
@@ -159,8 +187,22 @@ func TestInstallHandsHelmTheseArguments(t *testing.T) {
 			if status := install.run(context.Background(), test.arguments, &stdout, &stderr); status != exitOK {
 				t.Fatalf("install %v = %d\n%s", test.arguments, status, stderr.String())
 			}
-			if len(helm.calls) != 1 || !slices.Equal(helm.calls[0], test.want) {
+			if writes := helm.writes(); len(writes) != 1 || !slices.Equal(writes[0], test.want) {
 				t.Fatalf("install %v ran helm with\n%q\nwant\n%q", test.arguments, helm.calls, test.want)
+			}
+			// An install reads the release first, of the cluster it then writes;
+			// a render reads nothing.
+			var reads [][]string
+			if test.want[0] != "template" {
+				namespace := test.want[slices.Index(test.want, "--namespace")+1]
+				read := []string{"list", "--namespace", namespace, "--filter", "^ptah-operator$", "--deployed", "--failed", "--pending", "--output", "json"}
+				if at := slices.Index(test.want, "--kubeconfig"); at >= 0 {
+					read = append(read, test.want[at:]...)
+				}
+				reads = [][]string{read}
+			}
+			if got := helm.calls[:len(helm.calls)-1]; !slices.EqualFunc(got, reads, slices.Equal) {
+				t.Fatalf("install %v read the cluster with\n%q\nwant\n%q", test.arguments, got, reads)
 			}
 			// Printed first, as a person would paste it into a shell.
 			if want := "kubectl-ptah: running " + shellQuote(append([]string{"helm"}, test.want...)) + "\n"; stderr.String() != want {
@@ -187,11 +229,11 @@ func TestInstallAndItsRenderShareTheChartArguments(t *testing.T) {
 				t.Fatalf("install %v = %d", arguments, status)
 			}
 		}
-		installed, rendered := helm.calls[0], helm.calls[1]
+		installed, rendered := helm.writes()[0], helm.writes()[1]
 		if installed[0] != "upgrade" || installed[1] != "--install" || rendered[0] != "template" {
 			t.Fatalf("the calls are %q", helm.calls)
 		}
-		upTo := slices.Index(installed, "--create-namespace")
+		upTo := slices.Index(installed, "--reset-values")
 		renderedUpTo := slices.Index(rendered, "--output-dir")
 		if upTo < 0 || renderedUpTo < 0 || !slices.Equal(installed[2:upTo], rendered[1:renderedUpTo]) {
 			t.Fatalf("with %v, the install hands helm\n%q\nand the render\n%q", flags, installed, rendered)
@@ -209,6 +251,101 @@ func TestInstallReportsAHelmThatFailed(t *testing.T) {
 	if status != exitFailed || !strings.Contains(stderr.String(), "kubectl-ptah: helm upgrade: exit status 1") {
 		t.Fatalf("install = %d, said:\n%s", status, stderr.String())
 	}
+}
+
+// install does not upgrade: a release of another chart version would be
+// upgraded without --force-conflicts, which leaves the manager at no replicas.
+// It reads the release first, and writes only over the same version.
+func TestInstallWritesOnlyOverItsOwnVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		listed  string
+		listErr error
+		status  int
+		says    string
+	}{
+		{name: "nothing installed", listed: "[]", status: exitOK},
+		{name: "the same version", listed: `[{"name":"ptah-operator","namespace":"ptah-system","status":"deployed","chart":"ptah-operator-0.2.11"}]`, status: exitOK},
+		{name: "the same version, failed", listed: `[{"name":"ptah-operator","status":"failed","chart":"ptah-operator-0.2.11"}]`, status: exitOK},
+		{name: "a release whose name only contains it", listed: `[{"name":"ptah-operator-old","chart":"ptah-operator-0.2.10"}]`, status: exitOK},
+		{
+			name: "an older version", listed: `[{"name":"ptah-operator","status":"deployed","chart":"ptah-operator-0.2.10"}]`, status: exitUsage,
+			says: "release ptah-operator in namespace ptah-system is 0.2.10, and this is 0.2.11: install does not upgrade. Upgrade with helm as Upgrade in the Operations page says",
+		},
+		{
+			name: "a newer version", listed: `[{"name":"ptah-operator","status":"pending-upgrade","chart":"ptah-operator-0.2.12"}]`, status: exitUsage,
+			says: "is 0.2.12, and this is 0.2.11: install does not upgrade",
+		},
+		{
+			name: "another chart", listed: `[{"name":"ptah-operator","chart":"something-else-1.0.0"}]`, status: exitUsage,
+			says: "release ptah-operator in namespace ptah-system is chart something-else-1.0.0, which install did not put there",
+		},
+		{name: "a list helm could not run", listErr: errors.New("helm list: exit status 1"), status: exitFailed, says: "read the installed release: helm list: exit status 1"},
+		{name: "a list install cannot read", listed: "NAME\tNAMESPACE\n", status: exitFailed, says: "helm list printed what install cannot read"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			helm := &recordingHelm{listed: test.listed, listErr: test.listErr}
+			var stderr bytes.Buffer
+
+			status := releasedInstaller(helm).run(context.Background(), nil, io.Discard, &stderr)
+
+			if status != test.status || !strings.Contains(stderr.String(), test.says) {
+				t.Fatalf("install = %d, said:\n%s\nwant %d and %q", status, stderr.String(), test.status, test.says)
+			}
+			if wrote := len(helm.writes()) != 0; wrote != (test.status == exitOK) {
+				t.Fatalf("install = %d and ran %q", status, helm.calls)
+			}
+		})
+	}
+}
+
+// helmOnPath runs the helm a person has, after asking it its version. The
+// rows put a helm of their own first on PATH, so they share the process
+// environment and do not run in parallel.
+func TestInstallRunsOnlyAHelmItCanUse(t *testing.T) {
+	directory := t.TempDir()
+	ran := filepath.Join(directory, "ran")
+	for _, row := range []struct {
+		name, version, says string
+		runs                bool
+	}{
+		{name: "Helm 4", version: "v4.3.1", runs: true},
+		{name: "Helm 3", version: "v3.19.2", says: "helm is v3.19.2, and install runs Helm 4 or newer"},
+		{name: "a version it cannot read", version: "unknown", says: "which this command cannot read"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			_ = os.Remove(ran)
+			script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s' '" + row.version + "'; exit 0; fi\n: > '" + ran + "'\n"
+			if err := os.WriteFile(filepath.Join(directory, "helm"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", directory)
+
+			err := helmOnPath(nil)(context.Background(), []string{"upgrade", "--install"}, io.Discard, io.Discard)
+
+			_, statErr := os.Stat(ran)
+			ranIt := statErr == nil
+			if row.runs {
+				if err != nil || !ranIt {
+					t.Fatalf("helm %s: err = %v, and it ran: %v", row.version, err, ranIt)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), row.says) || ranIt {
+				t.Fatalf("helm %s: err = %v, want %q and nothing run (ran: %v)", row.version, err, row.says, ranIt)
+			}
+		})
+	}
+	t.Run("no helm", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		err := helmOnPath(nil)(context.Background(), []string{"upgrade"}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "install runs Helm 4 or newer, and no helm is on PATH") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
 
 func TestInstallRunsHelm4OrNewer(t *testing.T) {
@@ -280,7 +417,7 @@ func TestTheInstallPageShowsTheCommandInstallRuns(t *testing.T) {
 	if status := releasedInstaller(helm).run(context.Background(), []string{"--version", "0.2.11"}, io.Discard, io.Discard); status != exitOK {
 		t.Fatalf("install = %d", status)
 	}
-	if runs := shellQuote(append([]string{"helm"}, helm.calls[0]...)); shown != runs {
+	if runs := shellQuote(append([]string{"helm"}, helm.writes()[0]...)); shown != runs {
 		t.Fatalf("%s shows\n%s\nand install runs\n%s", page, shown, runs)
 	}
 }
