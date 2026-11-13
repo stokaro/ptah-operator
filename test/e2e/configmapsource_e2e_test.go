@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -42,6 +43,7 @@ func TestConfigMapSources(t *testing.T) {
 		{"configmap-schema", c.schemaFromConfigMap},
 		{"configmap-schema-edits", c.schemaEdits},
 		{"configmap-migration", c.migrationFromConfigMap},
+		{"journal-audit-lines", c.journalAuditLines},
 		{"configmap-snapshot-refused", c.replacedSnapshotRefused},
 		{"configmap-unreadable-source", c.unreadableSources},
 		{"database-reachable-kind", c.targetReachability},
@@ -585,6 +587,111 @@ func (c *configMapRun) migrationFromConfigMap() {
 		c.fatalf("an edit to an unselected key published %d migration plans", after-plans)
 	}
 	c.logf("PASS a migration sequence from a ConfigMap applied with no registry; an unselected edit planned nothing")
+}
+
+// journalAuditLines reads the manager's logs after the schema's two Applies
+// and the migration's run, and holds them to the journals both resources
+// store: one line for each entry, equal to it field by field, and no other
+// line for either resource. The journals are read before and after the logs
+// and must not move between, so a line still queued is waited for rather than
+// read as missing.
+func (c *configMapRun) journalAuditLines() {
+	c.t.Helper()
+	c.waitForSchema("the schema to be in sync", inSyncSchema)
+	c.waitForMigration("the migration to be in sync", func(migration *ptahv1alpha1.PtahMigration) bool {
+		return migration.Status.Phase == ptahv1alpha1.MigrationPhaseInSync && settledMigration(migration)
+	})
+	var held []journalAudited
+	var logs []managerJournalLog
+	c.wait("one manager log line for each journal entry", func() (bool, string) {
+		before := c.journalResources()
+		read, err := c.managerJournalLogs()
+		if err != nil {
+			return false, err.Error()
+		}
+		after := c.journalResources()
+		if !sameJournals(before, after) {
+			return false, "a journal moved while the logs were read"
+		}
+		if err := journalLogsCover(read, after); err != nil {
+			c.fatalf("%v", err)
+		}
+		if err := journalLinesHold(after, read); err != nil {
+			return false, err.Error()
+		}
+		held, logs = after, read
+		return true, ""
+	})
+	entries, lines := 0, 0
+	for _, resource := range held {
+		entries += len(resource.Journal.Entries)
+	}
+	for _, log := range logs {
+		lines += len(log.Lines)
+	}
+	c.logf("PASS %d journal entries of %s and %s each had one line on the logs of %d manager Pods, as stored; %d journal lines read",
+		entries, configMapSchema, configMapMigration, len(logs), lines)
+}
+
+// journalResources reads the schema and the migration with the entries their
+// first scenarios made: two Applies and their approvals for the schema, one
+// run and its approval for the migration.
+func (c *configMapRun) journalResources() []journalAudited {
+	c.t.Helper()
+	schema, migration := c.schema(), c.migration()
+	return []journalAudited{
+		{Kind: "PtahSchema", Object: schema.ObjectMeta, Journal: schema.Status.Journal, Declared: []declaredJournalEntries{
+			{Type: ptahv1alpha1.JournalApprovalAccepted, Count: 2},
+			{Type: ptahv1alpha1.JournalApplyFinished, Outcome: ptahv1alpha1.JournalSucceeded, Count: 2},
+		}},
+		{Kind: "PtahMigration", Object: migration.ObjectMeta, Journal: migration.Status.Journal, Declared: []declaredJournalEntries{
+			{Type: ptahv1alpha1.JournalApprovalAccepted, Count: 1},
+			{Type: ptahv1alpha1.JournalRunFinished, Outcome: ptahv1alpha1.JournalSucceeded, Count: 1},
+		}},
+	}
+}
+
+// managerJournalLogs reads the manager container's log of every manager Pod,
+// with the kubelet's timestamps. The Deployment's replica count is how many
+// there must be: the leader writes the lines, and leadership may have moved.
+func (c *configMapRun) managerJournalLogs() ([]managerJournalLog, error) {
+	deployments := &appsv1.DeploymentList{}
+	if err := c.cluster.Client.List(c.ctx, deployments, client.InNamespace(c.in.OperatorNamespace),
+		client.MatchingLabels{"app.kubernetes.io/component": "controller"}); err != nil {
+		return nil, err
+	}
+	if len(deployments.Items) != 1 || deployments.Items[0].Spec.Replicas == nil || deployments.Items[0].Spec.Selector == nil {
+		return nil, fmt.Errorf("namespace %s holds %d manager Deployments, want one with replicas and a selector", c.in.OperatorNamespace, len(deployments.Items))
+	}
+	deployment := deployments.Items[0]
+	pods := &corev1.PodList{}
+	if err := c.cluster.Client.List(c.ctx, pods, client.InNamespace(c.in.OperatorNamespace),
+		client.MatchingLabels(deployment.Spec.Selector.MatchLabels)); err != nil {
+		return nil, err
+	}
+	if len(pods.Items) != int(*deployment.Spec.Replicas) {
+		return nil, fmt.Errorf("deployment %s has %d Pods, want its %d replicas", deployment.Name, len(pods.Items), *deployment.Spec.Replicas)
+	}
+	var logs []managerJournalLog
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
+			return nil, fmt.Errorf("manager Pod %s is %s, deleting %t", pod.Name, pod.Status.Phase, pod.DeletionTimestamp != nil)
+		}
+		raw, err := c.cluster.Clientset.CoreV1().Pods(pod.Namespace).
+			GetLogs(pod.Name, &corev1.PodLogOptions{Container: "manager", Timestamps: true}).DoRaw(c.ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read the log of manager Pod %s: %w", pod.Name, err)
+		}
+		if !c.scanner.ready() || c.scanner.leaks(raw) {
+			c.fatalf("the log of manager Pod %s carries the database password", pod.Name)
+		}
+		log, err := readManagerJournalLog(pod.Name, raw)
+		if err != nil {
+			c.fatalf("%v", err)
+		}
+		logs = append(logs, log)
+	}
+	return logs, nil
 }
 
 // replacedSnapshotRefused replaces the snapshot a plan was computed from, after

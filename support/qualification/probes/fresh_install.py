@@ -206,7 +206,9 @@ def recorded_identity_findings(status, identities):
 # A MySQL authority section through v0.2.9 named these privileges in prose
 # and showed no statement.
 MYSQL_PRIVILEGES_THROUGH_V0_2_9 = ('SELECT', 'CREATE', 'ALTER', 'DROP', 'INDEX', 'REFERENCES')
-MYSQL_GRANT = re.compile(r"^GRANT ([A-Z_ ,]+) ON app\.\* TO 'ptah'@'%';$", re.M)
+# A page through v0.2.10 names the database bare; later pages put it in
+# backquotes, where an escaped wildcard can stand.
+MYSQL_GRANT = re.compile(r"^GRANT ([A-Z_ ,]+) ON (?:app|`app`)\.\* TO 'ptah'@'%';$", re.M)
 
 
 def mysql_privileges(databases):
@@ -521,7 +523,7 @@ class Walkthrough:
             self.admin_sql(engine, f"CREATE ROLE application LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE;\n"
                                    "CREATE DATABASE application;\n"
                                    "REVOKE ALL ON DATABASE application FROM PUBLIC;\n"
-                                   "GRANT CONNECT ON DATABASE application TO application;\n"
+                                   "GRANT CONNECT, TEMPORARY ON DATABASE application TO application;\n"
                                    "\\c application\n"
                                    "GRANT USAGE, CREATE ON SCHEMA public TO application;\n")
             return f'postgres://application:{password}@postgres.{self.fixtures}.svc.cluster.local:5432/application?sslmode=disable'

@@ -14,10 +14,14 @@ import (
 // the read that finds the database changed records exactly one, naming both
 // plans (#820), and the status write that published the new plan records the
 // replacement in the journal. It stays quiet for the reads after that one as well.
+//
+// It connects as e2e_plan_stale_login, created from the statements
+// support/databases.md shows, which created the seed and owns it. The server's
+// superuser drops the column.
 func (f *faultRun) planStaleOnlyOnReplacement() {
 	f.t.Helper()
 	const name, database, secret = "e2e-plan-stale", "e2e_plan_stale", "e2e-plan-stale-db"
-	f.createDatabase("postgresql", database, secret)
+	f.createDocumentedDatabase("postgresql", database, secret)
 	f.createSchema(faultSchema{
 		name: name, engine: "PostgreSQL", reference: f.pgReference, secret: secret,
 		coordinationKey: "e2e/plan-stale/postgresql", interval: "15s",

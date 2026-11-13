@@ -779,7 +779,11 @@ creation and a run by when its hold was recorded.
 The journal is written in the status write that records the transition, so it
 costs no request of its own. Its times come from that status, such as a plan's
 creation or a run's end, or from the manager's clock when the transition
-carries none, as conditions do.
+carries none, as conditions do. Once that write is stored, the manager also
+writes each entry the write added or changed as one JSON line on its standard
+output, read from the object the API server returned.
+[The journal in the manager's log](../../use/audit/#journal-lines) says what
+those lines are worth.
 
 A migration's `RunFinished`, `Verified` and `RunAcknowledged` entries carry
 `operationID`, the Apply claim they belong to, so the run's end, the reading after

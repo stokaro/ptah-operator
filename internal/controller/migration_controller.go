@@ -123,9 +123,12 @@ type MigrationReconciler struct {
 	// LockNamespace is one shared coordination namespace for every managed
 	// resource, including resources that live in different namespaces: two
 	// namespaces that address the same database must not run at the same time.
-	LockNamespace    string
-	Clock            func() time.Time
-	Telemetry        telemetry.Observer
+	LockNamespace string
+	Clock         func() time.Time
+	Telemetry     telemetry.Observer
+	// JournalLog receives each journal entry a status write stored. Nil writes
+	// none.
+	JournalLog       JournalLog
 	AdmissionOptions podintent.Options
 
 	// dispatch takes a claim to its one permitted create. Its zero value runs
@@ -2682,8 +2685,9 @@ func (r *MigrationReconciler) patchMigrationStatus(
 	// The journal is stamped by the wall clock, as conditions are: the
 	// injected clock decides deadlines, and a journal entry decides nothing.
 	now := metav1.Now().Time
-	after.Status.Journal = lifecyclejournal.Record(after.Status.Journal,
+	journal, written := lifecyclejournal.Record(after.Status.Journal,
 		lifecyclejournal.MigrationEntries(&before.Status, &after.Status, before.Status.Journal, now), now)
+	after.Status.Journal = journal
 	// A record of a run nobody accounted for is copied onto metadata before
 	// status stores it, and the copy comes off only after status has settled
 	// it. migration_unresolved_run.go says why the order is this one.
@@ -2694,6 +2698,9 @@ func (r *MigrationReconciler) patchMigrationStatus(
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch migration status: %w", err)
 	}
+	// The patch decoded the API server's answer into after. The entries are
+	// stored whatever the removal of the copy below does.
+	logStoredEntries(r.JournalLog, "PtahMigration", after, after.Status.Journal, written)
 	r.observeMigrationStatusTransitions(before, after)
 	return r.dropSettledUnresolvedRunCopy(ctx, before, after)
 }

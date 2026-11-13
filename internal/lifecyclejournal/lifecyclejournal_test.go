@@ -35,7 +35,7 @@ func published(plan string, offset time.Duration) operatorv1alpha1.JournalEntry 
 
 func TestRecordStartsCoveringAtTheFirstWrite(t *testing.T) {
 	t.Parallel()
-	journal := lifecyclejournal.Record(nil, nil, now)
+	journal, _ := lifecyclejournal.Record(nil, nil, now)
 	if journal == nil || !journal.CoveredSince.Time.Equal(now) || len(journal.Entries) != 0 {
 		t.Fatalf("journal = %#v, want an empty one covering since %s", journal, now)
 	}
@@ -44,7 +44,7 @@ func TestRecordStartsCoveringAtTheFirstWrite(t *testing.T) {
 func TestRecordFoldsAFailureRepeatedInARow(t *testing.T) {
 	t.Parallel()
 	start := &operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour)}
-	journal := lifecyclejournal.Record(start, []operatorv1alpha1.JournalEntry{
+	journal, _ := lifecyclejournal.Record(start, []operatorv1alpha1.JournalEntry{
 		failure("Observe", "ObservationFailed", -3*time.Minute),
 		failure("Observe", "ObservationFailed", -2*time.Minute),
 		failure("Observe", "ObservationFailed", -time.Minute),
@@ -84,7 +84,7 @@ func TestRecordKeepsDistinctFailuresApart(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			journal := lifecyclejournal.Record(nil, test.entries, now)
+			journal, _ := lifecyclejournal.Record(nil, test.entries, now)
 			if len(journal.Entries) != len(test.entries) {
 				t.Fatalf("entries = %#v, want each kept apart", journal.Entries)
 			}
@@ -98,7 +98,7 @@ func TestRecordDropsTheOldestPastTheCountAndMovesCoverage(t *testing.T) {
 	for index := range lifecyclejournal.MaxEntries + 2 {
 		entries = append(entries, published(fmt.Sprintf("plan-%02d", index), time.Duration(index)*time.Minute))
 	}
-	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour)}, entries, now)
+	journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-time.Hour)}, entries, now)
 	if len(journal.Entries) != lifecyclejournal.MaxEntries || journal.Entries[0].Plan != "plan-02" {
 		t.Fatalf("kept %d entries from %q, want %d from plan-02", len(journal.Entries), journal.Entries[0].Plan, lifecyclejournal.MaxEntries)
 	}
@@ -113,7 +113,7 @@ func TestRecordDropsWhatIsAMonthOlderThanTheNewest(t *testing.T) {
 	t.Parallel()
 	old := failure("Observe", "ObservationFailed", -40*24*time.Hour)
 	old.LastAt, old.Count = ptr(at(-29*24*time.Hour)), 2
-	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-50 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
+	journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-50 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
 		published("plan-gone", -31*24*time.Hour),
 		old,
 		published("plan-new", 0),
@@ -204,7 +204,7 @@ func TestRecordKeepsThePlanNothingCarriedOut(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, test.entries, now)
+			journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, test.entries, now)
 			if len(journal.Entries) > lifecyclejournal.MaxEntries {
 				t.Fatalf("kept %d entries, past the bound of %d", len(journal.Entries), lifecyclejournal.MaxEntries)
 			}
@@ -236,7 +236,7 @@ func TestRecordKeepsThePlanNothingCarriedOut(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, []operatorv1alpha1.JournalEntry{
+			journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-2 * month)}, []operatorv1alpha1.JournalEntry{
 				published("plan-a", -month-time.Hour), test.ended, failure("Observe", "Failed", 0),
 			}, now)
 			if names := planNames(journal.Entries); !slices.Equal(names, []string{""}) {
@@ -336,7 +336,7 @@ func TestSchemaEntriesNameThePlanAPublicationReplaced(t *testing.T) {
 // than the write's: two months behind it, a day apart, both stay.
 func TestRecordKeepsEntriesDatedByAnotherClock(t *testing.T) {
 	t.Parallel()
-	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-90 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
+	journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-90 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
 		published("plan-a", -61*24*time.Hour), published("plan-b", -60*24*time.Hour),
 	}, now)
 	if names := planNames(journal.Entries); !slices.Equal(names, []string{"plan-a", "plan-b"}) {
@@ -349,7 +349,7 @@ func TestRecordKeepsEntriesDatedByAnotherClock(t *testing.T) {
 // and taking it out of the middle would leave a gap coverage does not state.
 func TestRecordStopsDroppingAtTheFirstEntryWithinTheBounds(t *testing.T) {
 	t.Parallel()
-	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-90 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
+	journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(-90 * 24 * time.Hour)}, []operatorv1alpha1.JournalEntry{
 		failure("Observe", "Young", -24*time.Hour), failure("Observe", "Old", -40*24*time.Hour), published("plan-a", 0),
 	}, now)
 	if len(journal.Entries) != 3 {
@@ -362,7 +362,7 @@ func TestRecordStopsDroppingAtTheFirstEntryWithinTheBounds(t *testing.T) {
 
 func TestRecordNeverMovesCoverageBack(t *testing.T) {
 	t.Parallel()
-	journal := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(0)}, []operatorv1alpha1.JournalEntry{
+	journal, _ := lifecyclejournal.Record(&operatorv1alpha1.LifecycleJournal{CoveredSince: at(0)}, []operatorv1alpha1.JournalEntry{
 		published("plan-before", -40*24*time.Hour), published("plan-after", time.Hour),
 	}, now)
 	if !journal.CoveredSince.Time.Equal(now) {
@@ -1325,7 +1325,7 @@ func TestRecordKeepsTwoDecisionsUnderOneName(t *testing.T) {
 	before := operatorv1alpha1.PtahMigrationStatus{}
 	for index := range writes {
 		after := writes[index]
-		journal = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
+		journal, _ = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
 		before = after
 	}
 	var decisions []string
@@ -1570,7 +1570,7 @@ func TestMigrationEntriesKeepTwoExecutionsApart(t *testing.T) {
 			before := operatorv1alpha1.PtahMigrationStatus{}
 			for index := range writes {
 				after := writes[index]
-				journal = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
+				journal, _ = lifecyclejournal.Record(journal, lifecyclejournal.MigrationEntries(&before, &after, journal, now), now)
 				before = after
 			}
 			var outcomes []operatorv1alpha1.JournalOutcome

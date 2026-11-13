@@ -561,15 +561,20 @@ func TestMaximumEscapingPlanCrossesTLSAndPersists(t *testing.T) {
 	}
 	store := testStore(t)
 	certs := testCertificates(t, identity)
+	// The claim is that the largest plan arrives intact and persists, not how
+	// fast. Under the race detector this delivery takes most of a minute on an
+	// idle host, so a one-minute bound failed it on a loaded one. Both sides
+	// get the longest bound they accept.
+	const bound = 5 * time.Minute
 	r := testReceiver(t, store, func(_ context.Context, got Identity) error {
 		if got != identity {
 			return ErrAuthority
 		}
 		return nil
-	}, time.Minute)
+	}, bound)
 	server := startReceiver(t, r, certs, nil)
 	sender, err := NewSender(server.URL, identity, &tls.Config{RootCAs: certs.roots, Certificates: []tls.Certificate{certs.client}},
-		RetryPolicy{Attempts: 1, Interval: time.Millisecond, AttemptTimeout: time.Minute, TotalTimeout: time.Minute})
+		RetryPolicy{Attempts: 1, Interval: time.Millisecond, AttemptTimeout: bound, TotalTimeout: bound})
 	if err != nil {
 		t.Fatal(err)
 	}

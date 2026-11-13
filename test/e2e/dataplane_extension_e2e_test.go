@@ -17,6 +17,12 @@ import (
 // inventory entry that says one extension is declared and none is held (#795).
 // The schema then waits for a person to approve the plan that puts the
 // extension back, and the row leaves it there.
+//
+// It connects as ptah_e2e_extension_login, created from the statements
+// support/databases.md shows, with CREATE on the database added: the documented
+// authority cannot install an extension, and pg_trgm is a trusted extension, so
+// CREATE on the database is the extension authority the page says to grant an
+// artifact that declares one. The server's superuser drops the extension.
 func (d *dataPlane) postgresqlExtensionDrift() {
 	d.t.Helper()
 	d.logf("checking that a dropped PostgreSQL extension reaches status in Ptah's category")
@@ -30,6 +36,7 @@ func (d *dataPlane) postgresqlExtensionDrift() {
 	reference := d.registryReference("extension-postgresql")
 	digest := d.publishSchema("extension-postgresql", "v1", "postgres", reference, "")
 	d.createIsolatedPostgreSQLDatabase(extensionPGDatabase, extensionPGSecret, d.credentials.extensionPGURL)
+	d.createDocumentedPostgreSQLLogin(extensionPGLogin, extensionPGDatabase, true)
 	// The approval policy is the default, so the drifted schema waits for a
 	// person with the reading in place rather than putting the extension back
 	// before the row could read it.
@@ -53,8 +60,14 @@ func (d *dataPlane) postgresqlExtensionDrift() {
 	if count := d.isolatedPostgreSQLTableCount(extensionPGDatabase, table); count != "1" {
 		d.fatalf("%s is not present in %s after the approved plan applied", table, extensionPGDatabase)
 	}
+	owner, err := d.psql(extensionPGDatabase, "SELECT pg_get_userbyid(extowner) FROM pg_extension WHERE extname='"+extension+"'")
+	d.check(err, "read who owns %s in %s", extension, extensionPGDatabase)
+	if removeWhitespace(owner) != extensionPGLogin {
+		d.fatalf("%s is owned by %q after the Apply, and the row needs the login to have installed it", extension, removeWhitespace(owner))
+	}
+	d.assertOwnsEveryTable(extensionPGLogin, extensionPGDatabase)
 
-	_, err := d.psql(extensionPGDatabase, "DROP EXTENSION "+extension)
+	_, err = d.psql(extensionPGDatabase, "DROP EXTENSION "+extension)
 	d.check(err, "drop %s from %s", extension, extensionPGDatabase)
 	drifted := d.waitForSchema(schemaName, "an Observe to count the dropped extension in Ptah's category",
 		func(s *ptahv1alpha1.PtahSchema) bool { return droppedExtensionObserved(s, digest) })

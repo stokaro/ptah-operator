@@ -302,13 +302,20 @@ func (f *faultRun) finishedApplyProvedUnderTheFirstLogin() {
 	f.logf("PASS a login moved after an Apply finished: the proof stopped, and putting the first login back proved and credited the Apply")
 }
 
+// mysqlDriftBeforeDispatch changes a MySQL database by hand while its approved
+// Apply waits behind the scheduling barrier: the runner refuses the stale plan
+// without running SQL, and a fresh plan of the changed database runs on an
+// approval of its own.
+//
+// It connects as an account that holds the grant support/databases.md shows on
+// the database and nothing else. root drops the column.
 func (f *faultRun) mysqlDriftBeforeDispatch() {
 	f.t.Helper()
 	const name, database, secret = "e2e-mysql-approved-drift", "e2e_mysql_approved_drift", "e2e-mysql-approved-drift-db"
-	f.createDatabase("mysql", database, secret)
+	f.createDocumentedDatabase("mysql", database, secret)
 	f.query("mysql", database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'drift-control', 'preserve-this-row')")
 	audit := &databaseSQLAudit{t: f.t, ctx: f.ctx, cluster: f.cluster, namespace: f.in.TestNamespace, engine: "mysql"}
-	user := f.schemaMySQLAuditAccount(audit, database, secret)
+	user := f.schemaMySQLDocumentedAccount(audit, database, secret)
 	f.createSchema(faultSchema{name: name, engine: "MySQL", reference: f.mysqlReference, secret: secret, coordinationKey: "e2e/mysql-approved-drift"})
 	old := f.schemaPlan(f.waitForPlan(name))
 	observeBefore, planBefore := f.checkpointJobs(name, "observe"), f.checkpointJobs(name, "plan")

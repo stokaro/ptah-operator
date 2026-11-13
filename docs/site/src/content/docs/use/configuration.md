@@ -45,7 +45,7 @@ reader of a converged schema can see exactly what produced it.
 | `replicaCount` | `2` | Manager replicas. Scaling this release is how the operator runs highly available; a second release in the same cluster is not supported. More than one replica requires leaderElection. |
 | `image` |  | The image every runtime component runs from: the manager, the certificate rotator and the CRD manager are three commands in one image. |
 | `image.repository` | `ghcr.io/stokaro/ptah-operator` | Repository the manager image is pulled from. |
-| `image.tag` | `"0.2.10"` | Recorded for a reader. The digest below is what is actually pulled. |
+| `image.tag` | `"0.2.11"` | Recorded for a reader. The digest below is what is actually pulled. |
 | `image.digest` | `""` | Registry manifest digest, including for local development. A Docker image ID is not a registry manifest digest. Required, unless this chart is one a release published to its OCI registry, which carries the manager and runner image of that release; to replace them there, set this and execution.runnerImage together. |
 | `image.pullPolicy` | `IfNotPresent` | Pull policy for the manager image. AlwaysPullImages in the cluster rewrites this, which is what admission.alwaysPullImagesEnabled declares. |
 | `imagePullSecrets` | `[]` | Pull Secrets added to every Pod this chart creates. |

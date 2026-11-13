@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"slices"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +22,13 @@ import (
 // unused account makes all its traffic attributable even if a client switches
 // databases. Credentials remain inside the fixture's server container.
 func (a *databaseSQLAudit) createMySQLAccount(database string) string {
+	return a.createMySQLAccountWith(database, false)
+}
+
+// createMySQLAccountWith is createMySQLAccount with the grant a row asks for:
+// ALL PRIVILEGES on the database, or, for a drift row, the grant
+// support/databases.md shows and nothing else, which it then reads back.
+func (a *databaseSQLAudit) createMySQLAccountWith(database string, documented bool) string {
 	a.t.Helper()
 	if a.engine != "mysql" || a.started || !mysqlAuditIdentifier.MatchString(database) || len(database) > 64 {
 		a.t.Fatal("MySQL audit account needs an isolated database before its journal starts")
@@ -30,18 +38,42 @@ func (a *databaseSQLAudit) createMySQLAccount(database string) string {
 		a.t.Fatal("could not allocate an isolated MySQL audit account")
 	}
 	user := "audit_" + hex.EncodeToString(identity[:])
+	grant := "GRANT ALL PRIVILEGES ON " + database + ".* TO '" + user + "'@'%'"
+	if documented {
+		grant = documentedMySQLGrant(database, "'"+user+"'@'%'")
+	}
 	a.exec("sh", "-ec", `credential=$(printf '%s' "$MYSQL_PASSWORD" | sed "s/'/''/g")
-printf "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\nGRANT ALL PRIVILEGES ON %s.* TO '%s'@'%%';\n" "$1" "$credential" "$2" "$1" |
-MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, database)
+printf "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\n%s;\n" "$1" "$credential" "$2" |
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, grant)
+	if documented {
+		held := strings.TrimSpace(string(a.exec("sh", "-ec",
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
+			"sh", documentedMySQLAccountQuery(user, database))))
+		if want := documentedMySQLAccountReading(); held != want {
+			a.t.Fatalf("MySQL account %s holds %s, and the documented account holds %s", user, held, want)
+		}
+	}
 	return user
 }
 
 func (f *dataPlane) schemaMySQLAuditAccount(audit *databaseSQLAudit, database, secretName string) string {
 	f.t.Helper()
+	return f.schemaMySQLAccount(audit, database, secretName, false)
+}
+
+// schemaMySQLDocumentedAccount is schemaMySQLAuditAccount for a drift row: the
+// account the Secret moves to holds the grant support/databases.md shows.
+func (f *dataPlane) schemaMySQLDocumentedAccount(audit *databaseSQLAudit, database, secretName string) string {
+	f.t.Helper()
+	return f.schemaMySQLAccount(audit, database, secretName, true)
+}
+
+func (f *dataPlane) schemaMySQLAccount(audit *databaseSQLAudit, database, secretName string, documented bool) string {
+	f.t.Helper()
 	if secretName == mysqlSecret {
 		f.fatalf("a schema audit must not replace the shared MySQL fixture credential")
 	}
-	user := audit.createMySQLAccount(database)
+	user := audit.createMySQLAccountWith(database, documented)
 	secret := &corev1.Secret{}
 	f.check(f.get(secretName, secret), "read the isolated schema target Secret")
 	updated, err := replaceSchemaMySQLAuditUser(string(secret.Data["url"]), f.credentials.mysqlPassword, user)
@@ -79,15 +111,29 @@ type schemaRefusalWindow struct {
 // Fault waits allow the refusal under test to enter Failed and retain their
 // periodic credential audit. Lifecycle waits keep their own failure behavior.
 func (f *faultRun) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
-	w := f.dataPlane.startSchemaRefusalWindow(name, engine, database, secret)
+	w := f.dataPlane.startSchemaRefusalWindowFor(name, engine, database, secret, false)
 	w.wait = f.waitForSchema
 	return w
+}
+
+// startDocumentedSchemaRefusalWindow is startSchemaRefusalWindow for a drift
+// row: on MySQL the account the window creates, and the row connects as, holds
+// the grant support/databases.md shows. A PostgreSQL window changes no login.
+func (f *faultRun) startDocumentedSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+	w := f.dataPlane.startSchemaRefusalWindowFor(name, engine, database, secret, true)
+	w.wait = f.waitForSchema
+	return w
+}
+
+func (f *dataPlane) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+	f.t.Helper()
+	return f.startSchemaRefusalWindowFor(name, engine, database, secret, false)
 }
 
 // Start after fixture setup but before its resource exists. The dedicated
 // MySQL credential has never connected, so database-less records remain scoped.
 // Database assertions must run after assert closes this uninterrupted window.
-func (f *dataPlane) startSchemaRefusalWindow(name, engine, database, secret string) *schemaRefusalWindow {
+func (f *dataPlane) startSchemaRefusalWindowFor(name, engine, database, secret string, documented bool) *schemaRefusalWindow {
 	f.t.Helper()
 	if !apierrors.IsNotFound(f.get(name, &ptahv1alpha1.PtahSchema{})) {
 		f.fatalf("schema SQL refusal audit must start before its resource exists")
@@ -99,7 +145,7 @@ func (f *dataPlane) startSchemaRefusalWindow(name, engine, database, secret stri
 		inventory: &schemaSQLInventory{jobs: map[types.UID]batchv1.Job{}, pods: map[types.UID]corev1.Pod{}},
 	}
 	if engine == "mysql" {
-		w.user = f.schemaMySQLAuditAccount(w.audit, database, secret)
+		w.user = f.schemaMySQLAccount(w.audit, database, secret, documented)
 		w.mysqlBefore = w.audit.mysqlStatementSnapshot()
 	} else {
 		w.audit.snapshot()

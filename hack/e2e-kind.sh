@@ -3456,9 +3456,11 @@ E2E_ENGINE=mysql \
 	run_recorded_phase reference-data-mysql run_go_phase reference-data-mysql
 
 # A schema and a migration sequence whose source is a ConfigMap. They run on
-# the prepared PostgreSQL server and name no registry.
+# the prepared PostgreSQL server and name no registry. The phase reads the
+# manager's logs in the release namespace for the journal lines.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 	run_recorded_phase configmap-sources run_go_phase configmap-sources
 
 # A schema and a migration sequence whose source is Git, served from the
