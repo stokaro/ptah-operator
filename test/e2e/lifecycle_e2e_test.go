@@ -60,7 +60,8 @@ func TestUpgrade(t *testing.T) {
 }
 
 // TestUninstall is the uninstall phase: the synthetic next release, the
-// rollback to this one, and the uninstalls and installs over retained CRDs.
+// rollback to this one, the uninstalls and installs over retained CRDs, and
+// the uninstall-first teardown of a namespace that holds retained records.
 func TestUninstall(t *testing.T) {
 	run, in := harness.Begin(t, phases.Uninstall)
 	l := newLifecycleRun(t, run, "uninstall", lifecycleInputs{
@@ -72,6 +73,7 @@ func TestUninstall(t *testing.T) {
 		registryCredentialsFile: in.RegistryCredentialsFile, dockerContext: in.DockerContext,
 		externalPostgresContainerID: in.ExternalPostgresContainerID, externalPostgresIP: in.ExternalPostgresIP,
 		externalPostgresCredentialsFile: in.ExternalPostgresCredentialsFile,
+		teardownNamespace:               in.TeardownNamespace,
 	})
 	for _, scenario := range []struct {
 		name string
@@ -82,6 +84,7 @@ func TestUninstall(t *testing.T) {
 		{"uninstall", l.uninstallTheRolledBackRelease},
 		{"reinstall-over-retained-crds", l.reinstallOverRetainedCRDs},
 		{"exported-chart-install", l.installTheExportedChart},
+		{"uninstall-first-teardown", l.uninstallFirstTeardown},
 	} {
 		if !run.Scenario(scenario.name, l.scenario(scenario.body)) {
 			return
@@ -98,6 +101,7 @@ type lifecycleInputs struct {
 	nextChartPackage, nextValuesFile, nextControllerImage                               string
 	registryCredentialsFile, dockerContext                                              string
 	externalPostgresContainerID, externalPostgresIP, externalPostgresCredentialsFile    string
+	teardownNamespace                                                                   string
 }
 
 // lifecycleControllerIdentity is what capture_controller_service_account_identity

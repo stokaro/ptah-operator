@@ -1,0 +1,59 @@
+{
+  "apiVersion": "v1",
+  "kind": "Namespace",
+  "metadata": {
+    "creationTimestamp": "2026-11-12T20:24:21Z",
+    "deletionTimestamp": "2026-11-12T20:39:42Z",
+    "labels": {
+      "kubernetes.io/metadata.name": "ptah-op-enh827-window"
+    },
+    "name": "ptah-op-enh827-window",
+    "resourceVersion": "4477",
+    "uid": "28ff58ba-78d9-42b4-b13e-60fe203a196f"
+  },
+  "spec": {
+    "finalizers": [
+      "kubernetes"
+    ]
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-11-12T20:39:47Z",
+        "message": "All resources successfully discovered",
+        "reason": "ResourcesDiscovered",
+        "status": "False",
+        "type": "NamespaceDeletionDiscoveryFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-12T20:39:47Z",
+        "message": "All legacy kube types successfully parsed",
+        "reason": "ParsedGroupVersions",
+        "status": "False",
+        "type": "NamespaceDeletionGroupVersionParsingFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-12T20:39:47Z",
+        "message": "Failed to delete all resource types, 1 remaining: admission webhook \"vcontrollerwrite.operator.ptah.run\" denied the request: result publication retention has not authorized deletion: record ptah-result-0bfc411edeae30a52e7d75d92b71338aab33cb664ea3248174f8eb48ddd147bc cannot be deleted before 2026-11-12T21:24:23Z",
+        "reason": "ContentDeletionFailed",
+        "status": "True",
+        "type": "NamespaceDeletionContentFailure"
+      },
+      {
+        "lastTransitionTime": "2026-11-12T20:39:47Z",
+        "message": "All content successfully removed",
+        "reason": "ContentRemoved",
+        "status": "False",
+        "type": "NamespaceContentRemaining"
+      },
+      {
+        "lastTransitionTime": "2026-11-12T20:39:47Z",
+        "message": "All content-preserving finalizers finished",
+        "reason": "ContentHasNoFinalizers",
+        "status": "False",
+        "type": "NamespaceFinalizersRemaining"
+      }
+    ],
+    "phase": "Terminating"
+  }
+}
