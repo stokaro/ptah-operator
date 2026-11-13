@@ -19,7 +19,9 @@ out of silence.
 ## 0.2.11
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. Under `apply: Always`, a plan that changes an existing
+on the upgrade. The CRD schemas gain the fields a schema's Apply journals, so
+the CRD schema version moves and [a rollback](../../use/operations/#rollback)
+to 0.2.10 is refused once this release has updated the CRDs. Under `apply: Always`, a plan that changes an existing
 PostgreSQL view's `security_invoker`, or changes the definition of a view that
 states it, now waits for an approval bound to it. A plan published before the
 upgrade that holds such a statement and waits for an approval is planned again
@@ -125,8 +127,7 @@ the end of the Apply's term, the time the `ApplyPodGone` Warning names. A script
 that reads a `PtahSchema`'s `Ready` while its claim waits for the database lock
 sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
 for a read tried again after a failure, the failure's reason, which
-`ReconciliationFailed` still carries. After a rollback, an earlier manager
-leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
+`ReconciliationFailed` still carries.
 A script or an alert that reads `child_exit` from an Observe or
 `invalid_plan_output` from a Plan of a schema whose row file Ptah refuses as
 outside its working directory reads `desired_source_unreadable` now.
@@ -146,10 +147,7 @@ in place of `secret "<name>" not found`, and
 in place of `couldn't find key url in Secret <namespace>/<name>`. A missing
 database Secret or key now stops the Pod before its init containers run, where it
 stopped only the operation container once the source was fetched. A Job 0.2.10
-dispatched is adopted and supervised as before. After a
-[rollback](../../use/operations/#rollback) to 0.2.10, a Job 0.2.11 created that
-has no cleanup TTL yet keeps none: the 0.2.10 Job guard refuses every write to a
-Job that mounts a credential volume, so delete such a Job once it has finished.
+dispatched is adopted and supervised as before.
 
 Every read-only Job, a `PtahSchema`'s Observe, Plan, Verify and Resolve and a
 `PtahMigration`'s Resolve, Verify and History read, is now created with
@@ -158,9 +156,7 @@ Job created with a TTL has to admit it on those Jobs. A script that reads a
 finished read Job or its Pod log has to expect both gone five minutes after the
 Job finished, whether or not the operator had read it. An alert on
 `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred` no longer fires for
-a read-only Job this release creates. 0.2.10 admits no Pod and no result for a
-Job that already carries a TTL, so a read that runs when you roll back to 0.2.10
-can be refused, and runs again under a Job 0.2.10 creates.
+a read-only Job this release creates.
 
 PostgreSQL 16.x joins the supported release lines. Run 43292445627 of the
 Added database lines workflow passed the whole lifecycle on it on every
@@ -750,6 +746,24 @@ has nothing to change for that.
   such as `mapproval.operator.ptah.run/mutationRequestUID`. At `Metadata` an
   approval met its audit event only by namespace, name and time.
   [Joining one change across the record](../../use/audit/#joins) lists the keys.
+- **A schema's Apply names what ran and where it stopped.** A schema's
+  `ApplyFinished` entry held the outcome, the plan and when the Apply started,
+  so it could not be joined to the approval it consumed, the Job that ran it or
+  the reading that proved it, and said nothing of where a refused Apply
+  stopped. It now carries the claim's `operationID`, the plan's UID and
+  fingerprint, the approval's name and UID and its approver, and the Job's name
+  and UID once the API server confirmed the Job, as a migration's `RunFinished`
+  does, and the `Verified` entry after it carries the same `operationID`.
+  Where the run names the statement it stopped at, `applyFailure` on the entry
+  and on `status.pendingObservation` records its position and the SQLSTATE and
+  MySQL error number the database answered with, never the database's
+  message. Ptah v0.23.0 reports such an Apply as `unknown`, and the entry still
+  reads `Unknown`.
+  `kubectl ptah history` prints the new fields and joins a proof to its Apply
+  by the operation where both name one. Every field is optional, so a stored
+  object validates as before, and an entry an earlier release wrote reads as it
+  did. [The lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
+  has the rest.
 
 ## 0.2.10
 

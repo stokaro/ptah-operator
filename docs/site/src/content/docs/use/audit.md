@@ -92,15 +92,15 @@ documentation and the run did not exercise it.
 | A plan | `PtahSchemaPlan` and its chunks, with the exact SQL and the fingerprint; the journal's `PlanPublished` | The manager | Until the schema is deleted | Measured |
 | An approval | `PtahSchemaApproval`, with the username, UID and groups admission stamped, `approvedAt` and `mutationRequestUID`; the journal's `ApprovalAccepted`, with the approval's name and UID, when an Apply consumes it | The approver, stamped by admission | The approval until it or its namespace is deleted; the entry for the journal's bounds | Measured |
 | Apply dispatched | The Apply Job and Pod, and an `operation claimed` line in the manager's log | The manager | The Job: five minutes, or 24 hours when a person approved an Apply that failed or ended unknown | Measured |
-| How each statement ended | Not recorded. The journal's `ApplyFinished` holds `Succeeded` or `Unknown`, the plan and when it started; it names no approval, operation or failed statement | The manager | The journal's bounds | Measured |
+| How each statement ended | The journal's `ApplyFinished`: `Succeeded` or `Unknown`, the plan by name, UID and fingerprint, the approval and its approver, the `operationID`, the Job once the API server confirmed it, and the position of the statement it stopped at with the SQLSTATE, with no message. At 0.2.10, in the measured run, it held only the outcome, the plan and when it started | The manager | The journal's bounds | Read |
 | What the database answered | One line in the Apply Pod's log | The runner | As long as the Job | Measured |
 | Verification after Apply | The journal's `Verified`: `InSync` or `DriftRemains` | The manager | The journal's bounds | Measured |
 | `apply: Always` | No approval, so no `ApprovalAccepted` before the `ApplyFinished` | The manager | The journal's bounds | Read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
 | Anything, in the target database | Nothing. Ptah keeps no table for a declared schema | | | Measured |
 
-Both failed Applies ended `Unknown`, and the journal says no more than that.
-What failed is in the Pod log for 24 hours. On MySQL that line read
+Both failed Applies ended `Unknown`, and at 0.2.10 the journal said no more
+than that. What failed is in the Pod log for 24 hours. On MySQL that line read
 `Duplicate entry 'dup@example.test' for key 'customers.customers_email_unique'`:
 a value from a table row.
 
@@ -171,6 +171,9 @@ The journal joins itself and the cluster objects by UID. An `ApprovalAccepted`
 entry carries the approval's UID. A migration's `RunFinished` carries the plan's
 UID and fingerprint, the approval's UID, the Job's UID and the `operationID`,
 and its `Verified` and `RunAcknowledged` entries carry the same `operationID`.
+From 0.2.11 a schema's `ApplyFinished` carries the same identifiers, and the
+`Verified` entry after it the same `operationID`. That is read from the code;
+the measured run predates it.
 
 The database log joins nothing by identifier. Its `run_id` is Ptah's own, such
 as `28-dmth8umhdwq7`, and the operator does not pass the operation ID. A row
