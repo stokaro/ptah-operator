@@ -1214,8 +1214,11 @@ before anything else runs. A dispatched `PtahMigration` Apply is recorded as
 an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
 until a History reading or a `PtahMigrationRunAcknowledgment` accounts for it.
 A dispatched read-only Job of either family is run again under a new attempt.
-Where the Job is the one the claim fixes, the claim waits for that Job to stop
-first and gives it the five-minute TTL of a harvested Job, because admission
+A read-only Job created with its cleanup TTL, as every one is from 0.2.11 on,
+is left to it, and the read runs again at once. A read-only Job a release
+before 0.2.11 created carries none. Where such a Job is the one the claim
+fixes, the claim waits for that Job to stop first and gives it the five-minute
+TTL of a harvested Job, because admission
 admits the TTL only on the Job an active claim names. A claim that never
 recorded the Job's UID records it first. `Ready` on a `PtahSchema`, and
 `Progressing` on a `PtahMigration`, names the Job while the claim waits. The
@@ -1471,9 +1474,12 @@ Suspension prevents new operations. It does not necessarily stop one that is
 already running: setting `spec.suspend=true` cancels no SQL and deletes no Job
 or Pod, and a Job's cleanup TTL removes it only once it has finished. A Job
 still running when the resource is suspended runs until it stops by itself or
-reaches its own deadline. If an apply is already active, the controller
-continues observing that Job until its outcome is safe to classify; it does not
-delete the Pod mid-mutation.
+reaches its own deadline. A read-only Job is created with its cleanup TTL, five
+minutes counted from when the Job finishes, so a read that suspension drops
+leaves nothing behind once its Job has stopped and five minutes have passed.
+If an apply is already active, the controller continues observing that Job
+until its outcome is safe to classify; it does not delete the Pod
+mid-mutation.
 
 For either kind that classification is `Unknown`, whatever the run did.
 Suspending is a spec edit, the generation it bumps is one of the inputs the
@@ -1499,7 +1505,9 @@ While a `PtahSchema` owes the proof of an Apply, suspension starts no proof
 Job and drops a proof claim whose Job was not created; a proof Observe already
 running ends, and the Plan that completes the proof waits for resume. A proof
 read whose Job this release cannot confirm, as after an upgrade that changed
-the Job, waits for that Job to stop and gives it its cleanup TTL. The
+the Job, waits for that Job to stop and gives it its cleanup TTL where the Job
+carries none, as one a release before 0.2.11 created; a Job created with its
+TTL is left to it, and the proof reads again under a new Job. The
 schema retains and renews the Apply's database-realm Lease meanwhile. This
 deliberately blocks later mutations in the same realm until the resource is
 resumed and the read-only proof completes, or until the resource is deleted.
@@ -1520,8 +1528,10 @@ the generation it last acted on and its phase, and an operation still in
 flight, and what the suspension does to it. A read under way when the
 suspension arrives, a migration's read of its history after a run included,
 is dropped rather than waited for, since it changes nothing; its Job stops at
-its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
-the claim names, so a read Job that had finished gets its TTL as the claim is
+its own deadline, and the cleanup TTL it was created with removes it five
+minutes later. The claim writes nothing to the Job. A read Job a release before
+0.2.11 created carries no TTL, and admission admits one only on a finished Job
+the claim names, so such a Job that had finished gets its TTL as the claim is
 dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
 Warning Event names one still running, which stays until it is deleted. A read
 either kind holds while an execution component changes, and a `PtahSchema` Plan
@@ -2953,8 +2963,11 @@ Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects
 stay until garbage collection removes them with the owning schema, which it does
 as soon as the schema is deleted, so [export](#export-a-plan-before-deleting-it)
 any an audit needs first. Only the exact UID and fingerprint in `status.plan`
-are current. Completed Jobs
-receive a cleanup TTL before the controller clears the active operation: five
+are current. A read-only Job is created with a five-minute cleanup TTL, which
+Kubernetes counts from when the Job finishes, so a read whose result the manager
+has not taken by then runs again under a new Job. An Apply's Job is created with
+none, and receives its cleanup TTL before the controller clears the active
+operation: five
 minutes, or [24 hours](#failed-apply-log) for an Apply that failed or whose outcome is
 unknown, when a person approved it or its migration run stopped the resource. Failure
 to schedule that TTL leaves the operation

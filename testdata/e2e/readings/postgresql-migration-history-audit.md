@@ -42,7 +42,10 @@ place: the count of the default table in `information_schema.tables` and
 `SELECT * FROM "schema_migrations" WHERE 1 = 0`. It admits v0.17.0's
 search-path read as well. Additional statements, changed table/schema/column
 parameters, arbitrary SELECT or WITH statements, and failed unauthorized SQL
-are refused.
+are refused. PostgreSQL 16.15 logs this History with the same statements and
+values and labels its parameter lists `parameters: ` where 17 writes
+`Parameters: `. The audit reads 16's label as 17's, so the same predicate holds
+on both, and a changed value is refused under either label.
 
 This reading validates the parser and the allowed diagnostic control. It does
 not establish that a later approval-refusal scenario passed. That result

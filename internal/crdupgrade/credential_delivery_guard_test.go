@@ -71,7 +71,10 @@ func TestControllerJobGuardTakesAReleasedJobOnlyForCleanup(t *testing.T) {
 	current := goldenJobObjects(t, currentJobDirectory)
 	refused := 0
 	for name, job := range released {
-		carriesCredential := !jobObjectsEqual(t, job, current[name])
+		// v0.2.10 created every Job without a TTL, and this release creates a
+		// read-only one with its cleanup TTL, so the two differ there whatever
+		// they carry.
+		carriesCredential := !jobObjectsEqual(t, job, withoutTTL(t, current[name]))
 		for index, validation := range controllerJobWriteValidations("refused") {
 			credentialRule := validation.Message == controllerJobCredentialEnvironmentMessage
 			admitted := evaluateJobValidation(t, validation.Expression, job, nil, "CREATE")
@@ -129,6 +132,23 @@ func goldenJobObjects(t *testing.T, directory string) map[string]map[string]any 
 		t.Fatalf("%s holds no Job", directory)
 	}
 	return jobs
+}
+
+// withoutTTL is job without spec.ttlSecondsAfterFinished.
+func withoutTTL(t *testing.T, job map[string]any) map[string]any {
+	t.Helper()
+	if job == nil {
+		return nil
+	}
+	spec, ok := job["spec"].(map[string]any)
+	if !ok {
+		t.Fatal("a golden Job has no spec")
+	}
+	spec = maps.Clone(spec)
+	delete(spec, "ttlSecondsAfterFinished")
+	copied := maps.Clone(job)
+	copied["spec"] = spec
+	return copied
 }
 
 func jobObjectsEqual(t *testing.T, left, right map[string]any) bool {

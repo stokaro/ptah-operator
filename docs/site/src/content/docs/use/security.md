@@ -264,7 +264,8 @@ administrator on a cluster.
 Start namespace-scoped bindings from the
 desired-state author (`examples/desired-state-author-role.yaml`) and
 diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
-chart's optional approver ClusterRole remains unbound, so these three human
+chart's optional approver ClusterRole stays unbound unless
+`approverClusterRole.subjects` names someone, so these three human
 permission sets can be assigned to different identities. Diagnostic access
 deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
 plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads
@@ -914,7 +915,7 @@ then, so what that statement's failure quoted stays readable for those 24 hours 
 `Always` as well. Any other Job [keeps five minutes](../operations/#failed-apply-log).
 What a Pod kept that long still holds: it has no API token, because automatic
 token mounting is disabled. Its projected result token has the receiver as its
-only audience and lasts at most an hour, and the receiver refuses it once the Job
+only audience and lasts at most an hour, and the receiver refuses it once the Apply's Job
 carries a cleanup TTL or its claim has retired, as it refuses a client certificate
 of the older transport. No credential is in the Pod's spec or in any container's
 environment: the container runtime on the node keeps a stopped container's

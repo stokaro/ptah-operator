@@ -211,7 +211,7 @@ func TestLifecycleRuntimeInitGuardClauses(t *testing.T) {
 
 const lifecycleRuntimeDispatchedJob = `{
   "metadata": {"uid": "job-uid", "labels": {"operator.ptah.run/schema": "read-only-job-current", "operator.ptah.run/operation": "resolve"}},
-  "spec": {"backoffLimit": 0}
+  "spec": {"backoffLimit": 0, "ttlSecondsAfterFinished": 300}
 }`
 
 func TestLifecycleRuntimeReadOnlyJobDispatched(t *testing.T) {
@@ -226,9 +226,26 @@ func TestLifecycleRuntimeReadOnlyJobDispatched(t *testing.T) {
 		"another operation": func(job map[string]any) {
 			lifecycleRuntimeField(job, "metadata", "labels")["operator.ptah.run/operation"] = "plan"
 		},
-		"no labels":          func(job map[string]any) { delete(lifecycleRuntimeField(job, "metadata"), "labels") },
-		"cleanup TTL at all": func(job map[string]any) { lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = nil },
+		"no labels":      func(job map[string]any) { delete(lifecycleRuntimeField(job, "metadata"), "labels") },
+		"no cleanup TTL": func(job map[string]any) { delete(lifecycleRuntimeField(job, "spec"), "ttlSecondsAfterFinished") },
+		"a null cleanup TTL": func(job map[string]any) {
+			lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = nil
+		},
+		"the long cleanup TTL": func(job map[string]any) {
+			lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = int64(86400)
+		},
+		"a cleanup TTL as a string": func(job map[string]any) {
+			lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = "300"
+		},
 	})
+}
+
+func TestLifecycleRuntimeCleanupTTLRemoval(t *testing.T) {
+	t.Parallel()
+	want := `[{"op":"test","path":"/spec/ttlSecondsAfterFinished","value":300},{"op":"remove","path":"/spec/ttlSecondsAfterFinished"}]`
+	if got := string(lifecycleRuntimeCleanupTTLRemoval()); got != want {
+		t.Fatalf("patch = %s", got)
+	}
 }
 
 func TestLifecycleRuntimeSchemaQuiesced(t *testing.T) {
@@ -350,7 +367,7 @@ func TestLifecycleRuntimeReadOnlyJobRetired(t *testing.T) {
 		return conditions[index].(map[string]any)
 	}
 	lifecycleRuntimeMutations(t, lifecycleRuntimeRetiredJob, func(job map[string]any) bool {
-		return lifecycleRuntimeReadOnlyJobRetired(job, "job-uid")
+		return lifecycleRuntimeReadOnlyJobRetired(job, "job-uid", false)
 	}, map[string]func(map[string]any){
 		"another UID":       func(job map[string]any) { lifecycleRuntimeField(job, "metadata")["uid"] = "x" },
 		"never started":     func(job map[string]any) { delete(lifecycleRuntimeField(job, "status"), "startTime") },
@@ -379,17 +396,145 @@ func TestLifecycleRuntimeReadOnlyJobRetired(t *testing.T) {
 	for _, key := range []string{"active", "ready", "terminating", "uncountedTerminatedPods"} {
 		delete(status, key)
 	}
-	if !lifecycleRuntimeReadOnlyJobRetired(job, "job-uid") {
+	if !lifecycleRuntimeReadOnlyJobRetired(job, "job-uid", false) {
 		t.Fatal("absent counts were not read as zero")
 	}
 	// The API server's integers decode as int64 into an unstructured object.
 	status["active"] = int64(0)
-	if !lifecycleRuntimeReadOnlyJobRetired(job, "job-uid") {
+	if !lifecycleRuntimeReadOnlyJobRetired(job, "job-uid", false) {
 		t.Fatal("an int64 zero was not read as zero")
 	}
 	status["active"] = int64(1)
-	if lifecycleRuntimeReadOnlyJobRetired(job, "job-uid") {
+	if lifecycleRuntimeReadOnlyJobRetired(job, "job-uid", false) {
 		t.Fatal("an int64 one was read as zero")
+	}
+
+	// A Job this release created carries its cleanup TTL from the start, and
+	// keeps it.
+	created := lifecycleRuntimeDocument(t, lifecycleRuntimeRetiredJob)
+	lifecycleRuntimeField(created, "spec")["ttlSecondsAfterFinished"] = int64(300)
+	if !lifecycleRuntimeReadOnlyJobRetired(created, "job-uid", true) {
+		t.Fatal("a retired Job with the cleanup TTL it was created with was refused")
+	}
+	for name, ttl := range map[string]any{"none": nil, "the long one": int64(86400), "a string": "300"} {
+		job := lifecycleRuntimeDocument(t, lifecycleRuntimeRetiredJob)
+		if ttl != nil {
+			lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = ttl
+		}
+		if lifecycleRuntimeReadOnlyJobRetired(job, "job-uid", true) {
+			t.Errorf("a Job created with its cleanup TTL passed as retired with %s", name)
+		}
+	}
+}
+
+func TestLifecycleRuntimeFinishedAt(t *testing.T) {
+	t.Parallel()
+	failed := time.Date(2026, 11, 12, 10, 0, 7, 0, time.UTC)
+	for name, test := range map[string]struct {
+		conditions string
+		want       time.Time
+	}{
+		"the Failed condition": {conditions: `[
+		  {"type": "FailureTarget", "status": "True", "lastTransitionTime": "2026-11-12T10:00:00Z"},
+		  {"type": "Failed", "status": "True", "lastTransitionTime": "2026-11-12T10:00:07Z"}]`, want: failed},
+		"the Complete condition": {conditions: `[
+		  {"type": "SuccessCriteriaMet", "status": "True", "lastTransitionTime": "2026-11-12T10:00:00Z"},
+		  {"type": "Complete", "status": "True", "lastTransitionTime": "2026-11-12T10:00:07Z"}]`, want: failed},
+		// Neither condition that only announces the end starts the TTL.
+		"only a FailureTarget": {conditions: `[{"type": "FailureTarget", "status": "True", "lastTransitionTime": "2026-11-12T10:00:00Z"}]`},
+		"only SuccessCriteriaMet": {conditions: `[
+		  {"type": "SuccessCriteriaMet", "status": "True", "lastTransitionTime": "2026-11-12T10:00:00Z"}]`},
+		"a Failed condition that is not True": {conditions: `[
+		  {"type": "Failed", "status": "False", "lastTransitionTime": "2026-11-12T10:00:00Z"}]`},
+		"a Failed condition with no time": {conditions: `[{"type": "Failed", "status": "True"}]`},
+		"no conditions":                   {conditions: `[]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			at, found := lifecycleRuntimeFinishedAt(lifecycleRuntimeDocument(t, `{"status": {"conditions": `+test.conditions+`}}`))
+			if found != !test.want.IsZero() || !at.Equal(test.want) {
+				t.Fatalf("lifecycleRuntimeFinishedAt() = %s %t, want %s", at, found, test.want)
+			}
+		})
+	}
+}
+
+func TestLifecycleRuntimeCollected(t *testing.T) {
+	t.Parallel()
+	const retired = `{
+	  "metadata": {"uid": "job-uid", "name": "n", "namespace": "ns", "labels": {"a": "b"}, "annotations": {"c": "d"},
+	    "ownerReferences": [{"uid": "o"}], "resourceVersion": "7"},
+	  "spec": {"backoffLimit": 0, "ttlSecondsAfterFinished": 300},
+	  "status": {"conditions": [{"type": "Failed", "status": "True"}]}
+	}`
+	evidence, err := lifecycleRuntimeJobCleanupEvidence(lifecycleRuntimeDocument(t, retired))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Date(2026, 11, 12, 10, 5, 0, 0, time.UTC)
+	before, after := expires.Add(-time.Minute), expires.Add(time.Second)
+	edited := func(edit func(map[string]any)) map[string]any {
+		job := lifecycleRuntimeDocument(t, retired)
+		edit(job)
+		return job
+	}
+	for name, test := range map[string]struct {
+		job    map[string]any
+		readAt time.Time
+		done   bool
+		fails  string
+	}{
+		"the Job unchanged while its TTL runs": {job: lifecycleRuntimeDocument(t, retired), readAt: before},
+		"the Job unchanged past its TTL":       {job: lifecycleRuntimeDocument(t, retired), readAt: after},
+		"the Job with a new status": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata")["resourceVersion"] = "8"
+			lifecycleRuntimeField(job, "status")["failed"] = 1
+		}), readAt: before},
+		"the Job gone once its TTL ran out":       {readAt: after, done: true},
+		"the Job gone within the clocks' slack":   {readAt: expires.Add(-lifecycleRuntimeCollectionSlack), done: true},
+		"another Job of the name once it ran out": {job: edited(func(job map[string]any) { lifecycleRuntimeField(job, "metadata")["uid"] = "other" }), readAt: after, done: true},
+		"the Job being deleted once it ran out": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata")["deletionTimestamp"] = "2026-11-12T10:05:01Z"
+			lifecycleRuntimeField(job, "metadata")["finalizers"] = []any{"foregroundDeletion"}
+		}), readAt: after, done: true},
+
+		"the Job gone before its TTL ran out": {readAt: before, fails: "before its cleanup TTL ran out"},
+		"another Job of the name before it ran out": {
+			job:    edited(func(job map[string]any) { lifecycleRuntimeField(job, "metadata")["uid"] = "other" }),
+			readAt: before, fails: "before its cleanup TTL ran out",
+		},
+		"the Job deleted before its TTL ran out": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata")["deletionTimestamp"] = "2026-11-12T10:04:00Z"
+		}), readAt: after, fails: "before its cleanup TTL ran out"},
+		"the Job with a deletion time that is not one": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata")["deletionTimestamp"] = "soon"
+		}), readAt: after, fails: "before its cleanup TTL ran out"},
+		"the Job without its TTL": {job: edited(func(job map[string]any) {
+			delete(lifecycleRuntimeField(job, "spec"), "ttlSecondsAfterFinished")
+		}), readAt: before, fails: "no longer carries the cleanup TTL"},
+		"the Job with the long TTL": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "spec")["ttlSecondsAfterFinished"] = int64(86400)
+		}), readAt: before, fails: "no longer carries the cleanup TTL"},
+		"the Job with another label": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata", "labels")["a"] = "c"
+		}), readAt: before, fails: "changed while its cleanup TTL ran"},
+		"the Job with a finalizer": {job: edited(func(job map[string]any) {
+			lifecycleRuntimeField(job, "metadata")["finalizers"] = []any{"example.com/hold"}
+		}), readAt: after, fails: "changed while its cleanup TTL ran"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			done, err := lifecycleRuntimeCollected(test.job, "job-uid", evidence, expires, test.readAt)
+			if test.fails != "" {
+				if err == nil || !strings.Contains(err.Error(), test.fails) {
+					t.Fatalf("lifecycleRuntimeCollected() = %t, %v; want an error naming %q", done, err, test.fails)
+				}
+				return
+			}
+			if err != nil || done != test.done {
+				t.Fatalf("lifecycleRuntimeCollected() = %t, %v; want %t", done, err, test.done)
+			}
+		})
 	}
 }
 

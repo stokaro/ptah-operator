@@ -51,6 +51,10 @@ func TestCarryCredentialDeliveryRebuildsEveryReleasedJob(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
+			// v0.2.10 created every Job without a TTL. The claim matcher takes a
+			// stored read-only Job without one (jobclaim), so the rewrite leaves
+			// the TTL alone, and the comparison here is of everything else.
+			expected.Spec.TTLSecondsAfterFinished = nil
 			differed := !bytes.Equal(marshalJob(t, expected), released)
 			if got := CarryCredentialDelivery(expected, live); got != differed {
 				t.Fatalf("CarryCredentialDelivery() = %v for a released Job that differs from the rebuild: %v", got, differed)

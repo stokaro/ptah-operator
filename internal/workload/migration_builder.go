@@ -127,6 +127,7 @@ func (b Builder) BuildMigration(
 		admissionSnapshot:  operation.AdmissionSnapshot,
 		execution:          migration.Spec.Execution,
 		mutating:           mutationlifecycle.MigrationOperation(operation.Type).Mutating,
+		readOnly:           mutationlifecycle.MigrationOperation(operation.Type).ReadOnly(),
 		startedAt:          operation.StartedAt,
 		executionNotAfter:  operation.ExecutionNotAfter,
 		env:                environment,

@@ -618,9 +618,10 @@ func controllerJobIsolation(jobs []batchv1.Job, databaseSecret, registrySecret s
 
 // keptAndLiveJobs is every Job the namespace holds now and every Job an
 // earlier proof held that it no longer does, once each by UID: where both
-// hold a Job, the live copy is the one read. A finished Job outlives its
-// harvest by the cleanup TTL alone, so the Resolve and Verify Jobs an earlier
-// proof held can be gone by the time an Apply has converged.
+// hold a Job, the live copy is the one read. A read-only Job is created with
+// its cleanup TTL and outlives its finish by that TTL alone, so the Resolve and
+// Verify Jobs an earlier proof held can be gone by the time an Apply has
+// converged.
 func keptAndLiveJobs(kept, live []batchv1.Job) []batchv1.Job {
 	jobs := slices.Clone(live)
 	present := make(map[types.UID]bool, len(live))

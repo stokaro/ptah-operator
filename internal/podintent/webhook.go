@@ -17,6 +17,7 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/resultcredentials/binding"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
@@ -282,13 +283,56 @@ func validateJobExecutionEnvelope(job *batchv1.Job) error {
 	if job.Spec.ManagedBy != nil {
 		return fmt.Errorf("a custom Job controller is not permitted")
 	}
-	if job.Spec.TTLSecondsAfterFinished != nil {
-		return fmt.Errorf("Job cleanup policy must not change before Pod admission")
+	if err := validateCreationCleanupTTL(job); err != nil {
+		return err
 	}
 	if err := validateGeneratedJobSelector(job); err != nil {
 		return err
 	}
 	return nil
+}
+
+// validateCreationCleanupTTL holds a Job's cleanup TTL to the one its builder
+// creates it with. A read-only Job is created with workload.CleanupTTLSeconds,
+// which Kubernetes counts from the moment the Job finishes, so it ends nothing its
+// Pod runs. An Apply Job is created with none, and the manager gives it one only
+// once it has read what the run reported, so a TTL on an Apply Job is one the
+// manager has finished with or one it did not write. A read-only Job created by
+// 0.2.10 or earlier carries none until the manager has read it.
+//
+// The operation is read from the Pod template, which a Job cannot change after it
+// is created, and which the Pod's labels have to repeat and the claim's operation
+// type has to name.
+func validateCreationCleanupTTL(job *batchv1.Job) error {
+	ttl := job.Spec.TTLSecondsAfterFinished
+	switch {
+	case ttl == nil:
+		return nil
+	case !readOnlyJobTemplate(job):
+		return fmt.Errorf("Job cleanup policy must not change before Pod admission")
+	case *ttl != workload.CleanupTTLSeconds:
+		return fmt.Errorf("a read-only Job's cleanup TTL is %d seconds", workload.CleanupTTLSeconds)
+	}
+	return nil
+}
+
+// readOnlyJobTemplate reports whether the Job's Pod template names an operation
+// of its owner's family that is known not to change the database. The label is
+// the operation type in lower case, as the builder writes it.
+func readOnlyJobTemplate(job *batchv1.Job) bool {
+	labels := job.Spec.Template.Labels
+	operation := labels[workload.LabelOperation]
+	if operation == "" || strings.ToLower(operation) != operation {
+		return false
+	}
+	typed := strings.ToUpper(operation[:1]) + operation[1:]
+	switch labels[workload.LabelComponent] {
+	case workload.ComponentSchemaOperation:
+		return mutationlifecycle.SchemaOperation(operatorv1alpha1.OperationType(typed)).ReadOnly()
+	case workload.ComponentMigrationOperation:
+		return mutationlifecycle.MigrationOperation(operatorv1alpha1.MigrationOperationType(typed)).ReadOnly()
+	}
+	return false
 }
 
 func validateGeneratedJobSelector(job *batchv1.Job) error {

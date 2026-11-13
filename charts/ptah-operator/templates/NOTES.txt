@@ -2,10 +2,20 @@ The operator is installed with credential-isolated execution Jobs.
 
 Create database and registry Secrets only in the namespace of each PtahSchema.
 The controller ClusterRole intentionally has no permission to read Secrets.
+{{- $approvers := include "ptah-operator.approverSubjects" . | fromJsonArray }}
+{{- if $approvers }}
+
+The ClusterRole {{ include "ptah-operator.fullname" . }}-approver is bound in every namespace to:
+{{- range $approvers }}
+  - {{ .kind }} {{ with .namespace }}{{ . }}/{{ end }}{{ .name }}
+{{- end }}
+Each of them may approve any plan in any namespace.
+{{- else }}
 
 The optional ClusterRole {{ include "ptah-operator.fullname" . }}-approver is not
 bound automatically. Bind it only to authenticated identities allowed to create
 exact-plan approvals.
+{{- end }}
 {{- $grants := include "ptah-operator.releaseNamespaceGrantWarnings" . | fromJsonArray }}
 {{- if $grants }}
 
