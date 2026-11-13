@@ -81,7 +81,8 @@ func (h *MigrationApprovalHandler) Handle(ctx context.Context, req cradmission.R
 		if err != nil {
 			return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("encode stamped approval: %w", err))
 		}
-		return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
+		return withStampAnnotations(cradmission.PatchResponseFromRaw(req.Object.Raw, mutated),
+			approval.Spec.MutationRequestUID, approval.Spec.Approver.Username)
 	}
 
 	if err := migrationIdentityMatchesRequest(approval.Spec, req.UserInfo); err != nil {

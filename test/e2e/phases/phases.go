@@ -774,13 +774,18 @@ type ConfigMapSourceInputs struct {
 	// TestNamespace is the namespace the data plane stood up in preparation,
 	// with its PostgreSQL server and the Secret that holds its password.
 	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// OperatorNamespace is the release namespace, whose manager Pods' logs
+	// the journal lines are read from.
+	OperatorNamespace string `env:"E2E_OPERATOR_NAMESPACE"`
 }
 
 // ConfigMapSources proves a schema and a migration sequence whose source is
 // a ConfigMap: each applied with no registry, through a snapshot the manager
 // wrote and the operation Pods checked; an edit to a selected key planning
 // again and retiring the snapshot nothing names, and an edit to an unselected
-// key planning nothing; a snapshot replaced after approval refused by the Pod
+// key planning nothing; a line on the manager's log for each journal entry
+// both resources store, equal to it, and no other line for either; a snapshot
+// replaced after approval refused by the Pod
 // before the operation container starts; a desired file Ptah cannot read named
 // in the condition and the Event, for a schema and a migration, and the fault
 // of a schema it read and refuses; and a statement
@@ -800,6 +805,7 @@ var ConfigMapSources = define[ConfigMapSourceInputs](Phase{
 		"configmap-schema",
 		"configmap-schema-edits",
 		"configmap-migration",
+		"journal-audit-lines",
 		"configmap-snapshot-refused",
 		"configmap-unreadable-source",
 		"database-reachable-kind",

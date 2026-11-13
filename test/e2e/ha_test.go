@@ -67,7 +67,10 @@ ptah_operator_stored_plan_bytes 4096
 ptah_operator_webhook_certificate_expiry_timestamp_seconds 1.8e+09
 # HELP ptah_operator_webhook_certificate_read_failures_total Failed certificate reads.
 # TYPE ptah_operator_webhook_certificate_read_failures_total counter
-ptah_operator_webhook_certificate_read_failures_total 0`
+ptah_operator_webhook_certificate_read_failures_total 0
+# HELP ptah_operator_journal_lines_dropped_total Journal lines the manager did not write.
+# TYPE ptah_operator_journal_lines_dropped_total counter
+ptah_operator_journal_lines_dropped_total 0`
 
 // haTwoCounters is the smallest complete reading: the two counters alone.
 const haTwoCounters = `# HELP ptah_operator_reconciliations_total Total reconciliations.

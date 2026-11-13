@@ -2500,10 +2500,14 @@ reconciliation read. A resource waiting for a person is reconciled on its
 interval for as long as it waits, so a counter read from its status would climb
 with the reconciliation cadence and report decisions nobody made.
 
-Production logs are structured. Controller-runtime request context supplies the
-managed object identity; lifecycle records add the closed `operation`, numeric
-`attempt`, and `phase` fields. Reconciliation completion records include
-`requeue` and `requeueAfter`. Executor stdout and stderr are treated as
+Production logs are structured, and go to standard error. Controller-runtime
+request context supplies the managed object identity; lifecycle records add the
+closed `operation`, numeric `attempt`, and `phase` fields. Reconciliation
+completion records include `requeue` and `requeueAfter`. Standard output carries
+only the journal lines: one JSON line for each journal entry a status write
+stored, as [The journal in the manager's log](../audit/#journal-lines) says, and
+`ptah_operator_journal_lines_dropped_total` counts the lines the manager did not
+write because its output stopped taking them or a write failed. Executor stdout and stderr are treated as
 untrusted secret-bearing data: only a strictly validated Plan may transport
 the plan Ptah saved. Resolve and Verify emit bounded typed evidence, Observe emits
 only summaries, and Apply emits no native output but the one line
