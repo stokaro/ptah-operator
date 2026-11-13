@@ -1418,9 +1418,11 @@ func reportDecodeError(command string, outcome commandOutcome) error {
 // may start more than one Pod for the Job, so no one child's claim that
 // nothing reached the database speaks for the others, and only the
 // observation that follows can. That holds for a failed report too, although
-// in this contract failed means nothing was sent -- unlike a migration run,
-// whose failed may follow committed migrations -- so no reading here is shared
-// with decodeMigrationReport. The report still names the ending, so a refusal
+// in this contract failed means nothing was sent, or, from a Ptah later than
+// the one support/ptah.json pins, that the database refused a statement and
+// confirmed the rollback of all of them -- unlike a migration run, whose
+// failed may follow committed migrations -- so no reading here is shared with
+// decodeMigrationReport. The report still names the ending, so a refusal
 // reaches the resource as a refusal, and where a run that sent a statement
 // stopped reaches it as the statement's position and the database's code,
 // which carry no row.
@@ -1465,8 +1467,14 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 			return
 		}
 		logReportedError(report.Error, redactor, diagnostics)
-		setResultError(result, codeApplyFailed,
-			errors.New("ptah reported that the apply failed before it sent any statement"), redactor, diagnostics)
+		ended := errors.New("ptah reported that the apply failed before it sent any statement")
+		if report.Failure != nil && report.Failure.Failed() {
+			// The pinned Ptah reports a refused statement as unknown. A later
+			// one reports it as failed once the database confirmed the
+			// rollback (stokaro/ptah#5737), and then a statement was sent.
+			ended = errors.New("ptah reported that the database refused a statement and the apply rolled back")
+		}
+		setResultError(result, codeApplyFailed, ended, redactor, diagnostics)
 		result.ApplyFailure = report.Failure
 	case dataplane.SchemaApplyOutcomeUnknown:
 		logReportedError(report.Error, redactor, diagnostics)

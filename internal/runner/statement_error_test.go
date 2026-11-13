@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -490,6 +491,52 @@ func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
 			frame := handcraftedIntegrityValidFrame(t, candidate)
 			if _, err := ParseResultFor(frame, candidate.Operation, candidate.OperationID); !errors.Is(err, ErrMalformedFrame) {
 				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
+// A Ptah later than the pinned one reports a statement the database refused as
+// failed once the database confirmed the rollback (stokaro/ptah#5737). The
+// frame carries where it stopped, and its message no longer says that nothing
+// was sent. A failed report that names no statement still says so.
+func TestAFailedApplyThatNamesAStatementSaysItSentOne(t *testing.T) {
+	t.Parallel()
+
+	run := targetFailureRuns()["apply"]
+	document := func(failure string) string {
+		return `{"contract_version":4,"command":"schema apply","outcome":"failed","plan_name":"operator-plan",` +
+			`"plan_digest":"` + sha256Digest([]byte(targetFailurePlan)) + `","error":{"message":"ERROR: refused"}` + failure + `}`
+	}
+	for _, test := range []struct {
+		name    string
+		failure string
+		stopped *dataplane.SchemaApplyFailure
+		message string
+	}{
+		{
+			name:    "a refused statement",
+			failure: `,"failure":{"statement":2,"statements":3,"sqlstate":"42P07"}`,
+			stopped: &dataplane.SchemaApplyFailure{Statement: 2, Statements: 3, SQLState: "42P07"},
+			message: "ptah reported that the database refused a statement and the apply rolled back",
+		},
+		{
+			name:    "no statement",
+			message: "ptah reported that the apply failed before it sent any statement",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, log, encoded := runRefusedStatement(t, run, document(test.failure))
+			parsed, err := ParseResultFor(append([]byte(log), encoded.Frame...), run.operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("the frame does not parse: %v", err)
+			}
+			if parsed.Error == nil || parsed.Error.Code != codeApplyFailed || parsed.Error.Message != test.message {
+				t.Fatalf("the frame's error is %+v, want %s with %q", parsed.Error, codeApplyFailed, test.message)
+			}
+			if !reflect.DeepEqual(parsed.ApplyFailure, test.stopped) {
+				t.Fatalf("the frame carries apply failure %+v, want %+v", parsed.ApplyFailure, test.stopped)
 			}
 		})
 	}

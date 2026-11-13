@@ -171,3 +171,44 @@ func TestAnApprovedApplyJournalsWhatRanAndItsProof(t *testing.T) {
 		})
 	}
 }
+
+// A run that names no statement the database refused -- its commit failed, or
+// it confirmed every statement and still did not succeed -- records none: the
+// API admits a position from one, and a status write it refused would leave the
+// Apply's claim where it stood. The outcome is unknown all the same.
+func TestAnApplyThatNamesNoStatementRecordsNone(t *testing.T) {
+	t.Parallel()
+
+	for name, stopped := range map[string]*dataplane.SchemaApplyFailure{
+		"the commit after every statement":               {Statements: 2, Commit: true, SQLState: "23503"},
+		"every statement confirmed and still no success": {Statements: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, policyConfig := dispatchedApplyWithPlan(t)
+			job, pod := terminalWorkload(schema, batchv1.JobComplete)
+			frame := safetyRunnerFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationApply, OperationID: schema.Status.ActiveOperation.ID,
+				ChildExitCode: 2, MutationStarted: true, Uncertain: true,
+				CoordinationDigest: schema.Status.Plan.CoordinationDigest, TargetIdentityDigest: schema.Status.Plan.TargetIdentityDigest,
+				Error:        &runner.ResultError{Code: "apply_outcome_unknown", Message: "ptah sent the statements and returned an error"},
+				ApplyFailure: stopped,
+			})
+			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, plan, policyConfig, job, pod)
+			reconciler.Locks = targetlock.New(api, api, nil)
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			harvested := safetyGetSchema(t, api, schema)
+			assertUnaccountedApply(t, harvested)
+			if failure := harvested.Status.PendingObservation.ApplyFailure; failure != nil {
+				t.Fatalf("status.pendingObservation.applyFailure = %#v, want none", *failure)
+			}
+			if ended := oneJournaled(t, harvested, operatorv1alpha1.JournalApplyFinished); ended.ApplyFailure != nil ||
+				ended.Outcome != operatorv1alpha1.JournalUnknown {
+				t.Fatalf("ApplyFinished = %#v, want Unknown with no applyFailure", ended)
+			}
+		})
+	}
+}
