@@ -60,10 +60,11 @@ func (b *syncBuffer) lines(t *testing.T) []string {
 	return lines
 }
 
-// blockedOutput takes no line until release is closed, and says when a write
-// is waiting on it.
+// blockedOutput takes the first take lines and then no line until release is
+// closed, and says when a write is waiting on it.
 type blockedOutput struct {
 	syncBuffer
+	take    int
 	waiting chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -74,6 +75,10 @@ func newBlockedOutput() *blockedOutput {
 }
 
 func (b *blockedOutput) Write(data []byte) (int, error) {
+	if b.take > 0 {
+		b.take--
+		return b.syncBuffer.Write(data)
+	}
 	b.once.Do(func() { close(b.waiting) })
 	<-b.release
 	return b.syncBuffer.Write(data)
@@ -179,9 +184,11 @@ func TestAUsernameIsWrittenAsStatusHoldsIt(t *testing.T) {
 	}
 }
 
-// The longest entry the API admits still fits one record of a container
-// runtime's log, which splits a line past 16 KiB: every bounded string at its
-// bound, in the characters JSON spells longest.
+// The longest entry the API admits still fits one record of containerd's
+// container log, which splits a line past 16 KiB: every bounded string at its
+// bound, in the characters JSON spells longest. A runtime that reads its
+// output in smaller pieces records a longer line as partial records, which
+// kubectl logs joins again and a collector that tails the files must too.
 func TestTheLongestEntryFitsOneLogRecord(t *testing.T) {
 	t.Parallel()
 	const runtimeRecord = 16 * 1024
@@ -210,7 +217,7 @@ func TestTheLongestEntryFitsOneLogRecord(t *testing.T) {
 		t.Fatalf("wrote %d lines, want one", len(lines))
 	}
 	if size := len(lines[0]) + 1; size > runtimeRecord {
-		t.Fatalf("the longest line is %d bytes, more than the %d a runtime writes as one record", size, runtimeRecord)
+		t.Fatalf("the longest line is %d bytes, more than the %d containerd writes as one record", size, runtimeRecord)
 	}
 }
 
@@ -302,7 +309,8 @@ func TestAFailedWriteIsCountedAndTheNextLineWritten(t *testing.T) {
 }
 
 // Close gives up on an output that takes nothing, so a stopping manager
-// exits.
+// exits, and says how many lines it did not write: the one the writer holds
+// and the ones still queued.
 func TestCloseGivesUpOnAStoppedOutput(t *testing.T) {
 	t.Parallel()
 	out := newBlockedOutput()
@@ -310,10 +318,38 @@ func TestCloseGivesUpOnAStoppedOutput(t *testing.T) {
 	log := journallog.New(out, journallog.Options{Clock: clock})
 	log.Entries("PtahSchema", schema, []operatorv1alpha1.JournalEntry{entry("plan-a", 0)})
 	<-out.waiting
+	log.Entries("PtahSchema", schema, []operatorv1alpha1.JournalEntry{entry("plan-b", time.Second), entry("plan-c", 2*time.Second)})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := log.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	err := log.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Close() = %v, want the deadline", err)
+	}
+	if !strings.HasPrefix(err.Error(), "3 journal lines not written") {
+		t.Fatalf("Close() = %q, want it to count the 3 lines left", err)
+	}
+}
+
+// A Close that gives up counts only the lines the output never took, not the
+// ones it wrote before it stopped.
+func TestCloseCountsOnlyTheLinesLeft(t *testing.T) {
+	t.Parallel()
+	out := newBlockedOutput()
+	out.take = 1
+	defer close(out.release)
+	log := journallog.New(out, journallog.Options{Clock: clock})
+	log.Entries("PtahSchema", schema, []operatorv1alpha1.JournalEntry{
+		entry("plan-a", 0), entry("plan-b", time.Second), entry("plan-c", 2*time.Second),
+	})
+	<-out.waiting
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := log.Close(ctx)
+	if err == nil || !strings.HasPrefix(err.Error(), "2 journal lines not written") {
+		t.Fatalf("Close() = %v, want it to count the 2 lines after the one written", err)
+	}
+	if lines := out.lines(t); len(lines) != 1 {
+		t.Fatalf("wrote %q, want plan-a's line alone", lines)
 	}
 }
 

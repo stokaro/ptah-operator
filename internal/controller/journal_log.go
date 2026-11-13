@@ -16,12 +16,14 @@ type JournalLog interface {
 }
 
 // logStoredEntries hands log the entries a status write stored. stored is the
-// object the API server returned from that write, and written is how many of
+// object the write returned, and written is how many of
 // its journal's newest entries the write wrote, as lifecyclejournal.Record
 // counted them. It runs only after the write succeeded: a write that
 // conflicted or failed stored nothing, and the pass that follows derives its
-// entries again from what is stored. The entries come from stored rather than
-// from what the write sent, so a line says what the API server kept.
+// entries again from what is stored. The client decodes the API server's
+// answer over the object it sent, so each value the answer carries is the one
+// a line holds; a field the answer leaves out, as a pruned one, keeps the
+// value sent.
 func logStoredEntries(log JournalLog, kind string, stored metav1.Object, journal *operatorv1alpha1.LifecycleJournal, written int) {
 	if log == nil {
 		return

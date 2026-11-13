@@ -781,7 +781,7 @@ costs no request of its own. Its times come from that status, such as a plan's
 creation or a run's end, or from the manager's clock when the transition
 carries none, as conditions do. Once that write is stored, the manager also
 writes each entry the write added or changed as one JSON line on its standard
-output, read from the object the API server returned.
+output, read from the object the write returned.
 [The journal in the manager's log](../../use/audit/#journal-lines) says what
 those lines are worth.
 

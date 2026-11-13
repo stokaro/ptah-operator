@@ -280,6 +280,7 @@ is the one to change when the contract changes.
 | The approval behind `kubectl ptah approve`, bound to the plan a person reviewed | `internal/approve` |
 | Suspend, resume, refresh, set-source, settle and wait behind `kubectl ptah`, and what became of a change | `internal/operate` |
 | How a plugin command reads the API server's refusal of its write | `internal/apirefusal` |
+| The lifecycle journal, and its copy on the manager's standard output | `internal/lifecyclejournal`, `internal/journallog` |
 | Bounded-cardinality metrics | `internal/telemetry` |
 | What the manager caches from a watch | `internal/managercache` |
 | How fast a manager process calls the API server | `internal/apipace` |

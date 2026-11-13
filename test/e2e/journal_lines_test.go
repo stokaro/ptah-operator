@@ -243,6 +243,24 @@ func TestJournalLinesHoldOneLinePerStoredEntry(t *testing.T) {
 			refusal: "give count 2",
 		},
 		{
+			name: "an earlier count never logged",
+			edit: func(resources []journalAudited, schemaLines, attempts []ptahv1alpha1.JournalEntry) ([]journalAudited, map[string][]journalBatch, time.Time) {
+				return resources, map[string][]journalBatch{"manager-a": {
+					{"PtahSchema", resources[0].Object, schemaLines}, {"PtahSchema", resources[1].Object, []ptahv1alpha1.JournalEntry{attempts[0], attempts[2]}},
+				}}, started
+			},
+			refusal: "gives count 2",
+		},
+		{
+			name: "only the final count logged",
+			edit: func(resources []journalAudited, schemaLines, attempts []ptahv1alpha1.JournalEntry) ([]journalAudited, map[string][]journalBatch, time.Time) {
+				return resources, map[string][]journalBatch{"manager-a": {
+					{"PtahSchema", resources[0].Object, schemaLines}, {"PtahSchema", resources[1].Object, attempts[2:]},
+				}}, started
+			},
+			refusal: "gives count 1",
+		},
+		{
 			name: "a count past the stored one",
 			edit: func(resources []journalAudited, schemaLines, attempts []ptahv1alpha1.JournalEntry) ([]journalAudited, map[string][]journalBatch, time.Time) {
 				fourth := *attempts[2].DeepCopy()
