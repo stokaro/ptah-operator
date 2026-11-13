@@ -209,9 +209,12 @@ func TestAConflictedSchemaStatusWriteLogsNothing(t *testing.T) {
 	assertLoggedOnce(t, lines, "PtahSchema", stored, stored.Status.Journal, 0)
 }
 
-// A line says what the API server kept, which is what it answered the write
-// with: a field the CRD does not declare is pruned there. The row has the
-// answer differ from what was sent, and the line follows the answer.
+// A line is read from the object the write decoded the API server's answer
+// into, so a value the answer carries replaces the one sent. The row has the
+// answer differ from what was sent, and the line follows the answer. It does
+// not show pruning: the typed client decodes the answer over the object it
+// sent without zeroing it, so a field the answer leaves out keeps the value
+// sent there, while this fake client zeroes the object first.
 func TestALineHoldsWhatTheAPIServerAnswered(t *testing.T) {
 	t.Parallel()
 

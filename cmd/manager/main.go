@@ -387,7 +387,7 @@ func main() {
 	// them queues after Close is dropped and counted.
 	drain, cancel := context.WithTimeout(context.Background(), journalDrainBound)
 	if drainErr := journal.Close(drain); drainErr != nil {
-		log.Error(drainErr, "journal lines were still queued when the manager stopped")
+		log.Error(drainErr, "the manager stopped before writing every journal line")
 	}
 	cancel()
 	if err != nil {

@@ -368,7 +368,12 @@ cluster, and `status` survives none of them.
 | `entry` | The entry as `status.journal.entries` holds it, with the same keys |
 
 A line is written only after the API server stored the status write, and it is
-read from the object the API server returned. A write that conflicted or failed
+read from the object the write returned. The client decodes the API server's
+answer over the object it sent, so each value the answer carries replaces the
+one sent and a field the answer leaves out keeps the value sent. The two differ
+only where the API server stores less than the manager sent, as when the
+manager is newer than the CRDs it writes to; the line then still holds the
+field status dropped. A write that conflicted or failed
 stored nothing and writes no line; the pass after it reads what is stored, makes
 the entry again and writes the line once that write is stored. A pass that
 changes nothing writes no status and no line. A failed attempt that folds into
@@ -381,7 +386,8 @@ A line can be missing:
   the connection drops. The next pass finds the entry stored and writes no line
   for it.
 - The manager stopped between the write and the line. A manager asked to stop
-  waits up to two seconds for the lines it queued; one that is killed waits for
+  waits up to two seconds for the lines it queued, and if any are left, its
+  last record on standard error says how many; one that is killed waits for
   none.
 - Standard output stopped taking lines and the 1,024 the manager queues filled,
   or a write to it failed. The manager drops the line rather than hold up the
@@ -389,7 +395,10 @@ A line can be missing:
 - The kubelet rotated the container log, at 10 MiB by default, before the
   collector read it, or the collector lost it.
 
-Only the third is counted. While the resource exists, `status.journal` is the
+`ptah_operator_journal_lines_dropped_total` counts the third, and a line a
+stopping manager was given after it stopped taking lines. The counter stops
+with the manager, which is why a stopping manager names the lines it left on
+standard error instead. While the resource exists, `status.journal` is the
 record and the lines are a copy of it; once the resource is gone, the copy is
 what is left.
 

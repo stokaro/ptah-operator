@@ -796,7 +796,7 @@ GRANT TEMPORARY ON DATABASE app TO ptah;
 - **The journal in the manager's log.** After a status write that adds or
   changes a journal entry is stored, the manager writes the entry as one JSON
   line on its standard output, with the resource's kind, namespace, name and
-  UID, read from the object the API server returned. A folded failure writes a
+  UID, read from the object the write returned. A folded failure writes a
   line each time its count moves. The lines never hold up a status write: a
   line that finds the queue full, or whose write fails, is dropped and counted
   in `ptah_operator_journal_lines_dropped_total`. A collector that keeps them

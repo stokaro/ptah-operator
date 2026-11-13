@@ -16,8 +16,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -50,7 +52,8 @@ type Line struct {
 	Namespace string    `json:"namespace"`
 	Name      string    `json:"name"`
 	UID       types.UID `json:"uid"`
-	// Entry is the entry as the API server stored it in status.journal.
+	// Entry is the entry as the write that stored it in status.journal
+	// returned it.
 	Entry operatorv1alpha1.JournalEntry `json:"entry"`
 }
 
@@ -71,6 +74,9 @@ type Log struct {
 	lines   chan []byte
 	dropped prometheus.Counter
 	clock   func() time.Time
+	// unwritten counts the lines queued and not yet handed back by the output,
+	// the one the writer holds included.
+	unwritten atomic.Int64
 
 	mu      sync.RWMutex
 	closed  bool
@@ -107,8 +113,8 @@ func New(out io.Writer, options Options) *Log {
 
 // Entries queues one line for each entry of the resource object, in order. It
 // never blocks: a line that does not fit the queue is dropped and counted. The
-// caller passes the entries as the API server returned them from the write that
-// stored them, and only after that write succeeded.
+// caller passes the entries as the write that stored them returned them, and
+// only after that write succeeded.
 func (l *Log) Entries(kind string, object metav1.Object, entries []operatorv1alpha1.JournalEntry) {
 	if l == nil || len(entries) == 0 {
 		return
@@ -129,9 +135,11 @@ func (l *Log) Entries(kind string, object metav1.Object, entries []operatorv1alp
 			l.dropped.Inc()
 			continue
 		}
+		l.unwritten.Add(1)
 		select {
 		case l.lines <- line:
 		default:
+			l.unwritten.Add(-1)
 			l.dropped.Inc()
 		}
 	}
@@ -140,7 +148,9 @@ func (l *Log) Entries(kind string, object metav1.Object, entries []operatorv1alp
 // Close stops taking lines and waits until the queued ones are written or ctx
 // ends, whichever comes first. A line queued after Close is dropped and
 // counted. The manager calls it once its controllers have stopped, so the
-// last status writes still reach the output.
+// last status writes still reach the output. When ctx ends first, the error
+// says how many lines were not written: the drop counter stops with the
+// manager, so that error is the only count of them.
 func (l *Log) Close(ctx context.Context) error {
 	if l == nil {
 		return nil
@@ -155,7 +165,7 @@ func (l *Log) Close(ctx context.Context) error {
 	case <-l.stopped:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("%d journal lines not written: %w", l.unwritten.Load(), ctx.Err())
 	}
 }
 
@@ -165,6 +175,7 @@ func (l *Log) write() {
 		if _, err := l.out.Write(line); err != nil {
 			l.dropped.Inc()
 		}
+		l.unwritten.Add(-1)
 	}
 }
 
