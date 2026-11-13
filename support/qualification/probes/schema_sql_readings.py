@@ -409,6 +409,18 @@ def contract_readings(engine):
     return readings
 
 
+def parameter_detail(detail):
+    """A statement's bound parameters as the contract spells them.
+
+    PostgreSQL 17 logs them as "Parameters: ...", and 16 logs the same detail as
+    "parameters: ...". The audit's postgresParameterDetail rewrites that one
+    prefix the same way, so a reading on 16 witnesses the same declarations.
+    """
+    if detail.startswith('parameters: '):
+        return 'Parameters: ' + detail[len('parameters: '):]
+    return detail
+
+
 def received(engine, path):
     """Each statement a reading shows the server receiving, as the audit reads it."""
     for line in path.read_text().splitlines():
@@ -422,7 +434,7 @@ def received(engine, path):
             else:
                 sql = row.get('statement', '')
             if sql:
-                yield 'query', sql, row.get('detail', '')
+                yield 'query', sql, parameter_detail(row.get('detail', ''))
         elif row['type'] in ('Query', 'Prepare', 'Execute'):
             sql = binascii.unhexlify(row['argumentHex']).decode()
             yield row['type'], sql.replace(f"'{DATABASE}'", "'{{database}}'"), ''

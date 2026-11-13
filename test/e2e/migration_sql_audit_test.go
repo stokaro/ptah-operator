@@ -81,6 +81,46 @@ func TestPostgresMigrationSQLAuditAcceptsOnlyTheHistoryContract(t *testing.T) {
 	}
 }
 
+// PostgreSQL 16 logs the same History statements with the parameter detail
+// spelled "parameters: ", and the audit has to read them as 17's. Rewriting
+// that prefix must not let a changed value, or another spelling, through.
+func TestPostgresMigrationSQLAuditReadsPostgreSQL16Parameters(t *testing.T) {
+	t.Parallel()
+	raw := postgresMigrationAuditReading(t)
+	const database, host = "ptah_e2e_retarget", "10.244.3.97"
+	clients := map[string]operationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
+	lowered := strings.ReplaceAll(string(raw), `"detail": "Parameters: `, `"detail": "parameters: `)
+	if lowered == string(raw) {
+		t.Fatal("the History reading carries no parameter detail to respell")
+	}
+	counts, err := postgresMigrationRefusalSQL([]byte(lowered), database, clients)
+	if err != nil || counts[host] != 10 || len(counts) != 1 {
+		t.Fatalf("History reading as PostgreSQL 16 logs it: counts=%v error=%v", counts, err)
+	}
+	for name, detail := range map[string]string{
+		"another schema":   "parameters: $1 = 'other', $2 = 'schema_migrations'",
+		"extra params":     "parameters: $1 = '', $2 = 'schema_migrations', $3 = 'rogue'",
+		"upper case":       "PARAMETERS: $1 = '', $2 = 'schema_migrations'",
+		"no space":         "parameters:$1 = '', $2 = 'schema_migrations'",
+		"prefixed":         " parameters: $1 = '', $2 = 'schema_migrations'",
+		"second detail":    "parameters: $1 = '', $2 = 'schema_migrations'\nparameters: $3 = 'rogue'",
+		"bare lower label": "parameters: ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			row, err := json.Marshal(map[string]string{
+				"dbname": database, "remote_host": host, "message": "execute <unnamed>: " + postgresHistoryOwner,
+				"detail": detail,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := postgresMigrationRefusalSQL(append([]byte(lowered), row...), database, clients); err == nil {
+				t.Fatal("accepted a parameter detail the History contract does not name")
+			}
+		})
+	}
+}
+
 func TestPostgresMigrationSQLAuditRequiresCompleteAttribution(t *testing.T) {
 	t.Parallel()
 	raw := postgresMigrationAuditReading(t)

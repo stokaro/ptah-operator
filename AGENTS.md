@@ -231,9 +231,9 @@ Phases that share mutable state stay together: the CRD upgrade and the uninstall
 that follows it and the schema faults and their shared watches. MySQL and external PostgreSQL
 stay with schema faults because their closing assertions must still hold after
 fault injection. They run in `schema-faults`. The data-plane job runs the ordinary
-PostgreSQL lifecycle, plan-size boundaries and admission rows. The ConfigMap
-and Git sources read their own databases and run in `sources`. PostgreSQL
-reference data runs in `lifecycle` after leader failover. Certificate rotation, MySQL reference
+PostgreSQL lifecycle, plan-size boundaries and admission rows. PostgreSQL
+reference data and the ConfigMap and Git sources read their own databases and
+run in `sources`. Certificate rotation, MySQL reference
 data, plan-storage alerts, and certificate-expiry alerts share `certificates`. The reference-data rows use
 separate databases and need no migration acceptance. Alerting runs in lifecycle
 before the final next-release upgrade and uninstall. It publishes and plans its own schema and migration
@@ -246,7 +246,9 @@ and monitoring namespace, so the unpartitioned driver also runs them safely.
 The matrix has fourteen suites. Each has to finish inside the 90-minute job
 timeout with room for a slow runner, so a suite that comes near it splits where
 its rows own their state, and a phase split off that way publishes every
-artifact it reads.
+artifact it reads. `test/e2e/phases` declares the migration artifacts a
+phase's rows read without publishing them, and `go test ./hack/...` holds each
+declaration to those rows and to a publish the phase itself runs.
 
 The independent schema approval rows run in `schema-approvals`. The executor
 and runtime rows roll the manager and run in `schema-runtime`, which stands up

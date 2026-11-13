@@ -60,6 +60,10 @@ type View struct {
 	ApprovalsUnreadable       *statusview.Unreadable                    `json:"approvalsUnreadable,omitempty"`
 	Acknowledgments           *statusview.Decisions[AcknowledgmentView] `json:"acknowledgments,omitempty"`
 	AcknowledgmentsUnreadable *statusview.Unreadable                    `json:"acknowledgmentsUnreadable,omitempty"`
+	// Details is the status as this plugin's API version decodes it, present
+	// only when it was asked for, so the view without it reads as it always
+	// has.
+	Details *Details `json:"details,omitempty"`
 }
 
 // PolicyView is the spec's apply mode: whether a planned sequence runs
@@ -204,6 +208,16 @@ func Load(
 	reader client.Reader,
 	namespace, name string,
 ) (View, error) {
+	return load(ctx, reader, namespace, name, false)
+}
+
+// LoadWithDetails reads the view and the status beside it, from the same
+// read of the migration.
+func LoadWithDetails(ctx context.Context, reader client.Reader, namespace, name string) (View, error) {
+	return load(ctx, reader, namespace, name, true)
+}
+
+func load(ctx context.Context, reader client.Reader, namespace, name string, details bool) (View, error) {
 	if reader == nil {
 		return View{}, errors.New("a cluster reader is required")
 	}
@@ -254,6 +268,9 @@ func Load(
 	view.Plan = planOf(plan)
 	view.Approvals, view.ApprovalsUnreadable = approvalsOf(ctx, reader, migration, plan)
 	view.Acknowledgments, view.AcknowledgmentsUnreadable = acknowledgmentsOf(ctx, reader, migration)
+	if details {
+		view.Details = detailsOf(migration)
+	}
 	return view, nil
 }
 

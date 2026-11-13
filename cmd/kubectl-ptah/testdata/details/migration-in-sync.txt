@@ -1,0 +1,125 @@
+Migration:            application/orders
+Phase:                InSync
+Ready:                True, HistoryMatched: The database has every migration this artifact carries
+Artifact:             oci://e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/migrations-faults/postgresql-uncertain@sha256:d973ecdbeaac7a0bdf13060e190a59edb8abbd9e406ecf38a252925a2c779845
+History read:         2026-11-12T18:29:25Z
+Current version:      3
+Applied:              3
+Pending:              0
+
+Last run:             Applied, started 2026-11-12T18:23:43Z, finished 2026-11-12T18:29:13Z
+  Job:                ptah-m-apply-e2e-isolated-node-postgresql-14958256c429b79a, UID 9a16608b-4be0-4a73-bbec-23e628ffa147
+  Operation:          sha256:065d4435d418c50b8c095faa55a8185fa4db2410b9d129782a1aecfd5e18734a
+  Plan:               ptah-mplan-68ad16dd88b86de4dd89e8bc, fingerprint sha256:68ad16dd88b86de4dd89e8bc4dc9b8158ba5db3f24298136b45b44cc5e02ebd0
+  Authorized:         spec.policy.apply Always, with no approval
+  Read back:          InSync at version 3, 2026-11-12T18:29:25Z
+  Versions:           1, 2, 3
+  Message:            3 migrations are recorded applied
+
+No plan is published.
+
+Approvals: none
+
+Run acknowledgments: none
+
+Conditions:
+  TYPE               STATUS  REASON           SINCE                 MESSAGE
+  Progressing        False   HistoryMatched   2026-11-12T18:29:25Z  Nothing is pending
+  ArtifactVerified   True    PolicySatisfied  2026-11-12T18:23:31Z  The resolved artifact satisfied its verification policy
+  Blocked            False   HistoryMatched   2026-11-12T18:23:43Z  The history continues this artifact
+  Ready              True    HistoryMatched   2026-11-12T18:29:25Z  The database has every migration this artifact carries
+  DatabaseReachable  True    Observed         2026-11-12T18:23:43Z  The migration history was read
+  ApprovalRequired   False   HistoryMatched   2026-11-12T18:23:43Z  This reading published no plan, so nothing waits for an approval
+
+Details, every status field this plugin's API version knows:
+
+Status:               generation 1; the spec is at generation 1
+  Observed generation: 1
+  Phase: InSync
+  Next reconciliation time: 2026-11-12T18:31:25Z
+
+Active operation:     none
+
+Execution binding:    v1-6239d1375c99b1ba542910443252274c
+  Epoch: v1-6239d1375c99b1ba542910443252274c
+  Controller state version: 1
+  Ptah version: v0.23.0
+  Executor image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-executor@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489
+  Runner protocol version: 1
+
+Artifact:
+  Resolved reference: oci://e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/migrations-faults/postgresql-uncertain@sha256:d973ecdbeaac7a0bdf13060e190a59edb8abbd9e406ecf38a252925a2c779845
+  Digest: sha256:d973ecdbeaac7a0bdf13060e190a59edb8abbd9e406ecf38a252925a2c779845
+  Registry auth from:
+    Name: e2e-registry-auth
+    Mode: Environment
+    Username key: username
+    Password key: password
+    Token key: token
+    Docker config JSON key: .dockerconfigjson
+  Transport:
+    Plain HTTP: true
+
+History read:         2026-11-12T18:29:25Z
+  The database's revision table as the operator last read it, with its newest
+  rows. It is the database's record of what ran, apart from the operator's
+  journal.
+  Observed at: 2026-11-12T18:29:25Z
+  Contract version: 2
+  Current version: 3
+  Applied count: 3
+  Pending count: 0
+  Fingerprint: sha256:319abf0ec05c04266af58cd13517c31f479a75c6c65acbac282f7bd7e3104b61
+  Target identity digest: sha256:ab3fa530de2524fb1ab9d68b4375c25d8bbac38148249f1fc0dc6028300f11b4
+  Revisions:
+    - Version: 3
+      Description: Settle Slowly
+      Checksum: 4a726f8707f0adf64b1f2c0ed725997b3dba488d82e35cc74db1aaaea46ab15e
+      State: applied
+      Applied at: 2026-11-12T18:24:33Z
+      Execution millis: 45042
+    - Version: 2
+      Description: Add Widget Color
+      Checksum: 7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc
+      State: applied
+      Applied at: 2026-11-12T18:23:48Z
+      Execution millis: 4
+    - Version: 1
+      Description: Create Widgets
+      Checksum: 2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6
+      State: applied
+      Applied at: 2026-11-12T18:23:48Z
+      Execution millis: 6
+
+Last run:             Applied
+  The most recent run. A run nobody has accounted for is the unresolved run, a
+  record of its own.
+  Outcome: Applied
+  Job name: ptah-m-apply-e2e-isolated-node-postgresql-14958256c429b79a
+  Job UID: 9a16608b-4be0-4a73-bbec-23e628ffa147
+  Operation ID: sha256:065d4435d418c50b8c095faa55a8185fa4db2410b9d129782a1aecfd5e18734a
+  Plan ref:
+    Name: ptah-mplan-68ad16dd88b86de4dd89e8bc
+    UID: 0447169a-fa1c-4080-af77-d45b3b136f80
+  Plan fingerprint: sha256:68ad16dd88b86de4dd89e8bc4dc9b8158ba5db3f24298136b45b44cc5e02ebd0
+  Authorization:
+    Kind: Policy
+  Artifact digest: sha256:d973ecdbeaac7a0bdf13060e190a59edb8abbd9e406ecf38a252925a2c779845
+  Target identity digest: sha256:ab3fa530de2524fb1ab9d68b4375c25d8bbac38148249f1fc0dc6028300f11b4
+  Execution binding ID: v1-6239d1375c99b1ba542910443252274c
+  Verification:
+    Observed at: 2026-11-12T18:29:25Z
+    History fingerprint: sha256:319abf0ec05c04266af58cd13517c31f479a75c6c65acbac282f7bd7e3104b61
+    Current version: 3
+    Result: InSync
+  Started at: 2026-11-12T18:23:43Z
+  Finished at: 2026-11-12T18:29:13Z
+  Applied versions: 1, 2, 3
+  Dispatched by:
+    Controller image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-operator@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+    Controller revision: 1bf45520d047d243613894334d3aceeba7ee61a3
+    Runner image: e2e-registry.ptah-test-a-1-36-4-enh920-mig-8a3858119c.svc.cluster.local:5000/ptah-runner@sha256:e97f7018475bf0a0124d12590d7e415229a8e681fb581f6710cea1935b0506bc
+  Message: 3 migrations are recorded applied
+
+kubectl ptah history migration/orders -n application prints its lifecycle history and every decision that names it.
+kubectl events -n application --for ptahmigration/orders prints its Events.

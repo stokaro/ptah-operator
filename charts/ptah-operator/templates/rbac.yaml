@@ -201,3 +201,20 @@ rules:
     resources: ["ptahschemaapprovals", "ptahmigrationapprovals", "ptahmigrationrunacknowledgments"]
     verbs: ["create"]
 {{- end }}
+{{- with include "ptah-operator.approverSubjects" . | fromJsonArray }}
+---
+# The approvers the installer named. A ClusterRoleBinding, so they approve in
+# every namespace; a RoleBinding of the installation's own keeps one to fewer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ptah-operator.fullname" $ }}-approver
+  labels:
+    {{- include "ptah-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ptah-operator.fullname" $ }}-approver
+subjects:
+  {{- toYaml . | nindent 2 }}
+{{- end }}

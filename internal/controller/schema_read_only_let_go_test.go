@@ -100,6 +100,9 @@ func schemaOperationDispatchedBy(
 		if shape.alter != nil {
 			shape.alter(job)
 		}
+		if shape.createdWithoutTTL {
+			job.Spec.TTLSecondsAfterFinished = nil
+		}
 		return job
 	}
 	operation.AdmissionSnapshot = testAdmissionSnapshotOf(&build().Spec.Template)
@@ -240,7 +243,7 @@ func TestARefusedReadOnlySchemaJobIsCollectedOnceItStops(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
-			run := schemaReadDispatchedBy(t, runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: recorded})
+			run := schemaReadDispatchedBy(t, runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: recorded, createdWithoutTTL: true})
 			reconciler, api, recorder := run.reconciler(t, current)
 
 			result, err := reconciler.Reconcile(ctx, run.request())
@@ -338,28 +341,28 @@ func TestARefusedReadOnlySchemaJobAdmissionWouldNotCollectIsNamed(t *testing.T) 
 	}{
 		{
 			name:  "a claim that never recorded the UID of a Job under another epoch",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch},
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, createdWithoutTTL: true},
 			stays: "its claim never recorded the Job's UID, and the Job is not the one the claim fixes",
 		},
 		{
 			name:  "a Job under another epoch",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			stays: "the Job runs under another execution epoch than its claim",
 		},
 		{
 			name:  "a Job under another epoch after the inputs moved",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			moved: true,
 			stays: "the Job runs under another execution epoch than its claim",
 		},
 		{
 			name:      "a Job under another epoch that already has its TTL",
-			shape:     runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			shape:     runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			collected: true,
 		},
 		{
 			name:  "a Job that did not stop by its own deadline and its Pods' grace",
-			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true},
+			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true},
 			stale: true,
 			stays: "the Job did not stop by its own deadline and the grace its Pods are given",
 		},
@@ -432,7 +435,7 @@ func TestASchemaJobItsReleaseCannotRebuildIsCollectedOnceItStops(t *testing.T) {
 	ctx := context.Background()
 
 	current := workloadBuilderForMigrations()
-	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true})
+	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 	reconciler, api, _ := run.reconciler(t, current)
 	reconciler.Jobs = unrebuildableJobs{current}
 
@@ -467,7 +470,7 @@ func TestAPlanWaitingForItsRefusedJobKeepsItsLease(t *testing.T) {
 
 	current := workloadBuilderForMigrations()
 	run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{
-		dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true,
+		dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true,
 	})
 	reconciler, api, _ := run.reconciler(t, current)
 	holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
@@ -536,11 +539,11 @@ func TestASuspendedReadOnlySchemaClaimNamesTheRunningJobItLeaves(t *testing.T) {
 		// the Job and starts to wait for it.
 		refused bool
 	}{
-		{name: "a Job the claim supervises", shape: runShape{dispatcher: current, recorded: true}},
-		{name: "a Job the claim never recorded", shape: runShape{dispatcher: current}},
+		{name: "a Job the claim supervises", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true}},
+		{name: "a Job the claim never recorded", shape: runShape{dispatcher: current, createdWithoutTTL: true}},
 		{
 			name:    "a Job the claim was waiting for after refusing it",
-			shape:   runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true},
+			shape:   runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true},
 			refused: true,
 		},
 	} {
@@ -614,28 +617,28 @@ func TestASuspendedReadOnlySchemaClaimGoesAtOnceWhereItOwesItsJobNothingItCanGiv
 		stays string
 	}{
 		{
-			name: "a finished Job", shape: runShape{dispatcher: current, recorded: true},
+			name: "a finished Job", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			finished: true, patches: 1, ttl: "300",
 		},
 		{
-			name: "a finished Job the claim never recorded", shape: runShape{dispatcher: current},
+			name: "a finished Job the claim never recorded", shape: runShape{dispatcher: current, createdWithoutTTL: true},
 			finished: true, recordsIt: true, patches: 1, ttl: "300",
 		},
 		{
-			name: "a Job that already has its TTL", shape: runShape{dispatcher: current, recorded: true},
+			name: "a Job that already has its TTL", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			collected: true, ttl: "300",
 		},
 		{
-			name: "a Job that replaced the claim's", shape: runShape{dispatcher: current, recorded: true},
+			name: "a Job that replaced the claim's", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			replaced: true, ttl: "none",
 		},
 		{
-			name: "a Job under another epoch", shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			name: "a Job under another epoch", shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			ttl: "none", stays: "the Job runs under another execution epoch than its claim",
 		},
 		{
 			name:  "a Job under another epoch whose UID the claim never recorded",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch}, ttl: "none",
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, createdWithoutTTL: true}, ttl: "none",
 			stays: "its claim never recorded the Job's UID, and the Job is not the one the claim fixes",
 		},
 	} {
@@ -743,7 +746,7 @@ func TestARefusedSchemaJobTTLWriteIsSettledByItsAnswer(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
-			run := schemaReadDispatchedBy(t, runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true})
+			run := schemaReadDispatchedBy(t, runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true})
 			reconciler, api, recorder := run.reconciler(t, current)
 			finishSchemaRead(t, api, run)
 			reconciler.Client = refusingJobTTL(reconciler.Client.(client.WithWatch), row.answer)
@@ -803,7 +806,7 @@ func TestASuspendedReadOnlySchemaClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *te
 	ctx := context.Background()
 
 	current := workloadBuilderForMigrations()
-	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true})
+	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 	run.schema.Spec.Suspend = true
 	reconciler, api, recorder := run.reconciler(t, current)
 	finishSchemaRead(t, api, run)
@@ -833,9 +836,10 @@ func TestASuspendedReadOnlySchemaClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *te
 
 // TestASuspendedProofReadWaitsForTheJobItRefused is the Observe that proves an
 // Apply, over the running Job its release cannot rebuild, when the resource is
-// suspended. Proof outranks suspension, so suspension does not discard the claim,
-// and the claim waits for the Job it refused to stop, renewing the Apply's Lease,
-// as it would on a resource that is not suspended. Once the Job stops it gets the
+// suspended, and the Job is one a release before 0.2.11 created, with no cleanup
+// TTL. Proof outranks suspension, so suspension does not discard the claim, and
+// the claim waits for the Job it refused to stop, renewing the Apply's Lease, as
+// it would on a resource that is not suspended. Once the Job stops it gets the
 // TTL a harvested read-only Job gets before the claim moves to its next attempt.
 // Letting go at once left that Job with no cleanup, running beside the proof read
 // the resume starts.
@@ -849,6 +853,7 @@ func TestASuspendedProofReadWaitsForTheJobItRefused(t *testing.T) {
 	if dispatched == nil || dispatched.JobUID != job.UID {
 		t.Fatalf("the proof read did not record the Job it dispatched: %#v", dispatched)
 	}
+	job = asCreatedWithoutTTL(t, api, job)
 	started := metav1.NewTime(reconciler.now().Add(-time.Minute))
 	job.Status.StartTime = &started
 	job.Status.Active = 1
@@ -914,6 +919,101 @@ func TestASuspendedProofReadWaitsForTheJobItRefused(t *testing.T) {
 	}
 }
 
+// TestASuspendedProofReadLeavesARefusedJobCreatedWithItsTTL is the proof read of
+// TestASuspendedProofReadWaitsForTheJobItRefused over a Job this release created,
+// which carries its cleanup TTL. The Job collects itself once it finishes, so the
+// claim owes it nothing: it moves to its next attempt in the same pass, still
+// serving the proof, and writes nothing to the Job or about it.
+func TestASuspendedProofReadLeavesARefusedJobCreatedWithItsTTL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	schema, reconciler, api := builtProofFixture(t, operatorv1alpha1.OperationObserve)
+	job := reconcileUntilJobNamed(t, reconciler, api, schema, schema.Status.ActiveOperation.JobName)
+	dispatched := storedSchemaOf(t, api, schema).Status.ActiveOperation
+	if dispatched == nil || dispatched.JobUID != job.UID {
+		t.Fatalf("the proof read did not record the Job it dispatched: %#v", dispatched)
+	}
+	if got := job.Spec.TTLSecondsAfterFinished; got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the proof read's Job was created with TTL %s, want %d", ttlText(got), jobclaim.CleanupTTLSeconds)
+	}
+	started := metav1.NewTime(reconciler.now().Add(-time.Minute))
+	job.Status.StartTime = &started
+	job.Status.Active = 1
+	if err := api.Status().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	suspended := storedSchemaOf(t, api, schema)
+	suspended.Spec.Suspend = true
+	if err := api.Update(ctx, suspended); err != nil {
+		t.Fatal(err)
+	}
+	recorder := record.NewFakeRecorder(64)
+	reconciler.Recorder = recorder
+	reconciler.Jobs = unrebuildableJobs{reconciler.Jobs.(workload.Builder)}
+	jobWrites := &countingJobWrites{Client: reconciler.Client}
+	reconciler.Client = jobWrites
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() over the refused Job: %v", err)
+	}
+	next := storedSchemaOf(t, api, schema)
+	if operation := next.Status.ActiveOperation; operation == nil ||
+		operation.Attempt != dispatched.Attempt+1 || operation.JobName == dispatched.JobName {
+		t.Fatalf("operation = %#v, want the proof read moved to attempt %d under a new name in the same pass",
+			operation, dispatched.Attempt+1)
+	}
+	if next.Status.PendingObservation == nil {
+		t.Fatal("the suspended proof read let go of the proof it serves")
+	}
+	if jobWrites.writes != 0 {
+		t.Fatalf("%d writes reached the Job that collects itself, want none", jobWrites.writes)
+	}
+	if got := storedTTL(t, api, job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+		t.Fatalf("the refused Job's TTL = %s, want the %d it was created with", ttlText(got), jobclaim.CleanupTTLSeconds)
+	}
+	if events := migrationEvents(recorder); schemaCleanupDeferredFor(events, job.Name, "") {
+		t.Fatalf("a Job that collects itself is named as staying: %q", events)
+	}
+}
+
+// countingJobWrites counts the updates and patches that reach a Job, whatever
+// admission would answer, in front of a client of any shape.
+type countingJobWrites struct {
+	client.Client
+	writes int
+}
+
+func (c *countingJobWrites) Update(ctx context.Context, object client.Object, options ...client.UpdateOption) error {
+	if _, isJob := object.(*batchv1.Job); isJob {
+		c.writes++
+	}
+	return c.Client.Update(ctx, object, options...)
+}
+
+func (c *countingJobWrites) Patch(ctx context.Context, object client.Object, patch client.Patch, options ...client.PatchOption) error {
+	if _, isJob := object.(*batchv1.Job); isJob {
+		c.writes++
+	}
+	return c.Client.Patch(ctx, object, patch, options...)
+}
+
+// asCreatedWithoutTTL makes the stored job the Job a release before 0.2.11
+// created for the same claim: every such release created a read-only Job with no
+// cleanup TTL. It returns the Job as stored.
+func asCreatedWithoutTTL(t *testing.T, api client.Client, job *batchv1.Job) *batchv1.Job {
+	t.Helper()
+	stored := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.TTLSecondsAfterFinished = nil
+	if err := api.Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	return stored
+}
+
 // TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound is a Plan whose
 // realm Lease epoch moved while its Job ran (LeaseContinuityLost). Its result is
 // discarded, but the claim first waits for the Job to stop, renewing the Lease,
@@ -925,8 +1025,10 @@ func TestASuspendedProofReadWaitsForTheJobItRefused(t *testing.T) {
 // unless the claim proves an Apply, which outranks suspension. A resource being
 // deleted waits by the bound alone, suspended or not, as deletion waits on the
 // running Job of every claim that holds the lock. A claim that stops waiting is
-// discarded with its Lease handed back, and a Warning names the Job, which has
-// no TTL.
+// discarded with its Lease handed back, and a Warning names a Job a release
+// before 0.2.11 created, which has no TTL. A Job created with its cleanup TTL is
+// waited for the same way, since the wait is for the Lease, and nothing names it
+// when the claim stops waiting: it is collected once it finishes.
 func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	t.Parallel()
 
@@ -937,10 +1039,16 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 		// before it, suspend suspends the resource, proof makes the claim the
 		// Plan that proves an Apply, and deleting deletes the resource first.
 		past, suspend, proof, deleting bool
+		// createdWithTTL is a Job this release created, with its cleanup TTL.
+		createdWithTTL bool
 		// stays is what the Warning says of the Job the claim stops waiting
-		// for, or empty where the claim waits on.
+		// for, or empty where the claim waits on. A Job created with its TTL
+		// is named by no Warning, and stays only says the claim stopped.
 		stays string
 	}{
+		{name: "created with its TTL inside its stop bound", createdWithTTL: true},
+		{name: "created with its TTL at its stop bound", past: true, createdWithTTL: true, stays: "stopped"},
+		{name: "created with its TTL and suspended", suspend: true, createdWithTTL: true, stays: "stopped"},
 		{name: "inside its stop bound"},
 		{name: "at its stop bound", past: true, stays: "the Job did not stop by its own deadline"},
 		{name: "suspended inside its stop bound", suspend: true, stays: notWaited},
@@ -956,7 +1064,7 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			ctx := context.Background()
 
 			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan,
-				runShape{dispatcher: current, recorded: true, proof: row.proof})
+				runShape{dispatcher: current, recorded: true, proof: row.proof, createdWithoutTTL: !row.createdWithTTL})
 			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
 			run.schema.Spec.Suspend = row.suspend
 			reconciler, api, recorder := run.reconciler(t, current)
@@ -991,8 +1099,8 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 				t.Fatal(err)
 			}
 			events := migrationEvents(recorder)
-			if ttl := storedTTL(t, api, run.job); ttl != nil {
-				t.Fatalf("the running Job's TTL = %d, want none", *ttl)
+			if got, created := ttlText(storedTTL(t, api, run.job)), ttlText(run.job.Spec.TTLSecondsAfterFinished); got != created {
+				t.Fatalf("the running Job's TTL = %s, want the %s it was created with", got, created)
 			}
 			if row.stays == "" {
 				if got.Status.ActiveOperation == nil || result.RequeueAfter != maxLockContentionPoll {
@@ -1012,6 +1120,12 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			}
 			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
 				t.Fatalf("the discarded claim's Lease is still held by %q", leased)
+			}
+			if row.createdWithTTL {
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job created with its cleanup TTL is named as staying: %q", events)
+				}
+				return
 			}
 			if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
 				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
@@ -1047,7 +1161,7 @@ func TestAReadUnderALostLeaseSettlesItsJobsTTLWriteByItsAnswer(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
-			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{dispatcher: current, recorded: true})
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
 			reconciler, api, recorder := run.reconciler(t, current)
 			finishSchemaRead(t, api, run)

@@ -134,7 +134,10 @@ func (r *SchemaReconciler) waitForReadOnlySchemaJob(
 }
 
 // schemaJobCleanupNotScheduled says that a Job will not be collected by a TTL.
-// Nothing else collects it while its owner lives.
+// Nothing else collects it while its owner lives. A Job that carries a TTL is
+// collected once it finishes, so nothing is said about it: a read-only Job this
+// release creates carries one from creation, and a pass that lets go of it, or
+// gives up waiting for it, leaves it to that TTL.
 func (r *SchemaReconciler) schemaJobCleanupNotScheduled(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
@@ -152,6 +155,9 @@ func (r *SchemaReconciler) schemaJobCleanupDeferred(
 	job *batchv1.Job,
 	err error,
 ) {
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		return
+	}
 	r.event(schema, corev1.EventTypeWarning, "SchemaJobCleanupDeferred",
 		"%s Job %q has no cleanup scheduled, so it stays until it is deleted by hand or with its owner: %s",
 		operation, job.Name, bounded(err.Error(), 512))
@@ -181,9 +187,8 @@ func (r *SchemaReconciler) warnReadJobOverdue(
 // running Job it supervised, once the Job is past its stop bound
 // (stopWaitingForJob). Since Kubernetes 1.31 a Job past its deadline carries only
 // FailureTarget until every Pod has terminated, and a Pod on a node that is gone
-// may never terminate, so the claim would supervise the Job forever. The Job has
-// not finished, so admission refuses its cleanup TTL, and it stays until it is
-// deleted by hand or with its owner; the Warning says so.
+// may never terminate, so the claim would supervise the Job forever. The Warning
+// says what becomes of the Job (overdueReadJobFate).
 func (r *SchemaReconciler) retryPastOverdueSchemaJob(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -191,9 +196,7 @@ func (r *SchemaReconciler) retryPastOverdueSchemaJob(
 ) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	stopBy := jobStopBound(job)
-	r.warnReadJobOverdue(ctx, schema, job, fmt.Sprintf(
-		"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner.",
-		operation.Type, job.Name))
+	r.warnReadJobOverdue(ctx, schema, job, overdueReadJobFate(string(operation.Type), job))
 	return r.retryOperation(ctx, schema, nil, fmt.Errorf("%s Job %q did not stop by %s, its own deadline plus the grace its Pods are given",
 		operation.Type, job.Name, stopBy.UTC().Format(time.RFC3339)))
 }

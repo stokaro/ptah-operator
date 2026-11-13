@@ -18,6 +18,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -118,7 +119,7 @@ func TestValidationHandlerAllowsOnlyTheMigrationCleanupTTL(t *testing.T) {
 	t.Parallel()
 
 	migration, job := migrationJobFixture(t, operatorv1alpha1.MigrationOperationHistory)
-	terminal := withGeneratedJobIdentity(job)
+	terminal := createdWithoutCleanupTTL(withGeneratedJobIdentity(job))
 	migration.Status.ActiveOperation.JobUID = terminal.UID
 	terminal.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 	handler := migrationHandlerFixture(t, migration, terminal)
@@ -178,7 +179,7 @@ func TestValidationHandlerAllowsTheCleanupTTLOnEveryMigrationJobTheBuilderWrites
 			} else {
 				migration, job = migrationJobFixture(t, operationType)
 			}
-			terminal := withGeneratedJobIdentity(job)
+			terminal := createdWithoutCleanupTTL(withGeneratedJobIdentity(job))
 			terminal.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 			migration.Status.ActiveOperation.JobUID = terminal.UID
 			handler := migrationHandlerFixture(t, migration, append(objects, terminal)...)
@@ -193,6 +194,75 @@ func TestValidationHandlerAllowsTheCleanupTTLOnEveryMigrationJobTheBuilderWrites
 			}
 		})
 	}
+}
+
+// A read-only migration Job is created with its cleanup TTL, and an Apply Job
+// with none: the Job the claim authorizes is the one the builder writes, TTL
+// included, so a create with any other TTL is outside the claim.
+func TestValidationHandlerCreatesOnlyAReadOnlyMigrationJobWithItsCleanupTTL(t *testing.T) {
+	t.Parallel()
+
+	short, long := jobclaim.CleanupTTLSeconds, jobclaim.FailedApplyRetentionTTLSeconds
+	over := short + 1
+	for _, operationType := range []operatorv1alpha1.MigrationOperationType{
+		operatorv1alpha1.MigrationOperationResolve,
+		operatorv1alpha1.MigrationOperationVerify,
+		operatorv1alpha1.MigrationOperationHistory,
+	} {
+		for _, test := range []struct {
+			name     string
+			ttl      *int32
+			admitted bool
+		}{
+			{"its cleanup TTL", &short, true},
+			{"no TTL", nil, false},
+			{"the long TTL", &long, false},
+			{"one second more", &over, false},
+		} {
+			t.Run(string(operationType)+" with "+test.name, func(t *testing.T) {
+				t.Parallel()
+				migration, job := migrationJobFixture(t, operationType)
+				if job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != short {
+					t.Fatalf("the builder wrote TTL %v on the %s Job, want %d", job.Spec.TTLSecondsAfterFinished, operationType, short)
+				}
+				job.Spec.TTLSecondsAfterFinished = test.ttl
+				response := migrationHandlerFixture(t, migration).Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+				if response.Allowed != test.admitted {
+					t.Fatalf("admitted = %t (%s), want %t", response.Allowed, responseMessage(response), test.admitted)
+				}
+				// The row admitted with the builder's TTL is the control: the
+				// spec these refusals name differs from it in the TTL alone.
+				if !test.admitted && !strings.Contains(responseMessage(response), specOutsideClaim) {
+					t.Fatalf("denial = %q, want one naming %q", responseMessage(response), specOutsideClaim)
+				}
+			})
+		}
+	}
+
+	t.Run("Apply with the cleanup TTL", func(t *testing.T) {
+		t.Parallel()
+		migration, plan, job := migrationApplyJobFixture(t)
+		if job.Spec.TTLSecondsAfterFinished != nil {
+			t.Fatalf("the builder wrote TTL %d on an Apply Job", *job.Spec.TTLSecondsAfterFinished)
+		}
+		job.Spec.TTLSecondsAfterFinished = &short
+		response := migrationHandlerFixture(t, migration, plan).Handle(context.Background(), requestFor(t, admissionv1.Create, job))
+		if response.Allowed || !strings.Contains(responseMessage(response), specOutsideClaim) {
+			t.Fatalf("an Apply Job created with a cleanup TTL was judged %t: %s", response.Allowed, responseMessage(response))
+		}
+	})
+}
+
+const specOutsideClaim = "the Job's spec is not the one its claim builds"
+
+// createdWithoutCleanupTTL is job as a release before this one created it.
+// Every Job then started without a cleanup TTL, and the manager gave a read-only
+// Job its TTL once it had read the result; that update still has to be
+// admitted for a read Job such a release left behind.
+func createdWithoutCleanupTTL(job *batchv1.Job) *batchv1.Job {
+	job = job.DeepCopy()
+	job.Spec.TTLSecondsAfterFinished = nil
+	return job
 }
 
 // responseMessage is the denial text an admission response carries.

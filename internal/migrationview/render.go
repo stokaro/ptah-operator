@@ -105,6 +105,9 @@ func renderText(out io.Writer, view View) error {
 		text.WriteString("\nConditions:\n")
 		statusview.WriteTable(&text, "  ", view.Conditions, view.Generation)
 	}
+	if view.Details != nil {
+		renderDetails(&text, view)
+	}
 	fmt.Fprintf(&text, "\n%s prints its lifecycle history and every decision that names it.\n", historyCommand(view))
 	fmt.Fprintf(&text, "kubectl events -n %s --for ptahmigration/%s prints its Events.\n", view.Namespace, view.Migration)
 	_, err := io.WriteString(out, text.String())
