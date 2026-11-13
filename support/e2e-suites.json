@@ -138,8 +138,8 @@
     {
       "name": "sources",
       "slug": "sources",
-      "summary": "PostgreSQL reference data, and schemas and migration sequences read from ConfigMaps and from Git",
-      "phases": ["reference-data-postgresql", "configmap-sources", "git-sources"],
+      "summary": "PostgreSQL reference data, and schemas and migration sequences read from ConfigMaps, from Git and from HTTPS downloads",
+      "phases": ["reference-data-postgresql", "configmap-sources", "git-sources", "https-sources"],
       "prepare": ["dataplane"]
     },
     {
