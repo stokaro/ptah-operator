@@ -429,6 +429,7 @@ var MigrationFaultsMySQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"fault-artifact",
 		"mysql-migration-faults",
+		"mysql-refused-migration-log",
 	},
 	// fault-artifact publishes both, to the phase's own repository, before
 	// the fault rows create their resources from them.

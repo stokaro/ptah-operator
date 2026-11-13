@@ -99,17 +99,25 @@ func runMigrationFaultsPhase(t *testing.T, phase phases.Of[phases.MigrationsInpu
 	run, inputs := harness.Begin(t, phase)
 	m := newMigrationRun(t, run, inputs, engine)
 	m.repository += "-faults"
-	for _, scenario := range []struct {
+	type scenario struct {
 		name string
 		body func()
-	}{
+	}
+	scenarios := []scenario{
 		{"fault-artifact", func() {
 			m.migrationPolicy()
 			m.publish("fault-source", m.fixtureDir(""), m.reference(""))
 			m.publish("fault-uncertain", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
 		}},
 		{engine + "-migration-faults", m.engineMigrationFaults},
-	} {
+	}
+	// MySQL refuses a value longer than its column in the strict mode Ptah
+	// writes its log in. PostgreSQL refuses it too, and the operator reads
+	// either refusal from the same report, so one engine carries the row.
+	if engine == "mysql" {
+		scenarios = append(scenarios, scenario{"mysql-refused-migration-log", m.refusedLogProof})
+	}
+	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return
 		}
