@@ -35,7 +35,7 @@ const (
 // attempt folded into it. Nothing else moves, since the bounds only drop the
 // oldest entries, so those are the last ones the journal holds. A write that
 // stores the journal can then say which of the stored entries are its own:
-// [Newest] reads them back from the object the API server returned.
+// [Newest] reads them back from the object the write returned.
 //
 // The age bound is measured from the newest entry rather than from now: an
 // entry may be dated by the time its status carries, and the bound must not
