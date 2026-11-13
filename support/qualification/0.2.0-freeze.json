@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-12T18:19:59.736470+00:00",
+  "frozenAt": "2026-11-13T08:43:42.562653+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "aa08c2eff70aed824a440daab8d03e848765785e24016b3f4e503f5cc8de950f"
+      "sha256": "a27f4c61dbfe56619bd85a14b034c6de8e02e81808775824c365a5c213c4a5b1"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.10 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 90,
+  "revision": 91,
   "supersedes": {
-    "freezeCommit": "ba07efe82c590d568ea2f189077d701e1f5bd982",
-    "sha256": "7f0ab289023a11e69e5aadbe748a279ee2c04e138919491b9e07957516175c10"
+    "freezeCommit": "bae17e34e4ca223fc3fd787fd23c4002b40b2e79",
+    "sha256": "62bd28c28a0fa5381f9c0dbde0f26d70f18fe4450ca9f98ceceee46dcd0ef4f5"
   },
-  "revisionReason": "Add PostgreSQL 16.x to the supported release lines after Added database lines run 43292445627 passed the whole lifecycle on every supported Kubernetes minor at the pinned Ptah v0.23.0 build. The baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Record the databases page after it shows the statements that create the documented PostgreSQL login, and says that the drift rows connect as it or as a MySQL account holding the documented grant (#812). Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
 }
