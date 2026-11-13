@@ -206,7 +206,9 @@ def recorded_identity_findings(status, identities):
 # A MySQL authority section through v0.2.9 named these privileges in prose
 # and showed no statement.
 MYSQL_PRIVILEGES_THROUGH_V0_2_9 = ('SELECT', 'CREATE', 'ALTER', 'DROP', 'INDEX', 'REFERENCES')
-MYSQL_GRANT = re.compile(r"^GRANT ([A-Z_ ,]+) ON app\.\* TO 'ptah'@'%';$", re.M)
+# A page through v0.2.10 names the database bare; later pages put it in
+# backquotes, where an escaped wildcard can stand.
+MYSQL_GRANT = re.compile(r"^GRANT ([A-Z_ ,]+) ON (?:app|`app`)\.\* TO 'ptah'@'%';$", re.M)
 
 
 def mysql_privileges(databases):
