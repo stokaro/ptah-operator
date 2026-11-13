@@ -114,6 +114,7 @@ reader of a converged schema can see exactly what produced it.
 | `monitoring.prometheusRule.failures` |  | Operation failures in a window that are too many. Set both or neither. |
 | `monitoring.prometheusRule.failures.window` | `""` | The window, as a duration. |
 | `monitoring.prometheusRule.failures.count` | `null` | The count in that window. |
+| `monitoring.prometheusRule.journalLinesDroppedWithin` | `""` | How long the alert stays after a manager dropped a journal line. Any dropped line is one no collector can have, so there is no count. Cover at least two scrape intervals. |
 | `monitoring.prometheusRule.admissionFailingFor` | `""` | How long the API server may fail to reach the admission webhooks. The alert reads the API server's metrics, so it needs the API server scraped. |
 | `webhook` |  | The admission webhook server inside the manager, which is what refuses an approval that does not name an exact plan. |
 | `webhook.port` | `9443` | Port the manager serves admission on. |

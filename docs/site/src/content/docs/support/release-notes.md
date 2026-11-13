@@ -16,6 +16,19 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.12
+
+**Before you upgrade.** Nothing to change: the new alert renders only where its
+value is set.
+
+- **An alert for dropped journal lines.** Setting
+  `monitoring.prometheusRule.journalLinesDroppedWithin` renders
+  `PtahOperatorJournalLinesDropped`, which fires when any manager replica
+  dropped a journal line within that window. A dropped line reached no
+  collector, so the alert has no count. It is unset by default, like every
+  state alert. [Dropped journal lines](../../use/operations/#journal-lines-dropped)
+  says what to check.
+
 ## 0.2.11
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
