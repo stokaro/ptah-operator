@@ -325,11 +325,12 @@ desired_source_unreadable: schema.hcl: managed data file "../../proc/self/enviro
 desired_source_unreadable: schema.hcl: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"
 ```
 
-The operator puts the source under `/source`, outside that root, so Ptah v0.23.0
-refuses a row file beside the schema too, as the first line shows.
-An artifact that `ptah schema push` built carries its rows in the declaration
-and reads no row file, as [Manage reference data](../../use/reference-data/)
-describes.
+A schema from a ConfigMap or Git source is one file under `/source`, outside
+that root, and no row file arrives beside it, so its row files are refused
+wherever the declaration puts them, as the first line shows. Publish a schema
+with rows with `ptah schema push`: its artifact carries the rows in the
+declaration and reads no row file, as
+[Manage reference data](../../use/reference-data/) describes.
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |

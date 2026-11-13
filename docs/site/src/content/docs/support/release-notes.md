@@ -673,9 +673,9 @@ has nothing to change for that.
   script that matches `is in the Pod log` there has to match `was in the Pod
   log of Job` as well.
 - **A refused row file is named.** Ptah reads a row file that a `data` block
-  names only inside its working directory, `/work`, and the operator puts the
-  source under `/source`, so Ptah refuses a row file beside the schema as well
-  as one that climbs out of it. The Observe failed with `child_exit: ptah exited
+  names only inside its working directory, `/work`, and a schema from a
+  ConfigMap or Git source arrives as one file under `/source`, so its row files
+  are refused wherever they sit. The Observe failed with `child_exit: ptah exited
   with code 2` and the Plan with `invalid_plan_output`, and neither said which
   file. Both now fail with `desired_source_unreadable` and Ptah's sentence
   behind the schema's file name, such as `schema.hcl: managed data file
@@ -683,8 +683,10 @@ has nothing to change for that.
   outside allowed root "/work"`. The runner copies that sentence only whole and
   in the form Ptah's guard writes it, which holds nothing the database answered;
   any other failure keeps the code it had
-  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
-  that `ptah schema push` built carries its rows and reads no row file.
+  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). Row files work
+  only from an artifact that `ptah schema push` built, which carries its rows
+  and reads no row file
+  ([#1044](https://github.com/stokaro/ptah-operator/issues/1044)).
 - **Credentials reach the Pod as files.** Every operation Pod read its database
   URL, and a registry or Git credential, from a `secretKeyRef` in its container's
   environment, and the container runtime keeps a container's environment on the
