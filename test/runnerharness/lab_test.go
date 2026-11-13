@@ -329,11 +329,41 @@ func (l *lab) missingImages(t *testing.T, images ...string) []string {
 	return missing
 }
 
+// pullAttempts bounds how often one image is pulled. Docker Hub's CDN refuses
+// a blob request now and then, and one refusal failed a whole run before any
+// row ran. Each image is named by digest, so another attempt fetches the same
+// bytes or nothing.
+const pullAttempts = 3
+
 func (l *lab) pullImage(t *testing.T, image string) {
 	t.Helper()
-	if _, stderr, exit, err := l.docker.run(context.Background(), nil, nil, "pull", "--quiet", image); err != nil || exit != 0 {
-		t.Errorf("pull %s: exit %d, %v: %s", image, exit, err, stderr)
+	err := retryPull(pullAttempts, func() error {
+		_, stderr, exit, err := l.docker.run(context.Background(), nil, nil, "pull", "--quiet", image)
+		if err != nil || exit != 0 {
+			return fmt.Errorf("exit %d, %v: %s", exit, err, stderr)
+		}
+		return nil
+	}, func(attempt int) { time.Sleep(time.Duration(attempt+1) * 5 * time.Second) })
+	if err != nil {
+		t.Errorf("pull %s: %v", image, err)
 	}
+}
+
+// retryPull calls pull until it succeeds or has failed attempts times, and
+// waits between two attempts. It returns every failure when none succeeded.
+func retryPull(attempts int, pull func() error, wait func(attempt int)) error {
+	var failures []error
+	for attempt := range attempts {
+		err := pull()
+		if err == nil {
+			return nil
+		}
+		failures = append(failures, fmt.Errorf("attempt %d: %w", attempt+1, err))
+		if attempt+1 < attempts {
+			wait(attempt)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // startCleanup arranges for everything the run is about to make to go away, and
