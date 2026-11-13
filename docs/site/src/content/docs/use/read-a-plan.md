@@ -639,12 +639,18 @@ The heading of an entry is its time, its type and how it ended, or for
 the same operation and reason in a row are one entry, and `Attempts` says how
 many and when the last one was. On a migration, `Operation` is the Apply claim:
 the `RunFinished`, `Verified` and `RunAcknowledged` entries of one run carry the
-same one.
+same one. On a schema it is the Apply claim too, on `ApplyFinished` and on the
+`Verified` entry of the reading after it. `Job: none confirmed` on either end of
+an execution says its claim named a Job the API server never confirmed it
+created, and `Stopped at` on a schema's `ApplyFinished` names the statement the
+Apply stopped at, out of how many, and the code the database answered with.
 
 Every entry is printed as it was recorded. The command does not merge two
 entries that record the same event, and does not fill in what an entry lacks.
 An entry a release before 0.2.10 wrote names no approval UID and no operation,
-and says that it is therefore joined to nothing that holds the name today.
+and says that it is therefore joined to nothing that holds the name today. A
+schema's `ApplyFinished` or `Verified` that a release before 0.2.11 wrote names
+no operation and prints no `Operation` line.
 
 `(stored)` and `(no longer stored)` say whether the plan, approval or
 acknowledgment an entry names is still in the namespace. A plan counts only if
@@ -664,6 +670,8 @@ is, since the Apply's own outcome is not it: the `Verified` entry of its plan
 that follows it, with how that reading ended; `still owed` where none follows
 and `status.pendingObservation` still owes the reading; or `not in the journal`
 where neither holds, as when the journal began between the Apply and its proof.
+Where both the Apply and the reading name an operation, they join only under the
+same one, and so does the reading `status.pendingObservation` still owes.
 The JSON carries the same as `proof`.
 
 The decisions after the journal are every approval and acknowledgment the

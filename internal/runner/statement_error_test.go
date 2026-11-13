@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -394,5 +396,163 @@ func TestALineWithMoreQuotesThanAreComparedKeepsNoneOfThem(t *testing.T) {
 	atTheLimit := "before " + strings.Repeat("'a-password' ", maxQuotesCompared/2)
 	if got := hideStatementText(atTheLimit, "SELECT 'a-password'"); strings.Contains(got, "a-password") || !strings.HasPrefix(got, "before '") {
 		t.Fatalf("hideStatementText() = %q, want each part compared and hidden", got)
+	}
+}
+
+// TestARefusedApplySaysWhereItStopped runs each captured schema Apply refusal
+// through the runner, and the frame carries the statement and the code the
+// report named, exactly, so the manager can record them. A migration run says
+// where it stopped in its own report and carries none.
+func TestARefusedApplySaysWhereItStopped(t *testing.T) {
+	t.Parallel()
+
+	captures, err := filepath.Glob(filepath.Join("..", "dataplane", "testdata", "statement-errors", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applies := 0
+	for _, capture := range captures {
+		fixture := filepath.Base(capture)
+		family := "migration apply"
+		if strings.HasSuffix(fixture, "-apply.json") {
+			family = "apply"
+			applies++
+		}
+		t.Run(fixture, func(t *testing.T) {
+			t.Parallel()
+			document := statementErrorDocument(t, fixture)
+			run := targetFailureRuns()[family]
+			result, log, encoded := runRefusedStatement(t, run, document)
+			parsed, err := ParseResultFor(append([]byte(log), encoded.Frame...), run.operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("the frame does not parse: %v", err)
+			}
+			if family != "apply" {
+				if parsed.ApplyFailure != nil {
+					t.Fatalf("a migration run's frame carries an apply failure: %+v", *parsed.ApplyFailure)
+				}
+				return
+			}
+			report, err := dataplane.DecodeSchemaApply([]byte(document))
+			if err != nil || report.Failure == nil {
+				t.Fatalf("the capture names no failure: %v", err)
+			}
+			if parsed.ApplyFailure == nil || *parsed.ApplyFailure != *report.Failure {
+				t.Fatalf("the frame carries apply failure %+v, the report says %+v", parsed.ApplyFailure, *report.Failure)
+			}
+		})
+	}
+	if applies != 3 {
+		t.Fatalf("ran %d schema apply captures, want the 3 testdata/statement-errors holds", applies)
+	}
+}
+
+// An apply failure belongs to an Apply's reported failure and to nothing else,
+// and it is held to the forms the report's own decoder gives it, on the side
+// that writes the frame and on the side that reads it.
+func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
+	t.Parallel()
+
+	run := targetFailureRuns()["apply"]
+	base, _, _ := runRefusedStatement(t, run, statementErrorDocument(t, "pg-unique-apply.json"))
+	if base.ApplyFailure == nil {
+		t.Fatal("the base result carries no apply failure")
+	}
+	// The base, as it is, crosses: each refusal below is the mutation alone.
+	if _, err := MarshalFrame(base); err != nil {
+		t.Fatalf("MarshalFrame(base) error = %v", err)
+	}
+	succeeded := func(result *Result) {
+		result.Error, result.Uncertain, result.ChildExitCode = nil, false, 0
+	}
+	control := base
+	succeeded(&control)
+	control.ApplyFailure = nil
+	if _, err := MarshalFrame(control); err != nil {
+		t.Fatalf("MarshalFrame() of the same Apply succeeded error = %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "an Apply that succeeded", mutate: succeeded},
+		{name: "an error the report did not set", mutate: func(result *Result) { result.Error.Code = "invalid_apply_output" }},
+		{name: "another operation", mutate: func(result *Result) { result.Operation = OperationMigrationApply }},
+		{name: "no statements", mutate: func(result *Result) { result.ApplyFailure.Statements = 0 }},
+		{name: "a statement past the last", mutate: func(result *Result) { result.ApplyFailure.Statement = 2 }},
+		{name: "a statement and the commit", mutate: func(result *Result) { result.ApplyFailure.Commit = true }},
+		{name: "a SQLSTATE that quotes a row", mutate: func(result *Result) { result.ApplyFailure.SQLState = "(id)=7" }},
+		{name: "an error number past two bytes", mutate: func(result *Result) { result.ApplyFailure.ErrorNumber = 65536 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := base
+			failure := *base.ApplyFailure
+			candidate.ApplyFailure = &failure
+			if base.Error != nil {
+				reported := *base.Error
+				candidate.Error = &reported
+			}
+			test.mutate(&candidate)
+			if _, err := MarshalFrame(candidate); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("MarshalFrame() error = %v, want ErrMalformedFrame", err)
+			}
+			frame := handcraftedIntegrityValidFrame(t, candidate)
+			if _, err := ParseResultFor(frame, candidate.Operation, candidate.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
+// A Ptah later than the pinned one reports a run that sent a statement as
+// failed once the database confirmed the rollback (stokaro/ptah#5737). The
+// frame carries where it stopped, and its message no longer says that nothing
+// was sent. A failed report that names no position still says so.
+func TestAFailedApplyThatNamesAStatementSaysItSentOne(t *testing.T) {
+	t.Parallel()
+
+	run := targetFailureRuns()["apply"]
+	document := func(failure string) string {
+		return `{"contract_version":4,"command":"schema apply","outcome":"failed","plan_name":"operator-plan",` +
+			`"plan_digest":"` + sha256Digest([]byte(targetFailurePlan)) + `","error":{"message":"ERROR: refused"}` + failure + `}`
+	}
+	for _, test := range []struct {
+		name    string
+		failure string
+		stopped *dataplane.SchemaApplyFailure
+		message string
+	}{
+		{
+			name:    "a refused statement",
+			failure: `,"failure":{"statement":2,"statements":3,"sqlstate":"42P07"}`,
+			stopped: &dataplane.SchemaApplyFailure{Statement: 2, Statements: 3, SQLState: "42P07"},
+			message: "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent",
+		},
+		{
+			name:    "the commit after every statement",
+			failure: `,"failure":{"statement":0,"statements":2,"commit":true,"sqlstate":"23503"}`,
+			stopped: &dataplane.SchemaApplyFailure{Statements: 2, Commit: true, SQLState: "23503"},
+			message: "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent",
+		},
+		{
+			name:    "no statement",
+			message: "ptah reported that the apply failed before it sent any statement",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, log, encoded := runRefusedStatement(t, run, document(test.failure))
+			parsed, err := ParseResultFor(append([]byte(log), encoded.Frame...), run.operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("the frame does not parse: %v", err)
+			}
+			if parsed.Error == nil || parsed.Error.Code != codeApplyFailed || parsed.Error.Message != test.message {
+				t.Fatalf("the frame's error is %+v, want %s with %q", parsed.Error, codeApplyFailed, test.message)
+			}
+			if !reflect.DeepEqual(parsed.ApplyFailure, test.stopped) {
+				t.Fatalf("the frame carries apply failure %+v, want %+v", parsed.ApplyFailure, test.stopped)
+			}
+		})
 	}
 }

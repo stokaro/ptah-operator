@@ -232,8 +232,14 @@ type Result struct {
 	// process's exit status.
 	MigrationHistory *dataplane.MigrationStatusReport `json:"migrationHistory,omitempty"`
 	MigrationRun     *dataplane.MigrationRunReport    `json:"migrationRun,omitempty"`
-	Error            *ResultError                     `json:"error,omitempty"`
-	Truncation       *TruncationMetadata              `json:"truncation,omitempty"`
+	// ApplyFailure is where a schema Apply that sent a statement stopped, as
+	// `schema apply --json` named it: the statement's position and the code
+	// the database answered with, and none of its text. It is present only
+	// beside the error that reading the report set, and a frame from a runner
+	// that predates it carries none.
+	ApplyFailure *dataplane.SchemaApplyFailure `json:"applyFailure,omitempty"`
+	Error        *ResultError                  `json:"error,omitempty"`
+	Truncation   *TruncationMetadata           `json:"truncation,omitempty"`
 }
 
 // ParseOptions optionally binds a parsed frame to the Job contract that
@@ -851,6 +857,14 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.MigrationRun != nil && result.Operation != OperationMigrationApply {
 		return fmt.Errorf("%w: migration run report on an unrelated operation", ErrMalformedFrame)
+	}
+	if failure := result.ApplyFailure; failure != nil {
+		if result.Operation != OperationApply || result.Error == nil || !LeavesReportedError(result.Error.Code) {
+			return fmt.Errorf("%w: apply failure on a result that is not an Apply's reported failure", ErrMalformedFrame)
+		}
+		if err := failure.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
+		}
 	}
 	if result.Error == nil && result.Operation == OperationMigrationHistory && result.MigrationHistory == nil {
 		return fmt.Errorf("%w: successful migration history lacks its report", ErrMalformedFrame)

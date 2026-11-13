@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "17"
-    operator.ptah.run/crd-schema-digest: "sha256:9101ed7ef5222ae7f854c38788e368d7017c603267550e11c6cdd6594762339f"
+    operator.ptah.run/crd-schema-version: "18"
+    operator.ptah.run/crd-schema-digest: "sha256:6d1fa09e535bfc9c711647ed49a6d35640abf9bb9df7ff2be7b22836d0cd93c1"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1715,6 +1715,28 @@ spec:
                           format: int32
                           minimum: 0
                           type: integer
+                        applyFailure:
+                          properties:
+                            errorNumber:
+                              format: int32
+                              maximum: 65535
+                              minimum: 0
+                              type: integer
+                            sqlState:
+                              pattern: ^[0-9A-Z]{5}$
+                              type: string
+                            statement:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                            statements:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                          required:
+                          - statement
+                          - statements
+                          type: object
                         approval:
                           maxLength: 253
                           type: string
@@ -2144,6 +2166,28 @@ spec:
                     - serviceAccount
                     - templateDigest
                     - version
+                    type: object
+                  applyFailure:
+                    properties:
+                      errorNumber:
+                        format: int32
+                        maximum: 65535
+                        minimum: 0
+                        type: integer
+                      sqlState:
+                        pattern: ^[0-9A-Z]{5}$
+                        type: string
+                      statement:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      statements:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - statement
+                    - statements
                     type: object
                   applyGeneration:
                     format: int64

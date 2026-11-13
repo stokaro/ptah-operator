@@ -76,6 +76,18 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			cause{"status.journal.entries[0].approver", "Too long"}},
 		{"an unbounded acknowledgment author", journal(journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgedBy": strings.Repeat("a", 513)})),
 			cause{"status.journal.entries[0].acknowledgedBy", "Too long"}},
+		{"an apply failure SQLSTATE that is not one", journal(journalEntry(map[string]any{"type": "ApplyFinished", "outcome": "Unknown",
+			"applyFailure": map[string]any{"statement": int64(1), "statements": int64(1), "sqlState": "23p05"}})),
+			cause{"status.journal.entries[0].applyFailure.sqlState", "should match"}},
+		{"an apply failure before the first statement", journal(journalEntry(map[string]any{"type": "ApplyFinished", "outcome": "Unknown",
+			"applyFailure": map[string]any{"statement": int64(0), "statements": int64(1)}})),
+			cause{"status.journal.entries[0].applyFailure.statement", "greater than or equal to 1"}},
+		{"an apply failure of no statements", journal(journalEntry(map[string]any{"type": "ApplyFinished", "outcome": "Unknown",
+			"applyFailure": map[string]any{"statement": int64(1), "statements": int64(0)}})),
+			cause{"status.journal.entries[0].applyFailure.statements", "greater than or equal to 1"}},
+		{"an apply failure error number two bytes cannot hold", journal(journalEntry(map[string]any{"type": "ApplyFinished", "outcome": "Unknown",
+			"applyFailure": map[string]any{"statement": int64(1), "statements": int64(1), "errorNumber": int64(65536)}})),
+			cause{"status.journal.entries[0].applyFailure.errorNumber", "less than or equal to 65535"}},
 		{"a 65th entry", journal(tooMany...),
 			cause{"status.journal.entries", "must have at most 64 items"}},
 	} {
@@ -103,6 +115,13 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			journalEntry(map[string]any{"type": "RunAcknowledged", "acknowledgment": "ack-b", "acknowledgedBy": strings.Repeat("日", 512)}),
 			journalEntry(map[string]any{"type": "ApplyFinished", "startedAt": "2026-10-24T07:41:53Z", "outcome": "Succeeded"}),
 			journalEntry(map[string]any{"type": "Verified", "outcome": "InSync"}),
+			journalEntry(map[string]any{
+				"type": "ApplyFinished", "startedAt": "2026-10-24T07:41:53Z", "outcome": "Unknown", "operationID": "sha256:" + strings.Repeat("c", 64),
+				"plan": "ptah-plan-a", "planUID": "plan-uid", "planFingerprint": "sha256:" + strings.Repeat("b", 64),
+				"approval": "approve-a", "approvalUID": "approval-uid", "approver": "alice", "jobName": "ptah-apply-a", "jobUID": "job-uid",
+				"applyFailure": map[string]any{"statement": int64(2), "statements": int64(3), "sqlState": "23000", "errorNumber": int64(1062)},
+			}),
+			journalEntry(map[string]any{"type": "Verified", "outcome": "DriftRemains", "operationID": "sha256:" + strings.Repeat("c", 64)}),
 			journalEntry(map[string]any{
 				"type": "RunFinished", "outcome": "Failed", "appliedVersions": int64(2), "startedAt": "2026-10-24T07:41:53Z",
 				"failure": map[string]any{"version": int64(16), "statement": int64(2), "statements": int64(3), "sqlState": "42P01"},
@@ -136,6 +155,11 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			first, _ := kept[0].(map[string]any)
 			if first["approvalRequired"] != true || first["replaced"] != "ptah-plan-z" {
 				t.Fatalf("the first entry of %s %s came back as %v, want approvalRequired and replaced kept", object.GetKind(), object.GetName(), first)
+			}
+			stopped, _ := kept[6].(map[string]any)
+			if failure, _ := stopped["applyFailure"].(map[string]any); stopped["type"] != "ApplyFinished" ||
+				failure["statement"] != int64(2) || failure["sqlState"] != "23000" || failure["errorNumber"] != int64(1062) {
+				t.Fatalf("the stopped Apply of %s %s came back as %v, want its applyFailure kept", object.GetKind(), object.GetName(), stopped)
 			}
 		}
 	})

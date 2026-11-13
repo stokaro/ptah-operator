@@ -741,7 +741,7 @@ decision an entry names is still stored.
 | --- | --- |
 | `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. On a schema, `approvalRequired` says the plan asked for a person's approval when it was published, and `replaced` names the plan it took the place of, when a person could approve that plan or had approved it and it never ran. That is the record of what a [`PlanStale`](../../troubleshoot/events/) Warning reports, since the Event [can be lost](../../troubleshoot/events/#an-event-can-be-lost). A schema counts a plan in `ptah_operator_plans_total` on the write that records this entry, and a plan that asks for an approval when it is published has its `ApprovalRequired` Event in the same write. A plan that starts asking later, as after an edit of `spec.policy.apply`, has its Event with no entry, and `approvalRequired` keeps what the plan asked when it was published: [Events](../../troubleshoot/events/) lists when. |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, or the one a migration's Apply claim names, with the approver admission stamped. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
-| `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. An Apply withdrawn before dispatch changed nothing and writes nothing. |
+| `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. It names the Apply claim, the plan, the approval and the Job, and the statement the Apply stopped at. An Apply withdrawn before dispatch changed nothing and writes nothing. |
 | `Verified` | That observation settles: `InSync`, `DriftRemains`, `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run named: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that named none writes no such entry. |
 | `RunFinished` | A migration run ends, with its outcome, the plan it carried out, how many versions it applied, and where it stopped. One run writes one entry: a run that ends `Partial` or `Unknown` also holds the resource in `status.unresolvedRun`, which writes none of its own. A hold a restore brings back without status writes the entry the lost status held, with the outcome and time the hold recorded. |
 | `RunAcknowledged` | A person acknowledges an unresolved run, named by its operation, its plan and its Job, with the `outcome` that run ended with. |
@@ -795,6 +795,16 @@ its `ApprovalAccepted` entry: a claim withdrawn before dispatch leaves the appro
 to the next one. An entry written before 0.2.10 names none of it, and nothing fills
 it in.
 
+A schema's `ApplyFinished` carries the same identity for an Apply: the claim's
+`operationID`, the plan by name, UID and fingerprint, the approval by name and UID
+and its approver when a person approved the plan, and the Job by name and UID once
+the API server confirmed it created the Job. A claim names its Job before the
+create, so a Job nobody confirmed is not named. The `Verified` entry of the
+observation that follows carries the same `operationID`, and `kubectl ptah history`
+joins the two by it. A schema records no `authorization`: an Apply under
+`apply: Always` names no approval. An entry written before 0.2.11 names none of
+this, and its proof is joined by plan alone, as it was.
+
 `status.lastRun` carries the same identity, copied from the Apply claim when the
 run ends, with the source, the database and the execution binding it ran under, and
 `verification`, the first reading after it. The claim is written before the Job and
@@ -825,3 +835,12 @@ message names the migration and the database's answer. Since Ptah v0.23.0 a
 MySQL statement whose failure may still have committed, such as a `CREATE UNIQUE
 INDEX` stopped by a duplicate key, makes the run `unknown`; the field records
 that statement, and the message says it is not recorded whether it committed.
+
+A schema's Apply records where it stopped the same way, in `applyFailure` on its
+`ApplyFinished` entry and in `status.pendingObservation.applyFailure` until the
+observation that follows settles: the position of the statement it stopped at,
+how many statements the Apply held, and the SQLSTATE and MySQL error number the
+database answered with, where it answered. It carries no text either. Ptah v0.23.0 reports such an Apply as
+`unknown`, so the entry reads `Unknown` and the observation says what the database
+kept. A commit that failed after every statement, and a run that names no statement,
+record no `applyFailure`.

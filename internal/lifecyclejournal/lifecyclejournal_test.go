@@ -402,6 +402,15 @@ func observing(applyID string, outcome operatorv1alpha1.PendingObservationOutcom
 	return &operatorv1alpha1.PendingObservationStatus{ApplyOperationID: applyID, Outcome: outcome, Plan: *schemaPlan("plan-a")}
 }
 
+// carriedOut is pending as an approved Apply leaves it: the plan's UID and
+// fingerprint, the approval it consumed, and the Job the API server confirmed.
+func carriedOut(pending *operatorv1alpha1.PendingObservationStatus) *operatorv1alpha1.PendingObservationStatus {
+	pending.Plan = *approved(&pending.Plan, "approve-a")
+	pending.Plan.UID, pending.Plan.Fingerprint = "plan-uid", "sha256:plan"
+	pending.ApplyJobName, pending.ApplyJobUID = "apply-job", "job-uid"
+	return pending
+}
+
 func failed(reason string) []metav1.Condition {
 	return []metav1.Condition{{Type: operatorv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue, Reason: reason}}
 }
@@ -551,7 +560,7 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			after:  operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalApplyFinished, At: at(0), StartedAt: ptr(at(-2 * time.Minute)),
-				Plan: "plan-a", Outcome: operatorv1alpha1.JournalSucceeded,
+				OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalSucceeded,
 			}},
 		},
 		{
@@ -560,7 +569,51 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			after:  operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationOutcomeUnknown)},
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalApplyFinished, At: at(0), StartedAt: ptr(at(-2 * time.Minute)),
-				Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+				OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+			}},
+		},
+		{
+			name:   "an approved Apply, with its plan and Job",
+			before: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: applying("apply-1")},
+			after:  operatorv1alpha1.PtahSchemaStatus{PendingObservation: carriedOut(observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded))},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalApplyFinished, At: at(0), StartedAt: ptr(at(-2 * time.Minute)),
+				OperationID: "apply-1", Plan: "plan-a", PlanUID: "plan-uid", PlanFingerprint: "sha256:plan",
+				Approval: "approve-a", ApprovalUID: "approval-uid", Approver: "alice",
+				JobName: "apply-job", JobUID: "job-uid", Outcome: operatorv1alpha1.JournalSucceeded,
+			}},
+		},
+		{
+			// The proof names the Job the claim reserved; with no UID the API
+			// server never confirmed it, and a name alone would point at an
+			// execution nobody saw.
+			name:   "an Apply whose Job was never confirmed",
+			before: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: applying("apply-1")},
+			after: operatorv1alpha1.PtahSchemaStatus{PendingObservation: func() *operatorv1alpha1.PendingObservationStatus {
+				pending := carriedOut(observing("apply-1", operatorv1alpha1.PendingObservationOutcomeUnknown))
+				pending.ApplyJobUID = ""
+				return pending
+			}()},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalApplyFinished, At: at(0), StartedAt: ptr(at(-2 * time.Minute)),
+				OperationID: "apply-1", Plan: "plan-a", PlanUID: "plan-uid", PlanFingerprint: "sha256:plan",
+				Approval: "approve-a", ApprovalUID: "approval-uid", Approver: "alice", Outcome: operatorv1alpha1.JournalUnknown,
+			}},
+		},
+		{
+			name:   "an Apply that stopped at a statement",
+			before: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: applying("apply-1")},
+			after: operatorv1alpha1.PtahSchemaStatus{PendingObservation: func() *operatorv1alpha1.PendingObservationStatus {
+				pending := carriedOut(observing("apply-1", operatorv1alpha1.PendingObservationOutcomeUnknown))
+				pending.ApplyFailure = &operatorv1alpha1.SchemaApplyFailureStatus{Statement: 2, Statements: 3, SQLState: "23505", ErrorNumber: 1062}
+				return pending
+			}()},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalApplyFinished, At: at(0), StartedAt: ptr(at(-2 * time.Minute)),
+				OperationID: "apply-1", Plan: "plan-a", PlanUID: "plan-uid", PlanFingerprint: "sha256:plan",
+				Approval: "approve-a", ApprovalUID: "approval-uid", Approver: "alice",
+				JobName: "apply-job", JobUID: "job-uid", Outcome: operatorv1alpha1.JournalUnknown,
+				ApplyFailure: &operatorv1alpha1.SchemaApplyFailureStatus{Statement: 2, Statements: 3, SQLState: "23505", ErrorNumber: 1062},
 			}},
 		},
 		{
@@ -573,7 +626,7 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
 			after:  operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhaseInSync},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalVerified, At: at(0), Plan: "plan-a", Outcome: operatorv1alpha1.JournalInSync,
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalInSync,
 			}},
 		},
 		{
@@ -583,7 +636,7 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionTrue, Reason: "ScopedChanges"},
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalVerified, At: at(0), Plan: "plan-a", Outcome: operatorv1alpha1.JournalDriftRemains,
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalDriftRemains,
 			}},
 		},
 		{
@@ -593,7 +646,7 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionTrue, Reason: "ScopedChanges"},
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalVerified, At: at(0), Plan: "plan-a", Outcome: operatorv1alpha1.JournalSuperseded,
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalSuperseded,
 			}},
 		},
 		{
@@ -604,7 +657,7 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonProofSettled)},
 			}},
 			want: []operatorv1alpha1.JournalEntry{{
-				Type: operatorv1alpha1.JournalVerified, At: at(0), Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
 			}},
 		},
 		{
@@ -667,6 +720,12 @@ func TestJournalUsernamesFitTheAPIsBound(t *testing.T) {
 			plan.Approval.Approver.Username = username
 			return lifecyclejournal.SchemaEntries(&operatorv1alpha1.PtahSchemaStatus{}, &operatorv1alpha1.PtahSchemaStatus{Plan: plan},
 				journalWith(published("plan-a", -time.Hour)), now)
+		},
+		"a schema's ApplyFinished": func(username string) []operatorv1alpha1.JournalEntry {
+			pending := carriedOut(observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded))
+			pending.Plan.Approval.Approver.Username = username
+			return lifecyclejournal.SchemaEntries(&operatorv1alpha1.PtahSchemaStatus{ActiveOperation: applying("apply-1")},
+				&operatorv1alpha1.PtahSchemaStatus{PendingObservation: pending}, journalWith(), now)
 		},
 		"a migration's ApprovalAccepted": func(username string) []operatorv1alpha1.JournalEntry {
 			claim := &operatorv1alpha1.MigrationOperationStatus{

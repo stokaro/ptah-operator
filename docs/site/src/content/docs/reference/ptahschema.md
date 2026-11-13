@@ -666,6 +666,11 @@ spec:
 | `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
+| `status.journal.entries[].applyFailure` | `object` | ApplyFailure is where a PtahSchema's Apply stopped, as status.pendingObservation.applyFailure said. An Apply that ends Unknown carries it when the run named the statement it stopped at. |
+| `status.journal.entries[].applyFailure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
+| `status.journal.entries[].applyFailure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.journal.entries[].applyFailure.statement` | `integer`, required | Statement is the position of the failed statement in the plan, counting from one. |
+| `status.journal.entries[].applyFailure.statements` | `integer`, required | Statements is how many statements the plan has. |
 | `status.journal.entries[].approval` | `string` | Approval names the approval an Apply consumed. A name can be used again by a later decision, so it does not say which object it was: ApprovalUID does. |
 | `status.journal.entries[].approvalRequired` | `boolean` | ApprovalRequired reports a published PtahSchema plan that asked for a person's approval when it was published. |
 | `status.journal.entries[].approvalUID` | `string` | ApprovalUID is the UID of that approval. An entry a release before this field wrote has none: it is incomplete evidence, and is not to be joined to an object that holds the name today. |
@@ -674,21 +679,21 @@ spec:
 | `status.journal.entries[].authorization` | `string`, one of `Approval`, `Policy` | Authorization is what allowed a PtahMigration's run. |
 | `status.journal.entries[].count` | `integer` | Count is how many attempts an OperationFailed entry stands for. A single failure has none. |
 | `status.journal.entries[].destructive` | `boolean` | Destructive reports a published PtahSchema plan that destroys data. |
-| `status.journal.entries[].failure` | `object` | Failure is where a run stopped, as status.lastRun.failure said. |
+| `status.journal.entries[].failure` | `object` | Failure is where a PtahMigration's run stopped, as status.lastRun.failure said. |
 | `status.journal.entries[].failure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
 | `status.journal.entries[].failure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
 | `status.journal.entries[].failure.statement` | `integer`, required | Statement is the position of the failed statement in that migration, counting from one. |
 | `status.journal.entries[].failure.statements` | `integer`, required | Statements is how many statements that migration has. |
 | `status.journal.entries[].failure.version` | `integer`, required | Version is the migration the run stopped in. |
-| `status.journal.entries[].jobName` | `string` | JobName is the Job a PtahMigration's run ran as. It is absent when no Job was confirmed. |
+| `status.journal.entries[].jobName` | `string` | JobName is the Job an Apply or a run ran as. It is absent when no Job was confirmed. |
 | `status.journal.entries[].jobUID` | `string` | JobUID is that Job's UID, which outlives the Job and tells it from a later Job that takes the name. |
 | `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
-| `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim a PtahMigration's RunFinished, Verified or RunAcknowledged entry concerns. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
+| `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim an entry concerns: a PtahSchema's ApplyFinished and the Verified entry of the proof after it, or a PtahMigration's RunFinished, Verified or RunAcknowledged. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the Apply or the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
 | `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. On a PtahMigration's Verified entry it is what the reading after the run found, and on a RunAcknowledged entry how the run that person settled ended. |
 | `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
-| `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run carried out, when the claim recorded it. |
-| `status.journal.entries[].planUID` | `string` | PlanUID is the UID of a PtahMigration's plan. |
+| `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan an Apply or a run carried out, when the claim recorded it. |
+| `status.journal.entries[].planUID` | `string` | PlanUID is the UID of the plan an Apply or a run carried out, or of the plan a PtahMigration's approval was accepted for. |
 | `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set. It is a code, never the message: a message can carry what status must not. |
 | `status.journal.entries[].replaced` | `string` | Replaced names the plan a published PtahSchema plan took the place of: one a person could approve, or had approved, and that never ran. A PlanStale Warning reports the same replacement, and an Event can be lost. |
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
@@ -761,6 +766,11 @@ spec:
 | `status.pendingObservation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
 | `status.pendingObservation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
 | `status.pendingObservation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.pendingObservation.applyFailure` | `object` | ApplyFailure is the statement the apply stopped at, as the run's own report named it. It is absent when the run named none: it succeeded, it stopped before a statement was sent or at the commit after them, or its report could not be read. An apply that names one is OutcomeUnknown all the same: where it stopped does not say what the database kept. |
+| `status.pendingObservation.applyFailure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
+| `status.pendingObservation.applyFailure.sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.pendingObservation.applyFailure.statement` | `integer`, required | Statement is the position of the failed statement in the plan, counting from one. |
+| `status.pendingObservation.applyFailure.statements` | `integer`, required | Statements is how many statements the plan has. |
 | `status.pendingObservation.applyGeneration` | `integer`, required | ApplyGeneration is the spec generation the apply was dispatched for, so a newer desired state does not inherit this proof. |
 | `status.pendingObservation.applyJobName` | `string` | ApplyJobName and ApplyJobUID identify the Kubernetes Job independently of mutable labels so every exact-owner Pod can be tracked until the immutable execution horizon has elapsed. |
 | `status.pendingObservation.applyJobUID` | `string` | ApplyJobUID is that Job's UID. |

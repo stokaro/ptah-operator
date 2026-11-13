@@ -1155,6 +1155,12 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "error_number": 3730,
+        "sqlstate": "HY000",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "error": {
@@ -1493,6 +1499,11 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "sqlstate": "2BP01",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
@@ -2149,6 +2160,11 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "sqlstate": "2BP01",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
@@ -3003,6 +3019,11 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "sqlstate": "2BP01",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
@@ -4688,6 +4709,12 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "error_number": 1370,
+        "sqlstate": "42000",
+        "statement": 1,
+        "statements": 3
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "error": {
@@ -6908,6 +6935,11 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "sqlstate": "23514",
+        "statement": 2,
+        "statements": 2
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
@@ -19011,6 +19043,12 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "error_number": 1366,
+        "sqlstate": "HY000",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "error": {
@@ -19812,6 +19850,12 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "error_number": 1062,
+        "sqlstate": "23000",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "error": {
@@ -20789,6 +20833,11 @@
       }
     ],
     "result": {
+      "applyFailure": {
+        "sqlstate": "23505",
+        "statement": 1,
+        "statements": 1
+      },
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
