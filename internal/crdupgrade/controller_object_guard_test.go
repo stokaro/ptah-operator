@@ -166,7 +166,7 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(object).spec.template.spec.volumes.filter(v, v.name == "result-credentials").size() <= 1`,
 		`volume.name in ["registry-docker-config", "registry-credentials", "git-credentials"] && has(volume.secret)`,
 		`volume.name == "development-database-url" && has(volume.secret) && object.metadata.labels["operator.ptah.run/operation"] == "plan"`,
-		`!(variable.name in ["PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD"])`,
+		`!(variable.name in ["PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD", "PTAH_HTTPS_USERNAME", "PTAH_HTTPS_PASSWORD", "PTAH_HTTPS_TOKEN"])`,
 		`["install-runner", "fetch-git-source"]`,
 		`container.securityContext.capabilities.add.size() == 0`,
 		`["install-runner", "validate-source-authority", "fetch-schema"]`,

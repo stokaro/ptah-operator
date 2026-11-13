@@ -378,8 +378,8 @@ func controllerJobWriteValidations(message string) []admissionregistrationv1.Val
 // the Pod is removed. controllerJobCredentialEnvironmentValidation holds a
 // create to that: no container's environment carries a variable the runner
 // reads a credential into (runner.CredentialFiles), and a Secret reaches the
-// environment only for the grants, which name the registry or Git host a
-// credential is for and digest its CA, and hold no credential themselves.
+// environment only for the grants, which name the registry, Git or HTTPS host
+// a credential is for and digest its CA, and hold no credential themselves.
 //
 // The rule is for a create alone. A Job a release before file delivery
 // created carries its credentials in its environment, and its cleanup TTL is
@@ -389,14 +389,16 @@ var (
 		"PTAH_DB_URL", "PTAH_DEV_URL",
 		"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
 		"PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD",
+		"PTAH_HTTPS_USERNAME", "PTAH_HTTPS_PASSWORD", "PTAH_HTTPS_TOKEN",
 	}
 	controllerJobSecretEnvironmentGrants = []string{
 		"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT", "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP", "PTAH_OPERATOR_OCI_CA_SHA256_GRANT",
 		"PTAH_OPERATOR_GIT_HOST_GRANT", "PTAH_OPERATOR_GIT_CA_SHA256_GRANT", "PTAH_OPERATOR_GIT_KNOWN_HOSTS_SHA256_GRANT",
+		"PTAH_OPERATOR_HTTPS_HOST_GRANT", "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT",
 	}
 )
 
-const controllerJobCredentialEnvironmentMessage = "a Job the manager creates reads every credential from a file in a Secret volume: no container's environment holds a database URL, a registry credential or a Git credential, and a Secret reaches the environment only for a registry or Git grant"
+const controllerJobCredentialEnvironmentMessage = "a Job the manager creates reads every credential from a file in a Secret volume: no container's environment holds a database URL or a registry, Git or HTTPS credential, and a Secret reaches the environment only for a registry, Git or HTTPS grant"
 
 func controllerJobCredentialEnvironmentValidation() string {
 	variable := fmt.Sprintf(`!(variable.name in %s) && (!has(variable.valueFrom) || !has(variable.valueFrom.secretKeyRef) || variable.name in %s)`,

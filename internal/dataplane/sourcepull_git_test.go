@@ -127,6 +127,8 @@ func gitPullMutations(selected, commit, digest string) []struct {
 			return strings.Replace(report, size[0], fmt.Sprintf(`"size": %d`, bytes+1), 1)
 		}},
 		{"two documents", "decode Git pull report", func(report string) string { return report + report }},
+		{"an HTTPS report", "not a Git one", replace(`"source": "git"`, `"source": "https"`)},
+		{"a download beside the commit", "names a download", replace(`"commit":`, `"download_digest": "`+digest+`", "commit":`)},
 		// A release that renames a field the decoder reads. The decoder is not
 		// strict, so each of these reads as the field being absent.
 		{"a renamed source", "not a Git one", replace(`"source":`, `"origin":`)},
@@ -140,16 +142,17 @@ func gitPullMutations(selected, commit, digest string) []struct {
 	}
 }
 
-func TestDecodeGitPullHoldsTheReportToItsPull(t *testing.T) {
+func TestDecodeSourcePullHoldsAGitReportToItsPull(t *testing.T) {
 	t.Parallel()
 	for _, capture := range gitPullReports {
 		t.Run(capture.name, func(t *testing.T) {
 			t.Parallel()
 			report := string(gitPullCapture(t, capture.name, "stdout"))
 			reference, selected := gitPullAsked(t, capture.name)
-			decoded, err := dataplane.DecodeGitPull([]byte(report), reference, selected)
+			asked := dataplane.PullRequest{Source: dataplane.PullSourceGit, Reference: reference, Path: selected}
+			decoded, err := dataplane.DecodeSourcePull([]byte(report), asked)
 			if err != nil || decoded.Commit != capture.commit || decoded.ContentDigest != capture.digest {
-				t.Fatalf("DecodeGitPull() = %#v, %v, want commit %s with content %s", decoded, err, capture.commit, capture.digest)
+				t.Fatalf("DecodeSourcePull() = %#v, %v, want commit %s with content %s", decoded, err, capture.commit, capture.digest)
 			}
 			for _, mutation := range gitPullMutations(selected, capture.commit, capture.digest) {
 				t.Run(mutation.name, func(t *testing.T) {
@@ -158,12 +161,12 @@ func TestDecodeGitPullHoldsTheReportToItsPull(t *testing.T) {
 					if mutated == report {
 						t.Fatal("the mutation changed nothing")
 					}
-					_, err := dataplane.DecodeGitPull([]byte(mutated), reference, selected)
+					_, err := dataplane.DecodeSourcePull([]byte(mutated), asked)
 					if err == nil {
-						t.Fatalf("DecodeGitPull accepted %s", mutated)
+						t.Fatalf("DecodeSourcePull accepted %s", mutated)
 					}
 					if !strings.Contains(err.Error(), mutation.refusal) {
-						t.Fatalf("DecodeGitPull refused for another reason: %v, want %q", err, mutation.refusal)
+						t.Fatalf("DecodeSourcePull refused for another reason: %v, want %q", err, mutation.refusal)
 					}
 				})
 			}

@@ -16,7 +16,7 @@ import (
 // The directories under internal/dataplane/testdata/git-pull are the pulls the
 // pinned Ptah image ran; `make runner-harness-write` regenerates them. These
 // tests are in the package because
-// gitPullExit and the trust GitPull takes are not exported, and the arguments
+// pullExit and the trust GitPull takes are not exported, and the arguments
 // reach a child with paths the runner chose, which the capture's cannot equal.
 
 const (
@@ -208,7 +208,7 @@ func namesRefusal(reason string, exit int, refusal string) error {
 }
 
 // Each captured standard error gives the refusal the row expects, in the reason
-// gitPullExit keeps and in the message of the Resolve result that reaches the
+// pullExit keeps and in the message of the Resolve result that reaches the
 // condition. The expected words are the ones test/e2e/gitsource_e2e_test.go
 // matches, so a Ptah release that rewords one fails here first.
 func TestGitPullExitNamesEachCapturedRefusal(t *testing.T) {
@@ -223,7 +223,7 @@ func TestGitPullExitNamesEachCapturedRefusal(t *testing.T) {
 			t.Parallel()
 			exit, stderr := capturedExit(t, pull.name), capturedFile(t, pull.name, "stderr")
 			redactor := NewRedactor([]string{EnvGitPassword + "=a-token-the-capture-never-printed"})
-			if err := namesRefusal(gitPullExit(exit, stderr, redactor).Error(), exit, pull.refusal); err != nil {
+			if err := namesRefusal(pullExit(exit, stderr, redactor).Error(), exit, pull.refusal); err != nil {
 				t.Fatal(err)
 			}
 			result := Run(t.Context(), Config{
@@ -246,7 +246,7 @@ func TestGitPullExitNamesEachCapturedRefusal(t *testing.T) {
 }
 
 // The check above refuses a release that rewords a refusal, and one that writes
-// anything after it: gitPullExit keeps only the last line, so a refusal that
+// anything after it: pullExit keeps only the last line, so a refusal that
 // stops being last is lost to the row as surely as a reworded one.
 func TestNamesRefusalRefusesWhatARowWouldNotMatch(t *testing.T) {
 	t.Parallel()
@@ -265,14 +265,14 @@ func TestNamesRefusalRefusesWhatARowWouldNotMatch(t *testing.T) {
 				if mutated == stderr {
 					t.Fatal("the mutation changed nothing")
 				}
-				if err := namesRefusal(gitPullExit(exit, []byte(mutated), NewRedactor(nil)).Error(), exit, pull.refusal); err == nil {
+				if err := namesRefusal(pullExit(exit, []byte(mutated), NewRedactor(nil)).Error(), exit, pull.refusal); err == nil {
 					t.Fatalf("accepted standard error %q", mutated)
 				}
 			})
 		}
 		t.Run(pull.name+"/another exit status", func(t *testing.T) {
 			t.Parallel()
-			if err := namesRefusal(gitPullExit(exit+1, []byte(stderr), NewRedactor(nil)).Error(), exit, pull.refusal); err == nil {
+			if err := namesRefusal(pullExit(exit+1, []byte(stderr), NewRedactor(nil)).Error(), exit, pull.refusal); err == nil {
 				t.Fatal("accepted another exit status")
 			}
 		})

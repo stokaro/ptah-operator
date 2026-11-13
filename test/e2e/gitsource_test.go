@@ -98,7 +98,7 @@ func TestTheGitCapturesAnswerThePhasesRepository(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			report, err := dataplane.DecodeGitPull(stdout, row.reference, row.path)
+			report, err := dataplane.DecodeSourcePull(stdout, dataplane.PullRequest{Source: dataplane.PullSourceGit, Reference: row.reference, Path: row.path})
 			if err != nil {
 				t.Fatal(err)
 			}

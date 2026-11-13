@@ -101,6 +101,7 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 		overBoundRow          = "manager dispatches a Plan Job carrying one volume more than a Plan may"
 		urlInEnvironmentRow   = "manager dispatches an Observe Job reading its database URL from its environment"
 		ungrantedSecretRow    = "manager dispatches an Observe Job reading a Secret into a variable no grant names"
+		httpsTokenRow         = "manager dispatches an Observe Job carrying an HTTPS token in its environment"
 		resolveDatabaseRow    = "manager dispatches a Resolve Job mounting a database URL"
 		observeDevelopmentRow = "manager dispatches an Observe Job mounting a development database URL"
 		databaseAsConfigRow   = "manager dispatches an Observe Job mounting its database URL from a ConfigMap"
@@ -148,6 +149,15 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 			}})
 		}))),
 	})
+	// A literal value, not a Secret: the names clause alone refuses it, so a
+	// credential the runner reads that the guard does not name is admitted.
+	c.row(policyenv.Row{
+		Name: httpsTokenRow, Deny: []string{jobGuard}, Message: credentialEnvironmentMessage,
+		Do: as(manager, dryRunCreate(ociObserveJob(func(job *batchv1.Job) {
+			container := operationContainer(job)
+			container.Env = append(container.Env, corev1.EnvVar{Name: runner.EnvHTTPSToken, Value: "token"})
+		}))),
+	})
 	databaseVolume := func(name string) corev1.Volume {
 		return corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 			SecretName: databaseSecret.Name, Items: []corev1.KeyToPath{{Key: databaseSecret.Key, Path: "url"}},
@@ -190,7 +200,13 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard admits a credential in a container's environment", Policies: []string{jobGuard},
 		Apply:  policyenv.DropValidations(jobGuard, credentialEnvironmentMessage),
-		Breaks: []string{urlInEnvironmentRow, ungrantedSecretRow}, Admits: true,
+		Breaks: []string{urlInEnvironmentRow, ungrantedSecretRow, httpsTokenRow}, Admits: true,
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard forgets the HTTPS token among the credentials", Policies: []string{jobGuard},
+		Apply: policyenv.RewriteValidations(jobGuard, credentialEnvironmentMessage,
+			`"PTAH_HTTPS_TOKEN"`, `"PTAH_HTTPS_TOKEN_FORGOTTEN"`),
+		Breaks: []string{httpsTokenRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard holds a cleanup TTL to the rule for a create", Policies: []string{jobGuard},
@@ -230,7 +246,7 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 		Name: "Job write guard binding dropped, for where a Job keeps its credentials", Policies: []string{jobGuard},
 		Apply: policyenv.DropBinding(jobGuard),
 		Breaks: []string{
-			overBoundRow, urlInEnvironmentRow, ungrantedSecretRow, resolveDatabaseRow, observeDevelopmentRow, databaseAsConfigRow,
+			overBoundRow, urlInEnvironmentRow, ungrantedSecretRow, httpsTokenRow, resolveDatabaseRow, observeDevelopmentRow, databaseAsConfigRow,
 		},
 	})
 }

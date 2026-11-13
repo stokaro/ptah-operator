@@ -116,3 +116,30 @@ func TestRedactorRemovesMySQLNetworkDSNCredentials(t *testing.T) {
 		})
 	}
 }
+
+// Each source credential is redacted by the variable that carries it, alone.
+// A username is not a secret, and the redactor leaving it in place shows the
+// rows measure the variable's name rather than every value it was given.
+func TestRedactorRemovesEverySourceCredential(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		variable string
+		redacted bool
+	}{
+		{variable: EnvOCIPassword, redacted: true},
+		{variable: EnvOCIToken, redacted: true},
+		{variable: EnvGitPassword, redacted: true},
+		{variable: EnvHTTPSPassword, redacted: true},
+		{variable: EnvHTTPSToken, redacted: true},
+		{variable: EnvHTTPSUsername},
+	} {
+		t.Run(row.variable, func(t *testing.T) {
+			t.Parallel()
+			const value = "credential-value-4f1c"
+			got := NewRedactor([]string{row.variable + "=" + value}).Redact("ptah: refused with " + value)
+			if strings.Contains(got, value) == row.redacted {
+				t.Fatalf("Redact() = %q with %s set; want the value redacted %v", got, row.variable, row.redacted)
+			}
+		})
+	}
+}

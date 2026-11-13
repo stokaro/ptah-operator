@@ -282,6 +282,14 @@ func childEnvironment(environment []string) []string {
 		EnvGitKnownHostsSHA256Grant,
 		EnvGitCASourceFile,
 		EnvGitKnownHostsSourceFile,
+		EnvHTTPSURL,
+		EnvHTTPSDigest,
+		EnvHTTPSFormat,
+		EnvHTTPSPath,
+		EnvHTTPSSelects,
+		EnvHTTPSHostGrant,
+		EnvHTTPSCASHA256Grant,
+		EnvHTTPSCASourceFile,
 	)
 }
 

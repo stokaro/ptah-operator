@@ -589,6 +589,36 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 				CoordinationDigest: digest, ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest},
 		},
 		{
+			name: "HTTPS resolution without its content digest",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https-no-content",
+				ResolvedDownloadDigest: digest},
+		},
+		{
+			name: "HTTPS resolution with a download digest that is not one",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https-bad-download",
+				ResolvedDownloadDigest: "sha256:" + strings.Repeat("A", 64), ResolvedContentDigest: digest},
+		},
+		{
+			name: "a resolution naming a commit and a download",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-git-and-https",
+				ResolvedCommit: strings.Repeat("a", 40), ResolvedDownloadDigest: digest, ResolvedContentDigest: digest},
+		},
+		{
+			name: "HTTPS resolution beside OCI descriptor evidence",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https-and-oci",
+				ResolvedDownloadDigest: digest, ResolvedContentDigest: digest, ResolvedDigest: digest},
+		},
+		{
+			name: "HTTPS resolution on an unrelated operation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationPlan, OperationID: "plan-https",
+				CoordinationDigest: digest, ResolvedDownloadDigest: digest, ResolvedContentDigest: digest},
+		},
+		{
+			name: "HTTPS access refusal after a child ran",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https-late-refusal",
+				ChildExitCode: 0, Error: &ResultError{Code: "invalid_https_access", Message: "refused"}},
+		},
+		{
 			name: "migration history success without its report",
 			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationMigrationHistory,
 				OperationID: "history-no-report", ChildExitCode: 0, CoordinationDigest: digest},
@@ -1060,6 +1090,19 @@ func TestParserAdmitsAGitResolution(t *testing.T) {
 		ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: "sha256:" + strings.Repeat("9", 64)}
 	frame := handcraftedIntegrityValidFrame(t, result)
 	if parsed, err := ParseResultFor(frame, OperationResolve, "resolve-git"); err != nil || parsed.ResolvedCommit != result.ResolvedCommit {
+		t.Fatalf("ParseResultFor() = %#v, %v", parsed, err)
+	}
+}
+
+// An HTTPS resolution carries the download digest and the content digest,
+// no commit and no OCI descriptor, and the parser admits it.
+func TestParserAdmitsAnHTTPSResolution(t *testing.T) {
+	t.Parallel()
+	result := Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https",
+		ResolvedDownloadDigest: "sha256:" + strings.Repeat("8", 64), ResolvedContentDigest: "sha256:" + strings.Repeat("9", 64),
+		ResolvedContentBytes: 12}
+	frame := handcraftedIntegrityValidFrame(t, result)
+	if parsed, err := ParseResultFor(frame, OperationResolve, "resolve-https"); err != nil || !reflect.DeepEqual(parsed, result) {
 		t.Fatalf("ParseResultFor() = %#v, %v", parsed, err)
 	}
 }

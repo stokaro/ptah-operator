@@ -217,6 +217,11 @@ type Result struct {
 	// selected files there.
 	ResolvedCommit        string `json:"resolvedCommit,omitempty"`
 	ResolvedContentDigest string `json:"resolvedContentDigest,omitempty"`
+	// ResolvedDownloadDigest is the digest of the bytes resolving an HTTPS
+	// source downloaded; ResolvedContentDigest is then the content digest of
+	// the files it selected. A resolution names a commit or a download, never
+	// both.
+	ResolvedDownloadDigest string `json:"resolvedDownloadDigest,omitempty"`
 	// ResolvedContentBytes is how much the selected files hold together,
 	// which a source policy may bound.
 	ResolvedContentBytes     int64       `json:"resolvedContentBytes,omitempty"`
@@ -776,7 +781,7 @@ func validateResult(result Result, options ParseOptions) error {
 			return fmt.Errorf("%w: invalid truncation metadata", ErrMalformedFrame)
 		}
 	}
-	if result.Error != nil && (result.Error.Code == "invalid_oci_access" || result.Error.Code == "invalid_git_access") {
+	if result.Error != nil && (result.Error.Code == "invalid_oci_access" || result.Error.Code == "invalid_git_access" || result.Error.Code == "invalid_https_access") {
 		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
@@ -818,20 +823,31 @@ func validateResult(result Result, options ParseOptions) error {
 		"verification policy": result.VerificationPolicyDigest,
 		"drift report":        result.DriftReportDigest,
 		"resolved source":     result.ResolvedDigest,
+		"resolved download":   result.ResolvedDownloadDigest,
 		"plan content":        result.PlanContentDigest,
 	} {
 		if digest != "" && !validProtocolDigest(digest) {
 			return fmt.Errorf("%w: invalid %s digest", ErrMalformedFrame, name)
 		}
 	}
-	gitResolution := result.ResolvedCommit != "" || result.ResolvedContentDigest != ""
-	if result.ResolvedContentBytes < 0 || (result.ResolvedContentBytes != 0 && !gitResolution) {
-		return fmt.Errorf("%w: content size without a Git resolution", ErrMalformedFrame)
+	remoteResolution := result.ResolvedCommit != "" || result.ResolvedContentDigest != "" || result.ResolvedDownloadDigest != ""
+	if result.ResolvedContentBytes < 0 || (result.ResolvedContentBytes != 0 && !remoteResolution) {
+		return fmt.Errorf("%w: content size without a Git or HTTPS resolution", ErrMalformedFrame)
+	}
+	if result.ResolvedCommit != "" && result.ResolvedDownloadDigest != "" {
+		return fmt.Errorf("%w: a resolution names both a commit and a download", ErrMalformedFrame)
 	}
 	if result.Operation == OperationResolve {
 		switch {
 		case result.Error != nil:
-		case gitResolution:
+		case result.ResolvedDownloadDigest != "":
+			if !validProtocolDigest(result.ResolvedContentDigest) {
+				return fmt.Errorf("%w: successful HTTPS resolution lacks a content digest", ErrMalformedFrame)
+			}
+			if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedDigest != "" || result.ResolvedSize != 0 {
+				return fmt.Errorf("%w: HTTPS resolution carries OCI descriptor metadata", ErrMalformedFrame)
+			}
+		case remoteResolution:
 			if !gitCommitID.MatchString(result.ResolvedCommit) || !validProtocolDigest(result.ResolvedContentDigest) {
 				return fmt.Errorf("%w: successful Git resolution lacks a commit and a content digest", ErrMalformedFrame)
 			}
@@ -846,7 +862,7 @@ func validateResult(result Result, options ParseOptions) error {
 				return fmt.Errorf("%w: invalid resolved reference", ErrMalformedFrame)
 			}
 		}
-	} else if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 || gitResolution {
+	} else if result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 || remoteResolution {
 		return fmt.Errorf("%w: resolved source metadata on a non-resolve operation", ErrMalformedFrame)
 	}
 	if result.ResolvedDigest != "" && result.Operation != OperationResolve && result.Operation != OperationVerify {

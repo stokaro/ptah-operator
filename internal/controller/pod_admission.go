@@ -155,7 +155,7 @@ type podConfiguration struct {
 // external secret store that has not synced yet looks like this.
 //
 // The kubelet says it in one of two places. A value a container reads from a
-// Secret into its environment -- a registry or Git grant -- that the kubelet
+// Secret into its environment -- a registry, Git or HTTPS grant -- that the kubelet
 // cannot resolve leaves the container waiting as CreateContainerConfigError,
 // with the reason in its status. A credential is a file in a Secret volume, and
 // a volume the kubelet cannot set up stops the whole Pod before any container:

@@ -52,6 +52,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	materializeTo := flags.String("materialize-to", "", "directory a checked source snapshot is copied into")
 	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
+	fetchHTTPSSource := flags.String("fetch-https-source", "", "fetch the resolved download of an HTTPS source into this directory")
 	fetchOCISource := flags.Bool("fetch-oci-source", false, "run the Ptah pull after -- with the registry credential the Job names by file")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
@@ -73,31 +74,42 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		}
 		return 0
 	}
-	fetchMode := false
+	// The Git and the HTTPS fetch take the same shape: the directory to
+	// fetch into and the Ptah binary, nothing else.
+	remoteFetches := map[string]struct {
+		kind        string
+		destination *string
+		fetch       func(ctx context.Context, ptahBinary string, environment []string, destination, tempDir string, executor runner.Executor, diagnostics io.Writer) error
+	}{
+		"fetch-git-source":   {"Git", fetchGitSource, runner.FetchGitSource},
+		"fetch-https-source": {"HTTPS", fetchHTTPSSource, runner.FetchHTTPSSource},
+	}
+	fetchMode := ""
 	flags.Visit(func(current *flag.Flag) {
-		if current.Name == "fetch-git-source" {
-			fetchMode = true
+		if _, remote := remoteFetches[current.Name]; remote && fetchMode == "" {
+			fetchMode = current.Name
 		}
 	})
-	if fetchMode {
+	if fetchMode != "" {
+		remote := remoteFetches[fetchMode]
 		unexpectedFlag := false
 		flags.Visit(func(current *flag.Flag) {
-			if current.Name != "fetch-git-source" && current.Name != "ptah-binary" {
+			if current.Name != fetchMode && current.Name != "ptah-binary" {
 				unexpectedFlag = true
 			}
 		})
-		if unexpectedFlag || flags.NArg() != 0 || *fetchGitSource == "" {
-			_, _ = fmt.Fprintln(stderr, "ptah-runner: Git fetch mode takes only --fetch-git-source and --ptah-binary")
+		if unexpectedFlag || flags.NArg() != 0 || *remote.destination == "" {
+			_, _ = fmt.Fprintf(stderr, "ptah-runner: %s fetch mode takes only --%s and --ptah-binary\n", remote.kind, fetchMode)
 			return 2
 		}
-		// The fetch holds the Git credential and writes what the process
-		// holding the database URL reads next, so it is held to the protocol
-		// as the main run is.
+		// The fetch holds the source's credential and writes what the
+		// process holding the database URL reads next, so it is held to the
+		// protocol as the main run is.
 		if err := runner.CheckProtocolBinding(environment); err != nil {
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
 			return 2
 		}
-		if err := runner.FetchGitSource(ctx, *ptahBinary, environment, *fetchGitSource, "", runner.OSExecutor{}, stderr); err != nil {
+		if err := remote.fetch(ctx, *ptahBinary, environment, *remote.destination, "", runner.OSExecutor{}, stderr); err != nil {
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
 			return 2
 		}

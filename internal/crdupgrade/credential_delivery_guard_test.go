@@ -40,6 +40,7 @@ func TestControllerJobCredentialEnvironmentNamesAreTheRunners(t *testing.T) {
 	grants := []string{
 		runner.EnvOCIAuthRegistryGrant, runner.EnvOCIAllowPlainHTTPGrant, runner.EnvOCICASHA256Grant,
 		runner.EnvGitHostGrant, runner.EnvGitCASHA256Grant, runner.EnvGitKnownHostsSHA256Grant,
+		runner.EnvHTTPSHostGrant, runner.EnvHTTPSCASHA256Grant,
 	}
 	slices.Sort(grants)
 	if got := slices.Sorted(slices.Values(controllerJobSecretEnvironmentGrants)); !slices.Equal(got, grants) {

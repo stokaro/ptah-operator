@@ -406,8 +406,8 @@ func TestRunnerNamesWhyAGitPullFailed(t *testing.T) {
 			}
 		})
 	}
-	long := strings.Repeat("x", 4*maxGitRefusalBytes)
-	if message := gitPullExit(2, []byte("Error: "+long+"\n"), NewRedactor(nil)).Error(); len(message) > len("ptah exited with code 2: ")+maxGitRefusalBytes {
+	long := strings.Repeat("x", 4*maxPullRefusalBytes)
+	if message := pullExit(2, []byte("Error: "+long+"\n"), NewRedactor(nil)).Error(); len(message) > len("ptah exited with code 2: ")+maxPullRefusalBytes {
 		t.Fatalf("a long reason was kept whole: %d bytes", len(message))
 	}
 }

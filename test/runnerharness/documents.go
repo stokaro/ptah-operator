@@ -67,22 +67,35 @@ func DecodeDocument(args []string, exit int, stdout []byte) error {
 			}
 			return nil
 		}
-		reference, selected, err := pullAsked(args)
+		asked, err := pullAsked(args)
 		if err != nil {
 			return err
 		}
-		_, err = dataplane.DecodeGitPull(stdout, reference, selected)
+		_, err = dataplane.DecodeSourcePull(stdout, asked)
 		return err
 	default:
 		return fmt.Errorf("no decoder for `ptah %s`", command)
 	}
 }
 
-// pullAsked reads the reference and the path a pull's arguments name.
-func pullAsked(args []string) (reference, selected string, err error) {
-	flag := slices.Index(args, "--path")
-	if len(args) < 3 || flag < 0 || flag+1 >= len(args) {
-		return "", "", fmt.Errorf("%q is not a pull of a path", args)
+// pullAsked reads what a pull's arguments ask: the reference, the path and,
+// for a download, its format. A pull with --format is an HTTPS one; Ptah
+// takes the flag for nothing else.
+func pullAsked(args []string) (dataplane.PullRequest, error) {
+	value := func(name string) (string, bool) {
+		flag := slices.Index(args, name)
+		if flag < 0 || flag+1 >= len(args) {
+			return "", false
+		}
+		return args[flag+1], true
 	}
-	return args[2], args[flag+1], nil
+	selected, found := value("--path")
+	if len(args) < 3 || !found {
+		return dataplane.PullRequest{}, fmt.Errorf("%q is not a pull of a path", args)
+	}
+	asked := dataplane.PullRequest{Source: dataplane.PullSourceGit, Reference: args[2], Path: selected}
+	if format, download := value("--format"); download {
+		asked.Source, asked.Format = dataplane.PullSourceHTTPS, format
+	}
+	return asked, nil
 }
