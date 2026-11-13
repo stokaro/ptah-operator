@@ -46,6 +46,11 @@ The file is a list of rows, each one a map from column name to value:
 digest your `PtahSchema` resolves and your verification policy checks. Nothing
 later reads the author's working copy: the artifact carries the declaration.
 
+Only an artifact carries rows this way. A schema from a ConfigMap or Git source
+is one file, so a `data` block in it that names a row file is refused with
+`desired_source_unreadable` wherever the file sits
+([Condition reasons](../../troubleshoot/condition-reasons/)).
+
 ## What a change looks like
 
 The cycle is the one a structural change goes through, and the steps do not
