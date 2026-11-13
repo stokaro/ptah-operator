@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/jobclaim"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
@@ -383,11 +384,21 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 		// running, not deleted: the Job controller has not acted on the Job,
 		// though its bound has passed.
 		unmarked bool
+		// createdWithTTL is a read-only Job this release created, which
+		// carries its cleanup TTL. The others carry none, as a release before
+		// 0.2.11 created them.
+		createdWithTTL bool
 	}{
 		{name: "a Resolve", operation: operatorv1alpha1.OperationResolve},
+		{name: "a Resolve created with its TTL", operation: operatorv1alpha1.OperationResolve, createdWithTTL: true},
 		{name: "a Plan", operation: operatorv1alpha1.OperationPlan},
+		{name: "a Plan created with its TTL", operation: operatorv1alpha1.OperationPlan, createdWithTTL: true},
 		{name: "the Observe that proves an Apply", operation: operatorv1alpha1.OperationObserve, proof: true},
 		{name: "a Plan the Job controller has not marked", operation: operatorv1alpha1.OperationPlan, unmarked: true},
+		{
+			name:      "a Plan created with its TTL the Job controller has not marked",
+			operation: operatorv1alpha1.OperationPlan, unmarked: true, createdWithTTL: true,
+		},
 		{
 			name: "the Observe that proves an Apply, unmarked", operation: operatorv1alpha1.OperationObserve,
 			proof: true, unmarked: true,
@@ -406,6 +417,9 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 				run, reconciler, api = failingSchemaApply(t)
 			} else {
 				run = failingSchemaRead(t, row.operation, row.proof)
+			}
+			if row.createdWithTTL {
+				run.job.Spec.TTLSecondsAfterFinished = ptr(jobclaim.CleanupTTLSeconds)
 			}
 			bound := jobStopBound(run.job)
 			if row.unmarked {
@@ -488,13 +502,17 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			if operation == nil || operation.Attempt != dispatched.Attempt+1 || operation.JobName == dispatched.JobName || operation.JobUID != "" {
 				t.Fatalf("at the Job's stop bound the claim did not move to its next attempt: claim %#v, events %q", operation, all)
 			}
+			fate := "stays until it is deleted by hand or with its owner"
+			if row.createdWithTTL {
+				fate = "is deleted 300 seconds after it finishes"
+			}
 			want := fmt.Sprintf("%sStopped waiting for %s Job %s: it did not stop by %s, "+
 				"its own deadline plus the grace its Pods are given and 30 seconds. "+
-				"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner. "+
+				"The %s runs again under a new Job, and Job %s %s. "+
 				"Pod %s on node %s has not stopped and may still read the database; nothing uses what it reads. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
 				readJobOverdueEvent, row.operation, run.job.Name, bound.UTC().Format(time.RFC3339),
-				row.operation, run.job.Name, pod.Name, pod.Spec.NodeName, pod.Namespace, pod.Name)
+				row.operation, run.job.Name, fate, pod.Name, pod.Spec.NodeName, pod.Namespace, pod.Name)
 			if len(events) != 1 || events[0] != want {
 				t.Fatalf("Events at the Job's stop bound = %q, want one %q", all, want)
 			}
@@ -518,8 +536,12 @@ func TestASchemaReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			if !row.proof && slices.ContainsFunc(held, func(holder string) bool { return holder != "" }) {
 				t.Fatalf("the Lease was renewed for %q at the Job's stop bound", held)
 			}
-			if got := storedTTL(t, api, run.job); got != nil {
-				t.Fatalf("the Job that has not stopped got a cleanup TTL of %d", *got)
+			if got, created := ttlText(storedTTL(t, api, run.job)), ttlText(run.job.Spec.TTLSecondsAfterFinished); got != created {
+				t.Fatalf("the Job that has not stopped has cleanup TTL %s, want the %s it was created with", got, created)
+			}
+			// The pass's Events were drained into all above.
+			if schemaCleanupDeferredFor(all, run.job.Name, "") {
+				t.Fatalf("the Job the claim stopped waiting for is named as staying: %q", all)
 			}
 		})
 	}
@@ -535,27 +557,30 @@ func TestAMigrationReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 
 	current := workloadBuilderForMigrations()
 	for _, row := range []struct {
-		operation operatorv1alpha1.MigrationOperationType
+		name              string
+		operation         operatorv1alpha1.MigrationOperationType
+		createdWithoutTTL bool
 		// unmarked leaves the Job with no condition and its Pod running on a
 		// node that answers: the Job controller has not acted on the Job.
 		unmarked bool
 	}{
-		{operation: operatorv1alpha1.MigrationOperationHistory},
-		{operation: operatorv1alpha1.MigrationOperationHistory, unmarked: true},
-		{operation: operatorv1alpha1.MigrationOperationApply},
-		{operation: operatorv1alpha1.MigrationOperationApply, unmarked: true},
+		{name: "History", operation: operatorv1alpha1.MigrationOperationHistory},
+		{name: "History created without a TTL", operation: operatorv1alpha1.MigrationOperationHistory, createdWithoutTTL: true},
+		{name: "History the Job controller has not marked", operation: operatorv1alpha1.MigrationOperationHistory, unmarked: true},
+		{
+			name:      "History created without a TTL the Job controller has not marked",
+			operation: operatorv1alpha1.MigrationOperationHistory, createdWithoutTTL: true, unmarked: true,
+		},
+		{name: "Apply", operation: operatorv1alpha1.MigrationOperationApply},
+		{name: "Apply the Job controller has not marked", operation: operatorv1alpha1.MigrationOperationApply, unmarked: true},
 	} {
-		name := string(row.operation)
-		if row.unmarked {
-			name += " the Job controller has not marked"
-		}
-		t.Run(name, func(t *testing.T) {
+		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 
 			operationType := row.operation
 			apply := operationType == operatorv1alpha1.MigrationOperationApply
-			run := runDispatchedBy(t, operationType, runShape{dispatcher: current, recorded: true})
+			run := runDispatchedBy(t, operationType, runShape{dispatcher: current, recorded: true, createdWithoutTTL: row.createdWithoutTTL})
 			failed := run.job.Status.StartTime.Add(time.Duration(*run.job.Spec.ActiveDeadlineSeconds) * time.Second)
 			if row.unmarked {
 				run.pod.Spec.NodeName = "node-a"
@@ -627,15 +652,22 @@ func TestAMigrationReadStopsSupervisingAFailingJobAtItsStopBound(t *testing.T) {
 			if operation == nil || operation.Attempt != dispatched.Attempt+1 || operation.JobName == dispatched.JobName || operation.JobUID != "" {
 				t.Fatalf("at the Job's stop bound the claim did not move to its next attempt: %#v", operation)
 			}
+			fate := "is deleted 300 seconds after it finishes"
+			if row.createdWithoutTTL {
+				fate = "stays until it is deleted by hand or with its owner"
+			}
 			want := fmt.Sprintf("%sStopped waiting for History Job %s: it did not stop by %s, "+
 				"its own deadline plus the grace its Pods are given and 30 seconds. "+
-				"The History runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner. "+
+				"The History runs again under a new Job, and Job %s %s. "+
 				"Pod %s on node %s has not stopped and may still read the database; nothing uses what it reads. "+
 				"Once the node is known to be gone, delete the Pod: kubectl delete pod -n %s %s --force --grace-period=0",
-				readJobOverdueEvent, run.job.Name, bound.UTC().Format(time.RFC3339), run.job.Name,
+				readJobOverdueEvent, run.job.Name, bound.UTC().Format(time.RFC3339), run.job.Name, fate,
 				run.pod.Name, run.pod.Spec.NodeName, run.pod.Namespace, run.pod.Name)
 			if events := readJobOverdueEvents(recorder); len(events) != 1 || events[0] != want {
 				t.Fatalf("Events at the Job's stop bound = %q, want one %q", events, want)
+			}
+			if got, created := ttlText(storedTTL(t, api, run.job)), ttlText(run.job.Spec.TTLSecondsAfterFinished); got != created {
+				t.Fatalf("the Job that has not stopped has cleanup TTL %s, want the %s it was created with", got, created)
 			}
 		})
 	}

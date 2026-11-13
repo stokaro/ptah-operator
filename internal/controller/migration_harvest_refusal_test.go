@@ -241,7 +241,7 @@ func TestAMigrationRetryHarvestSettlesARefusedCleanup(t *testing.T) {
 			ctx := context.Background()
 
 			current := workloadBuilderForMigrations()
-			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 			reconciler, api := run.reconciler(t, current)
 			recorder := record.NewFakeRecorder(64)
 			reconciler.Recorder = recorder
@@ -307,7 +307,7 @@ func TestAMigrationStaleHarvestSettlesARefusedCleanup(t *testing.T) {
 			ctx := context.Background()
 
 			current := workloadBuilderForMigrations()
-			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 			reconciler, api := run.reconciler(t, current)
 			recorder := record.NewFakeRecorder(64)
 			reconciler.Recorder = recorder
@@ -378,7 +378,7 @@ func TestAMigrationReadHarvestSettlesARefusedCleanup(t *testing.T) {
 			ctx := context.Background()
 
 			current := workloadBuilderForMigrations()
-			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 			reconciler, api := run.reconciler(t, current)
 			recorder := record.NewFakeRecorder(64)
 			reconciler.Recorder = recorder

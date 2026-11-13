@@ -329,6 +329,7 @@
         "enableServiceLinks": false
       }
     },
+    "ttlSecondsAfterFinished": 300,
     "completionMode": "NonIndexed",
     "suspend": false,
     "podReplacementPolicy": "Failed"

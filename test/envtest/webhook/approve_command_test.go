@@ -17,6 +17,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/approve"
 	"github.com/stokaro/ptah-operator/internal/desiredspec"
+	"github.com/stokaro/ptah-operator/test/envtest/internal/harness"
 )
 
 // kubectl ptah approve hands its decision to approve.Submit, which reads the
@@ -57,6 +58,25 @@ func TestApproveCommandGetsTheAPIServersAnswer(t *testing.T) {
 			stored.Spec.PlanRef.UID != want.PlanUID || stored.Spec.PlanFingerprint != want.Fingerprint ||
 			!strings.HasPrefix(stored.Name, fixture.schema.Name+"-") {
 			t.Fatalf("stored %s with %+v, want the reviewed plan approved by %s", stored.Name, stored.Spec, person)
+		}
+	})
+
+	// approverClusterRole.subjects, which kubectl ptah install --approver
+	// fills, binds the role for the installation: the chart's own
+	// ClusterRoleBinding, as it renders, in a namespace nobody named.
+	t.Run("an approver the chart binds is admitted in any namespace", func(t *testing.T) {
+		t.Parallel()
+		fixture := newApprovalFixture(t)
+		const person = "frank@example.com"
+		installChartApproverBinding(t, fixture.namespace, person)
+
+		result := approve.Submit(ctx, clientAs(t, person), fixture.review(t), approve.Options{})
+
+		if result.Outcome != approve.Admitted {
+			t.Fatalf("Submit() as %s = %s: %s", person, result.Outcome, result.Message)
+		}
+		if approver, at := result.Approver(); approver != person || at == nil || at.IsZero() {
+			t.Fatalf("the answer carries approver %q at %v, want %s stamped by admission", approver, at, person)
 		}
 	})
 
@@ -226,6 +246,66 @@ func bindApproverRole(t *testing.T, namespace, user string) {
 		return nil
 	}); err != nil {
 		t.Fatalf("wait for RoleBinding %s/%s to take effect: %v", namespace, binding.Name, err)
+	}
+}
+
+// installChartApproverBinding renders the chart with user as its one approver,
+// creates the ClusterRoleBinding that render holds, and returns once the
+// authorizer lets user create a schema approval in namespace. The binding goes
+// with the test.
+func installChartApproverBinding(t *testing.T, namespace, user string) {
+	t.Helper()
+	ctx := context.Background()
+	release := harness.DefaultRelease()
+	release.Values = append(release.Values,
+		[2]string{"approverClusterRole.subjects[0].kind", "User"},
+		[2]string{"approverClusterRole.subjects[0].name", user})
+	objects, err := harness.RenderChart(ctx, release)
+	if err != nil {
+		t.Fatalf("render the chart with %s as its approver: %v", user, err)
+	}
+	var bindings []*rbacv1.ClusterRoleBinding
+	for _, object := range objects {
+		if object.GetKind() != "ClusterRoleBinding" || object.GetName() != chartApproverRole.Name {
+			continue
+		}
+		binding := &rbacv1.ClusterRoleBinding{}
+		if err := fromUnstructured(object, binding); err != nil {
+			t.Fatal(err)
+		}
+		bindings = append(bindings, binding)
+	}
+	if len(bindings) != 1 {
+		t.Fatalf("the chart rendered %d ClusterRoleBindings named %s for approver %s, want one", len(bindings), chartApproverRole.Name, user)
+	}
+	binding := bindings[0]
+	if binding.RoleRef.Name != chartApproverRole.Name {
+		t.Fatalf("the chart's approver binding refers to %+v, not the approver role %s", binding.RoleRef, chartApproverRole.Name)
+	}
+	if err := admin.Create(ctx, binding); err != nil {
+		t.Fatalf("create ClusterRoleBinding %s: %v", binding.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := admin.Delete(context.Background(), binding); err != nil && !apierrors.IsNotFound(err) {
+			t.Errorf("delete ClusterRoleBinding %s: %v", binding.Name, err)
+		}
+	})
+	if err := eventually(10*time.Second, func() error {
+		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: user,
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: namespace, Verb: "create", Group: operatorv1alpha1.GroupVersion.Group, Resource: "ptahschemaapprovals",
+			},
+		}}
+		if err := admin.Create(ctx, review); err != nil {
+			return err
+		}
+		if !review.Status.Allowed {
+			return errors.New("the authorizer does not yet let " + user + " create ptahschemaapprovals in " + namespace)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("wait for the chart's ClusterRoleBinding %s to take effect: %v", binding.Name, err)
 	}
 }
 

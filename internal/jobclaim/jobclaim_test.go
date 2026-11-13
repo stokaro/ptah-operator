@@ -362,31 +362,52 @@ func TestAJobUnderAnotherEpochIsNotItsClaims(t *testing.T) {
 	}
 }
 
-// A Job read back may carry the cleanup TTL the controller sets once it has
-// harvested it; a Job being created may not, since nothing has harvested it.
-func TestOnlyAStoredJobMayCarryTheCleanupTTL(t *testing.T) {
+// A read-only Job is created with the cleanup TTL, so a submitted one has to
+// carry it and an Apply's has to carry none. A Job read back may carry the TTL
+// the controller gives a finished Job, and a read-only one may carry none, as
+// every Job 0.2.10 created did until the manager had read it.
+func TestTheCleanupTTLIsPartOfAReadOnlyJobsIntent(t *testing.T) {
 	t.Parallel()
 
 	for _, family := range families(t) {
 		t.Run(family.name, func(t *testing.T) {
 			t.Parallel()
 
+			if ttl := family.built.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != jobclaim.CleanupTTLSeconds {
+				t.Fatalf("the builder made the read-only Job with ttlSecondsAfterFinished %v, so nothing below holds it", ttl)
+			}
+			apply := family.built.DeepCopy()
+			workload.MarkMutatingOperation(apply.Annotations)
+			apply.Spec.TTLSecondsAfterFinished = nil
+			short, other := jobclaim.CleanupTTLSeconds, jobclaim.CleanupTTLSeconds+1
 			for _, row := range []struct {
-				name   string
-				stored bool
-				ttl    int32
-				accept bool
+				name     string
+				mutating bool
+				stored   bool
+				ttl      *int32
+				accept   bool
 			}{
-				{name: "read back with the cleanup TTL", stored: true, ttl: jobclaim.CleanupTTLSeconds, accept: true},
-				{name: "read back with another TTL", stored: true, ttl: jobclaim.CleanupTTLSeconds + 1},
-				{name: "submitted with the cleanup TTL", stored: false, ttl: jobclaim.CleanupTTLSeconds},
+				{name: "a read-only Job submitted with the cleanup TTL", ttl: &short, accept: true},
+				{name: "a read-only Job submitted with none", ttl: nil},
+				{name: "a read-only Job submitted with another TTL", ttl: &other},
+				{name: "a read-only Job read back with the cleanup TTL", stored: true, ttl: &short, accept: true},
+				{name: "a read-only Job an earlier release created, read back with none", stored: true, ttl: nil, accept: true},
+				{name: "a read-only Job read back with another TTL", stored: true, ttl: &other},
+				{name: "an Apply Job submitted with none", mutating: true, ttl: nil, accept: true},
+				{name: "an Apply Job submitted with the cleanup TTL", mutating: true, ttl: &short},
+				{name: "an Apply Job read back with none", mutating: true, stored: true, ttl: nil, accept: true},
+				{name: "an Apply Job read back with the cleanup TTL", mutating: true, stored: true, ttl: &short, accept: true},
+				{name: "an Apply Job read back with another TTL", mutating: true, stored: true, ttl: &other},
 			} {
-				claim := family.claim
-				claim.Built, claim.Stored = family.built, row.stored
-				job := stored(family.built)
-				job.Spec.TTLSecondsAfterFinished = &row.ttl
+				claim, built := family.claim, family.built
+				if row.mutating {
+					claim.Mutating, built = true, apply
+				}
+				claim.Built, claim.Stored = built, row.stored
+				job := stored(built)
+				job.Spec.TTLSecondsAfterFinished = row.ttl
 				if err := jobclaim.Match(job, claim); (err == nil) != row.accept {
-					t.Fatalf("%s: Match() = %v, want accepted %t", row.name, err, row.accept)
+					t.Errorf("%s: Match() = %v, want accepted %t", row.name, err, row.accept)
 				}
 			}
 		})
@@ -416,6 +437,7 @@ func TestOnlyAnApplysStoredJobMayCarryTheLongTTL(t *testing.T) {
 			applying.Mutating = true
 			built := family.built.DeepCopy()
 			workload.MarkMutatingOperation(built.Annotations)
+			built.Spec.TTLSecondsAfterFinished = nil
 			applying.Built, applying.Stored = built, true
 			retained := stored(built)
 			retained.Spec.TTLSecondsAfterFinished = &long

@@ -44,7 +44,10 @@ spec:
           path: schema.sql
 ```
 
-A schema selects exactly one file, and its extension tells Ptah the format. A
+A schema selects exactly one file, and its extension tells Ptah the format.
+Only that file reaches the operation, so a `data` block in it that names a row
+file is refused; a schema with row files is published with `ptah schema push`,
+whose artifact carries the rows ([Manage reference data](../../use/reference-data/)). A
 migration directory selects up to 1,000 files, named as Ptah names migrations,
 such as `0000000001_create_orders.up.sql`. A key cannot hold `/`, so a nested
 path is spelled out in `path`. A key the list does not name is not part of the
@@ -216,7 +219,8 @@ or its credential.
 
 `path` is the schema file, or the migration directory, which may be `.`, the
 root of the repository. A submodule or a Git LFS pointer at the selected path is refused
-with a reason, rather than read as SQL.
+with a reason, rather than read as SQL. A schema reads only the file `path`
+selects, so a `data` block in it cannot name a row file, as for a ConfigMap.
 
 A public repository needs nothing else. A private one needs a credential, and
 the credential's owner decides where it may be sent.

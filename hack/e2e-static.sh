@@ -2564,6 +2564,7 @@ for controller_object_marker in \
 	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished in [300, 86400]' \
 	'dyn(object).spec.ttlSecondsAfterFinished != 86400' \
+	'dyn(object).spec.ttlSecondsAfterFinished == 300 && has(object.metadata.labels)' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
 	'dyn(object).spec.data.size() <= 699052' \
 	"dyn(object).spec.contractVersion in [$plan_contract_version, $source_plan_contract_version] && has(dyn(dyn(object).spec).controllerImage)" \

@@ -367,6 +367,34 @@ func TestIsolationRuleCount(t *testing.T) {
 	}
 }
 
+func TestHostReference(t *testing.T) {
+	t.Parallel()
+	const (
+		registry = "ptah-e2e-registry.ptah-e2e.svc.cluster.local:5000"
+		host     = "127.0.0.1:43127"
+	)
+	// What publishUnknownLayerArtifact pushed to before it took the reference
+	// the row reads: the host address, the phase's repository, and the
+	// engine's unknown-layer artifact.
+	got, err := hostReference("oci://"+registry+"/migrations-faults/postgresql-unknown:stable", registry, host)
+	if want := host + "/" + "migrations-faults" + "/" + "postgresql" + "-unknown:stable"; err != nil || got != want {
+		t.Fatalf("hostReference() = %q, %v, want %q", got, err, want)
+	}
+	for name, reference := range map[string]string{
+		"another registry":  "oci://registry.invalid/migrations/postgresql-unknown:stable",
+		"no oci scheme":     registry + "/migrations/postgresql-unknown:stable",
+		"the registry only": "oci://" + registry + "/",
+		"a registry prefix": "oci://" + registry + "0/migrations/postgresql-unknown:stable",
+	} {
+		if got, err := hostReference(reference, registry, host); err == nil {
+			t.Errorf("%s: hostReference(%q) = %q, want a refusal", name, reference, got)
+		}
+	}
+	if got, err := hostReference("oci://"+registry+"/m/p:stable", registry, ""); err == nil {
+		t.Errorf("hostReference() with no host address = %q, want a refusal", got)
+	}
+}
+
 func TestIsolatedApplyClaim(t *testing.T) {
 	t.Parallel()
 	claimed := func() *ptahv1alpha1.PtahMigration {

@@ -1281,9 +1281,7 @@ func (r *MigrationReconciler) retryPastOverdueMigrationJob(
 	}
 	running, _ := podsStillStopping(pods)
 	r.event(migration, corev1.EventTypeWarning, "ReadJobOverdue", "%s", readJobOverdueText(
-		readJobOverdueLead(string(operation.Type), job.Name, stopBy, fmt.Sprintf(
-			"The %s runs again under a new Job, and Job %s stays until it is deleted by hand or with its owner.",
-			operation.Type, job.Name)), running))
+		readJobOverdueLead(string(operation.Type), job.Name, stopBy, overdueReadJobFate(string(operation.Type), job)), running))
 	return r.retryMigrationOperation(ctx, migration, nil, fmt.Errorf(
 		"%s Job %q did not stop by %s, its own deadline plus the grace its Pods are given",
 		operation.Type, job.Name, stopBy.UTC().Format(time.RFC3339)))

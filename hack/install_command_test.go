@@ -99,25 +99,33 @@ func TestTheInstallPageOpensWithTheRegistryCommand(t *testing.T) {
 	t.Parallel()
 	page := readDocumentationPage(t, installPage)
 	_, section, found := strings.Cut(page, "## Choose a version, once\n")
-	block := installShellBlock.FindStringSubmatch(section)
-	if !found || block == nil {
-		t.Fatalf("%s shows no command under Choose a version, once", installPage)
+	blocks := installShellBlock.FindAllStringSubmatch(section, -1)
+	if !found || len(blocks) < 2 {
+		t.Fatalf("%s shows %d commands under Choose a version, once, want the plugin's and the helm one it runs", installPage, len(blocks))
 	}
-	if problem := registryInstallProblem(block[1]); problem != "" {
+	first, equivalent := blocks[0][1], blocks[1][1]
+	if problem := registryInstallProblem(first); problem != "" {
 		t.Errorf("%s: %s", installPage, problem)
 	}
 	for mistake, mutated := range map[string]string{
-		"a value to copy":    strings.Replace(block[1], "--create-namespace", "--create-namespace --set-string image.digest=x", 1),
-		"no verification":    strings.Replace(block[1], "gh attestation verify", "echo", 1),
-		"another repository": strings.ReplaceAll(block[1], chartstamp.Repository, "ghcr.io/stokaro/other"),
+		"a value to copy":    strings.Replace(first, `--version "$VERSION"`, `--version "$VERSION" --values values.yaml`, 1),
+		"an approver":        strings.Replace(first, `--version "$VERSION"`, `--version "$VERSION" --approver alice`, 1),
+		"no verification":    strings.Replace(first, "gh attestation verify", "echo", 1),
+		"another repository": strings.ReplaceAll(first, chartstamp.Repository, "ghcr.io/stokaro/other"),
+		"helm instead":       strings.Replace(first, "kubectl ptah install", "helm upgrade --install ptah-operator", 1),
+		"no version":         strings.Replace(first, ` --version "$VERSION"`, "", 1),
 	} {
 		if registryInstallProblem(mutated) == "" {
 			t.Errorf("the check accepted %s", mistake)
 		}
 	}
-	first, second := strings.Index(page, "helm upgrade --install ptah-operator oci://"), strings.Index(page, "helm upgrade --install ptah-operator ./charts")
-	if first < 0 || second < 0 || first > second {
-		t.Errorf("%s has the registry command at %d and the explicit values at %d, and the registry comes first", installPage, first, second)
+	if !strings.Contains(equivalent, "helm upgrade --install ptah-operator oci://"+chartstamp.Repository) ||
+		strings.Contains(equivalent, "--set") || strings.Contains(equivalent, "--values") {
+		t.Errorf("%s follows the plugin with\n%s\nwhich is not the registry install it runs", installPage, equivalent)
+	}
+	registry, explicit := strings.Index(page, "helm upgrade --install ptah-operator oci://"), strings.Index(page, "helm upgrade --install ptah-operator ./charts")
+	if registry < 0 || explicit < 0 || registry > explicit {
+		t.Errorf("%s has the registry command at %d and the explicit values at %d, and the registry comes first", installPage, registry, explicit)
 	}
 }
 
@@ -125,16 +133,16 @@ func registryInstallProblem(block string) string {
 	for _, required := range []string{
 		"gh attestation verify \"oci://" + chartstamp.Repository + ":$VERSION\"",
 		"--signer-workflow stokaro/ptah-operator/.github/workflows/release.yml",
-		"helm upgrade --install ptah-operator oci://" + chartstamp.Repository,
-		"--version \"$VERSION\"",
-		"--create-namespace",
+		"kubectl ptah install --version \"$VERSION\"\n",
 	} {
 		if !strings.Contains(block, required) {
-			return "the first command no longer says " + required
+			return "the first command no longer says " + strings.TrimSpace(required)
 		}
 	}
-	if strings.Contains(block, "--set") || strings.Contains(block, "--values") {
-		return "the first command asks for a value"
+	for _, value := range []string{"--set", "--values", "-f ", "--approver"} {
+		if strings.Contains(block, value) {
+			return "the first command asks for " + value
+		}
 	}
 	return ""
 }

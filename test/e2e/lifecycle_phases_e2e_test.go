@@ -26,8 +26,10 @@ const (
 )
 
 // readOnlyJobCleanupWithinTheRelease opens the upgrade phase: the manager the
-// driver installed is the candidate, and a read-only Job it dispatched is
-// retired by the same release once the runtime is back.
+// driver installed is the candidate, and a read-only Job it dispatched finishes
+// while the runtime is stopped. The Job was created with its cleanup TTL, so
+// once the runtime is back the candidate leaves it to that TTL, and Kubernetes
+// deletes it.
 func (l *lifecycleRun) readOnlyJobCleanupWithinTheRelease() {
 	l.t.Helper()
 	if info, err := os.Stat(l.in.candidateValuesFile); err != nil || !info.Mode().IsRegular() {
@@ -58,8 +60,8 @@ func (l *lifecycleRun) readOnlyJobCleanupWithinTheRelease() {
 	l.setPodWebhookFailurePolicy("Ignore", "Fail")
 	l.startRuntimeDeployments()
 	l.waitRuntimeReady()
-	l.waitForReadOnlyJobCleanup()
 	l.quiesceReadOnlyJobSchema()
+	l.waitForReadOnlyJobCollected()
 }
 
 // crdPreflightRefusals: the CRD hook refuses a missing CRD, a newer schema
@@ -253,6 +255,7 @@ func (l *lifecycleRun) nextReleaseUpgrade() {
 	// (stokaro/ptah-operator#7).
 	l.logf("holding one Apply open across the next-release upgrade")
 	l.dispatchReadOnlyJobFixture()
+	l.stripReadOnlyJobCleanupTTL()
 	l.startRunningApplyBarrier()
 	l.prepareRunningApplyFixture()
 	audit := l.externalPostgresAudit()

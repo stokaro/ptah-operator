@@ -134,7 +134,9 @@ The contract carries 55 PostgreSQL statement/parameter sets and 37 MySQL
 command/statement pairs. The predicate compares SQL, comments, whitespace,
 parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
-identifier. Received SQL is never normalized.
+identifier. Received SQL is never normalized. The one rewrite is the label of a
+PostgreSQL parameter list: 16 logs `parameters: `, and the audit reads it as the
+`Parameters: ` 17 and 18 log, with the values after it compared byte for byte.
 
 Against v0.22.0, v0.23.0 changed fourteen PostgreSQL declarations, the column read
 on each server line among them, and added three. On MySQL it changed five
@@ -292,6 +294,29 @@ That read is the one PostgreSQL declaration only an added line witnesses:
 per operation. The other readings are the PostgreSQL 17 ones. The contract
 permits the read on every server, and it is still a read of the catalog with
 no write, DDL, grant or transaction-control keyword outside comments and literals.
+
+## PostgreSQL 16
+
+PostgreSQL 16 adds no declaration. On November 12, 2026 the whole PostgreSQL
+capture ran on PostgreSQL 16.15
+(`postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28`)
+with the v0.23.0 image, the server image being the only change to the
+procedure. All 22 readings, 1,459 records, had the record counts and exit
+statuses of the PostgreSQL 17.11 ones, and every statement and parameter value
+matched. What differed is how 16 logs a statement's bound parameters: 885
+records carry `parameters: $1 = 'public'` where 17 writes `Parameters: $1 =
+'public'`. The audits compare that detail byte for byte, so on 16 they would
+refuse every statement with parameters. They read 16's label as 17's, and
+nothing else of the detail changes. The saved exclusion plans differ from 17's
+in their source fingerprint and name, as 18's do, and hold the same statements.
+Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
+`alter_generated_column_expression`, and no fixture changes a generated column.
+
+`postgresql-16-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply`
+are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
+53, 95 and 50 records. They witness the declarations the PostgreSQL 17 readings
+do, through the audit's own parser, which is what holds the label rewrite to a
+reading 16 wrote.
 
 ## The readings
 

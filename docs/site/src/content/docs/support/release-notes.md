@@ -134,6 +134,21 @@ A script that reads the text of `kubectl ptah schema` or `migration`, rather
 than `-o json`, finds the `kubectl ptah history` command where it found a
 `kubectl get` of the namespace, when more than five approvals or acknowledgments
 name the resource, and one more line before the closing `kubectl events` line.
+Every read-only Job, a `PtahSchema`'s Observe, Plan, Verify and Resolve and a
+`PtahMigration`'s Resolve, Verify and History read, is now created with
+`ttlSecondsAfterFinished: 300`. An admission policy of your own that refuses a
+Job created with a TTL has to admit it on those Jobs. A script that reads a
+finished read Job or its Pod log has to expect both gone five minutes after the
+Job finished, whether or not the operator had read it. An alert on
+`SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred` no longer fires for
+a read-only Job this release creates. 0.2.10 admits no Pod and no result for a
+Job that already carries a TTL, so a read that runs when you roll back to 0.2.10
+can be refused, and runs again under a Job 0.2.10 creates.
+
+PostgreSQL 16.x joins the supported release lines. Run 43292445627 of the
+Added database lines workflow passed the whole lifecycle on it on every
+supported Kubernetes minor at the pinned Ptah build. A cluster on 17.x or 18.x
+has nothing to change for that.
 
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
@@ -142,13 +157,27 @@ name the resource, and one more line before the closing `kubectl events` line.
   oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
   with more than five decisions sent the reader to a list of the whole
   namespace. Each entry shows its plan, decision, Job and outcome, folded
-  failures show their count and the last time, and each plan and decision an
-  entry names is marked as still stored or not. An entry an earlier release
-  wrote without the UIDs that would join it says so, and a status with no
-  journal reads differently from an empty one. `-o json` carries every field of
-  every entry. It needs `get` on the resource; listing plans and decisions is
-  optional. [What a resource kept of its past](../../use/read-a-plan/#history)
-  has the rest.
+  failures show their count and the last time, a schema's Apply names the
+  `Verified` entry that proved it or says the proof is still owed, and each
+  plan and decision an entry names is marked as still stored or not. An entry
+  an earlier release wrote without the UIDs that would join it says so, and a
+  status with no journal reads differently from an empty one. `-o json`
+  carries every field of every entry. It needs `get` on the resource; listing
+  plans and decisions is optional.
+  [What a resource kept of its past](../../use/read-a-plan/#history) has the
+  rest.
+- **`kubectl ptah schema --details` and `migration --details`.** The views
+  printed none of the operation a resource has claimed, a schema's proof still
+  owed after an Apply, a Lease release or binding retirement still owed, or a
+  migration's revision rows, and `-o json` carried only the view. `--details`
+  prints every status field the plugin's API version knows after the view,
+  each labeled by its API name, with a line that says what a claim knows of its
+  Job (confirmed by UID, a create attempted, not created yet, or not confirmed
+  for a claim that marks nothing before its create), that an Apply's own result
+  is not the reading that proves it, and that an acknowledgment is a statement
+  rather than proof. With `-o json` it adds `details.status`, the status as the
+  plugin decodes it. Without the flag neither output changes. [Every status
+  field the plugin knows](../../use/read-a-plan/#details) has the rest.
 - **`kubectl ptah settle` gives up a proof whose target moved.** A schema whose
   URL Secret names another target than the plan its Apply ran from stops with a
   `kubectl annotate` command in its message, and the value had to be copied out
@@ -632,9 +661,9 @@ name the resource, and one more line before the closing `kubectl events` line.
   script that matches `is in the Pod log` there has to match `was in the Pod
   log of Job` as well.
 - **A refused row file is named.** Ptah reads a row file that a `data` block
-  names only inside its working directory, `/work`, and the operator puts the
-  source under `/source`, so Ptah refuses a row file beside the schema as well
-  as one that climbs out of it. The Observe failed with `child_exit: ptah exited
+  names only inside its working directory, `/work`, and a schema from a
+  ConfigMap or Git source arrives as one file under `/source`, so its row files
+  are refused wherever they sit. The Observe failed with `child_exit: ptah exited
   with code 2` and the Plan with `invalid_plan_output`, and neither said which
   file. Both now fail with `desired_source_unreadable` and Ptah's sentence
   behind the schema's file name, such as `schema.hcl: managed data file
@@ -642,8 +671,44 @@ name the resource, and one more line before the closing `kubectl events` line.
   outside allowed root "/work"`. The runner copies that sentence only whole and
   in the form Ptah's guard writes it, which holds nothing the database answered;
   any other failure keeps the code it had
-  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
-  that `ptah schema push` built carries its rows and reads no row file.
+  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). Row files work
+  only from an artifact that `ptah schema push` built, which carries its rows
+  and reads no row file
+  ([#1044](https://github.com/stokaro/ptah-operator/issues/1044)).
+- **`kubectl ptah install`.** The plugin installs the chart a release published
+  to `oci://ghcr.io/stokaro/charts/ptah-operator` with Helm 4 and no image
+  value, by default at the plugin's own version, and waits for the release to
+  be ready. `--yaml` prints what it would apply instead, and `--out-dir` writes
+  it to files. [Install](../../start/install/#choose-a-version-once) now opens
+  with it. A release before v0.2.10 has no chart there, and the plugin says so.
+- **Approvers at install.** The new chart value `approverClusterRole.subjects`
+  binds the approver ClusterRole in every namespace, and `kubectl ptah install
+  --approver` fills it. It is empty by default, so an installation that does not
+  set it binds nobody, as before. A chart from v0.2.10 or earlier refuses the
+  value.
+- **Read-only Jobs are created with their cleanup TTL.** A read-only Job got its
+  TTL only from a claim that harvested it, and admission admits that TTL only on
+  a finished Job the active claim names by UID. A claim that let go of a read
+  without harvesting it, under suspension, after a refusal or a retirement, had
+  to wait for the Job or leave it behind, and the entries above are the cases
+  that left Jobs behind. Every read-only Job is now created with the five-minute
+  TTL a harvested one got. Kubernetes counts it from when the Job finishes, so
+  it removes nothing still running, and removes a finished read whether or not
+  the manager has read it. A read whose Job is gone before the manager read it
+  runs again under a new Job. A claim that lets go of such a Job writes nothing
+  to it and names it in no Warning: a suspended or refused read-only claim moves
+  on at once, a retired read-only claim that holds no database lock is retired
+  at once, and a `PtahSchema` Plan that cannot confirm its Job runs again
+  without waiting for that Job to stop. A Plan or a proof read that a binding
+  change retires, and a Plan whose database lock epoch moved, still wait for
+  their Job by its stop bound, since the database Lease they hold depends on the
+  Job having stopped. An Apply's Job is still created with no TTL and gets the
+  one its outcome decides. The waits, TTL writes and Warnings the entries above
+  describe for read-only Jobs serve the read-only Jobs 0.2.10 created, which
+  carry no TTL. A `ReadJobOverdue` Warning on a read that runs again now says
+  what becomes of its Job: it `is deleted 300 seconds after it finishes`, or,
+  for a Job 0.2.10 created, it `stays until it is deleted by hand or with its
+  owner`.
 
 ## 0.2.10
 

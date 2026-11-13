@@ -5,9 +5,10 @@ Journal:              9 entries, complete since 2026-11-10T09:00:00Z
 
 The journal is the operator's own bounded record in status.journal, in the order
 it recorded the entries, oldest first. It keeps at most 64 entries, none more
-than 30 days older than the newest, and is not an audit archive. Nothing before
-2026-11-10T09:00:00Z is recorded here, apart from what the bounds keep of a plan
-nothing has carried out yet. Each entry is dated by the status it was derived
+than 30 days older than the newest, and is not an audit archive. It is complete
+from 2026-11-10T09:00:00Z, and an event before then may be missing. Entries
+dated before it are ones the bounds keep, or ones dated by a time their status
+carried from before it began. Each entry is dated by the status it was derived
 from, so a time can be earlier than the entry above it. It is not the database's
 revision table, which kubectl ptah migration orders summarizes as its history
 read.
