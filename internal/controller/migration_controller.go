@@ -975,9 +975,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		}
 		operation = migration.Status.ActiveOperation
 	}
-	// A read is supervised until its Job stops. Once the Job controller has
-	// marked the Job to fail, it is supervised no longer than the Job's stop
-	// bound (readJobStopOverdue).
+	// A read is supervised until its Job stops, and no longer than the Job's
+	// stop bound, whether or not the Job controller has marked the Job
+	// (readJobStopOverdue).
 	if !mutating && readJobStopOverdue(job, r.now()) {
 		return r.retryPastOverdueMigrationJob(ctx, migration, job)
 	}

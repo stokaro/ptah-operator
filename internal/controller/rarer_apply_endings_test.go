@@ -170,6 +170,7 @@ func refusedPodCreation(t *testing.T, api client.Client, job *batchv1.Job, pod *
 			t.Fatal(err)
 		}
 	}
+	stoodThroughTheRefusalGrace(t, api, job)
 	stored := &batchv1.Job{}
 	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
 		t.Fatal(err)
@@ -800,6 +801,58 @@ func TestADeletedSchemasFailedLookKeepsTheWait(t *testing.T) {
 	}
 	if ready := meta.FindStatusCondition(stored.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil || ready.Message != run.said {
 		t.Fatalf("Ready after the failed look = %#v, want the last report %q standing", ready, run.said)
+	}
+}
+
+// An Apply whose Lease epoch moved ends with its outcome unknown, and the record
+// that ending writes keeps the realm while the Apply's Pod may still write. So the
+// claim takes the Lease back before it ends: while a sibling's operation holds the
+// Lease, as after a manager that stayed down past the Lease's duration, the claim
+// waits for it, and ends on the pass that has it. A read in the same place does not
+// wait for the sibling (#1006), which TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease
+// holds.
+func TestAnApplyUnderALostLeaseTakesTheLeaseBackBeforeItEnds(t *testing.T) {
+	t.Parallel()
+
+	run := unstartedSchemaApplyRun(t)
+	databaseLeasesGone(t, run.api, run.reconciler.LockNamespace)
+	run.reconcileOnce(t)
+	recorded := safetyGetSchema(t, run.api, run.schema)
+	operation := recorded.Status.ActiveOperation
+	if operation == nil || !operation.LeaseContinuityLost {
+		t.Fatalf("the pass did not record the lost continuity: claim %#v", operation)
+	}
+	if !schemaClaimHoldsLock(recorded) {
+		t.Fatal("the Apply's claim holds no Lease, so nothing below measures one")
+	}
+	release := takeRealmForASibling(t, run.reconciler, run.api, operation.CoordinationDigest)
+	sibling := safetyLeaseHolder(t, run.api, run.reconciler.LockNamespace, operation.CoordinationDigest)
+	if sibling == "" {
+		t.Fatal("the sibling holds no Lease, so the wait below waits for nothing")
+	}
+
+	run.reconcileOnce(t)
+	waiting := safetyGetSchema(t, run.api, run.schema)
+	if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != operation.ID {
+		t.Fatalf("the Apply ended while a sibling held the Lease: claim %#v, pending observation %#v",
+			waiting.Status.ActiveOperation, waiting.Status.PendingObservation)
+	}
+	if event := findEvent(run.recorder, corev1.EventTypeWarning+" ApplyOutcomeUnknown "); event != "" {
+		t.Fatalf("the Apply recorded %q while a sibling held the Lease", event)
+	}
+	if leased := safetyLeaseHolder(t, run.api, run.reconciler.LockNamespace, operation.CoordinationDigest); leased != sibling {
+		t.Fatalf("the Lease is held by %q after the waiting pass, want the sibling's %q", leased, sibling)
+	}
+
+	release()
+	for pass := 0; pass < 3 && safetyGetSchema(t, run.api, run.schema).Status.ActiveOperation != nil; pass++ {
+		run.reconcileOnce(t)
+	}
+	if failed := settledSchemaFailure(t, run.api, run.schema); !strings.Contains(failed.Message, "database lock continuity was lost during Apply") {
+		t.Fatalf("ReconciliationFailed = %q, want the lost Lease's sentence", failed.Message)
+	}
+	if leased := safetyLeaseHolder(t, run.api, run.reconciler.LockNamespace, operation.CoordinationDigest); leased == "" || leased == sibling {
+		t.Fatalf("the Apply's record ended with the Lease held by %q, want it taken back from the sibling %q", leased, sibling)
 	}
 }
 

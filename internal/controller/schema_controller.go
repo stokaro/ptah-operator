@@ -1181,10 +1181,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
-	// A read is supervised until its Job stops. Once the Job controller has
-	// marked the Job to fail, it is supervised no longer than the Job's stop
-	// bound (readJobStopOverdue). The check comes before the renewal, so a
-	// Plan's Lease is not renewed past it.
+	// A read is supervised until its Job stops, and no longer than the Job's
+	// stop bound, whether or not the Job controller has marked the Job
+	// (readJobStopOverdue). The check comes before the renewal, so a Plan's
+	// Lease is not renewed past it.
 	if isReadOnlyOperation(operation) && readJobStopOverdue(job, r.now()) {
 		return r.retryPastOverdueSchemaJob(ctx, schema, job)
 	}
@@ -1403,12 +1403,17 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	if operation == nil || !operation.LeaseContinuityLost || !schemaClaimHoldsLock(schema) {
 		return ctrl.Result{}, fmt.Errorf("database lock continuity recovery lacks an active locked operation")
 	}
-	acquired, requeue, err := r.acquireOperationLock(ctx, schema)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !acquired {
-		return ctrl.Result{RequeueAfter: requeue}, nil
+	// An Apply's Pod may still write, so its claim takes the Lease before it
+	// reads anything. A read's claim takes it only while it waits for its Job.
+	mutating := schemaOperation(operation).Mutating
+	if mutating {
+		acquired, requeue, err := r.acquireOperationLock(ctx, schema)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !acquired {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
 	}
 
 	job := &batchv1.Job{}
@@ -1418,7 +1423,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	}
 	honestJob := jobErr == nil && (operation.JobUID == "" || operation.JobUID == job.UID) &&
 		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID)
-	if schemaOperation(operation).Mutating {
+	if mutating {
 		// The report is asked about the Job under the name even when the
 		// finisher is not given it: claimJobRan takes only the claim's own
 		// Job's success as the Pod having run.
@@ -1453,10 +1458,25 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	// waits by the bound alone, suspended or not: deletion waits on a running Job
 	// for every claim that holds the lock (reconcileDeletion), and this is the
 	// pass it hands a claim whose epoch moved.
+	//
+	// The claim takes the Lease only while it waits, as the wait of a retired
+	// claim does (cleanupRetiredReadOnlyJob), so the bound is checked before the
+	// renewal (#1006). A claim that waits no longer, past the bound or over a Job
+	// that stopped, is gone or is not its own, renews nothing and is discarded
+	// whoever holds the Lease: the release that discards it names its own epoch
+	// and lets go of nothing a sibling took in the meantime, while a claim that
+	// asked for the Lease first would wait for that sibling past its own bound.
 	switch {
 	case honestJob && !jobTerminal(job):
 		stop := stopWaitingForJob(job, r.now(), schemaClaimMayWait(schema) || schema.DeletionTimestamp != nil)
 		if stop == nil {
+			acquired, requeue, err := r.acquireOperationLock(ctx, schema)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if !acquired {
+				return ctrl.Result{RequeueAfter: requeue}, nil
+			}
 			return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 		}
 		r.schemaJobCleanupNotScheduled(schema, operation, job, stop)

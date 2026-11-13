@@ -307,9 +307,10 @@ func startedReadPod(t *testing.T, api client.Client, job *batchv1.Job) *corev1.P
 }
 
 // TestARedispatchedReadIgnoresWhatItsOldPodDelivers is a live read whose Job the
-// Job controller marked to fail while its Pod sat on a node that is gone. At
-// the Job's stop bound the claim runs the read again under a new Job (#997), and
-// the next passes dispatch that Job. The old Pod then comes back, delivers, and
+// Job controller marked to fail while its Pod sat on a node that is gone, or
+// never marked, as while the Job controller is down, with its Pod running on a
+// node that answers (#1006). At the Job's stop bound the claim runs the read
+// again under a new Job (#997), and the next passes dispatch that Job. The old Pod then comes back, delivers, and
 // its Job finishes. The authority every delivery path asks admitted that Pod
 // while the claim named its Job, and refuses it once the claim has moved, under
 // the same operation ID, input fingerprint and execution binding: the claim
@@ -324,14 +325,20 @@ func TestARedispatchedReadIgnoresWhatItsOldPodDelivers(t *testing.T) {
 	for _, operationType := range []operatorv1alpha1.OperationType{
 		operatorv1alpha1.OperationResolve, operatorv1alpha1.OperationPlan,
 	} {
-		t.Run(string(operationType), func(t *testing.T) {
-			t.Parallel()
-			redispatchedReadIgnoresItsOldPod(t, operationType)
-		})
+		for _, marked := range []bool{true, false} {
+			name := string(operationType)
+			if !marked {
+				name += " the Job controller never marked"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				redispatchedReadIgnoresItsOldPod(t, operationType, marked)
+			})
+		}
 	}
 }
 
-func redispatchedReadIgnoresItsOldPod(t *testing.T, operationType operatorv1alpha1.OperationType) {
+func redispatchedReadIgnoresItsOldPod(t *testing.T, operationType operatorv1alpha1.OperationType, marked bool) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -343,6 +350,9 @@ func redispatchedReadIgnoresItsOldPod(t *testing.T, operationType operatorv1alph
 	run := schemaOperationDispatchedBy(t, operationType, runShape{dispatcher: current, recorded: true})
 	ensureTestPlanSealKeyDigest(run.schema)
 	readOnALostNode(run)
+	if !marked {
+		theJobControllerNeverMarked(run)
+	}
 	admittedReadPod(run.pod)
 	reconciler, api, recorder := run.reconciler(t, current)
 	// The API server stamps a UID on the Job the next attempt creates.

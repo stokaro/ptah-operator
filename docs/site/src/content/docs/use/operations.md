@@ -1710,12 +1710,16 @@ terminated after it started. A deleted one names the Pod, with its phase, in an
 
 A read's Pod on such a node is not waited for past its Job's stop bound, in
 either kind. A deleted schema lets go of a Plan or a proof read as above. A live
-read whose Job the Job controller has marked to fail, `FailureTarget`, runs
-again under a new Job at the bound, and so does a read whose recorded Job is
-gone, once that Job's Pods are past their own deadline, or the end of their
-deletion grace, and 30 seconds. Each says so in a `ReadJobOverdue` Warning
-Event that names the Job, the Pod that has not stopped, its node and the same
-forced delete. The Pod may come back with its node and finish its read. Nothing
+read runs again under a new Job at the bound, whether or not the Job controller
+has marked its Job to fail with `FailureTarget`: a Job controller that is down
+marks nothing, and its Job does not finish either. So does a read whose
+recorded Job is gone, once that Job's Pods are past their own deadline, or the
+end of their deletion grace, and 30 seconds. Each says so in a
+`ReadJobOverdue` Warning Event that names the Job, the Pod that has not
+stopped, its node and the same forced delete. While the Job controller stays
+down, each new Job waits out its own bound as well, so a read leaves one Job
+about every deadline and retry interval, and each one stays until it is
+deleted by hand or with its owner. The Pod may come back with its node and finish its read. Nothing
 uses what it reads: the result receiver refuses a Pod whose claim is gone or
 has moved to another Job, and the operator reads a result only for the Job its
 claim names. The Pod cannot take the database Lease either. Delete it once the
