@@ -36,7 +36,7 @@ import (
 const (
 	stampedManager  = "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	stampedExecutor = "ghcr.io/stokaro/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	stampedPtah     = "v0.23.0"
+	stampedPtah     = "v0.26.0"
 	otherExecutor   = "registry.example/ptah@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	// approverName is the approver ClusterRole and its binding, for the
 	// release name install uses.

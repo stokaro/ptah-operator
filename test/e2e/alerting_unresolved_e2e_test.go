@@ -68,7 +68,7 @@ func (a *alertingRun) unresolvedApply() {
 // PostgreSQL advisory lock is scoped to its database. A MySQL GET_LOCK name is
 // server-wide, but the families take different ones: Ptah's migrator takes
 // ptah_migrate and its schema apply ptah_schema_apply (migration/migrator and
-// internal/atlasschema at the pinned f47b2bfa), and the operator names neither.
+// internal/atlasschema at the pinned 1cf0563c), and the operator names neither.
 // Every database read either case makes is filtered by its own database.
 // Neither lane changes shared manager settings.
 func (a *alertingRun) unresolvedEngineCases(m *migrationRun, template *ptahv1.PtahMigration) {
