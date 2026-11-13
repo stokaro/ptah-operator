@@ -56,6 +56,13 @@ type Phase struct {
 	// in full; its preparation prefix must stand on its own. Running a required
 	// phase only through its own preparation boundary is insufficient.
 	RequiresFull []string
+	// Artifacts are the migration artifacts a row of the phase reads that the
+	// same row does not publish, named by the suffix the row builds its
+	// reference with: "" is the engine's own artifact, "-uncertain" the slow
+	// one. The phase publishes every one of them itself, because its suite
+	// runs it against a registry no other phase wrote to.
+	// hack/e2e_artifacts_test.go holds the list to the rows that read them.
+	Artifacts []string
 
 	inputs reflect.Type
 }
@@ -365,6 +372,9 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"postgresql-migrations",
 	},
+	// The lifecycle publishes the engine's artifact, and the guard and
+	// result-read rows create their resources from it.
+	Artifacts: []string{""},
 	// The hung result-read row holds the isolation worker's log responses
 	// unfinished, so only a suite that declares the worker may run the phase.
 	IsolatesNode: true,
@@ -381,6 +391,9 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"mysql-transaction-mode",
 		"mysql-migrations",
 	},
+	// The lifecycle publishes the engine's artifact, and the guard and
+	// result-read rows create their resources from it.
+	Artifacts: []string{""},
 	// The hung result-read row holds the isolation worker's log responses
 	// unfinished, so only a suite that declares the worker may run the phase.
 	IsolatesNode: true,
@@ -400,6 +413,9 @@ var MigrationFaultsPostgreSQL = define[MigrationsInputs](Phase{
 		"fault-artifact",
 		"postgresql-migration-faults",
 	},
+	// fault-artifact publishes both, to the phase's own repository, before
+	// the fault rows create their resources from them.
+	Artifacts: []string{"", "-uncertain"},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
 	IsolatesNode: true,
@@ -414,6 +430,9 @@ var MigrationFaultsMySQL = define[MigrationsInputs](Phase{
 		"fault-artifact",
 		"mysql-migration-faults",
 	},
+	// fault-artifact publishes both, to the phase's own repository, before
+	// the fault rows create their resources from them.
+	Artifacts: []string{"", "-uncertain"},
 	// The isolated-node row cuts the isolation worker off from the API
 	// server, so only a suite that declares the worker may run the phase.
 	IsolatesNode: true,
@@ -441,6 +460,9 @@ var MigrationRuntimePostgreSQL = define[MigrationsInputs](Phase{
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
+	// runtime-artifact publishes the engine's artifact, which the binding
+	// rows create their resources from.
+	Artifacts: []string{""},
 })
 
 // MigrationRuntimeMySQL proves execution bindings and runtime refusals
@@ -465,6 +487,7 @@ var MigrationRuntimeMySQL = define[MigrationsInputs](Phase{
 		"unsupported-runner-protocol-after-approval",
 		"running-apply-executor-image-change",
 	},
+	Artifacts: []string{""},
 })
 
 // ReferenceDataInputs is what the driver hands the reference-data phases.
@@ -591,6 +614,9 @@ var AlertingOperations = define[AlertingInputs](Phase{
 		"lock-release-owed",
 		"operations-failing",
 	},
+	// The lock-release and unresolved-apply scenarios publish them, and the
+	// per-family cases they run create their resources from them.
+	Artifacts: []string{"", "-uncertain"},
 })
 
 // UpgradeInputs is what the driver hands the upgrade phase, which proves the
@@ -922,6 +948,7 @@ var (
 	labelPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 	testPattern        = regexp.MustCompile(`^Test[A-Z][A-Za-z0-9]*$`)
 	environmentPattern = regexp.MustCompile(`^E2E_[A-Z0-9_]+$`)
+	artifactPattern    = regexp.MustCompile(`^-[a-z0-9]+(-[a-z0-9]+)*$`)
 )
 
 // define checks a declaration once, when the package loads, so a malformed
@@ -968,6 +995,13 @@ func (p Phase) validate() error {
 			return fmt.Errorf("phase %s: invalid or repeated prerequisite %q", p.Name, phase)
 		}
 		required[phase] = true
+	}
+	artifacts := map[string]bool{}
+	for _, suffix := range p.Artifacts {
+		if (suffix != "" && !artifactPattern.MatchString(suffix)) || artifacts[suffix] {
+			return fmt.Errorf("phase %s: invalid or repeated artifact %q", p.Name, suffix)
+		}
+		artifacts[suffix] = true
 	}
 	if p.inputs.Kind() != reflect.Struct || p.inputs.NumField() == 0 {
 		return fmt.Errorf("phase %s: its inputs must be a struct of environment variables", p.Name)
