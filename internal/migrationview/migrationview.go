@@ -128,6 +128,9 @@ type RunView struct {
 	// Failure is where a failed or partial run stopped, when a statement
 	// reached the database and failed there.
 	Failure *operatorv1alpha1.MigrationRunFailureStatus `json:"failure,omitempty"`
+	// MigrationLog is what the run's writes to schema_migrations_log came to,
+	// where the run reported it.
+	MigrationLog *operatorv1alpha1.MigrationLogStatus `json:"migrationLog,omitempty"`
 	// OperationID, PlanRef, PlanFingerprint, Authorization, ArtifactDigest,
 	// Source, TargetIdentityDigest, ExecutionBindingID and Verification are what
 	// the run's record says it carried out, who allowed it and what the reading
@@ -346,6 +349,7 @@ func runOf(run *operatorv1alpha1.MigrationRunStatus) *RunView {
 		TargetIdentityDigest: run.TargetIdentityDigest,
 		ExecutionBindingID:   run.ExecutionBindingID,
 		Verification:         run.Verification.DeepCopy(),
+		MigrationLog:         run.MigrationLog.DeepCopy(),
 	}
 	if run.Failure != nil {
 		failure := *run.Failure

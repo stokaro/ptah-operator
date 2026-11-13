@@ -277,3 +277,36 @@ func fixture() (*operatorv1alpha1.PtahMigration, *operatorv1alpha1.PtahMigration
 	}
 	return migration, plan
 }
+
+// The last run says the database's record of it is incomplete, in the text and
+// in the JSON, with the entries it lacks and none of the value refused.
+func TestRenderSaysTheRunsLogIsIncomplete(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := fixture()
+	migration.Status.LastRun.Outcome = operatorv1alpha1.MigrationRunOutcomeApplied
+	migration.Status.LastRun.MigrationLog = &operatorv1alpha1.MigrationLogStatus{
+		Written: 1, Lost: 1, Losses: []operatorv1alpha1.MigrationLogLossStatus{{
+			Version: 3, State: operatorv1alpha1.MigrationLogEntryApplied, SQLState: "22001", ErrorNumber: 1406,
+		}},
+	}
+	view, err := migrationview.Load(context.Background(), readerWith(t, migration, plan), "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text, document strings.Builder
+	if err := migrationview.Render(&text, view, migrationview.Text); err != nil {
+		t.Fatal(err)
+	}
+	want := "  Migration log:      1 of 2 entries refused, so the database's record of the run is incomplete: " +
+		"version 3 Applied (SQLSTATE 22001, error 1406)\n"
+	if !strings.Contains(text.String(), want) {
+		t.Fatalf("text does not say %q:\n%s", want, text.String())
+	}
+	if err := migrationview.Render(&document, view, migrationview.JSON); err != nil {
+		t.Fatal(err)
+	}
+	if want := `"migrationLog": {`; !strings.Contains(document.String(), want) {
+		t.Fatalf("JSON does not carry %s:\n%s", want, document.String())
+	}
+}
