@@ -81,8 +81,8 @@ func TestARetryOverAForeignJobMovesOnAndLeavesTheJobAlone(t *testing.T) {
 			if len(jobWrites) != 0 {
 				t.Fatalf("the claim wrote %q to a Job that is not its own, want nothing", jobWrites)
 			}
-			if got := storedTTL(t, api, run.job); got != nil {
-				t.Fatalf("the foreign Job's TTL = %s, want none", ttlText(got))
+			if got, want := ttlText(storedTTL(t, api, run.job)), ttlText(run.job.Spec.TTLSecondsAfterFinished); got != want {
+				t.Fatalf("the foreign Job's TTL = %s, want the %s it was created with", got, want)
 			}
 			if actual.Status.LastRun != nil {
 				t.Fatalf("a read-only claim settled a run from a Job that is not its own: %#v", actual.Status.LastRun)

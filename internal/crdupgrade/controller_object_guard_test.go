@@ -138,8 +138,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	entries := testControllerObjectGuard().entries()
 	for _, entry := range entries {
 		for index, validation := range entry.validations {
-			// The two cleanup TTL validations say why in words of their own.
-			ttlValidation := validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage
+			// The three cleanup TTL validations say why in words of their own.
+			ttlValidation := validation.Message == controllerJobCreationTTLMessage ||
+				validation.Message == controllerJobCleanupTTLMessage || validation.Message == controllerJobRetentionTTLMessage
 			if validation.Message != entry.denialMessage && !(entry.resource == "jobs" && ttlValidation) {
 				t.Fatalf("%s validation %d lacks its typed denial message", entry.resource, index)
 			}

@@ -323,6 +323,7 @@ func (b Builder) Build(
 		admissionSnapshot:  operation.AdmissionSnapshot,
 		execution:          schema.Spec.Execution,
 		mutating:           mutationlifecycle.SchemaOperation(operation.Type).Mutating,
+		readOnly:           mutationlifecycle.SchemaOperation(operation.Type).ReadOnly(),
 		startedAt:          operation.StartedAt,
 		executionNotAfter:  operation.ExecutionNotAfter,
 		env:                environment,

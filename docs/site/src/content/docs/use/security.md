@@ -912,7 +912,7 @@ then, so what that statement's failure quoted stays readable for those 24 hours 
 `Always` as well. Any other Job [keeps five minutes](../operations/#failed-apply-log).
 What a Pod kept that long still holds: it has no API token, because automatic
 token mounting is disabled. Its projected result token has the receiver as its
-only audience and lasts at most an hour, and the receiver refuses it once the Job
+only audience and lasts at most an hour, and the receiver refuses it once the Apply's Job
 carries a cleanup TTL or its claim has retired, as it refuses a client certificate
 of the older transport. No credential is in the Pod's spec, but the container runtime
 on the node keeps a stopped container's environment until the Pod is removed, so

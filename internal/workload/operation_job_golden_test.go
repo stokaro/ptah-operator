@@ -110,6 +110,47 @@ func TestOperationJobsMatchTheirGoldenFiles(t *testing.T) {
 	})
 }
 
+// TestOnlyAReadOnlyJobIsCreatedWithItsCleanupTTL reads every Job the golden set
+// builds, which covers every operation type of both families. A read-only Job
+// carries CleanupTTLSeconds from the moment it is created, so it is collected
+// once it finishes whichever claim lets go of it. An Apply carries none: the
+// manager chooses its TTL once it has read what the run reported.
+func TestOnlyAReadOnlyJobIsCreatedWithItsCleanupTTL(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]bool{}
+	for _, test := range goldenJobCases() {
+		job, err := test.build()
+		if err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		operation := job.Labels[LabelOperation]
+		seen[job.Labels[LabelComponent]+"/"+operation] = true
+		ttl := job.Spec.TTLSecondsAfterFinished
+		if operation == "apply" {
+			if ttl != nil {
+				t.Errorf("%s: an Apply Job is created with ttlSecondsAfterFinished %d, want none", test.name, *ttl)
+			}
+			continue
+		}
+		if ttl == nil || *ttl != 300 {
+			t.Errorf("%s: a %s Job is created with ttlSecondsAfterFinished %v, want 300", test.name, operation, ttl)
+		}
+	}
+	// Every operation type of both families, so a type the set stops building
+	// fails here rather than leaving the rule unread for it.
+	for _, want := range []string{
+		"schema-operation/resolve", "schema-operation/verify", "schema-operation/observe",
+		"schema-operation/plan", "schema-operation/apply",
+		"migration-operation/resolve", "migration-operation/verify", "migration-operation/history",
+		"migration-operation/apply",
+	} {
+		if !seen[want] {
+			t.Errorf("the golden set builds no %s Job", want)
+		}
+	}
+}
+
 func goldenJobCases() []goldenJobCase {
 	builder := builderFixture()
 	return []goldenJobCase{

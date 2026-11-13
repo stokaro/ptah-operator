@@ -42,7 +42,7 @@ import (
 func schemaResolveFinished(t *testing.T) (dispatchedSchemaRead, *SchemaReconciler, client.WithWatch, *record.FakeRecorder) {
 	t.Helper()
 	current := workloadBuilderForMigrations()
-	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true})
+	run := schemaReadDispatchedBy(t, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 	run.pod.GenerateName = run.job.Name + "-"
 	run.pod.Name = generatedTerminalPodName(run.job.Name, "abc12")
 	priority := int32(0)

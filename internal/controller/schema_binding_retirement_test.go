@@ -503,6 +503,30 @@ type retiredReadShape struct {
 	proof bool
 	// deadline is the Job's activeDeadlineSeconds, 900 where it is zero.
 	deadline int64
+	// unleased makes the claim an Observe that proves nothing, which holds no
+	// Lease.
+	unleased bool
+	// createdWithTTL is a Job this release created, which carries its cleanup
+	// TTL. Otherwise the Job carries none, as a release before 0.2.11 created
+	// it.
+	createdWithTTL bool
+}
+
+// realmLeaseHolder is who holds the realm Lease of the fixture's target, or
+// empty where nobody does or no claim ever took it.
+func realmLeaseHolder(t *testing.T, api client.Client, namespace string) string {
+	t.Helper()
+	name, err := targetlock.LeaseName(testCoordinationDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &coordinationv1.Lease{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: name}, lease); apierrors.IsNotFound(err) {
+		return ""
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return leaseHolder(lease)
 }
 
 // retiredReadStarted is when the Job of every retired read started: a minute
@@ -545,8 +569,16 @@ func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
 		schema.Status.ActiveOperation.Type = operatorv1alpha1.OperationObserve
 		schema.Status.ActiveOperation.ID = "retired-running-proof"
 	}
+	if shape.unleased {
+		schema.Status.Phase = operatorv1alpha1.PhaseObserving
+		schema.Status.ActiveOperation.Type = operatorv1alpha1.OperationObserve
+		schema.Status.ActiveOperation.ID = "retired-running-observe"
+	}
 	bindActiveInput(t, schema)
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	if shape.createdWithTTL {
+		job.Spec.TTLSecondsAfterFinished = ptr(jobclaim.CleanupTTLSeconds)
+	}
 	bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
 	if shape.declare {
 		declarePodMetadata(t, schema, job, schema.Status.ActiveOperation)
@@ -566,9 +598,9 @@ func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
 	recorder := record.NewFakeRecorder(64)
 	reconciler.Recorder = recorder
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
-	holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
-	if holder == "" {
-		t.Fatal("the running read's claim holds no Lease, so nothing measures one")
+	holder := realmLeaseHolder(t, api, reconciler.LockNamespace)
+	if (holder == "") != shape.unleased {
+		t.Fatalf("the running read's claim holds the Lease as %q, want it held unless the shape says unleased", holder)
 	}
 
 	reconcileRetirementPass(t, reconciler, request, "rotate over a running read")
@@ -584,7 +616,7 @@ func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
 			Operation: retained.Type, Name: retained.JobName, UID: retained.JobUID,
 		},
 	})
-	if got := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); got != holder {
+	if got := realmLeaseHolder(t, api, reconciler.LockNamespace); got != holder {
 		t.Fatalf("the rotation handed the running read's Lease to %q, want it kept by %q", got, holder)
 	}
 	return retiredRead{
@@ -602,25 +634,39 @@ func rotateOverARunningRead(t *testing.T, shape retiredReadShape) retiredRead {
 // until every Pod has terminated, and a Pod on a node that is gone may never
 // terminate, so a wait with no bound would hold the realm forever. A claim that
 // stops waiting is retired with its Lease handed back and the record cleared,
-// and a Warning names the Job, which has no TTL. The Observe that proves an Apply
-// waits under a suspension too, as proof outranks suspension.
+// and a Warning names a Job a release before 0.2.11 created, which has no TTL.
+// The Observe that proves an Apply waits under a suspension too, as proof
+// outranks suspension. A Job created with its cleanup TTL collects itself once it
+// finishes: a claim that holds the Lease waits for it all the same, and one that
+// holds none, which waits only to give the Job its TTL, is retired at once.
+// Nothing names such a Job.
 func TestARetiredReadOnlyClaimWaitsForItsJobOnlyUntilItStops(t *testing.T) {
 	t.Parallel()
 
+	withTTL := retiredReadShape{createdWithTTL: true}
 	for _, row := range []struct {
 		name  string
 		shape retiredReadShape
 		// past dates the pass at the Job's stop bound rather than a second
 		// before it, and suspend suspends the resource first.
 		past, suspend bool
+		// retired is whether the pass retires the claim rather than wait on.
+		retired bool
 		// stays is what the Warning says of the Job the claim stops waiting
-		// for, or empty where the claim waits on.
+		// for, or empty where no Warning names it.
 		stays string
 	}{
 		{name: "inside its stop bound"},
-		{name: "at its stop bound", past: true, stays: "the Job did not stop by its own deadline"},
-		{name: "suspended inside its stop bound", suspend: true, stays: notWaited},
+		{name: "at its stop bound", past: true, retired: true, stays: "the Job did not stop by its own deadline"},
+		{name: "suspended inside its stop bound", suspend: true, retired: true, stays: notWaited},
 		{name: "suspended while it proves an Apply", shape: retiredReadShape{proof: true}, suspend: true},
+		{name: "created with its TTL inside its stop bound", shape: withTTL},
+		{name: "created with its TTL at its stop bound", shape: withTTL, past: true, retired: true},
+		{name: "unleased inside its stop bound", shape: retiredReadShape{unleased: true}},
+		{
+			name: "unleased and created with its TTL inside its stop bound", retired: true,
+			shape: retiredReadShape{unleased: true, createdWithTTL: true},
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -648,18 +694,18 @@ func TestARetiredReadOnlyClaimWaitsForItsJobOnlyUntilItStops(t *testing.T) {
 			result := reconcileRetirementPass(t, reconciler, run.request, "decide whether to wait for the running Job")
 			got := safetyGetSchema(t, api, run.schema)
 			events := migrationEvents(run.recorder)
-			if ttl := jobTTL(t, api, run.job); ttl != nil {
-				t.Fatalf("the running retired Job's TTL = %d, want none", *ttl)
+			if got, created := ttlText(jobTTL(t, api, run.job)), ttlText(run.job.Spec.TTLSecondsAfterFinished); got != created {
+				t.Fatalf("the running retired Job's TTL = %s, want the %s it was created with", got, created)
 			}
 			if run.logs.reads != 0 {
 				t.Fatalf("the retired read's result was read %d times", run.logs.reads)
 			}
-			if row.stays == "" {
+			if !row.retired {
 				if got.Status.ActiveOperation == nil || got.Status.ActiveOperation.ID != run.retained.ID ||
 					got.Status.PendingBindingRetirement == nil || result.RequeueAfter != maxLockContentionPoll {
 					t.Fatalf("the retired claim did not wait for its running Job: result %#v, status %#v", result, got.Status)
 				}
-				if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != run.holder {
+				if leased := realmLeaseHolder(t, api, reconciler.LockNamespace); leased != run.holder {
 					t.Fatalf("the waiting claim's Lease is held by %q, want %q", leased, run.holder)
 				}
 				if schemaCleanupDeferredFor(events, run.job.Name, "") {
@@ -671,8 +717,14 @@ func TestARetiredReadOnlyClaimWaitsForItsJobOnlyUntilItStops(t *testing.T) {
 				got.Status.PendingLockRelease != nil || got.Status.ExecutionBinding.Epoch != run.rolloutEpoch {
 				t.Fatalf("the retired claim was not retired with its record cleared: %#v", got.Status)
 			}
-			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
+			if leased := realmLeaseHolder(t, api, reconciler.LockNamespace); leased != "" {
 				t.Fatalf("the retired claim's Lease is still held by %q", leased)
+			}
+			if row.stays == "" {
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job created with its cleanup TTL is named as staying: %q", events)
+				}
+				return
 			}
 			if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
 				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)

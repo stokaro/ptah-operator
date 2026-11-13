@@ -134,6 +134,16 @@ A script that reads the text of `kubectl ptah schema` or `migration`, rather
 than `-o json`, finds the `kubectl ptah history` command where it found a
 `kubectl get` of the namespace, when more than five approvals or acknowledgments
 name the resource, and one more line before the closing `kubectl events` line.
+Every read-only Job, a `PtahSchema`'s Observe, Plan, Verify and Resolve and a
+`PtahMigration`'s Resolve, Verify and History read, is now created with
+`ttlSecondsAfterFinished: 300`. An admission policy of your own that refuses a
+Job created with a TTL has to admit it on those Jobs. A script that reads a
+finished read Job or its Pod log has to expect both gone five minutes after the
+Job finished, whether or not the operator had read it. An alert on
+`SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred` no longer fires for
+a read-only Job this release creates. 0.2.10 admits no Pod and no result for a
+Job that already carries a TTL, so a read that runs when you roll back to 0.2.10
+can be refused, and runs again under a Job 0.2.10 creates.
 
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
@@ -664,6 +674,29 @@ name the resource, and one more line before the closing `kubectl events` line.
   --approver` fills it. It is empty by default, so an installation that does not
   set it binds nobody, as before. A chart from v0.2.10 or earlier refuses the
   value.
+- **Read-only Jobs are created with their cleanup TTL.** A read-only Job got its
+  TTL only from a claim that harvested it, and admission admits that TTL only on
+  a finished Job the active claim names by UID. A claim that let go of a read
+  without harvesting it, under suspension, after a refusal or a retirement, had
+  to wait for the Job or leave it behind, and the entries above are the cases
+  that left Jobs behind. Every read-only Job is now created with the five-minute
+  TTL a harvested one got. Kubernetes counts it from when the Job finishes, so
+  it removes nothing still running, and removes a finished read whether or not
+  the manager has read it. A read whose Job is gone before the manager read it
+  runs again under a new Job. A claim that lets go of such a Job writes nothing
+  to it and names it in no Warning: a suspended or refused read-only claim moves
+  on at once, a retired read-only claim that holds no database lock is retired
+  at once, and a `PtahSchema` Plan that cannot confirm its Job runs again
+  without waiting for that Job to stop. A Plan or a proof read that a binding
+  change retires, and a Plan whose database lock epoch moved, still wait for
+  their Job by its stop bound, since the database Lease they hold depends on the
+  Job having stopped. An Apply's Job is still created with no TTL and gets the
+  one its outcome decides. The waits, TTL writes and Warnings the entries above
+  describe for read-only Jobs serve the read-only Jobs 0.2.10 created, which
+  carry no TTL. A `ReadJobOverdue` Warning on a read that runs again now says
+  what becomes of its Job: it `is deleted 300 seconds after it finishes`, or,
+  for a Job 0.2.10 created, it `stays until it is deleted by hand or with its
+  owner`.
 
 ## 0.2.10
 

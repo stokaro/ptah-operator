@@ -30,6 +30,13 @@ type lifecycleRuntime struct {
 	// READ_ONLY_JOB_UID: the Job the current fixture schema dispatched.
 	readOnlyJobName string
 	readOnlyJobUID  string
+	// readOnlyJobCreatedTTL is whether the read-only Job still carries the
+	// cleanup TTL it was created with; false once the proof removed it so the
+	// Job stands for one an earlier release created.
+	readOnlyJobCreatedTTL bool
+	// readOnlyJobFinishedAt is when the retired read-only Job's cleanup TTL
+	// started counting, read off the Job.
+	readOnlyJobFinishedAt time.Time
 	// beforeCleanup is the read-only Job's cleanup evidence by schema,
 	// recorded once the Job controller retired it.
 	beforeCleanup map[string][]byte
@@ -126,6 +133,7 @@ func (l *lifecycleRun) dispatchReadOnlyJobFixture() {
 					l.fatalf("read-only Job does not match the dispatched operation identity")
 				}
 				l.runtime.readOnlyJobName, l.runtime.readOnlyJobUID = name, uid
+				l.runtime.readOnlyJobCreatedTTL = true
 				key := readOnlyJobDocumentKey(schema)
 				l.evidence[key] = job
 				l.check(os.WriteFile(filepath.Join(l.workDir, key), job, 0o600), "write %s", key)
@@ -209,7 +217,7 @@ func (l *lifecycleRun) stageReadOnlyJobCompletion() {
 
 	var retired *unstructured.Unstructured
 	for deadline := time.Now().Add(120 * time.Second); time.Now().Before(deadline); {
-		if reading, err := l.runtimeFixtureJob(name); err == nil && lifecycleRuntimeReadOnlyJobRetired(reading.Object, uid) {
+		if reading, err := l.runtimeFixtureJob(name); err == nil && lifecycleRuntimeReadOnlyJobRetired(reading.Object, uid, l.runtime.readOnlyJobCreatedTTL) {
 			retired = reading
 			break
 		}
@@ -228,6 +236,34 @@ func (l *lifecycleRun) stageReadOnlyJobCompletion() {
 		l.runtime.beforeCleanup = map[string][]byte{}
 	}
 	l.runtime.beforeCleanup[l.readOnlyJobSchema] = evidence
+	finished, ok := lifecycleRuntimeFinishedAt(retired.Object)
+	if !ok {
+		l.runtimeReportReadOnlyJob(name)
+		l.fatalf("retired read-only Job %s records no time it finished", name)
+	}
+	l.runtime.readOnlyJobFinishedAt = finished
+}
+
+// stripReadOnlyJobCleanupTTL removes the cleanup TTL from the pending read-only
+// Job, as the administrator, so that the Job stands for one a release before
+// this one created: 0.2.10 and every release before it created a read-only Job
+// with no TTL, and the successor has to give one to such a Job once it is
+// done with it. The patch tests the TTL first, so it removes nothing but the
+// one the Job was created with. Nothing counts a TTL on a Job that has not
+// finished, so the Job loses nothing it would have kept.
+func (l *lifecycleRun) stripReadOnlyJobCleanupTTL() {
+	l.t.Helper()
+	name, uid := l.runtime.readOnlyJobName, l.runtime.readOnlyJobUID
+	if name == "" || uid == "" || !l.runtime.readOnlyJobCreatedTTL {
+		l.fatalf("no read-only Job created with its cleanup TTL was dispatched")
+	}
+	l.mustKubectl("-n", l.in.proofNamespace, "patch", "job", name, "--type=json",
+		"-p", string(lifecycleRuntimeCleanupTTLRemoval()))
+	job, err := l.runtimeFixtureJob(name)
+	if err != nil || !lifecycleRuntimeReadOnlyJobOpen(job.Object, uid) || !lifecycleRuntimeCleanupTTLIs(job.Object, false) {
+		l.fatalf("read-only Job %s is not the open Job it was, without a cleanup TTL: %v", name, err)
+	}
+	l.runtime.readOnlyJobCreatedTTL = false
 }
 
 // runtimeReportReadOnlyJob prints the Job and its Pods when the Job controller did
@@ -281,11 +317,17 @@ func (l *lifecycleRun) stageReadOnlyJobUIDGap() {
 
 // waitForReadOnlyJobCleanup waits for the candidate manager to schedule the
 // retired Job's cleanup, and holds the Job to what it was apart from the TTL.
+// Only a Job without a TTL needs one scheduled: on a Job that still carries the
+// one it was created with, the wait would pass on its first reading.
 func (l *lifecycleRun) waitForReadOnlyJobCleanup() {
 	l.t.Helper()
 	before, ok := l.runtime.beforeCleanup[l.readOnlyJobSchema]
 	if !ok {
 		l.fatalf("no cleanup evidence of the read-only Job of %s was recorded", l.readOnlyJobSchema)
+	}
+	if l.runtime.readOnlyJobCreatedTTL {
+		l.fatalf("read-only Job %s still carries the cleanup TTL it was created with, so a TTL on it is not one the candidate scheduled",
+			l.runtime.readOnlyJobName)
 	}
 	for deadline := time.Now().Add(120 * time.Second); time.Now().Before(deadline); {
 		if job, err := l.runtimeFixtureJob(l.runtime.readOnlyJobName); err == nil && lifecycleRuntimeCleanupScheduled(job.Object) {
@@ -301,6 +343,60 @@ func (l *lifecycleRun) waitForReadOnlyJobCleanup() {
 		l.sleep(time.Second)
 	}
 	l.fatalf("candidate manager did not schedule cleanup for the quiesced read-only Job")
+}
+
+// waitForReadOnlyJobCollected holds the retired read-only Job, created with its
+// cleanup TTL, to that TTL alone: the candidate writes nothing to it, and
+// Kubernetes deletes it once the TTL has passed since it finished, counted from
+// the time the Job itself records. The runtime was stopped when it finished, so
+// nothing the manager did could have scheduled that.
+func (l *lifecycleRun) waitForReadOnlyJobCollected() {
+	l.t.Helper()
+	name, uid := l.runtime.readOnlyJobName, l.runtime.readOnlyJobUID
+	retired, ok := l.runtime.beforeCleanup[l.readOnlyJobSchema]
+	if !ok || l.runtime.readOnlyJobFinishedAt.IsZero() {
+		l.fatalf("no retirement of the read-only Job of %s was recorded", l.readOnlyJobSchema)
+	}
+	if !l.runtime.readOnlyJobCreatedTTL {
+		l.fatalf("read-only Job %s carries no cleanup TTL of its own to be collected by", name)
+	}
+	expires := l.runtime.readOnlyJobFinishedAt.Add(lifecycleRuntimeCleanupTTL * time.Second)
+	// The TTL controller deletes a Job at the instant its TTL runs out, in the
+	// foreground, and the Job's Pods are already gone, so two minutes past it is
+	// the controller missing it rather than being slow.
+	deadline := expires.Add(2 * time.Minute)
+	l.logf("waiting until %s for the TTL controller to delete read-only Job %s, which finished at %s",
+		expires.UTC().Format(time.RFC3339), name, l.runtime.readOnlyJobFinishedAt.UTC().Format(time.RFC3339))
+	for {
+		job, err := l.runtimeFixtureJob(name)
+		readAt := time.Now()
+		var reading map[string]any
+		switch {
+		case err == nil:
+			reading = job.Object
+		case !apierrors.IsNotFound(err):
+			if readAt.After(deadline) {
+				l.fatalf("read read-only Job %s: %v", name, err)
+			}
+			l.sleep(time.Second)
+			continue
+		}
+		done, err := lifecycleRuntimeCollected(reading, uid, retired, expires, readAt)
+		if err != nil {
+			l.runtimeReportReadOnlyJob(name)
+			l.fatalf("read-only Job %s: %v", name, err)
+		}
+		if done {
+			l.logf("read-only Job %s was deleted by its cleanup TTL at %s or later", name, expires.UTC().Format(time.RFC3339))
+			return
+		}
+		if readAt.After(deadline) {
+			l.runtimeReportReadOnlyJob(name)
+			l.fatalf("read-only Job %s is still there at %s; its cleanup TTL ran out at %s",
+				name, readAt.UTC().Format(time.RFC3339), expires.UTC().Format(time.RFC3339))
+		}
+		l.sleep(time.Second)
+	}
 }
 
 // waitForSuspended waits for a schema in the proof namespace to report
