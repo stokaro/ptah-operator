@@ -246,11 +246,13 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 			return match(resource)
 		})
 	}
-	// A refused Apply schedules its next read at spec.interval. Leave room
-	// for the manager rollout before the original approval expires, while
-	// keeping the recovery read inside the ten-minute observation window.
+	// A refused Apply schedules its next read at spec.interval, and the row
+	// asks for the recovery read itself once the supported runner is back. An
+	// hour keeps the interval's own reads out of the row: a refresh at the
+	// approval gate while the incompatible runner rolls out, and the read the
+	// refused run schedules.
 	document := m.migrationDocument(migrationSpec{name: name, secret: secret, reference: reference,
-		coordinationKey: "e2e/runner-protocol/" + m.engine.name, apply: "OnApproval", interval: "5m"})
+		coordinationKey: "e2e/runner-protocol/" + m.engine.name, apply: "OnApproval", interval: "1h"})
 	document["spec"].(map[string]any)["execution"].(map[string]any)["activeDeadlineSeconds"] = int64(120)
 	m.mustCreate(document)
 	before := wait("the supported migration runner's original approval gate", func(resource *ptahv1alpha1.PtahMigration) bool {
@@ -284,10 +286,17 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 		m.fatalf("the refused runner did not consume its exact admitted decision at dispatch")
 	}
 	rolloutExecutionManagers(m.t, m.ctx, m.cluster, manager, change.reverse(), m.scan)
-	current := wait("a fresh supported History while the exact Unknown latch remains", func(resource *ptahv1alpha1.PtahMigration) bool {
-		return resource.Status.ActiveOperation == nil && resource.Status.History != nil &&
-			resource.Status.History.ObservedAt.After(unknown.Status.LastRun.FinishedAt.Time) && resource.Status.History.Fingerprint == old.Spec.HistoryFingerprint &&
-			resource.Status.UnresolvedRun != nil && resource.Status.UnresolvedRun.OperationID == refused.job.Annotations[annotationOperationID]
+	// The refused run recorded its next read an interval away. Ask for the
+	// read under the restored runner and wait for the History that answers
+	// the request, read before the one the refused run scheduled.
+	intervalRead := unknown.Status.NextReconciliationTime
+	requested, value := m.requestRead(name)
+	if intervalRead == nil || !requested.Before(intervalRead.Time) || !requested.After(unknown.Status.LastRun.FinishedAt.Time) {
+		m.fatalf("the read request at %s does not fall between the refused run's end at %s and the read it scheduled at %v",
+			requested, unknown.Status.LastRun.FinishedAt, intervalRead)
+	}
+	current := wait("a fresh supported History, read on request, while the exact Unknown latch remains", func(resource *ptahv1alpha1.PtahMigration) bool {
+		return recoveryHistoryOnRequest(resource, value, requested, intervalRead.Time, old.Spec.HistoryFingerprint, refused.job.Annotations[annotationOperationID])
 	})
 	if current.UID != before.UID || current.Generation != before.Generation || !equality.Semantic.DeepEqual(current.Spec, before.Spec) ||
 		!equality.Semantic.DeepEqual(current.Status.ExecutionBinding, before.Status.ExecutionBinding) {

@@ -97,9 +97,10 @@ func renderCoverage(text *strings.Builder, field func(name, value string), view 
 	text.WriteString("\n")
 	paragraph := "The journal is the operator's own bounded record in status.journal, in the order it recorded " +
 		"the entries, oldest first. It keeps at most 64 entries, none more than 30 days older than the newest, " +
-		"and is not an audit archive. Nothing before " + statusview.Time(journal.CoveredSince) + " is recorded " +
-		"here, apart from what the bounds keep of a plan nothing has carried out yet. Each entry is dated by the " +
-		"status it was derived from, so a time can be earlier than the entry above it."
+		"and is not an audit archive. It is complete from " + statusview.Time(journal.CoveredSince) + ", and " +
+		"an event before then may be missing. Entries dated before it are ones the bounds keep, or ones dated " +
+		"by a time their status carried from before it began. Each entry is dated by the status it was derived " +
+		"from, so a time can be earlier than the entry above it."
 	if view.Kind == Migration {
 		paragraph += " It is not the database's revision table, which kubectl ptah migration " + view.Name +
 			" summarizes as its history read."
@@ -177,6 +178,27 @@ func renderEntry(text *strings.Builder, view View, entry Entry) {
 	field("Acknowledged by", statusview.Clean(entry.AcknowledgedBy))
 	if entry.Type == operatorv1alpha1.JournalRunAcknowledged {
 		field("Settled", "by a person's statement that the run is accounted for, not by a reading of the database")
+	}
+	field("Proof", proofText(entry.Proof))
+}
+
+// proofText says where the verdict on a schema Apply is: the Apply's own
+// outcome is not it, the reading of the database after it is.
+func proofText(proof *Proof) string {
+	if proof == nil {
+		return ""
+	}
+	switch proof.State {
+	case ProofVerified:
+		text := "the Verified entry at " + statusview.Time(*proof.At)
+		if proof.Outcome != "" {
+			text += ", " + statusview.Clean(string(proof.Outcome))
+		}
+		return text
+	case ProofOwed:
+		return "still owed: status.pendingObservation holds the reading of the database after it, which has not settled"
+	default:
+		return "not in the journal: no Verified entry of its plan follows it, and the status owes no reading for it"
 	}
 }
 

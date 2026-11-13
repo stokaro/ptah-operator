@@ -361,7 +361,8 @@ carries no recorded identity at all.
 The `operator.ptah.run/settled-apply` annotation is such an update, so nothing
 records who wrote it except the API server's audit log, if its policy records writes
 to `PtahSchema`. `patch` on `ptahschemas` alone can use it to [end a proof whose target
-moved](../recovery/#a-schema-whose-target-moved) and release the database realm. It
+moved](../recovery/#a-schema-whose-target-moved) and release the database realm, by
+hand or with `kubectl ptah settle`, which writes the same annotation. It
 is not the same power as deleting the resource, which takes `delete`, and patching the
 target does not end a proof. Under `apply: Always` the next plan then applies with no
 approval unless it is destructive or changes privileges.
@@ -611,9 +612,9 @@ that access is used with is `kubectl ptah`. Its read commands only read: they
 need `get` on the schema, the plan and its chunks and nothing else, and list
 approvals only where `list` on them is granted. `kubectl ptah approve` creates
 an approval as the person who runs it, and needs `create` on the approval kinds
-as well. `kubectl ptah suspend`, `resume`, `refresh` and `set-source` patch the
-resource as the person who runs them, and need `patch` on it, which no field
-narrows: an identity that may suspend a resource or point it at another
+as well. `kubectl ptah suspend`, `resume`, `refresh`, `set-source` and `settle`
+patch the resource as the person who runs them, and need `patch` on it, which no
+field narrows: an identity that may suspend a resource or point it at another
 artifact may edit the rest of its spec too, so grant it with the desired-state
 author's verbs and not with the approver's;
 [Read a plan](../read-a-plan/) carries the Role and the
