@@ -149,6 +149,11 @@ func renderEntry(text *strings.Builder, view View, entry Entry) {
 		}
 		field("Operation", statusview.Clean(operation))
 	}
+	if view.Kind == Schema && concernsAnApply(entry.Type) {
+		// An entry a release before 0.2.11 wrote names no claim, and reads as
+		// it did then: its proof is joined by plan alone, as it always was.
+		field("Operation", statusview.Clean(entry.OperationID))
+	}
 	field("Plan", planText(entry))
 	if entry.Type == operatorv1alpha1.JournalPlanPublished && view.Kind == Schema {
 		field("Statements", statementsText(entry))
@@ -173,6 +178,9 @@ func renderEntry(text *strings.Builder, view View, entry Entry) {
 	}
 	if failure := entry.Failure; failure != nil {
 		field("Stopped at", failureText(*failure))
+	}
+	if failure := entry.ApplyFailure; failure != nil {
+		field("Stopped at", applyFailureText(*failure))
 	}
 	field("Acknowledgment", acknowledgmentText(entry))
 	field("Acknowledged by", statusview.Clean(entry.AcknowledgedBy))
@@ -211,6 +219,12 @@ func concernsARun(entryType operatorv1alpha1.JournalEntryType) bool {
 	default:
 		return false
 	}
+}
+
+// concernsAnApply reports the entry types a schema joins to one Apply by the
+// Apply claim's operation ID.
+func concernsAnApply(entryType operatorv1alpha1.JournalEntryType) bool {
+	return entryType == operatorv1alpha1.JournalApplyFinished || entryType == operatorv1alpha1.JournalVerified
 }
 
 // summaryOf is what follows the type on an entry's first line: how it ended,
@@ -276,11 +290,23 @@ func jobText(entry Entry) string {
 		return statusview.Clean(entry.JobName)
 	case entry.JobUID != "":
 		return "UID " + statusview.Clean(string(entry.JobUID))
-	case entry.Type == operatorv1alpha1.JournalRunFinished && entry.OperationID != "":
+	case (entry.Type == operatorv1alpha1.JournalRunFinished || entry.Type == operatorv1alpha1.JournalApplyFinished) &&
+		entry.OperationID != "":
 		return "none confirmed: the API server never confirmed one was created"
 	default:
 		return ""
 	}
+}
+
+func applyFailureText(failure operatorv1alpha1.SchemaApplyFailureStatus) string {
+	stopped := fmt.Sprintf("statement %d of %d", failure.Statement, failure.Statements)
+	if failure.SQLState != "" {
+		stopped += ", SQLSTATE " + statusview.Clean(failure.SQLState)
+	}
+	if failure.ErrorNumber != 0 {
+		stopped += fmt.Sprintf(", error %d", failure.ErrorNumber)
+	}
+	return stopped
 }
 
 func failureText(failure operatorv1alpha1.MigrationRunFailureStatus) string {

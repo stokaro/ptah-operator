@@ -1494,6 +1494,13 @@ type PendingObservationStatus struct {
 	// result is uncertain. Until this time, the original mutating Pod could
 	// still be within its immutable active deadline.
 	ObserveAfter *metav1.Time `json:"observeAfter,omitempty"`
+	// ApplyFailure is the statement the apply stopped at, as the run's own
+	// report named it. It is absent when the run named none: it succeeded, it
+	// stopped before a statement was sent or at the commit after them, or its
+	// report could not be read. An apply that names one is OutcomeUnknown all
+	// the same: where it stopped does not say what the database kept.
+	// +optional
+	ApplyFailure *SchemaApplyFailureStatus `json:"applyFailure,omitempty"`
 
 	// Plan is the plan the apply carried out, kept here after the active
 	// operation is cleared so the proof knows what it is proving. Its manager
@@ -1542,6 +1549,29 @@ type PendingObservationStatus struct {
 	// LeaseEpoch identifies the uninterrupted database-realm lock acquisition
 	// carried from Apply through its complete read-only convergence proof.
 	LeaseEpoch string `json:"leaseEpoch,omitempty"`
+}
+
+// SchemaApplyFailureStatus is where a PtahSchema's Apply stopped: the
+// statement it stopped at, and the code the database answered with, when it
+// answered. The database's message is not kept, because it can quote a row.
+type SchemaApplyFailureStatus struct {
+	// Statement is the position of the failed statement in the plan,
+	// counting from one.
+	// +kubebuilder:validation:Minimum=1
+	Statement int32 `json:"statement"`
+	// Statements is how many statements the plan has.
+	// +kubebuilder:validation:Minimum=1
+	Statements int32 `json:"statements"`
+	// SQLState is the SQLSTATE the database answered with, empty when it gave
+	// none.
+	// +kubebuilder:validation:Pattern=`^[0-9A-Z]{5}$`
+	// +optional
+	SQLState string `json:"sqlState,omitempty"`
+	// ErrorNumber is MySQL's own error number, zero on every other protocol.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	ErrorNumber int32 `json:"errorNumber,omitempty"`
 }
 
 // ActiveOperationStatus makes controller restarts resume one deterministic Job.

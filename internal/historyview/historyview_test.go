@@ -61,6 +61,7 @@ func TestTextPrintsEveryFieldAnEntryRecords(t *testing.T) {
 		"JobUID":           types.UID("field-job-uid"),
 		"AppliedVersions":  int32(13),
 		"Failure":          &operatorv1alpha1.MigrationRunFailureStatus{Version: 17, Statement: 19, Statements: 23, SQLState: "42P07", ErrorNumber: 1050},
+		"ApplyFailure":     &operatorv1alpha1.SchemaApplyFailureStatus{Statement: 29, Statements: 31, SQLState: "23505", ErrorNumber: 1062},
 		"Acknowledgment":   "field-acknowledgment",
 		"AcknowledgedBy":   "field-acknowledger@example.com",
 	}
@@ -77,6 +78,7 @@ func TestTextPrintsEveryFieldAnEntryRecords(t *testing.T) {
 		"Outcome":          "RunFinished, Partial",
 		"AppliedVersions":  "  Versions applied:   13\n",
 		"Failure":          "  Stopped at:         version 17, statement 19 of 23, SQLSTATE 42P07, error 1050\n",
+		"ApplyFailure":     "  Stopped at:         statement 29 of 31, SQLSTATE 23505, error 1062\n",
 	}
 
 	var entry operatorv1alpha1.JournalEntry

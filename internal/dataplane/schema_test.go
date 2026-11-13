@@ -1,8 +1,11 @@
 package dataplane_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -281,5 +284,146 @@ func TestSchemaApplySQLStatementsRefusesAUnitWithoutSQL(t *testing.T) {
 		if listed, err := read(units); !errors.Is(err, dataplane.ErrNativeApplyUnit) {
 			t.Errorf("SQLStatements() accepted %s as %q, %v", name, listed, err)
 		}
+	}
+}
+
+// The statement-errors captures are what the image support/ptah.json pins
+// printed for an Apply the database refused, and each names where it stopped.
+// The decoder has to hand back exactly the failure object the document holds,
+// read here a second way, and the failure has to name a statement.
+func TestDecodeSchemaApplyReadsWhereEachCapturedRunStopped(t *testing.T) {
+	t.Parallel()
+
+	captures, err := filepath.Glob("testdata/statement-errors/*-apply.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(captures) != 3 {
+		t.Fatalf("found %d schema apply captures, want the 3 testdata/statement-errors holds: %q", len(captures), captures)
+	}
+	for _, capture := range captures {
+		t.Run(filepath.Base(capture), func(t *testing.T) {
+			t.Parallel()
+			document, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var printed struct {
+				Failure map[string]any `json:"failure"`
+			}
+			if err := json.Unmarshal(document, &printed); err != nil || len(printed.Failure) == 0 {
+				t.Fatalf("the capture holds no failure object: %v", err)
+			}
+			report, err := dataplane.DecodeSchemaApply(document)
+			if err != nil {
+				t.Fatalf("DecodeSchemaApply() refused what Ptah printed: %v", err)
+			}
+			if report.Failure == nil {
+				t.Fatal("the report carries no failure")
+			}
+			var decoded map[string]any
+			encoded, err := json.Marshal(report.Failure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decoded, printed.Failure) {
+				t.Fatalf("decoded failure %v, the capture says %v", decoded, printed.Failure)
+			}
+			if !report.Failure.Failed() || report.Failure.SQLState == "" {
+				t.Fatalf("failure %+v names no statement the database refused", *report.Failure)
+			}
+		})
+	}
+}
+
+// A failure is held to the forms Ptah's contract gives it, and to the outcomes
+// that can carry one. Each refusal is a shape that would put a position or a
+// code in status that no run produced.
+func TestDecodeSchemaApplyHoldsTheFailureToItsContract(t *testing.T) {
+	t.Parallel()
+
+	unknown := func(failure string) string {
+		return `{"contract_version":4,"command":"schema apply","outcome":"unknown","units":[{"sql":"SELECT 1"},{"sql":"SELECT 2"}],` +
+			`"error":{"message":"connection lost"},"failure":` + failure + `}`
+	}
+	for _, test := range []struct {
+		name     string
+		document string
+		want     dataplane.SchemaApplyFailure
+		failed   bool
+	}{
+		{
+			name:     "a statement the database refused",
+			document: unknown(`{"statement":2,"statements":2,"sqlstate":"23505","error_number":1062}`),
+			want:     dataplane.SchemaApplyFailure{Statement: 2, Statements: 2, SQLState: "23505", ErrorNumber: 1062},
+			failed:   true,
+		},
+		{
+			name:     "a refusal with no code",
+			document: unknown(`{"statement":1,"statements":2}`),
+			want:     dataplane.SchemaApplyFailure{Statement: 1, Statements: 2},
+			failed:   true,
+		},
+		{
+			name:     "the commit after every statement",
+			document: unknown(`{"statement":0,"statements":2,"commit":true,"sqlstate":"23503"}`),
+			want:     dataplane.SchemaApplyFailure{Statements: 2, Commit: true, SQLState: "23503"},
+		},
+		{
+			name:     "every statement confirmed and still no success",
+			document: unknown(`{"statement":0,"statements":2}`),
+			want:     dataplane.SchemaApplyFailure{Statements: 2},
+		},
+		{
+			name: "a failure after a rollback the database confirmed",
+			document: `{"contract_version":4,"command":"schema apply","outcome":"failed","error":{"message":"refused"},` +
+				`"failure":{"statement":1,"statements":1,"sqlstate":"42P07"}}`,
+			want:   dataplane.SchemaApplyFailure{Statement: 1, Statements: 1, SQLState: "42P07"},
+			failed: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			report, err := dataplane.DecodeSchemaApply([]byte(test.document))
+			if err != nil {
+				t.Fatalf("DecodeSchemaApply() error = %v", err)
+			}
+			if report.Failure == nil || *report.Failure != test.want {
+				t.Fatalf("failure = %+v, want %+v", report.Failure, test.want)
+			}
+			if got := report.Failure.Failed(); got != test.failed {
+				t.Fatalf("Failed() = %t, want %t", got, test.failed)
+			}
+		})
+	}
+
+	applied := `{"contract_version":4,"command":"schema apply","outcome":"applied","plan_name":"p","plan_digest":"` + digest + `"`
+	for name, document := range map[string]string{
+		"a failure on an Apply that succeeded": applied + `,"failure":{"statement":1,"statements":1}}`,
+		"a failure on a dry run": strings.Replace(applied, `"outcome":"applied"`, `"outcome":"dry-run"`, 1) +
+			`,"failure":{"statement":1,"statements":1}}`,
+		"a failure on a refusal": `{"contract_version":4,"command":"schema apply","outcome":"refused","refusal":{"code":"stale-plan"},` +
+			`"failure":{"statement":1,"statements":1}}`,
+		"no statements":                   unknown(`{"statement":0,"statements":0}`),
+		"a statement past the last":       unknown(`{"statement":3,"statements":2}`),
+		"a negative statement":            unknown(`{"statement":-1,"statements":2}`),
+		"a statement and the commit":      unknown(`{"statement":2,"statements":2,"commit":true}`),
+		"more statements than status":     unknown(`{"statement":1,"statements":2147483648}`),
+		"a SQLSTATE in lower case":        unknown(`{"statement":1,"statements":2,"sqlstate":"42p01"}`),
+		"a SQLSTATE of four characters":   unknown(`{"statement":1,"statements":2,"sqlstate":"4200"}`),
+		"a SQLSTATE that quotes a row":    unknown(`{"statement":1,"statements":2,"sqlstate":"Key (customer_id)=(7)"}`),
+		"an error number past two bytes":  unknown(`{"statement":1,"statements":2,"error_number":65536}`),
+		"a negative error number":         unknown(`{"statement":1,"statements":2,"error_number":-1}`),
+		"a position that is not a number": unknown(`{"statement":"1","statements":2}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if report, err := dataplane.DecodeSchemaApply([]byte(document)); err == nil {
+				t.Fatalf("DecodeSchemaApply() accepted %s as %#v", name, report)
+			}
+		})
 	}
 }
