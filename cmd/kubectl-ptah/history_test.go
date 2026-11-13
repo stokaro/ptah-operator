@@ -693,7 +693,7 @@ func ordersAfterAPartialRun(t *testing.T) []client.Object {
 		before := *status.DeepCopy()
 		step.change(&status)
 		now := at(step.at).Time
-		status.Journal = lifecyclejournal.Record(before.Journal,
+		status.Journal, _ = lifecyclejournal.Record(before.Journal,
 			lifecyclejournal.MigrationEntries(&before, &status, before.Journal, now), now)
 	}
 	migration.Status = status

@@ -22,11 +22,11 @@ them.
 | Question | Where the answer is | After the cluster is lost |
 | --- | --- | --- |
 | Who asked for the change? | The API server's audit log, at the write that changed the spec | Only if the log was kept outside the cluster |
-| What was approved, by whom, and when? | The approval object, the journal's `ApprovalAccepted` entry, the audit log | A migration's approver, by username, on its rows in `schema_migrations_log`. Nothing for a schema |
+| What was approved, by whom, and when? | The approval object, the journal's `ApprovalAccepted` entry, the audit log | A migration's approver, by username, on its rows in `schema_migrations_log`. For either family, the [journal lines](#journal-lines) a collector kept |
 | Was it approved before it ran? | The journal's order and the approval's `Consumed` condition | A migration's `actor` names its approver, or the `apply-always` prefix for a run no one approved |
 | Did a second person approve it? | [`approvals.requireDistinctApprover`](../approvals/#refusing-a-self-approval), when the installation turned it on | No |
 | What ran, exactly? | A schema plan's chunks hold its SQL. A migration plan holds versions and checksums, and the statements are in the artifact | A migration's versions and checksums, in the database |
-| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration |
+| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration, in the database. For either family, the journal lines a collector kept |
 | An approval or a policy? | A migration run's `authorization` in the journal. For a schema, whether an `ApprovalAccepted` comes before the `ApplyFinished` | A migration's `actor` |
 | Was the database changed outside this process? | Drift readings and the plans they publish | No |
 | Could the record have been changed, and would anyone notice? | [Who can change the record](#integrity) | |
@@ -134,10 +134,12 @@ reached no Event on either schema, while the journal recorded both. Events
 about a deleted resource stay for their hour and go with the namespace.
 [An Event can be lost](../../troubleshoot/events/#an-event-can-be-lost) says why.
 
-The manager's log lines carry the namespace, the name, the operation, the
-attempt and the phase. They name no plan, approver or outcome, and they go
-with the manager's Pod: the upgrade replaced both managers, and the cluster no
-longer served what the old Pods had logged.
+The manager's diagnostic log lines carry the namespace, the name, the
+operation, the attempt and the phase. They name no plan, approver or outcome,
+and they go with the manager's Pod: the upgrade replaced both managers, and the
+cluster no longer served what the old Pods had logged. The run's build predates
+the [journal lines](#journal-lines), which copy each journal entry to the same
+log and go with the Pod the same way unless a collector keeps them.
 
 ## What survives {#survival}
 
@@ -338,12 +340,86 @@ plane: in the run, it was gone with the nodes.
 ### Log collection {#log-collection}
 
 A collector that ships Pod logs out of the cluster keeps the manager's lines
-past an upgrade and past the cluster. It also ships every Apply Pod's log, and
+past an upgrade and past the cluster, the [journal lines](#journal-lines)
+included. It also ships every Apply Pod's log, and
 the line a failed statement leaves there can hold a table row, as
 [Output handling](../security/#output-handling) says. Decide what that pipeline
 may keep. An Event exporter keeps the Events the API server received and none
 of the ones the recorder dropped. The console writes its audit stream to its
 standard error, one JSON line per action.
+
+### The journal in the manager's log {#journal-lines}
+
+From 0.2.11 the manager writes each journal entry it stores as one JSON line on
+its standard output. Its diagnostic log stays on standard error, and nothing
+else writes to standard output. A collector that keeps the manager's container
+log keeps the journal past the deletion of the resource, its namespace and the
+cluster, and `status` survives none of them.
+
+```json
+{"logger":"journal","time":"2026-11-13T10:42:07.512Z","kind":"PtahSchema","namespace":"shop","name":"storefront","uid":"d67c5dfa-5692-4de3-b978-65f8f3adc0b2","entry":{"type":"ApprovalAccepted","at":"2026-11-13T10:42:06Z","plan":"ptah-plan-745692fb6a6c6b38e0d4d54b","approval":"storefront-v2","approvalUID":"5b0d6f3e-8a51-4d0c-9c1f-2f6c0a4b7e19","approver":"alice@example.test"}}
+```
+
+| Key | What it holds |
+| --- | --- |
+| `logger` | `journal`. It tells these lines from the diagnostic ones where a reader merges the two streams, as `kubectl logs` does |
+| `time` | When the manager queued the line, right after the write that stored the entry. `entry.at` is when the event happened |
+| `kind`, `namespace`, `name`, `uid` | The resource whose journal holds the entry. The UID tells it from a later resource with the same name |
+| `entry` | The entry as `status.journal.entries` holds it, with the same keys |
+
+A line is written only after the API server stored the status write, and it is
+read from the object the API server returned. A write that conflicted or failed
+stored nothing and writes no line; the pass after it reads what is stored, makes
+the entry again and writes the line once that write is stored. A pass that
+changes nothing writes no status and no line. A failed attempt that folds into
+the newest entry writes that entry again each time its `count` moves, so the
+newest line for an entry holds what status holds.
+
+A line can be missing:
+
+- The API server stored a write and the manager never got its answer, as when
+  the connection drops. The next pass finds the entry stored and writes no line
+  for it.
+- The manager stopped between the write and the line. A manager asked to stop
+  waits up to two seconds for the lines it queued; one that is killed waits for
+  none.
+- Standard output stopped taking lines and the 1,024 the manager queues filled,
+  or a write to it failed. The manager drops the line rather than hold up the
+  status write, and counts it in `ptah_operator_journal_lines_dropped_total`.
+- The kubelet rotated the container log, at 10 MiB by default, before the
+  collector read it, or the collector lost it.
+
+Only the third is counted. While the resource exists, `status.journal` is the
+record and the lines are a copy of it; once the resource is gone, the copy is
+what is left.
+
+A line proves nothing about who wrote it. It carries no signature, and whoever
+controls the manager's output can drop lines or write lines of their own: the
+node and its container runtime, anyone who can run a process in the manager's
+container, the collector, and the store it ships to. Give that pipeline the
+integrity an audit needs from it, and read a line as what the manager's output
+said rather than what the cluster stored.
+
+The acceptance row `journal-audit-lines` reads the log of every manager Pod
+after a schema's two Applies and a migration's run, and finds one line for each
+entry their journals store, equal to it, and no other line for either resource.
+[The measured run](#the-measured-run) predates the lines.
+
+To read them from every manager Pod of a running installation:
+
+```sh
+kubectl -n ptah-system logs -l app.kubernetes.io/component=controller -c manager --tail=-1 \
+  | jq -cR 'fromjson? | select(.logger == "journal")'
+```
+
+From a store of collected lines, one resource's entries, by its name and then
+by UID, since a resource created again under the name has a new one:
+
+```sh
+jq -c --arg ns <namespace> --arg name <name> \
+  'select(.logger == "journal" and .namespace == $ns and .name == $name)
+   | {uid, type: .entry.type, at: .entry.at, approver: .entry.approver}' journal.log
+```
 
 ### Backups and exports {#backups}
 
@@ -384,8 +460,10 @@ the specs people wrote, and no plan SQL.
 
 Erasure meets an append-only record unevenly. Deleting an approval removes the
 object, and the journal still names the approver until the entry ages out of its
-bounds. A log row stays until someone deletes it. An audit log store keeps what
-its own retention says.
+bounds. A [journal line](#journal-lines) names the approver too, and an
+acknowledgment's author, and stays in the store a collector ships it to for as
+long as that store keeps it. A log row stays until someone deletes it. An audit
+log store keeps what its own retention says.
 
 ## Reading the record {#reading}
 

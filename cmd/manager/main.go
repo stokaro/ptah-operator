@@ -31,6 +31,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/controllerwrite"
+	"github.com/stokaro/ptah-operator/internal/journallog"
 	"github.com/stokaro/ptah-operator/internal/managercache"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/planseal"
@@ -61,6 +62,12 @@ const (
 // controllerRevision is injected by the release build. An unversioned manager
 // must fail before it can interpret or write durable controller state.
 var controllerRevision string
+
+// journalDrainBound is how long a stopped manager waits for the journal lines
+// still queued to reach standard output. The leader Lease is already released
+// by then, and an output that takes no lines would otherwise hold the process
+// until the kubelet kills it.
+const journalDrainBound = 2 * time.Second
 
 // withStopTiming sets how the manager holds the leader Lease and how long it
 // takes to stop.
@@ -246,6 +253,9 @@ func main() {
 	}
 
 	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
+	// Standard output carries the journal lines and nothing else: the
+	// diagnostic log goes to standard error.
+	journal := journallog.New(os.Stdout, journallog.Options{Registerer: ctrlmetrics.Registry})
 	// Read alert state directly from the API once per leader scrape. A warm
 	// controller cache can keep serving stale state after API access fails.
 	stateMetrics := telemetry.NewSnapshotCollector(ctrlmetrics.Registry, manager.GetAPIReader(), nil)
@@ -272,6 +282,7 @@ func main() {
 		Locks:            targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
 		LockNamespace:    targetLockNamespace,
 		Telemetry:        operatorMetrics,
+		JournalLog:       journal,
 		AdmissionOptions: admissionOptions,
 	}
 	if results != nil {
@@ -291,6 +302,7 @@ func main() {
 		Locks:            targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
 		LockNamespace:    targetLockNamespace,
 		Telemetry:        operatorMetrics,
+		JournalLog:       journal,
 		AdmissionOptions: admissionOptions,
 	}
 	if results != nil {
@@ -370,7 +382,15 @@ func main() {
 		"leaderElection", leaderElection,
 		"leaderElectionID", leaderElectionID,
 	)
-	if err := manager.Start(ctrl.SetupSignalHandler()); err != nil {
+	err = manager.Start(ctrl.SetupSignalHandler())
+	// The controllers have stopped, or their grace period ended. A line one of
+	// them queues after Close is dropped and counted.
+	drain, cancel := context.WithTimeout(context.Background(), journalDrainBound)
+	if drainErr := journal.Close(drain); drainErr != nil {
+		log.Error(drainErr, "journal lines were still queued when the manager stopped")
+	}
+	cancel()
+	if err != nil {
 		log.Error(err, "manager stopped")
 		_, _ = fmt.Fprintln(os.Stderr, "ptah-operator manager stopped")
 		os.Exit(1)

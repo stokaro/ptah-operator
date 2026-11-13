@@ -170,6 +170,9 @@ type SchemaReconciler struct {
 	LockNamespace string
 	Clock         func() time.Time
 	Telemetry     telemetry.Observer
+	// JournalLog receives each journal entry a status write stored. Nil writes
+	// none.
+	JournalLog JournalLog
 	// AdmissionOptions must match cluster-wide built-in Pod admission settings.
 	// The exact values are copied into each durable operation snapshot.
 	AdmissionOptions podintent.Options
@@ -4568,10 +4571,13 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 	// injected clock decides deadlines, and a journal entry decides nothing.
 	now := metav1.Now().Time
 	entries := lifecyclejournal.SchemaEntries(&before.Status, &after.Status, before.Status.Journal, now)
-	after.Status.Journal = lifecyclejournal.Record(after.Status.Journal, entries, now)
+	journal, written := lifecyclejournal.Record(after.Status.Journal, entries, now)
+	after.Status.Journal = journal
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("update PtahSchema status: %w", err)
 	}
+	// The patch decoded the API server's answer into after.
+	logStoredEntries(r.JournalLog, "PtahSchema", after, after.Status.Journal, written)
 	r.observeStatusTransitions(before, after, entries)
 	return nil
 }

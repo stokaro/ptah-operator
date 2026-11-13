@@ -30,6 +30,13 @@ const (
 // to store. A nil journal starts covering at now. A failed attempt with the
 // same operation and reason as the newest entry folds into it.
 //
+// It also returns how many of the newest entries of that journal the write
+// wrote: the ones it added, and the newest one already there when a failed
+// attempt folded into it. Nothing else moves, since the bounds only drop the
+// oldest entries, so those are the last ones the journal holds. A write that
+// stores the journal can then say which of the stored entries are its own:
+// [Newest] reads them back from the object the API server returned.
+//
 // The age bound is measured from the newest entry rather than from now: an
 // entry may be dated by the time its status carries, and the bound must not
 // depend on which clock dated it. Record runs only in a status write that
@@ -39,44 +46,63 @@ const (
 // and the newest approval of it. A plan can wait for a person longer than the
 // bounds last, and those entries are the only record of what a later plan
 // replaces. They add at most two entries past the age bound and none to the count.
-func Record(journal *operatorv1alpha1.LifecycleJournal, entries []operatorv1alpha1.JournalEntry, now time.Time) *operatorv1alpha1.LifecycleJournal {
+func Record(journal *operatorv1alpha1.LifecycleJournal, entries []operatorv1alpha1.JournalEntry, now time.Time) (*operatorv1alpha1.LifecycleJournal, int) {
 	if journal == nil {
 		journal = &operatorv1alpha1.LifecycleJournal{CoveredSince: metav1.NewTime(now)}
 	} else {
 		journal = journal.DeepCopy()
 	}
+	// written is the index of the oldest entry this write wrote.
+	written := len(journal.Entries)
 	for _, entry := range entries {
 		if newest := len(journal.Entries) - 1; newest >= 0 && folds(journal.Entries[newest], entry) {
 			folded := &journal.Entries[newest]
 			last := entry.At
 			folded.LastAt = &last
 			folded.Count = max(folded.Count, 1) + 1
+			written = min(written, newest)
 			continue
 		}
 		journal.Entries = append(journal.Entries, entry)
 	}
-	applyBounds(journal)
-	return journal
+	return journal, applyBounds(journal, written)
+}
+
+// Newest is the newest count entries of journal, or as many as it holds. A
+// stored journal answers which entries a write wrote with the count [Record]
+// returned for it.
+func Newest(journal *operatorv1alpha1.LifecycleJournal, count int) []operatorv1alpha1.JournalEntry {
+	if journal == nil || count <= 0 {
+		return nil
+	}
+	return journal.Entries[max(len(journal.Entries)-count, 0):]
 }
 
 // applyBounds drops the oldest entries past the bounds, and stops at the first
-// entry within them, whatever the entries after it are dated.
-func applyBounds(journal *operatorv1alpha1.LifecycleJournal) {
+// entry within them, whatever the entries after it are dated. It returns how
+// many of the entries from index written on it kept: the order stays, so they
+// are the newest ones.
+func applyBounds(journal *operatorv1alpha1.LifecycleJournal, written int) int {
 	count := len(journal.Entries)
 	if count == 0 {
-		return
+		return 0
 	}
 	cutoff := latest(journal.Entries[count-1]).Add(-MaxAge)
 	published, approval := outstanding(journal.Entries)
 	kept := make([]operatorv1alpha1.JournalEntry, 0, count)
+	keptWritten := 0
 	for index, entry := range journal.Entries {
 		if index == published || index == approval {
 			kept = append(kept, entry)
+			if index >= written {
+				keptWritten++
+			}
 			continue
 		}
 		dropped := index - len(kept)
 		if count-dropped <= MaxEntries && !latest(entry).Before(cutoff) {
 			kept = append(kept, journal.Entries[index:]...)
+			keptWritten += count - max(index, written)
 			break
 		}
 		if at := latest(entry); at.After(journal.CoveredSince.Time) {
@@ -84,6 +110,7 @@ func applyBounds(journal *operatorv1alpha1.LifecycleJournal) {
 		}
 	}
 	journal.Entries = kept
+	return keptWritten
 }
 
 // folds reports whether entry is another attempt of the failure newest
