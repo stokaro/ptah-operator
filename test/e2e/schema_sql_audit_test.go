@@ -371,7 +371,10 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 				stem string
 			}
 			var readings []witness
-			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-"} {
+			// The documented- readings were taken as the login the databases
+			// page documents rather than as an administrator.
+			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-",
+				"documented-exclusion-wide-", "documented-exclusion-narrow-", "documented-drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
 					count := map[string]map[string]int{"postgresql": {"observe": 53, "plan": 95}, "mysql": {"observe": 20, "plan": 39}}[engine][operation]
 					if variant == "initial-v1-" {
@@ -380,8 +383,10 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 					readings = append(readings, witness{name: variant + operation, operation: operation, count: count, stem: engine})
 				}
 			}
-			readings = append(readings, witness{name: "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine},
-				witness{name: "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine})
+			for _, login := range []string{"", "documented-"} {
+				readings = append(readings, witness{name: login + "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine},
+					witness{name: login + "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 50, "mysql": 23}[engine], stem: engine})
+			}
 			if engine == "mysql" {
 				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 101, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 101, stem: engine})
 			}

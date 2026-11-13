@@ -174,6 +174,42 @@ Added database lines workflow passed the whole lifecycle on it on every
 supported Kubernetes minor at the pinned Ptah build. A cluster on 17.x or 18.x
 has nothing to change for that.
 
+A MySQL account made from [MySQL authority](../databases/#mysql-authority) as
+0.2.10 showed it can hold more than its one database. The page named the
+database bare, in `GRANT ... ON app.* TO 'ptah'@'%'`, and while
+`partial_revokes` is off, MySQL's default, such a grant reads `_` and `%` in the
+name as wildcards: a grant on `my_app` also covers `myXapp` and every other
+database the pattern matches on that server. On MySQL 8.4.13 an account granted
+that way created a table in `myXapp`. The page now writes the name in backquotes
+with both escaped. Where the managed database's name holds `_` or `%`, read what
+the account holds:
+
+```sql
+SHOW GRANTS FOR 'ptah'@'%';
+```
+
+A line that names the database with no backslash before each `_` or `%`, such
+as `` ON `my_app`.* ``, is the pattern. Revoke it as it is spelled there, and
+grant the same privileges on the escaped name:
+
+```sql
+REVOKE SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON `my_app`.* FROM 'ptah'@'%';
+GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON `my\_app`.* TO 'ptah'@'%';
+```
+
+`SHOW GRANTS` then names `` `my\_app`.* ``, and the account is refused in
+`myXapp`.
+
+[PostgreSQL authority](../databases/#postgresql-authority) now lists
+`TEMPORARY` on the database beside `CONNECT`. Ptah reads a declared column's
+type and default back from a temporary table, and without the privilege a
+column can read as changed on every plan. A new database grants `TEMPORARY` to
+`PUBLIC`, so a login has it unless that grant was revoked. If it was:
+
+```sql
+GRANT TEMPORARY ON DATABASE app TO ptah;
+```
+
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
   the order the operator recorded it and from when it is complete, then every

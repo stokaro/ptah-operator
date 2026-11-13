@@ -4,6 +4,17 @@ package e2e
 
 import ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 
+// exclusionPolicyChanges narrows an approved scope with spec.policy.exclude: a
+// table someone added by hand makes the plan destructive, the edit takes it out
+// of scope, and the approval of the wider plan goes stale without running it.
+//
+// It connects with the authority support/databases.md documents. On PostgreSQL
+// that is e2e_exclusion_policy_login, created from the page's statements, which
+// created the seed and owns it; on MySQL an account holding the page's grant on
+// the database and nothing else. The server's superuser, or root, creates the
+// excluded table, and on PostgreSQL the login holds nothing on it. Under a
+// superuser the destructive plan names the table whatever the executor reads
+// it through, so only this login shows Ptah reports what another role made.
 func (f *faultRun) exclusionPolicyChanges() {
 	f.t.Helper()
 	for _, engine := range []string{"postgresql", "mysql"} {
@@ -13,11 +24,14 @@ func (f *faultRun) exclusionPolicyChanges() {
 		if engine == "mysql" {
 			kind, dialect, reference = "MySQL", "mysql", f.mysqlReference
 		}
-		f.createDatabase(engine, database, secret)
+		login := f.createDocumentedDatabase(engine, database, secret)
 		f.query(engine, database, "CREATE TABLE "+excludedPolicyTable+" (id bigint NOT NULL PRIMARY KEY, note varchar(255)); INSERT INTO "+excludedPolicyTable+" VALUES (701, 'outside-managed-scope')")
+		if engine == "postgresql" {
+			f.assertNoAuthorityOver(login, database, excludedPolicyTable)
+		}
 		f.query(engine, database, "INSERT INTO e2e_widgets (id, name, note) VALUES (701, 'scope-control', 'preserved-managed-row')")
 		beforeDatabase := f.fingerprint(engine, database, "the database before narrowing the managed scope")
-		sqlWindow := f.startSchemaRefusalWindow(name, engine, database, secret)
+		sqlWindow := f.startDocumentedSchemaRefusalWindow(name, engine, database, secret)
 		initialJobs := f.checkpointJobs(name, "")
 		f.createSchema(faultSchema{name: name, engine: kind, reference: reference, secret: secret, coordinationKey: "e2e/exclusion-policy/" + engine, allowDestructive: true})
 		generation := f.schema(name).Generation

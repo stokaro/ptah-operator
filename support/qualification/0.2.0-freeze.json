@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-13T12:46:44.512003+00:00",
+  "frozenAt": "2026-11-13T13:29:51.226983+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "aa08c2eff70aed824a440daab8d03e848765785e24016b3f4e503f5cc8de950f"
+      "sha256": "54538ee8c40803d9cdcc912a31307847dd97ff2884bc441c1352187b06a6eb84"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.10 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 92,
+  "revision": 93,
   "supersedes": {
-    "freezeCommit": "70456fc6bcaa14816af57210d1aff69d40d80d11",
-    "sha256": "1c19bfd7cf781c095da91f16d15bd12bca3e08e1aced42192f02f4c31edb6318"
+    "freezeCommit": "467f3bf57f9fadf0bb13ab47f1559349ff1b5ef3",
+    "sha256": "ef876274bdff105095b44d8c688d27366050db60aa5fe3e6739eb6b820a4e660"
   },
-  "revisionReason": "Add the configmap-sources scenario journal-audit-lines, which holds the journal lines the manager writes to its log (#1065). Phases, suites, cells, platforms, minors, the profile and its targets are unchanged."
+  "revisionReason": "Record the databases page after it shows the statements that create the documented PostgreSQL login, grants that login TEMPORARY on the database for Ptah's column spelling probe, and says that the drift rows connect as it or as a MySQL account holding the documented grant (#812). Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
 }

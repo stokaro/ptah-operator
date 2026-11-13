@@ -44,10 +44,32 @@ ownership is the reliable least-authority boundary.
 
 The login needs only:
 
-- `CONNECT` on the target database;
+- `CONNECT` and `TEMPORARY` on the target database;
 - `USAGE` on each managed schema;
 - the ability to create objects in each managed schema;
 - ownership of every object the desired schema may alter or drop.
+
+Ptah creates a temporary table, and rolls it back, to read a declared column's
+type and default in PostgreSQL's own spelling: `varchar(10)[]` comes back as
+`character varying(10)[]`. Without `TEMPORARY` it compares such a column as
+declared, and a column it created can read as changed on every plan. A new
+database grants `TEMPORARY` to `PUBLIC`, so a login holds it there unless
+someone revoked it.
+
+For a database `app` whose managed schema is `public`, these statements create
+that login. Run them as a superuser connected to `app`: a grant on a schema
+applies in the database the session is connected to, so from another database
+the last one grants on the wrong `public`. Create the managed objects as the
+login, and it owns them:
+
+```sql
+CREATE ROLE ptah LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT CONNECT, TEMPORARY ON DATABASE app TO ptah;
+GRANT USAGE, CREATE ON SCHEMA public TO ptah;
+```
+
+Set its password with `\password ptah` in `psql`. The client hashes the
+password, so the server log never holds it.
 
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the
@@ -69,8 +91,13 @@ object a comparison reads. A typical table-and-index schema needs `SELECT`,
 schema needs `TRIGGER`, `EXECUTE`, and `SHOW VIEW` there as well:
 
 ```sql
-GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON app.* TO 'ptah'@'%';
+GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON `app`.* TO 'ptah'@'%';
 ```
+
+Escape each `_` or `%` in the database name as `\_` or `\%`, inside the
+backquotes. With `partial_revokes` off, MySQL's default, a database-level grant
+reads both as wildcards, so a grant on `` `my_app`.* `` also covers a database
+named `myXapp`. Write `` `my\_app`.* `` instead.
 
 MySQL lists in `information_schema` only what an account holds a privilege on,
 and a comparison reads an object it cannot see as absent. `TRIGGER` is the only
@@ -112,12 +139,16 @@ says the login found no difference. It does not say that nobody added anything.
 This section describes Ptah v0.23.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. The PostgreSQL table was measured at v0.22.0; the acceptance row that
-reads a table another role created under this login runs at the pinned build on
-PostgreSQL 16, 17 and 18. The runner harness holds the MySQL refusals to the release
-image. Another executor build can answer differently. Neither engine reads an
-object the login cannot see as absent at this build: PostgreSQL shows the login
-every object, and MySQL refuses the read
+8.4.11. The PostgreSQL table was measured at v0.22.0. The acceptance rows that
+change a database by hand and read what the next Observe or Plan reports run at
+the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
+the login the statements above create, with `CREATE` on the database added only
+where the artifact declares an extension, or as a MySQL account that holds the
+grant above and nothing else. Another role or account makes each change they
+read. The runner harness holds the MySQL refusals to the release image. Another
+executor build can answer differently. Neither engine reads an object the login
+cannot see as absent at this build: PostgreSQL shows the login every object, and
+MySQL refuses the read
 ([stokaro/ptah#5545](https://github.com/stokaro/ptah/pull/5545)).
 
 ### PostgreSQL

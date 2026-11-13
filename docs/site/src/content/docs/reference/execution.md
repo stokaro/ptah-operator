@@ -526,7 +526,9 @@ database of yours. A migration read holds no Lease either.
 
 The comparison asks the server to spell some things itself. On PostgreSQL it
 creates a throwaway object in a transaction it rolls back, so a CHECK or a view
-body compares in the server's own spelling. On MySQL it creates a `TEMPORARY`
+body compares in the server's own spelling. A column's type and default are
+read back from a temporary table, which takes `TEMPORARY` on the database, as
+[the databases page](../../support/databases/#postgresql-authority) lists. On MySQL it creates a `TEMPORARY`
 table to learn which non-ASCII index names collide, and drops it again; a
 temporary table belongs to its session and goes with it. Neither persists
 anything, and the PostgreSQL probe is why the session cannot be read-only:

@@ -43,7 +43,6 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 		"four-eyes":         credentials.fourEyesPGURL,
 		"Pod metadata":      credentials.podMetadataPGURL,
 		"Pod configuration": credentials.podConfigurationPGURL,
-		"extension":         credentials.extensionPGURL,
 		"unreadable":        credentials.unreadableOCIPGURL,
 	} {
 		if !strings.HasPrefix(url, "postgres://ptah_e2e:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e") ||
@@ -58,6 +57,9 @@ func TestFixtureCredentialsDeriveFromTheNamespace(t *testing.T) {
 	}
 	if credentials.loginVisibilityPGURL != "postgres://ptah_e2e_documented:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e_login_visibility?sslmode=disable" {
 		t.Fatalf("documented login URL = %s", credentials.loginVisibilityPGURL)
+	}
+	if credentials.extensionPGURL != "postgres://ptah_e2e_extension_login:e2ePg216964841Q7@e2e-postgresql.ptah-e2e-12345.svc.cluster.local:5432/ptah_e2e_extension?sslmode=disable" {
+		t.Fatalf("extension login URL = %s", credentials.extensionPGURL)
 	}
 	if credentials.mysqlURL != "mysql://ptah_e2e:e2eMy216964841Q7@tcp(e2e-mysql.ptah-e2e-12345.svc.cluster.local:3306)/ptah_e2e" {
 		t.Fatalf("MySQL URL = %s", credentials.mysqlURL)

@@ -16,7 +16,7 @@ from unittest import mock
 
 import schema_sql_readings
 from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_postgresql_lines, contract, contract_readings,
-                                 received)
+                                 documented_statements, received)
 
 READINGS = ROOT / 'testdata/e2e/readings'
 CONTRACT = ROOT / 'test/e2e/schema-sql-contract.json'
@@ -183,6 +183,78 @@ class LabCleanupTest(unittest.TestCase):
             self.assertEqual(self.called('rm'), [])
             self.assertEqual(self.called('network', 'rm'), [])
         self.assert_removed_everything(lab)
+
+
+class DocumentedLabTest(unittest.TestCase):
+    """A documented Lab connects the executor as the login the databases page shows."""
+
+    def setUp(self):
+        self.calls = []
+        self.scratch = temporary_directory(self)
+        for patcher in (mock.patch.object(schema_sql_readings, 'run', self.docker), *temporary_files_in(self.scratch)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        clock = mock.patch.object(schema_sql_readings, 'time')
+        clock.start().time.side_effect = itertools.count(step=60)
+        self.addCleanup(clock.stop)
+
+    def docker(self, argv, data=None, check=True, timeout=None):
+        self.calls.append((argv[3:], data.decode() if data else ''))
+        return SimpleNamespace(returncode=0, stdout=b'', stderr=b'')
+
+    def sent(self, *verb):
+        return [data for argv, data in self.calls if argv[:len(verb)] == list(verb)]
+
+    def executor_environment(self, lab):
+        lab.ptah(['schema', 'drift'])
+        create = next(argv for argv, _ in self.calls if argv[0] == 'create')
+        return [create[i + 1] for i, word in enumerate(create) if word == '-e']
+
+    def test_the_statements_are_the_pages_with_the_names_replaced(self):
+        self.assertEqual(documented_statements('postgresql', 'ptah_audit_schema', 'ptah_documented'),
+                         'CREATE ROLE ptah_documented LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n'
+                         'GRANT CONNECT, TEMPORARY ON DATABASE ptah_audit_schema TO ptah_documented;\n'
+                         'GRANT USAGE, CREATE ON SCHEMA public TO ptah_documented;\n')
+        self.assertEqual(documented_statements('mysql', 'ptah_audit_schema', 'ptah_audit'),
+                         'GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW '
+                         "ON `ptah\\_audit\\_schema`.* TO 'ptah_audit'@'%';\n")
+
+    def test_postgresql_revokes_public_creates_the_login_and_seeds_as_it(self):
+        with Lab('ctx', 'postgresql', 'executor', documented=True) as lab:
+            lab.seed('postgresql-v3.sql', statements=('INSERT INTO e2e_widgets VALUES (1)',))
+            environment = self.executor_environment(lab)
+        setup = self.sent('exec', '-i')
+        self.assertTrue(setup[0].startswith('REVOKE ALL ON DATABASE ptah_audit_schema FROM PUBLIC;\n'
+                                            + documented_statements('postgresql', 'ptah_audit_schema', 'ptah_documented')))
+        seeds = [argv for argv, data in self.calls if data == (schema_sql_readings.FIXTURES / 'postgresql-v3.sql').read_text()]
+        self.assertEqual(len(seeds), 1)
+        self.assertIn('ptah_documented', seeds[0])
+        statements = [argv for argv, data in self.calls if data == 'INSERT INTO e2e_widgets VALUES (1);']
+        self.assertEqual(len(statements), 1)
+        self.assertIn('ptah_audit', statements[0])
+        self.assertTrue(any(value.startswith('PTAH_DB_URL=postgres://ptah_documented:') for value in environment))
+
+    def test_mysql_starts_without_an_account_and_root_grants_the_pages(self):
+        with Lab('ctx', 'mysql', 'executor', documented=True) as lab:
+            lab.seed('mysql-v3.sql')
+            environment = self.executor_environment(lab)
+        server = next(argv for argv, _ in self.calls if argv[:2] == ['run', '-d'])
+        self.assertFalse(any(word.startswith('MYSQL_USER=') for word in server))
+        grant = documented_statements('mysql', 'ptah_audit_schema', 'ptah_audit')
+        created = [(argv, data) for argv, data in self.calls if grant in data]
+        self.assertEqual(len(created), 1)
+        self.assertIn('-uroot', created[0][0])
+        self.assertTrue(created[0][1].startswith("CREATE USER 'ptah_audit'@'%' IDENTIFIED BY '"))
+        seeds = [argv for argv, data in self.calls if data.startswith('USE ptah_audit_schema;\n')]
+        self.assertEqual(len(seeds), 1)
+        self.assertIn('-uroot', seeds[0])
+        self.assertTrue(any(value.startswith('PTAH_DB_URL=mysql://ptah_audit:') for value in environment))
+
+    def test_an_ordinary_lab_keeps_the_bootstrap_account(self):
+        with Lab('ctx', 'postgresql', 'executor') as lab:
+            environment = self.executor_environment(lab)
+        self.assertEqual(self.sent('exec', '-i'), [])
+        self.assertTrue(any(value.startswith('PTAH_DB_URL=postgres://ptah_audit:') for value in environment))
 
 
 class CaptureTest(unittest.TestCase):

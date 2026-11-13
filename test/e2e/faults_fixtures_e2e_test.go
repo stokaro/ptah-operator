@@ -205,6 +205,65 @@ func (f *faultRun) createDatabase(engine, database, secret string) {
 	}
 }
 
+// documentedLoginFor is the PostgreSQL login a drift row's database is given.
+func documentedLoginFor(database string) string { return database + "_login" }
+
+// createDocumentedDatabase is createDatabase for a drift row: the Secret names,
+// and on PostgreSQL the seed belongs to, a login with the authority
+// support/databases.md documents rather than the server's superuser.
+//
+// On PostgreSQL the login is one of the database's own, created from the
+// page's statements. It creates the seed and so owns every table the desired
+// schema alters, and the call returns its name. On MySQL a table has no owner:
+// root creates the seed, the image's application user gets no grant on the
+// database, and the account the row connects as is the one its SQL audit
+// creates with the page's grant (startDocumentedSchemaRefusalWindow and
+// schemaMySQLDocumentedAccount), which takes the Secret over before the
+// resource exists. The call returns no login there.
+func (f *faultRun) createDocumentedDatabase(engine, database, secret string) string {
+	f.t.Helper()
+	if !safeDatabaseName.MatchString(database) {
+		f.fatalf("unsafe generated database or barrier name: %s", database)
+	}
+	switch engine {
+	case "postgresql":
+		login := documentedLoginFor(database)
+		if f.query("postgresql", "postgres", "SELECT count(*) FROM pg_database WHERE datname='"+database+"'") != "0" ||
+			f.query("postgresql", "postgres", "SELECT count(*) FROM pg_roles WHERE rolname='"+login+"'") != "0" {
+			f.fatalf("PostgreSQL database %s or its login already exists", database)
+		}
+		f.query("postgresql", "postgres", "CREATE DATABASE "+database)
+		f.createDocumentedPostgreSQLLogin(login, database, false)
+		url, err := urlWithLogin(f.databaseURLFor(engine, database), login)
+		f.check(err, "name the documented login in the URL of %s", database)
+		secretObject := &corev1.Secret{Type: corev1.SecretTypeOpaque, StringData: map[string]string{"url": url}}
+		secretObject.Namespace, secretObject.Name = f.in.TestNamespace, secret
+		f.check(f.cluster.Client.Create(f.ctx, secretObject, client.FieldOwner(harness.FieldOwner)), "create Secret %s", secret)
+		seed, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", "postgresql-v3.sql"))
+		f.check(err, "read the PostgreSQL seed")
+		f.check(f.execInWithInput(pgService, seed, "sh", "-ec",
+			`PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U "$2" -d "$1"`,
+			"sh", database, login), "could not seed PostgreSQL database %s as %s", database, login)
+		f.assertOwnsEveryTable(login, database)
+		return login
+	case "mysql":
+		if f.query("mysql", "mysql", "SELECT count(*) FROM information_schema.schemata WHERE schema_name='"+database+"'") != "0" {
+			f.fatalf("MySQL database %s already exists", database)
+		}
+		f.query("mysql", "mysql", "CREATE DATABASE "+database)
+		f.createURLSecret(engine, database, secret, false)
+		seed, err := os.ReadFile(filepath.Join(repositoryRoot, "testdata", "e2e", "mysql-v3.sql"))
+		f.check(err, "read the MySQL seed")
+		f.check(f.execInWithInput(mysqlService, seed, "sh", "-ec",
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1"`,
+			"sh", database), "could not seed MySQL database %s", database)
+		return ""
+	default:
+		f.fatalf("unsupported database engine %s", engine)
+		return ""
+	}
+}
+
 // assertColumn holds the count of one e2e_widgets column in a database.
 func (f *faultRun) assertColumn(engine, database, column string, expected int) {
 	f.t.Helper()
