@@ -4042,6 +4042,12 @@ func TestRetiredPredecessorApplyLateCreateAdoptsUIDBeforePodFenceAndCleanup(t *t
 		fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldExecutionEpoch {
 		t.Fatalf("late predecessor Apply fence = %#v", fenced.Status)
 	}
+	// The proof names the Job the claim reserved; the journal names none,
+	// because nobody confirmed one was created.
+	if ended := oneJournaled(t, fenced, operatorv1alpha1.JournalApplyFinished); ended.JobName != "" || ended.JobUID != "" ||
+		ended.OperationID != "late-predecessor-apply" {
+		t.Fatalf("ApplyFinished of an Apply whose Job nobody confirmed = %#v, want its claim and no Job", ended)
+	}
 	if err := api.Create(context.Background(), applyJob); err != nil {
 		t.Fatalf("commit predecessor Apply Job after retirement fence: %v", err)
 	}

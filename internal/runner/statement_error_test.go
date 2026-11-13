@@ -462,11 +462,20 @@ func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
 	if _, err := MarshalFrame(base); err != nil {
 		t.Fatalf("MarshalFrame(base) error = %v", err)
 	}
+	succeeded := func(result *Result) {
+		result.Error, result.Uncertain, result.ChildExitCode = nil, false, 0
+	}
+	control := base
+	succeeded(&control)
+	control.ApplyFailure = nil
+	if _, err := MarshalFrame(control); err != nil {
+		t.Fatalf("MarshalFrame() of the same Apply succeeded error = %v", err)
+	}
 	for _, test := range []struct {
 		name   string
 		mutate func(*Result)
 	}{
-		{name: "a result with no error", mutate: func(result *Result) { result.Error = nil }},
+		{name: "an Apply that succeeded", mutate: succeeded},
 		{name: "an error the report did not set", mutate: func(result *Result) { result.Error.Code = "invalid_apply_output" }},
 		{name: "another operation", mutate: func(result *Result) { result.Operation = OperationMigrationApply }},
 		{name: "no statements", mutate: func(result *Result) { result.ApplyFailure.Statements = 0 }},
@@ -496,10 +505,10 @@ func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
 	}
 }
 
-// A Ptah later than the pinned one reports a statement the database refused as
+// A Ptah later than the pinned one reports a run that sent a statement as
 // failed once the database confirmed the rollback (stokaro/ptah#5737). The
 // frame carries where it stopped, and its message no longer says that nothing
-// was sent. A failed report that names no statement still says so.
+// was sent. A failed report that names no position still says so.
 func TestAFailedApplyThatNamesAStatementSaysItSentOne(t *testing.T) {
 	t.Parallel()
 
@@ -518,7 +527,13 @@ func TestAFailedApplyThatNamesAStatementSaysItSentOne(t *testing.T) {
 			name:    "a refused statement",
 			failure: `,"failure":{"statement":2,"statements":3,"sqlstate":"42P07"}`,
 			stopped: &dataplane.SchemaApplyFailure{Statement: 2, Statements: 3, SQLState: "42P07"},
-			message: "ptah reported that the database refused a statement and the apply rolled back",
+			message: "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent",
+		},
+		{
+			name:    "the commit after every statement",
+			failure: `,"failure":{"statement":0,"statements":2,"commit":true,"sqlstate":"23503"}`,
+			stopped: &dataplane.SchemaApplyFailure{Statements: 2, Commit: true, SQLState: "23503"},
+			message: "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent",
 		},
 		{
 			name:    "no statement",

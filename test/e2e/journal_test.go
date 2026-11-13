@@ -380,6 +380,10 @@ func TestProofJournaledForJoinsByTheOperation(t *testing.T) {
 	if err := proofJournaledFor(with(apply, proof), apply, ""); err != nil {
 		t.Fatalf("a proof the row claims no verdict for was refused: %v", err)
 	}
+	// An Apply of an earlier plan, under its own claim, ahead of both: the
+	// proof is looked for after this Apply's entry, not after the first one.
+	earlier := *apply.DeepCopy()
+	earlier.Plan, earlier.OperationID = "ptah-plan-earlier", "sha256:"+strings.Repeat("c", 64)
 	for _, test := range []struct {
 		name    string
 		journal *ptahv1alpha1.LifecycleJournal
@@ -389,6 +393,7 @@ func TestProofJournaledForJoinsByTheOperation(t *testing.T) {
 		{"no journal", nil, "", "keeps no journal"},
 		{"no proof yet", with(apply), "", "stops before the Verified"},
 		{"a proof from before the Apply", with(proof, apply), "", "stops before the Verified"},
+		{"a proof from before the Apply, after an earlier Apply", with(earlier, proof, apply), "", "stops before the Verified"},
 		{"another plan's proof", with(apply, proofOf(func(entry *ptahv1alpha1.JournalEntry) { entry.Plan = "ptah-plan-other" })), "", "stops before the Verified"},
 		{"a proof under another claim", with(apply, proofOf(func(entry *ptahv1alpha1.JournalEntry) {
 			entry.OperationID = "sha256:" + strings.Repeat("e", 64)
