@@ -294,8 +294,10 @@ func (i installer) checkInstalled(ctx context.Context, request installation, std
 		if release.Name != releaseName {
 			continue
 		}
+		// helm list names a chart <name>-<version>, so another chart's name
+		// leaves no release version behind once this one's is cut off.
 		installed, ok := parseChartVersion(strings.TrimPrefix(release.Chart, releaseChartName+"-"))
-		if !ok || !strings.HasPrefix(release.Chart, releaseChartName+"-") {
+		if !ok {
 			return exitUsage, fmt.Sprintf("release %s in namespace %s is chart %s, which install did not put there", releaseName, request.namespace, release.Chart)
 		}
 		if installed != request.version {
