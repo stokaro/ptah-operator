@@ -157,7 +157,7 @@ waived it would be the same `Always` again.
 | `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings; `SET ROLE` and `SET SESSION AUTHORIZATION`, which change who the rest of the Apply runs as |
 | `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
 | `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
-| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`, and every MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW`; a PostgreSQL view's `security_invoker`, read from the effect Ptah records for the statement: changed on a view that existed, or on for a new one. A statement with no effect is read from its SQL: the option named by `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, whatever its value, or reset, and set to `false` or `off` by `CREATE VIEW` |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`, and every MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW`; a PostgreSQL view's `security_invoker`, read from the effect Ptah records for the statement: changed on a view that existed or that the plan dropped and makes again, or on for a new one. A statement with no effect is read from its SQL: the option named by `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, whatever its value, or reset, and set to `false` or `off` by `CREATE VIEW` |
 | `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
 | `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
 
@@ -215,16 +215,27 @@ and not from the SQL:
   whose definition changed as `CREATE OR REPLACE VIEW` with every option the
   declaration states, so this is what lets a body change of a view with invoker
   rights run under `Always`.
-- A view the statement creates is raised when it reads with invoker rights. One
-  with its owner's rights is raised no more than a view that states no option.
+- A view the plan drops and makes again is read against the value the drop's
+  effect recorded, and raised when the new value differs, in either direction.
+  Ptah rebuilds a view it cannot change in place with `DROP VIEW` and then
+  `CREATE VIEW`, and the create's effect records the option as absent before,
+  as it does for a view that never existed.
+- A view the plan may have dropped without such an effect is raised when
+  either its effect or its SQL would raise it. That is a view a `DROP VIEW`
+  with no effect named, and any view the plan makes after a drop with
+  `CASCADE` or a `DROP OWNED`, which can take views they do not name.
+- Any other view the statement creates is raised when it reads with invoker
+  rights. One with its owner's rights is raised no more than a view that
+  states no option.
 
-The effect is read only where it plainly describes its statement: one effect
-the operator reads, at version 1, for a view, with the statement's own verb and
-values that agree with each other. Anything else is read from the SQL, and so is
-every statement of a plan from an earlier Ptah. The SQL reading takes no value
-from `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, so `0`, `no` or a
-quoted `'false'` is raised the same as `true`, and a restated option reads like
-a changed one. A view `CREATE VIEW` makes is raised there only when it states
+The effect is read only where it plainly describes its statement: every effect
+on the statement is one the operator reads, at version 1, exactly one of them
+is a view's with a `security_invoker`, and that one names the view the SQL
+names, with the statement's own verb and values that agree with each other.
+Anything else is read from the SQL, and so is every statement of a plan from an
+earlier Ptah. The SQL reading takes no value from `ALTER VIEW`, `ALTER TABLE` or
+`CREATE OR REPLACE VIEW`, so `0`, `no` or a quoted `'false'` is raised the same
+as `true`, and a restated option reads like a changed one. A view `CREATE VIEW` makes is raised there only when it states
 `false` or `off`. The plan's source fingerprint covers the database the effects
 were read from, so an Apply refuses the plan as stale if that database moved.
 
@@ -257,9 +268,12 @@ What it cannot see:
   otherwise, and a MySQL trigger runs as its definer. A new MySQL view that
   names no `SQL SECURITY` is not raised, although it runs as its definer.
 - SQL built at run time, such as a `DO` block that `EXECUTE`s a string.
-- A `CREATE OR REPLACE VIEW` that leaves `security_invoker` out, which clears
-  it. Ptah refuses such a plan unless the schema states the option, so the
-  reading does not look for it.
+- In a statement with no effect, a `CREATE OR REPLACE VIEW` that leaves
+  `security_invoker` out, which clears it, and a `CREATE VIEW` of a view an
+  earlier statement dropped, which the SQL reads as a new view. Ptah refuses
+  the first unless the schema states the option, so the reading does not look
+  for it. Where the statement has an effect, the values it records are read
+  instead.
 - `CREATE EXTENSION`, whose install script runs with whatever rights the
   extension asks for.
 - A `PtahMigration`. Its plan is a sequence of files the operator does not

@@ -19,12 +19,16 @@ out of silence.
 ## 0.2.12
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRD schemas do not change. An installation that renders
+on the upgrade. The CRD schemas do not change, so the CRD hook does not refuse
+[a rollback](../../use/operations/#rollback) to 0.2.11. An installation that renders
 the chart's rules gains `PtahOperatorJournalLinesDropped`. Set
 `monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
 The executor moves to Ptah v0.26.0, which retires the execution binding:
 approve again whatever was waiting, after the resource has read its database
-with v0.26.0 and planned. Move `kubectl ptah` with the operator. A plan with a PostgreSQL view statement
+with v0.26.0 and planned. A rollback to 0.2.11 retires every plan this release
+made the same way: 0.2.11 checks a plan's execution binding before it reads
+the `effects` the plan carries, so the resource plans again with Ptah v0.23.0
+and asks for its approvals again. Move `kubectl ptah` with the operator. A plan with a PostgreSQL view statement
 now carries the `effects` Ptah records for it, and a plugin from an earlier
 release names that field as one it does not read and refuses to approve the
 plan or print it with `-o sql` or `-o json`. Ptah Console 0.3.2 still holds
@@ -61,12 +65,15 @@ sends has to expect the reads the executor bullet names. Nothing else.
   v0.26.0 records what each PostgreSQL view statement does to the view's
   security options, before and after, read from the database the plan was
   computed against, and the operator reads `security_invoker` from that record.
-  A change on a view that existed is raised in either direction, a view the
-  plan creates with its readers' rights is raised, and an option that keeps its
-  value raises nothing, so such a body change now runs unattended. A
-  `CREATE VIEW` that states `security_invoker=false` is no longer raised: the
-  view has no readers yet and reads with its owner's rights, as one that states
-  nothing. A statement Ptah records nothing for is read from its SQL as before.
+  A change on a view that existed is raised in either direction, and an option
+  that keeps its value raises nothing, so such a body change now runs
+  unattended. A view the plan drops and creates again, as Ptah rebuilds one it
+  cannot change in place, is read the same way against the value its drop
+  recorded. A new view is raised when it reads with its readers' rights. One
+  that states `security_invoker=false` is no longer raised, as one that states
+  nothing is not, unless the plan may have dropped a view of its name without a
+  record of what that view held. A statement Ptah records nothing for is read
+  from its SQL as before.
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
   has the rule.
 - **Every MySQL view a plan replaces waits under `apply: Always`.** A MySQL or
