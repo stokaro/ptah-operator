@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -113,9 +114,10 @@ func journalLogsCover(logs []managerJournalLog, resources []journalAudited) erro
 
 // journalLinesHold is nil when the manager's logs hold exactly one line for
 // each entry the journal of each resource stores, equal to it field by field,
-// and no other line for that resource. A failure folded into one entry has a
-// line for each count it reached, so a line for an earlier count of a stored
-// entry is accounted for, once per count. The journals must be read twice
+// and no other line for that resource. A failure folded into one entry has
+// exactly one line for each count it reached: a write derives at most one
+// failure, so every count below the stored one was stored, and logged, by a
+// write of its own. The journals must be read twice
 // around the logs and found the same, so a line still on its way is not read
 // as a missing one.
 func journalLinesHold(resources []journalAudited, logs []managerJournalLog) error {
@@ -198,6 +200,13 @@ func journalLinesOf(resource journalAudited, logs []managerJournalLog) []string 
 		counted := fmt.Sprintf("%s#%d", journalAttemptKey(line.Entry), count)
 		if earlier[counted]++; earlier[counted] == 2 {
 			problems = append(problems, fmt.Sprintf("two lines for %s give count %d of the failure %s", who, count, journalAttemptKey(line.Entry)))
+		}
+	}
+	for _, attempt := range slices.Sorted(maps.Keys(folded)) {
+		for count := int32(1); count < folded[attempt]; count++ {
+			if earlier[fmt.Sprintf("%s#%d", attempt, count)] == 0 {
+				problems = append(problems, fmt.Sprintf("no line for %s gives count %d of the failure %s", who, count, attempt))
+			}
 		}
 	}
 	keys := make([]string, 0, len(stored))
