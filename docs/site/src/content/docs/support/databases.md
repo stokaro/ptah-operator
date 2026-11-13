@@ -50,7 +50,10 @@ The login needs only:
 - ownership of every object the desired schema may alter or drop.
 
 For a database `app` whose managed schema is `public`, these statements create
-that login. Create the managed objects as the login, and it owns them:
+that login. Run them as a superuser connected to `app`: a grant on a schema
+applies in the database the session is connected to, so from another database
+the last one grants on the wrong `public`. Create the managed objects as the
+login, and it owns them:
 
 ```sql
 CREATE ROLE ptah LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
@@ -81,8 +84,13 @@ object a comparison reads. A typical table-and-index schema needs `SELECT`,
 schema needs `TRIGGER`, `EXECUTE`, and `SHOW VIEW` there as well:
 
 ```sql
-GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON app.* TO 'ptah'@'%';
+GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON `app`.* TO 'ptah'@'%';
 ```
+
+Escape each `_` or `%` in the database name as `\_` or `\%`, inside the
+backquotes. With `partial_revokes` off, MySQL's default, a database-level grant
+reads both as wildcards, so a grant on `` `my_app`.* `` also covers a database
+named `myXapp`. Write `` `my\_app`.* `` instead.
 
 MySQL lists in `information_schema` only what an account holds a privilege on,
 and a comparison reads an object it cannot see as absent. `TRIGGER` is the only

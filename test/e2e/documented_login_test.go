@@ -29,7 +29,7 @@ func TestDocumentedLoginIsTheOneThePageShows(t *testing.T) {
 // the page alone.
 func TestPageShowsRefusesAPageThatMovedApart(t *testing.T) {
 	t.Parallel()
-	const mysqlGrant = "GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON app.* TO 'ptah'@'%';"
+	const mysqlGrant = "GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIEW ON `app`.* TO 'ptah'@'%';"
 	accepted := strings.Join([]string{
 		"# Databases", "",
 		postgreSQLAuthoritySection, "", "The login needs only:", "",
@@ -62,8 +62,8 @@ func TestPageShowsRefusesAPageThatMovedApart(t *testing.T) {
 		{"a PostgreSQL schema privilege dropped", postgreSQLAuthoritySection, "USAGE, CREATE ON SCHEMA", "USAGE ON SCHEMA", postgres},
 		{"the PostgreSQL statements moved out of their section", postgreSQLAuthoritySection, "```sql\nCREATE ROLE", "```text\nCREATE ROLE", postgres},
 		{"a MySQL privilege dropped", mySQLAuthoritySection, "EXECUTE, SHOW VIEW", "SHOW VIEW", mysql},
-		{"a MySQL privilege added", mySQLAuthoritySection, "SHOW VIEW ON app", "SHOW VIEW, CREATE VIEW ON app", mysql},
-		{"the MySQL grant widened to every database", mySQLAuthoritySection, "ON app.*", "ON *.*", mysql},
+		{"a MySQL privilege added", mySQLAuthoritySection, "SHOW VIEW ON", "SHOW VIEW, CREATE VIEW ON", mysql},
+		{"the MySQL grant widened to every database", mySQLAuthoritySection, "ON `app`.*", "ON *.*", mysql},
 		{"the MySQL grant removed, leaving the global one first", mySQLAuthoritySection, "```sql\n" + mysqlGrant + "\n```\n", "", mysql},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -100,10 +100,11 @@ func TestDocumentedLoginReadingsRefuseWiderLogins(t *testing.T) {
 		// database.
 		mysqlAll = "ALTER,ALTER ROUTINE,CREATE,CREATE ROUTINE,CREATE TEMPORARY TABLES,CREATE VIEW,DELETE,DROP,EVENT," +
 			"EXECUTE,INDEX,INSERT,LOCK TABLES,REFERENCES,SELECT,SHOW VIEW,TRIGGER,UPDATE|0|USAGE|0|0"
-		// The image's MYSQL_USER, read against its own database. The image grants
-		// it ALL PRIVILEGES on the name with its underscores escaped, so the
-		// query counts those 18 privileges as held on another database.
-		mysqlFixtureUser = "|18|USAGE|0|0"
+		// The page's privileges granted on the name with its underscores
+		// unescaped, which MySQL reads as a pattern covering other databases:
+		// the query counts all nine as held on another name. Read on MySQL
+		// 8.4.13 with partial_revokes off.
+		mysqlUnescaped = "|9|USAGE|0|0"
 	)
 	if got := documentedPostgreSQLLoginReading(false); got != documented {
 		t.Errorf("the documented login reads %q, and the guard expects %q", documented, got)
@@ -124,9 +125,25 @@ func TestDocumentedLoginReadingsRefuseWiderLogins(t *testing.T) {
 			t.Errorf("the PostgreSQL extension guard accepts %q", reading)
 		}
 	}
-	for _, reading := range []string{mysqlAll, mysqlFixtureUser} {
+	for _, reading := range []string{mysqlAll, mysqlUnescaped} {
 		if reading == documentedMySQLAccountReading() {
 			t.Errorf("the MySQL guard accepts %q", reading)
+		}
+	}
+}
+
+// A database-level grant reads an unescaped _ or % as a wildcard, so the grant
+// has to escape them, and the readback has to look for the name as the grant
+// stored it, escapes included.
+func TestDocumentedMySQLGrantEscapesTheDatabaseName(t *testing.T) {
+	t.Parallel()
+	if grant := documentedMySQLGrant("e2e_drift%x", "'u'@'%'"); !strings.Contains(grant, " ON `e2e\\_drift\\%x`.* TO 'u'@'%'") {
+		t.Errorf("the grant names %q", grant)
+	}
+	query := documentedMySQLAccountQuery("u", "e2e_drift")
+	for _, want := range []string{`TABLE_SCHEMA = 'e2e\\_drift'`, `TABLE_SCHEMA <> 'e2e\\_drift'`} {
+		if !strings.Contains(query, want) {
+			t.Errorf("the readback does not hold %s: %s", want, query)
 		}
 	}
 }

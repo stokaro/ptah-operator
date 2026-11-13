@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-13T08:43:42.562653+00:00",
+  "frozenAt": "2026-11-13T09:20:36.493948+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "a27f4c61dbfe56619bd85a14b034c6de8e02e81808775824c365a5c213c4a5b1"
+      "sha256": "72f584bc52d06baf372b5c854a7377a82db03924af306dc6300d69c6b3cf2ac5"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",

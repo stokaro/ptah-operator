@@ -40,7 +40,15 @@ var documentedMySQLPrivileges = []string{
 // documentedMySQLGrant is the page's grant on database to account, an account
 // name as MySQL spells it: 'user'@'host'.
 func documentedMySQLGrant(database, account string) string {
-	return "GRANT " + strings.Join(documentedMySQLPrivileges, ", ") + " ON " + database + ".* TO " + account
+	return "GRANT " + strings.Join(documentedMySQLPrivileges, ", ") + " ON `" + mysqlGrantDatabase(database) + "`.* TO " + account
+}
+
+// mysqlGrantDatabase is database as a database-level grant has to name it.
+// With partial_revokes off, MySQL's default, a grant reads an unescaped _ or %
+// in the name as a wildcard, so a grant on e2e_drift.* also covers e2eXdrift.
+// information_schema stores the name as the grant wrote it, escapes included.
+func mysqlGrantDatabase(database string) string {
+	return strings.NewReplacer("_", `\_`, "%", `\%`).Replace(database)
 }
 
 // documentedPostgreSQLLoginQuery reads, as the server's superuser in database,
@@ -71,10 +79,13 @@ func documentedPostgreSQLLoginReading(extensions bool) string {
 }
 
 // documentedMySQLAccountQuery reads, as root, what account holds: its
-// privileges on database, how many grants it holds on another database, its
-// global privileges, and how many table and column grants it holds.
+// privileges on database, as the grant names it, how many grants it holds on
+// any other name, a wildcard that matches database included, its global
+// privileges, and how many table and column grants it holds. The query runs
+// with backslash escapes on, so each backslash the name holds is doubled.
 func documentedMySQLAccountQuery(user, database string) string {
 	grantee := "'''" + user + "''@''%'''"
+	database = strings.ReplaceAll(mysqlGrantDatabase(database), `\`, `\\`)
 	return "SELECT CONCAT_WS('|', " +
 		"(SELECT COALESCE(GROUP_CONCAT(PRIVILEGE_TYPE ORDER BY PRIVILEGE_TYPE SEPARATOR ','), '') " +
 		"FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = " + grantee + " AND TABLE_SCHEMA = '" + database + "'), " +
