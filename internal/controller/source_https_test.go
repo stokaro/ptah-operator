@@ -8,9 +8,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 )
@@ -418,6 +422,209 @@ func TestAMigrationSourcePolicyRefusesAnHTTPSHostBeforeAnyJob(t *testing.T) {
 				ready == nil || !strings.Contains(ready.Message, "allowedHTTPSHosts does not name artifacts.example.com") {
 				t.Fatalf("phase %s, claim %#v, %d Jobs, Ready %#v; want Failed naming the rule before any Job",
 					actual.Status.Phase, actual.Status.ActiveOperation, len(jobs.Items), ready)
+			}
+		})
+	}
+}
+
+// An Apply of a plan computed from an HTTPS download persists its post-apply
+// proof: the access binding is the download, not an OCI reference the check
+// would look for a digest in. An OCI binding without its pinned reference is
+// the control the same check must still refuse.
+func TestAnHTTPSApplyPersistsItsPostApplyProof(t *testing.T) {
+	t.Parallel()
+	binding := operatorv1alpha1.SourceAccessBinding{HTTPS: &operatorv1alpha1.HTTPSSourceBinding{
+		URL: "https://artifacts.example.com/acme/app.zip", Digest: httpsDownloadA, Format: operatorv1alpha1.HTTPSFormatZip,
+		Path: "db/schema.hcl", ContentDigest: gitContentOne,
+	}}
+	for name, row := range map[string]struct {
+		source   operatorv1alpha1.SourceAccessBinding
+		artifact string
+		plan     *operatorv1alpha1.PlanSourceBinding
+		refused  bool
+	}{
+		"an HTTPS download": {
+			source: binding,
+			plan: &operatorv1alpha1.PlanSourceBinding{
+				Kind: operatorv1alpha1.SourceKindHTTPS, Revision: sourcebinding.HTTPSRevision(binding.HTTPS.URL, binding.HTTPS.Path),
+				ContentDigest: gitContentOne,
+			},
+		},
+		"an OCI digest without its pinned reference": {
+			source: operatorv1alpha1.SourceAccessBinding{Digest: testDigest}, artifact: testDigest, refused: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Status.ObservedGeneration = schema.Generation
+			schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
+				Name: "app-plan", UID: "plan-uid", Fingerprint: testDigest, ArtifactDigest: row.artifact, Source: row.plan,
+				CoordinationDigest: testDigest, TargetIdentityDigest: testDigest,
+			}
+			operation := &operatorv1alpha1.ActiveOperationStatus{
+				Type: operatorv1alpha1.OperationApply, ID: testDigest, JobName: "apply-job", JobUID: "job-uid",
+				Target: &operatorv1alpha1.DatabaseTargetBinding{Engine: schema.Spec.Target.Engine}, Source: row.source.DeepCopy(),
+				CoordinationDigest: testDigest, TargetIdentityDigest: testDigest, LeaseDurationSeconds: 30, LeaseEpoch: "epoch",
+			}
+			pending, err := pendingObservationFor(schema, operation, nil, operatorv1alpha1.PendingObservationApplySucceeded, nil, nil, 0)
+			if row.refused {
+				if err == nil {
+					t.Fatalf("an OCI binding without a pinned reference persisted %#v", pending)
+				}
+				return
+			}
+			if err != nil || pending == nil || pending.Source.HTTPS == nil || pending.Source.HTTPS.ContentDigest != gitContentOne {
+				t.Fatalf("pendingObservationFor() = %#v, %v; want the HTTPS binding persisted", pending, err)
+			}
+		})
+	}
+}
+
+// A source policy replaced under a resolved HTTPS source is read again: the
+// plan made under the old one does not apply.
+func TestAReplacedSourcePolicyIsSeenUnderAnHTTPSSource(t *testing.T) {
+	t.Parallel()
+	for name, row := range map[string]struct {
+		uid   types.UID
+		moved bool
+	}{
+		"the same policy":                    {uid: "policy-uid"},
+		"another object with the same bytes": {uid: "replacement-uid", moved: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired = operatorv1alpha1.SourceSpec{HTTPS: httpsSourceSpec()}
+			withSourcePolicy(&schema.Spec.Desired, "source-policy")
+			stored := sourcePolicyConfigMap("source-policy", string(row.uid), "maxContentBytes: 1024\n")
+			_, api := fakeReconciler(t, staticLogs{}, schema, stored)
+			_, bound, err := sourcePolicyFor(context.Background(), api, "team-a", schema.Spec.Desired)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bound.UID = "policy-uid"
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+				HTTPS: &operatorv1alpha1.HTTPSSourceRevision{
+					URL: schema.Spec.Desired.HTTPS.URL, Format: schema.Spec.Desired.HTTPS.Format, Path: schema.Spec.Desired.HTTPS.Path,
+					Digest: httpsDownloadA, ContentDigest: gitContentOne,
+				},
+				SourcePolicy: bound,
+			}
+			moved, err := sourcePolicyMoved(context.Background(), api, "team-a", schema.Spec.Desired,
+				schema.Status.Source.SourcePolicy, schemaSourceResolved(schema))
+			if err != nil || moved != row.moved {
+				t.Fatalf("sourcePolicyMoved() = %v, %v; want %v", moved, err, row.moved)
+			}
+		})
+	}
+}
+
+// A refresh of a resolved HTTPS source says it downloads the source again,
+// and keeps what was resolved as historical evidence.
+func TestAnHTTPSRefreshNamesTheDownload(t *testing.T) {
+	t.Parallel()
+	schema := schemaFixture()
+	schema.Spec.Desired = operatorv1alpha1.SourceSpec{HTTPS: httpsSourceSpec()}
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{HTTPS: &operatorv1alpha1.HTTPSSourceRevision{
+		URL: schema.Spec.Desired.HTTPS.URL, Format: schema.Spec.Desired.HTTPS.Format, Path: schema.Spec.Desired.HTTPS.Path,
+		Digest: httpsDownloadA, ContentDigest: gitContentOne,
+	}}
+	markSourceRefreshPending(schema)
+	resolved := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionArtifactResolved)
+	if resolved == nil || resolved.Reason != string(operatorv1alpha1.ReasonRefreshing) || !strings.Contains(resolved.Message, "HTTPS source again") {
+		t.Fatalf("ArtifactResolved = %#v, want a refresh of the HTTPS source", resolved)
+	}
+	markSourceRefreshFailed(schema)
+	resolved = meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionArtifactResolved)
+	if resolved == nil || resolved.Reason != string(operatorv1alpha1.ReasonRefreshFailed) || !strings.Contains(resolved.Message, "HTTPS download could not be read again") {
+		t.Fatalf("ArtifactResolved = %#v, want the failed HTTPS refresh with the retained content", resolved)
+	}
+}
+
+// A plan computed from an HTTPS download is published for approval: the Plan
+// harvest checks the source against its verification policy, and an HTTPS
+// source has none, only the download the spec names. The first kind run of
+// the HTTPS phase found the harvest refusing every HTTPS plan as a verified
+// source without a policy binding.
+func TestAnHTTPSPlanIsPublishedWithoutAVerificationPolicy(t *testing.T) {
+	t.Parallel()
+	schema := schemaFixture()
+	schema.Spec.Desired = operatorv1alpha1.SourceSpec{HTTPS: httpsSourceSpec()}
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{HTTPS: &operatorv1alpha1.HTTPSSourceRevision{
+		URL: schema.Spec.Desired.HTTPS.URL, Format: schema.Spec.Desired.HTTPS.Format, Path: schema.Spec.Desired.HTTPS.Path,
+		Digest: httpsDownloadA, ContentDigest: gitContentOne,
+	}}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		CoordinationDigest: testCoordinationDigest, IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
+	}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationPlan, ID: "https-plan-operation", JobName: "https-plan-job", JobUID: "job-uid",
+		StartedAt: metav1.Now(), Attempt: 1, PlanSealPublicKeyDigest: planSealPublicKeyDigest(testSchemaSealKey.PublicKey()),
+	}
+	bindActiveInput(t, schema)
+	planDocument := safetyPlanDocument(t, "observed-state")
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationPlan, OperationID: schema.Status.ActiveOperation.ID,
+		Stdout:             safetySealPlan(t, schema.Status.ActiveOperation, planDocument),
+		CoordinationDigest: schema.Status.Target.CoordinationDigest, TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		PlanContentDigest: fingerprint.DigestBytes(planDocument), PlanOutcome: runner.PlanOutcomeChanges,
+	})
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod)
+	reconciler.Plans = planstore.Store{Client: api, Reader: api}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	// Publication commits the plan, then marks its storage ready on a later
+	// pass; drive it until the plan is one a person could approve.
+	for pass := range 4 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+	actual := safetyGetSchema(t, api, schema)
+	verified := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+	if actual.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval || actual.Status.Plan == nil || verified != nil {
+		t.Fatalf("phase %s, plan %#v, ArtifactVerified %#v; want a plan awaiting approval and no verification",
+			actual.Status.Phase, actual.Status.Plan, verified)
+	}
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: actual.Namespace, Name: actual.Status.Plan.Name}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if source := plan.Spec.Source; source == nil || source.Kind != operatorv1alpha1.SourceKindHTTPS ||
+		source.ContentDigest != gitContentOne ||
+		source.Revision != sourcebinding.HTTPSRevision(schema.Spec.Desired.HTTPS.URL, schema.Spec.Desired.HTTPS.Path) {
+		t.Fatalf("the plan binds %#v, want the HTTPS download's content", plan.Spec.Source)
+	}
+}
+
+// The check the Plan harvest makes holds an HTTPS source to the download the
+// spec names now: a status resolved from another download is refused.
+func TestTheSourceCheckHoldsAnHTTPSSourceToTheSpec(t *testing.T) {
+	t.Parallel()
+	for name, row := range map[string]struct {
+		pinned  string
+		refused bool
+	}{
+		"the download it was resolved from": {pinned: httpsDownloadA},
+		"another download":                  {pinned: httpsDownloadB, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired = operatorv1alpha1.SourceSpec{HTTPS: httpsSourceSpec()}
+			schema.Spec.Desired.HTTPS.Digest = row.pinned
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{HTTPS: &operatorv1alpha1.HTTPSSourceRevision{
+				URL: schema.Spec.Desired.HTTPS.URL, Format: schema.Spec.Desired.HTTPS.Format, Path: schema.Spec.Desired.HTTPS.Path,
+				Digest: httpsDownloadA, ContentDigest: gitContentOne,
+			}}
+			reconciler, _ := fakeReconciler(t, staticLogs{}, schema)
+			err := reconciler.verifiedSourcePolicyError(context.Background(), schema)
+			if row.refused != (err != nil) || (err != nil && !strings.Contains(err.Error(), "no longer the HTTPS download")) {
+				t.Fatalf("verifiedSourcePolicyError() = %v, want refused %v", err, row.refused)
 			}
 		})
 	}

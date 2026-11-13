@@ -1564,7 +1564,8 @@ func (r *SchemaReconciler) verifiedSourcePolicyError(
 		return nil
 	}
 	if schema.Status.Source.HTTPS != nil {
-		// Nor has an HTTPS source: its digest is in the spec.
+		// Nor has an HTTPS source: its digest is in the spec. The Plan
+		// harvest calls this check whether or not the source was verified.
 		if !sourcebinding.HTTPSResolved(schema.Spec.Desired.HTTPS, schema.Status.Source.HTTPS) {
 			return fmt.Errorf("the source is no longer the HTTPS download it was resolved from")
 		}
