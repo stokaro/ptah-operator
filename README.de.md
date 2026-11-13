@@ -84,7 +84,9 @@ unterstützten Clientplattformen veröffentlicht. Seine Lesebefehle lesen nur;
 Namen und benötigt dafür `create` auf den Freigabearten.
 `kubectl ptah suspend`, `resume` und `refresh` ändern ein Schema oder eine
 Migration per Patch in Ihrem Namen, `kubectl ptah set-source` richtet eines
-davon auf ein anderes, per Digest festgelegtes Artefakt aus, und
+davon auf ein anderes, per Digest festgelegtes Artefakt aus,
+`kubectl ptah settle` gibt den Nachweis eines Schemas auf, dessen
+Datenbankziel sich geändert hat, und
 `kubectl ptah wait` wartet, bis der Operator auf eine Änderung reagiert hat.
 [Einen Plan lesen](https://operator.ptah.run/edge/use/read-a-plan/#install)
 beschreibt die Installation und die benötigten RBAC-Berechtigungen

@@ -67,14 +67,16 @@ itself, run by the operator in a Job.
 | [1 Source](../../use/sources/) | `kubectl apply`, or `kubectl ptah set-source` for another OCI artifact | `PtahSchema` or `PtahMigration`, and the source it names | Pins the content: a [ConfigMap snapshot](#a-configmap-source), a [Git commit](#a-git-source), or an OCI digest its verification policy accepts | Runs a Resolve Job for Git and OCI, and a Verify Job for OCI. A ConfigMap needs neither |
 | [2 Plan](../../use/read-a-plan/) | `kubectl ptah plan`, `schema` or `migration` shows the plan's identity, contents and findings | `PtahSchemaPlan` and its chunks, or `PtahMigrationPlan` | Publishes a plan bound to what was read | Observes the database and plans, or reads the revision table |
 | [3 Decision](../../use/approvals/) | `kubectl ptah approve`, when the policy asks | `PtahSchemaApproval` or `PtahMigrationApproval`, stamped by admission | Applies `spec.policy`: refuses, waits for an approval of this exact plan, or proceeds | Runs nothing |
-| [4 Execution](../../use/operations/#wait) | `kubectl ptah wait`, or `approve --wait` | An Apply Job and the database-realm Lease | Creates the Job once every gate holds | Runs the plan or the approved sequence |
-| [5 Verification](../../use/operations/#normal-status-progression) | `kubectl ptah schema` or `migration` | Status conditions | Takes this read as the proof, not the Job's exit | Reads the database or the revision table again |
-| [6 History](#the-lifecycle-journal) | `kubectl get`, `kubectl ptah plan --applied`, `kubectl events` | Status, stored plans and approvals, Events | Writes the record in the status writes it already makes | Runs nothing |
+| [4 Execution](../../use/operations/#wait) | `kubectl ptah wait`, or `approve --wait`; `schema --details` or `migration --details` shows the operation claimed and its Job | An Apply Job and the database-realm Lease | Creates the Job once every gate holds | Runs the plan or the approved sequence |
+| [5 Verification](../../use/operations/#normal-status-progression) | `kubectl ptah schema` or `migration`, and `--details` for the proof a schema still owes | Status conditions | Takes this read as the proof, not the Job's exit | Reads the database or the revision table again |
+| [6 History](#the-lifecycle-journal) | `kubectl ptah history`, `kubectl ptah plan --applied`, `kubectl events` | Status, stored plans and approvals, Events | Writes the record in the status writes it already makes | Runs nothing |
 
 History is not a step after verification, and reading it changes nothing.
 `status.journal` records when a plan was published, approved and applied and
 how each attempt ended. [The lifecycle journal](#the-lifecycle-journal) says how
-far back it reaches, and how much sooner Events and finished Jobs go. A migration
+far back it reaches, and how much sooner Events and finished Jobs go.
+[`kubectl ptah history`](../../use/read-a-plan/#history) prints it with every
+approval and run acknowledgment that names the resource. A migration
 also keeps the newest rows of its revision table in `status.history.revisions`,
 and its last run in `status.lastRun`. A schema keeps what its last confirmed
 Apply ran in `status.applied`, and `kubectl ptah plan --applied` prints that
@@ -729,6 +731,9 @@ planned, approved and applied, how long it took and how it ended, and how
 often something failed, after the Events Kubernetes keeps for about an hour
 and the finished Jobs it keeps for five minutes, or 24 hours after
 [a failed Apply that keeps its log](../../use/operations/#failed-apply-log), are gone.
+[`kubectl ptah history`](../../use/read-a-plan/#history) prints it in the order it
+was recorded, says from when it is complete, and marks whether each plan and
+decision an entry names is still stored.
 
 | Entry | Written when |
 | --- | --- |
@@ -764,7 +769,10 @@ The plan nothing has carried out yet stays past the age and the count, because a
 plan can wait for a person longer than they last and a later plan has to be able
 to say what it replaced. The entry that published it and the newest approval of
 it stay until an Apply or a run ends it or another plan is published, so those
-two can be older than `coveredSince`.
+two can be older than `coveredSince`. So can an entry dated by a time its status
+carried from before the journal began: the first status write that starts a
+journal, as after an upgrade from a release before 0.2.7, dates a plan by its
+creation and a run by when its hold was recorded.
 
 The journal is written in the status write that records the transition, so it
 costs no request of its own. Its times come from that status, such as a plan's

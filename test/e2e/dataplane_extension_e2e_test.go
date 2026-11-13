@@ -3,10 +3,6 @@
 package e2e
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
@@ -62,7 +58,7 @@ func (d *dataPlane) postgresqlExtensionDrift() {
 	d.check(err, "drop %s from %s", extension, extensionPGDatabase)
 	drifted := d.waitForSchema(schemaName, "an Observe to count the dropped extension in Ptah's category",
 		func(s *ptahv1alpha1.PtahSchema) bool { return droppedExtensionObserved(s, digest) })
-	d.printExtensionDriftReading(drifted)
+	d.printReading("extension drift", map[string]any{"status": drifted.Status})
 	d.logf("PASS a dropped PostgreSQL extension is stored as %s, and counted under %s with desired 1 and observed 0",
 		pgExtensionChange, pgExtensionKind)
 }
@@ -74,20 +70,4 @@ func (d *dataPlane) isolatedPostgreSQLExtensionCount(database, extension string)
 	count, err := d.psql(database, "SELECT count(*) FROM pg_extension WHERE extname='"+extension+"'")
 	d.check(err, "count extension %s in %s", extension, database)
 	return removeWhitespace(count)
-}
-
-// printExtensionDriftReading prints the status that satisfied the wait, so a
-// run's log holds the document the predicate's unit test reads. It is scanned
-// like every other document the phase prints, and withheld on a match.
-func (d *dataPlane) printExtensionDriftReading(schema *ptahv1alpha1.PtahSchema) {
-	d.t.Helper()
-	reading, err := json.Marshal(map[string]any{"status": schema.Status})
-	if err != nil || !d.scanner.ready() {
-		return
-	}
-	if d.scanner.leaks(reading) {
-		_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the extension drift reading is withheld: it matched a protected credential\n")
-		return
-	}
-	_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the extension drift reading\n%s\n", reading)
 }

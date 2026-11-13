@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/schemas/differs-fk-index-takeover-mysql@sha256:a7b395302c7696586a5d28517d189071126dfbece8b3125fbe3deb16fbc17810 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:a7b395302c7696586a5d28517d189071126dfbece8b3125fbe3deb16fbc17810
+Not parsed: the next command that reads the file reports what it cannot read.

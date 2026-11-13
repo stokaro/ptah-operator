@@ -1,0 +1,77 @@
+History of:           ptahmigration/orders in namespace application
+UID:                  orders-uid
+Created:              2026-11-10T08:59:55Z
+Journal:              9 entries, complete since 2026-11-10T09:00:00Z
+
+The journal is the operator's own bounded record in status.journal, in the order
+it recorded the entries, oldest first. It keeps at most 64 entries, none more
+than 30 days older than the newest, and is not an audit archive. It is complete
+from 2026-11-10T09:00:00Z, and an event before then may be missing. Entries
+dated before it are ones the bounds keep, or ones dated by a time their status
+carried from before it began. Each entry is dated by the status it was derived
+from, so a time can be earlier than the entry above it. It is not the database's
+revision table, which kubectl ptah migration orders summarizes as its history
+read.
+
+2026-11-10T09:01:00Z  PlanPublished
+  Plan:               ptah-mplan-orders-1 (no longer stored)
+2026-11-10T09:03:00Z  ApprovalAccepted
+  Plan:               ptah-mplan-orders-1, UID plan-1-uid, fingerprint sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (no longer stored)
+  Approval:           orders-approval-1, UID approval-1-uid (stored)
+  Approver:           alice@example.com
+2026-11-10T09:04:00Z  RunFinished, Succeeded
+  Started:            2026-11-10T09:03:00Z, 1m before it ended
+  Operation:          sha256:1111111111111111111111111111111111111111111111111111111111111111
+  Plan:               ptah-mplan-orders-1, UID plan-1-uid, fingerprint sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (no longer stored)
+  Authorized:         an approval
+  Approval:           orders-approval-1, UID approval-1-uid (stored)
+  Approver:           alice@example.com
+  Job:                ptah-m-apply-orders-1, UID job-1-uid
+  Versions applied:   2
+2026-11-10T09:05:00Z  PlanPublished
+  Plan:               ptah-mplan-orders-2 (stored)
+2026-11-10T09:05:00Z  Verified, Pending
+  Operation:          sha256:1111111111111111111111111111111111111111111111111111111111111111
+  Plan:               ptah-mplan-orders-1, UID plan-1-uid (no longer stored)
+  Job:                ptah-m-apply-orders-1, UID job-1-uid
+2026-11-10T09:11:00Z  ApprovalAccepted
+  Plan:               ptah-mplan-orders-2, UID plan-2-uid, fingerprint sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (stored)
+  Approval:           orders-approval-2, UID approval-2-uid (no longer stored)
+  Approver:           bob@example.com
+2026-11-10T09:12:00Z  RunFinished, Partial
+  Started:            2026-11-10T09:11:00Z, 1m before it ended
+  Operation:          sha256:2222222222222222222222222222222222222222222222222222222222222222
+  Plan:               ptah-mplan-orders-2, UID plan-2-uid, fingerprint sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (stored)
+  Authorized:         an approval
+  Approval:           orders-approval-2, UID approval-2-uid (no longer stored)
+  Approver:           bob@example.com
+  Job:                ptah-m-apply-orders-2, UID job-2-uid
+  Versions applied:   1
+  Stopped at:         version 5, statement 2 of 3, SQLSTATE 23505
+2026-11-10T09:15:00Z  OperationFailed, History, DatabaseUnreachable
+  Attempts:           3 in a row, the last at 2026-11-10T09:25:00Z
+2026-11-10T09:40:00Z  RunAcknowledged, Partial
+  Operation:          sha256:2222222222222222222222222222222222222222222222222222222222222222
+  Plan:               ptah-mplan-orders-2, UID plan-2-uid (stored)
+  Job:                ptah-m-apply-orders-2, UID job-2-uid
+  Acknowledgment:     orders-run-2-accounted (stored)
+  Acknowledged by:    carol@example.com
+  Settled:            by a person's statement that the run is accounted for, not by a reading of the database
+
+Approvals, 1 in all, oldest first:
+  orders-approval-1, UID approval-1-uid
+    approved by alice@example.com at 2026-11-10T09:02:30Z
+    plan ptah-mplan-orders-1, UID plan-1-uid
+    TYPE      STATUS  REASON      SINCE                 MESSAGE
+    Consumed  True    Dispatched  2026-11-10T09:03:00Z  The approved plan was dispatched
+
+Run acknowledgments, 1 in all, oldest first:
+  orders-run-2-accounted, UID acknowledgment-uid
+    acknowledged by carol@example.com at 2026-11-10T09:39:50Z
+    operation sha256:2222222222222222222222222222222222222222222222222222222222222222
+    It states that the run is accounted for. It is not proof that the data is correct.
+    TYPE      STATUS  REASON        SINCE                 MESSAGE
+    Consumed  True    Acknowledged  2026-11-10T09:40:00Z  The unresolved run was settled
+
+kubectl ptah migration orders -n application prints where it stands now.
+kubectl events -n application --for ptahmigration/orders prints its Events, which Kubernetes keeps for about an hour.

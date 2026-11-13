@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "managed data file \"/proc/self/environ\" for table public.regions: a path starting at a root is outside allowed root \"/work\""
+  }
+}

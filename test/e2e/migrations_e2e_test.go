@@ -249,6 +249,22 @@ func (m *migrationRun) logf(format string, arguments ...any) {
 	m.t.Logf("e2e migrations: "+format, arguments...)
 }
 
+// printReading prints a document a wait matched, so a run's log holds what a
+// predicate's unit test reads from testdata/e2e/readings. It is scanned like
+// every other document the phase prints, and withheld on a match.
+func (m *migrationRun) printReading(name string, reading any) {
+	m.t.Helper()
+	document, err := json.Marshal(reading)
+	if err != nil || !m.scanner.ready() {
+		return
+	}
+	if m.scanner.leaks(document) {
+		_, _ = fmt.Fprintf(os.Stderr, "e2e migrations: the %s %s reading is withheld: it matched a protected credential\n", m.engine.name, name)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "e2e migrations: the %s %s reading\n%s\n", m.engine.name, name, document)
+}
+
 func (m *migrationRun) check(err error, format string, arguments ...any) {
 	m.t.Helper()
 	if err != nil {

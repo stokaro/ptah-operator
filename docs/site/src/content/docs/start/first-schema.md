@@ -176,14 +176,15 @@ Watch the whole sequence, including this one, in
 You can read this at any stage, and reading it changes nothing:
 
 ```sh
-kubectl -n application get ptahschema application -o jsonpath='{.status.journal}' | jq
+kubectl ptah history schema/application -n application
 kubectl ptah plan application --applied -n application
 kubectl events -n application --for ptahschema/application
 ```
 
-The journal is the resource's own record. After the run above it holds
-`PlanPublished`, `ApprovalAccepted`, `ApplyFinished` with outcome `Succeeded`, and
-`Verified` with outcome `InSync`, each with its time. A plan that was replaced
+The journal is the resource's own record, and `history` prints it with the
+approval you made. After the run above it holds `PlanPublished`,
+`ApprovalAccepted`, `ApplyFinished` with outcome `Succeeded`, and `Verified` with
+outcome `InSync`, each with its time. A plan that was replaced
 before anybody approved it stays there as a `PlanPublished` with nothing after
 it. `--applied` prints the plan that Apply ran; without the flag the command
 exits 3, because a converged schema has no current plan. The Events and the

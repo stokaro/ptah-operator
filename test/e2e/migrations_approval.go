@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/types"
 
@@ -46,4 +48,29 @@ func changedMigrationApprovalRefused(resource *ptahv1alpha1.PtahMigration, oldPl
 	}
 	return status.Phase == ptahv1alpha1.MigrationPhaseAwaitingApproval &&
 		conditionStatus(status.Conditions, "ApprovalRequired", "True")
+}
+
+// approveWaitWillNotReach is the status kubectl ptah exits with when a wait ends
+// short of its target: exitWillNotReach in cmd/kubectl-ptah/operate.go.
+const approveWaitWillNotReach = 8
+
+// approveWaitStoppedOnAnotherRun holds what kubectl ptah approve --wait wrote to
+// stderr when the plan it approved went stale and another plan ran and was read
+// before the wait read again: exit 8, the stop that names another plan's run, and
+// both plans. Exit 0 is what #882 fixed: the replacement's run read as the run of
+// the approved plan.
+func approveWaitStoppedOnAnotherRun(code int, stderr, approved, ran string) error {
+	if approved == "" || ran == "" || approved == ran {
+		return errors.New("the approved plan and the plan that ran are not two named plans")
+	}
+	if code != approveWaitWillNotReach {
+		return fmt.Errorf("exit status %d, want %d", code, approveWaitWillNotReach)
+	}
+	if !strings.Contains(stderr, " will not reach applied: OtherPlanApplied.\n") {
+		return errors.New("stderr does not say the wait stopped on another plan's run (OtherPlanApplied)")
+	}
+	if !strings.Contains(stderr, fmt.Sprintf(" plan %s ran, not %s: ", ran, approved)) {
+		return fmt.Errorf("stderr does not name plan %s as the one that ran in place of plan %s", ran, approved)
+	}
+	return nil
 }

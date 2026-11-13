@@ -15,3 +15,8 @@ and unresolved run without rewriting their values. The diagnostic projection's
 name becomes `metadata.name`. Other diagnostic fields are omitted. No Pod
 reading is claimed by this fixture; the unit test supplies owned running and
 terminal Pods to distinguish retention from premature retirement.
+
+Each engine's last run is a run whose Job and result are gone, and it names no
+database and carries no reading. `TestRunNamesNoDatabaseRefusesEachClause` holds
+`runNamesNoDatabase` to both, and to copies of them with a database or a
+reading added.

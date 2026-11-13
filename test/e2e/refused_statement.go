@@ -105,6 +105,21 @@ func readPrintedLog(message string, kubectl func(arguments ...string) (stdout, s
 	return stdout, nil
 }
 
+// printedLogRefused holds the error of a printed command run as a user no Role of the
+// row is bound to: the API server refused that user by name. A command that ran, or
+// failed for another reason, says nothing about whose identity reached the API
+// server.
+func printedLogRefused(err error, user string) error {
+	if err == nil {
+		return fmt.Errorf("the API server answered the command for %s", user)
+	}
+	text := err.Error()
+	if !strings.Contains(text, "(Forbidden)") || !strings.Contains(text, `User "`+user+`" cannot `) {
+		return fmt.Errorf("the command failed, and not on a refusal of %s: %w", user, err)
+	}
+	return nil
+}
+
 // jobFinishedAt is the instant a finished Job's cleanup TTL counts from, read as the
 // TTL controller reads it (jobFinishTime in pkg/controller/ttlafterfinished): the
 // transition of a Complete or Failed condition that is true. A Job that met its

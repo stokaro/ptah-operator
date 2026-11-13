@@ -46,10 +46,13 @@ const (
 	// exitNotDone covers a decision or a change this program did not make:
 	// approve's plan or spec changed during review, the operator would not
 	// admit an approval now, the fingerprint given is not the current plan's,
-	// or the person declined; the resource suspend, resume, refresh or set-source
-	// read was deleted and created again before the change reached it; or
-	// set-source met a source that is not an OCI artifact, an Apply running,
-	// or a source another writer changed after it was read.
+	// or the person declined; the resource suspend, resume, refresh, set-source
+	// or settle read was deleted and created again before the change reached
+	// it; set-source met a source that is not an OCI artifact, an Apply
+	// running, or a source another writer changed after it was read; or
+	// settle met a schema that has not stopped on a proof whose target moved,
+	// a stop that prints no value it reads, or a value that no longer matches
+	// the resource or is not the one --expect names.
 	exitNotDone = 4
 	// exitRefused covers a write the API server refused with a 4xx, in its
 	// own words: RBAC, admission, the schema, a name already taken, a
@@ -84,6 +87,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return migration(ctx, arguments[1:], stdout, stderr)
 	case "schema":
 		return schema(ctx, arguments[1:], stdout, stderr)
+	case "history":
+		return historyCommand(ctx, arguments[1:], stdout, stderr)
 	case "approve":
 		return approveCommand(ctx, arguments[1:], os.Stdin, stdinIsTerminal(), stdout, stderr)
 	case "suspend":
@@ -96,6 +101,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return waitCommand(ctx, arguments[1:], stdout, stderr)
 	case "set-source":
 		return setSourceCommand(ctx, arguments[1:], stdout, stderr)
+	case "settle":
+		return settleCommand(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -217,6 +224,7 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the lock owed, the revision rows")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -245,7 +253,11 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := migrationview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := migrationview.Load
+	if *details {
+		load = migrationview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, migrationview.ErrMigrationNotFound) {
@@ -275,6 +287,7 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the proof owed, the lock owed")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -303,7 +316,11 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := schemaview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := schemaview.Load
+	if *details {
+		load = schemaview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, schemaview.ErrSchemaNotFound) {
@@ -393,11 +410,13 @@ func usage(out io.Writer) {
 	fmt.Fprint(out, `usage: kubectl ptah plan <schema> [flags]
        kubectl ptah schema <schema> [flags]
        kubectl ptah migration <migration> [flags]
+       kubectl ptah history schema/<name>|migration/<name> [flags]
        kubectl ptah approve schema/<name>|migration/<name> [flags]
        kubectl ptah suspend schema/<name>|migration/<name> [flags]
        kubectl ptah resume schema/<name>|migration/<name> [flags]
        kubectl ptah refresh schema/<name>|migration/<name> [flags]
        kubectl ptah set-source schema/<name>|migration/<name> --oci <ref> [flags]
+       kubectl ptah settle schema/<name> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
@@ -449,12 +468,38 @@ data plan is reading values.
   kubectl ptah migration orders -n application
   kubectl ptah migration orders -n application -o json
 
+--details adds, after the view, every status field this plugin's API version
+knows: the operation the resource has claimed and what it knows of its Job,
+the proof an Apply still owes, a Lease release still owed, when it was last
+read and is read next, the execution binding, and for a migration the revision
+rows and each run whole. With -o json it adds details.status, the status as
+this plugin decodes it; a field a newer operator added is not in it.
+
+  kubectl ptah schema storefront -n application --details
+  kubectl ptah migration orders -n application --details -o json
+
 Listing the approvals and acknowledgments takes list on them, which reading the
 resource does not. Without it the command still prints the resource, with one
-line that says why they are missing, and exits 0. Events are kubectl's own:
+line that says why they are missing, and exits 0. Each view prints the five
+newest; history prints them all. Events are kubectl's own:
 
   kubectl events -n application --for ptahschema/storefront
   kubectl events -n application --for ptahmigration/orders
+
+history prints what a schema or a migration retained of its past: the
+lifecycle journal the operator keeps in its status, entry by entry in the
+order it recorded them, and every approval and run acknowledgment that names
+this resource by name and UID, oldest first. It says from when the journal is
+complete, tells a status with no journal from a journal with no entries, and
+marks a plan or a decision an entry names that is no longer stored. The
+journal keeps at most 64 entries, none more than 30 days older than the
+newest: it is the operator's record, not an audit archive. It takes -o text
+(the default) or json, and the same -n, --kubeconfig, --context and --timeout
+flags. It needs get on the resource; listing its plans, approvals and
+acknowledgments is optional, the way it is for schema and migration.
+
+  kubectl ptah history schema/storefront -n application
+  kubectl ptah history migration/orders -n application -o json
 
 approve shows the current plan of a schema or a migration and the identities
 an approval of it carries, asks for a decision, and creates the approval as
@@ -570,6 +615,35 @@ Always it runs without a person, except a schema plan that is destructive or
 changes privileges. On a suspended resource nothing of this happens until it
 is resumed.
 
+settle gives up the proof a schema owes its last Apply when the URL Secret
+now names another target than the plan the Apply ran from: the schema stops
+Blocked with ReconciliationFailed reason TargetIdentityChanged, and its message
+ends with a kubectl annotate command. settle reads the value from that
+message and writes the operator.ptah.run/settled-apply annotation as that
+command does, and nothing else. It prints how the journal records the Apply's
+end and what the operator gives up when it takes the statement: the proof, the
+plan, the approval it consumed and the database lock, with no Apply recorded.
+Under apply Always the next plan then applies without a person, unless it is
+destructive or changes privileges. The operator takes the statement at the
+next read of that target, up to spec.execution.failureRetryInterval later;
+removing the annotation before then takes it back. settle sends nothing when
+the annotation already holds the value. It changes nothing on a schema that
+has not stopped there, on a stop that prints no value it reads, or on a value
+that names another Apply than the proof owed, or that another read replaced
+after settle read it. Without --expect it settles the stop it reads when it
+runs, whichever target that names; --expect binds it to the value you read.
+
+  --expect <value>         the value the stop printed when you read it, after
+                           settled-apply= in its command; settle writes that
+                           value or nothing
+  --wait                   wait until the operator has taken the statement
+                           and given the proof up; a proof a read of the
+                           first target ends instead stops the wait
+  --wait-timeout <dur>     how long --wait waits (default 5m)
+  -o, --output <format>    text (the default), or yaml or json
+
+  kubectl ptah settle schema/storefront -n application --expect "$VALUE" --wait
+
 wait reads a schema or a migration until it reaches a target. Apart from a plan
 already waiting for an approval, it counts nothing that was already true when
 it began: a reading of the database has to begin after the wait does. For
@@ -609,8 +683,8 @@ date the operator's records, so a wait counts a reading by a new stamp rather
 than by which time is later, except on a run an operator older than 0.2.10
 recorded.
 
-suspend, resume, refresh and set-source patch the resource as you: they need
-get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
+suspend, resume, refresh, set-source and settle patch the resource as you:
+they need get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
 named as schema/NAME or migration/NAME, or by the kind's plural or short name
 as kubectl spells it.
 
@@ -618,9 +692,11 @@ Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
 usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
 approved or changed (the plan or the spec changed, the operator would not
 admit an approval now, the fingerprint is not the current plan's, you
-declined, the resource was deleted and created again, or set-source met a
-source that is not an OCI artifact, an Apply running, or a source changed
-after it was read), 5
+declined, the resource was deleted and created again, set-source met a source
+that is not an OCI artifact, an Apply running, or a source changed after it
+was read, or settle met a schema that has not stopped on a moved target, a
+stop that prints no value, or a value that no longer matches or is not the
+one --expect names), 5
 refused by RBAC or the API server, 6 sent with no answer: the change may have
 been stored, 7 the wait timed out, 8 the resource will not reach the target.
 `)

@@ -1,0 +1,8 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "failed",
+  "error": {
+    "message": "managed data file \"regions.yaml\" for table public.regions: \"/source/schema/regions.yaml\" is outside allowed root \"/work\""
+  }
+}

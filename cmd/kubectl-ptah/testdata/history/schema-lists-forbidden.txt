@@ -1,0 +1,35 @@
+History of:           ptahschema/e2e-login-visibility-postgresql in namespace application
+UID:                  login-visibility-uid
+Created:              2026-11-12T16:00:40Z
+Journal:              4 entries, complete since 2026-11-12T16:00:44Z
+
+The journal is the operator's own bounded record in status.journal, in the order
+it recorded the entries, oldest first. It keeps at most 64 entries, none more
+than 30 days older than the newest, and is not an audit archive. It is complete
+from 2026-11-12T16:00:44Z, and an event before then may be missing. Entries
+dated before it are ones the bounds keep, or ones dated by a time their status
+carried from before it began. Each entry is dated by the status it was derived
+from, so a time can be earlier than the entry above it.
+Whether each plan is still stored is not shown: listing ptahschemaplans is
+forbidden to you (RBAC): ptahschemaplans.operator.ptah.run is forbidden: User
+"plan-reader" cannot list resource "ptahschemaplans" in API group
+"operator.ptah.run" in the namespace "application"
+
+2026-11-12T16:01:39Z  PlanPublished
+  Plan:               ptah-plan-ac1c72b8881baf3c4cac6711
+  Statements:         1, asked for an approval when it was published
+2026-11-12T16:01:39Z  ApprovalAccepted
+  Plan:               ptah-plan-ac1c72b8881baf3c4cac6711
+  Approval:           e2e-login-visibility-postgresql-approval, UID a4c05815-7c22-479b-aebe-8d8844e35b85
+  Approver:           kubernetes-admin
+2026-11-12T16:01:51Z  ApplyFinished, Succeeded
+  Started:            2026-11-12T16:01:39Z, 12s before it ended
+  Plan:               ptah-plan-ac1c72b8881baf3c4cac6711
+  Proof:              the Verified entry at 2026-11-12T16:02:13Z, InSync
+2026-11-12T16:02:13Z  Verified, InSync
+  Plan:               ptah-plan-ac1c72b8881baf3c4cac6711
+
+Approvals: not shown; listing ptahschemaapprovals is forbidden to you (RBAC): ptahschemaapprovals.operator.ptah.run is forbidden: User "plan-reader" cannot list resource "ptahschemaapprovals" in API group "operator.ptah.run" in the namespace "application"
+
+kubectl ptah schema e2e-login-visibility-postgresql -n application prints where it stands now.
+kubectl events -n application --for ptahschema/e2e-login-visibility-postgresql prints its Events, which Kubernetes keeps for about an hour.

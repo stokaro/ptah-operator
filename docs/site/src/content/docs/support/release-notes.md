@@ -127,7 +127,54 @@ sees reason `WaitingForDatabaseLock` where it saw `OperationInProgress`, or,
 for a read tried again after a failure, the failure's reason, which
 `ReconciliationFailed` still carries. After a rollback, an earlier manager
 leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
+A script or an alert that reads `child_exit` from an Observe or
+`invalid_plan_output` from a Plan of a schema whose row file Ptah refuses as
+outside its working directory reads `desired_source_unreadable` now.
+A script that reads the text of `kubectl ptah schema` or `migration`, rather
+than `-o json`, finds the `kubectl ptah history` command where it found a
+`kubectl get` of the namespace, when more than five approvals or acknowledgments
+name the resource, and one more line before the closing `kubectl events` line.
 
+- **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
+  `migration/NAME` prints the lifecycle journal the resource's status keeps, in
+  the order the operator recorded it and from when it is complete, then every
+  approval and run acknowledgment that names the resource by name and UID,
+  oldest first. Reading the journal needed `jsonpath` and `jq`, and a resource
+  with more than five decisions sent the reader to a list of the whole
+  namespace. Each entry shows its plan, decision, Job and outcome, folded
+  failures show their count and the last time, a schema's Apply names the
+  `Verified` entry that proved it or says the proof is still owed, and each
+  plan and decision an entry names is marked as still stored or not. An entry
+  an earlier release wrote without the UIDs that would join it says so, and a
+  status with no journal reads differently from an empty one. `-o json`
+  carries every field of every entry. It needs `get` on the resource; listing
+  plans and decisions is optional.
+  [What a resource kept of its past](../../use/read-a-plan/#history) has the
+  rest.
+- **`kubectl ptah schema --details` and `migration --details`.** The views
+  printed none of the operation a resource has claimed, a schema's proof still
+  owed after an Apply, a Lease release or binding retirement still owed, or a
+  migration's revision rows, and `-o json` carried only the view. `--details`
+  prints every status field the plugin's API version knows after the view,
+  each labeled by its API name, with a line that says what a claim knows of its
+  Job (confirmed by UID, a create attempted, not created yet, or not confirmed
+  for a claim that marks nothing before its create), that an Apply's own result
+  is not the reading that proves it, and that an acknowledgment is a statement
+  rather than proof. With `-o json` it adds `details.status`, the status as the
+  plugin decodes it. Without the flag neither output changes. [Every status
+  field the plugin knows](../../use/read-a-plan/#details) has the rest.
+- **`kubectl ptah settle` gives up a proof whose target moved.** A schema whose
+  URL Secret names another target than the plan its Apply ran from stops with a
+  `kubectl annotate` command in its message, and the value had to be copied out
+  of it. `kubectl ptah settle schema/NAME` reads the value from the message and
+  writes the same annotation, and nothing else. It prints how the journal
+  records the Apply's end and what the operator gives up when it takes the
+  statement, and changes nothing, with exit status 4, on a schema that has not
+  stopped there or a value that no longer matches it. `--expect` names the
+  value you read, so a stop that moved to another target since is refused
+  rather than settled. `--wait` waits until the operator has taken the
+  statement.
+  [Settle from the command line](../../use/recovery/#settle) has the details.
 - **A view's invoker rights wait for an approval.** `ALTER VIEW ... SET
   (security_invoker=true)` ran unattended under `apply: Always`, and the view's
   readers then needed rights of their own on the tables it reads, so a read that
@@ -593,6 +640,19 @@ leaves `WaitingForDatabaseLock` on a schema's `Ready` until the operation ends.
   `MigrationRunUncertain` Event of a `PtahMigration`, whatever the Job's TTL. A
   script that matches `is in the Pod log` there has to match `was in the Pod
   log of Job` as well.
+- **A refused row file is named.** Ptah reads a row file that a `data` block
+  names only inside its working directory, `/work`, and the operator puts the
+  source under `/source`, so Ptah refuses a row file beside the schema as well
+  as one that climbs out of it. The Observe failed with `child_exit: ptah exited
+  with code 2` and the Plan with `invalid_plan_output`, and neither said which
+  file. Both now fail with `desired_source_unreadable` and Ptah's sentence
+  behind the schema's file name, such as `schema.hcl: managed data file
+  "regions.yaml" for table public.regions: "/source/schema/regions.yaml" is
+  outside allowed root "/work"`. The runner copies that sentence only whole and
+  in the form Ptah's guard writes it, which holds nothing the database answered;
+  any other failure keeps the code it had
+  ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
+  that `ptah schema push` built carries its rows and reads no row file.
 
 ## 0.2.10
 

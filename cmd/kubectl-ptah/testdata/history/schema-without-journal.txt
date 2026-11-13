@@ -1,0 +1,19 @@
+History of:           ptahschema/catalog in namespace application
+UID:                  catalog-uid
+Created:              2026-09-01T08:00:00Z
+Journal:              none
+
+The status holds no journal. The manager that last wrote it keeps none, as a
+release before 0.2.7 did, or no manager has written this resource's status yet.
+What happened to it is not retained here; its decisions follow, if any are
+stored.
+
+Approvals, 1 in all, oldest first:
+  catalog-v2, UID catalog-approval-uid
+    approved by e2e-approver at 2026-09-02T09:58:00Z
+    plan ptah-plan-catalog-2, UID ptah-plan-catalog-2-uid
+    TYPE      STATUS  REASON   SINCE                 MESSAGE
+    Consumed  True    Applied  2026-09-02T10:00:00Z  The approved plan was applied
+
+kubectl ptah schema catalog -n application prints where it stands now.
+kubectl events -n application --for ptahschema/catalog prints its Events, which Kubernetes keeps for about an hour.
