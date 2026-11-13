@@ -258,10 +258,15 @@ func Load(ctx context.Context, reader client.Reader, kind Kind, namespace, name 
 }
 
 // joinProofs sets the Proof of every ApplyFinished entry. A schema journal
-// joins an Apply to its proof by plan name alone, and only forward: the
-// Verified entry that settles an Apply comes after it, and no other Apply of
-// that plan can come between, since an Apply is not claimed while a proof is
-// owed. An earlier Verified entry of the same plan proved an earlier Apply.
+// joins an Apply to its proof by plan name, and only forward: the Verified
+// entry that settles an Apply comes after it, and no other Apply of that plan
+// can come between, since an Apply is not claimed while a proof is owed. An
+// earlier Verified entry of the same plan proved an earlier Apply.
+//
+// From 0.2.11 both entries carry the Apply claim's operation ID, and where both
+// do, the IDs have to agree as well: a Verified entry of another claim proved
+// another Apply, whatever plan it names. An entry an older release wrote has
+// none, and the plan alone joins it.
 func joinProofs(entries []Entry, pending *operatorv1alpha1.PendingObservationStatus) {
 	newest := -1
 	for index, entry := range entries {
@@ -283,15 +288,25 @@ func joinProofs(entries []Entry, pending *operatorv1alpha1.PendingObservationSta
 				break
 			}
 			if later.Type == operatorv1alpha1.JournalVerified {
+				if !sameOperation(apply.OperationID, later.OperationID) {
+					continue
+				}
 				at := later.At
 				apply.Proof = &Proof{State: ProofVerified, At: &at, Outcome: later.Outcome}
 				break
 			}
 		}
-		if apply.Proof.State == ProofNotInJournal && index == newest && pending != nil && pending.Plan.Name == apply.Plan {
+		if apply.Proof.State == ProofNotInJournal && index == newest && pending != nil && pending.Plan.Name == apply.Plan &&
+			sameOperation(apply.OperationID, pending.ApplyOperationID) {
 			apply.Proof = &Proof{State: ProofOwed}
 		}
 	}
+}
+
+// sameOperation reports that two records can be of one Apply claim: they name
+// the same one, or one of them names none.
+func sameOperation(one, other string) bool {
+	return one == "" || other == "" || one == other
 }
 
 func get(ctx context.Context, reader client.Reader, key client.ObjectKey, object client.Object, kind Kind) error {

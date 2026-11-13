@@ -2,7 +2,12 @@ package e2e
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
+
+	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -150,4 +155,120 @@ func journalOf(journal *ptahv1alpha1.LifecycleJournal, plan string) string {
 		described = append(described, text+" at "+entry.At.UTC().Format("15:04:05"))
 	}
 	return fmt.Sprintf("%d entries, %d of the plan [%s]", len(journal.Entries), len(described), strings.Join(described, "; "))
+}
+
+// journaledApply is what an Apply ran as, read from the objects that ran it: the
+// plan, the approval it consumed and the Job. stopped is where the run said it
+// stopped, nil for an Apply that named no statement.
+type journaledApply struct {
+	plan     *ptahv1alpha1.PtahSchemaPlan
+	approval *ptahv1alpha1.PtahSchemaApproval
+	job      *batchv1.Job
+	outcome  ptahv1alpha1.JournalOutcome
+	stopped  *ptahv1alpha1.SchemaApplyFailureStatus
+}
+
+// applyJournaledAs is nil when the journal holds exactly one ApplyFinished entry
+// of the plan, and that entry names the claim, the plan's UID and fingerprint,
+// the approval's name, UID and approver, the Job's name and UID, and where the
+// run stopped, each as the object says it. It returns the entry, whose operation
+// ID is what the proof after it is joined by.
+//
+// The entry is found by the plan's name, which every release journaled, so an
+// entry that lost one of the fields under test is refused for that field rather
+// than missed.
+func applyJournaledAs(journal *ptahv1alpha1.LifecycleJournal, want journaledApply) (ptahv1alpha1.JournalEntry, error) {
+	if journal == nil {
+		return ptahv1alpha1.JournalEntry{}, fmt.Errorf("the schema keeps no journal")
+	}
+	plan := want.plan.Name
+	var found []ptahv1alpha1.JournalEntry
+	for _, entry := range journal.Entries {
+		if entry.Type == ptahv1alpha1.JournalApplyFinished && entry.Plan == plan {
+			found = append(found, entry)
+		}
+	}
+	if len(found) != 1 {
+		return ptahv1alpha1.JournalEntry{}, fmt.Errorf("the journal holds %d %s entries of plan %s, want one: %s",
+			len(found), ptahv1alpha1.JournalApplyFinished, plan, journalOf(journal, plan))
+	}
+	entry := found[0]
+	if !journalOperationPattern.MatchString(entry.OperationID) {
+		return entry, fmt.Errorf("the %s entry of plan %s names operation %q, not an Apply claim's ID", entry.Type, plan, entry.OperationID)
+	}
+	for _, field := range []struct {
+		name      string
+		got, want string
+	}{
+		{"outcome", string(entry.Outcome), string(want.outcome)},
+		{"planUID", string(entry.PlanUID), string(want.plan.UID)},
+		{"planFingerprint", entry.PlanFingerprint, want.plan.Spec.Fingerprint},
+		{"approval", entry.Approval, want.approval.Name},
+		{"approvalUID", string(entry.ApprovalUID), string(want.approval.UID)},
+		{"approver", entry.Approver, want.approval.Spec.Approver.Username},
+		{"jobName", entry.JobName, want.job.Name},
+		{"jobUID", string(entry.JobUID), string(want.job.UID)},
+	} {
+		if field.got != field.want {
+			return entry, fmt.Errorf("the %s entry of plan %s records %s %q, the object says %q", entry.Type, plan, field.name, field.got, field.want)
+		}
+	}
+	if !equality.Semantic.DeepEqual(entry.ApplyFailure, want.stopped) {
+		return entry, fmt.Errorf("the %s entry of plan %s records applyFailure %s, want %s",
+			entry.Type, plan, applyFailureText(entry.ApplyFailure), applyFailureText(want.stopped))
+	}
+	return entry, nil
+}
+
+// journalOperationPattern is the form the API gives an entry's operationID.
+var journalOperationPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// proofAfter is the first Verified entry of the Apply's plan after the Apply's
+// own entry, and false when there is none yet. The Apply's entry is found by
+// its operation ID and its type.
+func proofAfter(journal *ptahv1alpha1.LifecycleJournal, applied ptahv1alpha1.JournalEntry) (ptahv1alpha1.JournalEntry, bool) {
+	if journal == nil || applied.OperationID == "" {
+		return ptahv1alpha1.JournalEntry{}, false
+	}
+	at := slices.IndexFunc(journal.Entries, func(entry ptahv1alpha1.JournalEntry) bool {
+		return entry.Type == ptahv1alpha1.JournalApplyFinished && entry.OperationID == applied.OperationID
+	})
+	if at < 0 {
+		return ptahv1alpha1.JournalEntry{}, false
+	}
+	for _, entry := range journal.Entries[at+1:] {
+		if entry.Type == ptahv1alpha1.JournalVerified && entry.Plan == applied.Plan {
+			return entry, true
+		}
+	}
+	return ptahv1alpha1.JournalEntry{}, false
+}
+
+// proofJournaledFor is nil when the proof after the Apply is journaled under the
+// Apply's own operation ID, which is how a reader joins the two. outcome is the
+// verdict the row expects, or empty where the row does not claim one.
+func proofJournaledFor(journal *ptahv1alpha1.LifecycleJournal, applied ptahv1alpha1.JournalEntry, outcome ptahv1alpha1.JournalOutcome) error {
+	if journal == nil {
+		return fmt.Errorf("the schema keeps no journal")
+	}
+	proved, found := proofAfter(journal, applied)
+	if !found {
+		return fmt.Errorf("the journal of plan %s stops before the %s entry after operation %q: %s",
+			applied.Plan, ptahv1alpha1.JournalVerified, applied.OperationID, journalOf(journal, applied.Plan))
+	}
+	if proved.OperationID != applied.OperationID {
+		return fmt.Errorf("the %s entry after the Apply of plan %s names operation %q, the Apply %q",
+			proved.Type, applied.Plan, proved.OperationID, applied.OperationID)
+	}
+	if outcome != "" && proved.Outcome != outcome {
+		return fmt.Errorf("the journal records the proof of plan %s as %q, not %q", applied.Plan, proved.Outcome, outcome)
+	}
+	return nil
+}
+
+func applyFailureText(failure *ptahv1alpha1.SchemaApplyFailureStatus) string {
+	if failure == nil {
+		return "none"
+	}
+	return fmt.Sprintf("statement %d of %d, SQLSTATE %q, error %d", failure.Statement, failure.Statements, failure.SQLState, failure.ErrorNumber)
 }

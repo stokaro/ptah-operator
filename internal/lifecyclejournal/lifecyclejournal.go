@@ -137,10 +137,12 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 				outcome = operatorv1alpha1.JournalUnknown
 			}
 			started := operation.StartedAt
-			entries = append(entries, operatorv1alpha1.JournalEntry{
+			entry := operatorv1alpha1.JournalEntry{
 				Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(now), StartedAt: &started,
 				Plan: pending.Plan.Name, Outcome: outcome,
-			})
+			}
+			withApplyIdentity(&entry, pending)
+			entries = append(entries, entry)
 		}
 	}
 	if pending := before.PendingObservation; pending != nil && after.PendingObservation == nil {
@@ -160,6 +162,7 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		}
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(now), Plan: pending.Plan.Name, Outcome: outcome,
+			OperationID: pending.ApplyOperationID,
 		})
 	}
 	if failure := meta.FindStatusCondition(after.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failure != nil &&
@@ -358,6 +361,30 @@ func withRunIdentity(entry *operatorv1alpha1.JournalEntry, run *operatorv1alpha1
 	if authorization.Approver != nil {
 		entry.Approver = boundedUsername(authorization.Approver.Username)
 	}
+}
+
+// withApplyIdentity writes what the proof an Apply left behind says about which
+// Apply it was into its entry: the claim, the plan it carried out, the approval
+// it consumed, the Job it ran as and, when the run named one, the statement it
+// stopped at. The entry keeps saying so after the proof settles and the Job and
+// the plan are gone.
+//
+// The proof names the Job the claim reserved whether or not it was ever
+// created, so the Job is recorded only once the API server confirmed one, as
+// for a migration's run: a name alone would point at an execution nobody saw.
+func withApplyIdentity(entry *operatorv1alpha1.JournalEntry, pending *operatorv1alpha1.PendingObservationStatus) {
+	// The claim's ID is a sha256 digest (SchemaReconciler.claim), the form the
+	// entry's pattern requires.
+	entry.OperationID = pending.ApplyOperationID
+	entry.PlanUID, entry.PlanFingerprint = pending.Plan.UID, pending.Plan.Fingerprint
+	if approval := pending.Plan.Approval; approval != nil {
+		entry.Approval, entry.ApprovalUID = approval.Name, approval.UID
+		entry.Approver = boundedUsername(approval.Approver.Username)
+	}
+	if pending.ApplyJobUID != "" {
+		entry.JobName, entry.JobUID = pending.ApplyJobName, pending.ApplyJobUID
+	}
+	entry.ApplyFailure = pending.ApplyFailure.DeepCopy()
 }
 
 // maxUsernameLength is the API's bound on an entry's approver and acknowledgedBy,

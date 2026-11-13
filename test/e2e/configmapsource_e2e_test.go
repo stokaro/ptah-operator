@@ -909,10 +909,19 @@ func (c *configMapRun) refusedStatements() {
 	c.installDiagnosticReader()
 	c.createDatabase(configMapRefusedDatabase, configMapRefusedSecret)
 	c.createDatabase(configMapRefusedMigrationDatabase, configMapRefusedMigrationSecret)
-	schema, collected := c.refusedSchemaStatement()
+	schema, collected, refusedApply := c.refusedSchemaStatement()
 	migration := c.refusedMigrationStatement()
 
 	c.holdPastShortTTL(schema, migration)
+	// The proof after the refused Apply reads the database once the executor
+	// stopped, so it has settled long before the hold ends, and the wait costs
+	// the row nothing.
+	proved := c.waitForRefusedSchema("the proof after the refused Apply to be journaled", func(read *ptahv1alpha1.PtahSchema) bool {
+		_, found := proofAfter(read.Status.Journal, refusedApply)
+		return found
+	})
+	c.check(proofJournaledFor(proved.Status.Journal, refusedApply, ""), "the journal of the proof after the refused Apply")
+	c.logf("PASS the proof after the refused Apply is journaled under its operation %s", refusedApply.OperationID)
 	c.wait("the Apply Job that kept the short TTL to be collected", func() (bool, string) {
 		current := &batchv1.Job{}
 		err := c.get(collected.Name, current)
@@ -1072,12 +1081,20 @@ func (c *configMapRun) waitForRefusedSchema(what string, done func(*ptahv1alpha1
 	return matched
 }
 
-func (c *configMapRun) approveRefusedPlan(approval string, schema *ptahv1alpha1.PtahSchema) {
+// approveRefusedPlan approves the plan the schema waits on, and returns the plan
+// and the approval as the API server stored them, with the approver admission
+// stamped.
+func (c *configMapRun) approveRefusedPlan(
+	approval string, schema *ptahv1alpha1.PtahSchema,
+) (*ptahv1alpha1.PtahSchemaPlan, *ptahv1alpha1.PtahSchemaApproval) {
 	c.t.Helper()
 	plan := &ptahv1alpha1.PtahSchemaPlan{}
 	c.check(c.get(schema.Status.Plan.Name, plan), "read plan %s", schema.Status.Plan.Name)
 	c.check(c.create(approvalDocument(c.in.TestNamespace, approval, configMapRefusedSchema, string(schema.UID),
 		plan.Name, string(plan.UID), plan.Spec.Fingerprint)), "approve plan %s", plan.Name)
+	stored := &ptahv1alpha1.PtahSchemaApproval{}
+	c.check(c.get(approval, stored), "read approval %s", approval)
+	return plan, stored
 }
 
 // applyJobs are the Apply Jobs of one resource.
@@ -1091,9 +1108,13 @@ func (c *configMapRun) applyJobs(label, name string) []batchv1.Job {
 
 // refusedSchemaStatement is the reproduction of stokaro/ptah-operator#787: a
 // schema in sync on a table whose rows share a customer, and a plan that adds a
-// unique index on them. It returns the refused run and the Job of the Apply that
-// succeeded before it, which keeps the short TTL.
-func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job) {
+// unique index on them. It returns the refused run, the Job of the Apply that
+// succeeded before it, which keeps the short TTL, and the refused Apply's
+// ApplyFinished entry, which the proof after it is joined to.
+//
+// Each Apply's entry is read from the document that matched its wait, and held
+// to the plan, the approval and the Job the row reads from the API server.
+func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job, ptahv1alpha1.JournalEntry) {
 	c.t.Helper()
 	c.check(c.apply(c.sourceDocument(configMapRefusedSchemaSource, map[string]string{"schema.sql": configMapRefusedTable})),
 		"apply ConfigMap %s", configMapRefusedSchemaSource)
@@ -1111,8 +1132,8 @@ func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job) {
 		},
 	}), "create PtahSchema %s", configMapRefusedSchema)
 	first := c.waitForRefusedSchema("the table's plan", awaitingSchemaPlan(""))
-	c.approveRefusedPlan("e2e-configmap-refused-v1", first)
-	c.waitForRefusedSchema("the table to apply", inSyncSchema)
+	firstPlan, firstApproval := c.approveRefusedPlan("e2e-configmap-refused-v1", first)
+	inSync := c.waitForRefusedSchema("the table to apply", inSyncSchema)
 
 	// A run that succeeded keeps the five minutes, read before they can pass.
 	applied := c.applyJobs(labelSchema, configMapRefusedSchema)
@@ -1121,15 +1142,25 @@ func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job) {
 		c.fatalf("the Apply that succeeded left %+v, want one Job with the short cleanup TTL", applied)
 	}
 	succeeded := applied[0].DeepCopy()
+	appliedEntry, err := applyJournaledAs(inSync.Status.Journal, journaledApply{
+		plan: firstPlan, approval: firstApproval, job: succeeded, outcome: ptahv1alpha1.JournalSucceeded,
+	})
+	c.check(err, "the journal of the Apply that succeeded")
+	c.check(proofJournaledFor(inSync.Status.Journal, appliedEntry, ptahv1alpha1.JournalInSync), "the journal of the proof after it")
+	c.logf("PASS the Apply that succeeded is journaled as operation %s of Job %s, under approval %s, and its proof under the same",
+		appliedEntry.OperationID, succeeded.Name, firstApproval.Name)
 
-	_, err := databaseSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, configMapRefusedDatabase,
+	_, err = databaseSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, configMapRefusedDatabase,
 		"INSERT INTO e2e_refused_orders (id, customer_id) VALUES (1, 42), (2, 42)")
 	c.check(err, "give two rows the same customer")
 	version := c.editSource(configMapRefusedSchemaSource, "schema.sql", configMapRefusedTable+"\n"+configMapRefusedIndex)
 	second := c.waitForRefusedSchema("the index's plan", func(schema *ptahv1alpha1.PtahSchema) bool {
 		return sourceReadAt(schema.Status.Source.ConfigMap, schema.Status.Source.Snapshot, version) && awaitingSchemaPlan("")(schema)
 	})
-	c.approveRefusedPlan("e2e-configmap-refused-v2", second)
+	secondPlan, secondApproval := c.approveRefusedPlan("e2e-configmap-refused-v2", second)
+	if secondPlan.Spec.StatementCount != 1 {
+		c.fatalf("the index's plan %s holds %d statements, want the one the database refuses", secondPlan.Name, secondPlan.Spec.StatementCount)
+	}
 	refused := c.waitForRefusedSchema("the Apply's outcome to be unknown", func(schema *ptahv1alpha1.PtahSchema) bool {
 		applying := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionApplying)
 		return applying != nil && applying.Reason == string(ptahv1alpha1.ReasonOutcomeUnknown)
@@ -1148,7 +1179,17 @@ func (c *configMapRun) refusedSchemaStatement() (*refusedRun, *batchv1.Job) {
 	run := &refusedRun{job: job, resource: refused, printed: map[string]string{"the Applying condition": applying.Message}}
 	c.assertFailedApplyEvidence(run, refused.UID, refused.Status, "ApplyOutcomeUnknown")
 	c.logf("PASS a statement the database refused left its answer in the Pod log of %s, and said where", job.Name)
-	return run, succeeded
+	// The plan's one statement is the one the database refused, with the
+	// SQLSTATE PostgreSQL answers a duplicate key with, and no error number:
+	// PostgreSQL gives none.
+	refusedEntry, err := applyJournaledAs(refused.Status.Journal, journaledApply{
+		plan: secondPlan, approval: secondApproval, job: job, outcome: ptahv1alpha1.JournalUnknown,
+		stopped: &ptahv1alpha1.SchemaApplyFailureStatus{Statement: 1, Statements: secondPlan.Spec.StatementCount, SQLState: refusedStatementSQLState},
+	})
+	c.check(err, "the journal of the refused Apply")
+	c.logf("PASS the refused Apply is journaled as operation %s of Job %s, under approval %s, stopped at statement 1 with SQLSTATE %s",
+		refusedEntry.OperationID, job.Name, secondApproval.Name, refusedStatementSQLState)
+	return run, succeeded, refusedEntry
 }
 
 // refusedMigrationStatement is the same refusal on a migration's second file. A

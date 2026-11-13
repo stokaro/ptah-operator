@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -394,5 +395,102 @@ func TestALineWithMoreQuotesThanAreComparedKeepsNoneOfThem(t *testing.T) {
 	atTheLimit := "before " + strings.Repeat("'a-password' ", maxQuotesCompared/2)
 	if got := hideStatementText(atTheLimit, "SELECT 'a-password'"); strings.Contains(got, "a-password") || !strings.HasPrefix(got, "before '") {
 		t.Fatalf("hideStatementText() = %q, want each part compared and hidden", got)
+	}
+}
+
+// TestARefusedApplySaysWhereItStopped runs each captured schema Apply refusal
+// through the runner, and the frame carries the statement and the code the
+// report named, exactly, so the manager can record them. A migration run says
+// where it stopped in its own report and carries none.
+func TestARefusedApplySaysWhereItStopped(t *testing.T) {
+	t.Parallel()
+
+	captures, err := filepath.Glob(filepath.Join("..", "dataplane", "testdata", "statement-errors", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applies := 0
+	for _, capture := range captures {
+		fixture := filepath.Base(capture)
+		family := "migration apply"
+		if strings.HasSuffix(fixture, "-apply.json") {
+			family = "apply"
+			applies++
+		}
+		t.Run(fixture, func(t *testing.T) {
+			t.Parallel()
+			document := statementErrorDocument(t, fixture)
+			run := targetFailureRuns()[family]
+			result, log, encoded := runRefusedStatement(t, run, document)
+			parsed, err := ParseResultFor(append([]byte(log), encoded.Frame...), run.operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("the frame does not parse: %v", err)
+			}
+			if family != "apply" {
+				if parsed.ApplyFailure != nil {
+					t.Fatalf("a migration run's frame carries an apply failure: %+v", *parsed.ApplyFailure)
+				}
+				return
+			}
+			report, err := dataplane.DecodeSchemaApply([]byte(document))
+			if err != nil || report.Failure == nil {
+				t.Fatalf("the capture names no failure: %v", err)
+			}
+			if parsed.ApplyFailure == nil || *parsed.ApplyFailure != *report.Failure {
+				t.Fatalf("the frame carries apply failure %+v, the report says %+v", parsed.ApplyFailure, *report.Failure)
+			}
+		})
+	}
+	if applies != 3 {
+		t.Fatalf("ran %d schema apply captures, want the 3 testdata/statement-errors holds", applies)
+	}
+}
+
+// An apply failure belongs to an Apply's reported failure and to nothing else,
+// and it is held to the forms the report's own decoder gives it, on the side
+// that writes the frame and on the side that reads it.
+func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
+	t.Parallel()
+
+	run := targetFailureRuns()["apply"]
+	base, _, _ := runRefusedStatement(t, run, statementErrorDocument(t, "pg-unique-apply.json"))
+	if base.ApplyFailure == nil {
+		t.Fatal("the base result carries no apply failure")
+	}
+	// The base, as it is, crosses: each refusal below is the mutation alone.
+	if _, err := MarshalFrame(base); err != nil {
+		t.Fatalf("MarshalFrame(base) error = %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "a result with no error", mutate: func(result *Result) { result.Error = nil }},
+		{name: "an error the report did not set", mutate: func(result *Result) { result.Error.Code = "invalid_apply_output" }},
+		{name: "another operation", mutate: func(result *Result) { result.Operation = OperationMigrationApply }},
+		{name: "no statements", mutate: func(result *Result) { result.ApplyFailure.Statements = 0 }},
+		{name: "a statement past the last", mutate: func(result *Result) { result.ApplyFailure.Statement = 2 }},
+		{name: "a statement and the commit", mutate: func(result *Result) { result.ApplyFailure.Commit = true }},
+		{name: "a SQLSTATE that quotes a row", mutate: func(result *Result) { result.ApplyFailure.SQLState = "(id)=7" }},
+		{name: "an error number past two bytes", mutate: func(result *Result) { result.ApplyFailure.ErrorNumber = 65536 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := base
+			failure := *base.ApplyFailure
+			candidate.ApplyFailure = &failure
+			if base.Error != nil {
+				reported := *base.Error
+				candidate.Error = &reported
+			}
+			test.mutate(&candidate)
+			if _, err := MarshalFrame(candidate); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("MarshalFrame() error = %v, want ErrMalformedFrame", err)
+			}
+			frame := handcraftedIntegrityValidFrame(t, candidate)
+			if _, err := ParseResultFor(frame, candidate.Operation, candidate.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
 	}
 }

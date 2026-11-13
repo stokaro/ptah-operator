@@ -1421,7 +1421,9 @@ func reportDecodeError(command string, outcome commandOutcome) error {
 // in this contract failed means nothing was sent -- unlike a migration run,
 // whose failed may follow committed migrations -- so no reading here is shared
 // with decodeMigrationReport. The report still names the ending, so a refusal
-// reaches the resource as a refusal.
+// reaches the resource as a refusal, and where a run that sent a statement
+// stopped reaches it as the statement's position and the database's code,
+// which carry no row.
 //
 // A child this process stopped -- at its execution deadline, or because the Pod
 // is terminating -- is not read, unlike a migration child: its report could
@@ -1465,10 +1467,12 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 		logReportedError(report.Error, redactor, diagnostics)
 		setResultError(result, codeApplyFailed,
 			errors.New("ptah reported that the apply failed before it sent any statement"), redactor, diagnostics)
+		result.ApplyFailure = report.Failure
 	case dataplane.SchemaApplyOutcomeUnknown:
 		logReportedError(report.Error, redactor, diagnostics)
 		setResultError(result, codeApplyOutcomeUnknown,
 			errors.New("ptah sent the statements and returned an error, so how far they got is unknown"), redactor, diagnostics)
+		result.ApplyFailure = report.Failure
 	default:
 		setResultError(result, "invalid_apply_output",
 			fmt.Errorf("ptah reported %s, which an approved plan applied with --auto-approve cannot end in", report.Outcome),

@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/lifecyclejournal"
 )
 
 func TestApprovalJournaledOnceRefusesEachClause(t *testing.T) {
@@ -211,4 +213,209 @@ func TestApprovedApplyJournaledRefusesThePlanItsApplyPublishedAgain(t *testing.T
 	if err := approvedApplyJournaled(once, plan); err != nil {
 		t.Fatalf("approvedApplyJournaled(reading without the repeats) = %v", err)
 	}
+}
+
+// appliedObjects are the plan, the approval and the Job of one approved Apply, as
+// a row reads them from the cluster.
+func appliedObjects() (*ptahv1alpha1.PtahSchemaPlan, *ptahv1alpha1.PtahSchemaApproval, *batchv1.Job) {
+	plan := &ptahv1alpha1.PtahSchemaPlan{
+		ObjectMeta: metav1.ObjectMeta{Name: "ptah-plan-index", UID: "plan-uid"},
+		Spec:       ptahv1alpha1.PtahSchemaPlanSpec{Fingerprint: "sha256:" + strings.Repeat("f", 64)},
+	}
+	approval := &ptahv1alpha1.PtahSchemaApproval{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-configmap-refused-v2", UID: "approval-uid"},
+		Spec:       ptahv1alpha1.PtahSchemaApprovalSpec{Approver: ptahv1alpha1.ApprovalIdentity{Username: "kubernetes-admin"}},
+	}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ptah-apply-e2e-configmap-refused-schema-1", UID: "job-uid"}}
+	return plan, approval, job
+}
+
+// operatorJournalOfAnApply is the journal the operator's own code keeps across
+// the two status writes of an approved Apply: the claim that ends into the proof
+// it owes, and the proof that settles in sync. The statuses are what the
+// controller writes; the entries are what lifecyclejournal derives from them.
+func operatorJournalOfAnApply(
+	plan *ptahv1alpha1.PtahSchemaPlan, approval *ptahv1alpha1.PtahSchemaApproval, job *batchv1.Job,
+	outcome ptahv1alpha1.PendingObservationOutcome, stopped *ptahv1alpha1.SchemaApplyFailureStatus,
+) *ptahv1alpha1.LifecycleJournal {
+	start := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	claim := "sha256:" + strings.Repeat("d", 64)
+	applying := &ptahv1alpha1.PtahSchemaStatus{ActiveOperation: &ptahv1alpha1.ActiveOperationStatus{
+		Type: ptahv1alpha1.OperationApply, ID: claim, JobName: job.Name, JobUID: job.UID, StartedAt: metav1.NewTime(start),
+	}}
+	owed := &ptahv1alpha1.PtahSchemaStatus{PendingObservation: &ptahv1alpha1.PendingObservationStatus{
+		Outcome: outcome, ApplyOperationID: claim, ApplyJobName: job.Name, ApplyJobUID: job.UID, ApplyFailure: stopped.DeepCopy(),
+		Plan: ptahv1alpha1.CurrentPlanStatus{
+			Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint,
+			Approval: &ptahv1alpha1.ConsumedApprovalStatus{Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver},
+		},
+	}}
+	settled := &ptahv1alpha1.PtahSchemaStatus{Phase: ptahv1alpha1.PhaseInSync}
+	ended := start.Add(time.Minute)
+	journal := lifecyclejournal.Record(nil, lifecyclejournal.SchemaEntries(applying, owed, nil, ended), ended)
+	proved := ended.Add(time.Minute)
+	return lifecyclejournal.Record(journal, lifecyclejournal.SchemaEntries(owed, settled, journal, proved), proved)
+}
+
+// applyJournaledAs reads the journal the operator keeps for an Apply, and refuses
+// each field that does not name the object it should: the mistakes an entry that
+// lost a field on its way through the API server, or one an older release wrote,
+// would make.
+func TestApplyJournaledAsRefusesEachField(t *testing.T) {
+	t.Parallel()
+	plan, approval, job := appliedObjects()
+	stopped := &ptahv1alpha1.SchemaApplyFailureStatus{Statement: 1, Statements: 1, SQLState: "23505"}
+	succeeded := journaledApply{plan: plan, approval: approval, job: job, outcome: ptahv1alpha1.JournalSucceeded}
+	refused := journaledApply{plan: plan, approval: approval, job: job, outcome: ptahv1alpha1.JournalUnknown, stopped: stopped}
+	ofSuccess := func() *ptahv1alpha1.LifecycleJournal {
+		return operatorJournalOfAnApply(plan, approval, job, ptahv1alpha1.PendingObservationApplySucceeded, nil)
+	}
+	ofRefusal := func() *ptahv1alpha1.LifecycleJournal {
+		return operatorJournalOfAnApply(plan, approval, job, ptahv1alpha1.PendingObservationOutcomeUnknown, stopped)
+	}
+	for name, test := range map[string]struct {
+		journal *ptahv1alpha1.LifecycleJournal
+		want    journaledApply
+	}{
+		"an Apply that succeeded":           {ofSuccess(), succeeded},
+		"an Apply refused at its statement": {ofRefusal(), refused},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if count := len(journaled(test.journal, ptahv1alpha1.JournalApplyFinished)); count != 1 {
+				t.Fatalf("the operator's journal holds %d ApplyFinished entries, want the one this reads", count)
+			}
+			entry, err := applyJournaledAs(test.journal, test.want)
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if err := proofJournaledFor(test.journal, entry, ptahv1alpha1.JournalInSync); err != nil {
+				t.Fatalf("the proof was refused: %v", err)
+			}
+		})
+	}
+
+	edited := func(base func() *ptahv1alpha1.LifecycleJournal, edit func(*ptahv1alpha1.JournalEntry)) *ptahv1alpha1.LifecycleJournal {
+		journal := base()
+		for index := range journal.Entries {
+			if journal.Entries[index].Type == ptahv1alpha1.JournalApplyFinished {
+				edit(&journal.Entries[index])
+			}
+		}
+		return journal
+	}
+	other := journaledApply{plan: plan.DeepCopy(), approval: approval, job: job, outcome: ptahv1alpha1.JournalSucceeded}
+	other.plan.Name = "ptah-plan-other"
+	for _, test := range []struct {
+		name    string
+		journal *ptahv1alpha1.LifecycleJournal
+		want    journaledApply
+		refusal string
+	}{
+		{"no journal", nil, succeeded, "keeps no journal"},
+		{"another plan's Apply", ofSuccess(), other, "holds 0"},
+		{"the plan applied twice", func() *ptahv1alpha1.LifecycleJournal {
+			journal := ofSuccess()
+			journal.Entries = append(journal.Entries, journaled(journal, ptahv1alpha1.JournalApplyFinished)...)
+			return journal
+		}(), succeeded, "holds 2"},
+		{"an entry an older release wrote", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) {
+			*entry = ptahv1alpha1.JournalEntry{Type: entry.Type, At: entry.At, StartedAt: entry.StartedAt, Plan: entry.Plan, Outcome: entry.Outcome}
+		}), succeeded, "not an Apply claim's ID"},
+		{"an operation that is not a claim's", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.OperationID = "apply-1" }),
+			succeeded, "not an Apply claim's ID"},
+		{"another outcome", ofRefusal(), journaledApply{plan: plan, approval: approval, job: job, outcome: ptahv1alpha1.JournalSucceeded, stopped: stopped},
+			"outcome"},
+		{"no plan UID", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.PlanUID = "" }), succeeded, "planUID"},
+		{"another plan UID", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.PlanUID = "replaced-plan-uid" }), succeeded, "planUID"},
+		{"no fingerprint", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.PlanFingerprint = "" }), succeeded, "planFingerprint"},
+		{"no approval", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.Approval = "" }), succeeded, `approval ""`},
+		{"another approval under the name", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.ApprovalUID = "earlier-approval-uid" }),
+			succeeded, "approvalUID"},
+		{"no approval UID", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.ApprovalUID = "" }), succeeded, "approvalUID"},
+		{"another approver", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.Approver = "e2e-approver" }), succeeded, "approver"},
+		{"no Job", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.JobName, entry.JobUID = "", "" }), succeeded, "jobName"},
+		{"a later Job under the name", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) { entry.JobUID = "later-job-uid" }), succeeded, "jobUID"},
+		{"a refusal that names no statement", edited(ofRefusal, func(entry *ptahv1alpha1.JournalEntry) { entry.ApplyFailure = nil }),
+			refused, "applyFailure none"},
+		{"another SQLSTATE", edited(ofRefusal, func(entry *ptahv1alpha1.JournalEntry) { entry.ApplyFailure.SQLState = "42P01" }),
+			refused, "applyFailure"},
+		{"another statement", edited(ofRefusal, func(entry *ptahv1alpha1.JournalEntry) { entry.ApplyFailure.Statements = 2 }),
+			refused, "applyFailure"},
+		{"a success that names a statement", edited(ofSuccess, func(entry *ptahv1alpha1.JournalEntry) {
+			entry.ApplyFailure = stopped.DeepCopy()
+		}), succeeded, "applyFailure"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := applyJournaledAs(test.journal, test.want)
+			if err == nil || !strings.Contains(err.Error(), test.refusal) {
+				t.Fatalf("applyJournaledAs() = %v, want an error naming %q", err, test.refusal)
+			}
+		})
+	}
+}
+
+// proofJournaledFor joins an Apply to its proof by the operation ID, and refuses
+// a proof journaled under another claim or none, one of another plan, one from
+// before the Apply, and a verdict the row did not expect.
+func TestProofJournaledForJoinsByTheOperation(t *testing.T) {
+	t.Parallel()
+	plan, approval, job := appliedObjects()
+	base := operatorJournalOfAnApply(plan, approval, job, ptahv1alpha1.PendingObservationApplySucceeded, nil)
+	applied := journaled(base, ptahv1alpha1.JournalApplyFinished)
+	proofs := journaled(base, ptahv1alpha1.JournalVerified)
+	if len(applied) != 1 || len(proofs) != 1 {
+		t.Fatalf("the operator's journal holds %d ApplyFinished and %d Verified entries, want one of each", len(applied), len(proofs))
+	}
+	apply, proof := applied[0], proofs[0]
+	with := func(entries ...ptahv1alpha1.JournalEntry) *ptahv1alpha1.LifecycleJournal {
+		return &ptahv1alpha1.LifecycleJournal{Entries: entries}
+	}
+	proofOf := func(edit func(*ptahv1alpha1.JournalEntry)) ptahv1alpha1.JournalEntry {
+		edited := *proof.DeepCopy()
+		edit(&edited)
+		return edited
+	}
+	if err := proofJournaledFor(with(apply, proof), apply, ""); err != nil {
+		t.Fatalf("a proof the row claims no verdict for was refused: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		journal *ptahv1alpha1.LifecycleJournal
+		outcome ptahv1alpha1.JournalOutcome
+		want    string
+	}{
+		{"no journal", nil, "", "keeps no journal"},
+		{"no proof yet", with(apply), "", "stops before the Verified"},
+		{"a proof from before the Apply", with(proof, apply), "", "stops before the Verified"},
+		{"another plan's proof", with(apply, proofOf(func(entry *ptahv1alpha1.JournalEntry) { entry.Plan = "ptah-plan-other" })), "", "stops before the Verified"},
+		{"a proof under another claim", with(apply, proofOf(func(entry *ptahv1alpha1.JournalEntry) {
+			entry.OperationID = "sha256:" + strings.Repeat("e", 64)
+		})), "", "names operation"},
+		{"a proof an older release wrote", with(apply, proofOf(func(entry *ptahv1alpha1.JournalEntry) { entry.OperationID = "" })), "", `names operation ""`},
+		{"another verdict", with(apply, proof), ptahv1alpha1.JournalDriftRemains, `as "InSync", not "DriftRemains"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := proofJournaledFor(test.journal, apply, test.outcome)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("proofJournaledFor() = %v, want an error naming %q", err, test.want)
+			}
+		})
+	}
+}
+
+// journaled is every entry of entryType the journal holds.
+func journaled(journal *ptahv1alpha1.LifecycleJournal, entryType ptahv1alpha1.JournalEntryType) []ptahv1alpha1.JournalEntry {
+	if journal == nil {
+		return nil
+	}
+	var found []ptahv1alpha1.JournalEntry
+	for _, entry := range journal.Entries {
+		if entry.Type == entryType {
+			found = append(found, entry)
+		}
+	}
+	return found
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 )
@@ -131,7 +132,60 @@ type SchemaApplyReport struct {
 	// Error is why the run failed, refused or ended unknown. Only its kind is
 	// read.
 	Error *CommandError `json:"error,omitempty"`
+	// Failure is where a run that sent a statement stopped, and the code the
+	// database answered with. It carries no text, so it is what may leave the
+	// Pod. A build before stokaro/ptah#5562 writes none.
+	Failure *SchemaApplyFailure `json:"failure,omitempty"`
 }
+
+// SchemaApplyFailure is the unit or the commit a schema apply stopped at, as
+// Ptah's apply document names it (docs/exit_codes.md, "Where a Run Stopped").
+type SchemaApplyFailure struct {
+	// Statement is the position of the failed unit among the units the
+	// document lists, counting from one. It is zero when no unit is to blame:
+	// the commit after them failed, or the run confirmed every unit and still
+	// did not succeed.
+	Statement int `json:"statement"`
+	// Statements is how many units the document lists.
+	Statements int `json:"statements"`
+	// Commit is true when every unit ran and the commit that ends them failed.
+	Commit bool `json:"commit,omitempty"`
+	// SQLState is empty when the server gave no answer, and ErrorNumber is
+	// zero on every protocol but MySQL's.
+	SQLState    string `json:"sqlstate,omitempty"`
+	ErrorNumber int    `json:"error_number,omitempty"`
+}
+
+// Validate holds a failure to the forms Ptah's contract gives it. Nothing here
+// quotes the SQLSTATE back, because a value that failed its form could be
+// anything.
+func (f SchemaApplyFailure) Validate() error {
+	switch {
+	case f.Statements < 1 || f.Statements > maxSchemaApplyStatements:
+		return fmt.Errorf("schema apply reports statement %d of %d failed", f.Statement, f.Statements)
+	case f.Commit && f.Statement != 0:
+		// The commit runs after every statement, so a document that blames
+		// one of them as well says two things about the same failure.
+		return fmt.Errorf("schema apply reports statement %d of %d and the commit after them failed", f.Statement, f.Statements)
+	case f.Statement < 0 || f.Statement > f.Statements:
+		return fmt.Errorf("schema apply reports statement %d of %d failed", f.Statement, f.Statements)
+	case f.SQLState != "" && !sqlStatePattern.MatchString(f.SQLState):
+		return fmt.Errorf("schema apply reports a SQLSTATE that is not five digits or capital letters")
+	case f.ErrorNumber < 0 || f.ErrorNumber > math.MaxUint16:
+		return fmt.Errorf("schema apply reports error number %d, which the two bytes MySQL sends cannot hold", f.ErrorNumber)
+	}
+	return nil
+}
+
+// Failed reports whether the failure names a statement the database refused.
+// A failed commit, and a run that stopped with every unit confirmed, name none.
+func (f SchemaApplyFailure) Failed() bool {
+	return !f.Commit && f.Statement >= 1
+}
+
+// maxSchemaApplyStatements bounds the unit count a failure may report, so the
+// position and the count fit the int32 the status keeps them in.
+const maxSchemaApplyStatements = math.MaxInt32
 
 // SchemaApplyUnit is one planned operation an apply document lists: its SQL,
 // or a summary of a native provider operation that has none.
@@ -220,6 +274,16 @@ func DecodeSchemaApply(data []byte) (SchemaApplyReport, error) {
 	}
 	if report.PlanDigest != "" && !validDigest(report.PlanDigest) {
 		return SchemaApplyReport{}, fmt.Errorf("schema apply names a plan digest that is not an exact SHA-256 digest")
+	}
+	if failure := report.Failure; failure != nil {
+		// Only a run that sent a statement and returned an error says where it
+		// stopped: unknown, or failed after a rollback the database confirmed.
+		if report.Outcome != SchemaApplyOutcomeUnknown && report.Outcome != SchemaApplyOutcomeFailed {
+			return SchemaApplyReport{}, fmt.Errorf("schema apply reports outcome %q and a failed statement", report.Outcome)
+		}
+		if err := failure.Validate(); err != nil {
+			return SchemaApplyReport{}, err
+		}
 	}
 	return report, nil
 }

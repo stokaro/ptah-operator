@@ -40,7 +40,8 @@ const (
 	// names. One entry stands for one decision, told apart by the approval's UID:
 	// a later decision may take the same name.
 	JournalApprovalAccepted JournalEntryType = "ApprovalAccepted"
-	// JournalApplyFinished is a PtahSchema Apply that ended.
+	// JournalApplyFinished is a PtahSchema Apply that ended: one entry per
+	// execution.
 	JournalApplyFinished JournalEntryType = "ApplyFinished"
 	// JournalVerified is the post-Apply observation of a PtahSchema settling, or
 	// the first reading of a PtahMigration's history after a run.
@@ -114,13 +115,14 @@ type JournalEntry struct {
 	// +optional
 	Count int32 `json:"count,omitempty"`
 
-	// OperationID is the Apply claim a PtahMigration's RunFinished, Verified or
-	// RunAcknowledged entry concerns. It is what joins them: entries of one
-	// execution carry the same one, and neither their order nor their times are
-	// the join. ApprovalUID is what joins an ApprovalAccepted entry to the run
-	// that consumed it, since a claim withdrawn before dispatch leaves the
-	// approval to the next one. An entry a release before this field wrote has
-	// none.
+	// OperationID is the Apply claim an entry concerns: a PtahSchema's
+	// ApplyFinished and the Verified entry of the proof after it, or a
+	// PtahMigration's RunFinished, Verified or RunAcknowledged. It is what joins
+	// them: entries of one execution carry the same one, and neither their order
+	// nor their times are the join. ApprovalUID is what joins an
+	// ApprovalAccepted entry to the Apply or the run that consumed it, since a
+	// claim withdrawn before dispatch leaves the approval to the next one. An
+	// entry a release before this field wrote has none.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	// +optional
 	OperationID string `json:"operationID,omitempty"`
@@ -129,12 +131,13 @@ type JournalEntry struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	Plan string `json:"plan,omitempty"`
-	// PlanUID is the UID of a PtahMigration's plan.
+	// PlanUID is the UID of the plan an Apply or a run carried out, or of the
+	// plan a PtahMigration's approval was accepted for.
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
 	PlanUID types.UID `json:"planUID,omitempty"`
-	// PlanFingerprint is the spec.fingerprint of the plan a PtahMigration's run
+	// PlanFingerprint is the spec.fingerprint of the plan an Apply or a run
 	// carried out, when the claim recorded it.
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
@@ -196,7 +199,7 @@ type JournalEntry struct {
 	// +optional
 	Reason string `json:"reason,omitempty"`
 
-	// JobName is the Job a PtahMigration's run ran as. It is absent when no Job
+	// JobName is the Job an Apply or a run ran as. It is absent when no Job
 	// was confirmed.
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
@@ -212,9 +215,15 @@ type JournalEntry struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	AppliedVersions int32 `json:"appliedVersions,omitempty"`
-	// Failure is where a run stopped, as status.lastRun.failure said.
+	// Failure is where a PtahMigration's run stopped, as
+	// status.lastRun.failure said.
 	// +optional
 	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
+	// ApplyFailure is where a PtahSchema's Apply stopped, as
+	// status.pendingObservation.applyFailure said. An Apply that ends Unknown
+	// carries it when the run named the statement the database refused.
+	// +optional
+	ApplyFailure *SchemaApplyFailureStatus `json:"applyFailure,omitempty"`
 
 	// Acknowledgment names the acknowledgment that settled an unresolved run.
 	// +kubebuilder:validation:MaxLength=253

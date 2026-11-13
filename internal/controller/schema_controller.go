@@ -1373,7 +1373,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// start a Job workload more than once, so no child-side pre-mutation
 			// claim can prove that every attempt stayed pre-mutation. Once Job
 			// dispatch was possible, every Apply error requires read-only proof.
-			return r.finishUncertainApplyWithEvidence(ctx, schema, job, err, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
+			return r.finishReportedApplyFailure(ctx, schema, job, err, result.ApplyFailure, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
 		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
@@ -2774,7 +2774,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithReport(
 	}
 	evidence := podIdentityEvidence(pods)
 	failure := withLastPodReport(ending, report.withPodsRead(evidence))
-	return r.finishUncertainApplyWithEvidenceAndBinding(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true, nil, jobUID)
+	return r.finishUncertainApplyWithEvidenceAndBinding(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true, nil, jobUID, nil)
 }
 
 func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
@@ -2820,6 +2820,7 @@ func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
 		true,
 		binding,
 		"",
+		nil,
 	)
 }
 
@@ -2842,7 +2843,45 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 		waitForDispatchDeadline,
 		nil,
 		"",
+		nil,
 	)
+}
+
+// finishReportedApplyFailure is finishUncertainApplyWithEvidence for an Apply
+// whose own result reported the failure, and records where the run said it
+// stopped. The outcome is unknown all the same: the result speaks for one Pod.
+func (r *SchemaReconciler) finishReportedApplyFailure(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	failure error,
+	stopped *dataplane.SchemaApplyFailure,
+	podUIDs []types.UID,
+	podCount int32,
+	waitForDispatchDeadline bool,
+) (ctrl.Result, error) {
+	return r.finishUncertainApplyWithEvidenceAndBinding(
+		ctx, schema, job, failure, podUIDs, podCount, waitForDispatchDeadline, nil, "", schemaApplyFailureStatus(stopped),
+	)
+}
+
+// schemaApplyFailureStatus is where the run's report said the Apply stopped, in
+// the terms status keeps. The frame's validation already held the position,
+// the SQLSTATE and the error number to the forms the API schema admits.
+//
+// A failed commit, and a run that stopped with every statement confirmed, name
+// no statement, and the schema's position counts from one, so neither reaches
+// status: the outcome is unknown and the proof that follows reads the database.
+func schemaApplyFailureStatus(failure *dataplane.SchemaApplyFailure) *operatorv1alpha1.SchemaApplyFailureStatus {
+	if failure == nil || !failure.Failed() {
+		return nil
+	}
+	return &operatorv1alpha1.SchemaApplyFailureStatus{
+		Statement:   int32(failure.Statement),  // At most the statement count, which fits an int32.
+		Statements:  int32(failure.Statements), // Bounded by the frame's validation.
+		SQLState:    failure.SQLState,
+		ErrorNumber: int32(failure.ErrorNumber), // At most 65535.
+	}
 }
 
 func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
@@ -2855,6 +2894,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	waitForDispatchDeadline bool,
 	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
 	listedJobUID types.UID,
+	stopped *operatorv1alpha1.SchemaApplyFailureStatus,
 ) (ctrl.Result, error) {
 	approved := schema.Status.Plan != nil && schema.Status.Plan.Approval != nil
 	// The claim still names the Job here, and the record below is read-only
@@ -2892,6 +2932,7 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 		// recorded no UID under (finishUncertainApplyWithReport), or empty.
 		pending.ApplyJobUID = listedJobUID
 	}
+	pending.ApplyFailure = stopped
 	schema.Status.PendingObservation = pending
 	if replacementBinding != nil {
 		schema.Status.PendingObservation.PlanRequired = false
