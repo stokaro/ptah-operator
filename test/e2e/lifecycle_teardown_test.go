@@ -255,6 +255,31 @@ func TestTeardownNamespaceWindowIsWhatTheRecordsHaveLeft(t *testing.T) {
 	}
 }
 
+func TestTeardownNamespaceGoneInTimeRefusesAReadingAtOrAfterTheWindowsEnd(t *testing.T) {
+	t.Parallel()
+	ends := time.Date(2026, 11, 12, 21, 42, 42, 0, time.UTC)
+	attempt := teardownAttempt{WindowEnds: ends}
+	if err := teardownNamespaceGoneInTime(ends.Add(-time.Nanosecond), attempt); err != nil {
+		t.Fatalf("a reading just before the window's end: %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		read time.Time
+	}{
+		{"as the window ends", ends},
+		{"a nanosecond after", ends.Add(time.Nanosecond)},
+		{"a GET that crossed the end", ends.Add(3 * time.Second)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := teardownNamespaceGoneInTime(test.read, attempt)
+			if err == nil || !strings.Contains(err.Error(), "had already ended") {
+				t.Fatalf("teardownNamespaceGoneInTime(%s) error = %v, want a refusal", test.read, err)
+			}
+		})
+	}
+}
+
 // teardownNamespaceReading is a terminating namespace the namespace controller
 // reported on a kind lab with the operator installed: the admission webhook
 // refused to delete a result record inside its window.

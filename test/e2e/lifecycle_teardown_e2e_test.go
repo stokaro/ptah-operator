@@ -237,7 +237,11 @@ func (l *lifecycleRun) deleteTeardownNamespace(namespace string, attempt teardow
 		func(ctx context.Context) (bool, string, error) {
 			current := &corev1.Namespace{}
 			err := l.cluster.Client.Get(ctx, types.NamespacedName{Name: namespace}, current)
+			read := time.Now()
 			if apierrors.IsNotFound(err) {
+				if late := teardownNamespaceGoneInTime(read, attempt); late != nil {
+					return false, "", late
+				}
 				return true, "", nil
 			}
 			if err != nil {

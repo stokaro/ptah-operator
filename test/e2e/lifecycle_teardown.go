@@ -177,6 +177,20 @@ func teardownNamespaceWindow(deleted *metav1.Time, attempt teardownAttempt) (tim
 	return attempt.WindowEnds.Sub(deleted.Time), nil
 }
 
+// teardownNamespaceGoneInTime holds a reading that found the namespace gone to
+// the records' window. read is when that reading returned, and it has to be
+// before the window's end: from that instant retention lets the records go, so
+// a namespace found gone then says nothing about the uninstall. The wait that
+// polls for it runs one last reading at its deadline and accepts it before it
+// looks at the time, so the deadline alone does not hold this.
+func teardownNamespaceGoneInTime(read time.Time, attempt teardownAttempt) error {
+	if !read.Before(attempt.WindowEnds) {
+		return fmt.Errorf("the namespace was found gone at %s, when its records' window had already ended at %s",
+			read.UTC().Format(time.RFC3339Nano), attempt.WindowEnds.Format(time.RFC3339))
+	}
+	return nil
+}
+
 // teardownNamespaceRefusal reports a terminating namespace whose deletion
 // something refused, in the namespace controller's own words: content an
 // admission check or the API refused to delete, or content that carries a
