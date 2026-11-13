@@ -246,3 +246,17 @@ the webhook's refusal and the time `teardown-a`'s result could first go.
 uninstall-first teardown's predicates to them, and to copies of them with the one
 field each mistake would change. They name the lab namespace, the Job and the
 Pod, and hold no credentials or SQL.
+
+`view-invoker-created-plan.json`, `view-invoker-turned-on-plan.json` and
+`view-invoker-body-kept-plan.json` are the plans the Ptah v0.26.0 release image
+`ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`
+(commit `1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`) saved on November 13, 2026
+for `testdata/e2e/postgresql-external-v4-view.sql`, `-v5-view-invoker.sql` and
+`-v6-view-body.sql`, in that order, against one PostgreSQL 17.12 database that
+`postgresql-external-v3-grant.sql` had been applied to. Each was applied with
+`ptah schema apply --plan` before the next was planned. They are stored as Ptah
+wrote them, and hold no credentials. The external lifecycle's security_invoker
+row plans the same artifacts on kind; `TestViewInvokerPlannedReadsEachStepOfTheRow`
+holds `viewInvokerPlanned` to accepting each for its own step and to refusing it
+for the other two, the runner harness's plans of the same shapes over another
+view, and copies with the one field each mistake would change.

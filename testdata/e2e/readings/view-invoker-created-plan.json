@@ -1,0 +1,41 @@
+{
+  "format_version": 1,
+  "name": "plan_fb7524432804",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:5dc5b482de581eb5a5f8a0948b90c9ffa050f2e6071bd2b25fb85acd8da92ea3",
+  "to_fingerprint": "sha256:5dae10dc929acfac5a2fe75b6973434d84b5d904c41db6cde6b87b8502639b8b",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE VIEW \"e2e_widget_names\" AS\nSELECT id, name FROM e2e_widgets",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "e2e_widget_names"
+          },
+          "action": "create",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "after": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "after": false,
+              "changed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

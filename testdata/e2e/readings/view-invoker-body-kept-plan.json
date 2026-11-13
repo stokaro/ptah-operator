@@ -1,0 +1,43 @@
+{
+  "format_version": 1,
+  "name": "plan_575546750a27",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:c8554f76197c7e8f1b037470f1ff9fbf655d3da16425f631324c8336ed9e82e5",
+  "to_fingerprint": "sha256:efb59b9623f971a08eb7f763b1b3a78569f21b52f4c52185bdd74dd62ed57cca",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE OR REPLACE VIEW \"e2e_widget_names\" WITH (security_invoker=true) AS\nSELECT id, name FROM e2e_widgets WHERE id \u003e 0",
+      "severity": "warning",
+      "reason": "CREATE OR REPLACE VIEW changes the view in place, and what every query that reads it gets",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "e2e_widget_names"
+          },
+          "action": "replace",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "after": false,
+              "changed": false
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "after": true,
+              "changed": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
