@@ -135,6 +135,11 @@ than `-o json`, finds the `kubectl ptah history` command where it found a
 `kubectl get` of the namespace, when more than five approvals or acknowledgments
 name the resource, and one more line before the closing `kubectl events` line.
 
+PostgreSQL 16.x joins the supported release lines. Run 43292445627 of the
+Added database lines workflow passed the whole lifecycle on it on every
+supported Kubernetes minor at the pinned Ptah build. A cluster on 17.x or 18.x
+has nothing to change for that.
+
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
   the order the operator recorded it and from when it is complete, then every

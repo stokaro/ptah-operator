@@ -74,7 +74,8 @@
       "line": "16.x",
       "image": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28",
       "imageCreated": "2026-10-21",
-      "state": "pending",
+      "state": "supported",
+      "evidenceRun": "43292445627",
       "leftOut": [
         {
           "suite": "migrations-mysql",
