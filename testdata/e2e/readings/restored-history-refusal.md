@@ -6,9 +6,13 @@ release image on 2026-11-02, and the MySQL reading with the v0.16.0 release
 image on 2026-10-25, which the v0.17.0 image reproduced record for record on
 2026-11-02. On 2026-11-04 the v0.18.0 release image (`6e1d430e`) reproduced
 both record for record, on 2026-11-06 so did the v0.22.0 release image
-(`0dd9190b`), and on 2026-11-07 the v0.23.0 release image (`f47b2bfa`). They
-exercise the migration selection guard used by
-the operator's `restoredHistoryProof`.
+(`0dd9190b`), and on 2026-11-07 the v0.23.0 release image (`f47b2bfa`). On
+2026-11-13 the v0.26.0 release image (`1cf0563c`) reproduced the PostgreSQL
+reading record for record. On MySQL it creates the revision table with
+`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+([stokaro/ptah#5874](https://github.com/stokaro/ptah/pull/5874)), so the MySQL
+reading here is v0.26.0's; every other record matched. They exercise the
+migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`
@@ -28,7 +32,7 @@ fixture. MySQL also used its explicit `--tx-mode none`.
   PostgreSQL record: it reads the session's search path when it connects,
   which the History contract now permits too.
 - Executor image: `ghcr.io/stokaro/ptah@sha256:181e279720916ed455bf9fe8f1620b8e0d71dd37cc127b3ae662317697c92548`
-  for PostgreSQL, and `ghcr.io/stokaro/ptah@sha256:b8a9ac7c695e7af9f66787880b0cd722017474f5d05c08a81e0db297df311cf4`
+  for PostgreSQL, and `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`
   for MySQL
 - Database: `ptah_audit_restore`; account: `ptah_audit`
 - Executor client address in each isolated network: `172.19.0.3`
@@ -50,7 +54,7 @@ networks were removed; the borrowed images were preserved.
 
 - Reading: [mysql-restored-history-refusal.jsonl](mysql-restored-history-refusal.jsonl)
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Reading SHA-256: `9eeae5c60c294b68b8604d2ae7d5cfee3da125f983c769a21aee30f3ad8576aa`
+- Reading SHA-256: `8167c4f0d3d2cab9e424d6e1475b4a81924106841fe4c19184435c2027b48168`
 
 ## Permitted diagnostic contract
 
