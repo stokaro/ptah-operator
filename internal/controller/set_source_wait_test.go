@@ -50,8 +50,11 @@ func TestSetSourceWaitReachesThePlanFromTheNewArtifact(t *testing.T) {
 			Operation: runner.OperationVerify, ChildExitCode: 0,
 			ObservedArtifactType: dataplane.MigrationArtifactType, ResolvedDigest: digest,
 		})
-		clock.now = clock.now.Add(time.Minute)
+		// The History Job finishes before the clock moves: the fake builder
+		// gives a Job no deadline, so one left running for a minute would be
+		// past its stop bound (jobStopBound) and run again under a new name.
 		harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+		clock.now = clock.now.Add(time.Minute)
 		pending := dataplane.MigrationStatusReport{
 			ContractVersion: dataplane.SupportedMigrationStatusContract,
 			CurrentVersion:  2, TotalMigrations: 2, HasPendingChanges: true,

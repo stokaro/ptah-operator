@@ -573,9 +573,14 @@ GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIE
   records the proof `Unknown` and goes. A Plan hands the Lease back without
   renewing it past the bound. A proof's Lease is the Apply's: deletion renews
   it once more and hands it back on the same pass. A live read in either kind
-  that supervised a Job marked `FailureTarget`, or waited for the Pods of a
-  recorded Job that is gone, had no bound either; it now runs again under a new
-  Job at that bound. Each records a `ReadJobOverdue` Warning Event that names
+  that supervised a running Job, or waited for the Pods of a recorded Job that
+  is gone, had no bound either; it now runs again under a new Job at that
+  bound, whether or not the Job controller marked the Job `FailureTarget`. A
+  Job controller that is down marks nothing, and a Plan's Lease was renewed for
+  as long as it stayed down. A Plan whose database lock epoch moved checks the
+  bound before it asks for the Lease, and once it waits no longer it is
+  discarded on that pass, where it waited first for a Lease another resource
+  had taken meanwhile. Each records a `ReadJobOverdue` Warning Event that names
   the Job, the Pod that may still read, its node and the forced delete. Nothing
   uses what such a Pod reads, and
   [What a read does to the database](../../reference/execution/#what-a-read-does-to-the-database)

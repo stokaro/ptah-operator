@@ -243,15 +243,18 @@ func jobStopBound(job *batchv1.Job) time.Time {
 // (stopWaitingForJob), and every claim that supervises may wait: suspension lets
 // go of the one that may not before it supervises anything.
 //
-// A Job with no FailureTarget is still running as far as the Job controller is
-// concerned, and the Job controller is what enforces its deadline, so the claim
-// does not second-guess it. Its Pod's wait is not settled here either: a Pod on a
-// lost node past the deadline is what makes the Job controller write
-// FailureTarget, and the Job's stop bound is then the condition's time plus the
-// grace and the slack.
+// The bound holds whatever the Job's conditions say (#1006). A Job the Job
+// controller never marks, because the controller is down, passes the same
+// deadline and never finishes either, and a condition the controller does write
+// can only bring the bound earlier (jobStopBound). The claim dates the bound by
+// its own clock against the start the Job controller wrote, so a skew between
+// the two beyond the grace and the slack lets go of a Job the Job controller
+// still counts as running. Either way the Job's Pod may still read. A read writes
+// nothing to the database, and a result its Job delivers once the claim has moved
+// on reaches nothing, since every result path takes only the Job the live claim
+// names by name and UID.
 func readJobStopOverdue(job *batchv1.Job, now time.Time) bool {
-	return !jobTerminal(job) && conditionTrue(job.Status.Conditions, batchv1.JobFailureTarget) &&
-		stopWaitingForJob(job, now, true) != nil
+	return !jobTerminal(job) && stopWaitingForJob(job, now, true) != nil
 }
 
 // podStopBound is jobStopBound for one Pod, for a claim whose recorded Job is

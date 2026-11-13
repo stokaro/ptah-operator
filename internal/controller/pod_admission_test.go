@@ -53,6 +53,29 @@ func failedCreateEvent(job *batchv1.Job, name, message string, at time.Time) *co
 	}
 }
 
+// stoodThroughTheRefusalGrace dates job back by podCreationRefusalGrace from
+// the creation the API server stamped, so by the reconciler's clock the Job has
+// stood without a Pod for as long as a pass waits before it reads the Job's
+// Events (podCreationRefusal). A Job with no creation time, one a fixture
+// seeded, is read at once already. job is left as stored.
+func stoodThroughTheRefusalGrace(t *testing.T, api client.Client, job *batchv1.Job) {
+	t.Helper()
+
+	ctx := context.Background()
+	stored := &batchv1.Job{}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(job), stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.CreationTimestamp.IsZero() {
+		return
+	}
+	stored.CreationTimestamp = metav1.NewTime(stored.CreationTimestamp.Add(-podCreationRefusalGrace))
+	if err := api.Update(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.DeepCopyInto(job)
+}
+
 func TestASchemaReportsAPodTheAPIServerRefused(t *testing.T) {
 	for _, transport := range []string{"logs", "durable"} {
 		t.Run(transport, func(t *testing.T) { testSchemaPodAdmissionRefusal(t, transport == "durable") })
@@ -107,6 +130,7 @@ func testSchemaPodAdmissionRefusal(t *testing.T, durable bool) {
 
 	// An older Event with another message and the refusal that stands now:
 	// the condition carries the latest one.
+	stoodThroughTheRefusalGrace(t, api, job)
 	older := failedCreateEvent(job, "older", "Error creating: something earlier", reconciler.now().Add(-time.Minute))
 	latest := failedCreateEvent(job, "latest", refusalText+"\n\twith a\x00control character", reconciler.now())
 	for _, event := range []*corev1.Event{older, latest} {
@@ -243,6 +267,7 @@ func testMigrationPodAdmissionRefusal(t *testing.T, durable bool) {
 		t.Fatalf("dispatched Jobs = %d, want the one this row refuses a Pod to", len(jobs.Items))
 	}
 	job := &jobs.Items[0]
+	stoodThroughTheRefusalGrace(t, api, job)
 	if err := api.Create(ctx, failedCreateEvent(job, "refused", refusalText, reconciler.now())); err != nil {
 		t.Fatal(err)
 	}

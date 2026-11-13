@@ -1710,12 +1710,16 @@ terminated after it started. A deleted one names the Pod, with its phase, in an
 
 A read's Pod on such a node is not waited for past its Job's stop bound, in
 either kind. A deleted schema lets go of a Plan or a proof read as above. A live
-read whose Job the Job controller has marked to fail, `FailureTarget`, runs
-again under a new Job at the bound, and so does a read whose recorded Job is
-gone, once that Job's Pods are past their own deadline, or the end of their
-deletion grace, and 30 seconds. Each says so in a `ReadJobOverdue` Warning
-Event that names the Job, the Pod that has not stopped, its node and the same
-forced delete. The Pod may come back with its node and finish its read. Nothing
+read runs again under a new Job at the bound, whether or not the Job controller
+has marked its Job to fail with `FailureTarget`: a Job controller that is down
+marks nothing, and its Job does not finish either. So does a read whose
+recorded Job is gone, once that Job's Pods are past their own deadline, or the
+end of their deletion grace, and 30 seconds. Each says so in a
+`ReadJobOverdue` Warning Event that names the Job, the Pod that has not
+stopped, its node and the same forced delete. While the Job controller stays
+down, each new Job waits out its own bound as well, so a read leaves one Job
+about every deadline and retry interval, and each one stays until it is
+deleted by hand or with its owner. The Pod may come back with its node and finish its read. Nothing
 uses what it reads: the result receiver refuses a Pod whose claim is gone or
 has moved to another Job, and the operator reads a result only for the Job its
 claim names. The Pod cannot take the database Lease either. Delete it once the
@@ -1806,6 +1810,16 @@ old the rest of its records are.
 The manager's collector removes each record once its window has ended, and the
 namespace follows.
 
+On kind with Kubernetes 1.37.0, a namespace deleted with the operator installed
+held the records of two schemas: one deleted ten minutes earlier, whose records
+were retired, and one deleted with the namespace. The first refusal named the
+hour from the retired result's creation. When that time came, the next refusal
+named the hour from the retirement, and that schema's records were gone within
+14 seconds of it. The other schema's two records got their `DELETING` times 13
+and 28 seconds into the namespace's deletion, and the refusals named the hour
+from each in turn. The namespace was gone 61 minutes after its deletion, 59
+seconds after the last time a refusal named.
+
 A message that ends at `has not authorized deletion`, with no time, is not about
 time. The record's operation may still be pinned by its resource, its original Job
 may still exist, the records it depends on may still have to go first, or the
@@ -1887,7 +1901,12 @@ kubectl delete namespace <namespace> --wait=true
 Nothing refuses the deletion once the webhook is gone. On kind with Kubernetes
 1.37.0 the uninstall took 7 seconds, and the namespace, with 10 records inside
 their window, was gone 8 seconds later. Namespaces already `Terminating` followed
-within 40 seconds of the uninstall, including one refused for 30 minutes. Delete
+within 40 seconds of the uninstall, including one refused for 30 minutes. The
+`uninstall` acceptance phase runs these three commands on every supported
+Kubernetes minor, against a namespace holding one retired operation's records,
+deleted with nearly an hour of their window left. It fails if the namespace
+controller reports a refused deletion or a finalizer, or if the namespace outlives
+that window. Delete
 the resources first: a resource whose operation is active carries a finalizer
 only the manager removes, and with the manager gone the namespace would wait for
 that instead.

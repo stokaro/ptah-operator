@@ -942,6 +942,7 @@ func fakeMigrationReconciler(
 	objects = append(objects, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
 		Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 	}})
+	var reconciler *MigrationReconciler
 	api := withEventIndex(withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme))).
 		// A real API server stamps a UID on every object it accepts, and the
 		// controller refuses a Job without one. The fake client does not, so a
@@ -956,6 +957,7 @@ func fakeMigrationReconciler(
 				if object.GetUID() == "" {
 					object.SetUID(types.UID("created-" + object.GetName()))
 				}
+				stampJobCreation(object, reconciler.now)
 				// The controller-write guard re-derives a migration plan from
 				// the migration's own STORED status and refuses one it cannot
 				// reproduce. A fake client that accepted a plan built from a
@@ -986,7 +988,7 @@ func fakeMigrationReconciler(
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	testClock := &fixedClock{now: clock}
-	reconciler := &MigrationReconciler{
+	reconciler = &MigrationReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
 		LockNamespace:    "ptah-system",
 		Clock:            testClock.Now,

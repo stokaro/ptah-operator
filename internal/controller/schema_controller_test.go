@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -3038,6 +3039,19 @@ func mustGenerateTestSealKey() planseal.KeyPair {
 	return key
 }
 
+// stampJobCreation dates a Job the way the API server does when it accepts
+// one, by now: the clock of the reconciler that creates it, which the fake API
+// server shares. The fake client leaves a created object's creationTimestamp
+// zero, and a Job's stop bound counts from its creation until the Job
+// controller starts it (jobStopBound), so a Job dated nowhere would be past its
+// bound the moment it is read back. Only a Job is dated: no other kind's
+// creation reaches a decision these fixtures make.
+func stampJobCreation(object client.Object, now func() time.Time) {
+	if job, ok := object.(*batchv1.Job); ok && job.CreationTimestamp.IsZero() {
+		job.CreationTimestamp = metav1.NewTime(now())
+	}
+}
+
 func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (*SchemaReconciler, client.Client) {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -3057,7 +3071,14 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 			Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 		}})
 	}
+	var reconciler *SchemaReconciler
 	api := withEventIndex(withRealmIndexes(fake.NewClientBuilder().WithScheme(scheme))).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, writer client.WithWatch, object client.Object, options ...client.CreateOption) error {
+				stampJobCreation(object, reconciler.now)
+				return writer.Create(ctx, object, options...)
+			},
+		}).
 		WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahSchemaApproval{}, &batchv1.Job{}).
 		WithIndex(&operatorv1alpha1.PtahSchemaApproval{}, approvalSchemaIndex, func(object client.Object) []string {
 			approval := object.(*operatorv1alpha1.PtahSchemaApproval)
@@ -3066,7 +3087,7 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	testClock := &safetyClock{now: clock}
-	reconciler := &SchemaReconciler{
+	reconciler = &SchemaReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
 		SealKey:          testSchemaSealKey,
 		LockNamespace:    "ptah-system",

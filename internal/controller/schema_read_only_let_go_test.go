@@ -1024,11 +1024,13 @@ func asCreatedWithoutTTL(t *testing.T, api client.Client, job *batchv1.Job) *bat
 // hold the realm forever. It does not wait at all for a suspended resource,
 // unless the claim proves an Apply, which outranks suspension. A resource being
 // deleted waits by the bound alone, suspended or not, as deletion waits on the
-// running Job of every claim that holds the lock. A claim that stops waiting is
-// discarded with its Lease handed back, and a Warning names a Job a release
-// before 0.2.11 created, which has no TTL. A Job created with its cleanup TTL is
-// waited for the same way, since the wait is for the Lease, and nothing names it
-// when the claim stops waiting: it is collected once it finishes.
+// running Job of every claim that holds the lock. A claim that waits renews the
+// Lease on the pass that finds it within the bound. A claim that stops waiting
+// renews nothing on that pass (#1006): it is discarded with its Lease handed
+// back, and a Warning names a Job a release before 0.2.11 created, which has no
+// TTL. A Job created with its cleanup TTL is waited for the same way, since the
+// wait is for the Lease, and nothing names it when the claim stops waiting: it
+// is collected once it finishes.
 func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 	t.Parallel()
 
@@ -1086,12 +1088,14 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 				clock.now = stopBy
 			}
 			reconciler.Clock = clock.Now
-			reconciler.Locks = targetlock.New(api, api, clock)
+			writes := &leaseWrites{}
+			reconciler.Locks = targetlock.New(api, writes.writer(api), clock)
 
 			result, err := reconciler.Reconcile(ctx, run.request())
 			if err != nil {
 				t.Fatalf("Reconcile(): %v", err)
 			}
+			held := writes.take()
 			// A deletion that lets go of the claim also lets go of the resource.
 			got := &operatorv1alpha1.PtahSchema{}
 			if err := api.Get(ctx, client.ObjectKeyFromObject(run.schema), got); err != nil &&
@@ -1107,8 +1111,10 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 					t.Fatalf("the claim did not wait for its running Job: result %#v, operation %#v",
 						result, got.Status.ActiveOperation)
 				}
-				if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != holder {
-					t.Fatalf("the waiting claim's Lease is held by %q, want %q", leased, holder)
+				if lease := testDatabaseLease(t, api, reconciler.LockNamespace); leaseHolder(lease) != holder ||
+					lease.Spec.RenewTime == nil || !lease.Spec.RenewTime.Time.Equal(clock.now) {
+					t.Fatalf("the waiting claim's Lease is held by %q, renewed %v, want %q renewed at %s",
+						leaseHolder(lease), lease.Spec.RenewTime, holder, clock.now)
 				}
 				if schemaCleanupDeferredFor(events, run.job.Name, "") {
 					t.Fatalf("a Job the claim still waits for is named as staying: %q", events)
@@ -1117,6 +1123,14 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			}
 			if got.Status.ActiveOperation != nil {
 				t.Fatalf("the claim waited for its running Job, whose stop bound is %s: %#v", stopBy, got.Status.ActiveOperation)
+			}
+			// The release is seen through the same writer, so a renewal would
+			// have been too.
+			if !slices.Contains(held, "") {
+				t.Fatalf("the pass wrote the Lease %q and no release among them, so it measures no write", held)
+			}
+			if renewals := slices.DeleteFunc(slices.Clone(held), func(h string) bool { return h == "" }); len(renewals) != 0 {
+				t.Fatalf("the claim that stopped waiting renewed the Lease for %q before it let go of it", renewals)
 			}
 			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != "" {
 				t.Fatalf("the discarded claim's Lease is still held by %q", leased)
@@ -1129,6 +1143,123 @@ func TestAReadUnderALostLeaseWaitsForItsJobOnlyUntilItsStopBound(t *testing.T) {
 			}
 			if !schemaCleanupDeferredFor(events, run.job.Name, row.stays) {
 				t.Fatalf("Events = %q, want a Warning that Job %q stays because %q", events, run.job.Name, row.stays)
+			}
+		})
+	}
+}
+
+// TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease is a Plan whose realm
+// Lease epoch moved, and whose Lease a sibling's operation has since taken, as
+// after a manager that stayed down past the Lease's duration. A claim that still
+// waits for its running Job asks for the Lease and waits behind the sibling. One
+// that waits no longer, at its Job's stop bound or over a Job that stopped, does
+// not ask (#1006): it is discarded on that pass and the sibling keeps the Lease,
+// since the release names the claim's own epoch. A claim that asked first would
+// wait for the sibling past its own bound. The claim that waits asks again when
+// the sibling's Lease would run out, not later. A Job a release before 0.2.11
+// created has no TTL, so the claim that lets go of it gives it one or names it in
+// a Warning; one created with its TTL is collected once it finishes, and nothing
+// names it.
+func TestAReadUnderALostLeaseIsDiscardedWhoeverHoldsTheLease(t *testing.T) {
+	t.Parallel()
+
+	current := workloadBuilderForMigrations()
+	for _, row := range []struct {
+		name string
+		// past dates the pass at the Job's stop bound rather than a second
+		// before it, and stopped finishes the Job first.
+		past, stopped     bool
+		discarded         bool
+		createdWithoutTTL bool
+	}{
+		{name: "inside its Job's stop bound"},
+		{name: "at its Job's stop bound", past: true, discarded: true},
+		{name: "at the stop bound of a Job created without a TTL", past: true, discarded: true, createdWithoutTTL: true},
+		{name: "over a Job that stopped", stopped: true, discarded: true},
+		{name: "over a Job created without a TTL that stopped", stopped: true, discarded: true, createdWithoutTTL: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			run := schemaOperationDispatchedBy(t, operatorv1alpha1.OperationPlan, runShape{
+				dispatcher: current, recorded: true, createdWithoutTTL: row.createdWithoutTTL,
+			})
+			run.schema.Status.ActiveOperation.LeaseContinuityLost = true
+			reconciler, api, recorder := run.reconciler(t, current)
+			if row.stopped {
+				finishSchemaRead(t, api, run)
+			}
+			stopBy := jobStopBound(run.job)
+			measured := stopBy.Add(-time.Second)
+			if row.past {
+				measured = stopBy
+			}
+			// A claim that waits first meets the sibling's Lease two seconds
+			// short of that Lease's term (takeRealmForASibling takes it for five
+			// minutes) before the pass measured. The locker honors a Lease it
+			// did not take for its full term from the moment it first saw it, so
+			// two seconds of it are left at the measured pass, under the poll a
+			// contended claim waits at most (maxLockContentionPoll): the pass
+			// waits as long as the Lease says, not as long as the poll.
+			const siblingTerm, siblingLeft = 5 * time.Minute, 2 * time.Second
+			clock := &safetyClock{now: measured}
+			if !row.discarded {
+				clock.now = measured.Add(-siblingTerm + siblingLeft)
+			}
+			reconciler.Clock = clock.Now
+			reconciler.Locks = targetlock.New(api, api, clock)
+			claimed := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
+			takeRealmForASibling(t, reconciler, api, testCoordinationDigest)
+			sibling := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest)
+			if claimed == "" || sibling == "" || sibling == claimed {
+				t.Fatalf("the claim held the Lease as %q and the sibling as %q, so nothing below measures a sibling's Lease", claimed, sibling)
+			}
+			if !row.discarded {
+				if result, err := reconciler.Reconcile(ctx, run.request()); err != nil || result.RequeueAfter != maxLockContentionPoll {
+					t.Fatalf("Reconcile() on first meeting the sibling's Lease = %#v, %v; want a wait of %s",
+						result, err, maxLockContentionPoll)
+				}
+				clock.now = measured
+			}
+
+			result, err := reconciler.Reconcile(ctx, run.request())
+			if err != nil {
+				t.Fatalf("Reconcile(): %v", err)
+			}
+			operation := safetyGetSchema(t, api, run.schema).Status.ActiveOperation
+			if leased := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); leased != sibling {
+				t.Fatalf("the Lease is held by %q after the pass, want the sibling's %q", leased, sibling)
+			}
+			events := migrationEvents(recorder)
+			if !row.discarded {
+				if operation == nil || operation.ID != run.schema.Status.ActiveOperation.ID {
+					t.Fatalf("the claim inside its Job's stop bound did not wait for the Lease: %#v", operation)
+				}
+				if result.RequeueAfter != siblingLeft {
+					t.Fatalf("the claim waiting for the sibling asks again after %s, want the %s the sibling's Lease has left",
+						result.RequeueAfter, siblingLeft)
+				}
+				return
+			}
+			if operation != nil {
+				t.Fatalf("the claim that waits no longer waited for the sibling's Lease: %#v, events %q", operation, events)
+			}
+			if row.stopped {
+				if got := storedTTL(t, api, run.job); got == nil || *got != jobclaim.CleanupTTLSeconds {
+					t.Fatalf("the stopped Job's TTL = %s, want the %d seconds a harvested read-only Job gets",
+						ttlText(got), jobclaim.CleanupTTLSeconds)
+				}
+				return
+			}
+			if !row.createdWithoutTTL {
+				if schemaCleanupDeferredFor(events, run.job.Name, "") {
+					t.Fatalf("a Job created with its cleanup TTL is named as staying: %q", events)
+				}
+				return
+			}
+			if !schemaCleanupDeferredFor(events, run.job.Name, "the Job did not stop by its own deadline") {
+				t.Fatalf("Events = %q, want a Warning that Job %q stays past its stop bound", events, run.job.Name)
 			}
 		})
 	}

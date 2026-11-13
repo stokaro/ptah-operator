@@ -228,3 +228,21 @@ replaces the reading from CI run 37154162826, whose `ApprovalRequired` read
 `False/Satisfied`. `TestIsolatedDurableRunReading` and
 `TestRunAllowedByPolicyRefusesADecision` accept it and refuse the copies they
 list, and `internal/statusview` reads its conditions.
+
+`teardown-retired-attempt.json` and `teardown-namespace-refused.json` were read
+on a local kind run on November 12, 2026, with Kubernetes 1.37.0 and operator
+`71d60d6d`, in a lab namespace holding two schemas whose Resolve failed at an
+artifact nobody serves. `teardown-retired-attempt.json` is the three records of
+schema `teardown-a`, read after that schema was deleted and before the namespace
+was: its credential, its result and the `retired` record the collector wrote 16
+seconds after the deletion. The list the run read also held the other schema's
+two records, which are left out; the three are stored as the API server returned
+them. `teardown-namespace-refused.json` is the namespace 15 seconds after its
+deletion, with the operator installed: `NamespaceDeletionContentFailure` quotes
+the webhook's refusal and the time `teardown-a`'s result could first go.
+`TestTeardownRetiredAttemptReadsTheWindowTheRetirementPersisted`,
+`TestTeardownRetiredAttemptRefusesWhatIsNotOneRetiredAttempt` and
+`TestTeardownNamespaceRefusalNamesWhatTheNamespaceControllerReports` hold the
+uninstall-first teardown's predicates to them, and to copies of them with the one
+field each mistake would change. They name the lab namespace, the Job and the
+Pod, and hold no credentials or SQL.
