@@ -19,16 +19,14 @@ out of silence.
 ## 0.2.12
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRD schemas do not change, so the CRD hook does not refuse
-[a rollback](../../use/operations/#rollback) to 0.2.11. An installation that renders
+on the upgrade. The CRD schemas gain the HTTPS source, so the CRD schema
+version moves and [a rollback](../../use/operations/#rollback) to 0.2.11 is
+refused once this release has updated the CRDs. An installation that renders
 the chart's rules gains `PtahOperatorJournalLinesDropped`. Set
 `monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
 The executor moves to Ptah v0.26.0, which retires the execution binding:
 approve again whatever was waiting, after the resource has read its database
-with v0.26.0 and planned. A rollback to 0.2.11 retires every plan this release
-made the same way: 0.2.11 checks a plan's execution binding before it reads
-the `effects` the plan carries, so the resource plans again with Ptah v0.23.0
-and asks for its approvals again. Move `kubectl ptah` with the operator. A plan with a PostgreSQL view statement
+with v0.26.0 and planned. Move `kubectl ptah` with the operator. A plan with a PostgreSQL view statement
 now carries the `effects` Ptah records for it, and a plugin from an earlier
 release names that field as one it does not read and refuses to approve the
 plan or print it with `-o sql` or `-o json`. Ptah Console 0.3.2 still holds
@@ -48,6 +46,17 @@ declare now stops the Observe and the Plan with that reason rather than
 reaching the database at Apply. A database audit that lists what the executor
 sends has to expect the reads the executor bullet names. Nothing else.
 
+- **A source can be an HTTPS download pinned by its digest.**
+  `spec.desired.https` and `spec.artifact.https` name a URL, the SHA-256 of
+  the bytes it serves, a format (`File`, `TarGzip` or `Zip`) and the path the
+  resource reads, with an optional Basic or Bearer credential and a private CA.
+  Every operation downloads the URL again and refuses other bytes, and nothing
+  is stored in the cluster. A plan binds the URL, the path and the selected
+  files, not the download digest, so an archive published again with the same
+  files keeps its plan once the spec names the new digest.
+  `ArtifactResolved` says `DownloadVerified`, and a source policy gains
+  `allowedHTTPSHosts`. [From HTTPS](../../use/sources/#from-https) has the
+  fields and what each interval costs in downloads.
 - **Executor.** The verified executor is now Ptah v0.26.0. Each PostgreSQL
   schema read now also reads the inherit and set options of a role membership,
   whether the role it runs as is a superuser, the foreign tables that keep an

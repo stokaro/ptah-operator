@@ -30,6 +30,8 @@ contract that keeps it true. The operational view is
 | Snapshot copy init, ConfigMap source | no | no | the source snapshot ConfigMap, checked against the bound content digest |
 | Resolve main, Git source | Git credential and its grants | no | the repository, ref and path, and the optional CA or known hosts |
 | Git fetch init, Git source | Git credential and its grants | no | the bound commit, checked against the bound content digest |
+| Resolve main, HTTPS source | HTTPS credential and its grants | no | the URL, held to the pinned download digest, and the optional CA |
+| HTTPS fetch init, HTTPS source | HTTPS credential and its grants | no | the bound download, held to its digest and to the bound content digest |
 
 The controller sees only Secret names and keys; the kubelet reads the Secrets
 for the Job's Pod. A migration reads a local directory rather than an
@@ -48,13 +50,14 @@ Secret volume, mounted in that container and no other:
 | Development database URL, Plan only | `/credentials/development-database/url` | `PTAH_OPERATOR_DEV_URL_FILE` |
 | Registry username, password and token, `Environment` mode | `/credentials/registry/username`, `password`, `token` | `PTAH_OPERATOR_OCI_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
 | Git username and password, `https://` | `/credentials/git/username`, `password` | `PTAH_OPERATOR_GIT_USERNAME_FILE`, `_PASSWORD_FILE` |
+| HTTPS username and password, or token | `/credentials/https/username`, `password`, `token` | `PTAH_OPERATOR_HTTPS_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
 
 The container's environment holds the path and never the credential. The runner
 reads each file before anything else uses the value, so the value it redacts from
 everything it writes is the value it read. It hands the value to Ptah in the
 environment of the one child process it starts: Ptah `v0.26.0`
-takes the database URL from `--db-url` or `PTAH_DB_URL` and a registry or Git
-credential from its environment, and nothing else, and a command line is visible
+takes the database URL from `--db-url` or `PTAH_DB_URL` and a registry, Git or
+HTTPS credential from its environment, and nothing else, and a command line is visible
 to every process in the Pod. The OCI fetch init container runs Ptah's pull through
 the runner for the same reason, and the runner refuses any command there but the
 `schema pull` or `migrations pull` the manager built. A Docker config file and an
@@ -76,15 +79,15 @@ the `defaultUser` and `user` volume fields, which need the alpha
 `AtomicWriteVolumeUserFields` feature gate in every Kubernetes minor the operator
 supports and which the Job admission guard refuses.
 
-The registry and Git grants stay in the environment: the `registry`,
+The registry, Git and HTTPS grants stay in the environment: the `registry`,
 `allowPlainHTTP`, `caSHA256`, `host` and `knownHostsSHA256` keys of a credential
 Secret reach the runner through a `secretKeyRef`. They say where a credential may
 be sent and hold none, and a grant the Secret lacks stops the container with
 `CreateContainerConfigError`, as before.
 
 A volume with a key the Secret may lack is optional, as the selector was: a
-registry credential's three keys, a Git credential's two, and a `urlFrom` that sets
-`optional`. The kubelet then writes no file for that key, the runner leaves the
+registry credential's three keys, a Git credential's two, an HTTPS credential's
+three, and a `urlFrom` that sets `optional`. The kubelet then writes no file for that key, the runner leaves the
 variable unset, and whatever needs it refuses as it did when the kubelet left an
 optional variable unset.
 
@@ -103,6 +106,14 @@ operation. The runner in either one refuses a credential unless the Secret's
 file unless the Secret holds its digest, before Ptah starts; Ptah reads private
 copies of the trust files and never sees the grants. The container that holds
 the database URL mounts only the fetched files, read-only.
+
+A resource whose source is HTTPS has the same shape: a Resolve Job and no
+Verify Job, its credential and CA in the Resolve Job's operation container and
+in the `fetch-https-source` init container of every later operation, and
+nowhere else. The runner in either one refuses a credential unless the
+Secret's `host` key names the URL's authority, a CA bundle unless the Secret
+holds its digest, and a credential that is incomplete or mixes a token with a
+user name or a password, before Ptah starts.
 
 For Resolve and Verify, the runner replaces a mounted custom CA ConfigMap
 projection with a private snapshot before starting Ptah. For Observe and Plan,
@@ -325,7 +336,7 @@ A Secret that exists without the key reads `MountVolume.SetUp failed for volume
 "database-url" : references non-existent secret key: url (volume database-url
 reads Secret <namespace>/application-database)`. The kubelet's words name the key
 and not the Secret, so the operator adds the volume and the Secret it reads, from
-the Pod. A missing registry or Git grant still stops the container that reads it,
+the Pod. A missing registry, Git or HTTPS grant still stops the container that reads it,
 and the message carries what the kubelet wrote on that container, such as
 `couldn't find key registry in Secret <namespace>/<name>`. Before 0.2.11 the
 database URL was a variable too, so the message was the container's

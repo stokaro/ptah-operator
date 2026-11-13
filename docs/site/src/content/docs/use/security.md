@@ -582,15 +582,43 @@ only, at most 1,000 files and 64 MiB; no submodule, symbolic link or LFS
 pointer, each refused by name; no checkout, hook or filter, so a repository
 cannot run anything in the Pod.
 
+## HTTPS sources
+
+An HTTPS source is trusted by its digest: whoever may write the resource names
+the exact bytes the operator reads, and the server can serve those bytes or
+fail. Every download, at Resolve and before every later operation, is held to
+the digest, so a server that replaces a file cannot change the desired state;
+it can only stop the resource from planning until the bytes are back or the
+spec pins new ones. The digest is its check, and the API refuses a
+verification policy beside it.
+
+The manager never reads the server or the credential Secret. As for Git, the
+Secret's fixed keys name its scope, and a resource's author cannot choose them:
+`host`, the only `host[:port]` the credential is sent to, and `caSHA256`, the
+digest of the CA it may be sent under. A credential is `username` and `password`, or `token`,
+never both. A resource that names the Secret with another URL or another CA,
+or a Secret whose credential is incomplete or mixed, is refused in the Pod
+before Ptah starts. The API refuses a URL that carries user information, so a
+credential can only be in the Secret. With a credential set, Ptah refuses a redirect to
+another origin, and it refuses any redirect to `http://`.
+
+Only the `fetch-https-source` init container, and the Resolve container, mount
+the Secret and the CA; the container that holds the database URL reads the
+fetched files from a volume and holds neither. What a download yields is
+bounded by Ptah's pull: an archive entry outside the archive and a symbolic
+link in the selection are refused by name.
+
 ## Source policies
 
-A team that wants to bound what its ConfigMap and Git sources may name sets
-`sourcePolicyFrom` on the resource: an immutable ConfigMap holding a YAML
-document with up to three rules.
+A team that wants to bound what its ConfigMap, Git and HTTPS sources may name
+sets `sourcePolicyFrom` on the resource: an immutable ConfigMap holding a YAML
+document with up to four rules.
 
 ```yaml
 allowedGitHosts:          # the only host[:port] a Git source may name
   - git.example.com
+allowedHTTPSHosts:        # the only host[:port] an HTTPS source may name
+  - artifacts.example.com
 allowedConfigMaps:        # the only ConfigMaps a ConfigMap source may name
   - inventory-schema
 maxContentBytes: 1048576  # the most the selected files may hold together
@@ -599,10 +627,11 @@ maxContentBytes: 1048576  # the most the selected files may hold together
 A rule that is absent refuses nothing, and a list that is present and empty
 allows nothing of its kind. A field the document does not define is refused,
 so a misspelled rule is not read as one kept. The manager reads the policy,
-never the source's credential: a Git host it does not allow gets no Resolve
-Job, so the credential is never sent there; a ConfigMap it does not allow, or
-files that hold too much, leave no snapshot; a Git commit whose selected files
-hold too much is not recorded. The refusal names the rule.
+never the source's credential: a Git or HTTPS host it does not allow gets no
+Resolve Job, so the credential is never sent there; a ConfigMap it does not
+allow, or files that hold too much, leave no snapshot; a Git commit or an HTTPS
+download whose selected files hold too much is not recorded. The refusal names
+the rule.
 
 A plan binds the policy's object and bytes beside the source. Another policy,
 the same bytes in another ConfigMap included, retires the plan, and so does
@@ -836,6 +865,7 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | A row file outside Ptah's working directory | `desired_source_unreadable` | The `error.message` of the failed `schema drift` or `schema plan`, only in the form Ptah's row-file guard writes | 485 bytes, as above |
 | A plan that would change a protected table | `protected_table` | The `error.message` of the `schema plan` report, from a command with a database connection, which names the fenced tables | 4 KiB in the frame, then 512 bytes in the Event and 1 KiB in the condition |
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
+| An HTTPS source a Resolve cannot download | `child_exit` | The last line of standard error from the HTTPS pull, which holds the HTTPS credential and no database URL, and names the refusal, such as the digest a server served in place of the pinned one | 512 bytes, as above |
 
 One function in the runner handles all of them, and the Pod log line below. It removes
 the credentials the runner read from its files and its environment wherever one
@@ -890,8 +920,8 @@ cuts `Hunter2Hunter2` to `Hunter2...`, and the SQL reader stops at `PASS` in
 know what else in a file is sensitive either, so keep a value that must not reach
 status out of a desired file.
 
-Outside status and Events, a failed `fetch-git-source` init container writes
-standard error, handled by the same function, to its log, and the kubelet copies
+Outside status and Events, a failed `fetch-git-source` or `fetch-https-source`
+init container writes standard error, handled by the same function, to its log, and the kubelet copies
 the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations`
 init containers run Ptah's pull through the runner, which reads the registry
 credential files and hands Ptah's output to the container's streams as Ptah wrote
@@ -933,7 +963,7 @@ environment: the container runtime on the node keeps a stopped container's
 environment until the Pod is removed, and that environment holds the paths of the
 credential files and the grants, which hold no credential. The files are in Secret
 volumes, which the kubelet unmounts once the Pod's containers have stopped, so root on
-the node reads the database URL, and for a migration Apply the registry or Git
+the node reads the database URL, and for a migration Apply the registry, Git or HTTPS
 credential, only while the Pod runs. A Job 0.2.10 created still carries its
 credentials in its environment for the 24 hours. Once you have read the reason you
 can end the wait early: `kubectl delete job -n <namespace> <job>` removes the Job and

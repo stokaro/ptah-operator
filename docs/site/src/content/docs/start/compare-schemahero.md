@@ -63,7 +63,7 @@ did in that scenario, and they are not a statement about every workload.
   groups you name, and a plan that changes privileges waits for an approval
   even then.
 - [Immutable delivery](../../use/sources/) from an OCI artifact by digest, as well
-  as from a ConfigMap or Git.
+  as from a ConfigMap, Git or an HTTPS download pinned by its digest.
 - [Ptah Console](https://github.com/stokaro/ptah-console), an optional web console
   for approvers, developers, people on call and auditors.
 
