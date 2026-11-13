@@ -51,7 +51,7 @@
           "kind": "ptah.run/pgextension/extension-change",
           "representation": "change",
           "version": 1,
-          "definition": "sha256:aaea258c2dcc40969ef87697b4d1fae167d443099e9c1485943224088eac9052",
+          "definition": "sha256:ec32dcc398455c92bfbe4ad1a71c0ab2d5d978483465de953d6fbb9cbcc85bd1",
           "payload": {
             "after": {
               "if_not_exists": true

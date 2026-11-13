@@ -1,5 +1,26 @@
 {
   "contract_version": 3,
   "command": "schema plan",
-  "outcome": "no-changes"
+  "outcome": "changes",
+  "plan_digest": "sha256:1f245798185a713fa6c143be4c65da287f635c8fd1b9262c637f016d701fe917",
+  "plan_path": "/work/ptah-plan-output-2797806644/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_4340fc63fda6",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:f0a9ac5324c30c33066423f1759f7eb1e2305398c58ab2e02d6e17c200587746",
+    "to_fingerprint": "sha256:54e891b04576389c52a26e1c0ffc03dc614b2315d385db9945a8a10c8f4d0c4d",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_view_invoker_unstated_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes",
+        "severity": "warning",
+        "reason": "CREATE OR REPLACE VIEW changes the view in place, and what every query that reads it gets"
+      }
+    ]
+  }
 }

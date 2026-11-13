@@ -2,7 +2,7 @@
   "contract_version": 2,
   "command": "migrations up",
   "direction": "up",
-  "outcome": "unknown",
+  "outcome": "failed",
   "planned": [
     1
   ],
@@ -38,15 +38,15 @@
     "dirty_revision": {
       "version": 1,
       "description": "Change",
-      "state": "pending",
+      "state": "failed",
       "direction": "up",
       "applied": 0,
       "total": 1,
-      "error": "statement execution outcome is unknown after process interruption",
+      "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
       "error_stmt": "CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
-      "execution_time": 9000000,
+      "execution_time": 5000000,
       "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-      "applied_at": "2026-11-07T17:03:50Z",
+      "applied_at": "2026-11-13T16:31:27Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -56,8 +56,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-        "applied_at": "2026-11-07T17:03:50Z",
-        "execution_time_ms": 9,
+        "applied_at": "2026-11-13T16:31:27Z",
+        "execution_time_ms": 5,
         "state": "dirty"
       }
     ],

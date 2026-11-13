@@ -4,13 +4,13 @@
   "drift": true,
   "failed": true,
   "failure_threshold": "all",
-  "highest_severity": "warning",
+  "highest_severity": "destructive",
   "dialect": "postgres",
   "findings": [
     {
       "category": "feature_changes:ptah.run/postgres/table-partition-member-change",
       "count": 1,
-      "severity": "warning"
+      "severity": "destructive"
     }
   ],
   "inventory": [

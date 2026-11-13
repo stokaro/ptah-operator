@@ -17,8 +17,8 @@
     },
     {
       "sql": "DROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`",
-      "severity": "safe",
-      "reason": "does not remove data or tighten constraints"
+      "severity": "destructive",
+      "reason": "DROP PROCEDURE removes executable database behavior, and every caller of the procedure fails"
     },
     {
       "sql": "DROP TRIGGER `differs_hand_trigger`",

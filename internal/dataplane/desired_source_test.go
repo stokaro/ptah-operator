@@ -129,14 +129,21 @@ func failedSentence(t *testing.T, fixture string) string {
 func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 	t.Parallel()
 
-	const constraintKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
+	const (
+		constraintKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
+		indexKey      = `index "i": names column "missing_column", which table "t" does not declare`
+	)
 	for _, test := range []struct {
 		name, fixture, engine, want string
 	}{
 		{"a key into a table nothing declares", "foreign-key", "PostgreSQL", `invalid foreign key: field "id" references unknown table "nope"`},
-		{"the key after a line for an index", "key-and-index", "PostgreSQL", constraintKey},
 		{"the key on MySQL", "key-mysql", "MySQL", constraintKey},
 		{"a fault that does not open with the key", "not-unique", "PostgreSQL", `postgres requires referenced columns code on table "parent" to be declared unique`},
+		// Since Ptah v0.26.0 drift and plan check the indexes first, and stop
+		// on the first one they refuse with validate's line.
+		{"an index on a table nothing declares", "index-table", "PostgreSQL", `index "i": names table "nowhere", which no declaration defines`},
+		{"an index before a key", "key-and-index", "PostgreSQL", indexKey},
+		{"an index before a key the database refuses", "other-and-index", "PostgreSQL", indexKey},
 	} {
 		for _, command := range []string{"drift", "plan"} {
 			t.Run(test.name+"/"+command, func(t *testing.T) {
@@ -152,7 +159,7 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 }
 
 // TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn holds the filter
-// to the measured near misses first. On a database that holds a schema the file
+// to the measured near miss first. On a database that holds a schema the file
 // declares nothing of, drift and plan stop on a key into that schema, which
 // validate cannot know, so validate's own fault does not explain the failure and
 // the failed command's sentence, which names what the database holds, must not
@@ -160,26 +167,22 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) {
 	t.Parallel()
 
-	for name, fixture := range map[string]string{
-		"an index on a table nothing declares":          "index-table",
-		"another key than the one the database refuses": "other-and-key",
-		"an index, and a key the database refuses":      "other-and-index",
-	} {
-		for _, command := range []string{"drift", "plan"} {
-			t.Run(name+"/"+command, func(t *testing.T) {
-				t.Parallel()
-				if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-"+fixture+".txt"), "PostgreSQL",
-					failedSentence(t, command+"-"+fixture+".json")); found {
-					t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
-				}
-			})
-		}
+	for _, command := range []string{"drift", "plan"} {
+		t.Run("another key than the one the database refuses/"+command, func(t *testing.T) {
+			t.Parallel()
+			if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-other-and-key.txt"), "PostgreSQL",
+				failedSentence(t, command+"-other-and-key.json")); found {
+				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
+			}
+		})
 	}
 
 	const (
-		fault   = `invalid foreign key: field "id" references unknown table "nope"`
-		line    = "postgres: schema: " + fault + "\n"
-		wrapped = "error comparing schemas: " + fault
+		fault     = `invalid foreign key: field "id" references unknown table "nope"`
+		line      = "postgres: schema: " + fault + "\n"
+		wrapped   = "error comparing schemas: " + fault
+		index     = `postgres: index "i": names table "nowhere", which no declaration defines`
+		indexLine = index + "\n"
 	)
 	for _, test := range []struct {
 		name, stdout, engine, failed string
@@ -200,6 +203,14 @@ func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) 
 		{"a load failure", string(desiredSourceFixture(t, "validate-sql.txt")), "PostgreSQL", failedSentence(t, "drift-sql.json")},
 		{"a file with no problem", string(desiredSourceFixture(t, "validate-good.txt")), "PostgreSQL", wrapped},
 		{"a line after the fault that the command did not say", line + `postgres: index "i": names nothing`, "PostgreSQL", wrapped},
+		// An index line is read only as the whole sentence, dialect and all.
+		{"an index line under a wrapper", indexLine, "PostgreSQL", "error comparing schemas: " + index},
+		{"an index line with more words", indexLine, "PostgreSQL", index + `: the database holds table "nowhere"`},
+		{"another index's line", indexLine, "PostgreSQL", strings.Replace(index, `"i"`, `"j"`, 1)},
+		{"an index line without its dialect", indexLine, "PostgreSQL", strings.TrimPrefix(index, "postgres: ")},
+		{"an index line in another case", indexLine, "PostgreSQL", strings.ToUpper(index)},
+		{"an index line for another engine", indexLine, "MySQL", index},
+		{"an index line the command stopped before", indexLine + line, "PostgreSQL", "error reading database schema: permission denied for schema public"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

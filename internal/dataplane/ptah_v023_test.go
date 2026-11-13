@@ -13,7 +13,7 @@ import (
 // The rows in this file decode documents Ptah v0.23.0 printed, as the runner
 // harness captured them from the pinned release image.
 
-func loadPtahV023(t *testing.T, name string) []byte {
+func loadCapture(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
@@ -46,7 +46,7 @@ func TestDecodeMigrationRun_ReadsPtahV023CommitFailure(t *testing.T) {
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			t.Parallel()
-			report, err := dataplane.DecodeMigrationRun(loadPtahV023(t, test.file))
+			report, err := dataplane.DecodeMigrationRun(loadCapture(t, test.file))
 			if err != nil {
 				t.Fatalf("DecodeMigrationRun() error = %v", err)
 			}
@@ -60,19 +60,20 @@ func TestDecodeMigrationRun_ReadsPtahV023CommitFailure(t *testing.T) {
 	}
 }
 
-// A MySQL CREATE UNIQUE INDEX that fails with a duplicate key: v0.23.0 reports
-// the run unknown, because MySQL commits DDL on its own, and leaves the
-// in-flight marker in the revision row.
-func TestDecodeMigrationRun_ReadsPtahV023UnknownMySQLRun(t *testing.T) {
+// A MySQL CREATE UNIQUE INDEX that fails with a duplicate key. MySQL rolls back
+// an index build it rejects, and since v0.26.0 Ptah reports the run failed
+// where v0.23.0 reported it unknown (stokaro/ptah#5838); the revision row stays
+// dirty, with nothing of the migration recorded applied.
+func TestDecodeMigrationRun_ReadsAFailedMySQLIndexBuild(t *testing.T) {
 	t.Parallel()
 
-	report, err := dataplane.DecodeMigrationRun(loadPtahV023(t, "statement-errors/my-unique-up.json"))
+	report, err := dataplane.DecodeMigrationRun(loadCapture(t, "statement-errors/my-unique-up.json"))
 	if err != nil {
 		t.Fatalf("DecodeMigrationRun() error = %v", err)
 	}
 	want := dataplane.MigrationRunFailure{Version: 1, Statement: 1, Statements: 1, SQLState: "23000", ErrorNumber: 1062}
-	if report.Outcome != dataplane.MigrationOutcomeUnknown || report.Failure == nil || *report.Failure != want {
-		t.Fatalf("outcome %q failure %+v, want %q %+v", report.Outcome, report.Failure, dataplane.MigrationOutcomeUnknown, want)
+	if report.Outcome != dataplane.MigrationOutcomeFailed || report.Failure == nil || *report.Failure != want {
+		t.Fatalf("outcome %q failure %+v, want %q %+v", report.Outcome, report.Failure, dataplane.MigrationOutcomeFailed, want)
 	}
 	dirty := report.Status.DirtyRevision
 	if dirty == nil || dirty.Version != 1 || dirty.Applied != 0 || dirty.Total != 1 {
@@ -88,14 +89,14 @@ func TestUnseenObjectsFromPtahV023Failures(t *testing.T) {
 	t.Parallel()
 
 	plan := func(t *testing.T, name string) *dataplane.CommandError {
-		report, err := dataplane.DecodeSchemaPlan(loadPtahV023(t, name))
+		report, err := dataplane.DecodeSchemaPlan(loadCapture(t, name))
 		if err != nil {
 			t.Fatalf("DecodeSchemaPlan() error = %v", err)
 		}
 		return report.Error
 	}
 	drift := func(t *testing.T, name string) *dataplane.CommandError {
-		failure, err := dataplane.DecodeDriftFailure(loadPtahV023(t, name))
+		failure, err := dataplane.DecodeDriftFailure(loadCapture(t, name))
 		if err != nil {
 			t.Fatalf("DecodeDriftFailure() error = %v", err)
 		}

@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:d0d72f785ecf1c1c86b0b9dc04ca97b76d4a4d710373eaaf3b68271a4e2303a1",
+  "plan_path": "/work/ptah-plan-output-562615143/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_dab0dea00879",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:952134860575f20fd9b6cffc85c9fba6482056bdcb707953d95c67d4636ed2a0",
+    "to_fingerprint": "sha256:9b6245dd9f7dd78e2788f9b4984bb10d92310879928c771bdf6ae6b2e6b3a52e",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_view_invoker_declared_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

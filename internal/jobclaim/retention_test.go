@@ -82,9 +82,9 @@ func TestOnlyARunThatStopsItsResourceKeepsItsLogWithoutAnApproval(t *testing.T) 
 // TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats reads the documents
 // the pinned Ptah wrote, which the rule was written against. A statement it could not
 // run leaves a dirty revision in the report's status. A database it could not open
-// leaves no status at all, and that run comes around again. A MySQL DDL statement the
-// server refused may have committed on its own, so Ptah reports that run unknown
-// (stokaro/ptah#5661), and it stops its resource as any unresolved run does.
+// leaves no status at all, and that run comes around again. MySQL rolls back an index
+// build it rejects, and since v0.26.0 Ptah reports that run failed where v0.23.0
+// reported it unknown (stokaro/ptah#5838); it leaves a dirty revision too.
 func TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats(t *testing.T) {
 	t.Parallel()
 
@@ -99,10 +99,10 @@ func TestWhatPtahReportedTellsAFailedRunThatStopsFromOneThatRepeats(t *testing.T
 			"../dataplane/testdata/statement-errors/my-literal-up.json",
 			"../dataplane/testdata/statement-errors/my-syntax-up.json",
 		}, outcome: dataplane.MigrationOutcomeFailed, keeps: true},
-		{name: "a MySQL DDL statement refused", patterns: []string{
+		{name: "a MySQL index build refused", patterns: []string{
 			"../dataplane/testdata/statement-errors/my-unique-up.json",
 			"../dataplane/testdata/statement-errors/my-control-up.json",
-		}, outcome: dataplane.MigrationOutcomeUnknown, keeps: true},
+		}, outcome: dataplane.MigrationOutcomeFailed, keeps: true},
 		{name: "a statement refused after another migration applied", patterns: []string{"../dataplane/testdata/migrations-up-failed-postgres.json"}, outcome: dataplane.MigrationOutcomeFailed, keeps: true},
 		{name: "a migration that committed half of itself", patterns: []string{"../dataplane/testdata/migrations-up-partial-mysql.json"}, outcome: dataplane.MigrationOutcomePartial, keeps: true},
 		{name: "a database it could not open", patterns: []string{"../dataplane/testdata/target-failures/*/up.json"}, outcome: dataplane.MigrationOutcomeFailed},

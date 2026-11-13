@@ -143,19 +143,21 @@ func TestMigrationRunCarriesPtahV023CommitFailure(t *testing.T) {
 	}
 }
 
-// A MySQL CREATE UNIQUE INDEX stopped by a duplicate key: v0.23.0 reports the
-// run unknown. The runner carries the failure and the dirty row's counts,
-// clears the row's free text, which here is Ptah's in-flight marker, and marks
-// the run uncertain.
-func TestMigrationRunCarriesPtahV023UnknownMySQLRun(t *testing.T) {
+// A MySQL CREATE UNIQUE INDEX stopped by a duplicate key. Since v0.26.0 Ptah
+// reports the run failed, where v0.23.0 reported it unknown
+// (stokaro/ptah#5838), and the dirty row's free text is the database's own
+// sentence, which quotes the duplicated row. The runner carries the failure
+// and the dirty row's counts, clears that text, and does not mark the run
+// uncertain: the server rolled the index build back.
+func TestMigrationRunCarriesAFailedMySQLIndexBuild(t *testing.T) {
 	t.Parallel()
 
 	document := ptahV023Document(t, "statement-errors/my-unique-up.json")
-	const marker = "statement execution outcome is unknown"
+	const marker = "Duplicate entry 'row-value@example.com'"
 	if !strings.Contains(document, marker) {
-		t.Fatal("the captured document no longer carries the in-flight marker, so this row proves nothing about it")
+		t.Fatal("the captured document no longer quotes the row in its dirty revision, so this row proves nothing about clearing it")
 	}
-	operationID := "migration-v023-unknown"
+	operationID := "migration-mysql-index-failed"
 	result := Run(context.Background(), Config{
 		Operation: OperationMigrationApply,
 		// The apply binds the target digest to the URL, so this row keeps the
@@ -169,7 +171,7 @@ func TestMigrationRunCarriesPtahV023UnknownMySQLRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalFrame() error = %v", err)
 	}
-	if strings.Contains(string(frame), marker) || strings.Contains(string(frame), "Duplicate entry") {
+	if strings.Contains(string(frame), "row-value") || strings.Contains(string(frame), "Duplicate entry") {
 		t.Fatalf("the framed result carries Ptah's free text: %s", frame)
 	}
 	parsed, err := ParseResultFor(frame, OperationMigrationApply, operationID)
@@ -178,14 +180,14 @@ func TestMigrationRunCarriesPtahV023UnknownMySQLRun(t *testing.T) {
 	}
 	run := parsed.MigrationRun
 	want := dataplane.MigrationRunFailure{Version: 1, Statement: 1, Statements: 1, SQLState: "23000", ErrorNumber: 1062}
-	if run == nil || run.Outcome != dataplane.MigrationOutcomeUnknown || run.Failure == nil || *run.Failure != want {
-		t.Fatalf("the controller parsed migration run %#v, want outcome unknown and failure %+v", run, want)
+	if run == nil || run.Outcome != dataplane.MigrationOutcomeFailed || run.Failure == nil || *run.Failure != want {
+		t.Fatalf("the controller parsed migration run %#v, want outcome failed and failure %+v", run, want)
 	}
 	if dirty := run.Status.DirtyRevision; dirty == nil || dirty.Version != 1 || dirty.Applied != 0 || dirty.Total != 1 || dirty.Error != "" {
 		t.Fatalf("the controller parsed dirty revision %+v, want version 1, 0 of 1, no text", dirty)
 	}
-	if !parsed.Uncertain {
-		t.Fatal("parsed Uncertain = false, want an unknown run marked uncertain")
+	if parsed.Uncertain || !parsed.MutationStarted {
+		t.Fatalf("parsed Uncertain %t MutationStarted %t, want a failed run that is not uncertain", parsed.Uncertain, parsed.MutationStarted)
 	}
 }
 

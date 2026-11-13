@@ -19,7 +19,7 @@ import (
 // captured them under internal/dataplane/testdata. Each report is decoded and
 // then cut the way the runner cuts it before the frame, with Ptah's sentence
 // and the revision row's text gone; TestMigrationRunCarriesPtahV023CommitFailure and
-// TestMigrationRunCarriesPtahV023UnknownMySQLRun in internal/runner hold the
+// TestMigrationRunCarriesAFailedMySQLIndexBuild in internal/runner hold the
 // runner to that.
 func TestARunAccountFromPtahV023Documents(t *testing.T) {
 	t.Parallel()
@@ -42,9 +42,11 @@ func TestARunAccountFromPtahV023Documents(t *testing.T) {
 				"1 migration before it is recorded applied",
 		},
 		{
+			// MySQL rolls back an index build it rejects, and since v0.26.0
+			// Ptah reports the run failed (stokaro/ptah#5838).
 			file: "statement-errors/my-unique-up.json",
-			want: "Migration 1 (Change) stopped at statement 1 of 1 with SQLSTATE 23000 (error 1062), " +
-				"and whether it committed is not recorded",
+			want: "Migration 1 (Change) failed at statement 1 of 1 with SQLSTATE 23000 (error 1062) " +
+				"and committed nothing; 0 migrations before it are recorded applied",
 			failure: true,
 		},
 	} {

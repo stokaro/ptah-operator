@@ -10,10 +10,11 @@ import "strings"
 // of what a query on the parent returns, so a reader of the parent sees them
 // disappear. Ptah v0.23.0 rates every statement of a partition move a warning,
 // which lets apply: Always run a bare detachment, or a move to another parent,
-// with nobody looking. Ptah rates such a detachment destructive after
-// stokaro/ptah#5739 (fixed by stokaro/ptah#5741), and this rule agrees with
-// that rating; until a release with it is pinned, this rule is what holds the
-// detachment for an approval.
+// with nobody looking. Since v0.26.0 Ptah rates such a detachment destructive
+// itself (stokaro/ptah#5741), and the runner harness captures it doing so for
+// a bare detachment and a move to another parent. This rule agrees with that
+// rating, so against the pinned build it raises nothing Ptah did not, and it
+// stays so that the rating does not depend on which build wrote the plan.
 //
 // A detachment stays as Ptah rated it only when the next statement that moves
 // the same table attaches it to the same parent, with nothing renamed in

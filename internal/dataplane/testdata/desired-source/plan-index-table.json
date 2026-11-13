@@ -1,8 +1,11 @@
 {
   "contract_version": 3,
   "command": "schema plan",
-  "outcome": "failed",
+  "outcome": "refused",
+  "refusal": {
+    "code": "declaration-refused"
+  },
   "error": {
-    "message": "invalid schema projection: index \"i\" has no resolved owner"
+    "message": "postgres: index \"i\": names table \"nowhere\", which no declaration defines"
   }
 }

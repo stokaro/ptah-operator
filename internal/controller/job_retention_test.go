@@ -832,9 +832,9 @@ func TestWhatPtahWroteDecidesWhatTheManagerKeeps(t *testing.T) {
 		phase    operatorv1alpha1.MigrationPhase
 	}{
 		{document: "statement-errors/pg-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
-		// A MySQL DDL statement the server refused may have committed on its
-		// own, so Ptah v0.23.0 reports the run unknown (stokaro/ptah#5661).
-		{document: "statement-errors/my-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseBlocked},
+		// MySQL rolls back an index build it rejects, so since v0.26.0 Ptah
+		// reports the run failed, as it does on PostgreSQL (stokaro/ptah#5838).
+		{document: "statement-errors/my-unique-up.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
 		{document: "migrations-up-failed-postgres.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseVerifyingHistory},
 		{document: "migrations-up-partial-mysql.json", ttl: jobclaim.FailedApplyRetentionTTLSeconds, phase: operatorv1alpha1.MigrationPhaseBlocked},
 		{document: "target-failures/pg-connect/up.json", ttl: jobclaim.CleanupTTLSeconds, phase: operatorv1alpha1.MigrationPhaseFailed},

@@ -2,6 +2,6 @@
   "contract_version": 1,
   "command": "schema drift",
   "error": {
-    "message": "error comparing schemas: invalid schema diff: target index reference at position 0 requires a name and owning table"
+    "message": "postgres: index \"i\": names table \"nowhere\", which no declaration defines"
   }
 }

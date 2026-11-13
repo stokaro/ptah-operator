@@ -2,6 +2,6 @@
   "contract_version": 1,
   "command": "schema drift",
   "error": {
-    "message": "error comparing schemas: invalid foreign key: constraint \"t_other\" references unknown table \"other.nope\": the database compared holds schema \"other\" and the desired schema declares nothing of it"
+    "message": "postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare"
   }
 }

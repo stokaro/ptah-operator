@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_bbda223c6d80",
-  "plan_digest": "sha256:f02aad20d5b9ef6a8522cac9150f76c5e2ef8051b7f8c084b59e41dad5c60b03",
+  "plan_name": "plan_1b0eb2f31d5b",
+  "plan_digest": "sha256:713d0dea5b882847dff9234973c862c0cc742fedbe1b0d5e2c39cfc0213437f2",
   "units": [
     {
       "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""

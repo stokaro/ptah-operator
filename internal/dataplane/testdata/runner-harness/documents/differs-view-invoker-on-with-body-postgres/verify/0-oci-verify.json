@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-view-invoker-on-with-body-postgres@sha256:406ec7bbccc249f9bd05ea2800b0b8c6040e043830853bda065513f57718a64a",
+  "digest": "sha256:406ec7bbccc249f9bd05ea2800b0b8c6040e043830853bda065513f57718a64a",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

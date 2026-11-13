@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "dry-run",
   "plan_name": "plan_dcbfdfb2109f",
-  "plan_digest": "sha256:47e3258c03e3bf66d0e831a74969257d69043d1bf5bde8be07cd6330429044cf",
+  "plan_digest": "sha256:c19ecff5a524d1a663943c431f1a6dc5aaed4d6043ba29fb5e31d3c9441c03cb",
   "units": [
     {
       "sql": "DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`"
