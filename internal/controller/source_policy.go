@@ -39,7 +39,7 @@ func sourcePolicyFor(
 	return &policy, &operatorv1alpha1.SourcePolicyBinding{UID: binding.UID, Digest: binding.Digest}, nil
 }
 
-// gitAuthority is the host[:port] a Git source's URL names, lowercased.
+// gitAuthority is the host[:port] a Git or HTTPS source's URL names, lowercased.
 func gitAuthority(repository string) string {
 	parsed, err := url.Parse(repository)
 	if err != nil {
@@ -75,7 +75,7 @@ func sourcePolicyMoved(
 	recorded *operatorv1alpha1.SourcePolicyBinding,
 	resolved bool,
 ) (bool, error) {
-	if !resolved || (spec.ConfigMap == nil && spec.Git == nil) {
+	if !resolved || (spec.ConfigMap == nil && spec.Git == nil && spec.HTTPS == nil) {
 		return false, nil
 	}
 	_, live, err := sourcePolicyFor(ctx, reader, namespace, spec)

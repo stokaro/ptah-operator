@@ -38,7 +38,7 @@ func requireRefused(t *testing.T, schema *operatorv1alpha1.PtahSchema, want stri
 	if schema.Status.Phase != operatorv1alpha1.PhaseFailed || failed == nil || !strings.Contains(failed.Message, want) {
 		t.Fatalf("phase %s, failure %#v; want Failed naming %q", schema.Status.Phase, failed, want)
 	}
-	if schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil || schema.Status.Plan != nil {
+	if schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil || schema.Status.Source.HTTPS != nil || schema.Status.Plan != nil {
 		t.Fatalf("a refused source left status %#v and plan %#v", schema.Status.Source, schema.Status.Plan)
 	}
 }

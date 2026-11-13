@@ -18,6 +18,8 @@ import (
 const document = `allowedGitHosts:
   - git.example.com
   - git.example.com:2222
+allowedHTTPSHosts:
+  - files.example.com:8443
 allowedConfigMaps:
   - inventory-schema
 maxContentBytes: 100
@@ -34,6 +36,7 @@ func TestAPolicyRefusesWhatItsRulesDoNotAllow(t *testing.T) {
 		"an allowed host in uppercase": policy.CheckGitHost("GIT.EXAMPLE.COM"),
 		"an allowed host and port":     policy.CheckGitHost("git.example.com:2222"),
 		"an allowed ConfigMap":         policy.CheckConfigMap("inventory-schema"),
+		"an allowed download host":     policy.CheckHTTPSHost("FILES.example.com:8443"),
 		"content at the bound":         policy.CheckContentBytes(100),
 	} {
 		if check != nil {
@@ -41,11 +44,13 @@ func TestAPolicyRefusesWhatItsRulesDoNotAllow(t *testing.T) {
 		}
 	}
 	for name, check := range map[string]error{
-		"another host":            policy.CheckGitHost("attacker.example"),
-		"the host on a port":      policy.CheckGitHost("git.example.com:443"),
-		"another ConfigMap":       policy.CheckConfigMap("inventory-schema-copy"),
-		"a ConfigMap by its case": policy.CheckConfigMap("Inventory-Schema"),
-		"content past the bound":  policy.CheckContentBytes(101),
+		"another host":                    policy.CheckGitHost("attacker.example"),
+		"the host on a port":              policy.CheckGitHost("git.example.com:443"),
+		"another ConfigMap":               policy.CheckConfigMap("inventory-schema-copy"),
+		"a download from a Git host":      policy.CheckHTTPSHost("git.example.com"),
+		"a download host on another port": policy.CheckHTTPSHost("files.example.com"),
+		"a ConfigMap by its case":         policy.CheckConfigMap("Inventory-Schema"),
+		"content past the bound":          policy.CheckContentBytes(101),
 	} {
 		if !errors.Is(check, sourcepolicy.ErrRefused) {
 			t.Errorf("%s was not refused: %v", name, check)
@@ -59,14 +64,16 @@ func TestAnAbsentRuleRefusesNothingAndAnEmptyListAllowsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unrestricted.CheckGitHost("anything.example") != nil || unrestricted.CheckConfigMap("anything") != nil {
+	if unrestricted.CheckGitHost("anything.example") != nil || unrestricted.CheckConfigMap("anything") != nil ||
+		unrestricted.CheckHTTPSHost("anything.example") != nil {
 		t.Fatal("an absent rule refused a source")
 	}
-	closed, err := sourcepolicy.Parse([]byte("allowedGitHosts: []\nallowedConfigMaps: []\n"))
+	closed, err := sourcepolicy.Parse([]byte("allowedGitHosts: []\nallowedHTTPSHosts: []\nallowedConfigMaps: []\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if closed.CheckGitHost("git.example.com") == nil || closed.CheckConfigMap("inventory-schema") == nil {
+	if closed.CheckGitHost("git.example.com") == nil || closed.CheckConfigMap("inventory-schema") == nil ||
+		closed.CheckHTTPSHost("files.example.com") == nil {
 		t.Fatal("an empty list allowed a source")
 	}
 	if closed.CheckContentBytes(1<<40) != nil {
@@ -81,6 +88,7 @@ func TestParseRefusesWhatItCannotReadExactly(t *testing.T) {
 		"a zero size":            "maxContentBytes: 0\n",
 		"a negative size":        "maxContentBytes: -1\n",
 		"an empty host":          "allowedGitHosts:\n  - \"\"\n",
+		"a padded download host": "allowedHTTPSHosts:\n  - \"files.example.com \"\n",
 		"a padded ConfigMap":     "allowedConfigMaps:\n  - \" inventory\"\n",
 		"not YAML":               "allowedGitHosts: [\n",
 		"a list where a size is": "maxContentBytes: [1]\n",

@@ -4,7 +4,8 @@
 //
 // Everything comes from the resource's status, which records no credential,
 // so neither does a view. A Git repository URL cannot carry one: the API
-// refuses a URL with user information other than an SSH user name.
+// refuses a URL with user information other than an SSH user name, and an
+// HTTPS download URL with any user information at all.
 package sourceview
 
 import (
@@ -21,6 +22,8 @@ const (
 	KindConfigMap Kind = "ConfigMap"
 	// KindGit is a commit of a Git repository.
 	KindGit Kind = "Git"
+	// KindHTTPS is a download pinned by its digest.
+	KindHTTPS Kind = "HTTPS"
 )
 
 // View is one resolved source. The fields of the other kinds stay empty.
@@ -46,8 +49,14 @@ type View struct {
 	Path       string                   `json:"path,omitempty"`
 	Commit     string                   `json:"commit,omitempty"`
 
-	// ContentDigest is the digest of a ConfigMap or Git source's selected
-	// files, the content a plan computed from them is bound to.
+	// URL, Format and DownloadDigest are the download an HTTPS source names
+	// and the digest its bytes were held to; Path is what it selects.
+	URL            string `json:"url,omitempty"`
+	Format         string `json:"format,omitempty"`
+	DownloadDigest string `json:"downloadDigest,omitempty"`
+
+	// ContentDigest is the digest of a ConfigMap, Git or HTTPS source's
+	// selected files, the content a plan computed from them is bound to.
 	ContentDigest string `json:"contentDigest,omitempty"`
 	// SourcePolicyDigest is the content of the source policy the resolution
 	// was checked against, when the resource names one.
@@ -66,6 +75,8 @@ func FromSchema(status operatorv1alpha1.SchemaSourceStatus) *View {
 	switch {
 	case status.Git != nil:
 		view = gitView(status.Git.URL, status.Git.Ref, status.Git.Path, status.Git.Commit, status.Git.ContentDigest)
+	case status.HTTPS != nil:
+		view = httpsView(status.HTTPS.URL, status.HTTPS.Format, status.HTTPS.Path, status.HTTPS.Digest, status.HTTPS.ContentDigest)
 	case status.Snapshot != nil || status.ConfigMap != nil:
 		view = configMapView(status.ConfigMap, status.Snapshot)
 	case status.ResolvedReference != "" || status.Digest != "":
@@ -92,6 +103,8 @@ func FromMigration(
 	switch {
 	case artifact.Git != nil:
 		view = gitView(artifact.Git.URL, artifact.Git.Ref, artifact.Git.Path, artifact.Git.Commit, artifact.Git.ContentDigest)
+	case artifact.HTTPS != nil:
+		view = httpsView(artifact.HTTPS.URL, artifact.HTTPS.Format, artifact.HTTPS.Path, artifact.HTTPS.Digest, artifact.HTTPS.ContentDigest)
 	case artifact.Snapshot != nil:
 		view = configMapView(configMap, artifact.Snapshot)
 	default:
@@ -103,6 +116,10 @@ func FromMigration(
 
 func gitView(url string, ref operatorv1alpha1.GitRef, path, commit, contentDigest string) *View {
 	return &View{Kind: KindGit, Repository: url, Ref: &ref, Path: path, Commit: commit, ContentDigest: contentDigest}
+}
+
+func httpsView(url string, format operatorv1alpha1.HTTPSFormat, path, digest, contentDigest string) *View {
+	return &View{Kind: KindHTTPS, URL: url, Format: string(format), Path: path, DownloadDigest: digest, ContentDigest: contentDigest}
 }
 
 func configMapView(revision *operatorv1alpha1.ConfigMapSourceRevision, snapshot *operatorv1alpha1.SourceSnapshotBinding) *View {
@@ -147,6 +164,12 @@ func (v *View) Fields() []Field {
 			Field{"Ref", refText(v.Ref)},
 			Field{"Path", v.Path},
 			Field{"Commit", v.Commit})
+	case KindHTTPS:
+		fields = append(fields,
+			Field{"Source", joinNonEmpty("HTTPS", v.URL)},
+			Field{"Format", v.Format},
+			Field{"Path", v.Path},
+			Field{"Download", v.DownloadDigest})
 	}
 	return append(fields,
 		Field{"Content", v.ContentDigest},

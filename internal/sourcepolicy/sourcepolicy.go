@@ -1,11 +1,13 @@
 // Package sourcepolicy reads and applies a source policy: what a team refuses
-// for every ConfigMap and Git source, held in an immutable ConfigMap a
+// for every ConfigMap, Git and HTTPS source, held in an immutable ConfigMap a
 // resource selects with sourcePolicyFrom.
 //
-// The document is YAML with three optional rules:
+// The document is YAML with four optional rules:
 //
 //	allowedGitHosts:      # the only host[:port] a Git source may name
 //	  - git.example.com
+//	allowedHTTPSHosts:    # the only host[:port] an HTTPS source may name
+//	  - artifacts.example.com
 //	allowedConfigMaps:    # the only ConfigMaps a ConfigMap source may name
 //	  - inventory-schema
 //	maxContentBytes: 1048576   # the most the selected files may hold together
@@ -41,6 +43,7 @@ var ErrRefused = errors.New("the source policy refuses this source")
 // Policy is a parsed source policy.
 type Policy struct {
 	AllowedGitHosts   *[]string `json:"allowedGitHosts,omitempty"`
+	AllowedHTTPSHosts *[]string `json:"allowedHTTPSHosts,omitempty"`
 	AllowedConfigMaps *[]string `json:"allowedConfigMaps,omitempty"`
 	MaxContentBytes   *int64    `json:"maxContentBytes,omitempty"`
 }
@@ -64,7 +67,9 @@ func Parse(document []byte) (Policy, error) {
 	if policy.MaxContentBytes != nil && *policy.MaxContentBytes < 1 {
 		return Policy{}, errors.New("the source policy's maxContentBytes is not positive")
 	}
-	for name, list := range map[string]*[]string{"allowedGitHosts": policy.AllowedGitHosts, "allowedConfigMaps": policy.AllowedConfigMaps} {
+	for name, list := range map[string]*[]string{
+		"allowedGitHosts": policy.AllowedGitHosts, "allowedHTTPSHosts": policy.AllowedHTTPSHosts, "allowedConfigMaps": policy.AllowedConfigMaps,
+	} {
 		if list == nil {
 			continue
 		}
@@ -118,6 +123,20 @@ func (p Policy) CheckGitHost(authority string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: allowedGitHosts does not name %s", ErrRefused, authority)
+}
+
+// CheckHTTPSHost refuses an HTTPS source whose authority, host[:port], the
+// policy does not allow. Hosts compare without case. allowedGitHosts says
+// nothing about an HTTPS source: a host a team clones from is not one it
+// downloads from.
+func (p Policy) CheckHTTPSHost(authority string) error {
+	if p.AllowedHTTPSHosts == nil {
+		return nil
+	}
+	if slices.ContainsFunc(*p.AllowedHTTPSHosts, func(allowed string) bool { return strings.EqualFold(allowed, authority) }) {
+		return nil
+	}
+	return fmt.Errorf("%w: allowedHTTPSHosts does not name %s", ErrRefused, authority)
 }
 
 // CheckConfigMap refuses a ConfigMap source the policy does not allow.

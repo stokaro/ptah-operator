@@ -28,6 +28,8 @@ const (
 	SourceConfigMap SourceKind = "ConfigMap"
 	// SourceGit is one commit of a Git repository.
 	SourceGit SourceKind = "Git"
+	// SourceHTTPS is a download pinned by its digest.
+	SourceHTTPS SourceKind = "HTTPS"
 	// SourceOther is a spec that names none of these, such as a kind of
 	// source a newer API added.
 	SourceOther SourceKind = "Other"
@@ -94,6 +96,8 @@ func sourceKind(spec operatorv1alpha1.SourceSpec) SourceKind {
 		return SourceConfigMap
 	case spec.Git != nil:
 		return SourceGit
+	case spec.HTTPS != nil:
+		return SourceHTTPS
 	case spec.OCIRef != "":
 		return SourceOCI
 	default:

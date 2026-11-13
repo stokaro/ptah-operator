@@ -810,12 +810,16 @@ func (r *MigrationReconciler) claimMigration(
 		// credential, so no Resolve Job and no Verify step.
 		return r.resolveMigrationConfigMapSource(ctx, migration)
 	}
-	if git := migration.Spec.Artifact.Git; operationType == operatorv1alpha1.MigrationOperationResolve && git != nil {
+	if operationType == operatorv1alpha1.MigrationOperationResolve && (migration.Spec.Artifact.Git != nil || migration.Spec.Artifact.HTTPS != nil) {
 		// A host the source policy does not allow gets no Job: the
 		// credential is never sent there.
 		policy, _, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
 		if err == nil {
-			err = checkGitSource(policy, git, 0)
+			if git := migration.Spec.Artifact.Git; git != nil {
+				err = checkGitSource(policy, git, 0)
+			} else {
+				err = checkHTTPSSource(policy, migration.Spec.Artifact.HTTPS, 0)
+			}
 		}
 		if err != nil {
 			if errors.Is(err, errSourceRefused) {
@@ -1492,6 +1496,33 @@ func (r *MigrationReconciler) consumeMigrationResult(
 				fmt.Sprintf("The Git ref resolved to commit %s; the history is read next", revision.Commit))
 			break
 		}
+		if download := migration.Spec.Artifact.HTTPS; download != nil {
+			revision, err := httpsResolution(download, result)
+			if err != nil {
+				return r.retryMigrationOperation(ctx, migration, job, err)
+			}
+			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
+			if err == nil {
+				err = checkHTTPSSource(policy, download, result.ResolvedContentBytes)
+			}
+			if err != nil {
+				if errors.Is(err, errSourceRefused) {
+					return r.retryMigrationOperation(ctx, migration, job, err)
+				}
+				return ctrl.Result{}, err
+			}
+			migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: sourcebinding.HTTPSAccess(*download, revision)}
+			migration.Status.ConfigMap = nil
+			migration.Status.SourcePolicy = policyBinding
+			// The Resolve Job held the download to the pinned digest, which
+			// is the whole trust decision: the history is read next.
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+			endMigrationRefusal(migration, operatorv1alpha1.ReasonDownloadVerified, migrationSourceResolvedMessage)
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+				operatorv1alpha1.ReasonDownloadVerified, httpsResolvedMessage(revision)+"; the history is read next")
+			break
+		}
 		if !sha256DigestPattern.MatchString(result.ResolvedDigest) || result.ResolvedReference == "" {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the resolve result carries no immutable reference"))
 		}
@@ -1678,8 +1709,9 @@ func (r *MigrationReconciler) refuseMigrationArtifact(
 // other than the plan it names.
 const migrationPlanLeftMessage = "A reading of the database ended somewhere other than the plan this approval names, so that plan needs a new approval if it is published again"
 
-// migrationSourceResolvedMessage is what a refusal's conditions say once a Git
-// or ConfigMap source was read: neither has a verification policy to refuse it.
+// migrationSourceResolvedMessage is what a refusal's conditions say once a Git,
+// HTTPS or ConfigMap source was read: none has a verification policy to refuse
+// it.
 const migrationSourceResolvedMessage = "The source was read, and nothing refuses it"
 
 // endMigrationRefusal takes the verification policy's refusal off the
@@ -2158,7 +2190,7 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 	migration *operatorv1alpha1.PtahMigration,
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (string, error) {
-	if migration.Spec.Artifact.ConfigMap == nil && migration.Spec.Artifact.Git == nil {
+	if migration.Spec.Artifact.ConfigMap == nil && migration.Spec.Artifact.Git == nil && migration.Spec.Artifact.HTTPS == nil {
 		if _, err := ocireference.Parse(migration.Spec.Artifact.OCIRef); err != nil {
 			return "", errors.New("the artifact reference must be an OCI reference without credentials, whitespace, or query data")
 		}
@@ -2215,6 +2247,14 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			inputs["source_git_commit"] = git.Commit
 			inputs["source_content_digest"] = git.ContentDigest
 		}
+		// An HTTPS source adds the download it was resolved to and its
+		// content.
+		if download := migration.Status.Artifact.HTTPS; download != nil {
+			inputs["source_https_url"] = download.URL
+			inputs["source_https_path"] = download.Path
+			inputs["source_https_digest"] = download.Digest
+			inputs["source_content_digest"] = download.ContentDigest
+		}
 	}
 	if git := migration.Spec.Artifact.Git; git != nil {
 		// The repository, ref, path, credential and trust a Resolve Job is
@@ -2225,6 +2265,15 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			return "", fmt.Errorf("digest the Git source: %w", err)
 		}
 		inputs["git_source"] = source
+	}
+	if download := migration.Spec.Artifact.HTTPS; download != nil {
+		// The URL, digest, format, path, credential and trust a Resolve Job
+		// is built from.
+		source, err := fingerprint.DigestCanonicalJSON(download)
+		if err != nil {
+			return "", fmt.Errorf("digest the HTTPS source: %w", err)
+		}
+		inputs["https_source"] = source
 	}
 	if operationType == operatorv1alpha1.MigrationOperationVerify {
 		binding, err := policy.ConfigMapBinding(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom)
@@ -2908,6 +2957,14 @@ func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operator
 			binding.Transport = *spec.Transport.DeepCopy()
 		}
 		return &operatorv1alpha1.SourceAccessBinding{Git: binding}
+	}
+	if download := migration.Status.Artifact.HTTPS; download != nil {
+		binding := download.DeepCopy()
+		if spec := migration.Spec.Artifact.HTTPS; spec != nil {
+			binding.AuthFrom = spec.AuthFrom.DeepCopy()
+			binding.Transport = *spec.Transport.DeepCopy()
+		}
+		return &operatorv1alpha1.SourceAccessBinding{HTTPS: binding}
 	}
 	source := &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: migration.Status.Artifact.ResolvedReference,
