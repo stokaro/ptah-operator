@@ -162,6 +162,13 @@ a read-only Job this release creates. 0.2.10 admits no Pod and no result for a
 Job that already carries a TTL, so a read that runs when you roll back to 0.2.10
 can be refused, and runs again under a Job 0.2.10 creates.
 
+The manager now writes each journal entry it stores as one JSON line on its
+standard output; its diagnostic log stays on standard error. A pipeline that
+collects the manager's container log receives these lines too, and they name
+approvers and acknowledgment authors by username, as the journal does. A parser
+that reads every line of that log as a diagnostic record has to skip the lines
+whose `logger` is `journal`.
+
 PostgreSQL 16.x joins the supported release lines. Run 43292445627 of the
 Added database lines workflow passed the whole lifecycle on it on every
 supported Kubernetes minor at the pinned Ptah build. A cluster on 17.x or 18.x
@@ -750,6 +757,17 @@ has nothing to change for that.
   such as `mapproval.operator.ptah.run/mutationRequestUID`. At `Metadata` an
   approval met its audit event only by namespace, name and time.
   [Joining one change across the record](../../use/audit/#joins) lists the keys.
+- **The journal in the manager's log.** After a status write that adds or
+  changes a journal entry is stored, the manager writes the entry as one JSON
+  line on its standard output, with the resource's kind, namespace, name and
+  UID, read from the object the API server returned. A folded failure writes a
+  line each time its count moves. The lines never hold up a status write: a
+  line that finds the queue full, or whose write fails, is dropped and counted
+  in `ptah_operator_journal_lines_dropped_total`. A collector that keeps them
+  keeps the journal after the resource and the cluster are gone, and whoever
+  controls the manager's output can drop or forge them.
+  [The journal in the manager's log](../../use/audit/#journal-lines) says how to
+  read them and when one can be missing.
 
 ## 0.2.10
 

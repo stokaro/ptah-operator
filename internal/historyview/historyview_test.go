@@ -114,12 +114,12 @@ func TestTextPrintsEveryFieldAnEntryRecords(t *testing.T) {
 func TestTextSaysWhatThePrunedJournalCovers(t *testing.T) {
 	t.Parallel()
 
-	journal := lifecyclejournal.Record(nil, []operatorv1alpha1.JournalEntry{{
+	journal, _ := lifecyclejournal.Record(nil, []operatorv1alpha1.JournalEntry{{
 		Type: operatorv1alpha1.JournalPlanPublished, At: at(0), Plan: "ptah-plan-waiting", Statements: 2, ApprovalRequired: true,
 	}}, day0)
 	for _, day := range []int{1, 2, 40} {
 		reason := fmt.Sprintf("Reason%d", day)
-		journal = lifecyclejournal.Record(journal, []operatorv1alpha1.JournalEntry{{
+		journal, _ = lifecyclejournal.Record(journal, []operatorv1alpha1.JournalEntry{{
 			Type: operatorv1alpha1.JournalOperationFailed, At: at(time.Duration(day) * 24 * time.Hour), Operation: "Observe", Reason: reason,
 		}}, day0.Add(time.Duration(day)*24*time.Hour))
 	}

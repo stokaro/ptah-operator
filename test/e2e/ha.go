@@ -77,6 +77,7 @@ var haAlwaysPresent = map[string]string{
 	"ptah_operator_stored_plan_bytes":                            "gauge",
 	"ptah_operator_webhook_certificate_expiry_timestamp_seconds": "gauge",
 	"ptah_operator_webhook_certificate_read_failures_total":      "counter",
+	"ptah_operator_journal_lines_dropped_total":                  "counter",
 }
 
 // haMetricVerdict is what the custom-metric validator says about one reading.
