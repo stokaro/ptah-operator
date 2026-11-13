@@ -80,10 +80,11 @@ func IsKnownPrivilegeChange(kind string) bool {
 // One thing is read from Ptah instead of from the keywords: whether a view's
 // security_invoker changes, where the statement's effects describe it (see
 // securityInvokerHold). The SQL states the option, and a statement that
-// restates it reads like one that changes it.
-func privilegeChanges(statement PlanStatement, dialect string) []string {
+// restates it reads like one that changes it. drops carries the views the
+// plan's earlier statements dropped, for a statement that makes one again.
+func privilegeChanges(statement PlanStatement, dialect string, drops *viewDrops) []string {
 	found := make(map[string]bool)
-	invokerHold, invokerDescribed := securityInvokerHold(statement, dialect)
+	invokerHold, invokerDescribed := securityInvokerHold(statement, dialect, drops)
 	for _, tokens := range statementSegments(sqlKeywordTokens(statement.SQL, dialect)) {
 		classifyPrivilegeSegment(tokens, found, invokerDescribed)
 		if mysqlDialect(dialect) && (definerRightsRoutine(tokens) || replacesView(tokens)) {
@@ -180,9 +181,11 @@ func classifyPrivilegeSegment(tokens []string, found map[string]bool, invokerDes
 			// readers read with. ALTER VIEW and CREATE OR REPLACE VIEW change
 			// it on a view that may already have readers, and either direction
 			// changes what they can read, so there any value counts however it
-			// is spelled, and so does a reset. A view CREATE VIEW makes has no
-			// readers yet, and there only its owner's rights count, as they do
-			// for a new function.
+			// is spelled, and so does a reset. The SQL reads a view CREATE VIEW
+			// makes as new, with no readers yet, and there only its owner's
+			// rights count, as they do for a new function. A view the plan
+			// dropped and makes again is not new; where the effects say what
+			// it held, securityInvokerHold reads it against that.
 			if invokerDescribed {
 				break
 			}
@@ -339,8 +342,9 @@ func definerRightsRoutine(tokens []string) bool {
 // start to read with its definer's, or start to need their own, and every one
 // counts. Since Ptah v0.26.0 a plan does this to a view held as INVOKER that
 // the declaration leaves without a mode: CREATE OR REPLACE VIEW with no mode
-// (stokaro/ptah#5902). A view CREATE VIEW makes has no readers yet, so only
-// the SQL SECURITY DEFINER it states counts, as on PostgreSQL.
+// (stokaro/ptah#5902). A view CREATE VIEW makes is read as new, with no
+// readers yet, so only the SQL SECURITY DEFINER it states counts, as a
+// PostgreSQL statement with no effect is read.
 func replacesView(tokens []string) bool {
 	switch {
 	case tokenAt(tokens, 0) == "ALTER":

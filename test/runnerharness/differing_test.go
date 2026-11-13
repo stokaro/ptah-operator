@@ -277,8 +277,9 @@ func differingRows() []differingRow {
 		},
 		// A view the plan creates with invoker rights is raised too. CREATE
 		// VIEW's SQL left it unattended, since such a view has no readers yet;
-		// its effect records the option as absent before and true after, which
-		// is how a view that comes back with invoker rights after a drop reads.
+		// its effect records the option as absent before and true after. A
+		// view a rebuild drops and creates again records the same, and the
+		// manager reads it against the value the drop's effect recorded.
 		{
 			name: "view-invoker-new", engine: enginePostgres, declared: "view-invoker-true-postgresql.sql",
 			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-new.json"},

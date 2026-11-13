@@ -625,6 +625,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	hasDestructive := false
 	privileges := make(map[string]bool)
 	leavesParent := partitionDetachmentsLeavingParent(plan.Statements, plan.Dialect)
+	drops := newViewDrops()
 	for i, statement := range plan.Statements {
 		if strings.TrimSpace(statement.SQL) == "" || !knownSeverity(statement.Severity) {
 			return PlanFile{}, fmt.Errorf("plan statement %d is empty or has unknown severity %q", i, statement.Severity)
@@ -636,7 +637,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 			plan.Statements[i].Severity = "destructive"
 		}
 		hasDestructive = hasDestructive || strings.EqualFold(plan.Statements[i].Severity, "destructive")
-		for _, kind := range privilegeChanges(statement, plan.Dialect) {
+		for _, kind := range privilegeChanges(statement, plan.Dialect, drops) {
 			privileges[kind] = true
 		}
 	}
