@@ -49,13 +49,15 @@ func run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stder
 	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA here")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
+	fetchOCISource := flags.Bool("fetch-oci-source", false, "run the Ptah pull after -- with the registry credential the Job names by file")
 	prepareVolumes := flags.String("prepare-volumes", "", "unpack the volumes on standard input under this directory")
 	var appendArgs repeated
 	flags.Var(&appendArgs, "append-arg", "add this argument to every child")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
-	if flags.NArg() != 0 {
+	// Only the OCI fetch takes arguments: the pull after --.
+	if flags.NArg() != 0 && !*fetchOCISource {
 		_, _ = fmt.Fprintln(stderr, "runner-harness-recorder: unexpected arguments")
 		return 2
 	}
@@ -83,6 +85,20 @@ func run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stder
 			err = fmt.Errorf("%s: %w", runner.CodeRunnerProtocolMismatch, err)
 		} else {
 			err = runner.FetchGitSource(ctx, *ptahBinary, environment, *fetchGitSource, "", executor, stderr)
+		}
+		if err != nil {
+			transcript.Refusal = err.Error()
+			code = 2
+		}
+	case *fetchOCISource:
+		// As cmd/ptah-runner does, the fetch is held to the protocol first. The
+		// pull's standard output is kept in its child, since the recorder's own
+		// is the transcript.
+		err := runner.CheckProtocolBinding(environment)
+		if err != nil {
+			err = fmt.Errorf("%s: %w", runner.CodeRunnerProtocolMismatch, err)
+		} else {
+			code, err = runner.FetchOCISource(ctx, *ptahBinary, environment, flags.Args(), executor, io.Discard, stderr)
 		}
 		if err != nil {
 			transcript.Refusal = err.Error()

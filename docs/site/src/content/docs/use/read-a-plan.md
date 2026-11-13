@@ -68,7 +68,9 @@ kubectl ptah --version
 
 `kubectl plugin list` shows it once it is on `PATH`. It needs nothing else: no
 checkout of this repository, no Helm release on your machine, and no files
-beside it.
+beside it. `kubectl ptah install`, which installs the operator, is the one
+command that runs Helm 4, as [Install](../../start/install/#choose-a-version-once)
+shows.
 
 ## Which plan
 
@@ -195,18 +197,18 @@ Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.
 
-Exit status: `0` printed, approved, changed or reached, `1` could not read or
-verify, `2` the command line, `3` nothing stored to print, approve, change or
-wait on. The commands that write add `4` nothing approved or changed (the plan
-or the spec changed, the operator would not admit an approval now, the
-fingerprint given is not the current plan's, you declined, the resource was
-deleted and created again, set-source met a source that is not an OCI
-artifact, an Apply running, or a source another writer changed after it was
-read, or settle met a schema that has not stopped on a moved target, a stop
-that prints no value, or a value that no longer matches), `5` refused by
-RBAC or the API server, and `6` sent with no answer: the approval or the
-change may have been stored. A wait adds `7` timed out and `8` the resource
-will not reach the target.
+Exit status: `0` printed, approved, changed, reached or installed, `1` could not
+read or verify, or Helm did not install or render, `2` the command line, `3`
+nothing stored to print, approve, change or wait on. The commands that write add
+`4` nothing approved or changed (the plan or the spec changed, the operator
+would not admit an approval now, the fingerprint given is not the current
+plan's, you declined, the resource was deleted and created again, set-source met
+a source that is not an OCI artifact, an Apply running, or a source another
+writer changed after it was read, or settle met a schema that has not stopped on
+a moved target, a stop that prints no value, or a value that no longer matches),
+`5` refused by RBAC or the API server, and `6` sent with no answer: the approval
+or the change may have been stored. A wait adds `7` timed out and `8` the
+resource will not reach the target.
 
 ## Where a schema stands {#schema}
 
@@ -364,6 +366,59 @@ command still prints the schema, says in one line that the approvals are not
 shown because listing them is forbidden, and exits 0; `-o json` carries the
 same answer as `approvalsUnreadable`, in place of `approvals`.
 
+### Every status field the plugin knows {#details}
+
+```sh
+kubectl ptah schema storefront -n application --details
+kubectl ptah migration orders -n application --details
+```
+
+`--details` prints the view and then every record of the status the view
+summarizes or leaves out, each with every field it holds, labeled by the name
+the [API reference](../../reference/ptahschema/) lists it under, in words:
+`jobUID` reads `Job UID`. A field the record leaves unset is not printed. It
+reads the same object as the view and nothing more, so it needs the same `get`.
+The plugin decodes the status into the API version it was built with, so these
+are the fields that version knows: a field a newer operator added to the
+stored object is not printed, and `kubectl get -o yaml` shows it.
+
+`Status` is the status's own fields: the generation it was written for, the
+phase, when it reads next, and for a schema when it last attempted a read and
+last succeeded. `Read requested` says whether the read `kubectl ptah refresh` asked for
+has been answered.
+
+`Active operation` is the operation the resource has claimed. A claim names its
+Job before it creates it, and the details say what the claim knows of that Job.
+A claim that records the Job's UID has confirmed it; a Job of that name with
+another UID is not this one. An Apply, a Plan, and an Observe that proves an
+Apply mark the claim before their one create, so with no UID they say whether
+that create was attempted or the Job is not created yet. A claim of any other
+kind (a Resolve, a Verify, an ordinary Observe, a migration's History) has no
+such mark, and with no UID its Job may exist, created by a pass that could not
+read it back, so the details say only that it is not confirmed yet. A
+migration's attempt that has not dispatched names the time it is not
+dispatched before, the delay the attempt before it asked for.
+`Active operation: none` is a resource that has claimed nothing.
+
+A schema's `Pending proof` is an Apply that ended and the reading of the
+database that proves it, still owed. It keeps the Apply's own result,
+`ApplySucceeded` or `OutcomeUnknown`, apart from that verdict, names the time
+the database is not read for it before, while the Apply's Pod could still run,
+and on a suspended schema says that suspension does not end it. `Lock release` is a database
+Lease the operation held that is still to be handed back, and
+`Binding retirement` the cleanup an execution-binding change still owes.
+
+A migration's details add `History read`, the revision table as the operator
+last read it with its newest rows, which is the database's record and not the
+operator's journal, and `Last run`, `Unresolved run` and `Settled run` each
+whole. A settled run says whether a reading of the database settled it or a
+person's acknowledgment did, which is a statement that the run is accounted for
+and not proof that the data is correct.
+
+With `-o json`, `--details` adds `details.status`, the status as the plugin
+decodes it, field for field, and `details.readRequested`, the annotation it
+answers. Without the flag neither the text nor the JSON changes.
+
 ## A migration, not a plan {#migration}
 
 A `PtahMigration` runs SQL that is already written. There is no generated plan
@@ -494,7 +549,9 @@ A ConfigMap or Git source prints the same lines as
 
 `-o json` prints the same view as a document, for a script that wants the
 pending count, the last run's outcome and Job, or the unresolved run without
-parsing text.
+parsing text. `--details` adds every status field the plugin knows, the
+operation claimed and the revision rows among them: [Every status field the
+plugin knows](#details).
 
 What it never prints is SQL or a table row. A migration plan records versions,
 descriptions and checksums; reading the statements means reading the artifact,
@@ -568,8 +625,11 @@ Journal:              9 entries, complete since 2026-11-10T09:00:00Z
 `Journal` says how many entries the status holds and from when the journal is
 complete, its `coveredSince`. The journal is bounded, and
 [the lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
-says by what. The one kind of entry older than `coveredSince` is a plan nothing
-has carried out yet, which the bounds keep; such an entry is marked
+says by what. An event before `coveredSince` may be missing. Entries dated
+before it are ones the bounds keep, the plan nothing has carried out yet and its
+newest approval, or ones dated by a time their status carried from before the
+journal began, as the first journal written after an upgrade from a release
+before 0.2.7 can be; such an entry is marked
 `(dated before the journal's coverage begins)`. `Journal: none` is a status with
 no journal at all, as a manager before 0.2.7 wrote it or as one nobody has
 written yet, and `Journal: no entries` is a journal that has recorded nothing.
@@ -598,6 +658,13 @@ the decisions, says which list and why, and the rest still prints.
 say what an acknowledgment is: a person's statement that the run is accounted
 for. It is not a reading of the database, and not proof that the data is
 correct.
+
+`Proof` on a schema's `ApplyFinished` entry says where the verdict on that Apply
+is, since the Apply's own outcome is not it: the `Verified` entry of its plan
+that follows it, with how that reading ended; `still owed` where none follows
+and `status.pendingObservation` still owes the reading; or `not in the journal`
+where neither holds, as when the journal began between the Apply and its proof.
+The JSON carries the same as `proof`.
 
 The decisions after the journal are every approval and acknowledgment the
 namespace still stores for this resource, with what admission stamped on each
@@ -693,6 +760,10 @@ resource and nothing else. `approve --wait` reads the resource with the same
 `get` approve already has, and for a migration the approval it stored, with the
 `get` on `ptahmigrationapprovals` the approver ClusterRole grants; without that,
 it waits on the resource alone.
+
+`kubectl ptah install` creates CRDs, ClusterRoles, admission policies and the
+release namespace through Helm, as you, so it needs cluster-admin. With
+`--yaml` it reads no cluster and needs nothing.
 
 ## How the plan is stored
 

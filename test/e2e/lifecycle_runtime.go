@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -30,9 +31,15 @@ const (
 
 	lifecycleRuntimeTerminalReason  = "ReadOnlyJobProof"
 	lifecycleRuntimeTerminalMessage = "terminal read-only Job retained across quiescence"
-	// lifecycleRuntimeCleanupTTL is the ttlSecondsAfterFinished the successor
-	// gives a quiesced read-only Job.
+	// lifecycleRuntimeCleanupTTL is the ttlSecondsAfterFinished a read-only Job
+	// is created with, and the one the successor gives a read-only Job an
+	// earlier release created without one.
 	lifecycleRuntimeCleanupTTL = 300
+	// lifecycleRuntimeCollectionSlack is how long before a read-only Job's
+	// cleanup TTL runs out a reading may find the Job gone and still put that
+	// down to the TTL controller. The API server and the harness read one
+	// host's clock, and a condition's time is stored to the second.
+	lifecycleRuntimeCollectionSlack = 5 * time.Second
 
 	lifecycleRuntimeAdmissionConfiguration = "ptah-operator-admission"
 	lifecycleRuntimePodWebhook             = "vpodintent.operator.ptah.run"
@@ -139,12 +146,32 @@ func lifecycleRuntimeHasCondition(conditions []map[string]any, kind, reason, mes
 
 // lifecycleRuntimeReadOnlyJobDispatched is the identity the dispatched Job
 // has to carry: the claim's UID, the schema's and the Resolve operation's
-// labels, and no cleanup TTL yet.
+// labels, and the cleanup TTL a read-only Job is created with.
 func lifecycleRuntimeReadOnlyJobDispatched(job map[string]any, schema, uid string) bool {
 	return lifecycleRuntimeString(job, "metadata", "uid") == uid &&
 		lifecycleRuntimeString(job, "metadata", "labels", "operator.ptah.run/schema") == schema &&
 		lifecycleRuntimeString(job, "metadata", "labels", "operator.ptah.run/operation") == "resolve" &&
-		lifecycleRuntimeLacks(job, "ttlSecondsAfterFinished", "spec")
+		lifecycleRuntimeCleanupScheduled(job)
+}
+
+// lifecycleRuntimeCleanupTTLIs is the read-only Job's cleanup TTL as the proof
+// left it: the one this release creates it with, or none at all where the
+// proof removed it so the Job stands for one an earlier release created.
+func lifecycleRuntimeCleanupTTLIs(job map[string]any, created bool) bool {
+	if created {
+		return lifecycleRuntimeCleanupScheduled(job)
+	}
+	return lifecycleRuntimeLacks(job, "ttlSecondsAfterFinished", "spec")
+}
+
+// lifecycleRuntimeCleanupTTLRemoval is the JSON patch that removes the
+// read-only Job's cleanup TTL, and only while it is still the one the Job was
+// created with.
+func lifecycleRuntimeCleanupTTLRemoval() []byte {
+	return lifecycleRuntimeJSON([]map[string]any{
+		{"op": "test", "path": "/spec/ttlSecondsAfterFinished", "value": lifecycleRuntimeCleanupTTL},
+		{"op": "remove", "path": "/spec/ttlSecondsAfterFinished"},
+	})
 }
 
 // lifecycleRuntimeSchemaQuiesced is a schema that is suspended, reports
@@ -238,8 +265,8 @@ func lifecycleRuntimeFailureTargetPatch(at time.Time) []byte {
 // lifecycleRuntimeReadOnlyJobRetired is the Job the Job controller retired:
 // started, nothing active, ready, terminating or uncounted, no
 // completionTime, both the staged FailureTarget and the Failed it became, and
-// still no cleanup TTL.
-func lifecycleRuntimeReadOnlyJobRetired(job map[string]any, uid string) bool {
+// the cleanup TTL it had before, which created says.
+func lifecycleRuntimeReadOnlyJobRetired(job map[string]any, uid string, created bool) bool {
 	_, started := lifecycleRuntimeValue(job, "status", "startTime")
 	conditions, _ := lifecycleRuntimeConditions(job, "status", "conditions")
 	uncounted := func(kind string) int {
@@ -258,7 +285,60 @@ func lifecycleRuntimeReadOnlyJobRetired(job map[string]any, uid string) bool {
 		lifecycleRuntimeLacks(job, "completionTime", "status") &&
 		lifecycleRuntimeHasCondition(conditions, "FailureTarget", lifecycleRuntimeTerminalReason, lifecycleRuntimeTerminalMessage) &&
 		lifecycleRuntimeHasCondition(conditions, "Failed", lifecycleRuntimeTerminalReason, lifecycleRuntimeTerminalMessage) &&
-		lifecycleRuntimeLacks(job, "ttlSecondsAfterFinished", "spec")
+		lifecycleRuntimeCleanupTTLIs(job, created)
+}
+
+// lifecycleRuntimeFinishedAt is the instant a finished Job's cleanup TTL counts
+// from, as the TTL controller reads it: the lastTransitionTime of the first
+// Complete or Failed condition that is True.
+func lifecycleRuntimeFinishedAt(job map[string]any) (time.Time, bool) {
+	conditions, _ := lifecycleRuntimeConditions(job, "status", "conditions")
+	for _, condition := range conditions {
+		kind := lifecycleRuntimeString(condition, "type")
+		if (kind != "Complete" && kind != "Failed") || lifecycleRuntimeString(condition, "status") != "True" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, lifecycleRuntimeString(condition, "lastTransitionTime"))
+		return at, err == nil && !at.IsZero()
+	}
+	return time.Time{}, false
+}
+
+// lifecycleRuntimeCollected judges one reading of a retired read-only Job that
+// carries its cleanup TTL, taken at readAt, against the instant the TTL runs
+// out. It is done once the Job is gone or being deleted, no sooner than that
+// instant; until then the Job has to be the one retired, unchanged, with its
+// TTL. job is nil for a read that found no Job of that name. A Job being
+// deleted is dated by its own deletionTimestamp, and a Job found gone by the
+// read, which is no earlier than the deletion.
+func lifecycleRuntimeCollected(job map[string]any, uid string, retired []byte, expires, readAt time.Time) (bool, error) {
+	early := expires.Add(-lifecycleRuntimeCollectionSlack)
+	if job == nil || lifecycleRuntimeString(job, "metadata", "uid") != uid {
+		if readAt.Before(early) {
+			return false, fmt.Errorf("the Job was gone at %s, before its cleanup TTL ran out at %s",
+				readAt.UTC().Format(time.RFC3339), expires.UTC().Format(time.RFC3339))
+		}
+		return true, nil
+	}
+	if deleting := lifecycleRuntimeString(job, "metadata", "deletionTimestamp"); deleting != "" {
+		at, err := time.Parse(time.RFC3339, deleting)
+		if err != nil || at.Before(early) {
+			return false, fmt.Errorf("the Job was deleted at %q, before its cleanup TTL ran out at %s",
+				deleting, expires.UTC().Format(time.RFC3339))
+		}
+		return true, nil
+	}
+	if !lifecycleRuntimeCleanupScheduled(job) {
+		return false, errors.New("the Job no longer carries the cleanup TTL it was created with")
+	}
+	evidence, err := lifecycleRuntimeJobCleanupEvidence(job)
+	if err != nil {
+		return false, err
+	}
+	if string(evidence) != string(retired) {
+		return false, fmt.Errorf("the Job changed while its cleanup TTL ran: %s, retired as %s", evidence, retired)
+	}
+	return false, nil
 }
 
 // lifecycleRuntimeJobCleanupEvidence is what a successor's cleanup may not
@@ -289,7 +369,8 @@ func lifecycleRuntimeJobCleanupEvidence(job map[string]any) ([]byte, error) {
 }
 
 // lifecycleRuntimeCleanupScheduled is `.spec.ttlSecondsAfterFinished // 0`
-// at the TTL the successor gives a quiesced read-only Job.
+// at the TTL a read-only Job is created with and the successor gives one
+// created without it.
 func lifecycleRuntimeCleanupScheduled(job map[string]any) bool {
 	return lifecycleRuntimeNumber(job, "spec", "ttlSecondsAfterFinished") == lifecycleRuntimeCleanupTTL
 }

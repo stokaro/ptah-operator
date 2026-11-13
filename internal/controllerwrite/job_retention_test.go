@@ -216,7 +216,7 @@ func TestTheLongTTLIsNotForAReadOnlyJob(t *testing.T) {
 		t.Run("migration "+string(operationType), func(t *testing.T) {
 			t.Parallel()
 			migration, job := migrationJobFixture(t, operationType)
-			terminal := withGeneratedJobIdentity(job)
+			terminal := createdWithoutCleanupTTL(withGeneratedJobIdentity(job))
 			terminal.Status.Conditions = applyComplete
 			migration.Status.ActiveOperation.JobUID = terminal.UID
 			handler := migrationHandlerFixture(t, migration, terminal)

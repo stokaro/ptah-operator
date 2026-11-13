@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -264,6 +265,34 @@ func DropValidations(policy, message string) func(context.Context, *Env) (func(c
 		}
 		return editPolicy(policy, func(spec *admissionregistrationv1.ValidatingAdmissionPolicySpec) {
 			spec.Validations = kept
+		})(ctx, env)
+	}
+}
+
+// RewriteValidations replaces old with replacement in the expression of every
+// validation of the policy whose message contains message, which is how a
+// chart that rendered one clause of a rule differently would read. It fails
+// the mutation if no such expression holds old: rewriting nothing would prove
+// nothing, and the rows would say so only as a timeout.
+func RewriteValidations(policy, message, old, replacement string) func(context.Context, *Env) (func(context.Context) error, error) {
+	return func(ctx context.Context, env *Env) (func(context.Context) error, error) {
+		rendered, err := env.renderedPolicy(policy)
+		if err != nil {
+			return nil, err
+		}
+		rewritten := false
+		validations := slices.Clone(rendered.Spec.Validations)
+		for index := range validations {
+			if strings.Contains(validations[index].Message, message) && strings.Contains(validations[index].Expression, old) {
+				validations[index].Expression = strings.ReplaceAll(validations[index].Expression, old, replacement)
+				rewritten = true
+			}
+		}
+		if !rewritten {
+			return nil, fmt.Errorf("policy %s has no validation saying %q whose expression holds %q", policy, message, old)
+		}
+		return editPolicy(policy, func(spec *admissionregistrationv1.ValidatingAdmissionPolicySpec) {
+			spec.Validations = validations
 		})(ctx, env)
 	}
 }

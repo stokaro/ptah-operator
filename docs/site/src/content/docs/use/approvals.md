@@ -182,9 +182,12 @@ The chart's optional approver ClusterRole grants read access to schemas,
 migrations, their plans, the chunks a schema plan's SQL is stored in, and
 approvals, plus create access to `PtahSchemaApproval`, `PtahMigrationApproval`
 and `PtahMigrationRunAcknowledgment`, the decision that settles a migration run
-nobody accounted for. It has no binding, no ConfigMap permission and no Pod log
-permission. Bind it in each application namespace, and only to authenticated
-identities that are independent from routine desired-state writers.
+nobody accounted for. It has no ConfigMap permission and no Pod log
+permission, and the chart binds it to nobody unless `approverClusterRole.subjects`
+names someone; `kubectl ptah install --approver` sets that value, with one
+ClusterRoleBinding that reaches every namespace. Otherwise bind it in each
+application namespace with a RoleBinding, and only to authenticated identities
+that are independent from routine desired-state writers.
 
 ## Refusing a self-approval
 

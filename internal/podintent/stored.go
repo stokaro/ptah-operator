@@ -65,5 +65,9 @@ func storedPodOwner(references []metav1.OwnerReference, job *batchv1.Job) bool {
 }
 
 // ValidateActiveJob checks the one-shot execution envelope used at Pod
-// admission. A Job already marked for cleanup cannot start a new publication.
+// admission. An Apply Job already marked for cleanup cannot start a new
+// publication. A read-only Job carries its cleanup TTL from the moment it is
+// created, so the TTL says nothing about whether the manager has read it, and the
+// claim the caller holds the Job to is what refuses a publication for a read the
+// manager has moved past.
 func ValidateActiveJob(job *batchv1.Job) error { return validateJobExecutionEnvelope(job) }

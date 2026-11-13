@@ -11,7 +11,7 @@ import (
 
 const (
 	missingSecretWords = `secret "e2e-postgresql-pod-configuration-db" not found`
-	missingKeyWords    = "couldn't find key url in Secret"
+	missingKeyWords    = `MountVolume.SetUp failed for volume "database-url" : references non-existent secret key: url`
 )
 
 func podConfigurationSchema(mutate func(*ptahv1alpha1.PtahSchema)) *ptahv1alpha1.PtahSchema {
@@ -87,46 +87,48 @@ func TestPodConfigurationEventIsThisSchemasWarningInTheSameWords(t *testing.T) {
 	}
 }
 
-func TestKubeletReportedMissingKeyReadsThisJobsWaitingContainer(t *testing.T) {
+func TestKubeletReportedMountFailureReadsThisJobsPodsEvent(t *testing.T) {
 	t.Parallel()
-	pod := func(mutate func(*corev1.Pod)) []corev1.Pod {
-		waiting := corev1.Pod{}
-		waiting.Labels = map[string]string{"job-name": "observe-job"}
-		waiting.Status.ContainerStatuses = []corev1.ContainerStatus{{State: corev1.ContainerState{
-			Waiting: &corev1.ContainerStateWaiting{Reason: "CreateContainerConfigError", Message: missingKeyWords + " ns/name"},
-		}}}
-		if mutate != nil {
-			mutate(&waiting)
+	pods := func() []corev1.Pod {
+		pod := corev1.Pod{}
+		pod.Name, pod.UID = "observe-job-abcde", "pod-uid"
+		pod.Labels = map[string]string{"job-name": "observe-job"}
+		return []corev1.Pod{pod}
+	}
+	event := func(mutate func(*corev1.Event)) []corev1.Event {
+		recorded := corev1.Event{
+			InvolvedObject: corev1.ObjectReference{Kind: "Pod", Name: "observe-job-abcde", UID: "pod-uid"},
+			Type:           corev1.EventTypeWarning, Reason: "FailedMount", Message: missingKeyWords,
 		}
-		return []corev1.Pod{waiting}
+		if mutate != nil {
+			mutate(&recorded)
+		}
+		return []corev1.Event{recorded}
 	}
-	if !kubeletReportedMissingKey(pod(nil), "observe-job", missingKeyWords) {
-		t.Fatal("kubeletReportedMissingKey() refused the status the kubelet writes")
+	if !kubeletReportedMountFailure(event(nil), pods(), "observe-job", missingKeyWords) {
+		t.Fatal("kubeletReportedMountFailure() refused the Event the kubelet records")
 	}
-	if !kubeletReportedMissingKey(pod(func(waiting *corev1.Pod) {
-		waiting.Status.InitContainerStatuses, waiting.Status.ContainerStatuses = waiting.Status.ContainerStatuses, nil
-	}), "observe-job", missingKeyWords) {
-		t.Fatal("kubeletReportedMissingKey() refused an init container")
+	if kubeletReportedMountFailure(nil, pods(), "observe-job", missingKeyWords) {
+		t.Fatal("kubeletReportedMountFailure() accepted no Event")
 	}
-	if kubeletReportedMissingKey(nil, "observe-job", missingKeyWords) {
-		t.Fatal("kubeletReportedMissingKey() accepted no Pod")
+	if kubeletReportedMountFailure(event(nil), nil, "observe-job", missingKeyWords) {
+		t.Fatal("kubeletReportedMountFailure() accepted an Event with no Pod of the Job")
 	}
-	for name, mutate := range map[string]func(*corev1.Pod){
-		"another Job's Pod": func(waiting *corev1.Pod) { waiting.Labels["job-name"] = "other" },
-		"another reason": func(waiting *corev1.Pod) {
-			waiting.Status.ContainerStatuses[0].State.Waiting.Reason = "ImagePullBackOff"
-		},
-		"other words": func(waiting *corev1.Pod) {
-			waiting.Status.ContainerStatuses[0].State.Waiting.Message = missingSecretWords
-		},
-		"a running container": func(waiting *corev1.Pod) {
-			waiting.Status.ContainerStatuses[0].State = corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}
-		},
+	if kubeletReportedMountFailure(event(nil), pods(), "other-job", missingKeyWords) {
+		t.Fatal("kubeletReportedMountFailure() accepted another Job's Pod")
+	}
+	for name, mutate := range map[string]func(*corev1.Event){
+		"another Pod of the name": func(event *corev1.Event) { event.InvolvedObject.UID = "other" },
+		"another Pod":             func(event *corev1.Event) { event.InvolvedObject.Name = "other" },
+		"the Job's own Event":     func(event *corev1.Event) { event.InvolvedObject.Kind = "Job" },
+		"another reason":          func(event *corev1.Event) { event.Reason = "FailedScheduling" },
+		"a Normal Event":          func(event *corev1.Event) { event.Type = corev1.EventTypeNormal },
+		"other words":             func(event *corev1.Event) { event.Message = missingSecretWords },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if kubeletReportedMissingKey(pod(mutate), "observe-job", missingKeyWords) {
-				t.Fatal("kubeletReportedMissingKey() accepted it")
+			if kubeletReportedMountFailure(event(mutate), pods(), "observe-job", missingKeyWords) {
+				t.Fatal("kubeletReportedMountFailure() accepted it")
 			}
 		})
 	}
@@ -135,7 +137,7 @@ func TestKubeletReportedMissingKeyReadsThisJobsWaitingContainer(t *testing.T) {
 func TestHoldsNoSecretValueRefusesAValueAndAnEmptyReading(t *testing.T) {
 	t.Parallel()
 	const url = "postgres://ptah_e2e:e2ePg1Q7@db:5432/app"
-	document := []byte(`{"message":"couldn't find key url in Secret ns/name"}`)
+	document := []byte(`{"message":"references non-existent secret key: url (volume database-url reads Secret ns/name)"}`)
 	if err := holdsNoSecretValue(document, url, "e2ePg1Q7"); err != nil {
 		t.Fatalf("holdsNoSecretValue() refused a document that holds neither: %v", err)
 	}

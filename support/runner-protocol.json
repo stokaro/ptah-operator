@@ -387,6 +387,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:c8071c0a316890efd44e5083cb4ed09e0971bbb875df5cf11aa4d7897ae75a7c",
       "reason": "Name a row file Ptah refuses as outside its working directory (#939). When drift or a Plan fails with no target failure kind and its own sentence is the refusal Ptah's row-file guard writes, on one line, whole and in the guard's form, the runner reports that sentence behind the schema's file name under desired_source_unreadable, redacted and cut at 485 bytes, and runs no schema validate child, which reads no row file and could not say it. Any other sentence is compared and not copied, as before. No argument, field, retry or plan binding changes, and no child runs that did not run before. A manager of this protocol reads a result code as text and writes it with its message to the condition and the Event, so a manager of any release reads this frame, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:4d8cf9bb8337208f5294b2fe7ab3908dad01b7af0bbee18e77f9551521471793",
+      "reason": "Deliver every credential to the runner by file (#843). A Job may name the database URL, the development URL, a registry credential and a Git https credential by the path of a file in a read-only Secret volume (PTAH_OPERATOR_*_FILE). The runner reads each file into the variable Ptah reads, in the child's environment only, before the Redactor and the target checks, and refuses a Job that names a credential both ways or a file it cannot read before the child starts. The new fetch-oci command runs only the schema or migrations pull the builder writes, with the registry credential read the same way. A Job that names no file runs as before, so a Job any released manager built is unchanged, and a manager harvests only a Job its own builder rebuilds. SQL authority, payloads, result frames and delivery identity are the same, so an approval granted before this change authorizes what it did then. Protocol 1 stays."
     }
   ]
 }

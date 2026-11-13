@@ -3,6 +3,7 @@ package workload
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,38 +30,38 @@ func TestBuildMigrationCredentialAndInputIsolationByOperation(t *testing.T) {
 	}{
 		{
 			operation: operatorv1alpha1.MigrationOperationResolve,
-			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN"},
-			absent:    []string{"PTAH_DB_URL", "PTAH_MIGRATIONS_DIR", "PTAH_VERIFICATION_POLICY", "PTAH_COORDINATION_DIGEST"},
+			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE"},
+			absent:    []string{"PTAH_DB_URL", "PTAH_MIGRATIONS_DIR", "PTAH_VERIFICATION_POLICY", "PTAH_COORDINATION_DIGEST", "PTAH_OPERATOR_DB_URL_FILE"},
 		},
 		{
 			operation: operatorv1alpha1.MigrationOperationVerify,
 			want: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE",
-				"PTAH_VERIFICATION_POLICY", "PTAH_EXPECTED_ARTIFACT_TYPE", "PTAH_OCI_TOKEN",
+				"PTAH_VERIFICATION_POLICY", "PTAH_EXPECTED_ARTIFACT_TYPE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 			},
-			absent: []string{"PTAH_DB_URL", "PTAH_MIGRATIONS_DIR", "PTAH_COORDINATION_DIGEST"},
+			absent: []string{"PTAH_DB_URL", "PTAH_MIGRATIONS_DIR", "PTAH_COORDINATION_DIGEST", "PTAH_OPERATOR_DB_URL_FILE"},
 		},
 		{
 			operation: operatorv1alpha1.MigrationOperationHistory,
 			want: []string{
-				"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST",
+				"PTAH_OPERATOR_DB_URL_FILE", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST",
 				"PTAH_MIGRATIONS_DIR", "PTAH_CONNECT_TIMEOUT", "PTAH_MIGRATION_LOCK_TIMEOUT",
 			},
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_VERIFICATION_POLICY",
-				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY",
+				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 				"DOCKER_CONFIG", "PTAH_PLAIN_HTTP", "PTAH_DISPATCH_NOT_AFTER", "PTAH_EXECUTION_NOT_AFTER",
 			},
 		},
 		{
 			operation: operatorv1alpha1.MigrationOperationApply,
 			want: []string{
-				"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST",
+				"PTAH_OPERATOR_DB_URL_FILE", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST",
 				"PTAH_MIGRATIONS_DIR", "PTAH_DISPATCH_NOT_AFTER", "PTAH_EXECUTION_NOT_AFTER",
 			},
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_VERIFICATION_POLICY",
-				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY",
+				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 				"DOCKER_CONFIG", "PTAH_PLAIN_HTTP",
 			},
 		},
@@ -111,20 +112,26 @@ func TestBuildMigrationKeepsRegistryCredentialsOutOfTheSQLProcess(t *testing.T) 
 
 			pod := job.Spec.Template.Spec
 			fetch := requireContainer(t, pod.InitContainers, migrationFetchContainerName)
-			want := []string{"migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath}
+			want := append(slices.Clone(ociFetchPrefix), "migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath)
 			if !reflect.DeepEqual(fetch.Args, want) {
 				t.Fatalf("fetch args = %q, want %q", fetch.Args, want)
 			}
-			if !reflect.DeepEqual(fetch.Command, []string{ptahBinaryPath}) {
-				t.Fatalf("fetch command = %q, want the Ptah binary", fetch.Command)
+			if !reflect.DeepEqual(fetch.Command, []string{runnerPath}) {
+				t.Fatalf("fetch command = %q, want the runner in front of the Ptah pull", fetch.Command)
 			}
 			fetchEnvironment := containerEnvMap(fetch)
-			if _, ok := fetchEnvironment[runner.EnvDatabaseURL]; ok {
-				t.Error("the fetch container must never receive the database URL")
+			for _, name := range []string{runner.EnvDatabaseURL, runner.EnvDatabaseURLFile} {
+				if _, ok := fetchEnvironment[name]; ok {
+					t.Errorf("the fetch container must never receive %s", name)
+				}
 			}
-			if _, ok := fetchEnvironment[runner.EnvOCIPassword]; !ok {
-				t.Error("the fetch container is the one that holds the registry credentials")
+			if hasMount(fetch, databaseURLVolumeName) {
+				t.Error("the fetch container must never mount the database URL")
 			}
+			// The fetch container is the one that holds the registry
+			// credentials.
+			assertCredentialFile(t, job, fetch, runner.EnvOCIPasswordFile, "registry", "pass", true)
+			assertCredentialFile(t, job, pod.Containers[0], runner.EnvDatabaseURLFile, "database", "url", false)
 			requireContainer(t, pod.InitContainers, guardContainerName)
 
 			main := pod.Containers[0]
@@ -132,7 +139,7 @@ func TestBuildMigrationKeepsRegistryCredentialsOutOfTheSQLProcess(t *testing.T) 
 			if source.MountPath != sourcePath || !source.ReadOnly {
 				t.Fatalf("main source mount = %#v, want %s read-only", source, sourcePath)
 			}
-			if hasMount(main, dockerVolumeName) || hasMount(main, caVolumeName) {
+			if hasMount(main, dockerVolumeName) || hasMount(main, caVolumeName) || hasMount(main, registryCredentialsVolumeName) {
 				t.Error("the SQL-running container must not mount registry credentials")
 			}
 			directory := requireEnv(t, job, runner.EnvMigrationsDir).Value
@@ -158,8 +165,8 @@ func TestBuildMigrationHardensEveryContainerAndPod(t *testing.T) {
 	if job.Spec.PodReplacementPolicy == nil || *job.Spec.PodReplacementPolicy != batchv1.Failed {
 		t.Fatalf("podReplacementPolicy = %v, want Failed", job.Spec.PodReplacementPolicy)
 	}
-	if job.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatal("TTL must remain unset until the controller harvests logs")
+	if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != CleanupTTLSeconds {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want the read-only Job's %d", ttl, CleanupTTLSeconds)
 	}
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 600 {
 		t.Fatalf("activeDeadlineSeconds = %v, want the resource's 600", job.Spec.ActiveDeadlineSeconds)

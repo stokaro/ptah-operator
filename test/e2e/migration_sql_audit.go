@@ -205,6 +205,7 @@ func postgresStatementRefusalSQL(raw []byte, database string, clients map[string
 		} else if err != nil {
 			return nil, errors.New("invalid or incomplete PostgreSQL statement journal")
 		}
+		row.Detail = postgresParameterDetail(row.Detail)
 		statement := row.Statement
 		messageSQL := ""
 		if strings.HasPrefix(row.Message, "statement: ") {
@@ -300,6 +301,18 @@ func postgresStatementRefusalSQL(raw []byte, database string, clients map[string
 		return nil, errors.New("PostgreSQL refusal window did not observe its diagnostic control")
 	}
 	return counts, nil
+}
+
+// postgresParameterDetail spells a statement's bound parameters the way the
+// contracts write them. PostgreSQL 17 logs them as "Parameters: $1 = 'x'", and
+// 16 logs the same detail as "parameters: $1 = 'x'": measured on 17.11 and
+// 16.15 with the same executor command. Only that one prefix is rewritten, so
+// the SQL, the values and every other spelling are still compared byte for byte.
+func postgresParameterDetail(detail string) string {
+	if values, found := strings.CutPrefix(detail, "parameters: "); found {
+		return "Parameters: " + values
+	}
+	return detail
 }
 
 // The harness checks the unchanged database from inside the server container.

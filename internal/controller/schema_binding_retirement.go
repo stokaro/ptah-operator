@@ -227,15 +227,19 @@ func (r *SchemaReconciler) cleanupRetiredReadOnlyJob(
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
-	case err == nil && retiredJobMayStillRun(schema, retired, job):
+	case err == nil && retiredJobMayStillRun(schema, retired, job) &&
+		(job.Spec.TTLSecondsAfterFinished == nil || schemaClaimHoldsLock(schema)):
 		// The claim is what holds a Plan's Lease while its Pod can still reach
 		// the database, so it waits for a Job of this resource under the
 		// recorded name to stop, whether or not the envelope below would let
 		// the controller touch it. It waits by the rule every read-only claim
 		// keeps: not at all for a suspended resource, and no longer than the
 		// Job's stop bound, past which a Job that carries only FailureTarget
-		// would hold the realm forever. A Job left running is named, since the
-		// claim is the last thing that could have collected it.
+		// would hold the realm forever. A Job left running with no TTL is
+		// named, since the claim is the last thing that could have collected
+		// it. A claim that holds no Lease waits only to give the Job its TTL,
+		// so it does not wait for a Job created with one, as this release
+		// creates every read-only Job.
 		//
 		// While it waits, the claim renews the Lease it holds, as it does while it
 		// supervises its Job (waitForReadOnlySchemaJob): the Lease's duration was

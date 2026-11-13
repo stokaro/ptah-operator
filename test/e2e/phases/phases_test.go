@@ -192,7 +192,8 @@ type emptyInput struct{}
 // mistake it names while the well-formed declaration beside it passes.
 func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 	t.Parallel()
-	base := Phase{Name: "example", Test: "TestExample", Timeout: time.Minute, Scenarios: []string{"one", "two"}}
+	base := Phase{Name: "example", Test: "TestExample", Timeout: time.Minute, Scenarios: []string{"one", "two"},
+		Artifacts: []string{"", "-uncertain"}}
 	withInputs := func(phase Phase, inputs reflect.Type) Phase {
 		phase.inputs = inputs
 		return phase
@@ -250,6 +251,21 @@ func TestValidateRefusesMalformedDeclarations(t *testing.T) {
 			p.RequiresFull = []string{"assert", "assert"}
 			return withInputs(p, reflect.TypeFor[wellFormed]())
 		}(), refuse: "invalid or repeated prerequisite"},
+		{name: "artifact without its dash", phase: func() Phase {
+			p := base
+			p.Artifacts = []string{"uncertain"}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated artifact"},
+		{name: "artifact with a tag", phase: func() Phase {
+			p := base
+			p.Artifacts = []string{"-uncertain:stable"}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated artifact"},
+		{name: "artifact twice", phase: func() Phase {
+			p := base
+			p.Artifacts = []string{"", ""}
+			return withInputs(p, reflect.TypeFor[wellFormed]())
+		}(), refuse: "invalid or repeated artifact"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

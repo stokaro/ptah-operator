@@ -34,19 +34,19 @@ func podConfigurationEventRecorded(events []corev1.Event, schema *ptahv1alpha1.P
 	})
 }
 
-// kubeletReportedMissingKey is a Pod of the Job whose container waits as the
-// kubelet leaves one it cannot configure, in the words the condition carries. It
-// says the words on the resource are the kubelet's, so what the row reads for a
+// kubeletReportedMountFailure is a FailedMount Event the kubelet recorded
+// against a Pod of the Job, in the words the condition carries. A credential is
+// a file in a Secret volume, and a Secret or key the kubelet cannot find stops
+// the Pod before any container, so the kubelet says why only there. It says
+// the words on the resource are the kubelet's, so what the row reads for a
 // credential is what the kubelet wrote.
-func kubeletReportedMissingKey(pods []corev1.Pod, job, words string) bool {
-	return slices.ContainsFunc(pods, func(pod corev1.Pod) bool {
-		if pod.Labels["job-name"] != job {
-			return false
-		}
-		return slices.ContainsFunc(slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses),
-			func(status corev1.ContainerStatus) bool {
-				waiting := status.State.Waiting
-				return waiting != nil && waiting.Reason == "CreateContainerConfigError" && strings.Contains(waiting.Message, words)
+func kubeletReportedMountFailure(events []corev1.Event, pods []corev1.Pod, job, words string) bool {
+	return slices.ContainsFunc(events, func(event corev1.Event) bool {
+		reference := event.InvolvedObject
+		return event.Type == corev1.EventTypeWarning && event.Reason == "FailedMount" && reference.Kind == "Pod" &&
+			strings.Contains(event.Message, words) &&
+			slices.ContainsFunc(pods, func(pod corev1.Pod) bool {
+				return pod.Labels["job-name"] == job && pod.Name == reference.Name && pod.UID == reference.UID
 			})
 	})
 }

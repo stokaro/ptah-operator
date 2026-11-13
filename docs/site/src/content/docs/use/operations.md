@@ -1202,14 +1202,23 @@ replacement builds for it, with the manager identity taken from the live Pod
 template and the template held to the admission snapshot the claim persisted
 before dispatch. A release that changed nothing else in the Job adopts it. A
 release that also changed the Job or its Pod template -- an environment
-variable, an annotation, a security setting -- cannot confirm it. A dispatched
+variable, an annotation, a security setting -- cannot confirm it. 0.2.11 moved
+every credential out of the environment and into
+[files](../../reference/credentials-and-admission/#credential-files), and still
+adopts a Job 0.2.10 dispatched: it compares that Job with the one it builds given
+back 0.2.10's credential variables, so that difference and no other is accepted,
+and only for a claim whose admission snapshot a release that built that shape
+recorded. A dispatched
 `PtahSchema` Apply is settled as outcome unknown and the database is observed
 before anything else runs. A dispatched `PtahMigration` Apply is recorded as
 an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
 until a History reading or a `PtahMigrationRunAcknowledgment` accounts for it.
 A dispatched read-only Job of either family is run again under a new attempt.
-Where the Job is the one the claim fixes, the claim waits for that Job to stop
-first and gives it the five-minute TTL of a harvested Job, because admission
+A read-only Job created with its cleanup TTL, as every one is from 0.2.11 on,
+is left to it, and the read runs again at once. A read-only Job a release
+before 0.2.11 created carries none. Where such a Job is the one the claim
+fixes, the claim waits for that Job to stop first and gives it the five-minute
+TTL of a harvested Job, because admission
 admits the TTL only on the Job an active claim names. A claim that never
 recorded the Job's UID records it first. `Ready` on a `PtahSchema`, and
 `Progressing` on a `PtahMigration`, names the Job while the claim waits. The
@@ -1465,9 +1474,12 @@ Suspension prevents new operations. It does not necessarily stop one that is
 already running: setting `spec.suspend=true` cancels no SQL and deletes no Job
 or Pod, and a Job's cleanup TTL removes it only once it has finished. A Job
 still running when the resource is suspended runs until it stops by itself or
-reaches its own deadline. If an apply is already active, the controller
-continues observing that Job until its outcome is safe to classify; it does not
-delete the Pod mid-mutation.
+reaches its own deadline. A read-only Job is created with its cleanup TTL, five
+minutes counted from when the Job finishes, so a read that suspension drops
+leaves nothing behind once its Job has stopped and five minutes have passed.
+If an apply is already active, the controller continues observing that Job
+until its outcome is safe to classify; it does not delete the Pod
+mid-mutation.
 
 For either kind that classification is `Unknown`, whatever the run did.
 Suspending is a spec edit, the generation it bumps is one of the inputs the
@@ -1493,7 +1505,9 @@ While a `PtahSchema` owes the proof of an Apply, suspension starts no proof
 Job and drops a proof claim whose Job was not created; a proof Observe already
 running ends, and the Plan that completes the proof waits for resume. A proof
 read whose Job this release cannot confirm, as after an upgrade that changed
-the Job, waits for that Job to stop and gives it its cleanup TTL. The
+the Job, waits for that Job to stop and gives it its cleanup TTL where the Job
+carries none, as one a release before 0.2.11 created; a Job created with its
+TTL is left to it, and the proof reads again under a new Job. The
 schema retains and renews the Apply's database-realm Lease meanwhile. This
 deliberately blocks later mutations in the same realm until the resource is
 resumed and the read-only proof completes, or until the resource is deleted.
@@ -1514,8 +1528,10 @@ the generation it last acted on and its phase, and an operation still in
 flight, and what the suspension does to it. A read under way when the
 suspension arrives, a migration's read of its history after a run included,
 is dropped rather than waited for, since it changes nothing; its Job stops at
-its own deadline. Admission admits a Job's cleanup TTL only on a finished Job
-the claim names, so a read Job that had finished gets its TTL as the claim is
+its own deadline, and the cleanup TTL it was created with removes it five
+minutes later. The claim writes nothing to the Job. A read Job a release before
+0.2.11 created carries no TTL, and admission admits one only on a finished Job
+the claim names, so such a Job that had finished gets its TTL as the claim is
 dropped, and a `SchemaJobCleanupDeferred` or `MigrationJobCleanupDeferred`
 Warning Event names one still running, which stays until it is deleted. A read
 either kind holds while an execution component changes, and a `PtahSchema` Plan
@@ -2168,11 +2184,12 @@ nothing about whether the mutation was ever accounted for.
 
 ```sh
 kubectl ptah migration orders -n application
-kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 ```
 
 The first prints the record under `Unresolved run`, apart from the last run,
-with the migration's UID; the second is the record as stored.
+with the migration's UID; the second adds every field of the record the
+plugin knows, and of the last run beside it.
 
 The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
@@ -2338,12 +2355,13 @@ resource is suspended, and reads the database again before it plans anything.
 are gone, and `status.resolvedRun` names the run, the acknowledgment and you:
 
 ```sh
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
 ```
 
-`kubectl ptah migration orders -n application` prints the same as a
-`Settled run` line, and lists the acknowledgment with its conditions.
+`kubectl ptah migration orders -n application` prints it as a `Settled run`
+line, and lists the acknowledgment with its conditions; `--details` adds
+every field of the record the plugin knows.
 
 The acknowledgment reads `Consumed=True`, and a Normal Event,
 `UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then
@@ -2511,9 +2529,16 @@ one and who it reaches. A failed Apply also writes Ptah's words to its Pod log, 
 to nothing a controller reads, as
 [the next section](#failed-apply-log) says.
 
-Kubernetes Events provide the object-scoped audit trail for operation claims,
-completion, policy refusal, approval changes, and failures. Alert on a sustained
-increase in `ptah_operator_failures_total` and on any increase in
+Kubernetes Events tell a person watching a resource about operation claims,
+completion, policy refusal, approval changes, and failures. They are not a
+record. The API server keeps them for about an hour, and the manager's recorder
+drops some before they get there, as
+[An Event can be lost](../../troubleshoot/events/#an-event-can-be-lost) says: in
+[a measured run](../audit/#not-recorded) a schema's second approval reached no
+Event at all. `status.journal` is the operator's record, and
+[Audit a database change](../audit/) says what an audit can rely on and what the
+installation adds. Alert on a sustained increase in
+`ptah_operator_failures_total` and on any increase in
 `ptah_operator_applies_total{outcome="uncertain"}`. Use status Conditions and
 Events to identify the affected object instead of adding unbounded identity
 labels to metrics.
@@ -2540,7 +2565,8 @@ quoted part of the line with it and replaces what they share with `[in the
 statement]`, before it cuts the line. That covers a literal, a password in a literal
 and a name the statement declares, which is why the example above does not name its
 index. A value read from a table is not in the statement, so it stays. The runner
-also removes the secrets in the Pod's environment, in any case, and replaces control
+also removes the credentials it read from its files and its environment, in any case,
+and replaces control
 characters with a space, so a row cannot rewrite a reader's terminal. Nothing can
 recognize a row as a row.
 
@@ -2948,10 +2974,15 @@ are tracked in
 
 ## Plan retention
 
-Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects may remain useful as
-audit evidence until Kubernetes garbage collection removes the owning schema;
-only the exact UID and fingerprint in `status.plan` are current. Completed Jobs
-receive a cleanup TTL before the controller clears the active operation: five
+Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects
+stay until garbage collection removes them with the owning schema, which it does
+as soon as the schema is deleted, so [export](#export-a-plan-before-deleting-it)
+any an audit needs first. Only the exact UID and fingerprint in `status.plan`
+are current. A read-only Job is created with a five-minute cleanup TTL, which
+Kubernetes counts from when the Job finishes, so a read whose result the manager
+has not taken by then runs again under a new Job. An Apply's Job is created with
+none, and receives its cleanup TTL before the controller clears the active
+operation: five
 minutes, or [24 hours](#failed-apply-log) for an Apply that failed or whose outcome is
 unknown, when a person approved it or its migration run stopped the resource. Failure
 to schedule that TTL leaves the operation

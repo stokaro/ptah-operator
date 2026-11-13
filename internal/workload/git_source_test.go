@@ -110,7 +110,9 @@ func TestBuildResolvesAGitSourceInTheOperationContainer(t *testing.T) {
 				t.Errorf("%s = %q, want %q", name, env[name].Value, want)
 			}
 		}
-		for _, name := range []string{runner.EnvGitCommit, runner.EnvExpectedContentDigest, runner.EnvDatabaseURL, runner.EnvGitSSHKeyFile} {
+		for _, name := range []string{
+			runner.EnvGitCommit, runner.EnvExpectedContentDigest, runner.EnvDatabaseURL, runner.EnvDatabaseURLFile, runner.EnvGitSSHKeyFile,
+		} {
 			if _, present := env[name]; present {
 				t.Errorf("a Resolve Job carries %s", name)
 			}
@@ -121,14 +123,17 @@ func TestBuildResolvesAGitSourceInTheOperationContainer(t *testing.T) {
 		}{
 			runner.EnvGitHostGrant:     {operatorv1alpha1.GitHostSecretKey, false},
 			runner.EnvGitCASHA256Grant: {operatorv1alpha1.GitCASHA256SecretKey, false},
-			runner.EnvGitUsername:      {operatorv1alpha1.GitUsernameSecretKey, true},
-			runner.EnvGitPassword:      {operatorv1alpha1.GitPasswordSecretKey, true},
 		} {
 			secret, key, optional := secretKeyOf(env[name])
 			if secret != "git-token" || key != want.key || optional != want.optional {
 				t.Errorf("%s reads %s/%s optional=%v, want git-token/%s optional=%v", name, secret, key, optional, want.key, want.optional)
 			}
 		}
+		// The credential itself is a file, and either key may be missing:
+		// a token alone, or nothing for a public repository behind a grant.
+		main := job.Spec.Template.Spec.Containers[0]
+		assertCredentialFile(t, job, main, runner.EnvGitUsernameFile, "git-token", operatorv1alpha1.GitUsernameSecretKey, true)
+		assertCredentialFile(t, job, main, runner.EnvGitPasswordFile, "git-token", operatorv1alpha1.GitPasswordSecretKey, true)
 		ca := volumeNamed(job, gitCAVolumeName)
 		if ca == nil || ca.ConfigMap == nil || ca.ConfigMap.Name != "git-ca" || ca.ConfigMap.Items[0].Key != "ca.pem" {
 			t.Fatalf("CA volume = %#v, want the selected key of git-ca", ca)

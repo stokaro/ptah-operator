@@ -71,6 +71,31 @@
             }
           },
           {
+            "name": "registry-credentials",
+            "secret": {
+              "secretName": "registry",
+              "items": [
+                {
+                  "key": "user",
+                  "path": "username",
+                  "mode": 288
+                },
+                {
+                  "key": "pass",
+                  "path": "password",
+                  "mode": 288
+                },
+                {
+                  "key": "identity-token",
+                  "path": "token",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420,
+              "optional": true
+            }
+          },
+          {
             "name": "registry-ca",
             "configMap": {
               "name": "registry-ca",
@@ -147,38 +172,8 @@
                 "value": "/work"
               },
               {
-                "name": "PTAH_OCI_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "pass",
-                    "optional": true
-                  }
-                }
-              },
-              {
                 "name": "PTAH_OCI_REGISTRY",
                 "value": "registry.example"
-              },
-              {
-                "name": "PTAH_OCI_TOKEN",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "identity-token",
-                    "optional": true
-                  }
-                }
-              },
-              {
-                "name": "PTAH_OCI_USERNAME",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "user",
-                    "optional": true
-                  }
-                }
               },
               {
                 "name": "PTAH_OPERATION_ID",
@@ -215,6 +210,18 @@
                 "value": "true"
               },
               {
+                "name": "PTAH_OPERATOR_OCI_PASSWORD_FILE",
+                "value": "/credentials/registry/password"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_TOKEN_FILE",
+                "value": "/credentials/registry/token"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_USERNAME_FILE",
+                "value": "/credentials/registry/username"
+              },
+              {
                 "name": "PTAH_PLAIN_HTTP",
                 "value": "false"
               },
@@ -241,6 +248,11 @@
               {
                 "name": "work",
                 "mountPath": "/work"
+              },
+              {
+                "name": "registry-credentials",
+                "readOnly": true,
+                "mountPath": "/credentials/registry"
               },
               {
                 "name": "registry-ca",
@@ -296,6 +308,7 @@
         "enableServiceLinks": false
       }
     },
+    "ttlSecondsAfterFinished": 300,
     "completionMode": "NonIndexed",
     "suspend": false,
     "podReplacementPolicy": "Failed"

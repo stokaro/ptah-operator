@@ -5,8 +5,10 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -96,51 +98,8 @@ func (d *dataPlane) requireForbiddenRead(err error, what string) {
 // authority these requests actually receive.
 func (d *dataPlane) installReaderExample(schema, file, identity, placeholder string) client.Client {
 	d.t.Helper()
-	content, err := os.ReadFile(filepath.Join(repositoryRoot, "examples", file))
-	d.check(err, "read %s", file)
-	documents, err := decodeManifests(content)
-	d.check(err, "decode %s", file)
-	if len(documents) != 2 {
-		d.fatalf("%s must contain one Role and one RoleBinding", file)
-	}
-	var role *rbacv1.Role
-	var binding *rbacv1.RoleBinding
-	for _, document := range documents {
-		switch document["kind"] {
-		case "Role":
-			if role != nil {
-				d.fatalf("%s contains two Roles", file)
-			}
-			role = &rbacv1.Role{}
-			d.check(runtime.DefaultUnstructuredConverter.FromUnstructured(document, role), "decode the example Role")
-		case "RoleBinding":
-			if binding != nil {
-				d.fatalf("%s contains two RoleBindings", file)
-			}
-			binding = &rbacv1.RoleBinding{}
-			d.check(runtime.DefaultUnstructuredConverter.FromUnstructured(document, binding), "decode the example RoleBinding")
-		default:
-			d.fatalf("%s contains an unexpected kind", file)
-		}
-	}
-	if role == nil || binding == nil || len(role.Rules) == 0 || binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != role.Name ||
-		len(binding.Subjects) != 1 || binding.Subjects[0].Kind != "Group" || binding.Subjects[0].Name != placeholder {
-		d.fatalf("%s is not a nonempty Role bound to its documented placeholder group", file)
-	}
-	role.Namespace, binding.Namespace = d.in.TestNamespace, d.in.TestNamespace
 	group := "e2e:sql-" + identity
-	binding.Subjects[0].Name = group
-	for _, object := range []client.Object{role, binding} {
-		d.check(d.cluster.Client.Create(d.ctx, object), "install %s", file)
-		t := d.t
-		t.Cleanup(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := d.cluster.Client.Delete(ctx, object, client.Preconditions{UID: ptr.To(object.GetUID())}); client.IgnoreNotFound(err) != nil {
-				t.Errorf("remove the SQL reader example: %v", err)
-			}
-		})
-	}
+	d.check(installRoleExample(d.t, d.ctx, d.cluster, d.in.TestNamespace, file, placeholder, group), "install %s", file)
 	reader, err := d.cluster.As(rest.ImpersonationConfig{UserName: "e2e-sql-" + identity, Groups: []string{"system:authenticated", group}})
 	d.check(err, "construct the SQL reader identity")
 	d.check(harness.Wait(d.ctx, "the example RoleBinding to grant schema reads", time.Minute, time.Second,
@@ -152,4 +111,66 @@ func (d *dataPlane) installReaderExample(schema, file, identity, placeholder str
 			return err == nil, "reading the existing schema through the example Role", err
 		}), "wait for %s to take effect", file)
 	return reader
+}
+
+// installRoleExample creates the Role and RoleBinding of examples/<file> in the
+// namespace, with the group in place of the placeholder the binding names, and
+// removes both when the test ends. Nothing else changes, so the rules and the
+// roleRef a request is authorized by are the example's.
+func installRoleExample(t *testing.T, ctx context.Context, cluster *harness.Cluster, namespace, file, placeholder, group string) error {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(repositoryRoot, "examples", file))
+	if err != nil {
+		return err
+	}
+	documents, err := decodeManifests(content)
+	if err != nil {
+		return fmt.Errorf("decode %s: %w", file, err)
+	}
+	if len(documents) != 2 {
+		return fmt.Errorf("%s must contain one Role and one RoleBinding", file)
+	}
+	var role *rbacv1.Role
+	var binding *rbacv1.RoleBinding
+	for _, document := range documents {
+		switch document["kind"] {
+		case "Role":
+			if role != nil {
+				return fmt.Errorf("%s contains two Roles", file)
+			}
+			role = &rbacv1.Role{}
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(document, role); err != nil {
+				return fmt.Errorf("decode the Role of %s: %w", file, err)
+			}
+		case "RoleBinding":
+			if binding != nil {
+				return fmt.Errorf("%s contains two RoleBindings", file)
+			}
+			binding = &rbacv1.RoleBinding{}
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(document, binding); err != nil {
+				return fmt.Errorf("decode the RoleBinding of %s: %w", file, err)
+			}
+		default:
+			return fmt.Errorf("%s contains an unexpected kind", file)
+		}
+	}
+	if role == nil || binding == nil || len(role.Rules) == 0 || binding.RoleRef.Kind != "Role" || binding.RoleRef.Name != role.Name ||
+		len(binding.Subjects) != 1 || binding.Subjects[0].Kind != "Group" || binding.Subjects[0].Name != placeholder {
+		return fmt.Errorf("%s is not a nonempty Role bound to its documented placeholder group", file)
+	}
+	role.Namespace, binding.Namespace = namespace, namespace
+	binding.Subjects[0].Name = group
+	for _, object := range []client.Object{role, binding} {
+		if err := cluster.Client.Create(ctx, object); err != nil {
+			return fmt.Errorf("create the %T of %s: %w", object, file, err)
+		}
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := cluster.Client.Delete(ctx, object, client.Preconditions{UID: ptr.To(object.GetUID())}); client.IgnoreNotFound(err) != nil {
+				t.Errorf("remove the %s example: %v", file, err)
+			}
+		})
+	}
+	return nil
 }

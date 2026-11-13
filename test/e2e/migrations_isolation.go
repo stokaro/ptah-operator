@@ -45,6 +45,17 @@ const (
 	egressOpenReading = "api=open database=open dns=open registry=open"
 )
 
+// hostReference is the artifact a cluster reference names, addressed the way
+// the host reaches the same registry. A fixture only the host can build is
+// pushed there, and the row reads it back by the reference it was given.
+func hostReference(reference, registryHost, hostAddress string) (string, error) {
+	path, ok := strings.CutPrefix(reference, "oci://"+registryHost+"/")
+	if !ok || path == "" || registryHost == "" || hostAddress == "" {
+		return "", fmt.Errorf("%q is not an artifact of the task registry %s", reference, registryHost)
+	}
+	return hostAddress + "/" + path, nil
+}
+
 // isolatedApplyHeld is an Apply whose
 // node the API server cannot reach, still held by its resource. The claim is
 // what a replacement would have to get past, so each clause is one way of

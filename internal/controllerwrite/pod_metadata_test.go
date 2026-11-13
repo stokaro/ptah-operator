@@ -155,7 +155,7 @@ func TestValidationHandlerAllowsMigrationCleanupOfAJobCarryingDeclaredPodMetadat
 	if job.Labels["acme.example/team"] != "platform" {
 		t.Fatalf("the fixture's Job carries no declared metadata: %v", job.Labels)
 	}
-	terminal := withGeneratedJobIdentity(job)
+	terminal := createdWithoutCleanupTTL(withGeneratedJobIdentity(job))
 	terminal.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 	migration.Status.ActiveOperation.JobUID = terminal.UID
 	migration.Spec.Execution.PodMetadata = nil

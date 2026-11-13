@@ -20,9 +20,10 @@ import (
 )
 
 // refusalRewriteSource is the Job the shell phase's self-check and
-// hack/e2e-static.sh rewrote: one container whose URL was a literal, whose
-// operation ID came from the Pod's UID, and a variable the rewrite must leave
-// alone.
+// hack/e2e-static.sh rewrote, in the shape the operator now builds: one
+// container that names its database URL by a file of the database-url
+// volume, whose operation ID came from the Pod's UID, and a variable and a
+// volume the rewrite must leave alone.
 const refusalRewriteSource = `{
   "spec": {
     "backoffLimit": 7,
@@ -35,29 +36,42 @@ const refusalRewriteSource = `{
           "image": "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "args": ["observe"],
           "env": [
-            {"name": "PTAH_DB_URL", "value": "mysql://original.invalid"},
+            {"name": "PTAH_OPERATOR_DB_URL_FILE", "value": "/credentials/database/url"},
             {"name": "PTAH_OPERATION_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}}},
             {"name": "PRESERVED", "value": "exact"}
-          ]
-        }]
+          ],
+          "volumeMounts": [{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true}]
+        }],
+        "volumes": [
+          {"name": "database-url", "secret": {"secretName": "original-database", "items": [{"key": "url", "path": "url", "mode": 288}]}},
+          {"name": "development-database-url", "secret": {"secretName": "original-development", "items": [{"key": "url", "path": "url", "mode": 288}]}}
+        ]
       }
     }
   }
 }`
 
 // rewrittenRefusalContainers is the one container every rewrite of the source
-// must produce: the URL from the unsafe Secret, the operation ID a literal,
-// and nothing else moved.
+// must produce: the operation ID a literal, and nothing else moved.
 const rewrittenRefusalContainers = `[{
   "name": "ptah",
   "image": "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "args": ["observe"],
   "env": [
-    {"name": "PTAH_DB_URL", "valueFrom": {"secretKeyRef": {"name": "test-secret", "key": "url"}}},
+    {"name": "PTAH_OPERATOR_DB_URL_FILE", "value": "/credentials/database/url"},
     {"name": "PTAH_OPERATION_ID", "value": "test-operation-id"},
     {"name": "PRESERVED", "value": "exact"}
-  ]
+  ],
+  "volumeMounts": [{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true}]
 }]`
+
+// rewrittenRefusalVolumes are the volumes every rewrite of the source must
+// produce: the database URL file projected from the unsafe Secret, and the
+// development database left as the source had it.
+const rewrittenRefusalVolumes = `[
+  {"name": "database-url", "secret": {"secretName": "test-secret", "items": [{"key": "url", "path": "url", "mode": 288}]}},
+  {"name": "development-database-url", "secret": {"secretName": "original-development", "items": [{"key": "url", "path": "url", "mode": 288}]}}
+]`
 
 func decodeDocument(t *testing.T, content string) map[string]any {
 	t.Helper()
@@ -119,6 +133,10 @@ func TestRewriteMySQLRefusalJobWithoutInitContainers(t *testing.T) {
 	containers, _ := field(t, rewritten, "spec", "template", "spec", "containers")
 	if want := decodeValue(t, rewrittenRefusalContainers); !reflect.DeepEqual(containers, want) {
 		t.Errorf("containers = %v, want %v", containers, want)
+	}
+	volumes, _ := field(t, rewritten, "spec", "template", "spec", "volumes")
+	if want := decodeValue(t, rewrittenRefusalVolumes); !reflect.DeepEqual(volumes, want) {
+		t.Errorf("volumes = %v, want %v", volumes, want)
 	}
 	wantMetadata := map[string]any{
 		"namespace": "test-namespace", "name": "test-name",
@@ -186,13 +204,13 @@ func TestRewriteMySQLRefusalJobKeepsHelpersWithoutEnvironment(t *testing.T) {
 
 	withEnv := decodeDocument(t, refusalRewriteSource)
 	if err := unstructured.SetNestedField(withEnv, decodeValue(t, `[{"name": "install-runner", "env": [
-	  {"name": "PTAH_DB_URL", "value": "mysql://original.invalid"}
+	  {"name": "PTAH_OPERATION_ID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}}}
 	]}]`), "spec", "template", "spec", "initContainers"); err != nil {
 		t.Fatal(err)
 	}
 	initContainers, _ = field(t, rewriteTestJob(t, withEnv), "spec", "template", "spec", "initContainers")
 	want := decodeValue(t, `[{"name": "install-runner", "env": [
-	  {"name": "PTAH_DB_URL", "valueFrom": {"secretKeyRef": {"name": "test-secret", "key": "url"}}}
+	  {"name": "PTAH_OPERATION_ID", "value": "test-operation-id"}
 	]}]`)
 	if !reflect.DeepEqual(initContainers, want) {
 		t.Errorf("an init container with environment = %v, want %v", initContainers, want)
@@ -227,6 +245,18 @@ func TestRewriteMySQLRefusalJobDropsSelectorsAndRefusesMalformedSources(t *testi
 		{"a container that is not an object", `{"spec": {"template": {"spec": {"containers": ["ptah"]}}}}`},
 		{"a variable that is not an object", `{"spec": {"template": {"spec": {"containers": [{"env": ["PTAH_DB_URL"]}]}}}}`},
 		{"initContainers that is not a list", `{"spec": {"template": {"spec": {"containers": [], "initContainers": {}}}}}`},
+		// The copy would read the source's own database.
+		{"no database URL volume", `{"spec": {"template": {"spec": {"containers": []}}}}`},
+		{"a database URL volume that is not a Secret's", `{"spec": {"template": {"spec": {"containers": [],
+		  "volumes": [{"name": "database-url", "configMap": {"name": "database"}}]}}}}`},
+		{"two database URL volumes", `{"spec": {"template": {"spec": {"containers": [],
+		  "volumes": [{"name": "database-url", "secret": {"secretName": "a"}}, {"name": "database-url", "secret": {"secretName": "b"}}]}}}}`},
+		{"a database URL in a container's environment", `{"spec": {"template": {"spec": {
+		  "containers": [{"env": [{"name": "PTAH_DB_URL", "valueFrom": {"secretKeyRef": {"name": "original-database", "key": "url"}}}]}],
+		  "volumes": [{"name": "database-url", "secret": {"secretName": "original-database"}}]}}}}`},
+		{"a database URL in an init container's environment", `{"spec": {"template": {"spec": {"containers": [],
+		  "initContainers": [{"env": [{"name": "PTAH_DB_URL", "value": "mysql://original.invalid"}]}],
+		  "volumes": [{"name": "database-url", "secret": {"secretName": "original-database"}}]}}}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

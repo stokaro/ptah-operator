@@ -12,7 +12,7 @@
     "together: the CRD upgrade and the uninstall that follows it, the schema",
     "faults and their shared watches. Reference data uses separate databases",
     "and has no migration prerequisite. PostgreSQL reference data shares the",
-    "lifecycle job; MySQL reference data shares certificates. High",
+    "sources job; MySQL reference data shares certificates. High",
     "availability belongs with the upgrade rather than with the other",
     "control-plane phases, because it asserts what an upgrade leaves behind:",
     "the Resolve metric sources of the release it replaced. The control-plane",
@@ -33,7 +33,9 @@
     "create their own migration and database, from late dispatch to the",
     "rebuild drill, leave the lifecycle that reads the engine's own migration",
     "for migration-faults. A phase split this way publishes every artifact it",
-    "reads.",
+    "reads. After that split lifecycle still came within fourteen minutes of",
+    "the limit, so PostgreSQL reference data, which reads only the prepared",
+    "namespace and a database of its own, moved from lifecycle to sources.",
     "",
     "The migration path runs one engine per suite. Reference-data acceptance",
     "uses the prepared namespace, registry and databases. Plan-store alerting",
@@ -72,8 +74,8 @@
     {
       "name": "lifecycle",
       "slug": "lifecycle",
-      "summary": "Installation, the CRD upgrade path, leader failover, PostgreSQL reference data, infrastructure alert delivery, and uninstall",
-      "phases": ["upgrade", "ha", "reference-data-postgresql", "alerting", "uninstall"],
+      "summary": "Installation, the CRD upgrade path, leader failover, infrastructure alert delivery, and uninstall",
+      "phases": ["upgrade", "ha", "alerting", "uninstall"],
       "prepare": ["assert", "dataplane"]
     },
     {
@@ -136,8 +138,8 @@
     {
       "name": "sources",
       "slug": "sources",
-      "summary": "Schemas and migration sequences read from ConfigMaps and from Git",
-      "phases": ["configmap-sources", "git-sources"],
+      "summary": "PostgreSQL reference data, and schemas and migration sequences read from ConfigMaps and from Git",
+      "phases": ["reference-data-postgresql", "configmap-sources", "git-sources"],
       "prepare": ["dataplane"]
     },
     {

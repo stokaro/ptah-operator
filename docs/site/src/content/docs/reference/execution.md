@@ -38,7 +38,7 @@ sequenceDiagram
   R-->>J: durable receipt
   C->>K: background consumer reads result
   C->>S: record the outcome
-  C->>K: schedule the cleanup TTL
+  C->>K: schedule an Apply's cleanup TTL
 ```
 
 The claim is written before the Job exists. That is what lets the controller
@@ -81,14 +81,20 @@ claim dispatched, until that Job has stopped and its cleanup is scheduled. It
 authorizes nothing, and no further rotation starts while it is present
 ([Retire an execution binding](../mutation-lifecycle/#retire-an-execution-binding)).
 
-A terminal Job stays the active operation until the controller has both read
-its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
-failure retries the transition instead of orphaning the Job. That TTL is the
-one field the manager may add to a Job it already created, and no result is
+A read-only Job is created with its cleanup TTL, 300 seconds, which Kubernetes
+counts from when the Job finishes. It removes nothing still running, and it
+removes a finished read whether or not the controller has read its result: a
+read whose Job is gone before then runs again under a new Job. An Apply's Job is
+created with none. It stays the active operation until the controller has both
+read its result and scheduled its bounded cleanup TTL, so a transient API or
+RBAC failure retries the transition instead of orphaning the Job. That TTL is
+the one field the manager may add to a Job it already created, and no result is
 read before the Job carries its terminal condition. It is 300 seconds, or 86400
 for an Apply that failed or whose outcome is unknown, when a person approved it or its
 migration run stopped the resource, whose Pod log
 [holds what the database answered](../../use/operations/#failed-apply-log).
+A read-only Job a release before 0.2.11 created carries no TTL, and gets the
+300 seconds the same way.
 
 ### Durable result protocol
 
