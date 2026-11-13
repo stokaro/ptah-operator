@@ -197,22 +197,22 @@ func TestARefusedReadOnlyJobIsCollectedOnceItStops(t *testing.T) {
 	}{
 		{
 			name:  "built by a release that changed the Pod template, completing",
-			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true},
+			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true},
 			jobs:  current, ending: batchv1.JobComplete, want: "active Job intent changed",
 		},
 		{
 			name:  "built by a release that changed the Pod template, failing at its deadline",
-			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true},
+			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true},
 			jobs:  current, ending: batchv1.JobFailed, want: "active Job intent changed",
 		},
 		{
 			name:  "under a builder that refuses the claim",
-			shape: runShape{dispatcher: current, recorded: true},
+			shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			jobs:  failingMigrationBuildJobs{}, ending: batchv1.JobComplete, want: "rebuild immutable Job intent",
 		},
 		{
 			name:  "whose claim never recorded the Job's UID",
-			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting},
+			shape: runShape{dispatcher: predecessor, alter: withAnExecutorSetting, createdWithoutTTL: true},
 			jobs:  current, ending: batchv1.JobComplete, want: "active Job intent changed",
 		},
 	} {
@@ -264,28 +264,28 @@ func TestARefusedReadOnlyJobAdmissionWouldNotCollectIsNamed(t *testing.T) {
 	}{
 		{
 			name:  "a claim that never recorded the UID of a Job under another epoch",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch},
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, createdWithoutTTL: true},
 			stays: "its claim never recorded the Job's UID, and the Job is not the one the claim fixes",
 		},
 		{
 			name:  "a Job under another epoch",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			stays: "the Job runs under another execution epoch than its claim",
 		},
 		{
 			name:  "a Job whose Pod template is not its snapshot's",
-			shape: runShape{dispatcher: current, misrecord: recordedForAnotherTemplate, recorded: true},
+			shape: runShape{dispatcher: current, misrecord: recordedForAnotherTemplate, recorded: true, createdWithoutTTL: true},
 			stays: "does not match the persisted admission snapshot",
 		},
 		{
 			name:  "a Job outside its claim after the inputs moved",
-			shape: runShape{dispatcher: current, alter: underAnotherClaim, recorded: true},
+			shape: runShape{dispatcher: current, alter: underAnotherClaim, recorded: true, createdWithoutTTL: true},
 			moved: true,
 			stays: "the Job's labels are not its claim's",
 		},
 		{
 			name:      "a Job under another epoch that already has its TTL",
-			shape:     runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			shape:     runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			collected: true,
 		},
 	} {
@@ -369,7 +369,7 @@ func TestARefusedReadOnlyJobsTTLWriteIsSettledByItsAnswer(t *testing.T) {
 			ctx := context.Background()
 
 			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
-				dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true,
+				dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true,
 			})
 			reconciler, api := run.reconciler(t, current)
 			finishMigrationJob(t, api, run, batchv1.JobComplete)
@@ -529,7 +529,7 @@ func TestARefusedReadOnlyJobThatDoesNotStopIsLeft(t *testing.T) {
 			ctx := context.Background()
 
 			run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
-				dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true,
+				dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true,
 			})
 			deadline, grace := run.job.Spec.ActiveDeadlineSeconds, run.job.Spec.Template.Spec.TerminationGracePeriodSeconds
 			if deadline == nil || grace == nil {
@@ -705,7 +705,7 @@ func TestAFailedWriteOfTheWaitFailsThePass(t *testing.T) {
 
 	current := workloadBuilderForMigrations()
 	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{
-		dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true,
+		dispatcher: managerOnlyPredecessor(current), alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true,
 	})
 	reconciler, api := run.reconciler(t, current)
 	failures := 0

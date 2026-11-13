@@ -58,7 +58,7 @@ decision.
 | `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
 | `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Past the deadline, the failure the run records keeps the refusal as what was last reported, unless the Job counted a Pod by then. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
-| `PodConfigurationError` | The operation's Pod exists and the kubelet cannot start its container; the message carries the kubelet's words, such as `secret "application-database" not found`. Those words hold names and no value. The operation stays claimed, the Job keeps its deadline, and the kubelet keeps trying, so a Secret that arrives lets the operation go on with no action. |
+| `PodConfigurationError` | The operation's Pod exists and the kubelet cannot set up its credential volumes or start its container; the message carries the kubelet's words, such as `MountVolume.SetUp failed for volume "database-url" : secret "application-database" not found`. Those words hold names and no value. The operation stays claimed, the Job keeps its deadline, and the kubelet keeps trying, so a Secret that arrives lets the operation go on with no action. |
 | `PolicyBlocked` | Destructive-change policy blocks the current plan. |
 | `PolicyChanged` | Verification policy identity or bytes changed. |
 | `PolicyRefused` | Artifact verification policy explicitly refused the artifact. |
@@ -325,11 +325,12 @@ desired_source_unreadable: schema.hcl: managed data file "../../proc/self/enviro
 desired_source_unreadable: schema.hcl: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"
 ```
 
-The operator puts the source under `/source`, outside that root, so Ptah v0.23.0
-refuses a row file beside the schema too, as the first line shows.
-An artifact that `ptah schema push` built carries its rows in the declaration
-and reads no row file, as [Manage reference data](../../use/reference-data/)
-describes.
+A schema from a ConfigMap or Git source is one file under `/source`, outside
+that root, and no row file arrives beside it, so its row files are refused
+wherever the declaration puts them, as the first line shows. Publish a schema
+with rows with `ptah schema push`: its artifact carries the rows in the
+declaration and reads no row file, as
+[Manage reference data](../../use/reference-data/) describes.
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |

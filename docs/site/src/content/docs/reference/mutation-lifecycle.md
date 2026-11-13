@@ -380,6 +380,18 @@ grace of its Pods, plus 30 seconds for the kubelet and the Job controller to
 report, because a Job past its deadline is not `Failed` until every Pod has
 terminated, and a Pod on a node that is gone may never terminate.
 
+A read-only Job is created with its cleanup TTL (`workload.CleanupTTLSeconds`),
+and an Apply's Job with none. Kubernetes counts the TTL from when the Job
+finishes, so it removes a finished read whether or not its result was read, and
+removes nothing that still runs. A claim whose Job the TTL collected before its
+result was read runs again under a new attempt. `releaseReadOnlyJob` lets go of
+a Job that carries a TTL at once, writes nothing to it and names it in no
+Warning, so the waits and TTL writes this section describes serve a read-only
+Job a release before 0.2.11 created, with no TTL. The waits the database Lease
+needs do not depend on the TTL: a `PtahSchema` Plan or proof read that a binding
+change retires, and a Plan whose database lock epoch moved, wait for their Job
+by the bound below whatever it carries.
+
 Every read-only claim that lets go of its Job settles it by that one rule,
 `releaseReadOnlyJob`, in both families: one that runs again past a Job it
 refused, one that suspension discards, and a migration's claim that an
@@ -436,9 +448,11 @@ removes a Job only once it has finished. Suspension cannot discard a dispatched
 mutating claim in either family. A resource suspended mid-Apply keeps its claim
 and keeps renewing the Lease. A read-only claim that serves no proof is
 discarded at once, because
-suspension is the stop button: it gives a Job that has finished its TTL first,
-and a Warning Event names one still running, which runs until it stops by
-itself or reaches its deadline and then stays until it is deleted. A claim that
+suspension is the stop button. A Job created with its cleanup TTL is left to
+it, and Kubernetes deletes the Job five minutes after it stops. A Job a release
+before 0.2.11 created carries no TTL: the claim gives it one first if it has
+finished, and a Warning Event names one still running, which runs until it stops
+by itself or reaches its deadline and then stays until it is deleted. A claim that
 an execution-binding change was holding over its Job, in either family, and a
 `PtahSchema` Plan whose database lock epoch moved, are let go of the same way.
 The read that proves a `PtahSchema` Apply is not discarded, because post-apply
@@ -603,25 +617,29 @@ Both families retire it; they differ in what is left over.
 
 A migration leaves no record behind, because it moves the epoch only once
 nothing it retires is left. A claim goes in the write that installs the epoch.
-A read-only claim over a Job that is still running holds that write back, under
-the binding status still records, until the Job stops or reaches its stop
-bound, and the Job gets its cleanup TTL first; a suspended resource does not
-wait. A dispatched Apply becomes an unresolved run first, so the epoch moves on
-the next pass once no claim is in flight.
+A read-only claim over a running Job that carries no cleanup TTL, as one a
+release before 0.2.11 created, holds that write back, under the binding status
+still records, until the Job stops or reaches its stop bound, and the Job gets
+its cleanup TTL first. A Job created with its TTL holds nothing back, and a
+suspended resource does not wait. A dispatched Apply becomes an unresolved run
+first, so the epoch moves on the next pass once no claim is in flight.
 
 A schema leaves up to two things, and names them in the write that installs
 the epoch: the retired plan, whose approvals are still to be marked stale, and
 the Job the retired claim dispatched, by name and, once known, by UID. The plan
 leaves `status.plan` in that write, so the plan status names always belongs to
-the current epoch. A read-only claim stays in `status.activeOperation` until a
-Job of this resource under the recorded name has stopped, whether or not the
+the current epoch. A read-only claim that holds no database lock, an Observe
+that proves nothing, a Resolve or a Verify, is retired at once over a Job
+created with its cleanup TTL. Any other read-only claim stays in
+`status.activeOperation` until a Job of this resource under the recorded name
+has stopped, whether or not the
 controller can prove that Job's envelope, so a Plan's Lease is not handed back
 while its Pod can still reach the database, and it renews the Lease it holds on
 every pass while it waits. It stays no longer than the Job's
 stop bound, and not at all once the resource is suspended unless it serves a
 proof, by the rule every read-only wait keeps, and a Warning Event names a Job
-it leaves running. The claim is then retired, and the
-Job gets its cleanup TTL only when its envelope carries the retired epoch and
+it leaves running. The claim is then retired, and a Job that carries no TTL
+gets its cleanup TTL only when its envelope carries the retired epoch and
 the claim's admission snapshot. A dispatched Apply, or an outcome-unknown Apply
 of the retired epoch that no pass harvested, stays in
 `status.pendingObservation`, and no proof is claimed until its Job is accounted

@@ -270,9 +270,9 @@ func concatFixtures(lists ...[]any) []any {
 func controllerJobFixture(t *testing.T) fixture {
 	t.Helper()
 	registryCredentialEnv := []any{
-		optionalSecretEnvFixture("PTAH_OCI_USERNAME", "registry-auth", "username"),
-		optionalSecretEnvFixture("PTAH_OCI_PASSWORD", "registry-auth", "password"),
-		optionalSecretEnvFixture("PTAH_OCI_TOKEN", "registry-auth", "token"),
+		literalEnvFixture("PTAH_OPERATOR_OCI_USERNAME_FILE", "/credentials/registry/username"),
+		literalEnvFixture("PTAH_OPERATOR_OCI_PASSWORD_FILE", "/credentials/registry/password"),
+		literalEnvFixture("PTAH_OPERATOR_OCI_TOKEN_FILE", "/credentials/registry/token"),
 		literalEnvFixture("PTAH_OCI_REGISTRY", "registry.example"),
 		literalEnvFixture("PTAH_PLAIN_HTTP", "false"),
 		literalEnvFixture("PTAH_OCI_CA_FILE", "/credentials/ca-snapshot/ca.pem"),
@@ -287,12 +287,34 @@ func controllerJobFixture(t *testing.T) fixture {
 		literalEnvFixture("PTAH_PLAIN_HTTP", "false"),
 	}
 	registryEnv := concatFixtures(registryCredentialEnv[:5], authorityGuardEnv)
-	databaseEnv := []any{secretEnvFixture("PTAH_DB_URL", "database-url", "url")}
+	databaseEnv := []any{literalEnvFixture("PTAH_OPERATOR_DB_URL_FILE", "/credentials/database/url")}
 	observeEnv := concatFixtures(databaseEnv, []any{literalEnvFixture("PTAH_EXPECTED_DATABASE_ENGINE", "PostgreSQL")})
+	registryCredentialsMount := map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true}
+	databaseURLMount := map[string]any{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true}
+	credentialItem := func(key, path string) map[string]any {
+		return map[string]any{"key": key, "path": path, "mode": 288}
+	}
+	registryCredentialsVolume := map[string]any{"name": "registry-credentials", "secret": map[string]any{
+		"secretName": "registry-auth", "defaultMode": 420, "optional": true,
+		"items": []any{
+			credentialItem("user", "username"), credentialItem("pass", "password"), credentialItem("identity-token", "token"),
+		},
+	}}
+	databaseURLVolume := map[string]any{"name": "database-url", "secret": map[string]any{
+		"secretName": "database-url", "defaultMode": 420, "items": []any{credentialItem("url", "url")},
+	}}
 	job := func(operation string, mainEnv, fetchEnv []any) map[string]any {
-		mainMounts := []any{}
-		if operation == "resolve" || operation == "verify" {
-			mainMounts = []any{map[string]any{"name": "registry-ca", "mountPath": "/credentials/ca-source", "readOnly": true}}
+		var mainMounts, volumes []any
+		switch operation {
+		case "resolve", "verify":
+			mainMounts = []any{
+				registryCredentialsMount,
+				map[string]any{"name": "registry-ca", "mountPath": "/credentials/ca-source", "readOnly": true},
+			}
+			volumes = []any{registryCredentialsVolume}
+		default:
+			mainMounts = []any{databaseURLMount}
+			volumes = []any{databaseURLVolume}
 		}
 		initContainers := []any{map[string]any{"name": "install-runner", "env": []any{}}}
 		if fetchEnv != nil {
@@ -303,9 +325,12 @@ func controllerJobFixture(t *testing.T) fixture {
 					map[string]any{"name": "registry-ca-snapshot", "mountPath": "/credentials/ca-snapshot"},
 				}},
 				map[string]any{"name": "fetch-schema", "env": fetchEnv, "volumeMounts": []any{
+					map[string]any{"name": "runner", "mountPath": "/runner", "readOnly": true},
+					registryCredentialsMount,
 					map[string]any{"name": "registry-ca-snapshot", "mountPath": "/credentials/ca-snapshot", "readOnly": true},
 				}},
 			)
+			volumes = append(volumes, registryCredentialsVolume)
 		}
 		return map[string]any{
 			"metadata": map[string]any{
@@ -321,6 +346,7 @@ func controllerJobFixture(t *testing.T) fixture {
 						"name": "ptah", "env": mainEnv, "volumeMounts": mainMounts,
 					}},
 					"initContainers": initContainers,
+					"volumes":        volumes,
 				}},
 			},
 		}
@@ -366,6 +392,7 @@ func customCAPodFixture(t *testing.T) fixture {
 		spec.set([]any{
 			map[string]any{"name": "runner", "mountPath": "/runner", "readOnly": true},
 			map[string]any{"name": "work", "mountPath": "/work"},
+			map[string]any{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true},
 			map[string]any{"name": "schema-source", "mountPath": "/source", "readOnly": true},
 		}, "containers", 0, "volumeMounts")
 		install := spec.named("install-runner", "initContainers")
@@ -381,20 +408,34 @@ func customCAPodFixture(t *testing.T) fixture {
 		spec.set([]any{}, "initContainers", guard, "envFrom")
 		spec.set(hardenedContainer, "initContainers", guard, "securityContext")
 		fetch := spec.named("fetch-schema", "initContainers")
-		spec.set([]any{"/usr/local/bin/ptah"}, "initContainers", fetch, "command")
-		spec.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl", "--skip-parse"},
-			"initContainers", fetch, "args")
+		spec.set([]any{"/runner/ptah-runner"}, "initContainers", fetch, "command")
+		spec.set([]any{
+			"--fetch-oci-source", "--ptah-binary", "/usr/local/bin/ptah", "--",
+			"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl", "--skip-parse",
+		}, "initContainers", fetch, "args")
 		spec.set([]any{}, "initContainers", fetch, "envFrom")
 		spec.set(hardenedContainer, "initContainers", fetch, "securityContext")
 		spec.set([]any{
+			map[string]any{"name": "runner", "mountPath": "/runner", "readOnly": true},
 			map[string]any{"name": "schema-source", "mountPath": "/source"},
 			map[string]any{"name": "fetch-work", "mountPath": "/fetch-work"},
+			map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true},
 			map[string]any{"name": "registry-ca-snapshot", "mountPath": "/credentials/ca-snapshot", "readOnly": true},
 		}, "initContainers", fetch, "volumeMounts")
+		credentialItem := func(key string) map[string]any {
+			return map[string]any{"key": key, "path": key, "mode": 288}
+		}
 		spec.set([]any{
 			map[string]any{"name": "runner", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}},
 			map[string]any{"name": "work", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "128Mi"}},
+			map[string]any{"name": "database-url", "secret": map[string]any{
+				"secretName": "database-url", "defaultMode": 420, "items": []any{credentialItem("url")},
+			}},
 			map[string]any{"name": "fetch-work", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}},
+			map[string]any{"name": "registry-credentials", "secret": map[string]any{
+				"secretName": "registry-auth", "defaultMode": 420, "optional": true,
+				"items": []any{credentialItem("username"), credentialItem("password"), credentialItem("token")},
+			}},
 			map[string]any{"name": "registry-ca", "configMap": map[string]any{
 				"name": "registry-ca", "optional": false, "defaultMode": 420,
 				"items": []any{map[string]any{"key": "ca.pem", "path": "ca.pem", "mode": 288}},
@@ -465,9 +506,21 @@ func sourceJobFixture(t *testing.T, authMode string) fixture {
 		literalEnvFixture("PTAH_PLAIN_HTTP", "true"),
 	}
 	environmentCredentials := []any{
-		secretEnv("PTAH_OCI_USERNAME", "username", true),
-		secretEnv("PTAH_OCI_PASSWORD", "password", true),
-		secretEnv("PTAH_OCI_TOKEN", "token", true),
+		literalEnvFixture("PTAH_OPERATOR_OCI_USERNAME_FILE", "/credentials/registry/username"),
+		literalEnvFixture("PTAH_OPERATOR_OCI_PASSWORD_FILE", "/credentials/registry/password"),
+		literalEnvFixture("PTAH_OPERATOR_OCI_TOKEN_FILE", "/credentials/registry/token"),
+	}
+	credentialItem := func(key string) map[string]any {
+		return map[string]any{"key": key, "path": key, "mode": 288}
+	}
+	credentialsVolume := map[string]any{
+		"name": "registry-credentials",
+		"secret": map[string]any{
+			"secretName":  "registry-auth",
+			"items":       []any{credentialItem("username"), credentialItem("password"), credentialItem("token")},
+			"defaultMode": 420,
+			"optional":    true,
+		},
 	}
 	operationEnvironment := func(operation string) []any {
 		env := []any{
@@ -509,7 +562,11 @@ func sourceJobFixture(t *testing.T, authMode string) fixture {
 			map[string]any{"name": "runner", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}},
 			map[string]any{"name": "work", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "128Mi"}},
 		}
-		if authMode == "DockerConfigJSON" {
+		switch authMode {
+		case "Environment":
+			mounts = append(mounts, map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true})
+			volumes = append(volumes, credentialsVolume)
+		case "DockerConfigJSON":
 			mounts = append(mounts, map[string]any{"name": "registry-docker-config", "mountPath": "/credentials/docker", "readOnly": true})
 			volumes = append(volumes, dockerVolume)
 		}
@@ -666,7 +723,69 @@ func TestControllerJobIsolationFilter(t *testing.T) {
 				"items", f.itemWith(operation), "spec", "template", "spec", "containers", 0, "env")
 		}
 	}
+	container := func(f fixture, operation, name string) []any {
+		item := f.itemWith(operation)
+		if name == "ptah" {
+			return []any{"items", item, "spec", "template", "spec", "containers", 0}
+		}
+		init := f.named(name, "items", item, "spec", "template", "spec", "initContainers")
+		return []any{"items", item, "spec", "template", "spec", "initContainers", init}
+	}
+	volume := func(f fixture, operation, name string) []any {
+		item := f.itemWith(operation)
+		return []any{"items", item, "spec", "template", "spec", "volumes", f.named(name, "items", item, "spec", "template", "spec", "volumes")}
+	}
+	// inEnvironment puts the credential a file variable names back into the
+	// container's environment, as a release before file delivery built it.
+	inEnvironment := func(operation, name, fileVariable, variable, secret, key string) func(fixture) {
+		return func(f fixture) {
+			env := append(container(f, operation, name), "env")
+			f.keep(notNamed(fileVariable), env...)
+			f.push(optionalSecretEnvFixture(variable, secret, key), env...)
+		}
+	}
 	refusesEvery(t, controllerJobFixture, acceptsControllerJobs, []mutation{
+		{"Observe reading the database URL from its environment",
+			inEnvironment("observe", "ptah", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_DB_URL", "database-url", "url")},
+		{"Apply reading the database URL from its environment",
+			inEnvironment("apply", "ptah", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_DB_URL", "database-url", "url")},
+		{"the Plan fetch reading the registry password from its environment",
+			inEnvironment("plan", "fetch-schema", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OCI_PASSWORD", "registry-auth", "pass")},
+		{"Resolve reading the registry token from its environment",
+			inEnvironment("resolve", "ptah", "PTAH_OPERATOR_OCI_TOKEN_FILE", "PTAH_OCI_TOKEN", "registry-auth", "identity-token")},
+		{"Plan with the database URL from another Secret", func(f fixture) {
+			f.set("another-database", append(volume(f, "plan", "database-url"), "secret", "secretName")...)
+		}},
+		{"Apply with the database URL file anyone can read", func(f fixture) {
+			f.set(420, append(volume(f, "apply", "database-url"), "secret", "items", 0, "mode")...)
+		}},
+		{"Observe with the database URL file mounted writable", func(f fixture) {
+			mounts := append(container(f, "observe", "ptah"), "volumeMounts")
+			f.set(false, append(mounts, f.named("database-url", mounts...), "readOnly")...)
+		}},
+		{"Observe with the database URL file mounted by subPath", func(f fixture) {
+			mounts := append(container(f, "observe", "ptah"), "volumeMounts")
+			f.set("url", append(mounts, f.named("database-url", mounts...), "subPath")...)
+		}},
+		{"Apply with the database URL file's item twice", func(f fixture) {
+			f.push(map[string]any{"key": "url", "path": "url", "mode": 288},
+				append(volume(f, "apply", "database-url"), "secret", "items")...)
+		}},
+		{"Verify with the registry credentials from another Secret", func(f fixture) {
+			f.set("another-registry", append(volume(f, "verify", "registry-credentials"), "secret", "secretName")...)
+		}},
+		{"the Observe fetch mounting the database URL file", func(f fixture) {
+			f.push(map[string]any{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true},
+				append(container(f, "observe", "fetch-schema"), "volumeMounts")...)
+		}},
+		{"the Plan authority guard mounting the registry credentials", func(f fixture) {
+			f.push(map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true},
+				append(container(f, "plan", "validate-source-authority"), "volumeMounts")...)
+		}},
+		{"the Observe operation mounting the registry credentials", func(f fixture) {
+			f.push(map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true},
+				append(container(f, "observe", "ptah"), "volumeMounts")...)
+		}},
 		{"resolve without ptah", withoutContainer("resolve", "ptah")},
 		{"observe without validate-source-authority", withoutContainer("observe", "validate-source-authority")},
 		{"observe without fetch-schema", withoutContainer("observe", "fetch-schema")},
@@ -761,8 +880,47 @@ func TestCustomCAPodIsolationFilter(t *testing.T) {
 		// A fetch that parses the schema stops on a fault in it, in a
 		// container whose words never reach status.
 		{"fetch-parses-schema", func(f fixture) {
-			f.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl"},
+			f.set([]any{
+				"--fetch-oci-source", "--ptah-binary", "/usr/local/bin/ptah", "--",
+				"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl",
+			}, initContainer(f, "fetch-schema", "args")...)
+		}},
+		// The fetch as a release before file delivery built it: Ptah itself,
+		// with the registry credential in its environment.
+		{"fetch-credentials-in-environment", func(f fixture) {
+			f.set([]any{"/usr/local/bin/ptah"}, initContainer(f, "fetch-schema", "command")...)
+			f.set([]any{"schema", "pull", fixtureResolvedReference, "--out", "/source/schema.hcl", "--skip-parse"},
 				initContainer(f, "fetch-schema", "args")...)
+			env := initContainer(f, "fetch-schema", "env")
+			for _, name := range []string{"username", "password", "token"} {
+				variable := "PTAH_OPERATOR_OCI_" + strings.ToUpper(name) + "_FILE"
+				f.keep(notNamed(variable), env...)
+				f.push(optionalSecretEnvFixture("PTAH_OCI_"+strings.ToUpper(name), "registry-auth", name), env...)
+			}
+			f.keep(notNamed("registry-credentials"), initContainer(f, "fetch-schema", "volumeMounts")...)
+			f.keep(notNamed("runner"), initContainer(f, "fetch-schema", "volumeMounts")...)
+		}},
+		{"main-database-url-in-environment", func(f fixture) {
+			env := []any{"items", 0, "spec", "containers", 0, "env"}
+			f.keep(notNamed("PTAH_OPERATOR_DB_URL_FILE"), env...)
+			f.push(secretEnvFixture("PTAH_DB_URL", "database-url", "url"), env...)
+			f.keep(notNamed("database-url"), "items", 0, "spec", "containers", 0, "volumeMounts")
+		}},
+		{"fetch-database-url", func(f fixture) {
+			f.push(map[string]any{"name": "database-url", "mountPath": "/credentials/database", "readOnly": true},
+				initContainer(f, "fetch-schema", "volumeMounts")...)
+		}},
+		{"guard-registry-credential-files", func(f fixture) {
+			f.push(map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true},
+				initContainer(f, "validate-source-authority", "volumeMounts")...)
+		}},
+		{"main-registry-credential-files", func(f fixture) {
+			f.push(map[string]any{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true},
+				"items", 0, "spec", "containers", 0, "volumeMounts")
+		}},
+		{"database-url-group-writable", func(f fixture) {
+			f.set(432, "items", 0, "spec", "volumes", f.named("database-url", "items", 0, "spec", "volumes"),
+				"secret", "items", 0, "mode")
 		}},
 		{"fetch-source-ca", func(f fixture) {
 			f.push(map[string]any{"name": "registry-ca", "mountPath": "/credentials/ca-source", "readOnly": true},
@@ -1195,14 +1353,41 @@ func TestSourceJobIsolationFilter(t *testing.T) {
 				"configMapKeyRef": map[string]any{"name": "unexpected", "key": "value"},
 			}}, sourceSpec(0, "containers", 0, "env")...)
 		}},
-		{"required Environment username", func(f fixture) {
-			f.set(false, f.sourceEnv(0, "PTAH_OCI_USERNAME", "valueFrom", "secretKeyRef", "optional")...)
+		{"required Environment credentials", func(f fixture) {
+			f.del(append(sourceSpec(0, "volumes"), f.named("registry-credentials", sourceSpec(0, "volumes")...), "secret", "optional")...)
 		}},
-		{"wrong Environment password Secret", func(f fixture) {
-			f.set("other-registry-auth", f.sourceEnv(0, "PTAH_OCI_PASSWORD", "valueFrom", "secretKeyRef", "name")...)
+		{"wrong Environment credentials Secret", func(f fixture) {
+			f.set("other-registry-auth",
+				append(sourceSpec(0, "volumes"), f.named("registry-credentials", sourceSpec(0, "volumes")...), "secret", "secretName")...)
 		}},
 		{"wrong Environment token key", func(f fixture) {
-			f.set("accessToken", f.sourceEnv(0, "PTAH_OCI_TOKEN", "valueFrom", "secretKeyRef", "key")...)
+			f.set("accessToken",
+				append(sourceSpec(0, "volumes"), f.named("registry-credentials", sourceSpec(0, "volumes")...), "secret", "items", 2, "key")...)
+		}},
+		{"Environment credential file anyone can read", func(f fixture) {
+			f.set(292,
+				append(sourceSpec(0, "volumes"), f.named("registry-credentials", sourceSpec(0, "volumes")...), "secret", "items", 1, "mode")...)
+		}},
+		{"wrong Environment password file", func(f fixture) {
+			f.set("/credentials/registry/token", f.sourceEnv(0, "PTAH_OPERATOR_OCI_PASSWORD_FILE", "value")...)
+		}},
+		{"Environment credential files mounted writable", func(f fixture) {
+			mounts := sourceSpec(0, "containers", 0, "volumeMounts")
+			f.set(false, append(mounts, f.named("registry-credentials", mounts...), "readOnly")...)
+		}},
+		// The Job as a release before file delivery built it: each credential
+		// read from the registry Secret into the environment.
+		{"Environment credentials in the environment", func(f fixture) {
+			env := sourceSpec(0, "containers", 0, "env")
+			for _, name := range []string{"username", "password", "token"} {
+				f.keep(notNamed("PTAH_OPERATOR_OCI_"+strings.ToUpper(name)+"_FILE"), env...)
+				f.push(optionalSecretEnvFixture("PTAH_OCI_"+strings.ToUpper(name), "registry-auth", name), env...)
+			}
+			f.keep(notNamed("registry-credentials"), sourceSpec(0, "containers", 0, "volumeMounts")...)
+			f.keep(notNamed("registry-credentials"), sourceSpec(0, "volumes")...)
+		}},
+		{"Environment credential in the environment beside its file", func(f fixture) {
+			f.push(optionalSecretEnvFixture("PTAH_OCI_TOKEN", "registry-auth", "token"), sourceSpec(0, "containers", 0, "env")...)
 		}},
 		{"mixed Environment and Docker config auth", func(f fixture) {
 			f.push(literalEnvFixture("DOCKER_CONFIG", "/credentials/docker"), sourceSpec(0, "containers", 0, "env")...)

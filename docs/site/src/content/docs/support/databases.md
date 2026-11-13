@@ -14,6 +14,7 @@ Kubernetes minor.
 | PostgreSQL | 17.x | `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73` |
 | MySQL | 8.4.x LTS | `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb` |
 | PostgreSQL | 18.x | `postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5` |
+| PostgreSQL | 16.x | `postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28` |
 
 The immutable references identify the current matrix environments; they do
 not restrict production to one image vendor. Other release lines are
@@ -125,14 +126,14 @@ This section describes Ptah v0.23.0, the executor this operator build pins
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
-the pinned build on PostgreSQL 17 and 18 and on MySQL 8.4. They connect as the
-login the statements above create, with `CREATE` on the database added only where
-the artifact declares an extension, or as a MySQL account that holds the grant
-above and nothing else. Another role or account makes each change they read. The
-runner harness holds the MySQL refusals to the release image. Another executor
-build can answer differently. Neither engine reads an object the login cannot see
-as absent at this build: PostgreSQL shows the login every object, and MySQL
-refuses the read
+the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
+the login the statements above create, with `CREATE` on the database added only
+where the artifact declares an extension, or as a MySQL account that holds the
+grant above and nothing else. Another role or account makes each change they
+read. The runner harness holds the MySQL refusals to the release image. Another
+executor build can answer differently. Neither engine reads an object the login
+cannot see as absent at this build: PostgreSQL shows the login every object, and
+MySQL refuses the read
 ([stokaro/ptah#5545](https://github.com/stokaro/ptah/pull/5545)).
 
 ### PostgreSQL

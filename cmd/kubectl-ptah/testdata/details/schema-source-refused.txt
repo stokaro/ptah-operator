@@ -1,0 +1,80 @@
+Schema:               application/storefront
+Phase:                Failed
+Ready:                False, OperationFailed: Reconciliation did not complete
+ReconciliationFailed: True, OperationFailed: authentication_failed: the target database refused the credentials. Check the user and password in the URL that Secret "e2e-reachability-schema-database" holds under key "url"
+Policy:               allowDestructive false
+Source:               ConfigMap e2e-reachability-schema-source
+Snapshot:             ptah-src-4e3a8c461a04db069291c364
+Content:              sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+Observed:             not yet
+
+No plan is published.
+
+Approvals: none
+
+Conditions:
+  TYPE                  STATUS  REASON                SINCE                 MESSAGE
+  EngineSupported       True    SupportedEngine       2026-11-06T18:28:03Z  Database engine "PostgreSQL" is supported
+  Suspended             False   Active                2026-11-06T18:28:03Z  Reconciliation is active
+  ReconciliationFailed  True    OperationFailed       2026-11-06T18:28:15Z  authentication_failed: the target database refused the credentials. Check the user and password in the URL that Secret "e2e-reachability-schema-database" holds under key "url"
+  ArtifactResolved      True    SnapshotTaken         2026-11-06T18:28:03Z  ConfigMap e2e-reachability-schema-source was copied into snapshot ptah-src-4e3a8c461a04db069291c364
+  Ready                 False   OperationFailed       2026-11-06T18:28:03Z  Reconciliation did not complete
+  DatabaseReachable     False   AuthenticationFailed  2026-11-06T18:28:15Z  authentication_failed: the target database refused the credentials. Check the user and password in the URL that Secret "e2e-reachability-schema-database" holds under key "url"
+
+Details, every status field this plugin's API version knows:
+
+Status:               generation 1; the spec is at generation 1
+  Observed generation: 1
+  Phase: Failed
+  Last attempt time: 2026-11-06T18:28:03Z
+  Next reconciliation time: 2026-11-06T18:28:20Z
+
+Active operation:     Observe, attempt 2, claimed 2026-11-06T18:28:03Z
+  Its Job ptah-observe-e2e-reachability-schema-8064d4f5ae543de6 is named, and no
+  UID is recorded: whether it was created is not confirmed yet.
+  Type: Observe
+  ID: sha256:ed9c3d34a07a28340f0f2138c5f98ede989f804fc767a039de3f89660da2dbfb
+  Input fingerprint: sha256:11d9934e7777c6bddd627fc4c1ebd7ee80d3f50ff57c5cb3a3e8cf22e4245545
+  Job name: ptah-observe-e2e-reachability-schema-8064d4f5ae543de6
+  Started at: 2026-11-06T18:28:03Z
+  Attempt: 2
+  Execution binding ID: v1-18efdea243379129254e48ced5a75184
+  Coordination digest: sha256:6cfe8502a614a20b26e24af313087e9e2c5c95cd5a5545f5f71689ad428b3266
+  Target:
+    Engine: PostgreSQL
+    URL from:
+      Name: e2e-reachability-schema-database
+      Key: url
+  Observation severity: all
+  Observation connect timeout: 10s
+  Observation lock timeout: 30s
+  Source:
+    Snapshot:
+      Name: ptah-src-4e3a8c461a04db069291c364
+      UID: 752e6734-e025-4296-8dcf-0bcc912c3868
+      Content digest: sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+      Schema file: schema.sql
+
+Pending proof:        none
+
+Execution binding:    v1-18efdea243379129254e48ced5a75184
+  Epoch: v1-18efdea243379129254e48ced5a75184
+  Controller state version: 1
+  Ptah version: v0.18.0
+  Executor image: e2e-registry.ptah-test-a-1-35-8-ci-42261374839-1-1-35-data-plane-9359a2bc5e.svc.cluster.local:5000/ptah-executor@sha256:9f8797986124add44d0232a17cd17e6f03cfec76b1711efc53c169483b7b4303
+  Runner protocol version: 1
+
+Source:
+  Resolved at: 2026-11-06T18:28:03Z
+  Config map:
+    Name: e2e-reachability-schema-source
+    UID: ca1f2f7c-a1eb-447f-8b2a-744c5f7a849c
+    Resource version: 18703
+  Snapshot:
+    Name: ptah-src-4e3a8c461a04db069291c364
+    UID: 752e6734-e025-4296-8dcf-0bcc912c3868
+    Content digest: sha256:c2716b52b9d1654f252e548a04f7a3a9700c6f85e8ce5357c8e7f4879fc85eab
+    Schema file: schema.sql
+
+kubectl ptah history schema/storefront -n application prints its lifecycle history and every approval that names it.
+kubectl events -n application --for ptahschema/storefront prints its Events.

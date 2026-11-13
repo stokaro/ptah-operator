@@ -38,8 +38,9 @@ type goldenJobCase struct {
 // The set covers both families, every operation type, each registry auth mode,
 // the CA snapshot with and without credentials, plain HTTP, the development
 // database and the plan fence, the Apply window and termination grace, the
-// admission snapshot, and every scheduling knob spec.execution offers, set and
-// left unset.
+// admission snapshot, every scheduling knob spec.execution offers, set and
+// left unset, and a Git source by https:// and by ssh://, resolved in the
+// operation container and fetched before it.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -108,6 +109,47 @@ func TestOperationJobsMatchTheirGoldenFiles(t *testing.T) {
 			t.Fatalf("%s holds %q, want exactly the cases %q", goldenJobDirectory, files, names)
 		}
 	})
+}
+
+// TestOnlyAReadOnlyJobIsCreatedWithItsCleanupTTL reads every Job the golden set
+// builds, which covers every operation type of both families. A read-only Job
+// carries CleanupTTLSeconds from the moment it is created, so it is collected
+// once it finishes whichever claim lets go of it. An Apply carries none: the
+// manager chooses its TTL once it has read what the run reported.
+func TestOnlyAReadOnlyJobIsCreatedWithItsCleanupTTL(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]bool{}
+	for _, test := range goldenJobCases() {
+		job, err := test.build()
+		if err != nil {
+			t.Fatalf("%s: %v", test.name, err)
+		}
+		operation := job.Labels[LabelOperation]
+		seen[job.Labels[LabelComponent]+"/"+operation] = true
+		ttl := job.Spec.TTLSecondsAfterFinished
+		if operation == "apply" {
+			if ttl != nil {
+				t.Errorf("%s: an Apply Job is created with ttlSecondsAfterFinished %d, want none", test.name, *ttl)
+			}
+			continue
+		}
+		if ttl == nil || *ttl != 300 {
+			t.Errorf("%s: a %s Job is created with ttlSecondsAfterFinished %v, want 300", test.name, operation, ttl)
+		}
+	}
+	// Every operation type of both families, so a type the set stops building
+	// fails here rather than leaving the rule unread for it.
+	for _, want := range []string{
+		"schema-operation/resolve", "schema-operation/verify", "schema-operation/observe",
+		"schema-operation/plan", "schema-operation/apply",
+		"migration-operation/resolve", "migration-operation/verify", "migration-operation/history",
+		"migration-operation/apply",
+	} {
+		if !seen[want] {
+			t.Errorf("the golden set builds no %s Job", want)
+		}
+	}
 }
 
 func goldenJobCases() []goldenJobCase {
@@ -280,6 +322,41 @@ func goldenJobCases() []goldenJobCase {
 					Name: "registry-docker", Mode: operatorv1alpha1.RegistryAuthDockerConfigJSON,
 				}
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
+		{
+			name: "schema-resolve-git-https",
+			build: func() (*batchv1.Job, error) {
+				return builder.Build(gitSchemaFixture(gitHTTPSSpec("db/schema.hcl")), operationFixture(operatorv1alpha1.OperationResolve), nil)
+			},
+		},
+		{
+			name: "schema-plan-git-https",
+			build: func() (*batchv1.Job, error) {
+				spec := gitHTTPSSpec("db/schema.hcl")
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				return builder.Build(gitSchemaFixture(spec), operation, nil)
+			},
+		},
+		{
+			name: "migration-resolve-git-ssh",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: gitSSHSpec("db/migrations")}
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			name: "migration-apply-git-ssh",
+			build: func() (*batchv1.Job, error) {
+				spec := gitSSHSpec("db/migrations")
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},

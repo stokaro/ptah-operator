@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,11 +67,20 @@ func executorEnv(t *testing.T, job *batchv1.Job) map[string]corev1.EnvVar {
 // executor fails the test if a child starts.
 func runBuiltRead(t *testing.T, job *batchv1.Job, operation operatorv1alpha1.OperationType, databaseURL string) (runner.Result, []byte) {
 	t.Helper()
-	environment := []string{runner.EnvDatabaseURL + "=" + databaseURL}
+	// The Job names the URL by a file the kubelet would project from its
+	// Secret; here the file holds the URL the Secret has moved to.
+	file := filepath.Join(t.TempDir(), "url")
+	if err := os.WriteFile(file, []byte(databaseURL), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{runner.EnvDatabaseURLFile + "=" + file}
 	for name, variable := range executorEnv(t, job) {
-		if variable.ValueFrom == nil {
+		if variable.ValueFrom == nil && name != runner.EnvDatabaseURLFile {
 			environment = append(environment, name+"="+variable.Value)
 		}
+	}
+	if _, named := executorEnv(t, job)[runner.EnvDatabaseURLFile]; !named {
+		t.Fatalf("the built read names no %s", runner.EnvDatabaseURLFile)
 	}
 	result := runner.Run(context.Background(), runner.Config{
 		Operation:   mutationlifecycle.SchemaOperation(operation).Runner,

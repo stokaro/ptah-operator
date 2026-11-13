@@ -17,6 +17,9 @@ operator run against a cluster and database it builds for itself, read
 - Helm 4 or newer. Helm 3 is not supported and is not tested: it reaches end of
   life before this operator's first release.
 - `kubectl`, and `jq` for the commands on the pages that follow.
+- The `kubectl ptah` plugin, which [Read a plan](../../use/read-a-plan/#install)
+  installs with its checksum checked. It installs the operator below, and reads
+  what the operator planned afterwards.
 - The chart, at a version you chose deliberately. The next section is how.
 - A database the operator can reach, which [First schema](../first-schema/)
   needs rather than the install. A registry is optional and comes
@@ -33,25 +36,68 @@ its chart to an OCI registry with its images already pinned, so installing it
 takes one command and no values. Check who built the chart first:
 
 ```sh
-VERSION=<release version, such as 0.2.10>
+VERSION=<release version, such as 0.2.11>
 gh attestation verify "oci://ghcr.io/stokaro/charts/ptah-operator:$VERSION" \
   --repo stokaro/ptah-operator \
   --signer-workflow stokaro/ptah-operator/.github/workflows/release.yml
+kubectl ptah install --version "$VERSION"
+```
+
+`kubectl ptah install` installs that chart with Helm, passes it no image, and
+waits until the manager and the certificate rotator are available. Without
+`--version` it installs the release the plugin came from; a plugin built from a
+checkout names no release and asks for one. It checks that Helm is version 4
+or newer and reads the release already in the namespace, then prints the Helm
+command and runs it:
+
+```sh
 helm upgrade --install ptah-operator oci://ghcr.io/stokaro/charts/ptah-operator \
   --version "$VERSION" \
   --namespace ptah-system \
-  --create-namespace
+  --reset-values \
+  --create-namespace \
+  --wait \
+  --timeout 5m0s
 ```
 
-The chart carries the manager, runner and executor digests and the verified Ptah
-version of its release, and `helm show chart` prints them. They are the ones the
-release manifest names, and plans and status record them as they record values
-you set. The command above is what most installations need.
+Run it yourself where the plugin is not installed. Either way the chart carries
+the manager, runner and executor digests and the verified Ptah version of its
+release, and `helm show chart` prints them. They are the ones the release
+manifest names, and plans and status record them as they record values you
+set.
 [Install from the registry](../../support/releases/#install-from-the-registry)
 verifies the chart against the release manifest and installs it by digest, with
 its signature checked, for an installation that wants to pin that too. An upgrade
 that moves to a release with a new manager image also needs `--force-conflicts`,
-as [Upgrade](../../use/operations/#upgrade-run) says.
+as [Upgrade](../../use/operations/#upgrade-run) says, so upgrade with Helm
+rather than with the plugin: `kubectl ptah install` refuses a namespace whose
+release is another version, and changes nothing there.
+
+`--reset-values` makes each run install exactly its own flags. A run keeps no
+value an earlier run set, so give it every flag the installation needs.
+
+Other flags:
+
+- `--approver <username>` binds the chart's approver ClusterRole to that user in
+  every namespace, through the `approverClusterRole.subjects` value, so the
+  person can approve the first plan without another step. Repeat it for more
+  people. A RoleBinding of your own keeps an approver to fewer namespaces, as
+  [Approvals](../../use/approvals/) describes. Run the command again without
+  the flag and the binding goes. The flag replaces any
+  `approverClusterRole.subjects` a values file sets.
+- `--yaml` prints the objects the install would apply, rendered by
+  `helm template` from the same chart, version and values, and `--out-dir <dir>`
+  writes them under `<dir>/ptah-operator` instead, for a GitOps repository. The
+  render reads no cluster, so the checks below that read one do not run, and the
+  webhook certificate and key it generates are new on every render. Provide the
+  certificate yourself before committing a render, as
+  [Operations](../../use/operations/#install-before) describes.
+- `-f, --values <file>` hands the chart a values file. The chart takes other
+  images only as the next section says. Helm reads the flag as a
+  comma-separated list and the plugin gives it no standard input, so a path
+  holding a comma or a double quote, and `-`, are refused.
+- `-n, --namespace`, `--kubeconfig`, `--context` and `--timeout` mean what they
+  mean to Helm.
 
 A release before v0.2.10 has no chart in a registry, so it installs from its
 assets with the values below.
@@ -142,8 +188,9 @@ Ptah builds have been run against this operator is
 [Ptah compatibility](../../support/ptah/).
 
 The chart supports the Kubernetes window documented in
-[Kubernetes support](../../support/kubernetes/). It intentionally does not
-bind the optional approver ClusterRole to any identity.
+[Kubernetes support](../../support/kubernetes/). It binds the optional
+approver ClusterRole to nobody unless `approverClusterRole.subjects` names
+someone, which is what `--approver` sets.
 
 ## Confirm it installed
 
@@ -166,9 +213,8 @@ Every value the chart takes is in [configuration](../../use/configuration/).
 
 ## The client
 
-The chart installs the operator. Reading what it planned or applied is a
-separate install on your own machine: `kubectl ptah`, a plugin published with
-each release. Its read commands only read; `kubectl ptah approve` creates the
+The plugin that installed the operator is also how you read what it planned or
+applied. Its read commands only read; `kubectl ptah approve` creates the
 approval of a plan you reviewed, as you, `suspend`, `resume`, `refresh` and
 `set-source` patch a schema or a migration, as you, and `settle` patches a
 schema. [Read a plan](../../use/read-a-plan/#install)

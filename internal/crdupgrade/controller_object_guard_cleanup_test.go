@@ -23,6 +23,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 
 	"github.com/stokaro/ptah-operator/internal/jobclaim"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // The cleanup TTL is the one field the manager may add to a Job it already
@@ -149,7 +150,101 @@ func TestControllerJobGuardNamesWhichCleanupTTLAJobMayCarry(t *testing.T) {
 	})
 }
 
-// The guard writes the two values as literals, because a chart template holds
+// TestControllerJobGuardCreatesOnlyAReadOnlyJobWithItsCleanupTTL evaluates the
+// validation that holds a create's TTL, and only it: the shape validations leave
+// the field to it, so a refusal names the reason. A read-only Job is created with
+// the short TTL, or with none as a manager of the release before this one creates
+// it; an Apply Job is created with none.
+func TestControllerJobGuardCreatesOnlyAReadOnlyJobWithItsCleanupTTL(t *testing.T) {
+	t.Parallel()
+
+	validation := creationTTLValidation(t)
+	short, long := int64(jobclaim.CleanupTTLSeconds), int64(jobclaim.FailedApplyRetentionTTLSeconds)
+	for _, test := range []struct {
+		name               string
+		operation, subject string
+		ttl                *int64
+		admitted           bool
+	}{
+		{"a schema Resolve with the short TTL", "resolve", "schema-operation", &short, true},
+		{"a schema Verify with the short TTL", "verify", "schema-operation", &short, true},
+		{"an Observe with the short TTL", "observe", "schema-operation", &short, true},
+		{"a Plan with the short TTL", "plan", "schema-operation", &short, true},
+		{"a migration Resolve with the short TTL", "resolve", "migration-operation", &short, true},
+		{"a migration Verify with the short TTL", "verify", "migration-operation", &short, true},
+		{"a history read with the short TTL", "history", "migration-operation", &short, true},
+		{"an Observe with no TTL", "observe", "schema-operation", nil, true},
+		{"a schema Apply with no TTL", "apply", "schema-operation", nil, true},
+		{"a migration Apply with no TTL", "apply", "migration-operation", nil, true},
+		{"a schema Apply with the short TTL", "apply", "schema-operation", &short, false},
+		{"a migration Apply with the short TTL", "apply", "migration-operation", &short, false},
+		{"a schema Apply with the long TTL", "apply", "schema-operation", &long, false},
+		{"an Observe with the long TTL", "observe", "schema-operation", &long, false},
+		{"a history read just over the short TTL", "history", "migration-operation", ptrTo(short + 1), false},
+		{"a Resolve with no time at all", "resolve", "schema-operation", ptrTo(0), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			job := cleanupProbeJob(test.operation, test.subject, false)
+			if test.ttl != nil {
+				job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = *test.ttl
+			}
+			if got := evaluateControllerJobRequest(t, cleanupEnvironment(t), "CREATE", validation, job, nil); got != test.admitted {
+				t.Fatalf("admitted = %t, want %t", got, test.admitted)
+			}
+		})
+	}
+
+	t.Run("a Job with no labels", func(t *testing.T) {
+		t.Parallel()
+		job := cleanupProbeJob("observe", "schema-operation", false)
+		delete(job["metadata"].(map[string]any), "labels")
+		job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = short
+		if evaluateControllerJobRequest(t, cleanupEnvironment(t), "CREATE", validation, job, nil) {
+			t.Fatal("the short TTL was admitted at CREATE on a Job that does not say it is a read")
+		}
+	})
+	// The validation is for a create. An update is the other validations' to
+	// judge, and this one leaves it alone whatever it carries.
+	t.Run("an update", func(t *testing.T) {
+		t.Parallel()
+		job := cleanupProbeJob("apply", "schema-operation", true)
+		job["spec"].(map[string]any)["ttlSecondsAfterFinished"] = long
+		if !evaluateControllerJobRequest(t, cleanupEnvironment(t), "UPDATE", validation, job, cleanupProbeJob("apply", "schema-operation", true)) {
+			t.Fatal("the creation TTL validation refused an update")
+		}
+	})
+	// The shape the create also has to satisfy says nothing about the TTL, so a
+	// refusal of the field is this validation's and names its reason.
+	t.Run("the shape leaves the TTL to it", func(t *testing.T) {
+		t.Parallel()
+		for _, expression := range validationExpressions(controllerJobWriteValidations("test")) {
+			if expression != controllerJobCreationTTLValidation && strings.Contains(expression, `request.operation == "CREATE" && !has(dyn(object).spec.ttlSecondsAfterFinished)`) {
+				t.Fatalf("a shape validation refuses a TTL at CREATE itself: %s", expression)
+			}
+		}
+	})
+}
+
+func ptrTo(value int64) *int64 { return &value }
+
+// creationTTLValidation is the one validation carrying the creation message,
+// found in what the guard installs rather than taken from the constant.
+func creationTTLValidation(t *testing.T) admissionregistrationv1.Validation {
+	t.Helper()
+	var found []admissionregistrationv1.Validation
+	for _, validation := range controllerJobWriteValidations("the guard's own message") {
+		if validation.Message == controllerJobCreationTTLMessage {
+			found = append(found, validation)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the guard installs %d creation TTL validations, want 1", len(found))
+	}
+	return found[0]
+}
+
+// The guard writes the values as literals, because a chart template holds
 // them. This keeps them the values the manager writes.
 func TestControllerJobGuardTTLsAreTheOnesTheManagerWrites(t *testing.T) {
 	t.Parallel()
@@ -157,6 +252,10 @@ func TestControllerJobGuardTTLsAreTheOnesTheManagerWrites(t *testing.T) {
 	values := fmt.Sprintf("[%d, %d]", jobclaim.CleanupTTLSeconds, jobclaim.FailedApplyRetentionTTLSeconds)
 	if !strings.Contains(controllerJobCleanupTTLValidation, values) {
 		t.Errorf("the guard does not admit %s: %s", values, controllerJobCleanupTTLValidation)
+	}
+	created := fmt.Sprintf("ttlSecondsAfterFinished == %d", workload.CleanupTTLSeconds)
+	if !strings.Contains(controllerJobCreationTTLValidation, created) {
+		t.Errorf("the guard does not create a read-only Job with %q: %s", created, controllerJobCreationTTLValidation)
 	}
 	long := fmt.Sprintf("!= %d", jobclaim.FailedApplyRetentionTTLSeconds)
 	if !strings.Contains(controllerJobRetentionTTLValidation, long) {
@@ -276,6 +375,23 @@ func evaluateControllerJobUpdate(
 	job, oldJob map[string]any,
 ) bool {
 	t.Helper()
+	return evaluateControllerJobRequest(t, environment, "UPDATE", validation, job, oldJob)
+}
+
+// evaluateControllerJobRequest runs one validation against a request of the
+// operation given. A create has no old object, which CEL reads as null.
+func evaluateControllerJobRequest(
+	t *testing.T,
+	environment *celgo.Env,
+	operation string,
+	validation admissionregistrationv1.Validation,
+	job, oldJob map[string]any,
+) bool {
+	t.Helper()
+	var old any
+	if oldJob != nil {
+		old = oldJob
+	}
 	ast, issues := environment.Compile(validation.Expression)
 	if issues != nil && issues.Err() != nil {
 		t.Fatalf("compile the cleanup validation: %v", issues.Err())
@@ -286,8 +402,8 @@ func evaluateControllerJobUpdate(
 	}
 	result, _, evaluationErr := program.Eval(map[string]any{
 		"object":    job,
-		"oldObject": oldJob,
-		"request":   map[string]any{"operation": "UPDATE"},
+		"oldObject": old,
+		"request":   map[string]any{"operation": operation},
 		"variables": map[string]any{},
 	})
 	if evaluationErr != nil {

@@ -162,6 +162,41 @@ func schemaAuditReading(t *testing.T, engine, operation string) []byte {
 	return raw
 }
 
+// addedPostgresLineStems names the readings of each PostgreSQL line
+// support/databases.json adds, such as "postgresql-18". A line the catalog adds
+// without readings fails where its reading is read.
+func addedPostgresLineStems(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "support", "databases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Added []struct {
+			Engine string `json:"engine"`
+			Line   string `json:"line"`
+		} `json:"added"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	var stems []string
+	for _, line := range catalog.Added {
+		if line.Engine != "postgresql" {
+			continue
+		}
+		major, found := strings.CutSuffix(line.Line, ".x")
+		if !found || major == "" {
+			t.Fatalf("added PostgreSQL line %q does not name a major version", line.Line)
+		}
+		stems = append(stems, "postgresql-"+major)
+	}
+	if len(stems) == 0 {
+		t.Fatal("support/databases.json adds no PostgreSQL line, so no added line is witnessed")
+	}
+	return stems
+}
+
 func schemaAuditActor(operation string) operationSQLClient {
 	return operationSQLClient{resourceUID: "schema", jobUID: "job", podUID: "pod", operation: operation}
 }
@@ -350,14 +385,18 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			if engine == "mysql" {
 				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 101, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 101, stem: engine})
 			}
-			// PostgreSQL 18 reads a column's NOT NULL constraint name where 17
-			// selects an empty string, so that one declaration has a witness only
-			// on the added line.
+			// Each added PostgreSQL line keeps a witness per operation, read
+			// through the same audit. PostgreSQL 18 reads a column's NOT NULL
+			// constraint name where 17 selects an empty string, so that one
+			// declaration has a witness only on 18. PostgreSQL 16 sends what 17
+			// sends and spells the parameter detail differently.
 			if engine == "postgresql" {
-				readings = append(readings,
-					witness{name: "drift-observe", operation: "observe", count: 53, stem: "postgresql-18"},
-					witness{name: "drift-plan", operation: "plan", count: 95, stem: "postgresql-18"},
-					witness{name: "drift-stale-apply", operation: "stale-apply", count: 50, stem: "postgresql-18"})
+				for _, stem := range addedPostgresLineStems(t) {
+					readings = append(readings,
+						witness{name: "drift-observe", operation: "observe", count: 53, stem: stem},
+						witness{name: "drift-plan", operation: "plan", count: 95, stem: stem},
+						witness{name: "drift-stale-apply", operation: "stale-apply", count: 50, stem: stem})
+				}
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)

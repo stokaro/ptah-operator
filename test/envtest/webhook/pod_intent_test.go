@@ -9,7 +9,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
@@ -59,6 +62,11 @@ func TestPodIntentWebhook(t *testing.T) {
 	if job.Spec.Template.Labels[batchv1.ControllerUidLabel] != string(job.UID) {
 		t.Fatalf("the stored Job %s/%s carries no generated identity labels: %v", job.Namespace, job.Name, job.Spec.Template.Labels)
 	}
+	// A Resolve is read-only, and its Job is created with its cleanup TTL, which
+	// is what the first row admits a Pod of.
+	if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != workload.CleanupTTLSeconds {
+		t.Fatalf("the stored Job %s/%s carries cleanup TTL %v, want the read-only Job's %d", job.Namespace, job.Name, ttl, workload.CleanupTTLSeconds)
+	}
 	grant(t, fixture.namespace, "other-pods", userSubject(otherWriter),
 		rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"create"}})
 
@@ -90,6 +98,35 @@ func TestPodIntentWebhook(t *testing.T) {
 		t.Parallel()
 		err := clientAs(t, otherWriter).Create(ctx, podFor(job), client.DryRunAll)
 		requireDenied(t, err, podIntentWebhook, "managed Pod was not created by the Kubernetes Job controller")
+	})
+
+	// The webhook holds the Job to its envelope before it reads the claim, so
+	// these Jobs need no claim of their own: each is the Resolve with one thing
+	// changed, under a name of its own.
+	stored := func(t *testing.T, suffix string, edit func(*batchv1.Job)) *batchv1.Job {
+		t.Helper()
+		job := fixture.job.DeepCopy()
+		job.Name += "-" + suffix
+		edit(job)
+		if err := admin.Create(ctx, job); err != nil {
+			t.Fatalf("create Job %s/%s: %v", job.Namespace, job.Name, err)
+		}
+		return job
+	}
+	t.Run("a Pod of an Apply Job created with a cleanup TTL is refused", func(t *testing.T) {
+		t.Parallel()
+		apply := stored(t, "apply", func(job *batchv1.Job) {
+			job.Labels[workload.LabelOperation] = "apply"
+			job.Spec.Template.Labels[workload.LabelOperation] = "apply"
+		})
+		err := clientAs(t, jobController).Create(ctx, podFor(apply), client.DryRunAll)
+		requireDenied(t, err, podIntentWebhook, "Job cleanup policy must not change before Pod admission")
+	})
+	t.Run("a Pod of a read-only Job created with another cleanup TTL is refused", func(t *testing.T) {
+		t.Parallel()
+		long := stored(t, "long", func(job *batchv1.Job) { job.Spec.TTLSecondsAfterFinished = ptr.To(int32(86400)) })
+		err := clientAs(t, jobController).Create(ctx, podFor(long), client.DryRunAll)
+		requireDenied(t, err, podIntentWebhook, "a read-only Job's cleanup TTL is 300 seconds")
 	})
 }
 

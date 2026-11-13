@@ -221,9 +221,10 @@ after encoding. Split the change across artifacts.
 
 ### Old `PtahSchemaPlan` objects are piling up. Do I clean them? {#old-plan-objects}
 
-They are owned by the schema and can stay as audit evidence until garbage
-collection removes the owner. Only the exact UID and fingerprint in `status.plan`
-are current, so read that rather than the newest object you find.
+They are owned by the schema and stay until garbage collection removes them
+with the owner, which happens as soon as the schema is deleted, so export any
+an audit needs first. Only the exact UID and fingerprint in `status.plan` are
+current, so read that rather than the newest object you find.
 
 - [Operations](../use/operations/#plan-retention)
 
@@ -270,7 +271,7 @@ stay untouched. Dropping data has to be a separate, deliberate action. See
 
 The operator's support contract is narrower than the CLI's on purpose: an engine
 is supported only when the whole lifecycle is green on every supported Kubernetes
-minor, which today means PostgreSQL 17.x and 18.x and MySQL 8.4.x LTS. An unknown engine
+minor, which today means PostgreSQL 16.x, 17.x and 18.x and MySQL 8.4.x LTS. An unknown engine
 value is stored without any database or registry access and sets `phase=Blocked`.
 Changing the spec back to a supported engine restarts the workflow at Resolve.
 

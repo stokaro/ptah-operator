@@ -64,6 +64,6 @@ acknowledgment and the identity on it, and the acknowledgment reports
 `Consumed=True`:
 
 ```sh
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
 ```

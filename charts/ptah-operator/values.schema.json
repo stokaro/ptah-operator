@@ -596,6 +596,29 @@
       "properties": {
         "create": {
           "type": "boolean"
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "name"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["User", "Group", "ServiceAccount"]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S(?:.*\\S)?$"
+              },
+              "namespace": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     },

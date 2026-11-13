@@ -67,6 +67,11 @@ type runShape struct {
 	// claim serves, and the Lease the proof holds, before the claim is bound to
 	// its inputs.
 	proof bool
+	// createdWithoutTTL is the Job as 0.2.10 and every release before it
+	// created one: with no cleanup TTL, a read-only Job too. The manager still
+	// gives such a read-only Job its TTL when it lets go of it
+	// (releaseReadOnlyJob), and the rows that set this hold that path.
+	createdWithoutTTL bool
 }
 
 // runDispatchedBy stands up a dispatched run of operationType.
@@ -109,6 +114,9 @@ func runDispatchedBy(
 		}
 		if shape.alter != nil {
 			shape.alter(job)
+		}
+		if shape.createdWithoutTTL {
+			job.Spec.TTLSecondsAfterFinished = nil
 		}
 		return job
 	}
@@ -191,6 +199,14 @@ func withAnExecutorSetting(job *batchv1.Job) {
 		}
 	}
 	panic("the built Job has no executor container to change")
+}
+
+// deliveredByEnvironment is the Job 0.2.10 built: every credential in a
+// secretKeyRef of its container's environment rather than in a file.
+func deliveredByEnvironment(job *batchv1.Job) {
+	if !workload.CarryCredentialDelivery(job, &batchv1.Job{}) {
+		panic("the built Job names no credential by file, so it has no released shape to take")
+	}
 }
 
 // underAnotherEpoch is a Job that carries an execution epoch its claim was
@@ -304,8 +320,9 @@ func assertRefusedRecording(t *testing.T, api client.Client, run dispatchedRun, 
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(run.job), left); err != nil {
 		t.Fatalf("read the Job the claim left: %v", err)
 	}
-	if left.UID != run.job.UID || left.Spec.TTLSecondsAfterFinished != nil {
-		t.Fatalf("the Job the claim could not confirm was changed: UID %q, TTL %v", left.UID, left.Spec.TTLSecondsAfterFinished)
+	if left.UID != run.job.UID || ttlText(left.Spec.TTLSecondsAfterFinished) != ttlText(run.job.Spec.TTLSecondsAfterFinished) {
+		t.Fatalf("the Job the claim could not confirm was changed: UID %q, TTL %s, created with %s",
+			left.UID, ttlText(left.Spec.TTLSecondsAfterFinished), ttlText(run.job.Spec.TTLSecondsAfterFinished))
 	}
 }
 
@@ -335,9 +352,11 @@ func claimsAndVerdicts() []struct {
 // manager identity, which it takes from the live Pod template. A predecessor
 // that built a different Pod template left a run this manager cannot
 // confirm: an Apply is recorded as outcome unknown, and a read-only claim is
-// run again. A read-only claim runs again once the Job stops, so the Job gets its
-// cleanup first, and one that never recorded the Job's UID records it before it
-// waits (assertRefusedOnceStopped).
+// run again. A read-only Job created with its cleanup TTL collects itself once it
+// finishes, so the claim runs again at once and leaves it as it is. One a release
+// before 0.2.11 created carries no TTL, so the claim runs again once the Job
+// stops, and the Job gets its cleanup first; a claim that never recorded the
+// Job's UID records it before it waits (assertRefusedOnceStopped).
 func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 	t.Parallel()
 
@@ -345,20 +364,46 @@ func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 	predecessor := managerOnlyPredecessor(current)
 	for _, claim := range claimsAndVerdicts() {
 		for _, row := range []struct {
-			name       string
-			dispatcher workload.Builder
-			alter      func(*batchv1.Job)
-			adopted    bool
+			name              string
+			dispatcher        workload.Builder
+			alter             func(*batchv1.Job)
+			createdWithoutTTL bool
+			adopted           bool
 		}{
 			{name: "built by this manager", dispatcher: current, adopted: true},
 			{name: "built by a release that differs in the recorded manager alone", dispatcher: predecessor, adopted: true},
+			{name: "built by a release before 0.2.11 that differs in the recorded manager alone",
+				dispatcher: predecessor, createdWithoutTTL: true, adopted: true},
 			{name: "built by a release that also changed the Pod template", dispatcher: predecessor, alter: withAnExecutorSetting},
+			{name: "built by a release before 0.2.11 that also changed the Pod template",
+				dispatcher: predecessor, alter: withAnExecutorSetting, createdWithoutTTL: true},
+			{name: "built by a release that read its credentials from the environment", dispatcher: predecessor, alter: deliveredByEnvironment, adopted: true},
+			{
+				name:       "built by a release that read its credentials from the environment and changed the Pod template",
+				dispatcher: predecessor,
+				alter: func(job *batchv1.Job) {
+					deliveredByEnvironment(job)
+					withAnExecutorSetting(job)
+				},
+			},
+			{name: "built by a release before 0.2.11, which read its credentials from the environment",
+				dispatcher: predecessor, alter: deliveredByEnvironment, createdWithoutTTL: true, adopted: true},
+			{
+				name:       "built by a release before 0.2.11, which read its credentials from the environment, that changed the Pod template",
+				dispatcher: predecessor,
+				alter: func(job *batchv1.Job) {
+					deliveredByEnvironment(job)
+					withAnExecutorSetting(job)
+				},
+				createdWithoutTTL: true,
+			},
 		} {
 			t.Run(claim.name+"/"+row.name, func(t *testing.T) {
 				t.Parallel()
 
 				run := runDispatchedBy(t, claim.operation, runShape{
 					dispatcher: row.dispatcher, alter: row.alter, recorded: claim.recorded,
+					createdWithoutTTL: row.createdWithoutTTL,
 				})
 				if row.dispatcher.ControllerImage != current.ControllerImage &&
 					run.job.Spec.Template.Annotations[workload.AnnotationControllerImage] == current.ControllerImage {
@@ -374,8 +419,12 @@ func TestAMigrationAdoptsARunOnlyWhereItsReleaseBuildsTheSameJob(t *testing.T) {
 					return
 				}
 				const want = "the Job's spec is not the one its claim builds"
-				if claim.operation == operatorv1alpha1.MigrationOperationHistory {
+				if claim.operation == operatorv1alpha1.MigrationOperationHistory && row.createdWithoutTTL {
 					assertRefusedOnceStopped(t, reconciler, api, run, batchv1.JobComplete, want)
+					return
+				}
+				if claim.operation == operatorv1alpha1.MigrationOperationHistory {
+					assertRefusedOutsideItsClaim(t, api, run, want)
 					return
 				}
 				assertRefused(t, api, run, want)
@@ -449,7 +498,8 @@ func TestAMigrationRefusesAJobWhosePodTemplateIsNotItsSnapshots(t *testing.T) {
 // under its name to, so it cannot confirm it, and settles it as it settles
 // any Job it cannot confirm. An Apply whose plan is gone is the case a person
 // can cause: the plan names the sequence the Job was built to run. The History
-// reading recorded its Job's UID, so it runs again once the Job stops.
+// reading's Job carries its cleanup TTL from creation, so the reading runs again
+// at once and leaves the Job to collect itself.
 func TestAMigrationClaimThatCannotRebuildItsJobDoesNotAdoptIt(t *testing.T) {
 	t.Parallel()
 
@@ -477,7 +527,7 @@ func TestAMigrationClaimThatCannotRebuildItsJobDoesNotAdoptIt(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			if !migrationOperation(run.migration.Status.ActiveOperation).Mutating {
-				assertRefusedOnceStopped(t, reconciler, api, run, batchv1.JobComplete, row.want)
+				assertRefusedOutsideItsClaim(t, api, run, row.want)
 				return
 			}
 			assertRefused(t, api, run, row.want)

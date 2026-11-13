@@ -71,8 +71,13 @@ accounted for. This is the ordinary path and needs no procedure.
 ### Restore a consistent control plane
 
 You have a backup of the Kubernetes objects taken while nothing was running,
-and you are restoring all of it together. Object UIDs are preserved by the
-backup tool, so plans still load and approvals still bind.
+and you are restoring all of it together, below the API, as from an etcd
+snapshot. Object UIDs and status come back as they were, so plans still load and
+approvals still bind. A tool that writes objects back through the API cannot do
+this: the API server gives every object a new UID, and the status write guard
+refuses a status write from anyone but the manager, a cluster administrator
+included. [What survives](../audit/#survival) has what such a restore brought
+back in a measured run.
 
 This is the only mode in which a recorded approval survives.
 

@@ -352,10 +352,20 @@ certificateRotation:
 # their plans, the chunks a schema plan's SQL is stored in, and approvals,
 # create an approval of either kind, and create the acknowledgment that settles
 # a migration run nobody accounted for. It reads no ConfigMap and no Pod log.
-# Bind it yourself; the chart binds nobody.
+# The chart binds it only to the subjects below.
 approverClusterRole:
   # Whether to create that ClusterRole.
   create: true
+  # Who may approve in every namespace, through one ClusterRoleBinding the
+  # release owns. Each entry is an RBAC subject: kind User or Group with a
+  # name, or kind ServiceAccount with a name and a namespace. Empty binds
+  # nobody. To keep an approver to the namespaces they decide for, bind the
+  # role there with a RoleBinding of your own instead. kubectl ptah install
+  # --approver fills this with users. system:anonymous and every group whose
+  # name starts with system: are refused: Kubernetes fills those groups
+  # itself, and system:authenticated or system:serviceaccounts would let
+  # anyone, or any Pod, approve.
+  subjects: []
 
 # A PodDisruptionBudget for the manager, so a drain cannot take every replica
 # at once.

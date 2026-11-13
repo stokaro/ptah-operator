@@ -25,6 +25,8 @@ const (
 
 	gitSSHKeyDirectory     = "/credentials/git"
 	gitSSHKeyPath          = gitSSHKeyDirectory + "/ssh-key"
+	gitUsernameFile        = "username"
+	gitPasswordFile        = "password"
 	gitCADirectory         = "/credentials/git-ca"
 	gitCAPath              = gitCADirectory + "/ca.pem"
 	gitKnownHostsDirectory = "/credentials/git-known-hosts"
@@ -122,10 +124,13 @@ func addGitAccess(
 			mounts = append(mounts, corev1.VolumeMount{Name: gitCredentialsVolumeName, MountPath: gitSSHKeyDirectory, ReadOnly: true})
 			environment = append(environment, literalEnv(runner.EnvGitSSHKeyFile, gitSSHKeyPath))
 		} else {
-			environment = append(environment,
-				optionalSecretEnv(runner.EnvGitUsername, auth.Name, operatorv1alpha1.GitUsernameSecretKey),
-				optionalSecretEnv(runner.EnvGitPassword, auth.Name, operatorv1alpha1.GitPasswordSecretKey),
-			)
+			variables, volume, mount := optionalCredentials(gitCredentialsVolumeName, gitSSHKeyDirectory, auth.Name, []credentialItem{
+				{fileVariable: runner.EnvGitUsernameFile, key: operatorv1alpha1.GitUsernameSecretKey, name: gitUsernameFile},
+				{fileVariable: runner.EnvGitPasswordFile, key: operatorv1alpha1.GitPasswordSecretKey, name: gitPasswordFile},
+			})
+			environment = append(environment, variables...)
+			volumes = append(volumes, volume)
+			mounts = append(mounts, mount)
 		}
 		if request.transport.CAFrom != nil {
 			environment = append(environment,

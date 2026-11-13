@@ -151,9 +151,15 @@ The operator separates five authorities:
    schema plan's SQL is stored in, and create immutable approvals for either
    family, and the acknowledgment that settles a migration run nobody
    accounted for. The chart creates an optional
-   ClusterRole but never binds it automatically. RBAC decides who may
-   approve; it does not by itself decide that the approver is a second
-   person rather than the author. See
+   ClusterRole and binds it only to the subjects
+   `approverClusterRole.subjects` names, which `kubectl ptah install
+   --approver` fills, with one ClusterRoleBinding. That binding reaches every
+   namespace, including those created later: a subject bound there reads
+   every namespace's plan SQL in its chunks, may approve any plan waiting for
+   an approval, and may settle another namespace's unresolved migration run.
+   A RoleBinding in each namespace keeps an approver to fewer. RBAC decides
+   who may approve; it does not by itself decide that the approver is a
+   second person rather than the author. See
    [Refusing a self-approval](#refusing-a-self-approval).
 3. The controller may manage plans and their chunks, Jobs, Leases, status, and
    Events, and create the ConfigMaps an Apply mounts its plan through. Its
@@ -170,8 +176,9 @@ The operator separates five authorities:
    of a migration's unresolved-run record on its metadata. A person settles such
    a run with a `PtahMigrationRunAcknowledgment`, which admission stamps with
    who made it and the migration records.
-4. A Job receives only the credentials needed for its fixed operation through
-   same-namespace Secret selectors resolved by the kubelet.
+4. A Job receives only the credentials needed for its fixed operation, as
+   [files in same-namespace Secret volumes](../../reference/credentials-and-admission/#credential-files)
+   that the kubelet mounts in the one container that needs each.
 5. A realm administrator decides which namespaces may manage a database more
    than one namespace reaches, by writing a cluster-scoped `PtahRealm`. An
    author names a realm and cannot grant it. See
@@ -263,7 +270,8 @@ administrator on a cluster.
 Start namespace-scoped bindings from the
 desired-state author (`examples/desired-state-author-role.yaml`) and
 diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
-chart's optional approver ClusterRole remains unbound, so these three human
+chart's optional approver ClusterRole stays unbound unless
+`approverClusterRole.subjects` names someone, so these three human
 permission sets can be assigned to different identities. Diagnostic access
 deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
 plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads
@@ -606,7 +614,9 @@ intentionally inspectable by independently authorized approvers, but arbitrary
 schema names, defaults, comments, and literals may still be sensitive. Restrict
 `PtahSchemaPlanChunk` read access in application namespaces accordingly. One
 rule on that kind reads every plan in the namespace, and the built-in approver
-role carries it, as described in [Exact-plan approvals](../approvals/). What
+role carries it, as described in [Exact-plan approvals](../approvals/). A
+subject in `approverClusterRole.subjects` holds that rule in every namespace,
+as [trust boundary 2](#trust-boundaries) says. What
 that access is used with is `kubectl ptah`. Its read commands only read: they
 need `get` on the schema, the plan and its chunks and nothing else, and list
 approvals only where `list` on them is granted. `kubectl ptah approve` creates
@@ -825,7 +835,8 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
 
 One function in the runner handles all of them, and the Pod log line below. It removes
-the credentials of the Pod's environment wherever one appears whole, in any case,
+the credentials the runner read from its files and its environment wherever one
+appears whole, in any case,
 replaces control and format characters with a space, joins the text onto one line,
 takes the result frame's marker out and cuts it at a character boundary, in that order.
 The marker goes because the manager searches a merged log for it anywhere and these
@@ -878,10 +889,11 @@ status out of a desired file.
 
 Outside status and Events, a failed `fetch-git-source` init container writes
 standard error, handled by the same function, to its log, and the kubelet copies
-the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations` init containers are Ptah itself,
-with no runner around them, so their logs hold what Ptah wrote with nothing
-removed. Those containers hold the registry credentials, which is why status and
-Events name only the step and its exit status. Whoever holds `pods/log` reads
+the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations`
+init containers run Ptah's pull through the runner, which reads the registry
+credential files and hands Ptah's output to the container's streams as Ptah wrote
+it, with nothing removed. Those containers hold the registry credentials, which is
+why status and Events name only the step and its exit status. Whoever holds `pods/log` reads
 those logs, and whoever reads Pods reads the status.
 
 The first line of a failed Apply's error sentence goes to the operation Pod's log,
@@ -911,15 +923,18 @@ then, so what that statement's failure quoted stays readable for those 24 hours 
 `Always` as well. Any other Job [keeps five minutes](../operations/#failed-apply-log).
 What a Pod kept that long still holds: it has no API token, because automatic
 token mounting is disabled. Its projected result token has the receiver as its
-only audience and lasts at most an hour, and the receiver refuses it once the Job
+only audience and lasts at most an hour, and the receiver refuses it once the Apply's Job
 carries a cleanup TTL or its claim has retired, as it refuses a client certificate
-of the older transport. No credential is in the Pod's spec, but the container runtime
-on the node keeps a stopped container's environment until the Pod is removed, so
-anyone with root on that node can read it for those 24 hours as they could while the
-Pod ran. That is the database URL of the operation container, and for a migration Apply
-the registry or Git credential of its fetch init container as well. Once you have read
-the reason you can end that early: `kubectl delete job -n <namespace> <job>` removes
-the Job and its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
+of the older transport. No credential is in the Pod's spec or in any container's
+environment: the container runtime on the node keeps a stopped container's
+environment until the Pod is removed, and that environment holds the paths of the
+credential files and the grants, which hold no credential. The files are in Secret
+volumes, which the kubelet unmounts once the Pod's containers have stopped, so root on
+the node reads the database URL, and for a migration Apply the registry or Git
+credential, only while the Pod runs. A Job 0.2.10 created still carries its
+credentials in its environment for the 24 hours. Once you have read the reason you
+can end the wait early: `kubectl delete job -n <namespace> <job>` removes the Job and
+its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
 which the diagnostic reader role does not grant, and no admission policy or webhook
 judges it. The run is already recorded by the time status names the log, so nothing
 waits on the Job, and the resource goes on as it would have. Delete a Job that has

@@ -101,6 +101,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return waitCommand(ctx, arguments[1:], stdout, stderr)
 	case "set-source":
 		return setSourceCommand(ctx, arguments[1:], stdout, stderr)
+	case "install":
+		return installCommand(ctx, arguments[1:], stdout, stderr)
 	case "settle":
 		return settleCommand(ctx, arguments[1:], stdout, stderr)
 	default:
@@ -224,6 +226,7 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the lock owed, the revision rows")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -252,7 +255,11 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := migrationview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := migrationview.Load
+	if *details {
+		load = migrationview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, migrationview.ErrMigrationNotFound) {
@@ -282,6 +289,7 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the proof owed, the lock owed")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -310,7 +318,11 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := schemaview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := schemaview.Load
+	if *details {
+		load = schemaview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, schemaview.ErrSchemaNotFound) {
@@ -408,6 +420,7 @@ func usage(out io.Writer) {
        kubectl ptah set-source schema/<name>|migration/<name> --oci <ref> [flags]
        kubectl ptah settle schema/<name> [flags]
        kubectl ptah wait schema/<name>|migration/<name> --for <target> [flags]
+       kubectl ptah install [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
 own checks on it have held, each statement under a line that gives its severity
@@ -457,6 +470,16 @@ data plan is reading values.
   kubectl ptah schema storefront -n application -o json
   kubectl ptah migration orders -n application
   kubectl ptah migration orders -n application -o json
+
+--details adds, after the view, every status field this plugin's API version
+knows: the operation the resource has claimed and what it knows of its Job,
+the proof an Apply still owes, a Lease release still owed, when it was last
+read and is read next, the execution binding, and for a migration the revision
+rows and each run whole. With -o json it adds details.status, the status as
+this plugin decodes it; a field a newer operator added is not in it.
+
+  kubectl ptah schema storefront -n application --details
+  kubectl ptah migration orders -n application --details -o json
 
 Listing the approvals and acknowledgments takes list on them, which reading the
 resource does not. Without it the command still prints the resource, with one
@@ -663,21 +686,56 @@ date the operator's records, so a wait counts a reading by a new stamp rather
 than by which time is later, except on a run an operator older than 0.2.10
 recorded.
 
+install puts the operator into the cluster from the chart a release published
+to oci://ghcr.io/stokaro/charts/ptah-operator. That chart carries its release's
+manager, runner and executor digests and the verified Ptah version, so install
+passes no image and every image stays pinned by digest. It runs helm upgrade
+--install with Helm 4 or newer from PATH, prints that command line first, and
+waits for the release to become ready. Each run installs exactly its flags,
+with --reset-values: run again with the same flags, it applies the same
+objects as a new Helm revision, and a run without --approver removes the
+binding an earlier --approver made. It refuses a namespace whose release is
+another version, since an upgrade needs helm --force-conflicts. Verify the
+chart first, as the install page shows.
+
+  --version <version>      the release to install (default: this plugin's
+                           own; a build from a checkout has none, so it needs
+                           this)
+  -n, --namespace <name>   the release namespace (default ptah-system)
+  --approver <username>    bind the chart's approver ClusterRole to this user
+                           in every namespace; repeat it for more
+  -f, --values <file>      a values file for the chart; repeat it for more.
+                           The chart takes an image only with its pair, as
+                           it does from helm
+  --yaml                   print the objects install would apply instead,
+                           rendered by helm template from the same chart,
+                           version and values; reads no cluster, so the
+                           chart's cluster checks do not run, and holds a
+                           webhook CA key generated for this render
+  --out-dir <dir>          with --yaml, write them under <dir>/ptah-operator
+                           rather than to standard output
+  --timeout <duration>     how long helm waits for the release (default 5m)
+
+  kubectl ptah install --version 0.2.11
+  kubectl ptah install --version 0.2.11 --approver alice@example.com
+  kubectl ptah install --version 0.2.11 --yaml --out-dir ./deploy
+
 suspend, resume, refresh, set-source and settle patch the resource as you:
-they need get and patch on ptahschemas or ptahmigrations. wait needs get. The resource is
+they need get and patch on ptahschemas or ptahmigrations. wait needs get.
+install needs what the chart needs, which is cluster-admin. The resource is
 named as schema/NAME or migration/NAME, or by the kind's plural or short name
 as kubectl spells it.
 
-Exit status: 0 printed, changed or reached, 1 could not read or verify, 2
-usage, 3 nothing stored to print, approve, change or wait on, 4 nothing
-approved or changed (the plan or the spec changed, the operator would not
-admit an approval now, the fingerprint is not the current plan's, you
-declined, the resource was deleted and created again, set-source met a source
-that is not an OCI artifact, an Apply running, or a source changed after it
-was read, or settle met a schema that has not stopped on a moved target, a
-stop that prints no value, or a value that no longer matches or is not the
-one --expect names), 5
-refused by RBAC or the API server, 6 sent with no answer: the change may have
-been stored, 7 the wait timed out, 8 the resource will not reach the target.
+Exit status: 0 printed, changed, reached or installed, 1 could not read or
+verify, or helm did not install or render, 2 usage, 3 nothing stored to print,
+approve, change or wait on, 4 nothing approved or changed (the plan or the spec
+changed, the operator would not admit an approval now, the fingerprint is not
+the current plan's, you declined, the resource was deleted and created again,
+set-source met a source that is not an OCI artifact, an Apply running, or a
+source changed after it was read, or settle met a schema that has not stopped
+on a moved target, a stop that prints no value, or a value that no longer
+matches or is not the one --expect names), 5 refused by RBAC or the API server,
+6 sent with no answer: the change may have been stored, 7 the wait timed out, 8
+the resource will not reach the target.
 `)
 }

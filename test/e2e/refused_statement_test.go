@@ -150,6 +150,47 @@ func TestReadPrintedLogRunsWhatTheMessagePrints(t *testing.T) {
 	}
 }
 
+// outsiderRefusal is what kubectl wrote on kind when a printed command ran as the
+// diagnostic reader under a Role that had lost its batch jobs rule, with the outsider's
+// name in place of the reader's. Getting the Job is the command's first request, and
+// the outsider is refused it the same way.
+const outsiderRefusal = `Error from server (Forbidden): jobs.batch "ptah-apply-e2e-configmap-refused-schema-491536d3b7fdc341" ` +
+	`is forbidden: User "e2e-diagnostic-outsider" cannot get resource "jobs" in API group "batch" ` +
+	`in the namespace "ptah-test-a-1-36-4-local-52ec5dd439-34811-41ccc3bc0f"`
+
+func TestPrintedLogRefusedNamesTheUser(t *testing.T) {
+	t.Parallel()
+
+	refused := func(stderr string) error {
+		_, err := readPrintedLog(printedMessage, func(...string) ([]byte, []byte, error) {
+			return nil, []byte(stderr), errors.New("exit status 1")
+		})
+		return err
+	}
+	if err := printedLogRefused(refused(outsiderRefusal), "e2e-diagnostic-outsider"); err != nil {
+		t.Fatalf("refused the API server's refusal of the outsider: %v", err)
+	}
+	for name, test := range map[string]struct {
+		err  error
+		user string
+	}{
+		"the command ran":     {nil, "e2e-diagnostic-outsider"},
+		"no such Job":         {refused(`Error from server (NotFound): jobs.batch "ptah-apply-orders-0123" not found`), "e2e-diagnostic-outsider"},
+		"another user":        {refused(outsiderRefusal), "e2e-diagnostic-reader"},
+		"a shorter user name": {refused(outsiderRefusal), "e2e-diagnostic"},
+		"no refusal":          {refused(`error: timed out waiting for the condition`), "e2e-diagnostic-outsider"},
+		"a refusal unnamed":   {refused(`Error from server (Forbidden): jobs.batch "ptah-apply-orders-0123" is forbidden`), "e2e-diagnostic-outsider"},
+		"the name, no answer": {refused(`User "e2e-diagnostic-outsider" cannot get resource "jobs"`), "e2e-diagnostic-outsider"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := printedLogRefused(test.err, test.user); err == nil {
+				t.Fatalf("printedLogRefused(%v, %q) accepted it", test.err, test.user)
+			}
+		})
+	}
+}
+
 func TestJobFinishedAtReadsWhatTheTTLControllerReads(t *testing.T) {
 	t.Parallel()
 

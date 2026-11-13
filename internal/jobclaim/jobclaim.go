@@ -34,10 +34,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-// CleanupTTLSeconds is the TTL the controller sets on a Job once it no longer
-// needs it, and the one change a stored Job may carry beyond what its claim
-// built.
-const CleanupTTLSeconds int32 = 300
+// CleanupTTLSeconds is the TTL a read-only Job is created with
+// (workload.CleanupTTLSeconds), and the one the controller sets on any other Job
+// once it no longer needs it.
+const CleanupTTLSeconds = workload.CleanupTTLSeconds
 
 // FailedApplyRetentionTTLSeconds is the TTL of the Job of an Apply that failed
 // or whose outcome is unknown, when a person approved it or, for a migration, when
@@ -125,10 +125,10 @@ type Claim struct {
 	// dispatch.
 	Built *batchv1.Job
 	// Stored says the Job was read back from the API server rather than
-	// submitted to it. A stored Job may carry the cleanup TTL where Built
-	// carries none, and its metadata is compared in its labels, annotations
-	// and owner only; a submitted Job's metadata has to be Built's apart from
-	// the fields the API server assigns.
+	// submitted to it. A stored Job may carry a cleanup TTL Built does not
+	// (storedCleanupTTL), and its metadata is compared in its labels,
+	// annotations and owner only; a submitted Job's metadata has to be Built's
+	// apart from the fields the API server assigns, its TTL included.
 	Stored bool
 }
 
@@ -284,8 +284,9 @@ func (o Owner) controls(references []metav1.OwnerReference) error {
 
 // matchBuilt holds a Job to the one its claim rebuilds. What the API server
 // generates -- the UID selector and the template labels bound to it -- is not
-// the claim's, and neither is the cleanup TTL a stored Job may have been
-// given.
+// the claim's, and neither is the cleanup TTL a stored Job may have been given
+// since (storedCleanupTTL). A submitted Job carries the TTL Built carries: the
+// cleanup TTL on a read-only Job, and none on an Apply.
 func matchBuilt(job, normalized *batchv1.Job, claim Claim) error {
 	built := claim.Built
 	if !reflect.DeepEqual(job.Labels, built.Labels) || !reflect.DeepEqual(job.Annotations, built.Annotations) {
@@ -323,15 +324,31 @@ func matchBuilt(job, normalized *batchv1.Job, claim Claim) error {
 			}
 		}
 	}
-	if claim.Stored && actual.Spec.TTLSecondsAfterFinished != nil &&
-		(*actual.Spec.TTLSecondsAfterFinished == CleanupTTLSeconds ||
-			(claim.Mutating && *actual.Spec.TTLSecondsAfterFinished == FailedApplyRetentionTTLSeconds)) {
+	if claim.Stored && storedCleanupTTL(actual.Spec.TTLSecondsAfterFinished, claim.Mutating) {
 		actual.Spec.TTLSecondsAfterFinished = expected.Spec.TTLSecondsAfterFinished
 	}
 	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actual.Spec, expected.Spec) {
 		return errors.New("the Job's spec is not the one its claim builds")
 	}
 	return nil
+}
+
+// storedCleanupTTL reports whether ttl is a cleanup TTL a stored Job of the
+// claim may carry in place of the one its claim builds. The manager gives a
+// finished Job CleanupTTLSeconds, or FailedApplyRetentionTTLSeconds for an Apply
+// that keeps its Pod log. A read-only Job may also carry none: 0.2.10 and earlier
+// created every Job without a TTL and gave a read-only one its TTL once it had
+// finished, so such a Job can still be running under its claim when the manager
+// is upgraded.
+func storedCleanupTTL(ttl *int32, mutating bool) bool {
+	switch {
+	case ttl == nil:
+		return !mutating
+	case *ttl == CleanupTTLSeconds:
+		return true
+	default:
+		return mutating && *ttl == FailedApplyRetentionTTLSeconds
+	}
 }
 
 // matchEnvelope holds a Job to the labels and annotations its claim fixes,

@@ -17,7 +17,9 @@ import (
 // database URL, and the artifact reaches them as files a separate init
 // container pair wrote: the process that runs SQL never holds a registry
 // credential, never holds the registry CA, and is pointed at a local
-// directory rather than at a reference it could fetch itself.
+// directory rather than at a reference it could fetch itself. Every
+// credential is a file in a read-only Secret volume that only the container
+// holding it mounts, and no container's environment holds one.
 //
 // The Jobs read have to cover the whole lifecycle, one of each of the four
 // operations at least, and every one of them has to keep the boundary.
@@ -76,42 +78,36 @@ type migrationBoundary struct {
 // ones, the init ones and the ephemeral ones, in that order.
 func migrationJobContainers(job *batchv1.Job) []containerView {
 	spec := job.Spec.Template.Spec
-	return slices.Concat(viewContainers(spec.Containers), viewContainers(spec.InitContainers),
-		viewEphemeralContainers(spec.EphemeralContainers))
+	return inPod(slices.Concat(viewContainers(spec.Containers), viewContainers(spec.InitContainers),
+		viewEphemeralContainers(spec.EphemeralContainers)), spec.Volumes)
 }
 
-// noDatabase is a container that neither names the database URL nor reads the
-// database Secret.
+// noDatabase is a container that neither names the database URL, by value or
+// by file, nor reads the database Secret.
 func (b migrationBoundary) noDatabase(c containerView) bool {
-	return !c.hasEnvName("PTAH_DB_URL") && !c.hasEnvName("PTAH_DEV_URL") &&
-		!slices.Contains(c.secretNames(), b.databaseSecret)
+	return noDatabaseAccess(c, b.databaseSecret)
 }
 
 // noRegistry is a container with no registry variable, no read of the
 // registry Secret, and none of the registry credential or CA mounts.
 func (b migrationBoundary) noRegistry(c containerView) bool {
-	return !c.envNameWith(registryEnvName) && !slices.Contains(c.secretNames(), b.registrySecret) &&
-		len(c.mountsNamed("registry-docker-config")) == 0 && len(c.mountsNamed("registry-ca")) == 0 &&
-		len(c.mountsNamed("registry-ca-snapshot")) == 0
+	return !c.envNameWith(registryEnvName) && !c.readsSecret(b.registrySecret) &&
+		len(c.mountsNamed("registry-docker-config")) == 0 && len(c.mountsNamed("registry-credentials")) == 0 &&
+		len(c.mountsNamed("registry-ca")) == 0 && len(c.mountsNamed("registry-ca-snapshot")) == 0
 }
 
-// reachesRegistry is a container that reads the registry Secret and is told,
-// by a literal alone, to speak plain HTTP to it.
+// reachesRegistry is a container that names the registry credential by the
+// files of the registry Secret, holds none of it in its environment, and is
+// told, by a literal alone, to speak plain HTTP to the registry.
 func (b migrationBoundary) reachesRegistry(c containerView) bool {
-	return slices.Contains(c.secretNames(), b.registrySecret) && exactLiteralEnv(c, "PTAH_PLAIN_HTTP", "true")
+	return c.hasCredentialFiles(registryCredentialFiles(b.registrySecret, [3]string{})...) && noCredentialVariable(c) &&
+		exactLiteralEnv(c, "PTAH_PLAIN_HTTP", "true")
 }
 
-// holdsDatabase is a container with exactly one PTAH_DB_URL, with no literal
-// value and a source that is the url key of the database Secret and nothing
-// else.
+// holdsDatabase is a container that names the database URL by the file of the
+// url key of the database Secret, and holds no credential in its environment.
 func (b migrationBoundary) holdsDatabase(c containerView) bool {
-	matches := c.envNamed("PTAH_DB_URL")
-	if len(matches) != 1 || matches[0].Value != "" || matches[0].ValueFrom == nil ||
-		!slices.Equal(renderedKeys(matches[0].ValueFrom), []string{"secretKeyRef"}) {
-		return false
-	}
-	reference := matches[0].ValueFrom.SecretKeyRef
-	return reference.Name == b.databaseSecret && reference.Key == "url"
+	return c.hasCredentialFile(databaseURLFile(b.databaseSecret)) && noCredentialVariable(c)
 }
 
 // localMigrationsDir is a container pointed at a path the fetch container
@@ -147,7 +143,7 @@ func (b migrationBoundary) sourceOperation(job *batchv1.Job) bool {
 	if !slices.Equal(containerNames(viewContainers(spec.Containers)), []string{"ptah"}) ||
 		!slices.Equal(containerNames(viewContainers(spec.InitContainers)), []string{"install-runner"}) ||
 		spec.Containers[0].Image != b.executorImage || spec.InitContainers[0].Image != b.runnerImage ||
-		!b.reachesRegistry(viewContainers(spec.Containers)[0]) {
+		!b.reachesRegistry(inPod(viewContainers(spec.Containers), spec.Volumes)[0]) {
 		return false
 	}
 	for _, container := range migrationJobContainers(job) {
@@ -162,7 +158,8 @@ func (b migrationBoundary) sourceOperation(job *batchv1.Job) bool {
 // source authority validated, the migrations pulled by Ptah from the registry
 // in a container that holds no database URL, and Ptah run against the
 // database, from the pulled files, in a container that holds no registry
-// credential and reads the files read-only.
+// credential and reads the files read-only. The pull is the runner's, which
+// reads the registry credential from its files and starts Ptah with it.
 func (b migrationBoundary) databaseOperation(job *batchv1.Job) bool {
 	spec := job.Spec.Template.Spec
 	if !slices.Equal(containerNames(viewContainers(spec.Containers)), []string{"ptah"}) ||
@@ -170,16 +167,16 @@ func (b migrationBoundary) databaseOperation(job *batchv1.Job) bool {
 			[]string{"install-runner", "validate-source-authority", "fetch-migrations"}) {
 		return false
 	}
-	main, init := viewContainers(spec.Containers)[0], viewContainers(spec.InitContainers)
+	main, init := inPod(viewContainers(spec.Containers), spec.Volumes)[0], inPod(viewContainers(spec.InitContainers), spec.Volumes)
 	fetch := &spec.InitContainers[2]
 	args := fetch.Args
-	if len(args) > 2 {
-		args = args[:2]
+	if len(args) > 6 {
+		args = args[:6]
 	}
 	sources := main.mountsNamed("schema-source")
 	return spec.Containers[0].Image == b.executorImage && spec.InitContainers[0].Image == b.runnerImage &&
-		fetch.Image == b.executorImage && slices.Equal(fetch.Command, []string{"/usr/local/bin/ptah"}) &&
-		slices.Equal(args, []string{"migrations", "pull"}) &&
+		fetch.Image == b.executorImage && slices.Equal(fetch.Command, []string{"/runner/ptah-runner"}) &&
+		slices.Equal(args, []string{"--fetch-oci-source", "--ptah-binary", "/usr/local/bin/ptah", "--", "migrations", "pull"}) &&
 		b.holdsDatabase(main) && localMigrationsDir(main) && b.noRegistry(main) &&
 		b.reachesRegistry(init[2]) && b.noDatabase(init[1]) && b.noDatabase(init[2]) &&
 		len(sources) == 1 && sources[0].ReadOnly

@@ -759,9 +759,11 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 		return denyf("active Plan operation cannot reconstruct its source Job: %v", err)
 	}
 	// An earlier manager of the same execution binding may have dispatched the
-	// Plan Job. Its recorded identity is taken from the Job, and the snapshot
-	// check that follows holds what was taken to the claim.
+	// Plan Job. Its recorded identity is taken from the Job, and so is where a
+	// Job 0.2.10 dispatched reads its credentials; the snapshot check that
+	// follows holds what was taken to the claim.
 	workload.CarryManagerIdentity(expected, job)
+	workload.CarryCredentialDelivery(expected, job)
 	// The same manager may have restarted between dispatching this Plan Job
 	// and this validation, generating a new seal key; or a different replica
 	// dispatched it. Either way this process's own key is not what live was

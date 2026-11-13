@@ -185,13 +185,14 @@ You can read the history at any stage, and reading it changes nothing:
 
 ```sh
 kubectl ptah history migration/orders -n application
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.history.revisions}' | jq
+kubectl ptah migration orders -n application --details
 kubectl events -n application --for ptahmigration/orders
 ```
 
 `history` prints the operator's journal, which dates the run as a whole, with
-the approval and any acknowledgment that name the migration. How long each
-migration took comes from the revision table, where the table records it.
+the approval and any acknowledgment that name the migration. `--details`
+prints the newest rows of the revision table under `History read`; how long
+each migration took comes from there, where the table records it.
 [The lifecycle journal](../../reference/reconciliation/#the-lifecycle-journal)
 says how far back the journal, the Events and the finished Jobs reach.
 
@@ -533,7 +534,8 @@ condition the controller writes on it.
 
 The chart's optional approver ClusterRole grants what an approver needs for
 either family: read on the migration, its plans and approvals, and create on
-`PtahMigrationApproval`. The chart binds it to nobody;
+`PtahMigrationApproval`. The chart binds it only to the subjects
+`approverClusterRole.subjects` names, in every namespace;
 [Exact-plan approvals](../approvals/) says what it leaves out and why.
 
 The execution runs the approved sequence and nothing else. The Job hands Ptah

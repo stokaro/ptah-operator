@@ -52,6 +52,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	materializeTo := flags.String("materialize-to", "", "directory a checked source snapshot is copied into")
 	contentDigest := flags.String("content-digest", "", "content digest the source snapshot must hold")
 	fetchGitSource := flags.String("fetch-git-source", "", "fetch the resolved commit of a Git source into this directory")
+	fetchOCISource := flags.Bool("fetch-oci-source", false, "run the Ptah pull after -- with the registry credential the Job names by file")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -101,6 +102,31 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		return 0
+	}
+	if *fetchOCISource {
+		unexpectedFlag := false
+		flags.Visit(func(current *flag.Flag) {
+			if current.Name != "fetch-oci-source" && current.Name != "ptah-binary" {
+				unexpectedFlag = true
+			}
+		})
+		if unexpectedFlag || flags.NArg() == 0 {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: OCI fetch mode takes only --fetch-oci-source, --ptah-binary and the pull after --")
+			return 2
+		}
+		// The fetch holds the registry credential and writes what the
+		// process holding the database URL reads next, so it is held to the
+		// protocol as the main run is.
+		if err := runner.CheckProtocolBinding(environment); err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
+			return 2
+		}
+		exitCode, err := runner.FetchOCISource(ctx, *ptahBinary, environment, flags.Args(), runner.OSExecutor{}, stdout, stderr)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
+			return 2
+		}
+		return exitCode
 	}
 	materializeFlags := map[string]bool{"materialize-source-snapshot": true, "materialize-to": true, "content-digest": true}
 	materializeMode := false

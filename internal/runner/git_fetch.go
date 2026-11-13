@@ -31,6 +31,10 @@ const (
 // container that holds the database URL never sees the credential, and reads
 // only files that gave the digest.
 func FetchGitSource(ctx context.Context, ptahBinary string, environment []string, destination, tempDir string, executor Executor, diagnostics io.Writer) error {
+	environment, err := ResolveCredentialFiles(environment)
+	if err != nil {
+		return fmt.Errorf("%s: %w", CodeGitSourceRefused, err)
+	}
 	source, isGit := GitSourceFromEnvironment(environment)
 	switch {
 	case !isGit:

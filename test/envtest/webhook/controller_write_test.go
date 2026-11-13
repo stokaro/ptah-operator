@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -111,12 +113,25 @@ func TestControllerWriteWebhook(t *testing.T) {
 	ctx := context.Background()
 	managerAPI := clientAs(t, manager.username)
 
-	// The three rows share one Job name, so they run in order: the refusals are
-	// dry runs, and only the last row stores the Job.
+	// The rows share one Job name, so they run in order: the refusals are dry
+	// runs, and only the last row stores the Job.
 	t.Run("the manager's Job with a changed image is refused", func(t *testing.T) {
 		err := managerAPI.Create(ctx, fixture.tampered(), client.DryRunAll)
 		requireDenied(t, err, controllerWriteWebhook, "Job is outside the active operation intent")
 	})
+
+	// A Resolve is read-only, so its claim builds the Job with its cleanup TTL,
+	// and the webhook holds the create to that Job: the same Job created with
+	// no TTL, as a release before this one created it, or with another TTL is
+	// not the one the claim builds.
+	for _, ttl := range []*int32{nil, ptr.To(int32(86400)), ptr.To(workload.CleanupTTLSeconds + 1)} {
+		t.Run("the manager's Job with cleanup TTL "+ttlText(ttl)+" is refused", func(t *testing.T) {
+			job := fixture.job.DeepCopy()
+			job.Spec.TTLSecondsAfterFinished = ttl
+			err := managerAPI.Create(ctx, job, client.DryRunAll)
+			requireDenied(t, err, controllerWriteWebhook, "Job is outside the active operation intent")
+		})
+	}
 
 	t.Run("the same Job from another identity is not the controller-write webhook's to judge", func(t *testing.T) {
 		// The entry's matchCondition sends it the manager's writes and nothing
@@ -137,7 +152,17 @@ func TestControllerWriteWebhook(t *testing.T) {
 		if job.UID == "" {
 			t.Fatalf("Job %s/%s was admitted but not stored", fixture.namespace, fixture.job.Name)
 		}
+		if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != workload.CleanupTTLSeconds {
+			t.Fatalf("Job %s/%s was stored with cleanup TTL %s, want the read-only Job's %d", job.Namespace, job.Name, ttlText(ttl), workload.CleanupTTLSeconds)
+		}
 	})
+}
+
+func ttlText(ttl *int32) string {
+	if ttl == nil {
+		return "none"
+	}
+	return strconv.Itoa(int(*ttl))
 }
 
 // TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason serves what the chart's
@@ -161,8 +186,12 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 			{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: finish},
 		},
 	}
+	// store keeps a read-only Job as a release before this one created it, with
+	// no TTL: the manager writes a TTL only to a Job that carries none, and this
+	// release creates a read-only Job with its TTL already set.
 	store := func(job *batchv1.Job) *batchv1.Job {
 		t.Helper()
+		job.Spec.TTLSecondsAfterFinished = nil
 		if err := admin.Create(ctx, job); err != nil {
 			t.Fatalf("store Job %s: %v", job.Name, err)
 		}
@@ -189,6 +218,8 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		built.Spec.Template.Labels[workload.LabelOperation] = "apply"
 		built.Annotations[workload.AnnotationOperationID] = operationID
 		built.OwnerReferences = owners
+		// An Apply is created with no TTL; the Resolve it is built from has one.
+		built.Spec.TTLSecondsAfterFinished = nil
 		job := built.DeepCopy()
 		// Not empty: an empty set is filled in from the Pod template.
 		job.Labels, job.OwnerReferences = map[string]string{"fixture": "unowned"}, nil
@@ -268,6 +299,21 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 	t.Run("a TTL that is neither value is refused by naming both", func(t *testing.T) {
 		requireDenied(t, setTTL(store(fixture.job.DeepCopy()), 600), controllerWriteWebhook,
 			"Job cleanup TTL 600 is neither the 300 seconds every finished Job keeps nor the 86400 seconds")
+	})
+	t.Run("a read-only Job created with its cleanup TTL takes no other", func(t *testing.T) {
+		job := fixture.job.DeepCopy()
+		job.Name += "-created"
+		if err := admin.Create(ctx, job); err != nil {
+			t.Fatalf("store Job %s: %v", job.Name, err)
+		}
+		job.Status = finished
+		if err := admin.Status().Update(ctx, job); err != nil {
+			t.Fatalf("finish Job %s: %v", job.Name, err)
+		}
+		if ttl := job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != workload.CleanupTTLSeconds {
+			t.Fatalf("the builder's read-only Job carries cleanup TTL %s, want %d", ttlText(ttl), workload.CleanupTTLSeconds)
+		}
+		requireDenied(t, setTTL(job, 86400), controllerWriteWebhook, "Job update is not the transition that adds a cleanup TTL to a Job carrying none")
 	})
 	t.Run("the long TTL on a read-only Job is refused by naming its operation", func(t *testing.T) {
 		job := fixture.job.DeepCopy()

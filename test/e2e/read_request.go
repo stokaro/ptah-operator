@@ -18,13 +18,34 @@ const readRequestBound = 4 * time.Minute
 // found the database at version. A reading the interval took, one older than
 // the request, and one of another request all fail it.
 func historyReadOnRequest(migration *ptahv1alpha1.PtahMigration, value string, requested, intervalRead time.Time, version int64) bool {
+	return historyAnsweredRequest(migration, value, requested, intervalRead) && migration.Status.History.CurrentVersion == version
+}
+
+// recoveryHistoryOnRequest is a migration whose Apply ended Unknown, read
+// again because a person asked: the History answered exactly that request as
+// historyReadOnRequest requires, no operation runs, the reading has the
+// fingerprint the approved plan was made from, and the run named by
+// operationID is still unresolved. The interval read the refused run
+// scheduled, a reading taken before the request, and one after the record was
+// settled all fail it.
+func recoveryHistoryOnRequest(
+	migration *ptahv1alpha1.PtahMigration, value string, requested, intervalRead time.Time, fingerprint, operationID string,
+) bool {
+	unresolved := migration.Status.UnresolvedRun
+	return migration.Status.ActiveOperation == nil && historyAnsweredRequest(migration, value, requested, intervalRead) &&
+		migration.Status.History.Fingerprint == fingerprint && unresolved != nil && unresolved.OperationID == operationID
+}
+
+// historyAnsweredRequest is a history read after the request the status
+// answered, within readRequestBound of it and before the read the interval
+// had set.
+func historyAnsweredRequest(migration *ptahv1alpha1.PtahMigration, value string, requested, intervalRead time.Time) bool {
 	history := migration.Status.History
 	if migration.Status.LastReadRequest != value || history == nil || history.ObservedAt.IsZero() {
 		return false
 	}
 	read := history.ObservedAt.Time
-	return read.After(requested) && read.Before(requested.Add(readRequestBound)) && read.Before(intervalRead) &&
-		history.CurrentVersion == version
+	return read.After(requested) && read.Before(requested.Add(readRequestBound)) && read.Before(intervalRead)
 }
 
 // schemaObservedOnRequest is a schema back at its approval gate after a read
