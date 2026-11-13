@@ -23,10 +23,15 @@ const (
 	transcriptFile = "runner-harness/transcript.json"
 	provenanceFile = "runner-harness/provenance.json"
 	documentsDir   = "runner-harness/documents"
-	// directoryRows keep the layout their consumers read: args, stdout, stderr
-	// and exit-code in one directory per row, and nothing in the transcript.
-	directoryRows = "git-pull"
+	// gitPullRows and httpsPullRows keep the layout their consumers read:
+	// args, stdout, stderr and exit-code in one directory per row, and nothing
+	// in the transcript.
+	gitPullRows   = "git-pull"
+	httpsPullRows = "https-pull"
 )
+
+// directoryRows are the directories whose rows keep the per-directory layout.
+var directoryRows = []string{gitPullRows, httpsPullRows}
 
 // Child is what one Ptah command did, in the form it is committed: arguments,
 // standard error and status in the transcript, with the volatile values masked,
@@ -85,7 +90,7 @@ func DocumentPath(row string, index int, command string, document []byte) string
 
 // directoryRow says whether a row is stored in the per-directory layout.
 func directoryRow(name string) bool {
-	return strings.HasPrefix(name, directoryRows+"/")
+	return slices.ContainsFunc(directoryRows, func(directory string) bool { return strings.HasPrefix(name, directory+"/") })
 }
 
 // LoadCaptures reads every committed capture.
@@ -111,18 +116,20 @@ func LoadCaptures(root string) (Captures, error) {
 			return Captures{}, fmt.Errorf("read %s: %w", provenanceFile, err)
 		}
 	}
-	directories, err := os.ReadDir(filepath.Join(root, directoryRows))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return Captures{}, err
-	}
-	for _, directory := range directories {
-		row, stdout, err := readDirectoryRow(root, directoryRows+"/"+directory.Name())
-		if err != nil {
+	for _, rows := range directoryRows {
+		directories, err := os.ReadDir(filepath.Join(root, rows))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return Captures{}, err
 		}
-		captures.Rows = append(captures.Rows, row)
-		if len(stdout) != 0 {
-			captures.Documents[row.Children[0].Stdout] = stdout
+		for _, directory := range directories {
+			row, stdout, err := readDirectoryRow(root, rows+"/"+directory.Name())
+			if err != nil {
+				return Captures{}, err
+			}
+			captures.Rows = append(captures.Rows, row)
+			if len(stdout) != 0 {
+				captures.Documents[row.Children[0].Stdout] = stdout
+			}
 		}
 	}
 	slices.SortFunc(captures.Rows, func(a, b Row) int { return strings.Compare(a.Name, b.Name) })
