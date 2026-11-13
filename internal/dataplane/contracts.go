@@ -298,6 +298,14 @@ type PlanStatement struct {
 	Owned        bool     `json:"owned,omitempty"`
 	Access       string   `json:"access,omitempty"`
 	AccessReason string   `json:"access_reason,omitempty"`
+	// Effects is what Ptah v0.26.0 records the statement does to the objects
+	// it changes, computed from the database the plan read
+	// (stokaro/ptah#5954): for a PostgreSQL view, its security options before
+	// the statement runs and after. A statement Ptah does not describe carries
+	// none, and neither does any statement of a plan from an earlier Ptah. The
+	// privilege reading takes a view's security_invoker from it and everything
+	// else from the SQL.
+	Effects []PlanEffect `json:"effects,omitempty"`
 }
 
 // PlanFile is the plan document `schema plan --output` saves. It is decoded
@@ -346,9 +354,11 @@ type PlanFile struct {
 
 	// PrivilegeChanges are the kinds of authority the statements change, read
 	// by the operator from the SQL: grants, role membership, ownership,
-	// row-security policies and definer rights. Ptah's document has no such
-	// field and cannot supply one, since a plan is decoded strictly; the list
-	// is the operator's own, in the order PrivilegeChangeKinds gives.
+	// row-security policies and definer rights. A view's security_invoker is
+	// read from the statement's effects where Ptah recorded them. Ptah's
+	// document has no such field and cannot supply one, since a plan is
+	// decoded strictly; the list is the operator's own, in the order
+	// PrivilegeChangeKinds gives.
 	PrivilegeChanges []string `json:"-"`
 }
 
@@ -626,7 +636,7 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 			plan.Statements[i].Severity = "destructive"
 		}
 		hasDestructive = hasDestructive || strings.EqualFold(plan.Statements[i].Severity, "destructive")
-		for _, kind := range privilegeChanges(statement.SQL, plan.Dialect) {
+		for _, kind := range privilegeChanges(statement, plan.Dialect) {
 			privileges[kind] = true
 		}
 	}
@@ -639,7 +649,10 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	// "Destructive" means data can be lost, and a plan that grants, delegates
 	// or rebinds authority loses nothing. The privilege class is read
 	// separately and is independent of the severity Ptah gave each statement,
-	// so a statement Ptah called safe is still raised, and nothing lowers it.
+	// so a statement Ptah called safe is still raised. The one thing Ptah's
+	// document decides in it is whether a view's security_invoker changes,
+	// from the values before and after that Ptah read from the database, and
+	// the plan's source fingerprint covers those values.
 	plan.PrivilegeChanges = nil
 	for _, kind := range privilegeChangeKinds {
 		if privileges[kind] {

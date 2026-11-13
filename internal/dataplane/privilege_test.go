@@ -139,7 +139,9 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 		{
 			// Ptah writes a view whose body changed this way with the options
 			// the declaration states, whether or not they changed, and the
-			// statement cannot say which.
+			// statement cannot say which. Read without the effect Ptah v0.26.0
+			// records beside it, as a plan from an earlier Ptah is, it is
+			// raised; effect_test.go reads the same statement with its effect.
 			name: "view body changed, invoker rights restated", dialect: "postgres",
 			statement: "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name, created_at FROM differs_notes",
 			want:      []string{"SecurityDefiner"},
@@ -209,7 +211,10 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 			statement: "CREATE /*!50017 DEFINER=`root`@`localhost`*/ TRIGGER `t_new` BEFORE INSERT ON `orders` FOR EACH ROW SET NEW.created_at = NOW()",
 			want:      []string{"Definer"},
 		},
-		{name: "MySQL view definer altered", dialect: "mysql", statement: "ALTER DEFINER = `admin`@`%` VIEW `v` AS SELECT 1", want: []string{"Definer"}},
+		{
+			name: "MySQL view definer altered", dialect: "mysql",
+			statement: "ALTER DEFINER = `admin`@`%` VIEW `v` AS SELECT 1", want: []string{"SecurityDefiner", "Definer"},
+		},
 		{
 			name: "MariaDB definer function replaced", dialect: "mariadb",
 			statement: "CREATE OR REPLACE DEFINER=`admin`@`%` FUNCTION `f`() RETURNS int RETURN 1",
@@ -232,6 +237,29 @@ func TestDecodePlanRaisesPrivilegeChanges(t *testing.T) {
 			name: "MySQL function in an executable comment", dialect: "mysql",
 			statement: "/*!50003 CREATE FUNCTION `f`() RETURNS int DETERMINISTIC RETURN 1 */",
 			want:      []string{"SecurityDefiner"},
+		},
+		// A MySQL or MariaDB statement that replaces a view sets its SQL
+		// SECURITY, to DEFINER where it names none, and does not say what the
+		// view held. Ptah v0.26.0 plans the first of these for a view held as
+		// INVOKER that the declaration leaves without a mode.
+		{
+			name: "MySQL view replaced", dialect: "mysql",
+			statement: "CREATE OR REPLACE VIEW `v_mod` AS\nSELECT id, total FROM orders", want: []string{"SecurityDefiner"},
+		},
+		{
+			name: "MySQL view replaced with invoker rights", dialect: "mysql",
+			statement: "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `v_mod` AS\nSELECT id, total FROM orders", want: []string{"SecurityDefiner"},
+		},
+		{
+			name: "MySQL view replaced with its clauses", dialect: "mysql",
+			statement: "CREATE OR REPLACE ALGORITHM = MERGE SQL SECURITY INVOKER VIEW `v_mod` AS SELECT id FROM orders",
+			want:      []string{"SecurityDefiner"},
+		},
+		{name: "MySQL view altered", dialect: "mysql", statement: "ALTER VIEW `v_mod` AS SELECT id FROM orders", want: []string{"SecurityDefiner"}},
+		{name: "MariaDB view replaced", dialect: "mariadb", statement: "CREATE OR REPLACE VIEW `v_mod` AS SELECT id FROM orders", want: []string{"SecurityDefiner"}},
+		{
+			name: "MySQL view replaced in an executable comment", dialect: "mysql",
+			statement: "/*!50001 CREATE OR REPLACE VIEW `v_mod` AS SELECT id FROM orders */", want: []string{"SecurityDefiner"},
 		},
 		{
 			name: "MariaDB invoker function replaced", dialect: "mariadb",
@@ -312,7 +340,17 @@ func TestDecodePlanDoesNotRaiseLookalikes(t *testing.T) {
 			name: "MySQL invoker routine", dialect: "mysql",
 			statement: "CREATE FUNCTION `total`(p int) RETURNS int DETERMINISTIC SQL SECURITY INVOKER RETURN p",
 		},
-		{name: "MySQL view replaced", dialect: "mysql", statement: "CREATE OR REPLACE VIEW `v_mod` AS\nSELECT id, total FROM orders"},
+		// A view CREATE VIEW makes has no readers yet, and the words VIEW and
+		// REPLACE elsewhere in a statement replace no view.
+		{name: "MySQL view created", dialect: "mysql", statement: "CREATE SQL SECURITY INVOKER VIEW `v_new` AS SELECT id FROM orders"},
+		{name: "MySQL column named view", dialect: "mysql", statement: "ALTER TABLE `orders` ADD COLUMN view int"},
+		{name: "MySQL table altered with a view's name", dialect: "mysql", statement: "ALTER TABLE `view` RENAME TO `v_old`"},
+		{
+			name: "MariaDB trigger replaced that sets a column named view", dialect: "mariadb",
+			statement: "CREATE OR REPLACE TRIGGER `t` BEFORE INSERT ON `orders` FOR EACH ROW SET NEW.view = 1",
+		},
+		{name: "MySQL event that reads a view", dialect: "mysql", statement: "ALTER EVENT `e` DO INSERT INTO t SELECT * FROM view_totals"},
+		{name: "MySQL row that names a view", dialect: "mysql", statement: "REPLACE INTO `views` (`name`) VALUES ('CREATE OR REPLACE VIEW v')"},
 		{name: "MySQL definer column added", dialect: "mysql", statement: "ALTER TABLE `audit` ADD COLUMN definer varchar(64)"},
 		{name: "MySQL definer and event columns", dialect: "mysql", statement: "CREATE TABLE audit (definer varchar(64), event varchar(64))"},
 		{name: "MySQL role column default", dialect: "mysql", statement: "ALTER TABLE accounts ALTER role SET DEFAULT 'member'"},
@@ -351,10 +389,13 @@ func TestDecodePlanDoesNotRaiseLookalikes(t *testing.T) {
 }
 
 // Definer rights that come from an engine default rather than from the
-// statement are outside the class, and this pins that the classifier reads the
-// statement: a MySQL view or trigger that names no definer and no SQL SECURITY
-// still runs as its definer, and the documentation says so rather than this
-// classifier guessing.
+// statement are outside the class where nothing had other rights before, and
+// this pins that the classifier reads the statement: a MySQL view CREATE VIEW
+// makes, or a trigger, that names no definer and no SQL SECURITY still runs as
+// its definer, and the documentation says so rather than this classifier
+// guessing. A statement that replaces a MySQL view is raised for its default
+// (TestDecodePlanRaisesPrivilegeChanges), since the view it replaces may have
+// read with its readers' rights.
 func TestDecodePlanDoesNotRaiseImplicitDefinerRights(t *testing.T) {
 	t.Parallel()
 
@@ -469,7 +510,9 @@ func TestDecodePlanElevatesDestructiveSQLBehindLexicalTricks(t *testing.T) {
 
 // The class is the operator's own, so nothing in Ptah's document lowers it:
 // not a severity, not destructive: false, and not a field of the same name,
-// which the strict decoder refuses rather than reads.
+// which the strict decoder refuses rather than reads. The one value Ptah's
+// document decides in it is a view's security_invoker before and after a
+// statement, which effect_test.go holds.
 func TestPrivilegeClassIsRaiseOnly(t *testing.T) {
 	t.Parallel()
 
