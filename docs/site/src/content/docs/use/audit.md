@@ -176,17 +176,43 @@ The database log joins nothing by identifier. Its `run_id` is Ptah's own, such
 as `28-dmth8umhdwq7`, and the operator does not pass the operation ID. A row
 meets its run by the version, the actor and the time.
 
-`mutationRequestUID` does not join the API audit log. It is the UID of the
-admission review the webhook answered, and the API server makes a new one for
-each webhook call. The audit event has an `auditID` of its own, and the two
-differed on every approval. At `RequestResponse` the UID is in the stored object
-in `responseObject` and in the webhook's patch annotation,
-`patch.webhook.admission.k8s.io/round_0_index_0`. At `Metadata` the approval's
-create named it nowhere: it carried only
-`mutation.webhook.admission.k8s.io/round_0_index_0` with `"mutated":true`.
-`objectRef.uid` is empty on a create, so at `Metadata` an approval meets its
-audit event by namespace, name and time. A delete names the UID it removed in
-`responseStatus.details.uid`.
+`mutationRequestUID` is the UID of the admission review the mutating webhook
+answered, and the API server makes a new one for each webhook call. The audit
+event has an `auditID` of its own, and the two differed on every approval in the
+run. So the webhook names its stamp on the event: it answers with audit
+annotations, and the API server records them on the create's event, each key
+prefixed with the name of the webhook that answered.
+
+| Kind | Annotations on the create's audit event |
+| --- | --- |
+| `PtahSchemaApproval` | `mapproval.operator.ptah.run/mutationRequestUID`, `mapproval.operator.ptah.run/username` |
+| `PtahMigrationApproval` | `mmigrationapproval.operator.ptah.run/mutationRequestUID`, `mmigrationapproval.operator.ptah.run/username` |
+| `PtahMigrationRunAcknowledgment` | `mmigrationrunacknowledgment.operator.ptah.run/mutationRequestUID`, `mmigrationrunacknowledgment.operator.ptah.run/username` |
+
+`mutationRequestUID` holds the value the object stores in
+`spec.mutationRequestUID`, and `username` the username it stores in
+`spec.approver`, or in `spec.acknowledgedBy` for an acknowledgment. On an
+impersonated request that is the impersonated identity, which the event also
+holds in `impersonatedUser`, while `user` names who sent the request. The
+annotations say what the webhook stamped, and `responseStatus.code` says
+whether the object was stored: validation after the webhook can still refuse
+it. The prefix is the webhook's entry name, not the name of its
+`MutatingWebhookConfiguration`, which
+`mutation.webhook.admission.k8s.io/round_0_index_0` names beside it.
+[Reading the record](#reading) finds an approval's event by its
+`mutationRequestUID`.
+
+This is measured at `Metadata` against the API server `make test-envtest`
+runs, in `TestStampingWebhooksNameTheirStampInTheAuditLog` under
+`test/envtest/webhook`. The levels above `Metadata` keep the annotations too,
+as read in `k8s.io/apiserver` v0.37.2, `pkg/admission/attributes.go`. The run's
+build predates them. There, at `Metadata`, the approval's create named the UID
+nowhere: it carried only `mutation.webhook.admission.k8s.io/round_0_index_0`
+with `"mutated":true`, and `objectRef.uid` is empty on a create, so an approval
+met its audit event only by namespace, name and time. At `RequestResponse` the
+UID is also in the stored object in `responseObject` and in the webhook's patch
+annotation, `patch.webhook.admission.k8s.io/round_0_index_0`. A delete names the
+UID it removed in `responseStatus.details.uid`.
 
 [Ptah Console](https://github.com/stokaro/ptah-console) writes the API server's
 `Audit-Id` header into each line of its own audit stream, so a console action
@@ -265,6 +291,8 @@ rules:
       - {group: "operator.ptah.run", resources: ["ptahschemaplanchunks", "ptahresultrecords"]}
     verbs: ["create", "update", "patch", "delete", "deletecollection"]
   # Every other write to the operator's kinds, with what was sent and stored.
+  # The create of an approval or an acknowledgment also names its stamp in the
+  # event's annotations, which every level from Metadata up keeps.
   - level: RequestResponse
     resources: [{group: "operator.ptah.run"}]
     verbs: ["create", "update", "patch", "delete", "deletecollection"]
@@ -287,8 +315,10 @@ the namespace, Jobs and Events included, and no rule of its own for chunks and
 result records.
 
 At `RequestResponse` an approval's line holds the stamped identity, `approvedAt`
-and `mutationRequestUID`, and a spec edit's line holds the patch, such as
-`{"spec":{"suspend":true}}`. A namespace deletion's line lists every object it
+and `mutationRequestUID` in the stored object. Its `mutationRequestUID` and
+username are also in the annotations [Joining one change across the
+record](#joins) lists, as they are at `Metadata`. A spec edit's line holds the
+patch, such as `{"spec":{"suspend":true}}`. A namespace deletion's line lists every object it
 removed, status included: the deleted migration came back with all nine of its
 journal entries. A single delete returns the object only when the delete waits
 on a finalizer. The schema deleted during an operation came back with its 12
@@ -379,6 +409,20 @@ jq -c 'select(.objectRef.resource == "ptahschemaapprovals"
   | {auditID, user, impersonatedUser, code: .responseStatus.code,
      approver: .responseObject.spec.approver}' audit.log
 ```
+
+At any level from `Metadata` up, the approval's `mutationRequestUID` finds the
+same write by its annotation, with no body in the log:
+
+```sh
+uid=$(kubectl -n <namespace> get ptahschemaapproval <approval> \
+  -o jsonpath='{.spec.mutationRequestUID}')
+jq -c --arg uid "$uid" '
+  select(.annotations["mapproval.operator.ptah.run/mutationRequestUID"] == $uid)
+  | {auditID, user, impersonatedUser, code: .responseStatus.code}' audit.log
+```
+
+For a migration approval or an acknowledgment, use the key of its webhook from
+[the table](#joins).
 
 `ptah migrations log` prints the same table, and on MySQL needs `parseTime=true`
 in the URL, as [What survives a lost cluster](../recovery/#what-survives-a-lost-cluster)

@@ -110,7 +110,10 @@ controller runs there, so what they prove is the API server's own verdict:
   One row sends `kubectl ptah approve`'s submission as the person: bound to the
   chart's approver ClusterRole it is admitted and stamped, without create it is
   refused by the authorizer, a server dry run is named and not stored, and a
-  schema that moves after the last read is admission's refusal.
+  schema that moves after the last read is admission's refusal. Its API server
+  writes an audit log at `Metadata` for the creates the stamping webhooks
+  answer, and one row reads each create's event for the `mutationRequestUID`
+  and username the webhook named in its annotations.
 - `resultstore` publishes immutable `PtahResultRecord` objects against the API
   server and tests interrupted writes, concurrent redelivery, payload limits,
   readback after explicit Job/Pod deletion, and the API server's preconditions

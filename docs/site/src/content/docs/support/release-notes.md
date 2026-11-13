@@ -742,6 +742,14 @@ has nothing to change for that.
   what becomes of its Job: it `is deleted 300 seconds after it finishes`, or,
   for a Job 0.2.10 created, it `stays until it is deleted by hand or with its
   owner`.
+- **An approval's audit event names its stamp.** The webhooks that stamp a
+  `PtahSchemaApproval`, a `PtahMigrationApproval` and a
+  `PtahMigrationRunAcknowledgment` answer with the `mutationRequestUID` and the
+  username they stamped as audit annotations. The API server records them on
+  the create's audit event at `Metadata` and above, under the webhook's name,
+  such as `mapproval.operator.ptah.run/mutationRequestUID`. At `Metadata` an
+  approval met its audit event only by namespace, name and time.
+  [Joining one change across the record](../../use/audit/#joins) lists the keys.
 
 ## 0.2.10
 
