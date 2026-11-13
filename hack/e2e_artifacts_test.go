@@ -100,8 +100,8 @@ func (u e2eArtifactUse) String() string {
 
 // e2ePhaseArtifacts is what one phase does with the family's artifacts.
 type e2ePhaseArtifacts struct {
-	phase  phases.Phase
-	scopes int
+	phase     phases.Phase
+	scopes    int
 	reads     []e2eArtifactUse
 	publishes []e2eArtifactUse
 	// shared are the reads whose function publishes nothing under that suffix.
