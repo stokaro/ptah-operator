@@ -271,7 +271,7 @@ stay untouched. Dropping data has to be a separate, deliberate action. See
 
 The operator's support contract is narrower than the CLI's on purpose: an engine
 is supported only when the whole lifecycle is green on every supported Kubernetes
-minor, which today means PostgreSQL 17.x and 18.x and MySQL 8.4.x LTS. An unknown engine
+minor, which today means PostgreSQL 16.x, 17.x and 18.x and MySQL 8.4.x LTS. An unknown engine
 value is stored without any database or registry access and sets `phase=Blocked`.
 Changing the spec back to a supported engine restarts the workflow at Resolve.
 

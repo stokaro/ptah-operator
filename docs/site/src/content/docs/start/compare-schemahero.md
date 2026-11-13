@@ -78,7 +78,7 @@ from its release manifest. An install command in the plugin is
 SchemaHero's `Database` resource has connection types for PostgreSQL, MySQL,
 CockroachDB, TimescaleDB, SQLite, RQLite and Cassandra. We ran only PostgreSQL,
 so we state that list from its API. This operator supports
-[PostgreSQL 17 and 18 and MySQL 8.4](../../support/databases/), and
+[PostgreSQL 16, 17 and 18 and MySQL 8.4](../../support/databases/), and
 [widening that](https://github.com/stokaro/ptah-operator/issues/784) is tracked.
 If your engine is outside this operator's list, SchemaHero may be your only
 option of the two.

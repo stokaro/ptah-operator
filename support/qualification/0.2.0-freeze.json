@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "0873bad46f25129d946f54d2a4944229aed768ceb8b38c32946a480ffe130b8d"
+      "sha256": "1b2708a0bac7c37987710b75b04dcc02ace1c9d9c3995a5f35a5ae4f311332a0"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "5030dbd0e70e5b657700ef329c662b2e8debd67b02f4ec3d33a42d3aa3df407f"
+      "sha256": "aa08c2eff70aed824a440daab8d03e848765785e24016b3f4e503f5cc8de950f"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.10 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 89,
+  "revision": 90,
   "supersedes": {
-    "freezeCommit": "bf1fcffff7c985cfeff57847cf5381b1d08998d7",
-    "sha256": "23cb4e6ecc6c6808ce58b77b71d7cdc00ee21c51a231a4dfbd2c036c4da9995e"
+    "freezeCommit": "ba07efe82c590d568ea2f189077d701e1f5bd982",
+    "sha256": "7f0ab289023a11e69e5aadbe748a279ee2c04e138919491b9e07957516175c10"
   },
-  "revisionReason": "Move the phase reference-data-postgresql from lifecycle to sources, whose jobs ran about 40 minutes beside lifecycle's 77 (#932). Phases, scenarios, cells, platforms, minors, the profile and its targets are unchanged."
+  "revisionReason": "Add PostgreSQL 16.x to the supported release lines after Added database lines run 43292445627 passed the whole lifecycle on every supported Kubernetes minor at the pinned Ptah v0.23.0 build. The baseline lines, phases, cells, platforms, the profile and its targets are unchanged."
 }

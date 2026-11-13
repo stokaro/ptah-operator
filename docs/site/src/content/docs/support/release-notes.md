@@ -145,6 +145,11 @@ a read-only Job this release creates. 0.2.10 admits no Pod and no result for a
 Job that already carries a TTL, so a read that runs when you roll back to 0.2.10
 can be refused, and runs again under a Job 0.2.10 creates.
 
+PostgreSQL 16.x joins the supported release lines. Run 43292445627 of the
+Added database lines workflow passed the whole lifecycle on it on every
+supported Kubernetes minor at the pinned Ptah build. A cluster on 17.x or 18.x
+has nothing to change for that.
+
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
   the order the operator recorded it and from when it is complete, then every

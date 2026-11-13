@@ -45,9 +45,20 @@ class SchemaSQLReadingsTest(unittest.TestCase):
                 {'dbname': 'ptah_audit_schema', 'remote_host': '172.19.0.3', 'message': 'execute stmtcache_1: SELECT $1',
                  'detail': "Parameters: $1 = 'public'"},
                 {'dbname': 'ptah_audit_schema', 'remote_host': '172.19.0.3', 'message': 'connection authorized'},
+                # PostgreSQL 16 spells the detail with a lowercase p; the
+                # audit reads it as 17 does, and leaves any other spelling.
+                {'dbname': 'ptah_audit_schema', 'remote_host': '172.19.0.3', 'message': 'execute stmtcache_2: SELECT $1',
+                 'detail': "parameters: $1 = 'public'"},
+                {'dbname': 'ptah_audit_schema', 'remote_host': '172.19.0.3', 'message': 'execute stmtcache_3: SELECT $1',
+                 'detail': "PARAMETERS: $1 = 'public'"},
+                {'dbname': 'ptah_audit_schema', 'remote_host': '172.19.0.3', 'message': 'execute stmtcache_4: SELECT $1',
+                 'detail': "unrelated parameters: $1 = 'public'"},
             ]) + '\n')
             self.assertEqual(list(received('postgresql', postgres)),
-                             [('query', '-- ping', ''), ('query', 'SELECT $1', "Parameters: $1 = 'public'")])
+                             [('query', '-- ping', ''), ('query', 'SELECT $1', "Parameters: $1 = 'public'"),
+                              ('query', 'SELECT $1', "Parameters: $1 = 'public'"),
+                              ('query', 'SELECT $1', "PARAMETERS: $1 = 'public'"),
+                              ('query', 'SELECT $1', "unrelated parameters: $1 = 'public'")])
             mysql = Path(directory) / 'mysql.jsonl'
             mysql.write_text('\n'.join(json.dumps({'time': '2026-10-10T00:00:00.000000', 'type': kind, 'client': 'x', 'thread': 1,
                                                    'argumentHex': text.encode().hex().upper()}) for kind, text in [
