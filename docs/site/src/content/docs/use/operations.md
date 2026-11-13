@@ -2163,11 +2163,12 @@ nothing about whether the mutation was ever accounted for.
 
 ```sh
 kubectl ptah migration orders -n application
-kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 ```
 
 The first prints the record under `Unresolved run`, apart from the last run,
-with the migration's UID; the second is the record as stored.
+with the migration's UID; the second adds every field of the record the
+plugin knows, and of the last run beside it.
 
 The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
@@ -2333,12 +2334,13 @@ resource is suspended, and reads the database again before it plans anything.
 are gone, and `status.resolvedRun` names the run, the acknowledgment and you:
 
 ```sh
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
 ```
 
-`kubectl ptah migration orders -n application` prints the same as a
-`Settled run` line, and lists the acknowledgment with its conditions.
+`kubectl ptah migration orders -n application` prints it as a `Settled run`
+line, and lists the acknowledgment with its conditions; `--details` adds
+every field of the record the plugin knows.
 
 The acknowledgment reads `Consumed=True`, and a Normal Event,
 `UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then
@@ -2506,9 +2508,16 @@ one and who it reaches. A failed Apply also writes Ptah's words to its Pod log, 
 to nothing a controller reads, as
 [the next section](#failed-apply-log) says.
 
-Kubernetes Events provide the object-scoped audit trail for operation claims,
-completion, policy refusal, approval changes, and failures. Alert on a sustained
-increase in `ptah_operator_failures_total` and on any increase in
+Kubernetes Events tell a person watching a resource about operation claims,
+completion, policy refusal, approval changes, and failures. They are not a
+record. The API server keeps them for about an hour, and the manager's recorder
+drops some before they get there, as
+[An Event can be lost](../../troubleshoot/events/#an-event-can-be-lost) says: in
+[a measured run](../audit/#not-recorded) a schema's second approval reached no
+Event at all. `status.journal` is the operator's record, and
+[Audit a database change](../audit/) says what an audit can rely on and what the
+installation adds. Alert on a sustained increase in
+`ptah_operator_failures_total` and on any increase in
 `ptah_operator_applies_total{outcome="uncertain"}`. Use status Conditions and
 Events to identify the affected object instead of adding unbounded identity
 labels to metrics.
@@ -2943,13 +2952,15 @@ are tracked in
 
 ## Plan retention
 
-Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects may remain useful as
-audit evidence until Kubernetes garbage collection removes the owning schema;
-only the exact UID and fingerprint in `status.plan` are current. A read-only
-Job is created with a five-minute cleanup TTL, which Kubernetes counts from
-when the Job finishes, so a read whose result the manager has not taken by then
-runs again under a new Job. An Apply's Job is created with none, and receives
-its cleanup TTL before the controller clears the active operation: five
+Plans are owned by the schema, and a plan's chunks by the plan. Old plan objects
+stay until garbage collection removes them with the owning schema, which it does
+as soon as the schema is deleted, so [export](#export-a-plan-before-deleting-it)
+any an audit needs first. Only the exact UID and fingerprint in `status.plan`
+are current. A read-only Job is created with a five-minute cleanup TTL, which
+Kubernetes counts from when the Job finishes, so a read whose result the manager
+has not taken by then runs again under a new Job. An Apply's Job is created with
+none, and receives its cleanup TTL before the controller clears the active
+operation: five
 minutes, or [24 hours](#failed-apply-log) for an Apply that failed or whose outcome is
 unknown, when a person approved it or its migration run stopped the resource. Failure
 to schedule that TTL leaves the operation

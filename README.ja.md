@@ -78,6 +78,7 @@ kubectl ptah plan storefront --applied -n application -o sql
 した計画の承認をあなた自身として作成するため、承認の種類に対する `create` が必要です。
 `kubectl ptah suspend`、`resume`、`refresh` はスキーマまたはマイグレーションをあなた自身として
 パッチし、`kubectl ptah set-source` はそれをダイジェストで固定した別のアーティファクトに向け、
+`kubectl ptah settle` はデータベースのターゲットが移ったスキーマの証明を放棄し、
 `kubectl ptah wait` は変更に対してオペレーターが動作するのを待ちます。
 インストール方法と必要な名前空間スコープの RBAC
 は[計画を読む](https://operator.ptah.run/edge/use/read-a-plan/#install)にあります。
