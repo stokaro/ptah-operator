@@ -13,12 +13,16 @@
 //	/away/<prefix>/...  a redirect to /<prefix>/... on the other origin
 //
 // Every request is logged, and GET /requests answers the log as JSON, so a
-// phase can show that a host or a path received nothing.
+// phase can show that a host or a path received nothing. The digest of every
+// file is logged when the server starts and whenever the file changes, so a
+// phase that replaced a download's bytes knows when the server serves them.
 package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -90,6 +94,24 @@ func run() error {
 		_ = httpServer.Close()
 	}()
 	log.Printf("serving %s over https %s", s.root, *listen)
+	seen := map[string]string{}
+	if err := announce(s.root, seen, log.Printf); err != nil {
+		return err
+	}
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := announce(s.root, seen, log.Printf); err != nil {
+					log.Printf("read %s: %v", s.root, err)
+				}
+			}
+		}
+	}()
 	if err := httpServer.ListenAndServeTLS(*certificate, *key); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -172,6 +194,33 @@ func servedName(rest string) (string, bool) {
 		return "", false
 	}
 	return rest, true
+}
+
+// announce logs "file <name> is sha256:<hex>" for every file of root whose
+// digest differs from the one seen holds, and records it. A ConfigMap volume
+// keeps its own entries under names that begin with "..", which nothing
+// serves.
+func announce(root string, seen map[string]string, logf func(string, ...any)) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if _, ok := servedName(name); !ok {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, name)) // #nosec G304 -- an entry of the served directory
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(data)
+		if digest := "sha256:" + hex.EncodeToString(sum[:]); seen[name] != digest {
+			seen[name] = digest
+			logf("file %s is %s", name, digest)
+		}
+	}
+	return nil
 }
 
 func equal(got, want string) bool {

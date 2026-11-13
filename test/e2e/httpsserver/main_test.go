@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,5 +115,39 @@ func TestServedNameRefusesAnythingButOneElement(t *testing.T) {
 		if _, ok := servedName(rest); ok != want {
 			t.Errorf("servedName(%q) = %v, want %v", rest, ok, want)
 		}
+	}
+}
+
+// A file is announced once for each content it has held, and a ConfigMap
+// volume's own entries are not.
+func TestAnnounceLogsEachFileOnceForEachContent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for name, data := range map[string]string{"schema.zip": "first", "..data": "", "..2026_11_13": ""} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var lines []string
+	logf := func(format string, arguments ...any) { lines = append(lines, fmt.Sprintf(format, arguments...)) }
+	seen := map[string]string{}
+	for range 2 {
+		if err := announce(root, seen, logf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := "file schema.zip is sha256:a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e"
+	if len(lines) != 1 || lines[0] != first {
+		t.Fatalf("lines = %q, want only %q", lines, first)
+	}
+	if err := os.WriteFile(filepath.Join(root, "schema.zip"), []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := announce(root, seen, logf); err != nil {
+		t.Fatal(err)
+	}
+	second := "file schema.zip is sha256:16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4"
+	if len(lines) != 2 || lines[1] != second {
+		t.Fatalf("lines = %q, want %q after %q", lines, second, first)
 	}
 }
