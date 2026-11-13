@@ -668,6 +668,17 @@ has nothing to change for that.
   any other failure keeps the code it had
   ([#939](https://github.com/stokaro/ptah-operator/issues/939)). An artifact
   that `ptah schema push` built carries its rows and reads no row file.
+- **`kubectl ptah install`.** The plugin installs the chart a release published
+  to `oci://ghcr.io/stokaro/charts/ptah-operator` with Helm 4 and no image
+  value, by default at the plugin's own version, and waits for the release to
+  be ready. `--yaml` prints what it would apply instead, and `--out-dir` writes
+  it to files. [Install](../../start/install/#choose-a-version-once) now opens
+  with it. A release before v0.2.10 has no chart there, and the plugin says so.
+- **Approvers at install.** The new chart value `approverClusterRole.subjects`
+  binds the approver ClusterRole in every namespace, and `kubectl ptah install
+  --approver` fills it. It is empty by default, so an installation that does not
+  set it binds nobody, as before. A chart from v0.2.10 or earlier refuses the
+  value.
 - **Read-only Jobs are created with their cleanup TTL.** A read-only Job got its
   TTL only from a claim that harvested it, and admission admits that TTL only on
   a finished Job the active claim names by UID. A claim that let go of a read

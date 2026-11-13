@@ -68,7 +68,9 @@ kubectl ptah --version
 
 `kubectl plugin list` shows it once it is on `PATH`. It needs nothing else: no
 checkout of this repository, no Helm release on your machine, and no files
-beside it.
+beside it. `kubectl ptah install`, which installs the operator, is the one
+command that runs Helm 4, as [Install](../../start/install/#choose-a-version-once)
+shows.
 
 ## Which plan
 
@@ -195,18 +197,18 @@ Diagnostics go to standard error. Nothing reaches standard output until every
 check has held, so a plan whose last chunk is corrupt leaves you with an error
 rather than half its SQL.
 
-Exit status: `0` printed, approved, changed or reached, `1` could not read or
-verify, `2` the command line, `3` nothing stored to print, approve, change or
-wait on. The commands that write add `4` nothing approved or changed (the plan
-or the spec changed, the operator would not admit an approval now, the
-fingerprint given is not the current plan's, you declined, the resource was
-deleted and created again, set-source met a source that is not an OCI
-artifact, an Apply running, or a source another writer changed after it was
-read, or settle met a schema that has not stopped on a moved target, a stop
-that prints no value, or a value that no longer matches), `5` refused by
-RBAC or the API server, and `6` sent with no answer: the approval or the
-change may have been stored. A wait adds `7` timed out and `8` the resource
-will not reach the target.
+Exit status: `0` printed, approved, changed, reached or installed, `1` could not
+read or verify, or Helm did not install or render, `2` the command line, `3`
+nothing stored to print, approve, change or wait on. The commands that write add
+`4` nothing approved or changed (the plan or the spec changed, the operator
+would not admit an approval now, the fingerprint given is not the current
+plan's, you declined, the resource was deleted and created again, set-source met
+a source that is not an OCI artifact, an Apply running, or a source another
+writer changed after it was read, or settle met a schema that has not stopped on
+a moved target, a stop that prints no value, or a value that no longer matches),
+`5` refused by RBAC or the API server, and `6` sent with no answer: the approval
+or the change may have been stored. A wait adds `7` timed out and `8` the
+resource will not reach the target.
 
 ## Where a schema stands {#schema}
 
@@ -758,6 +760,10 @@ resource and nothing else. `approve --wait` reads the resource with the same
 `get` approve already has, and for a migration the approval it stored, with the
 `get` on `ptahmigrationapprovals` the approver ClusterRole grants; without that,
 it waits on the resource alone.
+
+`kubectl ptah install` creates CRDs, ClusterRoles, admission policies and the
+release namespace through Helm, as you, so it needs cluster-admin. With
+`--yaml` it reads no cluster and needs nothing.
 
 ## How the plan is stored
 

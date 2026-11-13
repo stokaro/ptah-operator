@@ -263,7 +263,8 @@ administrator on a cluster.
 Start namespace-scoped bindings from the
 desired-state author (`examples/desired-state-author-role.yaml`) and
 diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
-chart's optional approver ClusterRole remains unbound, so these three human
+chart's optional approver ClusterRole stays unbound unless
+`approverClusterRole.subjects` names someone, so these three human
 permission sets can be assigned to different identities. Diagnostic access
 deliberately excludes Secrets, plan chunks and ConfigMaps: the chunks are a
 plan's SQL, and a ConfigMap may be the copy of it an Apply mounted. It reads

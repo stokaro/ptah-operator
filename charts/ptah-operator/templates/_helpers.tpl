@@ -783,6 +783,48 @@ with a version or a build it was not released with.
 {{- end -}}
 {{- end -}}
 
+{{- /* approverSubjects is approverClusterRole.subjects as RBAC subjects, in
+      JSON, or refuses them. The schema holds the same shape, and this holds it
+      again under --skip-schema-validation, because what it guards is who may
+      approve. An upgrade with --reuse-values from a chart without the value
+      reads it as empty. */ -}}
+{{- define "ptah-operator.approverSubjects" -}}
+{{- $subjects := list -}}
+{{- $given := default (list) .Values.approverClusterRole.subjects -}}
+{{- if and $given (not .Values.approverClusterRole.create) -}}
+{{- fail "approverClusterRole.subjects binds the approver ClusterRole, which approverClusterRole.create: false does not create" -}}
+{{- end -}}
+{{- range $index, $subject := $given -}}
+{{- $where := printf "approverClusterRole.subjects[%d]" $index -}}
+{{- if not (kindIs "map" $subject) -}}
+{{- fail (printf "%s must be a subject with a kind and a name" $where) -}}
+{{- end -}}
+{{- $kind := toString (default "" $subject.kind) -}}
+{{- $name := toString (default "" $subject.name) -}}
+{{- $namespace := toString (default "" $subject.namespace) -}}
+{{- if or (eq (trim $name) "") (ne (trim $name) $name) -}}
+{{- fail (printf "%s.name is required and has no leading or trailing space" $where) -}}
+{{- end -}}
+{{- if has $name (list "system:authenticated" "system:unauthenticated" "system:anonymous") -}}
+{{- fail (printf "%s names %s, and an approval anyone can make is no approval" $where $name) -}}
+{{- end -}}
+{{- if or (eq $kind "User") (eq $kind "Group") -}}
+{{- if $namespace -}}
+{{- fail (printf "%s is a %s, which has no namespace" $where $kind) -}}
+{{- end -}}
+{{- $subjects = append $subjects (dict "kind" $kind "apiGroup" "rbac.authorization.k8s.io" "name" $name) -}}
+{{- else if eq $kind "ServiceAccount" -}}
+{{- if not $namespace -}}
+{{- fail (printf "%s is a ServiceAccount and needs its namespace" $where) -}}
+{{- end -}}
+{{- $subjects = append $subjects (dict "kind" $kind "name" $name "namespace" $namespace) -}}
+{{- else -}}
+{{- fail (printf "%s.kind is %q; it is User, Group or ServiceAccount" $where $kind) -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $subjects -}}
+{{- end -}}
+
 {{- define "ptah-operator.validateLeaderElection" -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection) -}}
 {{- fail "leaderElection must be true when replicaCount is greater than 1" -}}
