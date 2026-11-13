@@ -197,8 +197,8 @@ func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
 			}
 		}
 	}
-	if examined != 10 {
-		t.Fatalf("examined %d rules, want all ten chart rules", examined)
+	if examined != 11 {
+		t.Fatalf("examined %d rules, want all eleven chart rules", examined)
 	}
 }
 
@@ -680,6 +680,7 @@ func TestAlRulesLoaded(t *testing.T) {
 		"PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
 		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorPlanStoreLarge",
 		"PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
+		"PtahOperatorJournalLinesDropped",
 	}
 	type rule struct {
 		Type      string `json:"type"`

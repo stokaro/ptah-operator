@@ -30,8 +30,16 @@ const testViewUnsyncedFor = "10m"
 
 var ruleMetricName = regexp.MustCompile(`\bptah_operator_[a-z_]+\b`)
 
-// exportedMetricName matches the two ways the telemetry package names a family:
-// the full name in a descriptor, and a namespace with a name in the options.
+// metricPackages are the packages whose metrics the manager registers on the
+// registry its metrics endpoint serves: the telemetry package, and the journal
+// log, which cmd/manager hands that registry.
+var metricPackages = []string{
+	filepath.Join("internal", "telemetry"),
+	filepath.Join("internal", "journallog"),
+}
+
+// exportedMetricName matches the two ways those packages name a family: the
+// full name in a descriptor, and a namespace with a name in the options.
 var exportedMetricName = regexp.MustCompile(`"(ptah_operator_[a-z_]+)"|Namespace:\s*"ptah_operator",\s*Name:\s*"([a-z_]+)"`)
 
 func TestThePrometheusRuleIsAbsentUntilItIsAskedFor(t *testing.T) {
@@ -162,6 +170,26 @@ func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
 	}
 }
 
+// The dropped journal lines alert renders with the rules, since any drop
+// counts and its value is only how long the alert stays, and an empty value
+// leaves it out.
+func TestTheJournalAlertRendersWithTheRules(t *testing.T) {
+	t.Parallel()
+	if rule := renderedPrometheusRule(t); !strings.Contains(rule, "alert: PtahOperatorJournalLinesDropped") {
+		t.Errorf("the rules rendered without the journal alert:\n%s", rule)
+	}
+	if rule := renderedPrometheusRuleWith(t, "monitoring.prometheusRule.journalLinesDroppedWithin="); strings.Contains(rule, "PtahOperatorJournalLinesDropped") {
+		t.Errorf("an empty journalLinesDroppedWithin rendered the journal alert:\n%s", rule)
+	}
+}
+
+// The dropped journal lines alert against the case it exists for, as the
+// chart renders it by default.
+func TestTheJournalAlertFiresOnADroppedLine(t *testing.T) {
+	t.Parallel()
+	runPromtool(t, renderedPrometheusRule(t), "journal.test.yaml")
+}
+
 // The state alerts against the cases they exist for.
 func TestTheStateAlertsFireOnWhatTheyAreFor(t *testing.T) {
 	t.Parallel()
@@ -215,30 +243,34 @@ func promtoolOrSkip(t *testing.T) string {
 func exportedMetricNames(t *testing.T) map[string]bool {
 	t.Helper()
 	names := map[string]bool{}
-	directory := repositoryFile(t, filepath.Join("internal", "telemetry"))
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		t.Fatalf("read %s: %v", directory, err)
-	}
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		content, err := os.ReadFile(filepath.Join(directory, entry.Name())) //nolint:gosec // A path under the repository.
+	for _, pkg := range metricPackages {
+		found := 0
+		directory := repositoryFile(t, pkg)
+		entries, err := os.ReadDir(directory)
 		if err != nil {
-			t.Fatalf("read %s: %v", entry.Name(), err)
+			t.Fatalf("read %s: %v", directory, err)
 		}
-		for _, match := range exportedMetricName.FindAllStringSubmatch(string(content), -1) {
-			if match[1] != "" {
-				names[match[1]] = true
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
 			}
-			if match[2] != "" {
-				names["ptah_operator_"+match[2]] = true
+			content, err := os.ReadFile(filepath.Join(directory, entry.Name())) //nolint:gosec // A path under the repository.
+			if err != nil {
+				t.Fatalf("read %s: %v", entry.Name(), err)
+			}
+			for _, match := range exportedMetricName.FindAllStringSubmatch(string(content), -1) {
+				found++
+				if match[1] != "" {
+					names[match[1]] = true
+				}
+				if match[2] != "" {
+					names["ptah_operator_"+match[2]] = true
+				}
 			}
 		}
-	}
-	if len(names) == 0 {
-		t.Fatal("the telemetry package registers no ptah_operator metric this can read")
+		if found == 0 {
+			t.Fatalf("%s registers no ptah_operator metric this can read", pkg)
+		}
 	}
 	return names
 }

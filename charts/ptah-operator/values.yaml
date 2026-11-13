@@ -247,6 +247,11 @@ monitoring:
     # Where each rule's runbook_url points. The page and its anchor are fixed;
     # this is the guide they are read from.
     runbookBaseURL: "https://operator.ptah.run/edge/use/operations/"
+    # How long the dropped journal lines alert stays after a manager dropped a
+    # line. It renders with the rules: any dropped line is one no collector can
+    # have, so there is no threshold to choose, only this hold. Keep it above
+    # two scrape intervals. Empty leaves the alert out.
+    journalLinesDroppedWithin: "10m"
     # The rules below render only where their threshold is set. Each one is a
     # number about a particular cluster -- its intervals, its Job start times,
     # its tolerance -- so the chart ships none; the operations guide says how

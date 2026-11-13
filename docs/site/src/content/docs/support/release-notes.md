@@ -16,6 +16,20 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.12
+
+**Before you upgrade.** An installation that renders the chart's rules gains
+`PtahOperatorJournalLinesDropped`. Set
+`monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
+
+- **An alert for dropped journal lines.** `PtahOperatorJournalLinesDropped`
+  fires when any manager replica dropped a journal line within
+  `monitoring.prometheusRule.journalLinesDroppedWithin`, 10 minutes by default.
+  A dropped line reached no collector, so any drop counts, and the alert renders
+  with the rules rather than waiting for a threshold.
+  [Dropped journal lines](../../use/operations/#journal-lines-dropped) says what
+  to check.
+
 ## 0.2.11
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

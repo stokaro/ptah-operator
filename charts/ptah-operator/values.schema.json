@@ -424,7 +424,7 @@
         "prometheusRule": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "labels", "viewUnsyncedFor", "runbookBaseURL", "lockReleaseOwedFor", "failures", "admissionFailingFor"],
+          "required": ["enabled", "labels", "viewUnsyncedFor", "runbookBaseURL", "lockReleaseOwedFor", "failures", "journalLinesDroppedWithin", "admissionFailingFor"],
           "properties": {
             "overdueAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
             "operationStalledAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
@@ -440,6 +440,7 @@
                 "count": {"type": ["integer", "null"], "minimum": 0}
               }
             },
+            "journalLinesDroppedWithin": {"type": "string", "pattern": "^$|^[1-9][0-9]*(s|m|h)$"},
             "admissionFailingFor": {"type": "string", "pattern": "^$|^[1-9][0-9]*(s|m|h)$"},
             "enabled": {
               "type": "boolean"

@@ -2877,6 +2877,34 @@ max_over_time(max(ptah_operator_active_operation_seconds)[7d:1m])
 max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
 ```
 
+#### Dropped journal lines {#journal-lines-dropped}
+
+`PtahOperatorJournalLinesDropped` fires when any manager replica dropped a
+journal line within the last `journalLinesDroppedWithin`, and clears once that
+window has passed the last drop. It renders with the rules, whatever thresholds
+are set, because it has no threshold: each dropped line is an entry that never
+reached standard output, so no collector has it. The value is only how long the
+alert stays, 10 minutes by default; keep it above two scrape intervals, and set
+it to `""` to leave the alert out. While its resource
+exists, `status.journal` still holds the entry; once the resource is deleted,
+nothing does. Copy the journals of the resources that changed in the window
+before anyone deletes them.
+
+A line drops when the 1,024 lines the manager queues fill, or when a write to
+standard output fails. The queue fills only while standard output stops taking
+lines, so look at what reads it: the node the manager runs on. The container
+runtime there reads the output of every container on the node and writes it to
+the node's log files, so a stalled runtime, or a full or failing disk under
+`/var/log/pods`, stops the manager's output. Read the node's conditions and the
+runtime's and the kubelet's logs. The manager counts a failed write and does not
+log it.
+
+The counter sees only these. A line the kubelet rotated away before the
+collector read it, or one the collector lost, was written, and the counter does
+not move. Compare the collector's copy with `status.journal` to find those.
+[The journal in the manager's log](../audit/#journal-lines) lists every way a
+line can be missing.
+
 #### What reaches a receiver {#alert-delivery}
 
 The rules are tested against synthetic series with promtool, and the path a
@@ -2899,8 +2927,13 @@ intervals are the phase's, not a recommendation: a deployment that scrapes
 every 30 seconds has a target larger by the same amount.
 
 The phase does not drive a certificate close to expiry, an admission webhook
-the API server cannot reach, or a failed upgrade hook. Their rules are tested
-with promtool only. `PtahOperatorAdmissionUnavailable` reads the API server's
+the API server cannot reach, a failed upgrade hook, or a journal line the
+manager could not write. Their rules are tested with promtool only, and the
+phase's Prometheus holds the journal rule loaded and healthy. The manager's
+standard output stops only when the node's container runtime stops reading it,
+and stopping the runtime stops every container on that node, so the journal
+alert has no cluster row yet
+([#1075](https://github.com/stokaro/ptah-operator/issues/1075)). `PtahOperatorAdmissionUnavailable` reads the API server's
 own `apiserver_admission_webhook_rejection_count`, and a Job that a hook left
 failed is Kubernetes object state; both come from the cluster's Kubernetes
 monitoring, not from this operator's endpoint.
