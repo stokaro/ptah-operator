@@ -221,9 +221,10 @@ after encoding. Split the change across artifacts.
 
 ### Old `PtahSchemaPlan` objects are piling up. Do I clean them? {#old-plan-objects}
 
-They are owned by the schema and can stay as audit evidence until garbage
-collection removes the owner. Only the exact UID and fingerprint in `status.plan`
-are current, so read that rather than the newest object you find.
+They are owned by the schema and stay until garbage collection removes them
+with the owner, which happens as soon as the schema is deleted, so export any
+an audit needs first. Only the exact UID and fingerprint in `status.plan` are
+current, so read that rather than the newest object you find.
 
 - [Operations](../use/operations/#plan-retention)
 
