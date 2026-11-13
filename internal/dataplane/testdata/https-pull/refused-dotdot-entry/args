@@ -1,0 +1,14 @@
+migrations
+pull
+https://e2e-https.ptah-test.svc/bearer/dotdot.tar.gz
+--format
+tar.gz
+--path
+orders-1.0/db/migrations
+--expect-download-digest
+sha256:625319d1188a78704ed64c95e03a240438e7e0389773fdd77d910c92e6731b32
+--ca-file
+/credentials/https-ca/ca.pem
+--out
+/fetch-work/ptah-https-fetch-capture/migrations
+--json

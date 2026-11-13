@@ -1,0 +1,1 @@
+error: archive entry is not a regular file or a directory: "orders-1.0/db/migrations/0000000003_linked.up.sql" is a symbolic link

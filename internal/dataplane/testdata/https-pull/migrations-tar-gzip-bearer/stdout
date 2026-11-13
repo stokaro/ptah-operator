@@ -1,0 +1,34 @@
+{
+  "source": "https",
+  "reference": "https://e2e-https.ptah-test.svc/bearer/migrations.tar.gz",
+  "format": "tar.gz",
+  "download_digest": "sha256:44b2f485fb27e42982838a8b3a3f512c42b1566829c1b580435494f7d61fb653",
+  "download_size": 321,
+  "path": "orders-1.0/db/migrations",
+  "content_digest": "sha256:eca90ad888a699bf042a99b2ebd384f53d1afba878c75fd685a7bb32b51c2017",
+  "files": [
+    {
+      "path": "0000000001_create_https_parts.down.sql",
+      "size": 28,
+      "sha256": "2e596b4d173bc6c67dd9bcad7d876271d27cde326694b42f0598b4002808a938"
+    },
+    {
+      "path": "0000000001_create_https_parts.up.sql",
+      "size": 85,
+      "sha256": "0f0097cf776928cb8c44e603d2de9eb7fb854a1532451e53d8d56bfbfac5cd4d"
+    },
+    {
+      "path": "0000000002_add_https_sku.down.sql",
+      "size": 45,
+      "sha256": "4ce65e5584c4d76f651b571cbd411e4af1b05c222e7029b33b815a0396e8438d"
+    },
+    {
+      "path": "0000000002_add_https_sku.up.sql",
+      "size": 49,
+      "sha256": "c67bff86c2e02f14208fec12a5eb2a6257af0be2cc707dbbcb6cab31d156b776"
+    }
+  ],
+  "written": [
+    "/fetch-work/ptah-https-fetch-capture/migrations"
+  ]
+}
