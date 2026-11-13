@@ -392,6 +392,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:4d8cf9bb8337208f5294b2fe7ab3908dad01b7af0bbee18e77f9551521471793",
       "reason": "Deliver every credential to the runner by file (#843). A Job may name the database URL, the development URL, a registry credential and a Git https credential by the path of a file in a read-only Secret volume (PTAH_OPERATOR_*_FILE). The runner reads each file into the variable Ptah reads, in the child's environment only, before the Redactor and the target checks, and refuses a Job that names a credential both ways or a file it cannot read before the child starts. The new fetch-oci command runs only the schema or migrations pull the builder writes, with the registry credential read the same way. A Job that names no file runs as before, so a Job any released manager built is unchanged, and a manager harvests only a Job its own builder rebuilds. SQL authority, payloads, result frames and delivery identity are the same, so an approval granted before this change authorizes what it did then. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:679fb8ea3e01d732d28b102240431f4a8c74319d96c81c8f2ec3e303247b72d0",
+      "reason": "Carry where a schema Apply stopped (#1064). An Apply report of outcome unknown or failed may carry Ptah's failure object: the position of the statement the run stopped at, how many it had, whether the commit failed, and the SQLSTATE and MySQL error number, with no text. internal/dataplane holds it to the forms Ptah's contract gives and to those two outcomes, and the result frame carries it as applyFailure only on an Apply whose error the report set. A failed report that names a position says the run sent a statement and the database rolled back every one, where it said nothing was sent. Commands, payloads, delivery identity, SQL authority and retry limits are the same. An earlier manager that adopted such a Job would read the frame without the field or refuse it as malformed, and records the Apply Unknown either way, as it records it now; it meets one only after a rollback, which the CRD schema version this change moves refuses. Protocol 1 stays."
     }
   ]
 }
