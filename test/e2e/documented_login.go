@@ -18,15 +18,15 @@ const (
 
 // documentedPostgreSQLLogin is the statements the page's PostgreSQL authority
 // section shows, for login on database: a login with no administrative
-// attribute, CONNECT on the database, and USAGE and CREATE on its public
-// schema. What the login creates afterwards it owns, which is the last item the
+// attribute, CONNECT and TEMPORARY on the database, and USAGE and CREATE on its
+// public schema. What the login creates afterwards it owns, which is the last item the
 // page lists. A drift row creates its login with these statements, and
 // TestDocumentedLoginIsTheOneThePageShows holds them to the page, so the login
 // a row proves and the one the page tells a person to create are one list.
 func documentedPostgreSQLLogin(login, database string) []string {
 	return []string{
 		"CREATE ROLE " + login + " LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-		"GRANT CONNECT ON DATABASE " + database + " TO " + login,
+		"GRANT CONNECT, TEMPORARY ON DATABASE " + database + " TO " + login,
 		"GRANT USAGE, CREATE ON SCHEMA public TO " + login,
 	}
 }
@@ -67,15 +67,15 @@ func documentedPostgreSQLLoginQuery(login, database string) string {
 
 // documentedPostgreSQLLoginReading is what documentedPostgreSQLLoginQuery reads
 // for the login the page documents, once the fixture revoked what PUBLIC holds
-// on a new database: no attribute but LOGIN, no role, CONNECT and nothing else
-// on the database, USAGE and CREATE on the schema. extensions is the one grant a
+// on a new database: no attribute but LOGIN, no role, CONNECT and TEMPORARY on
+// the database, USAGE and CREATE on the schema. extensions is the one grant a
 // row may add, CREATE on the database, which installs a trusted extension.
 func documentedPostgreSQLLoginReading(extensions bool) string {
 	create := "f"
 	if extensions {
 		create = "t"
 	}
-	return "f|f|f|f|f|t|0|t|" + create + "|f|t|t"
+	return "f|f|f|f|f|t|0|t|" + create + "|t|t|t"
 }
 
 // documentedMySQLAccountQuery reads, as root, what account holds: its

@@ -35,7 +35,7 @@ func TestPageShowsRefusesAPageThatMovedApart(t *testing.T) {
 		postgreSQLAuthoritySection, "", "The login needs only:", "",
 		"```sql",
 		"CREATE ROLE ptah LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;",
-		"GRANT CONNECT ON DATABASE app TO ptah;",
+		"GRANT CONNECT, TEMPORARY ON DATABASE app TO ptah;",
 		"GRANT USAGE, CREATE ON SCHEMA public TO ptah;",
 		"```", "",
 		mySQLAuthoritySection, "", "Grant:", "",
@@ -56,7 +56,8 @@ func TestPageShowsRefusesAPageThatMovedApart(t *testing.T) {
 		want                    []string
 	}{
 		{"a PostgreSQL login made a superuser", postgreSQLAuthoritySection, "NOSUPERUSER", "SUPERUSER", postgres},
-		{"a PostgreSQL grant dropped", postgreSQLAuthoritySection, "GRANT CONNECT ON DATABASE app TO ptah;\n", "", postgres},
+		{"a PostgreSQL grant dropped", postgreSQLAuthoritySection, "GRANT CONNECT, TEMPORARY ON DATABASE app TO ptah;\n", "", postgres},
+		{"TEMPORARY dropped from the PostgreSQL grant", postgreSQLAuthoritySection, "CONNECT, TEMPORARY ON DATABASE", "CONNECT ON DATABASE", postgres},
 		{"a PostgreSQL grant added", postgreSQLAuthoritySection, "GRANT USAGE, CREATE ON SCHEMA public TO ptah;\n",
 			"GRANT USAGE, CREATE ON SCHEMA public TO ptah;\nGRANT CREATE ON DATABASE app TO ptah;\n", postgres},
 		{"a PostgreSQL schema privilege dropped", postgreSQLAuthoritySection, "USAGE, CREATE ON SCHEMA", "USAGE ON SCHEMA", postgres},
@@ -87,13 +88,15 @@ func TestPageShowsRefusesAPageThatMovedApart(t *testing.T) {
 func TestDocumentedLoginReadingsRefuseWiderLogins(t *testing.T) {
 	t.Parallel()
 	const (
-		documented = "f|f|f|f|f|t|0|t|f|f|t|t"
+		documented = "f|f|f|f|f|t|0|t|f|t|t|t"
 		// The image's POSTGRES_USER, which every PostgreSQL row connected as.
 		superuser = "t|t|t|t|t|t|0|t|t|t|t|t"
-		// The statements without the revoke: PUBLIC's TEMPORARY reaches it.
-		publicKept = "f|f|f|f|f|t|0|t|f|t|t|t"
+		// The page's statements before they granted TEMPORARY, under the
+		// revoke: Ptah's column probe cannot create its temporary table, and
+		// the row's SQL audit refused the probe it falls back to.
+		noTemporary = "f|f|f|f|f|t|0|t|f|f|t|t"
 		// The statements and CREATE on the database, for a trusted extension.
-		extension = "f|f|f|f|f|t|0|t|t|f|t|t"
+		extension = "f|f|f|f|f|t|0|t|t|t|t|t"
 		// An account made with the page's grant.
 		mysqlDocumented = "ALTER,CREATE,DROP,EXECUTE,INDEX,REFERENCES,SELECT,SHOW VIEW,TRIGGER|0|USAGE|0|0"
 		// The audit account the MySQL rows connected as: ALL PRIVILEGES on one
@@ -115,12 +118,12 @@ func TestDocumentedLoginReadingsRefuseWiderLogins(t *testing.T) {
 	if got := documentedMySQLAccountReading(); got != mysqlDocumented {
 		t.Errorf("the documented account reads %q, and the guard expects %q", mysqlDocumented, got)
 	}
-	for _, reading := range []string{superuser, publicKept, extension} {
+	for _, reading := range []string{superuser, noTemporary, extension} {
 		if reading == documentedPostgreSQLLoginReading(false) {
 			t.Errorf("the PostgreSQL guard accepts %q", reading)
 		}
 	}
-	for _, reading := range []string{superuser, publicKept, documented} {
+	for _, reading := range []string{superuser, noTemporary, documented} {
 		if reading == documentedPostgreSQLLoginReading(true) {
 			t.Errorf("the PostgreSQL extension guard accepts %q", reading)
 		}

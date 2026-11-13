@@ -193,6 +193,16 @@ GRANT SELECT, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER, EXECUTE, SHOW VIE
 `SHOW GRANTS` then names `` `my\_app`.* ``, and the account is refused in
 `myXapp`.
 
+[PostgreSQL authority](../databases/#postgresql-authority) now lists
+`TEMPORARY` on the database beside `CONNECT`. Ptah reads a declared column's
+type and default back from a temporary table, and without the privilege a
+column can read as changed on every plan. A new database grants `TEMPORARY` to
+`PUBLIC`, so a login has it unless that grant was revoked. If it was:
+
+```sql
+GRANT TEMPORARY ON DATABASE app TO ptah;
+```
+
 - **`kubectl ptah history`.** `kubectl ptah history schema/NAME` or
   `migration/NAME` prints the lifecycle journal the resource's status keeps, in
   the order the operator recorded it and from when it is complete, then every

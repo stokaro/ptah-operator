@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-13T10:36:35.541789+00:00",
+  "frozenAt": "2026-11-13T12:00:34.361253+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -32,7 +32,7 @@
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "72f584bc52d06baf372b5c854a7377a82db03924af306dc6300d69c6b3cf2ac5"
+      "sha256": "54538ee8c40803d9cdcc912a31307847dd97ff2884bc441c1352187b06a6eb84"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -84,5 +84,5 @@
     "freezeCommit": "70456fc6bcaa14816af57210d1aff69d40d80d11",
     "sha256": "1c19bfd7cf781c095da91f16d15bd12bca3e08e1aced42192f02f4c31edb6318"
   },
-  "revisionReason": "Record the databases page after it shows the statements that create the documented PostgreSQL login, and says that the drift rows connect as it or as a MySQL account holding the documented grant (#812). Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Record the databases page after it shows the statements that create the documented PostgreSQL login, grants that login TEMPORARY on the database for Ptah's column spelling probe, and says that the drift rows connect as it or as a MySQL account holding the documented grant (#812). Phases, scenarios, cells, platforms, the profile and its targets are unchanged."
 }

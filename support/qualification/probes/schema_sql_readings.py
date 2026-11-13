@@ -23,6 +23,7 @@ import argparse
 import binascii
 import json
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -48,6 +49,13 @@ CONTROL_V1 = "INSERT INTO e2e_widgets (id, name) VALUES (701, 'identity-control'
 # lifecycle creates it.
 EXCLUDED = ['CREATE TABLE e2e_excluded_policy_keep (id bigint NOT NULL PRIMARY KEY, note varchar(255))',
             "INSERT INTO e2e_excluded_policy_keep VALUES (701, 'outside-managed-scope')"]
+# The login a documented reading connects as on PostgreSQL. On MySQL it keeps
+# ACCOUNT, so every MySQL reading names the same account.
+LOGIN = 'ptah_documented'
+DATABASES_PAGE = ROOT / 'docs/site/src/content/docs/support/databases.md'
+# The stale-plan readings a documented capture keeps: the ones that witness the
+# contract.
+DOCUMENTED_DRIFT = {'drift-stale-apply', 'drift-observe', 'drift-plan', 'drift-validate-plan'}
 OBSERVE = ['schema', 'drift', '--schema-file', '/desired.sql', '--format', 'json']
 PLAN = ['schema', 'plan', '--schema-file', '/desired.sql', '--output', '/tmp/plan.json', '--json']
 APPLY = ['schema', 'apply', '--plan', '/plan.json', '--auto-approve', '--json']
@@ -75,11 +83,38 @@ def run(argv, data=None, check=True, timeout=COMMAND_TIMEOUT):
     return result
 
 
-class Lab:
-    """One disposable server, its network, and the executor runs against it."""
+def documented_statements(engine, database, login):
+    """The statements the databases page shows for engine, naming database and login.
 
-    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST, server_image=None):
+    A documented reading creates its login from the page itself, so it reads
+    under the authority the page tells a person to grant and no other.
+    """
+    heading = '## PostgreSQL authority' if engine == 'postgresql' else '## MySQL authority'
+    page = DATABASES_PAGE.read_text()
+    section = page[page.index(heading) + len(heading):]
+    section = section[:section.index('\n## ')]
+    block = re.search(r'```sql\n(.*?)```', section, re.S).group(1)
+    if engine == 'postgresql':
+        return re.sub(r'\bptah\b', login, re.sub(r'\bapp\b', database, block))
+    # A database-level grant reads an unescaped _ or % as a wildcard, as the
+    # page says, so the database is named the way the page tells a person to.
+    escaped = database.replace('_', '\\_').replace('%', '\\%')
+    return block.replace('`app`', f'`{escaped}`').replace("'ptah'@'%'", f"'{login}'@'%'")
+
+
+class Lab:
+    """One disposable server, its network, and the executor runs against it.
+
+    A documented Lab connects the executor as the login the databases page
+    shows. On PostgreSQL the login creates the setup's files and so owns what
+    they create, and the server's superuser runs the setup's statements, as the
+    e2e rows do. On MySQL root creates both, and the account holds only the
+    page's grant.
+    """
+
+    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST, server_image=None, documented=False):
         self.engine, self.image, self.database, self.address = engine, image, database, address
+        self.documented = documented
         self.server_image = server_image or SERVERS[engine]
         self.docker = ['docker', '--context', context]
         self.name = f'ptah-sql-readings-{engine}-{secrets.token_hex(4)}'
@@ -113,10 +148,10 @@ class Lab:
                                self.server_image, '-c', 'log_statement=all', '-c', 'logging_collector=on',
                                '-c', 'log_destination=jsonlog', '-c', 'log_directory=/tmp/pglog', '-c', 'log_filename=pg'])
         else:
+            account = [] if self.documented else ['-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}']
             run(self.docker + ['run', '-d', '--name', server, '--network', self.name,
                                '-e', f'MYSQL_ROOT_PASSWORD={self.password}', '-e', f'MYSQL_DATABASE={self.database}',
-                               '-e', f'MYSQL_USER={ACCOUNT}', '-e', f'MYSQL_PASSWORD={self.password}', self.server_image,
-                               '--general-log=1', '--log-output=TABLE'])
+                               *account, self.server_image, '--general-log=1', '--log-output=TABLE'])
         deadline = time.time() + 180
         while time.time() < deadline:
             # Over TCP: the image's temporary init server listens on the
@@ -132,10 +167,24 @@ class Lab:
             time.sleep(2)
         else:
             raise RuntimeError(f'{self.engine} did not start')
+        if self.documented:
+            self.document()
         if self.engine == 'mysql':
             # The image's own initialization connected through the socket; the
             # journal begins empty for the readings.
             self.sql('TRUNCATE mysql.general_log', root=True)
+
+    def document(self):
+        """Create the documented login, holding what the page shows and nothing else."""
+        if self.engine == 'postgresql':
+            # A new database grants CONNECT and TEMPORARY to PUBLIC; revoked, the
+            # login holds only what the page grants it.
+            self.sql(f'REVOKE ALL ON DATABASE {self.database} FROM PUBLIC;\n'
+                     + documented_statements('postgresql', self.database, LOGIN)
+                     + f"ALTER ROLE {LOGIN} PASSWORD '{self.password}';\n")
+            return
+        self.sql(f"CREATE USER '{ACCOUNT}'@'%' IDENTIFIED BY '{self.password}';\n"
+                 + documented_statements('mysql', self.database, ACCOUNT), root=True)
 
     def __exit__(self, *_):
         for kind, name in reversed(self.created):
@@ -160,18 +209,33 @@ class Lab:
             print(f"{' '.join(argv[:4])} exited {result.returncode}: {result.stderr.decode()[-400:]}; "
                   f'remove the {kind} {name} by hand', file=sys.stderr)
 
-    def sql(self, text, root=False):
+    def sql(self, text, root=False, login=False):
+        """Run text as ACCOUNT, as MySQL's root with root, or on PostgreSQL as LOGIN with login."""
         if self.engine == 'postgresql':
-            return run(self.docker + ['exec', '-i', self.server, 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', ACCOUNT, '-d', self.database],
+            role = LOGIN if login else ACCOUNT
+            return run(self.docker + ['exec', '-i', self.server, 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', role, '-d', self.database],
                        text.encode()).stdout
         user = ['-uroot', f'-p{self.password}'] if root else [f'-u{ACCOUNT}', f'-p{self.password}', self.database]
         return run(self.docker + ['exec', '-i', self.server, 'mysql', '-N', '-B'] + user, text.encode()).stdout
 
+    def admin(self, text):
+        """Run text in the database as the role that changes it behind the executor's back.
+
+        That is ACCOUNT, except that a documented MySQL account cannot create or
+        change rows, so root does it there.
+        """
+        if self.engine == 'mysql' and self.documented:
+            return self.sql(f'USE {self.database};\n' + text, root=True)
+        return self.sql(text)
+
     def seed(self, *files, statements=()):
         for name in files:
-            self.sql((FIXTURES / name).read_text())
+            if self.documented and self.engine == 'postgresql':
+                self.sql((FIXTURES / name).read_text(), login=True)
+            else:
+                self.admin((FIXTURES / name).read_text())
         for statement in statements:
-            self.sql(statement + ';')
+            self.admin(statement + ';')
 
     def mark(self):
         if self.engine == 'postgresql':
@@ -211,8 +275,9 @@ class Lab:
     def ptah(self, args, desired=None, plan=None, environment=None, files=None):
         """Run one executor command; return its exit code, journal and saved plan."""
         container = self.name + '-ptah-' + secrets.token_hex(3)
-        url = (f'postgres://{ACCOUNT}:{self.password}@{self.server}:5432/{self.database}?sslmode=disable'
-               if self.engine == 'postgresql' else f'mysql://{ACCOUNT}:{self.password}@{self.server}:3306/{self.database}')
+        role = LOGIN if self.documented and self.engine == 'postgresql' else ACCOUNT
+        url = (f'postgres://{role}:{self.password}@{self.server}:5432/{self.database}?sslmode=disable'
+               if self.engine == 'postgresql' else f'mysql://{role}:{self.password}@{self.server}:3306/{self.database}')
         env = ['-e', f'PTAH_DB_URL={url}']
         for key, value in (environment or {}).items():
             env += ['-e', f'{key}={value}']
@@ -243,6 +308,8 @@ def scenarios(engine):
     """Each reading: its file stem, the setup, and the command sequence that produces it."""
     v1, v2, v3, v4, fault = (f'{engine}-{name}.sql' for name in ('v1', 'v2', 'v3', 'v4', 'fault-v1'))
     populated = dict(files=(v3,), statements=(CONTROL_V3,))
+    excluded = dict(files=(v3,), statements=(CONTROL_V3,) + tuple(EXCLUDED))
+    documented = dict(excluded, documented=True)
     return [
         ('', populated, [('observe', OBSERVE, fault), ('plan', PLAN, fault)]),
         ('destructive-', populated, [('observe', OBSERVE, v4), ('plan', PLAN, v4)]),
@@ -253,6 +320,11 @@ def scenarios(engine):
         ('initial-v1-', dict(files=(), statements=()), [('observe', OBSERVE, v1), ('plan', PLAN, v1)]),
         ('tag-v2-', dict(files=(v1,), statements=(CONTROL_V1,)), [('observe', OBSERVE, v2), ('plan', PLAN, v2)]),
         ('tag-v3-', dict(files=(v1,), statements=(CONTROL_V1,)), [('observe', OBSERVE, v3), ('plan', PLAN, v3)]),
+        # The exclusion row connects as the login support/databases.md shows,
+        # and another role creates the excluded table.
+        ('documented-exclusion-wide-', documented, [('observe', OBSERVE, fault), ('plan', PLAN, fault)]),
+        ('documented-exclusion-narrow-', documented,
+         [('observe', OBSERVE, fault), ('plan', PLAN + ['--exclude=e2e_excluded_policy_keep'], fault)]),
     ]
 
 
@@ -265,7 +337,7 @@ def capture(context, image, engine, out):
     """Write every reading for one engine into out and return what each command did."""
     results = {}
     for variant, setup, steps in scenarios(engine):
-        with Lab(context, engine, image) as lab:
+        with Lab(context, engine, image, documented=setup.get('documented', False)) as lab:
             lab.seed(*setup['files'], statements=setup['statements'])
             for operation, args, desired in steps:
                 code, rows, saved = lab.ptah(args, desired=desired)
@@ -275,6 +347,9 @@ def capture(context, image, engine, out):
                         raise RuntimeError(f'{engine} {variant} saved no plan')
                     (out / f'{engine}-schema-{variant}plan.json').write_bytes(saved.read_bytes())
     results.update(capture_stale_plan(context, image, engine, out, f'{engine}-schema-'))
+    # The drift rows connect as the documented login too.
+    results.update(capture_stale_plan(context, image, engine, out, f'{engine}-schema-documented-',
+                                      keep=DOCUMENTED_DRIFT, documented=True))
     # A runner Plan reads the plan twice and validates the first read with a
     # dry run under the resource's lock timeout.
     if engine == 'mysql':
@@ -296,7 +371,7 @@ def capture(context, image, engine, out):
     return results
 
 
-def capture_stale_plan(context, image, engine, out, stem, server_image=None, keep=None):
+def capture_stale_plan(context, image, engine, out, stem, server_image=None, keep=None, documented=False):
     """Save a plan, change the database under it, refuse the old plan, then observe, plan, validate and apply afresh."""
     results = {}
 
@@ -305,11 +380,11 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
             write(out, f'{stem}{name}.jsonl', rows, code, results)
 
     fault, v3 = f'{engine}-fault-v1.sql', f'{engine}-v3.sql'
-    with Lab(context, engine, image, server_image=server_image) as lab:
+    with Lab(context, engine, image, server_image=server_image, documented=documented) as lab:
         lab.seed(v3, statements=(CONTROL_V3,))
         code, rows, first = lab.ptah(PLAN, desired=fault)
         record('drift-plan-before', rows, code)
-        lab.sql('ALTER TABLE e2e_widgets DROP COLUMN enabled;')
+        lab.admin('ALTER TABLE e2e_widgets DROP COLUMN enabled;')
         code, rows, _ = lab.ptah(APPLY, plan=first, environment={'PTAH_LOCK_TIMEOUT': '60s'})
         record('drift-stale-apply', rows, code)
         code, rows, _ = lab.ptah(OBSERVE, desired=fault)
@@ -386,7 +461,8 @@ def comparable(path):
     return [(row['type'], row['client'], row['argumentHex']) for row in rows]
 
 
-CONTRACT_VARIANTS = ('', 'destructive-', 'exclusion-wide-', 'exclusion-narrow-', 'initial-v1-', 'tag-v2-', 'tag-v3-', 'drift-')
+CONTRACT_VARIANTS = ('', 'destructive-', 'exclusion-wide-', 'exclusion-narrow-', 'initial-v1-', 'tag-v2-', 'tag-v3-', 'drift-',
+                     'documented-exclusion-wide-', 'documented-exclusion-narrow-', 'documented-drift-')
 OPERATION_ORDER = {'observe': 0, 'plan': 1, 'stale-apply': 2}
 
 
@@ -400,7 +476,9 @@ def contract_readings(engine):
     readings = []
     for variant in CONTRACT_VARIANTS:
         readings += [(f'{engine}-schema-{variant}observe.jsonl', 'observe'), (f'{engine}-schema-{variant}plan.jsonl', 'plan')]
-    readings += [(f'{engine}-schema-drift-validate-plan.jsonl', 'plan'), (f'{engine}-schema-drift-stale-apply.jsonl', 'stale-apply')]
+    for stem in ('', 'documented-'):
+        readings += [(f'{engine}-schema-{stem}drift-validate-plan.jsonl', 'plan'),
+                     (f'{engine}-schema-{stem}drift-stale-apply.jsonl', 'stale-apply')]
     if engine == 'mysql':
         readings += [('mysql-schema-lock-45-plan.jsonl', 'plan'), ('mysql-schema-lock-60-plan.jsonl', 'plan')]
     if engine == 'postgresql':

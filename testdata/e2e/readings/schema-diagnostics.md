@@ -32,7 +32,8 @@ account created through `MYSQL_USER`. The executor's client address is rewritten
 to `172.19.0.3`, the address the audit predicates name; SQL, parameters,
 protocol commands, session order and timestamps stay as received. Each command
 runs in its own container, and every container, anonymous volume and network the
-run created is removed.
+run created is removed. The `documented-` readings use the login the databases
+page documents instead, as [the documented login](#the-documented-login) says.
 
 Before the v0.23.0 capture, the same procedure ran with the executor of the
 previous pin, the Ptah v0.22.0 release image, as it ran with v0.18.0 before the
@@ -130,7 +131,7 @@ the wide plans still drop the excluded table after it.
 
 ## Permitted work and source review
 
-The contract carries 55 PostgreSQL statement/parameter sets and 37 MySQL
+The contract carries 57 PostgreSQL statement/parameter sets and 37 MySQL
 command/statement pairs. The predicate compares SQL, comments, whitespace,
 parameters and MySQL protocol commands byte for byte. Only the declaration's
 quoted MySQL database placeholder is expanded to the controlled fixture
@@ -318,6 +319,37 @@ are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 
+## The documented login
+
+A runner connects as the login
+[the databases page](../../../docs/site/src/content/docs/support/databases.md)
+documents, not as an administrator, and Ptah reads some catalogs differently
+without one. The `documented-exclusion-wide-`, `documented-exclusion-narrow-`
+and `documented-drift-` readings repeat those sequences as that login. The probe
+takes the grants from the first `sql` block under the page's PostgreSQL or MySQL
+authority section, so the readings are taken with what the page says, and a
+change to the page changes the next capture.
+
+On PostgreSQL the probe revokes every database privilege from `PUBLIC`, creates
+`ptah_documented` with the page's statements, and seeds the fixture as that
+login, which then owns the tables as the page requires. On MySQL the server
+starts with root alone, and root creates `ptah_audit` with the page's
+database-level grant.
+
+The readings were taken on November 13, 2026 with the v0.23.0 image. Each one
+has the record count and exit status of its administrator counterpart. On MySQL
+every statement matched. On PostgreSQL the two role reads differ: without
+superuser Ptah selects `NULL::boolean AS has_password` and does not join
+`pg_authid`. Those are two declarations, one for the roles the scope uses and
+one for the rest, and they take the contract from 92 to 94. Every other
+statement matched, the column spelling probe on `pg_temp` included.
+
+That probe needs `TEMPORARY` on the database. Without it the temporary table
+cannot be created, Ptah falls back to a probe per column and then to comparing
+the column as declared, and a column it created can read as changed on every
+plan ([stokaro/ptah#3617](https://github.com/stokaro/ptah/issues/3617)). The
+databases page lists `TEMPORARY` for that reason.
+
 ## The readings
 
 | Reading | Fixture and command | PostgreSQL records | MySQL records (Query/Execute) |
@@ -333,6 +365,8 @@ reading 16 wrote.
 | `drift-observe`, `drift-plan` | the changed database, observed and planned again | 53, 95 | 44 (20), 85 (39) |
 | `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 50 | 52 (23) |
 | `drift-apply-current` | the fresh plan applied, lock timeout 60s | 54 | 56 (27) |
+| `documented-exclusion-wide-observe`, `-plan`, `documented-exclusion-narrow-…` | the exclusion sequences as the documented login | 53, 95 | 44 (20), 85 (39) |
+| `documented-drift-stale-apply`, `-drift-observe`, `-drift-plan`, `-drift-validate-plan` | the drift sequence as the documented login | 50, 53, 95, 50 | 52 (23), 44 (20), 85 (39), 52 (23) |
 | `lock-45-plan`, `lock-60-plan` | MySQL only: a runner Plan's two plan reads and dry-run validation under a 45s or 60s lock timeout | | 222 (101) |
 
 Every Observe exited 1 with drift, every Plan and validation exited 0, the stale

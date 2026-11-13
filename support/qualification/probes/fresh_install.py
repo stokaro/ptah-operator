@@ -523,7 +523,7 @@ class Walkthrough:
             self.admin_sql(engine, f"CREATE ROLE application LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE;\n"
                                    "CREATE DATABASE application;\n"
                                    "REVOKE ALL ON DATABASE application FROM PUBLIC;\n"
-                                   "GRANT CONNECT ON DATABASE application TO application;\n"
+                                   "GRANT CONNECT, TEMPORARY ON DATABASE application TO application;\n"
                                    "\\c application\n"
                                    "GRANT USAGE, CREATE ON SCHEMA public TO application;\n")
             return f'postgres://application:{password}@postgres.{self.fixtures}.svc.cluster.local:5432/application?sslmode=disable'

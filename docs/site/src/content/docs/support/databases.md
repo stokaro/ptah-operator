@@ -44,10 +44,17 @@ ownership is the reliable least-authority boundary.
 
 The login needs only:
 
-- `CONNECT` on the target database;
+- `CONNECT` and `TEMPORARY` on the target database;
 - `USAGE` on each managed schema;
 - the ability to create objects in each managed schema;
 - ownership of every object the desired schema may alter or drop.
+
+Ptah creates a temporary table, and rolls it back, to read a declared column's
+type and default in PostgreSQL's own spelling: `varchar(10)[]` comes back as
+`character varying(10)[]`. Without `TEMPORARY` it compares such a column as
+declared, and a column it created can read as changed on every plan. A new
+database grants `TEMPORARY` to `PUBLIC`, so a login holds it there unless
+someone revoked it.
 
 For a database `app` whose managed schema is `public`, these statements create
 that login. Run them as a superuser connected to `app`: a grant on a schema
@@ -57,7 +64,7 @@ login, and it owns them:
 
 ```sql
 CREATE ROLE ptah LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-GRANT CONNECT ON DATABASE app TO ptah;
+GRANT CONNECT, TEMPORARY ON DATABASE app TO ptah;
 GRANT USAGE, CREATE ON SCHEMA public TO ptah;
 ```
 
