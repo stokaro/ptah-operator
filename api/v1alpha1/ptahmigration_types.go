@@ -660,7 +660,8 @@ type MigrationLogStatus struct {
 	// it is not zero.
 	// +kubebuilder:validation:Minimum=0
 	Lost int32 `json:"lost"`
-	// Losses are the first of those entries, in the order the run tried them.
+	// Losses are the first sixteen entries the database refused, in the order
+	// the run tried them.
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
