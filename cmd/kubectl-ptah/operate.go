@@ -364,6 +364,8 @@ func changeFailed(stderr io.Writer, ref operate.Ref, verb string, err error) int
 			again = "Running it again writes a newer request in its place, which asks for one more read at most."
 		case "set-source":
 			again = "Running it again sends nothing when the spec already holds the reference."
+		case "settle":
+			again = "Running it again sends nothing when the annotation already holds the value."
 		}
 		fmt.Fprintf(stderr, "kubectl-ptah: %s\nThe change was sent and no answer said whether it was stored. %s "+
 			"shows what is stored. %s\n", message, viewCommand(ref), again)
@@ -491,6 +493,12 @@ func writeReached(out io.Writer, result operate.Result) {
 	case operate.TargetApproval:
 		field("Plan", statusview.Clean(status.plan))
 		next = fmt.Sprintf("kubectl ptah approve %s/%s -n %s reviews it.", ref.Family, ref.Name, ref.Namespace)
+	case operate.TargetSettled:
+		if entry := settledEntry(result.Object); entry != nil {
+			field("Journal", fmt.Sprintf("Verified Unknown at %s, plan %s", statusview.Time(entry.At), statusview.Clean(entry.Plan)))
+		}
+		text.WriteString("The operator gave the proof up, and status.applied records no Apply. It reads the database " +
+			"again under the URL the Secret holds.\n")
 	case operate.TargetApplied:
 		if ref.Family == operate.FamilySchema {
 			field("Applied", statusview.Clean(status.applied))
@@ -505,6 +513,21 @@ func writeReached(out io.Writer, result operate.Result) {
 	}
 	text.WriteString(next + "\n")
 	_, _ = io.WriteString(out, text.String())
+}
+
+// settledEntry is the journal's newest record of a proof a person settled.
+func settledEntry(object client.Object) *operatorv1alpha1.JournalEntry {
+	schema, ok := object.(*operatorv1alpha1.PtahSchema)
+	if !ok || schema.Status.Journal == nil {
+		return nil
+	}
+	entries := schema.Status.Journal.Entries
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].Type == operatorv1alpha1.JournalVerified && entries[index].Outcome == operatorv1alpha1.JournalUnknown {
+			return &entries[index]
+		}
+	}
+	return nil
 }
 
 // waitFailed tells the person why a wait ended without the target.

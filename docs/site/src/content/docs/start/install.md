@@ -169,6 +169,7 @@ Every value the chart takes is in [configuration](../../use/configuration/).
 The chart installs the operator. Reading what it planned or applied is a
 separate install on your own machine: `kubectl ptah`, a plugin published with
 each release. Its read commands only read; `kubectl ptah approve` creates the
-approval of a plan you reviewed, as you, and `suspend`, `resume`, `refresh` and
-`set-source` patch a schema or a migration, as you. [Read a plan](../../use/read-a-plan/#install)
+approval of a plan you reviewed, as you, `suspend`, `resume`, `refresh` and
+`set-source` patch a schema or a migration, as you, and `settle` patches a
+schema. [Read a plan](../../use/read-a-plan/#install)
 carries the download, the checksum check and the RBAC each command needs.

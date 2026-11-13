@@ -453,6 +453,11 @@ func (m *migrationRun) assertRunProvenance(settled *ptahv1alpha1.PtahMigration, 
 			m.fatalf("%s: the record of its approved run: %v", m.migrationName(), check)
 		}
 	}
+	m.printReading("approved run", map[string]any{
+		"migration": map[string]any{"metadata": readingMetadata(settled), "status": settled.Status},
+		"plan":      map[string]any{"metadata": readingMetadata(plan), "spec": plan.Spec},
+		"approval":  map[string]any{"metadata": readingMetadata(approval), "spec": approval.Spec},
+	})
 	m.logf("PASS %s records the plan, the approval and the reading of its run", m.engine.kind)
 }
 

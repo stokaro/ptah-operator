@@ -337,9 +337,10 @@ func (d *dataPlane) assertNativePolicyRefusal(reference, digest, engine, secret 
 		d.fatalf("%s did not carry Ptah's refusal through the frame: %v", schema, err)
 	}
 	var last error
+	events := &corev1.EventList{}
 	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
-		events := &corev1.EventList{}
+		events = &corev1.EventList{}
 		d.mustList(events)
 		if last = nativeRefusalEvent(events.Items, refused.UID); last == nil {
 			break
@@ -349,6 +350,10 @@ func (d *dataPlane) assertNativePolicyRefusal(reference, digest, engine, secret 
 	if last != nil {
 		d.fatalf("%s has no Event naming what the policy refused: %v", schema, last)
 	}
+	d.printReading("native refusal schema", map[string]any{
+		"metadata": readingMetadata(refused), "status": refused.Status, "verifyResult": verifyResult,
+		"events": readingEvents(events.Items, refused.UID, "ArtifactVerificationRefused"),
+	})
 	d.suspend(schema, true)
 	d.waitForSchema(schema, "the native refusal fixture to suspend before its refresh interval",
 		func(s *ptahv1alpha1.PtahSchema) bool {

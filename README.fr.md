@@ -87,8 +87,9 @@ lire ; `kubectl ptah approve` crée, en votre nom, l’approbation d’un plan q
 vous avez relu, et requiert `create` sur les types d’approbation.
 `kubectl ptah suspend`, `resume` et `refresh` modifient un schéma ou une
 migration par un patch, en votre nom, `kubectl ptah set-source` le fait pointer
-vers un autre artefact épinglé par son digest, et `kubectl ptah wait` attend
-que l’opérateur ait traité une modification.
+vers un autre artefact épinglé par son digest, `kubectl ptah settle` renonce à
+la preuve d’un schéma dont la cible de base de données a changé, et
+`kubectl ptah wait` attend que l’opérateur ait traité une modification.
 [Lire un plan](https://operator.ptah.run/edge/use/read-a-plan/#install)
 décrit son installation et les droits RBAC requis dans le namespace.
 

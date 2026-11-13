@@ -160,3 +160,71 @@ first recorded at 06:54:03Z and last at 06:57:34Z, four times.
 `applyPodGoneWarnings` to counting it for a live Apply and not for a deletion,
 and `applyPodGoneWarnedInTerm` to accepting it. It names what the deletion
 reading names, and holds no credentials or SQL.
+
+`native-refusal-schema.json`, `native-refusal-migration.json`,
+`native-refusal-recovered-migration.json`, `approved-run-postgresql.json`,
+`partial-run-left-a-dirty-revision.json` and
+`isolated-node-durable-migration.json` are what rows printed on Kubernetes
+1.36.4 with the Ptah v0.23.0 executor, on two local kind runs on November 12,
+2026. The schema reading is from the `data-plane` suite. The migration readings
+are from one run of `migrations-postgresql` and `migration-faults-postgresql`,
+which built `1bf45520`: `9b8a762a` with the rows' printing and a local catalog
+edit that put both phases in one suite. Their `controllerRevision` names that
+commit. Each is stored as the row printed it, one line, after the row's scan for
+protected credentials. They name the test namespace, the registry, the images,
+Jobs, and Secrets by name and key, and hold no credentials or SQL.
+
+`native-refusal-schema.json` is the schema `assertNativePolicyRefusal` matched
+once Ptah refused its artifact under
+`testdata/e2e/verification-policy-other-type.yaml`, with the Verify result frame
+the row read and the `ArtifactVerificationRefused` Warning it matched. The
+schema is `Blocked`, and `ArtifactVerified` and `Ready` read `False` with reason
+`PolicyRefused`; `ArtifactVerified` names `artifact_types`.
+`native-refusal-migration.json` is the same for the migration row
+`nativePolicyRefusalProof`, which reads no result frame.
+`TestNativelyRefusedSchema`, `TestNativelyRefusedMigration`,
+`TestNativeRefusalResult` and `TestNativeRefusalEvent` accept these readings and
+refuse copies of them with the one field each mistake would change.
+`TestNativeRefusalResult` also requires the policy digest the schema read to be
+the digest of that policy file.
+
+`native-refusal-recovered-migration.json` is the same migration once its policy
+was edited to one that accepts the artifact: `InSync` under `Always`, with the
+run that followed and no condition naming the refusal. `ArtifactVerified` and
+`Blocked` moved in the same second, 18:35:01Z, and the history read after the
+run dates `Ready`. `TestRecoveredFromRefusal` and
+`TestRefusalTransitionsNamesBothTimes` hold the row's predicate and its failure
+message to it, and `TestTheRefusalRecoveryReadingIsTheReconcilers` in
+`internal/controller` holds the reconciler to its phase and condition reasons.
+It replaces a document of the same shape written before any cluster ran the
+row.
+
+`approved-run-postgresql.json` is what `assertRunProvenance` matched after the
+first approved run: the migration's identity and status, the plan the run
+carried out and the approval that allowed it, stamped for the impersonated
+`oidc:José García $(HOME)`. `ApprovalRequired` reads `False` with reason
+`HistoryMatched`, the reason `Ready` carries, which is what a reading that
+publishes no plan has written since #917.
+`TestRunIdentityRecordedRefusesEachClause`,
+`TestRunApprovedByRefusesEachClause`, `TestRunVerifiedInSyncRefusesEachClause`
+and `TestRunJournaledRefusesEachClause` accept it and refuse copies of it with
+the one field each mistake would change. It replaces a status written by hand.
+
+`partial-run-left-a-dirty-revision.json` is the first reading the partial row
+took during its 90-second hold that found a cycle in progress: the phase is `Resolving` while `Blocked` stays `True` with reason
+`HistoryDirty`, the history is dirty at version 3 with one migration pending,
+and the partial run is both `lastRun` and `unresolvedRun`. It replaces a
+reading of the same moment from an older run, with digests, times and names
+redacted, whose `ApprovalRequired` read `False/Satisfied`.
+`TestPartialRunRecordedReadsTheRecord`,
+`TestDirtyReadingHoldsTheRefusalNotThePhase` and `TestBlockedRefusalHeld` accept
+it, and `TestRenderTextShowsNoHoldWithoutAnUnresolvedRun` in
+`internal/migrationview` settles the run in a copy of it.
+
+`isolated-node-durable-migration.json` is the migration the isolated-node row
+read once its Apply settled: `InSync`, its run `Applied` under the policy with
+versions 1, 2 and 3, and a history read twelve seconds after the run ended. It
+replaces the reading from CI run 37154162826, whose `ApprovalRequired` read
+`False/Satisfied`. `TestIsolatedDurableRunReading` and
+`TestRunAllowedByPolicyRefusesADecision` accept it and refuse the copies they
+list, and `internal/statusview` reads its conditions.

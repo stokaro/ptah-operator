@@ -205,7 +205,7 @@ func TestUsageNamesEveryCommand(t *testing.T) {
 	if status := run(context.Background(), []string{"help"}, &stdout, &stderr); status != exitOK {
 		t.Fatalf("status = %d", status)
 	}
-	for _, want := range []string{"kubectl ptah plan", "kubectl ptah schema", "kubectl ptah migration"} {
+	for _, want := range []string{"kubectl ptah plan", "kubectl ptah schema", "kubectl ptah migration", "kubectl ptah settle"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("usage does not name %q:\n%s", want, stdout.String())
 		}

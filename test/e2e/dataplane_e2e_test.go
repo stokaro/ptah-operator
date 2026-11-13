@@ -160,6 +160,22 @@ func (d *dataPlane) logf(format string, arguments ...any) {
 	d.t.Logf("e2e data plane: "+format, arguments...)
 }
 
+// printReading prints a document a wait matched, so a run's log holds what a
+// predicate's unit test reads from testdata/e2e/readings. It is scanned like
+// every other document the phase prints, and withheld on a match.
+func (d *dataPlane) printReading(name string, reading any) {
+	d.t.Helper()
+	document, err := json.Marshal(reading)
+	if err != nil || !d.scanner.ready() {
+		return
+	}
+	if d.scanner.leaks(document) {
+		_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the %s reading is withheld: it matched a protected credential\n", name)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "e2e data plane: the %s reading\n%s\n", name, document)
+}
+
 // check ends the scenario when err is not nil, saying what failed and why.
 func (d *dataPlane) check(err error, format string, arguments ...any) {
 	d.t.Helper()

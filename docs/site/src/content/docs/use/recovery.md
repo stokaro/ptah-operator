@@ -315,6 +315,8 @@ ID and the digest of the target the read named. The value is a statement about t
 Apply and this target, not a secret: the digest is a plain SHA-256 of the target's
 identity, so anyone who knows the URL can work it out, and the status of anything
 planned against that URL shows it. The Apply's ID on its own settles nothing.
+[`kubectl ptah settle`](#settle) reads the value from the message and writes it
+for you.
 
 The statement holds until the proof ends. The operator takes it at a read that names
 its target, once the resource has stopped there and printed that value, so you see
@@ -384,6 +386,71 @@ and `status.journal` with it, so settling is the better record.
 A `PtahMigration` is different. Its history read is not bound to the plan the run
 came from, and a run nobody accounted for is settled by a
 [`PtahMigrationRunAcknowledgment`](../operations/#a-migration-run-nobody-accounted-for).
+
+### Settle from the command line {#settle}
+
+`kubectl ptah settle` writes the statement with the value the stop prints.
+Give it the value you read, the part after `settled-apply=` in the printed
+command, so that it settles that stop and no other:
+
+```sh
+kubectl ptah settle schema/storefront -n application --expect "$VALUE" --wait
+```
+
+Without `--expect` it settles the stop it reads when it runs. If the URL Secret
+moved again after you read the message, that stop names a target you have not
+looked at, and under `apply: Always` the next plan applies there.
+
+It reads the value from the message `ReconciliationFailed` ends with, as the
+operator wrote it, and works out nothing itself. It sets the
+`operator.ptah.run/settled-apply` annotation to that value, the change the
+printed `kubectl annotate` command makes, and nothing else. The report says how
+`status.journal` records the end of the Apply, `Succeeded` or `Unknown`, and
+what the operator gives up when it takes the statement: the proof, the plan
+and the database lock in one status write, while the approval the Apply
+consumed goes `Stale`. It says what the apply policy lets the next plan do,
+when the operator takes the statement, and how to take it back. When the annotation already holds the
+value, it sends nothing.
+
+settle changes nothing, and exits 4, for:
+
+- A schema that has not stopped on a moved target: it owes no proof, or
+  `ReconciliationFailed` is not `True` with reason `TargetIdentityChanged`. A
+  read that failed reports `OperationFailed` with no command, and nothing
+  settles at it.
+- A stop whose message ends with no command for this schema, such as one cut
+  short.
+- A value that names another Apply than the one whose proof is owed, or the
+  target the plan was made for.
+- A value other than the one `--expect` names: a read of another target
+  stopped the resource since you read it. Read the message again, and check
+  what the URL Secret holds before you settle that target. A value that is not
+  an operation ID and a target digest joined by a slash is a usage error, exit
+  status 2.
+- A value that a read of another target replaced between settle's read and its
+  patch. The patch carries the `resourceVersion` of that read, so the API
+  server refuses it when anything wrote in between. settle reads again,
+  retries over a write that left the printed value as it was, and does not
+  write over a stop it did not read: run it again to settle the stop as it
+  stands. A resource that keeps changing under it for three tries ends with
+  the API server's conflict and exit status 5.
+
+`--wait` stays until the operator has taken the statement: the proof is gone
+and the journal records it `Verified`, `Unknown`. A proof that ends without
+it stops the wait with exit status 8: a read of the first target recorded
+`Verified` with `InSync` or `DriftRemains`, or a newer generation, policy or
+execution binding recorded `Superseded`. So does an annotation removed or
+changed while the proof is still owed. A wait that times out exits 7
+and says what the statement still waits for: the next read of the target, a
+resume, or a stop that prints the value again. Which target the URL Secret
+holds is not in the resource's status, so the wait cannot tell that a read of
+the first target is coming; it says that such a read finishes the proof
+instead. `-o yaml` or `-o json` prints the resource the API server answered
+with, or with `--wait` the one the wait ended on.
+
+settle takes a `PtahSchema` only; a `PtahMigration` is a usage error, exit
+status 2. It needs `get` and `patch` on `ptahschemas`, the same `patch` the
+annotation takes by hand.
 
 ## Verify the recovery
 

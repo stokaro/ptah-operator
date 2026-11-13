@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:144c663c73dffb93e8f46562ebf9fab7bd429839fc97cd9c14de9a0741206204",
+  "plan_path": "/work/ptah-plan-output-174026557/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_37680130e5d5",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:a100ec220c3f2c073b9589440ba0f7db52b3b4840e94fefa13b8e4457c35a0ca",
+    "to_fingerprint": "sha256:ef2a17de2f0c8d2e945113b928b0b1c900c40477f793e902025129810095ac1f",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_fk_index_takeover_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}
