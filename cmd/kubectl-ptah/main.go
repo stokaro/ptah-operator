@@ -691,9 +691,12 @@ to oci://ghcr.io/stokaro/charts/ptah-operator. That chart carries its release's
 manager, runner and executor digests and the verified Ptah version, so install
 passes no image and every image stays pinned by digest. It runs helm upgrade
 --install with Helm 4 or newer from PATH, prints that command line first, and
-waits for the release to become ready. Run again with the same flags, it
-applies the same objects as a new Helm revision; a run without --approver
-removes the binding an earlier --approver made. Verify the chart first, as the install page shows.
+waits for the release to become ready. Each run installs exactly its flags,
+with --reset-values: run again with the same flags, it applies the same
+objects as a new Helm revision, and a run without --approver removes the
+binding an earlier --approver made. It refuses a namespace whose release is
+another version, since an upgrade needs helm --force-conflicts. Verify the
+chart first, as the install page shows.
 
   --version <version>      the release to install (default: this plugin's
                            own; a build from a checkout has none, so it needs
@@ -707,7 +710,8 @@ removes the binding an earlier --approver made. Verify the chart first, as the i
   --yaml                   print the objects install would apply instead,
                            rendered by helm template from the same chart,
                            version and values; reads no cluster, so the
-                           chart's cluster checks do not run
+                           chart's cluster checks do not run, and holds a
+                           webhook CA key generated for this render
   --out-dir <dir>          with --yaml, write them under <dir>/ptah-operator
                            rather than to standard output
   --timeout <duration>     how long helm waits for the release (default 5m)

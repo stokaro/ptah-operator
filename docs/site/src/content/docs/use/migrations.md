@@ -534,7 +534,8 @@ condition the controller writes on it.
 
 The chart's optional approver ClusterRole grants what an approver needs for
 either family: read on the migration, its plans and approvals, and create on
-`PtahMigrationApproval`. The chart binds it to nobody;
+`PtahMigrationApproval`. The chart binds it only to the subjects
+`approverClusterRole.subjects` names, in every namespace;
 [Exact-plan approvals](../approvals/) says what it leaves out and why.
 
 The execution runs the approved sequence and nothing else. The Job hands Ptah
