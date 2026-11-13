@@ -14,6 +14,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
+	"github.com/stokaro/ptah-operator/internal/workload"
 	"github.com/stokaro/ptah-operator/test/e2e/gitfixture"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 	"github.com/stokaro/ptah-operator/test/runnerharness"
@@ -352,7 +353,40 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-partial-mysql.json"), wantCode("child_exit"))
 		run.history("history-dirty")
 	})
+	// The log table is there before the run, with an actor column narrower
+	// than the name the manager passes for a run under apply: Always. MySQL
+	// refuses each entry, Ptah applies every migration all the same, and the
+	// run reports the entries it lost.
+	t.Run("log-lost-mysql", func(t *testing.T) {
+		t.Parallel()
+		family, database := "migrations-log-lost-mysql", "harness_log_lost_mysql"
+		l.createDatabase(t, engineMySQL, database)
+		l.sql(t, engineMySQL, database, narrowMigrationLog)
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-"+engineFile(engineMySQL))
+		run := l.newMigration(t, family, engineMySQL, l.databaseURL(engineMySQL, database), ociSource(reference))
+		run.actor = workload.MigrationActor(run.migration, nil)
+		run.resolve("resolve")
+		before := run.history("history-pending")
+		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-log-lost-mysql.json"))
+		run.history("history-applied")
+	})
 }
+
+// narrowMigrationLog is Ptah's schema_migrations_log for MySQL with the actor
+// column cut to 16 characters, which no name the manager records fits.
+const narrowMigrationLog = `CREATE TABLE schema_migrations_log (
+    run_id VARCHAR(64) NOT NULL,
+    seq BIGINT NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    version BIGINT NOT NULL,
+    state VARCHAR(32) NOT NULL,
+    actor VARCHAR(16) NULL,
+    actor_source VARCHAR(32) NOT NULL,
+    checksum VARCHAR(64) NULL,
+    logged_at TIMESTAMP NOT NULL,
+    error TEXT NULL,
+    PRIMARY KEY (run_id, seq)
+) ENGINE=InnoDB`
 
 // gitLifecycles read a schema and a migration directory from Git through the
 // runner: the Resolve's pull, the fetch before each operation, and the refusals

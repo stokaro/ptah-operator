@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-log-lost-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@sha256:2f0d1be42843f69442836d78d99e015c4fe9849ebe2df7a642ee393b4c2d999c",
+  "digest": "sha256:2f0d1be42843f69442836d78d99e015c4fe9849ebe2df7a642ee393b4c2d999c",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}

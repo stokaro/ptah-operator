@@ -79,6 +79,32 @@ func TestDecodeMigrationRun_ReadsTheMigrationLog(t *testing.T) {
 	}
 }
 
+// The pinned Ptah wrote this run against a MySQL whose log table holds an
+// actor of 16 characters, so the database refused every entry with error 1406
+// while every migration applied.
+func TestDecodeMigrationRun_ReadsPtahsRefusedLog(t *testing.T) {
+	t.Parallel()
+
+	report, err := dataplane.DecodeMigrationRun(loadMigrationRun(t, "migrations-up-log-lost-mysql.json"))
+	if err != nil {
+		t.Fatalf("DecodeMigrationRun() error = %v", err)
+	}
+	if report.Outcome != dataplane.MigrationOutcomeApplied || !reflect.DeepEqual(report.Applied, []int64{1, 2, 3}) {
+		t.Fatalf("outcome %q applied %v, want every version applied", report.Outcome, report.Applied)
+	}
+	log := report.MigrationLog
+	if log == nil || log.Written != 0 || len(log.Lost) != 6 {
+		t.Fatalf("migration log = %+v, want all six entries lost", log)
+	}
+	for index, loss := range log.Lost {
+		state := []string{dataplane.MigrationLogStarted, dataplane.MigrationLogApplied}[index%2]
+		if loss.Operation != "up" || loss.Version != int64(index/2+1) || loss.State != state ||
+			loss.SQLState != "22001" || loss.ErrorNumber != 1406 || !strings.Contains(loss.Message, "Data too long for column 'actor'") {
+			t.Fatalf("lost entry %d = %+v, want version %d %s refused with 22001/1406", index, loss, index/2+1, state)
+		}
+	}
+}
+
 // A run that keeps no log, and one from a Ptah before v0.23.0, carries no
 // report, and that is not a report of nothing lost.
 func TestDecodeMigrationRun_ReadsNoLogAsNoReport(t *testing.T) {
