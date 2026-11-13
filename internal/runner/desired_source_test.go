@@ -225,8 +225,14 @@ func TestASchemaFaultTheCommandStoppedOnIsNamed(t *testing.T) {
 	}{
 		{"observe", "drift-foreign-key.json", "validate-foreign-key.txt", `schema.sql: invalid foreign key: field "id" references unknown table "nope"`},
 		{"plan", "plan-foreign-key.json", "validate-foreign-key.txt", `schema.sql: invalid foreign key: field "id" references unknown table "nope"`},
-		{"observe", "drift-key-and-index.json", "validate-key-and-index.txt", `schema.sql: invalid foreign key: constraint "t_nope" references unknown table "nope"`},
-		{"plan", "plan-key-and-index.json", "validate-key-and-index.txt", `schema.sql: invalid foreign key: constraint "t_nope" references unknown table "nope"`},
+		// Since Ptah v0.26.0 drift and plan stop on the first index they refuse,
+		// in validate's words, before they compare anything.
+		{"observe", "drift-key-and-index.json", "validate-key-and-index.txt", `schema.sql: index "i": names column "missing_column", which table "t" does not declare`},
+		{"plan", "plan-key-and-index.json", "validate-key-and-index.txt", `schema.sql: index "i": names column "missing_column", which table "t" does not declare`},
+		{"observe", "drift-index-table.json", "validate-index-table.txt", `schema.sql: index "i": names table "nowhere", which no declaration defines`},
+		{"plan", "plan-index-table.json", "validate-index-table.txt", `schema.sql: index "i": names table "nowhere", which no declaration defines`},
+		{"observe", "drift-other-and-index.json", "validate-other-and-index.txt", `schema.sql: index "i": names column "missing_column", which table "t" does not declare`},
+		{"plan", "plan-other-and-index.json", "validate-other-and-index.txt", `schema.sql: index "i": names column "missing_column", which table "t" does not declare`},
 	} {
 		t.Run(test.operation+"/"+test.failed, func(t *testing.T) {
 			t.Parallel()
@@ -270,14 +276,15 @@ func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
 		name, operation, code string
 		answers               func(*testing.T) (scriptedResponse, scriptedResponse)
 	}{
-		{"an index on a table nothing declares", "observe", "child_exit", captured("drift-index-table.json", "validate-index-table.txt")},
-		{"an index on a table nothing declares", "plan", "invalid_plan_output", captured("plan-index-table.json", "validate-index-table.txt")},
 		{"a key the database refuses, beside another", "observe", "child_exit", captured("drift-other-and-key.json", "validate-other-and-key.txt")},
 		// Ptah v0.23.0 refuses these plans as declaration-refused rather than
 		// failing them, and a refusal the file does not explain keeps its code.
 		{"a key the database refuses, beside another", "plan", "plan_refused", captured("plan-other-and-key.json", "validate-other-and-key.txt")},
-		{"a key the database refuses, beside an index", "observe", "child_exit", captured("drift-other-and-index.json", "validate-other-and-index.txt")},
-		{"a key the database refuses, beside an index", "plan", "plan_refused", captured("plan-other-and-index.json", "validate-other-and-index.txt")},
+		// The key the database refuses, beside an index the plan did not stop on.
+		{"a key the database refuses, beside an index validate faults", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
+			return scriptedResponse{stdout: desiredSourceOutput(t, "drift-other-and-key.json"), exitCode: 2},
+				scriptedResponse{stdout: desiredSourceOutput(t, "validate-index-table.txt"), exitCode: 1}
+		}},
 		{"a document that does not decode", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
 			return scriptedResponse{stdout: "error comparing schemas: invalid foreign key", exitCode: 2}, foreignKey(t)
 		}},

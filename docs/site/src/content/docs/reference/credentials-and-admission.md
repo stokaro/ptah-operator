@@ -52,7 +52,7 @@ Secret volume, mounted in that container and no other:
 The container's environment holds the path and never the credential. The runner
 reads each file before anything else uses the value, so the value it redacts from
 everything it writes is the value it read. It hands the value to Ptah in the
-environment of the one child process it starts: Ptah `v0.23.0`
+environment of the one child process it starts: Ptah `v0.26.0`
 takes the database URL from `--db-url` or `PTAH_DB_URL` and a registry or Git
 credential from its environment, and nothing else, and a command line is visible
 to every process in the Pod. The OCI fetch init container runs Ptah's pull through

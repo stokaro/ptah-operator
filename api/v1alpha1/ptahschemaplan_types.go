@@ -176,10 +176,13 @@ type PtahSchemaPlanSpec struct {
 	// approval naming these exact bytes whatever spec.policy.apply says, so
 	// apply: Always does not grant access on its own.
 	//
-	// The operator reads the kinds from the SQL itself, independently of the
-	// severity Ptah gave each statement, and only ever adds to a plan's class.
-	// It names kinds and nothing else: no object, no role and no text. Read
-	// the statements with kubectl ptah plan.
+	// The operator reads the kinds from the statements themselves,
+	// independently of the severity Ptah gave each one. A PostgreSQL view's
+	// security_invoker comes from the effect Ptah recorded for its statement
+	// where one is readable, so a statement that restates the option raises
+	// nothing; anything else is read from the SQL. It names kinds and nothing
+	// else: no object, no role and no text. Read the statements with kubectl
+	// ptah plan.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=16

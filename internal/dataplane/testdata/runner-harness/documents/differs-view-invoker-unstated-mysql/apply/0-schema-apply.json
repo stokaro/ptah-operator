@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_4340fc63fda6",
+  "plan_digest": "sha256:1f245798185a713fa6c143be4c65da287f635c8fd1b9262c637f016d701fe917",
+  "units": [
+    {
+      "sql": "CREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes"
+    }
+  ]
+}

@@ -10,13 +10,15 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
 // The external PostgreSQL lifecycle: the automatic safe plan, the privileged
-// plan and the grant-only plan held for a person under apply: Always.
+// plan and the grant-only plan held for a person under apply: Always, and a
+// view's security_invoker held only when a plan moves it.
 
 var digestSelectedReference = regexp.MustCompile(`^oci://[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 
@@ -24,7 +26,8 @@ var digestSelectedReference = regexp.MustCompile(`^oci://[^[:space:]@]+@sha256:[
 // automatic safe plan against the database outside the cluster, holds the
 // Jobs it ran to their generated-name bounds and the realm to one Lease, and
 // then proves a privileged plan and a grant-only plan wait for a person under
-// the same apply: Always.
+// the same apply: Always, and that a view's security_invoker waits for one only
+// when the plan changes it.
 func (d *dataPlane) externalPostgresqlLifecycle() {
 	d.t.Helper()
 	schema := externalPGSchema
@@ -67,6 +70,7 @@ func (d *dataPlane) externalPostgresqlLifecycle() {
 	d.auditRuntimeCredentials()
 	d.assertPrivilegedPlanWaitsUnderAlways(schema, publishReference, externalPGCoordinationKey, realm)
 	d.assertGrantOnlyChangePlansUnderAlways(schema, publishReference, externalPGCoordinationKey, realm)
+	d.assertViewInvokerHeldOnlyWhenItMoves(schema, publishReference, externalPGCoordinationKey, realm)
 	d.logf("PASS external PostgreSQL bridge lifecycle")
 }
 
@@ -546,4 +550,166 @@ func (d *dataPlane) assertGrantOnlyChangePlansUnderAlways(schema, publishReferen
 	d.waitForSchema(schema, "external PostgreSQL acceptance to suspend after the grant-only plan", quiescentlySuspended)
 	d.auditRuntimeCredentials()
 	d.logf("PASS grant-only change observed, planned and held for a person under apply Always")
+}
+
+// externalViewState is how the external database holds the security_invoker
+// row's view: its options, a colon, and whether its body reads only rows with a
+// positive id. It is empty when the view does not exist.
+func (d *dataPlane) externalViewState() string {
+	d.t.Helper()
+	return removeWhitespace(d.externalPGQuery(
+		"SELECT coalesce(array_to_string(c.reloptions, ','), '') || ':' || (pg_get_viewdef(c.oid) LIKE '%(id > 0)%')::text " +
+			"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
+			"WHERE n.nspname = 'public' AND c.relname = '" + externalView + "' AND c.relkind = 'v'"))
+}
+
+// assertViewInvokerHeldOnlyWhenItMoves proves that under apply: Always a view's
+// security_invoker holds a plan for a person when the plan changes it, and
+// holds nothing when the plan only restates it (stokaro/ptah-operator#1060).
+//
+// Three artifacts add one view to the converged external schema. The first
+// creates it with no option, so it reads with its owner's rights; Ptah plans a
+// CREATE VIEW and the plan applies with nobody's approval. The second turns
+// security_invoker on, which Ptah plans as ALTER VIEW ... SET
+// (security_invoker=true): from then on the view reads what its readers may
+// read rather than what its owner may, so the plan names SecurityDefiner,
+// waits for a person with no Apply and the view unchanged, and one exact
+// approval applies it. The third gives the view a new body with the option
+// still on. CREATE OR REPLACE VIEW has to restate every option the view keeps,
+// so the statement reads, as SQL, like the option being set; the effect Ptah
+// records says it was true before the statement and is true after it, and the
+// plan names no privilege kind and applies with nobody's approval.
+//
+// Each plan is held to the statement and effect it is for, read from the
+// document its chunks hold, so a step that reached the same verdict by
+// planning something else fails. An unattended step is held to its journal,
+// which publishes the plan with no approval required and applies it under
+// none, to no approval object naming the plan, and to one Apply Job; every
+// step reads the view back from the database.
+//
+// It starts from the suspended, converged resource the grant-only row leaves,
+// and leaves it suspended again.
+func (d *dataPlane) assertViewInvokerHeldOnlyWhenItMoves(schema, publishReference, key, realm string) {
+	d.t.Helper()
+	const approval = "e2e-postgresql-external-view-invoker"
+	if d.rbac.paused {
+		d.fatalf("the security_invoker row requires active controller status writes")
+	}
+	if state := d.externalViewState(); state != "" {
+		d.fatalf("external PostgreSQL holds %s before any plan created it: %s", externalView, state)
+	}
+
+	d.applyViewStepUnattended(schema, publishReference, "v4", "postgresql-external-v4-view.sql",
+		viewCreatedWithOwnerRights, ":false")
+
+	digest := d.publishSchema("postgresql-external", "v5", "postgres", publishReference,
+		filepath.Join(repositoryRoot, "testdata", "e2e", "postgresql-external-v5-view-invoker.sql"))
+	reference := strings.TrimSuffix(publishReference, ":stable") + "@" + digest
+	before := d.checkpointJobs(schema, "")
+	d.patchSchema(schema, map[string]any{"spec": map[string]any{
+		"suspend": false, "interval": quiescentInterval, "desired": map[string]any{"ociRef": reference},
+	}})
+	d.assertAlwaysPolicyKept(schema, quiescentInterval)
+	// The gate also holds between two operations of a refresh, where the
+	// approval webhook refuses an approval; the row approves from the phase
+	// the webhook admits.
+	gate := d.waitForHeldPlan(schema, before,
+		func(s *ptahv1alpha1.PtahSchema) bool { return privilegedApprovalGate(s, digest) }, planAwaitingApproval,
+		"security_invoker approval gate", heldPlanMessages{
+			failedWhile: "its plan that turns security_invoker on",
+			timedOut:    " to hold the plan that turns security_invoker on for a person as SecurityDefiner",
+		}, privilegedGateReading)
+	if gate.Status.Plan == nil {
+		d.fatalf("%s held no plan at its security_invoker gate", schema)
+	}
+	planName, planUID, fingerprint := gate.Status.Plan.Name, string(gate.Status.Plan.UID), gate.Status.Plan.Fingerprint
+	plan := d.schemaPlan(planName)
+	if err := privilegedPlanRecorded(plan, planUID, fingerprint, digest,
+		[]ptahv1alpha1.PrivilegeChange{"SecurityDefiner"}); err != nil {
+		d.fatalf("%s does not record the SecurityDefiner its statement changes: %v", planName, err)
+	}
+	document, _ := d.rebuildPlanDocument(plan)
+	if err := viewInvokerPlanned(document, viewInvokerTurnedOn); err != nil {
+		d.fatalf("%s is not the plan that turns security_invoker on: %v", planName, err)
+	}
+	if state := d.externalViewState(); state != ":false" {
+		d.fatalf("%s changed while its plan waited for a person: %s", externalView, state)
+	}
+	applyCheckpoint := d.checkpointJobs(schema, "")
+	d.assertNoJobBetween(schema, "apply", before, applyCheckpoint)
+	d.createExactApproval(schema, planName, approval, key, realm)
+	d.waitForApprovedPlanConverged(schema, digest, fingerprint, planUID, "the approved security_invoker plan applied and converged")
+	after := d.checkpointJobs(schema, "")
+	d.assertOneJobBetween(schema, "apply", applyCheckpoint, after)
+	d.assertApprovalConsumed(approval, planUID)
+	if state := d.externalViewState(); state != "security_invoker=true:false" {
+		d.fatalf("the approved plan did not turn security_invoker on for %s: %s", externalView, state)
+	}
+	d.assertExternalPostgresqlCatalog()
+	d.suspend(schema, true)
+	d.waitForSchema(schema, "external PostgreSQL acceptance to suspend after the security_invoker plan", quiescentlySuspended)
+
+	d.applyViewStepUnattended(schema, publishReference, "v6", "postgresql-external-v6-view-body.sql",
+		viewBodyKeptInvoker, "security_invoker=true:true")
+	d.auditRuntimeCredentials()
+	d.logf("PASS security_invoker held for a person only when the plan changes it, under apply Always")
+}
+
+// applyViewStepUnattended publishes one artifact of the security_invoker row
+// and proves the plan it makes is the change want describes, applied with
+// nobody's approval under apply: Always. The poll fails at once on a reading
+// that holds the plan for a person. Once the schema converges on the digest,
+// the plan it applied names no privilege kind and destroys nothing, its
+// document is want's change, its journal is the life of a plan nobody
+// approved, no approval names it, one Apply Job ran, and the database holds
+// the view as state says. It leaves the schema suspended.
+func (d *dataPlane) applyViewStepUnattended(schema, publishReference, version, fixture string,
+	want viewInvokerChange, state string,
+) {
+	d.t.Helper()
+	digest := d.publishSchema("postgresql-external", version, "postgres", publishReference,
+		filepath.Join(repositoryRoot, "testdata", "e2e", fixture))
+	reference := strings.TrimSuffix(publishReference, ":stable") + "@" + digest
+	before := d.checkpointJobs(schema, "")
+	d.patchSchema(schema, map[string]any{"spec": map[string]any{
+		"suspend": false, "interval": quiescentInterval, "desired": map[string]any{"ociRef": reference},
+	}})
+	d.assertAlwaysPolicyKept(schema, quiescentInterval)
+	converged := d.waitForSchema(schema, want.describeChange+" applied with nobody's approval",
+		func(s *ptahv1alpha1.PtahSchema) bool {
+			if s.Status.Source.Digest == digest && s.Status.Plan != nil &&
+				conditionIs(s.Status.Conditions, "ApprovalRequired", metav1.ConditionTrue, "PrivilegeChanges") {
+				d.fatalf("%s held %s for a person: %s", schema, want.describeChange, privilegedGateReading(s))
+			}
+			return s.Status.ObservedGeneration == s.Generation && s.Status.Plan == nil && inSync(s, digest)
+		})
+	after := d.checkpointJobs(schema, "")
+	d.assertOneJobBetween(schema, "apply", before, after)
+	applied := converged.Status.Applied
+	plan := d.schemaPlan(applied.PlanRef.Name)
+	if plan.UID != applied.PlanRef.UID || plan.Spec.ArtifactDigest != digest || plan.Spec.Fingerprint != applied.PlanFingerprint {
+		d.fatalf("%s is not the plan %s applied for %s", plan.Name, schema, want.describeChange)
+	}
+	if plan.Spec.Destructive || len(plan.Spec.PrivilegeChanges) != 0 {
+		d.fatalf("%s for %s is destructive=%t and records privilege changes %v, want neither",
+			plan.Name, want.describeChange, plan.Spec.Destructive, plan.Spec.PrivilegeChanges)
+	}
+	document, _ := d.rebuildPlanDocument(plan)
+	if err := viewInvokerPlanned(document, want); err != nil {
+		d.fatalf("%s is not the plan of %s: %v", plan.Name, want.describeChange, err)
+	}
+	if err := unattendedApplyJournaled(converged.Status.Journal, plan.Name); err != nil {
+		d.fatalf("%s: %v", schema, err)
+	}
+	approvals := &ptahv1alpha1.PtahSchemaApprovalList{}
+	d.mustList(approvals)
+	if count := approvalsOfPlan(approvals.Items, plan.UID); count != 0 {
+		d.fatalf("%d approvals name %s, which applied with nobody's approval", count, plan.Name)
+	}
+	if got := d.externalViewState(); got != state {
+		d.fatalf("after %s the database holds %s as %q, want %q", want.describeChange, externalView, got, state)
+	}
+	d.assertExternalPostgresqlCatalog()
+	d.suspend(schema, true)
+	d.waitForSchema(schema, "external PostgreSQL acceptance to suspend after "+want.describeChange, quiescentlySuspended)
 }

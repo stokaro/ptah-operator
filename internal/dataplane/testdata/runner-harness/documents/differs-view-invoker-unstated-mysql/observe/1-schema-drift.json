@@ -1,11 +1,18 @@
 {
   "contract_version": 1,
   "command": "schema drift",
-  "drift": false,
-  "failed": false,
+  "drift": true,
+  "failed": true,
   "failure_threshold": "all",
-  "highest_severity": "safe",
+  "highest_severity": "warning",
   "dialect": "mysql",
+  "findings": [
+    {
+      "category": "views_modified",
+      "count": 1,
+      "severity": "warning"
+    }
+  ],
   "inventory": [
     {
       "kind": "columns",
@@ -53,7 +60,15 @@
     "sequences_modified": null,
     "views_added": null,
     "views_removed": null,
-    "views_modified": null,
+    "views_modified": [
+      {
+        "view_name": "differs_notes_view",
+        "changes": {
+          "security": "INVOKER -\u003e DEFINER"
+        },
+        "previous_body": "select `harness_differs_view_invoker_unstated_mysql`.`differs_notes`.`id` AS `id`,`harness_differs_view_invoker_unstated_mysql`.`differs_notes`.`owner_name` AS `owner_name` from `harness_differs_view_invoker_unstated_mysql`.`differs_notes`"
+      }
+    ],
     "materialized_views_added": null,
     "materialized_views_removed": null,
     "materialized_views_modified": null,

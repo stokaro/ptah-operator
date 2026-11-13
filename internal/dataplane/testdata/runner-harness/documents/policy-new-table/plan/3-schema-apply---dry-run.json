@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_bcd605868b1f",
-  "plan_digest": "sha256:0486dc885c6989ad362cc49f93ca1d22f2150c45698bc7144598b2f37dbf7aa9",
+  "plan_name": "plan_b9946d469348",
+  "plan_digest": "sha256:be6ee6812a08d5d9cd33c2c0b51918705a1d3e732888692f47a3e74266cad853",
   "units": [
     {
       "sql": "CREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)"

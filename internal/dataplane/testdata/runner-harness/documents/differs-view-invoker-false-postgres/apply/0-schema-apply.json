@@ -2,11 +2,36 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_1bfa165c7656",
-  "plan_digest": "sha256:d47ef2178b709197187f21e239fc3977247aae06743df1d21dc01c5be58c8b37",
+  "plan_name": "plan_d5e05a296f0d",
+  "plan_digest": "sha256:b679df5a61f5aaaf839b6f8bd1150094701ca1bce315c0b51e3f37df5f10db5e",
   "units": [
     {
-      "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)"
+      "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_notes_view"
+          },
+          "action": "alter",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "after": false,
+              "changed": false
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "after": false,
+              "changed": true
+            }
+          ]
+        }
+      ]
     }
   ]
 }

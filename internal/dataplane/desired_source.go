@@ -11,19 +11,23 @@ import (
 const migrationRegistrationPrefix = "error registering migrations: "
 
 // wholeSchemaKind opens what `schema validate` says of a schema as a whole,
-// after the dialect. A fault of one declaration names its kind and the object.
-const wholeSchemaKind = "schema: "
+// after the dialect. A fault of one declaration names its kind and the object,
+// and indexKind opens the fault of one index.
+const (
+	wholeSchemaKind = "schema: "
+	indexKind       = "index "
+)
 
 // SchemaSourceProblem reads what `schema validate` printed about a desired
 // schema it could not load: `<dialect>: source: <reason>`, in the dialect the
 // engine names. The reason is as Ptah printed it, across lines if it spans them:
 // what leaves the runner is the runner's to make, after it has redacted the words.
 //
-// Only that shape is read. Validate also reports structural problems, a
-// `schema` or an `index` line, and `schema drift` and `schema plan` do not
-// refuse all of those, so such a line does not say why a command failed. A
-// load failure does: both commands load the same file before they compare
-// anything.
+// Only that shape is read here. Validate also reports structural problems, a
+// `schema` or an `index` line, which say why a command failed only where that
+// command stopped on them; SchemaStructuralProblem reads those. A load failure
+// says it of every command: drift and plan load the same file before they
+// compare anything.
 func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 	dialect, rest, found := strings.Cut(strings.TrimSpace(string(stdout)), ": ")
 	if !found || !dialectMatches(engine, dialect) {
@@ -32,21 +36,25 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 	return strings.CutPrefix(rest, "source: ")
 }
 
-// SchemaStructuralProblem reads what `schema validate` printed about a schema
-// as a whole, such as a foreign key into a table it does not declare, when that
-// fault is the one the command that failed stopped on: a `<dialect>: schema:
-// <fault>` line, in the dialect the engine names, whose words end failed, the
-// sentence the failed command's own document holds. Validate prints an index
-// line first for each index it refuses, and the fault runs to the end of its
-// output.
+// SchemaStructuralProblem reads what `schema validate` printed about the
+// schema's structure when that fault is the one the command that failed stopped
+// on, in the dialect the engine names. failed is the sentence the failed
+// command's own document holds.
+//
+// Validate prints a line for each index it refuses first, and then a fault of
+// the schema as a whole, such as a foreign key into a table it does not
+// declare, which runs to the end of its output. Since Ptah v0.26.0 drift and
+// plan check every index before they compare anything (stokaro/ptah#5845), and
+// the first one they refuse stops them with validate's line, dialect and all.
+// So an `<dialect>: index <name>: <fault>` line is read when failed is that
+// line and nothing else, and the reason is the line after the dialect. A
+// `<dialect>: schema: <fault>` line is read when failed ends with its words:
+// drift and plan run the validator that wrote it, and wrap its sentence and
+// nothing else around it. The reason is then the fault.
 //
 // Validate reports a fault of the file whether or not it stopped anything, and
 // the command that failed may have stopped on the database or on another fault
-// validate does not know. Comparing the words is what ties the two: drift and
-// plan run the validator that wrote this line, and wrap its sentence and nothing
-// else around it. An index line has no such tie, so it is not read: drift
-// accepts an index on a column no table declares, and on a table none declares it
-// fails in other words.
+// validate does not know. Comparing the words is what ties the two.
 //
 // failed is compared and never returned. Its command had a connection, so it
 // could quote the database. What is returned comes from a run that had none.
@@ -55,7 +63,11 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 	for offset := 0; offset < len(text); {
 		line, _, _ := strings.Cut(text[offset:], "\n")
 		dialect, rest, found := strings.Cut(line, ": ")
-		if found && dialectMatches(engine, dialect) && strings.HasPrefix(rest, wholeSchemaKind) {
+		switch {
+		case !found || !dialectMatches(engine, dialect):
+		case strings.HasPrefix(rest, indexKind) && line == failed:
+			return rest, true
+		case strings.HasPrefix(rest, wholeSchemaKind):
 			fault := text[offset+len(dialect)+len(": ")+len(wholeSchemaKind):]
 			if !strings.HasSuffix(failed, ": "+fault) {
 				return "", false

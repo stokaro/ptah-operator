@@ -1,0 +1,48 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:2b8afb469ec1782efff0b3dc225bcffb83b5e94db387eab7e89be85800f65bd3",
+  "plan_path": "/work/ptah-plan-output-1247215290/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_ef6dc8bbd24a",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:eb632e13b98ec33b58f3432bb0b724e83916cef5af76cf3cfee732ffb41c9a1e",
+    "to_fingerprint": "sha256:1400ced5135a912c432184b56ecb7a3d32985199510aeb2171409eb237cd2a5c",
+    "scope": {
+      "kind": "realm"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "public",
+              "name": "differs_notes_view"
+            },
+            "action": "create",
+            "properties": [
+              {
+                "name": "security_barrier",
+                "after": false,
+                "changed": true
+              },
+              {
+                "name": "security_invoker",
+                "after": true,
+                "changed": true
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

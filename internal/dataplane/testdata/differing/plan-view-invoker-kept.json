@@ -1,0 +1,43 @@
+{
+  "format_version": 1,
+  "name": "plan_20b3145daf60",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:832049ff6c6b246be1808105a85ffe9d8fd11c4ac15ed576332fa8662c825354",
+  "to_fingerprint": "sha256:0d4e4c768a08ba2080b6a15184febdb6e49743eeb66d9382fd9a1fbd4686035a",
+  "scope": {
+    "kind": "realm"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
+      "severity": "warning",
+      "reason": "CREATE OR REPLACE VIEW changes the view in place, and what every query that reads it gets",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_notes_view"
+          },
+          "action": "replace",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "after": false,
+              "changed": false
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "after": true,
+              "changed": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

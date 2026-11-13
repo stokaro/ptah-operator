@@ -71,7 +71,7 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.23.0
+  ptahVersion: v0.26.0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerProtocolVersion: 1
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
@@ -121,7 +121,7 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.23.0
+  ptahVersion: v0.26.0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
@@ -177,7 +177,7 @@ spec:
   coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
   targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
   policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
-  ptahVersion: v0.23.0
+  ptahVersion: v0.26.0
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
@@ -209,7 +209,7 @@ spec:
 | `spec.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran Ptah. |
 | `spec.fingerprint` | `string`, required | Fingerprint is the complete approval identity of this plan: every binding below hashed together. An approval names this value, and an apply runs only while the live bindings still produce it. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under. Editing the policy -- a protected table included -- retires a plan waiting for a person rather than letting it apply under rules nobody approved. |
-| `spec.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan's statements change: privileges granted or revoked, role membership, roles, owners, row-security policies and definer rights. A plan that lists any needs an approval naming these exact bytes whatever spec.policy.apply says, so apply: Always does not grant access on its own. The operator reads the kinds from the SQL itself, independently of the severity Ptah gave each statement, and only ever adds to a plan's class. It names kinds and nothing else: no object, no role and no text. Read the statements with kubectl ptah plan. |
+| `spec.privilegeChanges` | `[]string` | PrivilegeChanges names the kinds of authority the plan's statements change: privileges granted or revoked, role membership, roles, owners, row-security policies and definer rights. A plan that lists any needs an approval naming these exact bytes whatever spec.policy.apply says, so apply: Always does not grant access on its own. The operator reads the kinds from the statements themselves, independently of the severity Ptah gave each one. A PostgreSQL view's security_invoker comes from the effect Ptah recorded for its statement where one is readable, so a statement that restates the option raises nothing; anything else is read from the SQL. It names kinds and nothing else: no object, no role and no text. Read the statements with kubectl ptah plan. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed this plan, as the executor image reports it. |
 | `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan. Like the manager's own identity it is recorded and not bound: the runner is built from the operator's source, and what it enforces is versioned by RunnerProtocolVersion. |
 | `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. A runner answering in another version has its result rejected rather than interpreted. |

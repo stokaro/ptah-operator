@@ -30,7 +30,9 @@ const (
 	// PrivilegeSecurityDefiner is code set to run with its owner's rights
 	// rather than its caller's. A MySQL or MariaDB routine does that unless it
 	// says SQL SECURITY INVOKER, so a routine that names no mode counts. A
-	// change to the rights an existing PostgreSQL view reads with counts too.
+	// change to the rights an existing PostgreSQL view reads with counts too,
+	// and so does a MySQL or MariaDB statement that replaces a view, which sets
+	// the rights it reads with whether or not it names them.
 	PrivilegeSecurityDefiner = "SecurityDefiner"
 	// PrivilegeDefiner is a MySQL DEFINER clause, which names the account a
 	// view, routine, trigger or event runs as.
@@ -74,13 +76,23 @@ func IsKnownPrivilegeChange(kind string) bool {
 // A body is read too, which raises a GRANT that only runs when the function is
 // called. What it cannot see is SQL built at run time, such as a DO block that
 // EXECUTEs a string.
-func privilegeChanges(statement, dialect string) []string {
+//
+// One thing is read from Ptah instead of from the keywords: whether a view's
+// security_invoker changes, where the statement's effects describe it (see
+// securityInvokerHold). The SQL states the option, and a statement that
+// restates it reads like one that changes it. drops carries the views the
+// plan's earlier statements dropped, for a statement that makes one again.
+func privilegeChanges(statement PlanStatement, dialect string, drops *viewDrops) []string {
 	found := make(map[string]bool)
-	for _, tokens := range statementSegments(sqlKeywordTokens(statement, dialect)) {
-		classifyPrivilegeSegment(tokens, found)
-		if mysqlDialect(dialect) && definerRightsRoutine(tokens) {
+	invokerHold, invokerDescribed := securityInvokerHold(statement, dialect, drops)
+	for _, tokens := range statementSegments(sqlKeywordTokens(statement.SQL, dialect)) {
+		classifyPrivilegeSegment(tokens, found, invokerDescribed)
+		if mysqlDialect(dialect) && (definerRightsRoutine(tokens) || replacesView(tokens)) {
 			found[PrivilegeSecurityDefiner] = true
 		}
+	}
+	if invokerHold {
+		found[PrivilegeSecurityDefiner] = true
 	}
 	var kinds []string
 	for _, kind := range privilegeChangeKinds {
@@ -108,7 +120,10 @@ func statementSegments(tokens []string) [][]string {
 	return segments
 }
 
-func classifyPrivilegeSegment(tokens []string, found map[string]bool) {
+// classifyPrivilegeSegment reads one statement's keywords into found. With
+// invokerDescribed, the statement's effects decide its security_invoker and the
+// keyword is not read.
+func classifyPrivilegeSegment(tokens []string, found map[string]bool, invokerDescribed bool) {
 	for index, token := range tokens {
 		previous, next := tokenAt(tokens, index-1), tokenAt(tokens, index+1)
 		switch token {
@@ -166,9 +181,14 @@ func classifyPrivilegeSegment(tokens []string, found map[string]bool) {
 			// readers read with. ALTER VIEW and CREATE OR REPLACE VIEW change
 			// it on a view that may already have readers, and either direction
 			// changes what they can read, so there any value counts however it
-			// is spelled, and so does a reset. A view CREATE VIEW makes has no
-			// readers yet, and there only its owner's rights count, as they do
-			// for a new function.
+			// is spelled, and so does a reset. The SQL reads a view CREATE VIEW
+			// makes as new, with no readers yet, and there only its owner's
+			// rights count, as they do for a new function. A view the plan
+			// dropped and makes again is not new; where the effects say what
+			// it held, securityInvokerHold reads it against that.
+			if invokerDescribed {
+				break
+			}
 			if !createsWithoutReplacing(tokens) || next == "FALSE" || next == "OFF" {
 				found[PrivilegeSecurityDefiner] = true
 			}
@@ -312,6 +332,43 @@ func assumesIdentity(tokens []string) bool {
 func definerRightsRoutine(tokens []string) bool {
 	return tokenAt(tokens, 0) == "CREATE" && namesRoutine(tokens[1:]) &&
 		!hasSQLTokenSequence(tokens, "SQL", "SECURITY", "INVOKER")
+}
+
+// replacesView reports whether a MySQL or MariaDB statement replaces a view:
+// CREATE OR REPLACE VIEW, or ALTER VIEW, which the engines read the same way.
+// Either sets the view's SQL SECURITY, to DEFINER where it names none, and
+// takes nothing from the view it replaces. The statement does not say what
+// the view held, so it reads the same whether its readers keep their rights,
+// start to read with its definer's, or start to need their own, and every one
+// counts. Since Ptah v0.26.0 a plan does this to a view held as INVOKER that
+// the declaration leaves without a mode: CREATE OR REPLACE VIEW with no mode
+// (stokaro/ptah#5902). A view CREATE VIEW makes is read as new, with no
+// readers yet, so only the SQL SECURITY DEFINER it states counts, as a
+// PostgreSQL statement with no effect is read.
+func replacesView(tokens []string) bool {
+	switch {
+	case tokenAt(tokens, 0) == "ALTER":
+		return namesView(tokens[1:])
+	case tokenAt(tokens, 0) == "CREATE" && tokenAt(tokens, 1) == "OR" && tokenAt(tokens, 2) == "REPLACE":
+		return namesView(tokens[3:])
+	}
+	return false
+}
+
+// namesView reports whether the words reach VIEW before any other object
+// keyword or the AS that opens a view's query. MySQL and MariaDB put the
+// ALGORITHM, DEFINER and SQL SECURITY clauses in between.
+func namesView(tokens []string) bool {
+	for _, token := range tokens {
+		switch token {
+		case "VIEW":
+			return true
+		case "AS", "FUNCTION", "PROCEDURE", "TRIGGER", "TABLE", "INDEX", "SEQUENCE", "SCHEMA", "DATABASE", "EVENT",
+			"SERVER", "USER", "ROLE", "TABLESPACE", "INSTANCE", "LOGFILE", "RESOURCE", "PACKAGE":
+			return false
+		}
+	}
+	return false
 }
 
 // namesRoutine reports whether the words after CREATE, or after CREATE OR

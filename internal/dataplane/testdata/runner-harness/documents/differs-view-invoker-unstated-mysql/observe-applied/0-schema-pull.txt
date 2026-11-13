@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/schemas/differs-view-invoker-unstated-mysql@sha256:ca96d43b02798e25c8d025da4a33d2045035d5b07104ac9b1dfb9ca9e48d2725 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:ca96d43b02798e25c8d025da4a33d2045035d5b07104ac9b1dfb9ca9e48d2725
+Not parsed: the next command that reads the file reports what it cannot read.

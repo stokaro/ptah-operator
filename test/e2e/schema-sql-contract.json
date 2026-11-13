@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "f47b2bfa3b696c93730e7d25397987ed0a4a2562",
+  "ptahCommit": "1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -242,6 +242,17 @@
         "stale-apply"
       ],
       "command": "query",
+      "statement": "\n\t\tSELECT e.extname, n.nspname, c.relname\n\t\tFROM pg_extension e\n\t\tJOIN pg_depend d ON d.refclassid = 'pg_extension'::regclass\n\t\t\tAND d.refobjid = e.oid AND d.classid = 'pg_foreign_data_wrapper'::regclass\n\t\t\tAND d.deptype = 'e'\n\t\tJOIN pg_foreign_data_wrapper fdw ON fdw.oid = d.objid\n\t\tJOIN pg_foreign_server s ON s.srvfdw = fdw.oid\n\t\tJOIN pg_foreign_table ft ON ft.ftserver = s.oid\n\t\tJOIN pg_class c ON c.oid = ft.ftrelid\n\t\tJOIN pg_namespace n ON n.oid = c.relnamespace\n\t\tWHERE NOT EXISTS (\n\t\t\tSELECT 1 FROM pg_depend member\n\t\t\tWHERE member.classid = 'pg_class'::regclass AND member.objid = c.oid\n\t\t\t\tAND member.refclassid = 'pg_extension'::regclass\n\t\t\t\tAND member.refobjid = e.oid AND member.deptype = 'e')\n\t\tORDER BY e.extname, n.nspname, c.relname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
       "statement": "\n\t\tSELECT\n\t\t\tp.proname AS function_name,\n\t\t\tpg_get_function_arguments(p.oid) AS parameters,\n\t\t\tpg_get_function_identity_arguments(p.oid) AS identity_arguments,\n\t\t\t-- COALESCE because pg_get_function_result is NULL for a procedure,\n\t\t\t-- which is the currentCatalog stating the property that separates the two\n\t\t\t-- kinds (stokaro/ptah#1722).\n\t\t\tCOALESCE(pg_get_function_result(p.oid), '') AS returns,\n\t\t\t-- Whether the function returns a set. CockroachDB leaves SETOF out of\n\t\t\t-- pg_get_function_result; see [routineargs.AsSet].\n\t\t\tp.proretset AS returns_set,\n\t\t\tl.lanname AS language,\n\t\t\tCASE p.prosecdef WHEN true THEN 'DEFINER' ELSE 'INVOKER' END AS security,\n\t\t\tCASE p.provolatile\n\t\t\t\tWHEN 'i' THEN 'IMMUTABLE'\n\t\t\t\tWHEN 's' THEN 'STABLE'\n\t\t\t\tWHEN 'v' THEN 'VOLATILE'\n\t\t\tEND AS volatility,\n\t\t\tp.prosrc AS body,\n\t\t\tCOALESCE(obj_description(p.oid, 'pg_proc'), '') AS comment,\n\t\t\tCASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind,\n\t\t\t-- The routine's own configuration settings, which is where a pinned\n\t\t\t-- search_path lives. A routine with none reports NULL rather than an\n\t\t\t-- empty array (stokaro/ptah#2356).\n\t\t\tCOALESCE(array_to_string(p.proconfig, E'\\n'), '') AS settings,\n\t\t\tp.proleakproof AS leakproof,\n\t\t\tp.proisstrict AS strict,\n\t\t\tCASE p.proparallel\n\t\t\t\tWHEN 's' THEN 'SAFE'\n\t\t\t\tWHEN 'r' THEN 'RESTRICTED'\n\t\t\t\tELSE 'UNSAFE'\n\t\t\tEND AS parallel\n\t\tFROM pg_proc p\n\t\tJOIN pg_namespace n ON n.oid = p.pronamespace\n\t\tJOIN pg_language l ON l.oid = p.prolang\n\t\tWHERE n.nspname = $1\n\t\t-- Functions and procedures, which are the two routine kinds a schema\n\t\t-- can declare. Aggregates ('a') and window functions ('w') are left\n\t\t-- out on purpose: both are defined by naming other routines rather\n\t\t-- than by a body a schema can carry, and neither has a Ptah\n\t\t-- declaration to compare against (stokaro/ptah#1722).\n\t\tAND p.prokind IN ('f', 'p')\n\t\tAND l.lanname != 'internal'  -- Exclude internal functions\n\t\t-- Escaped for the same reason as the role filters above: a bare _\n\t\t-- is a LIKE wildcard, so the unescaped form also excluded ordinary\n\t\t-- functions such as ptahxtriggery (stokaro/ptah#1291).\n\t\tAND p.proname NOT LIKE 'ptah\\_trigger\\_%' ESCAPE '\\'\n\t\t-- Exclude extension-owned functions to prevent migration issues\n\t\t-- Extension functions cannot be dropped independently and should be managed by the extension\n\t\tAND NOT EXISTS (\n\t\t\tSELECT 1 FROM pg_depend d\n\t\t\tJOIN pg_extension e ON e.oid = d.refobjid\n\t\t\tWHERE d.objid = p.oid AND d.deptype = 'e'\n\t\t)\n\t\tORDER BY p.proname, pg_get_function_identity_arguments(p.oid)",
       "parameters": "Parameters: $1 = 'public'"
     },
@@ -275,7 +286,7 @@
         "stale-apply"
       ],
       "command": "query",
-      "statement": "\n\t\tSELECT\n\t\t\tn.nspname AS schema_name,\n\t\t\ttbl.relname AS table_name,\n\t\t\ttrg.tgname AS trigger_name,\n\t\t\tCASE\n\t\t\t\tWHEN (trg.tgtype & 2) <> 0 THEN 'BEFORE'\n\t\t\t\tWHEN (trg.tgtype & 64) <> 0 THEN 'INSTEAD OF'\n\t\t\t\tELSE 'AFTER'\n\t\t\tEND AS timing,\n\t\t\tconcat_ws(' OR ',\n\t\t\t\tCASE WHEN (trg.tgtype & 4) <> 0 THEN 'INSERT' END,\n\t\t\t\tCASE WHEN (trg.tgtype & 8) <> 0 THEN 'DELETE' END,\n\t\t\t\tCASE WHEN (trg.tgtype & 16) <> 0 THEN 'UPDATE' || COALESCE(' OF ' || (\n\t\t\t\t\tSELECT string_agg(quote_ident(a.attname), ', ' ORDER BY k.position)\n\t\t\t\t\tFROM unnest(trg.tgattr::int2[]) WITH ORDINALITY AS k(attnum, position)\n\t\t\t\t\tJOIN pg_attribute a ON a.attrelid = trg.tgrelid AND a.attnum = k.attnum\n\t\t\t\t), '') END,\n\t\t\t\tCASE WHEN (trg.tgtype & 32) <> 0 THEN 'TRUNCATE' END\n\t\t\t) AS event,\n\t\t\tCASE WHEN (trg.tgtype & 1) <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS for_each,\n\t\t\tp.prosrc AS body,\n\t\t\tp.proname AS execute_function,\n\t\t\tCOALESCE(obj_description(trg.oid, 'pg_trigger'), '') AS comment,\n\t\t\tpg_get_triggerdef(trg.oid) AS definition,\n\t\t\tCOALESCE(trg.tgoldtable, '') AS old_table,\n\t\t\tCOALESCE(trg.tgnewtable, '') AS new_table\n\t\tFROM pg_trigger trg\n\t\tJOIN pg_class tbl ON tbl.oid = trg.tgrelid\n\t\tJOIN pg_namespace n ON n.oid = tbl.relnamespace\n\t\tJOIN pg_proc p ON p.oid = trg.tgfoid\n\t\tWHERE n.nspname = $1\n\t\tAND NOT trg.tgisinternal\n\t\tAND COALESCE(to_jsonb(trg) ->> 'tgparentid', '0') = '0'\n\t\tORDER BY tbl.relname, trg.tgname",
+      "statement": "\n\t\tSELECT\n\t\t\tn.nspname AS schema_name,\n\t\t\ttbl.relname AS table_name,\n\t\t\ttrg.tgname AS trigger_name,\n\t\t\tCASE\n\t\t\t\tWHEN (trg.tgtype & 2) <> 0 THEN 'BEFORE'\n\t\t\t\tWHEN (trg.tgtype & 64) <> 0 THEN 'INSTEAD OF'\n\t\t\t\tELSE 'AFTER'\n\t\t\tEND AS timing,\n\t\t\tconcat_ws(' OR ',\n\t\t\t\tCASE WHEN (trg.tgtype & 4) <> 0 THEN 'INSERT' END,\n\t\t\t\tCASE WHEN (trg.tgtype & 8) <> 0 THEN 'DELETE' END,\n\t\t\t\tCASE WHEN (trg.tgtype & 16) <> 0 THEN 'UPDATE' || COALESCE(' OF ' || (\n\t\t\t\t\tSELECT string_agg(quote_ident(a.attname), ', ' ORDER BY k.position)\n\t\t\t\t\tFROM unnest(trg.tgattr::int2[]) WITH ORDINALITY AS k(attnum, position)\n\t\t\t\t\tJOIN pg_attribute a ON a.attrelid = trg.tgrelid AND a.attnum = k.attnum\n\t\t\t\t), '') END,\n\t\t\t\tCASE WHEN (trg.tgtype & 32) <> 0 THEN 'TRUNCATE' END\n\t\t\t) AS event,\n\t\t\tCASE WHEN (trg.tgtype & 1) <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS for_each,\n\t\t\tp.prosrc AS body,\n\t\t\tp.proname AS execute_function,\n\t\t\tencode(trg.tgargs, 'hex') AS function_arguments_hex,\n\t\t\tCOALESCE(obj_description(trg.oid, 'pg_trigger'), '') AS comment,\n\t\t\tpg_get_triggerdef(trg.oid) AS definition,\n\t\t\tCOALESCE(trg.tgoldtable, '') AS old_table,\n\t\t\tCOALESCE(trg.tgnewtable, '') AS new_table\n\t\tFROM pg_trigger trg\n\t\tJOIN pg_class tbl ON tbl.oid = trg.tgrelid\n\t\tJOIN pg_namespace n ON n.oid = tbl.relnamespace\n\t\tJOIN pg_proc p ON p.oid = trg.tgfoid\n\t\tWHERE n.nspname = $1\n\t\tAND NOT trg.tgisinternal\n\t\tAND COALESCE(to_jsonb(trg) ->> 'tgparentid', '0') = '0'\n\t\tORDER BY tbl.relname, trg.tgname",
       "parameters": "Parameters: $1 = 'public'"
     },
     {
@@ -429,7 +440,7 @@
         "stale-apply"
       ],
       "command": "query",
-      "statement": "\n\t\tSELECT\n\t\t\trole.rolname AS role_name,\n\t\t\tmember.rolname AS member_name,\n\t\t\tm.admin_option\n\t\tFROM pg_auth_members m\n\t\tJOIN pg_roles role ON role.oid = m.roleid\n\t\tJOIN pg_roles member ON member.oid = m.member\n\t\tWHERE role.rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND role.rolname != 'postgres'\n\t\tAND member.rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND member.rolname != 'postgres'\n\t\tORDER BY role.rolname, member.rolname",
+      "statement": "\n\t\tSELECT\n\t\t\trole.rolname AS role_name,\n\t\t\tmember.rolname AS member_name,\n\t\t\tm.admin_option,\n\t\t\t(to_jsonb(m)->>'inherit_option')::boolean, (to_jsonb(m)->>'set_option')::boolean\n\t\tFROM pg_auth_members m\n\t\tJOIN pg_roles role ON role.oid = m.roleid\n\t\tJOIN pg_roles member ON member.oid = m.member\n\t\tWHERE role.rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND role.rolname != 'postgres'\n\t\tAND member.rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND member.rolname != 'postgres'\n\t\tORDER BY role.rolname, member.rolname",
       "parameters": ""
     },
     {
@@ -440,7 +451,7 @@
         "stale-apply"
       ],
       "command": "query",
-      "statement": "SELECT current_user",
+      "statement": "SELECT rolname, rolsuper FROM pg_roles WHERE rolname = current_user",
       "parameters": ""
     },
     {
@@ -497,6 +508,28 @@
       "command": "query",
       "statement": "\n\t\tSELECT c.relname\n\t\tFROM pg_depend d\n\t\tJOIN pg_class c ON c.oid = d.objid\n\t\tJOIN pg_namespace n ON n.oid = c.relnamespace\n\t\tWHERE d.classid = 'pg_class'::regclass\n\t\tAND d.deptype = 'e'\n\t\tAND n.nspname = $1\n\t\tORDER BY c.relname",
       "parameters": "Parameters: $1 = 'public'"
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
+      "statement": "\n\t\tSELECT kind, name FROM (\n\t\t\tSELECT 'aggregate' AS kind,\n\t\t\t       p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS name,\n\t\t\t       p.pronamespace AS namespace\n\t\t\tFROM pg_catalog.pg_proc p WHERE p.prokind = 'a'\n\t\t\tUNION ALL\n\t\t\tSELECT 'collation', c.collname, c.collnamespace\n\t\t\tFROM pg_catalog.pg_collation c\n\t\t\tUNION ALL\n\t\t\tSELECT 'foreign table', c.relname, c.relnamespace\n\t\t\tFROM pg_catalog.pg_class c WHERE c.relkind = 'f'\n\t\t) objects\n\t\tJOIN pg_catalog.pg_namespace n ON n.oid = objects.namespace\n\t\tWHERE n.nspname = $1\n\t\tORDER BY kind, name",
+      "parameters": "Parameters: $1 = 'public'"
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
+      "statement": "\n\t\tSELECT 'event trigger' AS kind, evtname AS name FROM pg_catalog.pg_event_trigger\n\t\tUNION ALL\n\t\tSELECT 'publication', pubname FROM pg_catalog.pg_publication\n\t\tORDER BY kind, name",
+      "parameters": ""
     },
     {
       "engine": "postgresql",
@@ -827,7 +860,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -838,7 +871,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {

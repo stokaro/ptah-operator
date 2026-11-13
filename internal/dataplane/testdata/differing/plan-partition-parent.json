@@ -1,21 +1,21 @@
 {
   "format_version": 1,
-  "name": "plan_bbda223c6d80",
+  "name": "plan_1b0eb2f31d5b",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:a86180f3f84721c6b7200bcc4f2564e3529659e9fdd9e4eece50b6e8c462ee78",
+  "from_fingerprint": "sha256:06426050a55c5dee6bddeb2d5699a53ec711c40a7ae7165baf6cade8f62b7c6e",
   "to_fingerprint": "sha256:2d2dc564e154fd35cb86926724871c3d4c4e58f30dabc9ee4dedb9e7b5b3abfa",
   "scope": {
     "kind": "realm"
   },
-  "destructive": false,
+  "destructive": true,
   "statements": [
     {
       "transactions": [
         "allowed"
       ],
       "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\"",
-      "severity": "warning",
-      "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
+      "severity": "destructive",
+      "reason": "DETACH PARTITION takes the partition's rows out of what differs_events returns; they stay in the table",
       "owned": true
     },
     {

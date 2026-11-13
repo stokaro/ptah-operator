@@ -108,6 +108,15 @@ another account defines later. `SHOW VIEW` shows the definitions of views. Add
 `CREATE VIEW`, `EVENT`, `CREATE ROUTINE`, or `ALTER ROUTINE` only if those
 objects are managed.
 
+A view runs as its definer unless it says `SQL SECURITY INVOKER`, and a plan
+that replaces a view sets the mode again. Since Ptah v0.26.0 a plan switches a
+view the database holds as `INVOKER` to `DEFINER` when the declaration names no
+mode, and records the connected account as the view's definer. Declare the mode
+each managed view should have.
+[Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
+says why every MySQL view a plan replaces waits for an approval under
+`apply: Always`.
+
 Do not grant global administration, user-management, file, replication, or
 grant-option privileges. `SHOW_ROUTINE` is the one global privilege the account
 may need. `EXECUTE` does not show the body of a routine another account defined,
@@ -136,10 +145,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.23.0, the executor this operator build pins
+This section describes Ptah v0.26.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
-8.4.11. The PostgreSQL table was measured at v0.22.0. The acceptance rows that
+8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
+v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
+v0.26.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only

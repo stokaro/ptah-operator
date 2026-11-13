@@ -302,4 +302,4 @@ const mysqlHistoryCreate = "CREATE TABLE IF NOT EXISTS `schema_migrations` (\n" 
     error_stmt TEXT NULL,
     execution_time_ms BIGINT NOT NULL DEFAULT 0,
     checksum VARCHAR(64) NOT NULL DEFAULT ''
-) ENGINE=InnoDB`
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`

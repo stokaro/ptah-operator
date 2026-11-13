@@ -35,6 +35,13 @@
       "observed": 1
     }
   ],
+  "not_compared": [
+    {
+      "kind": "foreign table",
+      "name": "differs_remote_items",
+      "reason": "Ptah does not compare this object kind"
+    }
+  ],
   "diff": {
     "feature_changes": [
       {
@@ -51,11 +58,14 @@
           "kind": "ptah.run/pgextension/extension-change",
           "representation": "change",
           "version": 1,
-          "definition": "sha256:aaea258c2dcc40969ef87697b4d1fae167d443099e9c1485943224088eac9052",
+          "definition": "sha256:ec32dcc398455c92bfbe4ad1a71c0ab2d5d978483465de953d6fbb9cbcc85bd1",
           "payload": {
             "after": null,
             "before": {
               "comment": "foreign-data wrapper for remote PostgreSQL servers",
+              "dependent_foreign_tables": [
+                "public.differs_remote_items"
+              ],
               "provides": [
                 "postgres_fdw_disconnect",
                 "postgres_fdw_disconnect_all",

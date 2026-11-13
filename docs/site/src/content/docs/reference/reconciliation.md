@@ -832,15 +832,21 @@ answered with. It carries no text, for the reason the run's message carries
 none. A run whose statements all ran and whose commit failed, as a deferred
 constraint does, has no statement to point at, so the field stays unset and the
 message names the migration and the database's answer. Since Ptah v0.23.0 a
-MySQL statement whose failure may still have committed, such as a `CREATE UNIQUE
-INDEX` stopped by a duplicate key, makes the run `unknown`; the field records
-that statement, and the message says it is not recorded whether it committed.
+MySQL DDL statement whose failure may still have committed makes the run
+`unknown`; the field records that statement, and the message says it is not
+recorded whether it committed. Since v0.26.0 a `CREATE INDEX` the server refused
+on an InnoDB table is not one of them: the run is `Failed`
+([stokaro/ptah#5838](https://github.com/stokaro/ptah/pull/5838)).
 
 A schema's Apply records where it stopped the same way, in `applyFailure` on its
 `ApplyFinished` entry and in `status.pendingObservation.applyFailure` until the
 observation that follows settles: the position of the statement it stopped at,
 how many statements the Apply held, and the SQLSTATE and MySQL error number the
-database answered with, where it answered. It carries no text either. Ptah v0.23.0 reports such an Apply as
-`unknown`, so the entry reads `Unknown` and the observation says what the database
-kept. A commit that failed after every statement, and a run that names no statement,
+database answered with, where it answered. It carries no text either. Since
+v0.26.0 Ptah reports such an Apply on PostgreSQL as `failed` once the database
+confirmed it rolled back every statement it sent, and as `unknown` otherwise
+([stokaro/ptah#5737](https://github.com/stokaro/ptah/pull/5737)). The entry reads
+`Unknown` either way, because Kubernetes can start more than one Pod for a Job
+and no one Pod's report speaks for the others; the observation says what the
+database kept. A commit that failed after every statement, and a run that names no statement,
 record no `applyFailure`.

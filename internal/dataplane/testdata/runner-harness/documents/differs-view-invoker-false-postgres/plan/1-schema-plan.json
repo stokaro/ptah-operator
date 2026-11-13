@@ -2,13 +2,13 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:d47ef2178b709197187f21e239fc3977247aae06743df1d21dc01c5be58c8b37",
-  "plan_path": "/work/ptah-plan-output-4110441992/first.plan.json",
+  "plan_digest": "sha256:b679df5a61f5aaaf839b6f8bd1150094701ca1bce315c0b51e3f37df5f10db5e",
+  "plan_path": "/work/ptah-plan-output-2433396073/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_1bfa165c7656",
+    "name": "plan_d5e05a296f0d",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:2993b8ce539227e026879e666e05a5edb9607b86265215c660112c5f9de638a5",
+    "from_fingerprint": "sha256:832049ff6c6b246be1808105a85ffe9d8fd11c4ac15ed576332fa8662c825354",
     "to_fingerprint": "sha256:1841d8b3bb50fe494f13fe26fc2b8e272dda9cda4c7c59287ec3905373d052a5",
     "scope": {
       "kind": "realm"
@@ -18,7 +18,32 @@
       {
         "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
         "severity": "safe",
-        "reason": "does not remove data or tighten constraints"
+        "reason": "does not remove data or tighten constraints",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "public",
+              "name": "differs_notes_view"
+            },
+            "action": "alter",
+            "properties": [
+              {
+                "name": "security_barrier",
+                "before": false,
+                "after": false,
+                "changed": false
+              },
+              {
+                "name": "security_invoker",
+                "before": true,
+                "after": false,
+                "changed": true
+              }
+            ]
+          }
+        ]
       }
     ]
   }

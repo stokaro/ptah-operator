@@ -23,6 +23,13 @@
       "observed": 1
     }
   ],
+  "not_compared": [
+    {
+      "kind": "foreign table",
+      "name": "differs_remote_items",
+      "reason": "Ptah does not compare this object kind"
+    }
+  ],
   "diff": {
     "identifier_semantics": {
       "default_schema": "public",

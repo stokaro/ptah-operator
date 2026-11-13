@@ -10,27 +10,32 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The plans Ptah v0.23.0 saved for five changes to a partition declared in
-// SQL, as the runner harness captured them, rate every statement a warning. The operator holds the two that take the
-// partition's rows out of the parent, and leaves the bound changes and the
-// attachment as Ptah rated them.
-func TestDecodePlanRatesPtahV023PartitionMoves(t *testing.T) {
+// The plans Ptah saved for five changes to a partition declared in SQL, as the
+// runner harness captured them from the pinned release. Since v0.26.0 Ptah
+// rates a detachment that takes the partition's rows out of its parent
+// destructive itself (stokaro/ptah#5741), where v0.23.0 rated it a warning and
+// the operator raised it; the bound changes and the attachment stay warnings.
+// Each row holds the capture to Ptah's own ratings before it reads the
+// operator's, so a rating Ptah moves fails here rather than passing on the
+// operator's raise.
+func TestDecodePlanRatesPartitionMoves(t *testing.T) {
 	t.Parallel()
 
 	for _, row := range []struct {
 		file string
-		// raised is the severity each statement reads as.
-		raised []string
+		// rated is the severity Ptah saved for each statement, and raised the
+		// severity the operator reads it as.
+		rated, raised []string
 	}{
-		{file: "differing/plan-partition-bound.json", raised: []string{"warning", "warning"}},
-		{file: "differing/plan-partition-bound-excludes-row.json", raised: []string{"warning", "warning"}},
-		{file: "differing/plan-partition-attach.json", raised: []string{"warning"}},
-		{file: "differing/plan-partition-detach.json", raised: []string{"destructive"}},
-		{file: "differing/plan-partition-parent.json", raised: []string{"destructive", "warning"}},
+		{file: "differing/plan-partition-bound.json", rated: []string{"warning", "warning"}, raised: []string{"warning", "warning"}},
+		{file: "differing/plan-partition-bound-excludes-row.json", rated: []string{"warning", "warning"}, raised: []string{"warning", "warning"}},
+		{file: "differing/plan-partition-attach.json", rated: []string{"warning"}, raised: []string{"warning"}},
+		{file: "differing/plan-partition-detach.json", rated: []string{"destructive"}, raised: []string{"destructive"}},
+		{file: "differing/plan-partition-parent.json", rated: []string{"destructive", "warning"}, raised: []string{"destructive", "warning"}},
 	} {
 		t.Run(row.file, func(t *testing.T) {
 			t.Parallel()
-			data := loadPtahV023(t, row.file)
+			data := loadCapture(t, row.file)
 			var saved struct {
 				Destructive bool `json:"destructive"`
 				Statements  []struct {
@@ -40,11 +45,13 @@ func TestDecodePlanRatesPtahV023PartitionMoves(t *testing.T) {
 			if err := json.Unmarshal(data, &saved); err != nil {
 				t.Fatal(err)
 			}
-			for index, statement := range saved.Statements {
-				if saved.Destructive || statement.Severity != "warning" {
-					t.Fatalf("Ptah rated statement %d %q, plan destructive=%t; the capture no longer measures the warning rating",
-						index, statement.Severity, saved.Destructive)
-				}
+			var rated []string
+			for _, statement := range saved.Statements {
+				rated = append(rated, statement.Severity)
+			}
+			if !slices.Equal(rated, row.rated) || saved.Destructive != slices.Contains(row.rated, "destructive") {
+				t.Fatalf("Ptah rated the statements %q, plan destructive=%t; the capture no longer measures the ratings %q",
+					rated, saved.Destructive, row.rated)
 			}
 			plan, err := dataplane.DecodePlan(data, "postgres")
 			if err != nil {

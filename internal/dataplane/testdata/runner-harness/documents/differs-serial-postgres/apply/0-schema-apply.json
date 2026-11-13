@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_715e661d1dc2",
-  "plan_digest": "sha256:0e87cb5f5851776092ca9dccb5409330a85f979496990d6fae943edf3ad67bfb",
+  "plan_name": "plan_f961b6faef48",
+  "plan_digest": "sha256:f5323e856e08cb679c9fe6600ffe5dc0d2e797301297a6174ecf330d46a02e60",
   "units": [
     {
       "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT"

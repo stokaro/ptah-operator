@@ -136,6 +136,10 @@ func differingRows() []differingRow {
 		outside = "CREATE SCHEMA differs_outside"
 		scoped  = "&search_path=public"
 	)
+	const (
+		mysqlNotes   = "CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, owner_name varchar(64) NOT NULL)"
+		mysqlInvoker = "CREATE SQL SECURITY INVOKER VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes"
+	)
 	dropped := []string{"constraints_removed", "tables_removed"}
 	rows := []differingRow{
 		{
@@ -224,7 +228,8 @@ func differingRows() []differingRow {
 		},
 		{
 			name: "view-invoker-false", engine: enginePostgres, declared: "view-invoker-false-postgresql.sql",
-			seed: []string{notes, invoker},
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-off.json"},
+			seed:   []string{notes, invoker},
 			want: differingReading{
 				findings:   []string{"views_modified"},
 				statements: []string{`ALTER VIEW "differs_notes_view" SET (security_invoker=false)`},
@@ -236,25 +241,94 @@ func differingRows() []differingRow {
 		// plan waits for an approval under apply: Always.
 		{
 			name: "view-invoker-true", engine: enginePostgres, declared: "view-invoker-true-postgresql.sql",
-			seed: []string{notes, plain},
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-on.json"},
+			seed:   []string{notes, plain},
 			want: differingReading{
 				findings:   []string{"views_modified"},
 				statements: []string{`ALTER VIEW "differs_notes_view" SET (security_invoker=true)`},
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
-		// MySQL reads a view's SQL SECURITY nowhere: the reader leaves it out and a
-		// SQL schema cannot state it, so the view is read and the report is clean.
+		// A body change of a view that keeps its option: Ptah restates the
+		// option in CREATE OR REPLACE VIEW, which reads like a change, and the
+		// statement's effect says it was true before and stays true, so the
+		// manager raises nothing and the plan runs unattended under apply:
+		// Always (#1060).
+		{
+			name: "view-invoker-kept", engine: enginePostgres, declared: "view-invoker-body-postgresql.sql",
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-kept.json"},
+			seed:   []string{notes, invoker},
+			want: differingReading{
+				findings:   []string{"views_modified"},
+				statements: []string{`CREATE OR REPLACE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+			},
+		},
+		// The same statement over a view that held no option turns it on, and
+		// its effect says so.
+		{
+			name: "view-invoker-on-with-body", engine: enginePostgres, declared: "view-invoker-body-postgresql.sql",
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-on-with-body.json"},
+			seed:   []string{notes, plain},
+			want: differingReading{
+				findings:   []string{"views_modified"},
+				statements: []string{`CREATE OR REPLACE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+				privileges: []string{"SecurityDefiner"},
+			},
+		},
+		// A view the plan creates with invoker rights is raised too. CREATE
+		// VIEW's SQL left it unattended, since such a view has no readers yet;
+		// its effect records the option as absent before and true after. A
+		// view a rebuild drops and creates again records the same, and the
+		// manager reads it against the value the drop's effect recorded.
+		{
+			name: "view-invoker-new", engine: enginePostgres, declared: "view-invoker-true-postgresql.sql",
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-invoker-new.json"},
+			seed:   []string{notes},
+			want: differingReading{
+				findings:   []string{"views_added"},
+				statements: []string{`CREATE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+				privileges: []string{"SecurityDefiner"},
+			},
+		},
+		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
+		// INVOKER that the declaration leaves without a mode reads as changed.
+		// The plan replaces it with no mode, which the server takes as DEFINER:
+		// its readers start to read with its definer's rights, and the definer
+		// is the login the Apply runs as (stokaro/ptah#5902). The statement does
+		// not say what the view held, so the manager raises every MySQL view it
+		// replaces, and this plan waits for an approval under apply: Always.
 		{
 			name: "view-invoker-unstated", engine: engineMySQL, declared: "view-mysql.sql",
-			seed: []string{
-				"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, owner_name varchar(64) NOT NULL)",
-				"CREATE SQL SECURITY INVOKER VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes",
+			seed: []string{mysqlNotes, mysqlInvoker},
+			want: differingReading{
+				findings:   []string{"views_modified"},
+				observed:   map[string]int32{"views": 1},
+				statements: []string{"CREATE OR REPLACE VIEW `differs_notes_view`"},
+				privileges: []string{"SecurityDefiner"},
 			},
+		},
+		// A declaration that states the mode keeps it: the read agrees and
+		// nothing is planned. This is what the databases page tells a person to
+		// write for a view that reads with its readers' rights.
+		{
+			name: "view-invoker-stated", engine: engineMySQL, declared: "view-invoker-mysql.sql",
+			seed: []string{mysqlNotes, mysqlInvoker},
 			want: differingReading{observed: map[string]int32{"views": 1}},
 		},
-		// A foreign table is read through what it needs: Ptah names the extension
-		// and plans to drop it, and the foreign table stops that drop.
+		// The same declaration over a view held as DEFINER turns invoker rights
+		// on, and its readers start to need their own rights on the table.
+		{
+			name: "view-invoker-declared", engine: engineMySQL, declared: "view-invoker-mysql.sql",
+			seed: []string{mysqlNotes, "CREATE VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes"},
+			want: differingReading{
+				findings:   []string{"views_modified"},
+				statements: []string{"SQL SECURITY INVOKER"},
+				privileges: []string{"SecurityDefiner"},
+			},
+		},
+		// A foreign table is read through what it needs: Ptah names the extension,
+		// and since v0.26.0 it refuses to plan the drop the foreign table would
+		// stop, rather than plan one the server refuses (stokaro/ptah#5898).
 		{
 			name: "foreign-table", engine: enginePostgres, declared: "kept-postgresql.sql",
 			seed: []string{
@@ -264,11 +338,10 @@ func differingRows() []differingRow {
 				"CREATE FOREIGN TABLE differs_remote_items (id bigint NOT NULL) SERVER differs_remote",
 			},
 			want: differingReading{
-				findings:         []string{"feature_changes:ptah.run/pgextension/extension-change"},
-				statements:       []string{`DROP EXTENSION "postgres_fdw"`},
-				destructive:      true,
-				applyRefusal:     "cannot drop extension postgres_fdw because other objects depend on it",
-				driftsAfterApply: true,
+				findings: []string{"feature_changes:ptah.run/pgextension/extension-change"},
+				planRefusal: `cannot drop extension "postgres_fdw": foreign table "public.differs_remote_items" depends on it; ` +
+					"drop the foreign table first",
+				planCode: "invalid_plan_output",
 			},
 		},
 		// With no extension in the way nothing names the foreign table at all.
@@ -859,12 +932,19 @@ func (row differingRow) checkApply(captures runnerharness.Captures) error {
 	if err != nil {
 		return err
 	}
+	// PostgreSQL takes back what a refused Apply sent, and since Ptah v0.26.0
+	// the report says so (stokaro/ptah#5737). MySQL commits each DDL statement
+	// on its own, so how far a refused Apply got stays unknown there.
+	refused := "apply_outcome_unknown"
+	if row.engine == enginePostgres {
+		refused = "apply_failed"
+	}
 	var problems []error
 	switch code := frameCode(record); {
 	case row.want.applyRefusal == "" && code != "":
 		problems = append(problems, fmt.Errorf("%s: the frame says %q, want no error", apply, code))
-	case row.want.applyRefusal != "" && code != "apply_outcome_unknown":
-		problems = append(problems, fmt.Errorf("%s: the frame says %q, want apply_outcome_unknown", apply, code))
+	case row.want.applyRefusal != "" && code != refused:
+		problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", apply, code, refused))
 	case !strings.Contains(child.Stderr, row.want.applyRefusal):
 		problems = append(problems, fmt.Errorf("%s: `schema apply` says %q, want the refusal %q", apply, child.Stderr, row.want.applyRefusal))
 	}
@@ -1156,7 +1236,7 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			},
 		},
 		{
-			name: "an Apply the dependent did not stop", row: "differs-dependent-view-postgres", want: "want apply_outcome_unknown",
+			name: "an Apply the dependent did not stop", row: "differs-dependent-view-postgres", want: "want apply_failed",
 			edit: func(captures *runnerharness.Captures) {
 				editRow(captures, "differs-dependent-view-postgres/apply", func(row *runnerharness.Row) {
 					row.Result = map[string]any{"operation": "apply"}
@@ -1178,9 +1258,23 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			},
 		},
 		{
-			name: "an Apply where the plan should have stopped the row", row: "differs-view-invoker-unstated-mysql", want: "a row that plans nothing applied",
+			name: "an Apply where the plan should have stopped the row", row: "differs-view-invoker-stated-mysql", want: "a row that plans nothing applied",
 			edit: func(captures *runnerharness.Captures) {
-				captures.Rows = append(captures.Rows, runnerharness.Row{Name: "differs-view-invoker-unstated-mysql/apply"})
+				captures.Rows = append(captures.Rows, runnerharness.Row{Name: "differs-view-invoker-stated-mysql/apply"})
+			},
+		},
+		{
+			name: "a MySQL Apply the dependent did not stop", row: "differs-dependent-key-mysql", want: "want apply_outcome_unknown",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-dependent-key-mysql/apply", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "apply_failed"}}
+				})
+			},
+		},
+		{
+			name: "a replaced MySQL view the manager runs unattended", row: "differs-view-invoker-unstated-mysql", want: "the manager reads the privilege changes",
+			edit: func(captures *runnerharness.Captures) {
+				usePlan(captures, "differs-dependent-view-mysql", "differs-view-invoker-unstated-mysql")
 			},
 		},
 		{

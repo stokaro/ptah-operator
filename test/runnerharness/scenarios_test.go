@@ -702,7 +702,15 @@ func statementErrors(t *testing.T, l *lab) {
 		run.observe("observe")
 		planned := run.plan("plan", nil)
 		run.publishPlan("plan", planned.plan)
-		return run.apply("apply", storedAs("schema apply", "statement-errors/"+name+".json"), wantCode("apply_outcome_unknown"))
+		// PostgreSQL rolls the refused statement's transaction back, and since
+		// Ptah v0.26.0 the report says so (stokaro/ptah#5737). MySQL commits
+		// each DDL statement on its own, so Ptah still reports such a run as
+		// unknown there.
+		want := "apply_outcome_unknown"
+		if engine == enginePostgres {
+			want = "apply_failed"
+		}
+		return run.apply("apply", storedAs("schema apply", "statement-errors/"+name+".json"), wantCode(want))
 	}
 	up := func(t *testing.T, name, engine string, seed []string) rowOutcome {
 		t.Helper()
@@ -853,19 +861,23 @@ func unreadableSources(t *testing.T, l *lab) {
 
 // structuralFaults runs Observe and Plan on schemas that load and that Ptah
 // refuses. The fault crosses only when the failed command stopped on it, in the
-// words of a child that held no credential. The last rows are the near misses:
-// validate finds a fault there, and drift and plan stop on something else, so
-// the runner has to say what it says without the fault: drift's exit status,
-// and the code of the refusal Ptah planned. Its fixed sentences hold neither
-// the row the database was seeded with nor anything drift said of the schema
-// the database holds, which no check of a code would show.
+// words of a child that held no credential. Since Ptah v0.26.0 drift and plan
+// check every index first and stop on the first one they refuse, in validate's
+// words, so a schema with a faulty index says that fault whatever else is
+// wrong with it. The last row is the near miss: validate finds a fault there,
+// and drift and plan stop on something else, so the runner has to say what it
+// says without the fault: drift's exit status, and the code of the refusal
+// Ptah planned. Its fixed sentences hold neither the row the database was
+// seeded with nor anything drift said of the schema the database holds, which
+// no check of a code would show.
 func structuralFaults(t *testing.T, l *lab) {
 	t.Helper()
 	const (
 		invalid    = runner.CodeDesiredSchemaInvalid
 		noReason   = "ptah exited with code 2"
-		noPlan     = "plan command did not complete successfully"
 		foreignKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
+		indexTable = `index "i": names table "nowhere", which no declaration defines`
+		indexKey   = `index "i": names column "missing_column", which table "t" does not declare`
 		// Since Ptah v0.23.0 the plan refuses what it cannot compare as
 		// declaration-refused, and the runner asks the desired-source check
 		// why. Where validate finds the fault in the file, the Plan says that;
@@ -900,7 +912,7 @@ func structuralFaults(t *testing.T, l *lab) {
 		{
 			name: "key-and-index", engine: enginePostgres, file: "key-and-index.sql",
 			observeCode: invalid, planCode: invalid,
-			observeWords: "schema.sql: " + foreignKey, planWords: "schema.sql: " + foreignKey,
+			observeWords: "schema.sql: " + indexKey, planWords: "schema.sql: " + indexKey,
 		},
 		{
 			name: "key-mysql", engine: engineMySQL, file: "key-constraint.sql",
@@ -915,14 +927,16 @@ func structuralFaults(t *testing.T, l *lab) {
 		},
 		{
 			name: "index-table", engine: enginePostgres, file: "index-table.sql",
-			observeCode: "child_exit", planCode: "invalid_plan_output", observeWords: noReason, planWords: noPlan,
-		},
-		{
-			name: "other-and-key", engine: enginePostgres, file: "other-and-key.sql", extra: otherSchema,
-			observeCode: "child_exit", planCode: "plan_refused", observeWords: noReason, planWords: declarationRefused,
+			observeCode: invalid, planCode: invalid,
+			observeWords: "schema.sql: " + indexTable, planWords: "schema.sql: " + indexTable,
 		},
 		{
 			name: "other-and-index", engine: enginePostgres, file: "other-and-index.sql", extra: otherSchema,
+			observeCode: invalid, planCode: invalid,
+			observeWords: "schema.sql: " + indexKey, planWords: "schema.sql: " + indexKey,
+		},
+		{
+			name: "other-and-key", engine: enginePostgres, file: "other-and-key.sql", extra: otherSchema,
 			observeCode: "child_exit", planCode: "plan_refused", observeWords: noReason, planWords: declarationRefused,
 		},
 	} {

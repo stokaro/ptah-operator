@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_65348d128d01",
-  "plan_digest": "sha256:df843bc54ede03f5751a5a6c9b1a973e61adc42c86ceeec4ff0ce83008afa222",
+  "plan_name": "plan_2f37026cba02",
+  "plan_digest": "sha256:1f41b8ca0c3603b43092753e7cff0e549bf00462d02f93c9a1cb3349b2acf4a1",
   "units": [
     {
       "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');"

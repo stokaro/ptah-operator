@@ -1418,9 +1418,9 @@ func reportDecodeError(command string, outcome commandOutcome) error {
 // may start more than one Pod for the Job, so no one child's claim that
 // nothing reached the database speaks for the others, and only the
 // observation that follows can. That holds for a failed report too, although
-// in this contract failed means nothing was sent, or, from a Ptah later than
-// the one support/ptah.json pins, that statements were sent and the database
-// confirmed the rollback of every one of them -- unlike a migration run, whose
+// in this contract failed means nothing was sent, or, since Ptah v0.26.0, that
+// statements were sent and the database confirmed the rollback of every one of
+// them (stokaro/ptah#5737) -- unlike a migration run, whose
 // failed may follow committed migrations -- so no reading here is shared with
 // decodeMigrationReport. The report still names the ending, so a refusal
 // reaches the resource as a refusal, and where a run that sent a statement
@@ -1470,9 +1470,9 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 		ended := errors.New("ptah reported that the apply failed before it sent any statement")
 		if report.Failure != nil {
 			// Ptah names where a run stopped only once it sent a statement.
-			// The pinned one reports such a run as unknown; a later one
-			// reports it as failed once the database confirmed the rollback
-			// of every statement it sent (stokaro/ptah#5737).
+			// Since v0.26.0 it reports such a run as failed once the database
+			// confirmed the rollback of every statement it sent, and as
+			// unknown otherwise (stokaro/ptah#5737).
 			ended = errors.New("ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent")
 		}
 		setResultError(result, codeApplyFailed, ended, redactor, diagnostics)

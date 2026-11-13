@@ -1,0 +1,35 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_ef6dc8bbd24a",
+  "plan_digest": "sha256:2b8afb469ec1782efff0b3dc225bcffb83b5e94db387eab7e89be85800f65bd3",
+  "units": [
+    {
+      "sql": "CREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_notes_view"
+          },
+          "action": "create",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "after": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "after": true,
+              "changed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
