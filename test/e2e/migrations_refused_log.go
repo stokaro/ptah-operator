@@ -68,8 +68,11 @@ func everyLogEntryLost(migration *ptahv1alpha1.PtahMigration) error {
 		return fmt.Errorf("the run's RunFinished reads %s with log %+v, want Succeeded with the log lastRun holds", end.Outcome, end.MigrationLog)
 	}
 	logged := meta.FindStatusCondition(status.Conditions, ptahv1alpha1.ConditionMigrationRunLogged)
-	if logged == nil || logged.Status != metav1.ConditionFalse || logged.Reason != string(ptahv1alpha1.ReasonLogEntriesLost) {
-		return fmt.Errorf("RunLogged is %+v, want False with %s", logged, ptahv1alpha1.ReasonLogEntriesLost)
+	if logged == nil {
+		return fmt.Errorf("the migration has no RunLogged, want False with %s", ptahv1alpha1.ReasonLogEntriesLost)
+	}
+	if logged.Status != metav1.ConditionFalse || logged.Reason != string(ptahv1alpha1.ReasonLogEntriesLost) {
+		return fmt.Errorf("RunLogged is %s with %s, want False with %s", logged.Status, logged.Reason, ptahv1alpha1.ReasonLogEntriesLost)
 	}
 	if logged.ObservedGeneration != migration.Generation {
 		return fmt.Errorf("RunLogged was written for generation %d, and the migration is at %d", logged.ObservedGeneration, migration.Generation)
