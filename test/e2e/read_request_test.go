@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +60,88 @@ func TestHistoryReadOnRequestRefusesAReadingTheRequestDidNotCause(t *testing.T) 
 	}
 	if historyReadOnRequest(reading(func(*ptahv1alpha1.PtahMigration) {}), value, requested, requested.Add(30*time.Second), 2) {
 		t.Fatal("a read after the interval's own read was taken for one the request caused")
+	}
+}
+
+// TestRecoveryHistoryOnRequestRefusesAReadingTheRequestDidNotCause holds the
+// runner protocol row's wait to the History reads the uncertain row captured
+// beside an Unknown record it had not settled. Those were read on the
+// interval, so as stored they answer no request and are refused; a copy that
+// answered a request 40 seconds before the read is accepted, and each copy
+// that changes what the row asserts is refused.
+func TestRecoveryHistoryOnRequestRefusesAReadingTheRequestDidNotCause(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile("../../testdata/e2e/readings/uncertain-migration-history-dirty.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readings map[string]*ptahv1alpha1.PtahMigration
+	if err := json.Unmarshal(content, &readings); err != nil {
+		t.Fatal(err)
+	}
+	if len(readings) != 2 || readings["postgresql"] == nil || readings["mysql"] == nil {
+		t.Fatal("both native engine readings are required")
+	}
+	for engine, captured := range readings {
+		t.Run(engine, func(t *testing.T) {
+			t.Parallel()
+			history, unresolved := captured.Status.History, captured.Status.UnresolvedRun
+			if history == nil || history.ObservedAt.IsZero() || unresolved == nil || captured.Status.ActiveOperation != nil {
+				t.Fatal("the capture no longer holds a History read beside an unresolved run")
+			}
+			requested := history.ObservedAt.Add(-40 * time.Second)
+			value := requested.Format(time.RFC3339)
+			intervalRead := requested.Add(55 * time.Minute)
+			fingerprint, operation := history.Fingerprint, unresolved.OperationID
+			if recoveryHistoryOnRequest(captured, value, requested, intervalRead, fingerprint, operation) {
+				t.Fatal("the captured interval read was taken for a read on request")
+			}
+			answered := func(change func(*ptahv1alpha1.PtahMigration)) *ptahv1alpha1.PtahMigration {
+				migration := captured.DeepCopy()
+				migration.Status.LastReadRequest = value
+				change(migration)
+				return migration
+			}
+			if !recoveryHistoryOnRequest(answered(func(*ptahv1alpha1.PtahMigration) {}), value, requested, intervalRead, fingerprint, operation) {
+				t.Fatal("a History read 40 seconds after the request it answered was refused")
+			}
+			// Inside the bound, so only the scheduled read can refuse it.
+			if recoveryHistoryOnRequest(answered(func(*ptahv1alpha1.PtahMigration) {}), value, requested, requested.Add(30*time.Second), fingerprint, operation) {
+				t.Fatal("a History read after the one the refused run scheduled was taken for one the request caused")
+			}
+			for name, change := range map[string]func(*ptahv1alpha1.PtahMigration){
+				"another request answered": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.LastReadRequest = requested.Add(-time.Hour).Format(time.RFC3339)
+				},
+				"no history": func(m *ptahv1alpha1.PtahMigration) { m.Status.History = nil },
+				"a history read before the request": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.History.ObservedAt = metav1.NewTime(requested.Add(-time.Second))
+				},
+				"a history read in the request's own second": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.History.ObservedAt = metav1.NewTime(requested)
+				},
+				"a history read past the bound": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.History.ObservedAt = metav1.NewTime(requested.Add(readRequestBound + time.Second))
+				},
+				"an operation running": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{Type: ptahv1alpha1.MigrationOperationHistory}
+				},
+				"another reading of the revision table": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.History.Fingerprint = "sha256:" + strings.Repeat("0", 64)
+				},
+				"the record settled": func(m *ptahv1alpha1.PtahMigration) { m.Status.UnresolvedRun = nil },
+				"another run unresolved": func(m *ptahv1alpha1.PtahMigration) {
+					m.Status.UnresolvedRun.OperationID = "sha256:" + strings.Repeat("1", 64)
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					if recoveryHistoryOnRequest(answered(change), value, requested, intervalRead, fingerprint, operation) {
+						t.Fatal("recoveryHistoryOnRequest accepted it")
+					}
+				})
+			}
+		})
 	}
 }
 
