@@ -1202,7 +1202,13 @@ replacement builds for it, with the manager identity taken from the live Pod
 template and the template held to the admission snapshot the claim persisted
 before dispatch. A release that changed nothing else in the Job adopts it. A
 release that also changed the Job or its Pod template -- an environment
-variable, an annotation, a security setting -- cannot confirm it. A dispatched
+variable, an annotation, a security setting -- cannot confirm it. 0.2.11 moved
+every credential out of the environment and into
+[files](../../reference/credentials-and-admission/#credential-files), and still
+adopts a Job 0.2.10 dispatched: it compares that Job with the one it builds given
+back 0.2.10's credential variables, so that difference and no other is accepted,
+and only for a claim whose admission snapshot a release that built that shape
+recorded. A dispatched
 `PtahSchema` Apply is settled as outcome unknown and the database is observed
 before anything else runs. A dispatched `PtahMigration` Apply is recorded as
 an `Unknown` run in `status.unresolvedRun`, and no further Apply is claimed
@@ -2544,7 +2550,8 @@ quoted part of the line with it and replaces what they share with `[in the
 statement]`, before it cuts the line. That covers a literal, a password in a literal
 and a name the statement declares, which is why the example above does not name its
 index. A value read from a table is not in the statement, so it stays. The runner
-also removes the secrets in the Pod's environment, in any case, and replaces control
+also removes the credentials it read from its files and its environment, in any case,
+and replaces control
 characters with a space, so a row cannot rewrite a reader's terminal. Nothing can
 recognize a row as a row.
 

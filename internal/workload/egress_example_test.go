@@ -97,7 +97,7 @@ func describePod(t *testing.T, name string, template corev1.PodTemplateSpec) ope
 			}
 		}
 		for _, env := range container.Env {
-			if env.Name == runner.EnvDatabaseURL {
+			if env.Name == runner.EnvDatabaseURLFile {
 				pod.database = true
 			}
 		}

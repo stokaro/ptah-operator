@@ -63,6 +63,14 @@ func Run(ctx context.Context, config Config) Result {
 	if environment == nil {
 		environment = os.Environ()
 	}
+	// The credentials the Job names by file are read first, so the Redactor
+	// below holds the values the child will receive. A refusal is reported
+	// after the protocol check, and its words name the variable, never the
+	// file's content.
+	resolved, credentialErr := ResolveCredentialFiles(environment)
+	if credentialErr == nil {
+		environment = resolved
+	}
 	redactor := NewRedactor(environment)
 	values := environmentMap(environment)
 	inputs := InputsFromEnvironment(environment)
@@ -93,6 +101,10 @@ func Run(ctx context.Context, config Config) Result {
 	// document and nothing else, which a manager of any protocol reads.
 	if err := checkProtocolBinding(values); err != nil {
 		setResultError(&result, CodeRunnerProtocolMismatch, err, redactor, config.Diagnostics)
+		return result
+	}
+	if credentialErr != nil {
+		setResultError(&result, "invalid_configuration", credentialErr, redactor, config.Diagnostics)
 		return result
 	}
 	if config.MaxResultBytes <= 0 {

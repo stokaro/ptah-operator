@@ -170,8 +170,9 @@ The operator separates five authorities:
    of a migration's unresolved-run record on its metadata. A person settles such
    a run with a `PtahMigrationRunAcknowledgment`, which admission stamps with
    who made it and the migration records.
-4. A Job receives only the credentials needed for its fixed operation through
-   same-namespace Secret selectors resolved by the kubelet.
+4. A Job receives only the credentials needed for its fixed operation, as
+   [files in same-namespace Secret volumes](../../reference/credentials-and-admission/#credential-files)
+   that the kubelet mounts in the one container that needs each.
 5. A realm administrator decides which namespaces may manage a database more
    than one namespace reaches, by writing a cluster-scoped `PtahRealm`. An
    author names a realm and cannot grant it. See
@@ -826,7 +827,8 @@ Ptah's own words reach the frame, a condition and an Event for these failures:
 | A Git source a Resolve cannot fetch | `child_exit` | The last line of standard error from the Git pull, which holds the Git credential and no database URL, and names the refusal | 512 bytes, and an Event's 512 include the words in front of it |
 
 One function in the runner handles all of them, and the Pod log line below. It removes
-the credentials of the Pod's environment wherever one appears whole, in any case,
+the credentials the runner read from its files and its environment wherever one
+appears whole, in any case,
 replaces control and format characters with a space, joins the text onto one line,
 takes the result frame's marker out and cuts it at a character boundary, in that order.
 The marker goes because the manager searches a merged log for it anywhere and these
@@ -879,10 +881,11 @@ status out of a desired file.
 
 Outside status and Events, a failed `fetch-git-source` init container writes
 standard error, handled by the same function, to its log, and the kubelet copies
-the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations` init containers are Ptah itself,
-with no runner around them, so their logs hold what Ptah wrote with nothing
-removed. Those containers hold the registry credentials, which is why status and
-Events name only the step and its exit status. Whoever holds `pods/log` reads
+the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations`
+init containers run Ptah's pull through the runner, which reads the registry
+credential files and hands Ptah's output to the container's streams as Ptah wrote
+it, with nothing removed. Those containers hold the registry credentials, which is
+why status and Events name only the step and its exit status. Whoever holds `pods/log` reads
 those logs, and whoever reads Pods reads the status.
 
 The first line of a failed Apply's error sentence goes to the operation Pod's log,
@@ -914,13 +917,16 @@ What a Pod kept that long still holds: it has no API token, because automatic
 token mounting is disabled. Its projected result token has the receiver as its
 only audience and lasts at most an hour, and the receiver refuses it once the Apply's Job
 carries a cleanup TTL or its claim has retired, as it refuses a client certificate
-of the older transport. No credential is in the Pod's spec, but the container runtime
-on the node keeps a stopped container's environment until the Pod is removed, so
-anyone with root on that node can read it for those 24 hours as they could while the
-Pod ran. That is the database URL of the operation container, and for a migration Apply
-the registry or Git credential of its fetch init container as well. Once you have read
-the reason you can end that early: `kubectl delete job -n <namespace> <job>` removes
-the Job and its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
+of the older transport. No credential is in the Pod's spec or in any container's
+environment: the container runtime on the node keeps a stopped container's
+environment until the Pod is removed, and that environment holds the paths of the
+credential files and the grants, which hold no credential. The files are in Secret
+volumes, which the kubelet unmounts once the Pod's containers have stopped, so root on
+the node reads the database URL, and for a migration Apply the registry or Git
+credential, only while the Pod runs. A Job 0.2.10 created still carries its
+credentials in its environment for the 24 hours. Once you have read the reason you
+can end the wait early: `kubectl delete job -n <namespace> <job>` removes the Job and
+its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
 which the diagnostic reader role does not grant, and no admission policy or webhook
 judges it. The run is already recorded by the time status names the log, so nothing
 waits on the Job, and the resource goes on as it would have. Delete a Job that has

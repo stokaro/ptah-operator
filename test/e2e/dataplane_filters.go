@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"path"
 	"reflect"
 	"regexp"
 	"slices"
@@ -78,12 +79,14 @@ func renderedKeys(value any) []string {
 }
 
 // containerView is what the filters read of a container, whichever list it
-// is declared in.
+// is declared in. volumes are the Pod's, which a mount resolves through; a
+// view built without them sees every mount as a volume the Pod lacks.
 type containerView struct {
 	name    string
 	env     []corev1.EnvVar
 	envFrom []corev1.EnvFromSource
 	mounts  []corev1.VolumeMount
+	volumes []corev1.Volume
 }
 
 func viewContainers(containers []corev1.Container) []containerView {
@@ -102,6 +105,14 @@ func viewEphemeralContainers(containers []corev1.EphemeralContainer) []container
 		views = append(views, containerView{
 			name: container.Name, env: container.Env, envFrom: container.EnvFrom, mounts: container.VolumeMounts,
 		})
+	}
+	return views
+}
+
+// inPod gives every view the Pod's volumes.
+func inPod(views []containerView, volumes []corev1.Volume) []containerView {
+	for index := range views {
+		views[index].volumes = volumes
 	}
 	return views
 }
@@ -145,6 +156,131 @@ func (c containerView) secretNames() []string {
 		}
 	}
 	return names
+}
+
+// mountedVolume is the Pod volume the container mounts under name, or nil
+// when it mounts none or the Pod declares no such volume.
+func (c containerView) mountedVolume(name string) *corev1.Volume {
+	if len(c.mountsNamed(name)) == 0 {
+		return nil
+	}
+	for index := range c.volumes {
+		if c.volumes[index].Name == name {
+			return &c.volumes[index]
+		}
+	}
+	return nil
+}
+
+// mountedSecretNames are the Secrets the volumes the container mounts
+// project, a projected volume's Secret sources included.
+func (c containerView) mountedSecretNames() []string {
+	var names []string
+	for _, mount := range c.mounts {
+		volume := c.mountedVolume(mount.Name)
+		if volume == nil {
+			continue
+		}
+		if volume.Secret != nil {
+			names = append(names, volume.Secret.SecretName)
+		}
+		if volume.Projected != nil {
+			for _, source := range volume.Projected.Sources {
+				if source.Secret != nil {
+					names = append(names, source.Secret.Name)
+				}
+			}
+		}
+	}
+	return names
+}
+
+// readsSecret is a container that reads the Secret, by its environment or by a
+// volume it mounts.
+func (c containerView) readsSecret(secret string) bool {
+	return slices.Contains(c.secretNames(), secret) || slices.Contains(c.mountedSecretNames(), secret)
+}
+
+// credentialFileMode is the mode the builder gives every credential file:
+// readable by the runner's user and the Pod's fsGroup, and by nobody else.
+const credentialFileMode = 0o440
+
+// credentialFile is a credential the Job names by file: the variable holding
+// the path, the path, and the Secret volume the kubelet projects the file
+// from. An empty key accepts whichever key the Secret holds the credential
+// under.
+type credentialFile struct {
+	variable, path, volume, secret, key string
+	optional                            bool
+}
+
+// The credential files the operator's Jobs name.
+func databaseURLFile(secret string) credentialFile {
+	return credentialFile{
+		variable: "PTAH_OPERATOR_DB_URL_FILE", path: "/credentials/database/url",
+		volume: "database-url", secret: secret, key: "url",
+	}
+}
+
+func registryCredentialFiles(secret string, keys [3]string) []credentialFile {
+	files := make([]credentialFile, 0, len(keys))
+	for index, name := range []string{"username", "password", "token"} {
+		files = append(files, credentialFile{
+			variable: "PTAH_OPERATOR_OCI_" + strings.ToUpper(name) + "_FILE", path: "/credentials/registry/" + name,
+			volume: "registry-credentials", secret: secret, key: keys[index], optional: true,
+		})
+	}
+	return files
+}
+
+// credentialVariables are the variables Ptah reads a credential from. The
+// operator's Jobs carry none of them: the runner reads each from a file into
+// its child's environment.
+var credentialVariables = []string{
+	"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
+	"PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD",
+}
+
+// noCredentialVariable is a container whose environment holds no variable
+// Ptah reads a credential from.
+func noCredentialVariable(c containerView) bool {
+	return !c.envNameWith(func(name string) bool { return slices.Contains(credentialVariables, name) })
+}
+
+// hasCredentialFile is a container that names the credential by exactly one
+// literal variable, holding the path of a file in exactly one read-only mount
+// of a Secret volume, whose one item for the file reads the key at the
+// credential file mode.
+func (c containerView) hasCredentialFile(file credentialFile) bool {
+	directory, name := path.Split(file.path)
+	mounts := c.mountsNamed(file.volume)
+	volume := c.mountedVolume(file.volume)
+	if !exactLiteralEnv(c, file.variable, file.path) || len(mounts) != 1 || !mounts[0].ReadOnly ||
+		mounts[0].MountPath != strings.TrimSuffix(directory, "/") || mounts[0].SubPath != "" ||
+		volume == nil || volume.Secret == nil || volume.Secret.SecretName != file.secret ||
+		!optionalIs(&corev1.SecretKeySelector{Optional: volume.Secret.Optional}, file.optional) {
+		return false
+	}
+	count := 0
+	for _, item := range volume.Secret.Items {
+		if item.Path == name {
+			count++
+			if (file.key != "" && item.Key != file.key) || item.Mode == nil || *item.Mode != credentialFileMode {
+				return false
+			}
+		}
+	}
+	return count == 1
+}
+
+// hasCredentialFiles is hasCredentialFile for each of files.
+func (c containerView) hasCredentialFiles(files ...credentialFile) bool {
+	for _, file := range files {
+		if !c.hasCredentialFile(file) {
+			return false
+		}
+	}
+	return len(files) > 0
 }
 
 // secretEnvNames are the variables that read a Secret.
@@ -282,18 +418,14 @@ type controllerIsolation struct {
 // containers the controller isolation reads.
 func jobContainers(job *batchv1.Job) []containerView {
 	spec := job.Spec.Template.Spec
-	return append(viewContainers(spec.Containers), viewContainers(spec.InitContainers)...)
+	return inPod(append(viewContainers(spec.Containers), viewContainers(spec.InitContainers)...), spec.Volumes)
 }
 
+// hasDatabaseRef is a container that names the database URL by the file the
+// kubelet projects from the url key of the database Secret, and never holds
+// the URL in its environment.
 func (s controllerIsolation) hasDatabaseRef(c containerView) bool {
-	for _, variable := range c.env {
-		reference := envSecretRef(variable)
-		if variable.Name == "PTAH_DB_URL" && variable.Value == "" && reference != nil &&
-			reference.Name == s.databaseSecret && reference.Key == "url" {
-			return true
-		}
-	}
-	return false
+	return c.hasCredentialFile(databaseURLFile(s.databaseSecret)) && noCredentialVariable(c)
 }
 
 func hasExpectedDatabaseEngine(c containerView) bool {
@@ -316,13 +448,21 @@ func hasRegistryLiteral(c containerView) bool {
 	return false
 }
 
+// hasRegistryCredentials is a container that names the registry username,
+// password and token by the files the kubelet projects from the registry
+// Secret, whichever keys the Secret holds them under, never holds one in its
+// environment, and names the registry.
 func (s controllerIsolation) hasRegistryCredentials(c containerView) bool {
-	for _, name := range []string{"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN"} {
-		if !c.hasSecretEnvAnyKey(name, s.registrySecret) {
-			return false
-		}
-	}
-	return hasRegistryLiteral(c)
+	return c.hasCredentialFiles(registryCredentialFiles(s.registrySecret, [3]string{})...) &&
+		noCredentialVariable(c) && hasRegistryLiteral(c)
+}
+
+// noRegistryCredential is a container that reads no registry credential: no
+// variable Ptah reads one from, no variable naming a file of one, and no
+// mount of the volume the files are in. A registry grant it may still read.
+func noRegistryCredential(c containerView) bool {
+	return !c.envNameWith(registryCredentialFileVariable) && noCredentialVariable(c) &&
+		len(c.mountsNamed("registry-credentials")) == 0
 }
 
 func (s controllerIsolation) hasCustomCAGuardInputs(c containerView) bool {
@@ -340,17 +480,40 @@ func (s controllerIsolation) hasAuthorityGuardInputs(c containerView) bool {
 			(s.hasCustomCAGuardInputs(c) && c.hasLiteralEnv("PTAH_PLAIN_HTTP", "false")))
 }
 
+// registryCredentialFileVariable is a variable that names a registry
+// credential file. It shares the prefix of the guard's inputs and is none of
+// them.
+func registryCredentialFileVariable(name string) bool {
+	return slices.ContainsFunc(registryCredentialFiles("", [3]string{}), func(file credentialFile) bool {
+		return file.variable == name
+	})
+}
+
+// noAuthorityGuardInputs is a container that carries none of the source
+// authority guard's inputs.
 func noAuthorityGuardInputs(c containerView) bool {
-	return !c.envNameWith(func(name string) bool { return strings.HasPrefix(name, "PTAH_OPERATOR_OCI_") })
+	return !c.envNameWith(func(name string) bool {
+		return strings.HasPrefix(name, "PTAH_OPERATOR_OCI_") && !registryCredentialFileVariable(name)
+	})
+}
+
+// noDatabaseAccess is a container that can reach no database URL: no
+// variable Ptah reads one from, no variable naming a file of one, no mount of
+// a database URL volume, and no read of the database Secret.
+func noDatabaseAccess(c containerView, databaseSecret string) bool {
+	return !c.hasEnvName("PTAH_DB_URL") && !c.hasEnvName("PTAH_DEV_URL") &&
+		!c.hasEnvName("PTAH_OPERATOR_DB_URL_FILE") && !c.hasEnvName("PTAH_OPERATOR_DEV_URL_FILE") &&
+		len(c.mountsNamed("database-url")) == 0 && len(c.mountsNamed("development-database-url")) == 0 &&
+		!c.readsSecret(databaseSecret)
 }
 
 func (s controllerIsolation) noDatabase(c containerView) bool {
-	return !c.hasEnvName("PTAH_DB_URL") && !c.hasEnvName("PTAH_DEV_URL") &&
-		!slices.Contains(c.secretNames(), s.databaseSecret)
+	return noDatabaseAccess(c, s.databaseSecret)
 }
 
 func (s controllerIsolation) noRegistry(c containerView) bool {
-	return !c.envNameWith(registryEnvName) && !slices.Contains(c.secretNames(), s.registrySecret)
+	return !c.envNameWith(registryEnvName) && !c.readsSecret(s.registrySecret) &&
+		len(c.mountsNamed("registry-credentials")) == 0
 }
 
 func (s controllerIsolation) neutral(c containerView) bool {
@@ -412,9 +575,7 @@ func (s controllerIsolation) databaseSourceJobIsolated(job *batchv1.Job) bool {
 	return slices.Equal(initNames, []string{"install-runner", "validate-source-authority", "fetch-schema"}) &&
 		s.hasDatabaseRef(main[0]) && s.noRegistry(main[0]) &&
 		s.noDatabase(fetch[0]) && s.hasRegistryCredentials(fetch[0]) && noAuthorityGuardInputs(fetch[0]) &&
-		s.noDatabase(guard[0]) && s.hasAuthorityGuardInputs(guard[0]) &&
-		!guard[0].hasEnvName("PTAH_OCI_USERNAME") && !guard[0].hasEnvName("PTAH_OCI_PASSWORD") &&
-		!guard[0].hasEnvName("PTAH_OCI_TOKEN") &&
+		s.noDatabase(guard[0]) && s.hasAuthorityGuardInputs(guard[0]) && noRegistryCredential(guard[0]) &&
 		s.fetchCASnapshotBoundary(guard[0], fetch[0]) &&
 		s.onlyNeutralExcept(job, "ptah", "validate-source-authority", "fetch-schema")
 }
@@ -557,7 +718,7 @@ func (in sourceJobIsolationInputs) exactSourceEnvNames(operation string) []strin
 	}
 	switch in.authMode {
 	case "Environment":
-		names = append(names, "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_USERNAME")
+		names = append(names, "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE", "PTAH_OPERATOR_OCI_USERNAME_FILE")
 	case "DockerConfigJSON":
 		names = append(names, "DOCKER_CONFIG")
 	}
@@ -569,8 +730,7 @@ func (in sourceJobIsolationInputs) exactSourceEnvNames(operation string) []strin
 }
 
 func (in sourceJobIsolationInputs) noDatabase(c containerView) bool {
-	return !c.hasEnvName("PTAH_DB_URL") && !c.hasEnvName("PTAH_DEV_URL") &&
-		!slices.Contains(c.secretNames(), in.databaseSecret)
+	return noDatabaseAccess(c, in.databaseSecret)
 }
 
 func noEnvFrom(c containerView) bool {
@@ -579,13 +739,13 @@ func noEnvFrom(c containerView) bool {
 
 func (in sourceJobIsolationInputs) noSourceAccess(c containerView) bool {
 	return !c.envNameWith(registryEnvName) && len(c.mountsNamed("registry-docker-config")) == 0 &&
-		!slices.Contains(c.secretNames(), in.registrySecret)
+		len(c.mountsNamed("registry-credentials")) == 0 && !c.readsSecret(in.registrySecret)
 }
 
 func (in sourceJobIsolationInputs) fixedGrants(c containerView) bool {
 	var grants []string
 	for _, name := range c.envNames() {
-		if strings.HasPrefix(name, "PTAH_OPERATOR_OCI_") {
+		if strings.HasPrefix(name, "PTAH_OPERATOR_OCI_") && !registryCredentialFileVariable(name) {
 			grants = append(grants, name)
 		}
 	}
@@ -631,22 +791,51 @@ func volumesNamed(volumes []corev1.Volume, name string) []corev1.Volume {
 	return matches
 }
 
+// environmentCredentials is a container that names the registry username,
+// password and token by the files of the one registry-credentials volume,
+// which projects nothing else, and reads only the two grants from a Secret
+// into its environment.
 func (in sourceJobIsolationInputs) environmentCredentials(job *batchv1.Job, c containerView) bool {
 	secretNames := c.secretEnvNames()
 	sort.Strings(secretNames)
 	volumes := job.Spec.Template.Spec.Volumes
-	return in.exactSecretEnv(c, "PTAH_OCI_USERNAME", "username", true) &&
-		in.exactSecretEnv(c, "PTAH_OCI_PASSWORD", "password", true) &&
-		in.exactSecretEnv(c, "PTAH_OCI_TOKEN", "token", true) &&
-		slices.Equal(secretNames, []string{
-			"PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_USERNAME",
-			"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP", "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
-		}) &&
-		!c.hasEnvName("DOCKER_CONFIG") &&
-		len(volumesNamed(volumes, "registry-docker-config")) == 0 &&
-		len(c.mountsNamed("registry-docker-config")) == 0 &&
-		noSecretVolumes(volumes)
+	credentialVolumes := volumesNamed(volumes, "registry-credentials")
+	if !c.hasCredentialFiles(registryCredentialFiles(in.registrySecret, [3]string{"username", "password", "token"})...) ||
+		!noCredentialVariable(c) ||
+		!slices.Equal(secretNames, []string{"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP", "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"}) ||
+		c.hasEnvName("DOCKER_CONFIG") ||
+		len(volumesNamed(volumes, "registry-docker-config")) != 0 ||
+		len(c.mountsNamed("registry-docker-config")) != 0 ||
+		len(credentialVolumes) != 1 || !renderedEqual(credentialVolumes[0], in.registryCredentialsVolume()) {
+		return false
+	}
+	for _, volume := range volumes {
+		if (volume.Secret != nil && volume.Name != "registry-credentials") || projectsSecret(volume) {
+			return false
+		}
+	}
+	return true
 }
+
+// registryCredentialsVolume is the volume an Environment-mode registry
+// credential is projected from: each of the three keys, optional, at the
+// credential file mode.
+func (in sourceJobIsolationInputs) registryCredentialsVolume() any {
+	item := func(key string) any {
+		return map[string]any{"key": key, "path": key, "mode": float64(credentialFileMode)}
+	}
+	return map[string]any{
+		"name": "registry-credentials",
+		"secret": map[string]any{
+			"secretName":  in.registrySecret,
+			"items":       []any{item("username"), item("password"), item("token")},
+			"defaultMode": float64(420),
+			"optional":    true,
+		},
+	}
+}
+
+var registryCredentialsMount = literalDocument(`{"name": "registry-credentials", "mountPath": "/credentials/registry", "readOnly": true}`)
 
 func (in sourceJobIsolationInputs) dockerConfigVolume() any {
 	return map[string]any{
@@ -688,7 +877,10 @@ func (in sourceJobIsolationInputs) expectedSourceVolumes(operation string) any {
 		map[string]any{"name": "runner", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "64Mi"}},
 		map[string]any{"name": "work", "emptyDir": map[string]any{"medium": "Memory", "sizeLimit": "128Mi"}},
 	}
-	if in.authMode == "DockerConfigJSON" {
+	switch in.authMode {
+	case "Environment":
+		volumes = append(volumes, in.registryCredentialsVolume())
+	case "DockerConfigJSON":
 		volumes = append(volumes, in.dockerConfigVolume())
 	}
 	if operation == "verify" {
@@ -709,7 +901,10 @@ func (in sourceJobIsolationInputs) expectedMainMounts(operation string) any {
 		map[string]any{"name": "runner", "mountPath": "/runner", "readOnly": true},
 		map[string]any{"name": "work", "mountPath": "/work"},
 	}
-	if in.authMode == "DockerConfigJSON" {
+	switch in.authMode {
+	case "Environment":
+		mounts = append(mounts, registryCredentialsMount)
+	case "DockerConfigJSON":
 		mounts = append(mounts, dockerConfigMount)
 	}
 	if operation == "verify" {
@@ -807,7 +1002,7 @@ func (in sourceJobIsolationInputs) sourceJobIsolated(job *batchv1.Job) bool {
 		return false
 	}
 	main, install := &spec.Containers[0], &spec.InitContainers[0]
-	mainView := viewContainers(spec.Containers)[0]
+	mainView := inPod(viewContainers(spec.Containers), spec.Volumes)[0]
 	envNames := mainView.envNames()
 	sort.Strings(envNames)
 	if !slices.Equal(envNames, in.exactSourceEnvNames(operation)) ||
@@ -844,14 +1039,14 @@ func (in sourceJobIsolationInputs) sourceJobIsolated(job *batchv1.Job) bool {
 	default:
 		return false
 	}
-	all := append(append(viewContainers(spec.Containers), viewContainers(spec.InitContainers)...),
-		viewEphemeralContainers(spec.EphemeralContainers)...)
+	all := inPod(append(append(viewContainers(spec.Containers), viewContainers(spec.InitContainers)...),
+		viewEphemeralContainers(spec.EphemeralContainers)...), spec.Volumes)
 	for _, container := range all {
 		if !in.noDatabase(container) || !noEnvFrom(container) {
 			return false
 		}
 	}
-	for _, container := range viewContainers(spec.InitContainers) {
+	for _, container := range inPod(viewContainers(spec.InitContainers), spec.Volumes) {
 		if !in.noSourceAccess(container) {
 			return false
 		}
@@ -1079,7 +1274,7 @@ func (in customCAPodIsolationInputs) isolated(pod *corev1.Pod) bool {
 		pod = pod.DeepCopy()
 		pod.Spec = normalized.Spec.Template.Spec
 	}
-	all := viewContainers(podContainers(pod))
+	all := inPod(viewContainers(podContainers(pod)), pod.Spec.Volumes)
 	main, install := containersNamed(all, "ptah"), containersNamed(all, "install-runner")
 	guard, fetch := containersNamed(all, "validate-source-authority"), containersNamed(all, "fetch-schema")
 	if len(main) != 1 || len(install) != 1 || len(guard) != 1 || len(fetch) != 1 ||
@@ -1097,7 +1292,8 @@ func (in customCAPodIsolationInputs) isolated(pod *corev1.Pod) bool {
 	for _, volume := range pod.Spec.Volumes {
 		volumeNames = append(volumeNames, volume.Name)
 	}
-	if !sameStringsSorted(volumeNames, "fetch-work", "registry-ca", "registry-ca-snapshot", "runner", "schema-source", "work") ||
+	if !sameStringsSorted(volumeNames, "database-url", "fetch-work", "registry-ca", "registry-ca-snapshot", "registry-credentials",
+		"runner", "schema-source", "work") ||
 		!exactMemoryVolume(pod, "runner", "64Mi") || !exactMemoryVolume(pod, "work", "128Mi") ||
 		!exactMemoryVolume(pod, "fetch-work", "64Mi") || !exactMemoryVolume(pod, "registry-ca-snapshot", "2Mi") ||
 		!exactMemoryVolume(pod, "schema-source", "64Mi") || !in.exactCAVolume(pod) {
@@ -1137,9 +1333,9 @@ func (in customCAPodIsolationInputs) guardIsolated(container *corev1.Container, 
 		view.hasLiteralEnv("PTAH_OPERATOR_OCI_CA_SOURCE_FILE", "/credentials/ca-source/ca.pem") &&
 		view.hasLiteralEnv("PTAH_OCI_REGISTRY", in.registryAuthority) &&
 		view.hasLiteralEnv("PTAH_PLAIN_HTTP", "false") &&
-		!view.hasEnvName("PTAH_OCI_USERNAME") && !view.hasEnvName("PTAH_OCI_PASSWORD") &&
-		!view.hasEnvName("PTAH_OCI_TOKEN") &&
+		noRegistryCredential(view) &&
 		sameStringsSorted(view.secretNames(), in.registrySecret, in.registrySecret) &&
+		len(view.mountedSecretNames()) == 0 &&
 		exactMounts(container.VolumeMounts, []expectedMount{
 			{"runner", "/runner", true},
 			{"registry-ca", "/credentials/ca-source", true},
@@ -1147,30 +1343,43 @@ func (in customCAPodIsolationInputs) guardIsolated(container *corev1.Container, 
 		})
 }
 
+// fetchIsolated is the fetch run by the runner, which reads the registry
+// credential from the files of the registry Secret and hands it to Ptah's pull
+// alone. Its environment reads no Secret.
 func (in customCAPodIsolationInputs) fetchIsolated(container *corev1.Container, view containerView) bool {
-	return slices.Equal(container.Command, []string{"/usr/local/bin/ptah"}) &&
-		slices.Equal(container.Args, []string{"schema", "pull", in.resolvedReference, "--out", "/source/schema.hcl", "--skip-parse"}) &&
-		view.hasSecretEnv("PTAH_OCI_USERNAME", in.registrySecret, "username", true) &&
-		view.hasSecretEnv("PTAH_OCI_PASSWORD", in.registrySecret, "password", true) &&
-		view.hasSecretEnv("PTAH_OCI_TOKEN", in.registrySecret, "token", true) &&
+	return slices.Equal(container.Command, []string{"/runner/ptah-runner"}) &&
+		slices.Equal(container.Args, []string{
+			"--fetch-oci-source", "--ptah-binary", "/usr/local/bin/ptah", "--",
+			"schema", "pull", in.resolvedReference, "--out", "/source/schema.hcl", "--skip-parse",
+		}) &&
+		view.hasCredentialFiles(registryCredentialFiles(in.registrySecret, [3]string{"username", "password", "token"})...) &&
+		noCredentialVariable(view) &&
 		view.hasLiteralEnv("PTAH_OCI_REGISTRY", in.registryAuthority) &&
 		view.hasLiteralEnv("PTAH_OCI_CA_FILE", "/credentials/ca-snapshot/ca.pem") &&
 		view.hasLiteralEnv("PTAH_PLAIN_HTTP", "false") &&
 		noAuthorityGuardInputs(view) &&
-		sameStringsSorted(view.secretNames(), in.registrySecret, in.registrySecret, in.registrySecret) &&
+		len(view.secretNames()) == 0 &&
+		sameStringsSorted(view.mountedSecretNames(), in.registrySecret) &&
 		exactMounts(container.VolumeMounts, []expectedMount{
 			{"fetch-work", "/fetch-work", false},
 			{"registry-ca-snapshot", "/credentials/ca-snapshot", true},
+			{"registry-credentials", "/credentials/registry", true},
+			{"runner", "/runner", true},
 			{"schema-source", "/source", false},
 		})
 }
 
+// mainIsolated is the operation, which names the database URL by the file of
+// the database Secret and reads no other Secret.
 func (in customCAPodIsolationInputs) mainIsolated(container *corev1.Container, view containerView) bool {
-	return view.hasSecretEnv("PTAH_DB_URL", in.databaseSecret, "url", false) &&
+	return view.hasCredentialFile(databaseURLFile(in.databaseSecret)) &&
+		noCredentialVariable(view) &&
 		view.hasLiteralEnv("PTAH_EXPECTED_DATABASE_ENGINE", "PostgreSQL") &&
 		!view.envNameWith(registryEnvName) &&
-		sameStringsSorted(view.secretNames(), in.databaseSecret) &&
+		len(view.secretNames()) == 0 &&
+		sameStringsSorted(view.mountedSecretNames(), in.databaseSecret) &&
 		exactMounts(container.VolumeMounts, []expectedMount{
+			{"database-url", "/credentials/database", true},
 			{"runner", "/runner", true},
 			{"schema-source", "/source", true},
 			{"work", "/work", false},

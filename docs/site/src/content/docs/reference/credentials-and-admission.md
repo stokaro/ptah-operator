@@ -31,11 +31,62 @@ contract that keeps it true. The operational view is
 | Resolve main, Git source | Git credential and its grants | no | the repository, ref and path, and the optional CA or known hosts |
 | Git fetch init, Git source | Git credential and its grants | no | the bound commit, checked against the bound content digest |
 
-The controller sees only Secret names and keys; Kubernetes resolves those
-selectors in the Job Pod. A migration reads a local directory rather than an
+The controller sees only Secret names and keys; the kubelet reads the Secrets
+for the Job's Pod. A migration reads a local directory rather than an
 OCI reference for the same reason the table splits every row: passing
 `oci://…` to the process that runs SQL would put registry and database
 credentials in one process.
+
+### Credentials are files {#credential-files}
+
+Every credential reaches the container that needs it as a file in a read-only
+Secret volume, mounted in that container and no other:
+
+| Credential | File | Variable naming the file |
+| --- | --- | --- |
+| Database URL | `/credentials/database/url` | `PTAH_OPERATOR_DB_URL_FILE` |
+| Development database URL, Plan only | `/credentials/development-database/url` | `PTAH_OPERATOR_DEV_URL_FILE` |
+| Registry username, password and token, `Environment` mode | `/credentials/registry/username`, `password`, `token` | `PTAH_OPERATOR_OCI_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
+| Git username and password, `https://` | `/credentials/git/username`, `password` | `PTAH_OPERATOR_GIT_USERNAME_FILE`, `_PASSWORD_FILE` |
+
+The container's environment holds the path and never the credential. The runner
+reads each file before anything else uses the value, so the value it redacts from
+everything it writes is the value it read. It hands the value to Ptah in the
+environment of the one child process it starts: Ptah `v0.23.0`
+takes the database URL from `--db-url` or `PTAH_DB_URL` and a registry or Git
+credential from its environment, and nothing else, and a command line is visible
+to every process in the Pod. The OCI fetch init container runs Ptah's pull through
+the runner for the same reason, and the runner refuses any command there but the
+`schema pull` or `migrations pull` the manager built. A Docker config file and an
+SSH key were files before and are unchanged.
+
+A value the kubelet puts into a container's environment stays in the container
+runtime's record of that container until the Pod is removed, for anyone with root
+on the node to read, and a failed Apply's Pod is kept a day. A Secret volume is a
+memory-backed file system that the kubelet unmounts once the Pod's containers have
+stopped, though the Pod is kept. While the
+Pod runs, root on the node can still read the file and the environment of the
+Ptah process.
+
+Every file is mode `0440`, readable by root and by group 65532, the Pod's
+`fsGroup`, and by nobody else. With an `fsGroup` the kubelet gives each file of a
+Secret volume to that group with group read, whatever mode the Job declares, so a
+declared `0400` reads back as `0440`. Owning the file by the operation's user takes
+the `defaultUser` and `user` volume fields, which need the alpha
+`AtomicWriteVolumeUserFields` feature gate in every Kubernetes minor the operator
+supports and which the Job admission guard refuses.
+
+The registry and Git grants stay in the environment: the `registry`,
+`allowPlainHTTP`, `caSHA256`, `host` and `knownHostsSHA256` keys of a credential
+Secret reach the runner through a `secretKeyRef`. They say where a credential may
+be sent and hold none, and a grant the Secret lacks stops the container with
+`CreateContainerConfigError`, as before.
+
+A volume with a key the Secret may lack is optional, as the selector was: a
+registry credential's three keys, a Git credential's two, and a `urlFrom` that sets
+`optional`. The kubelet then writes no file for that key, the runner leaves the
+variable unset, and whatever needs it refuses as it did when the kubelet left an
+optional variable unset.
 
 A resource whose source is a ConfigMap has no Resolve or Verify Job and no
 registry credential anywhere: the manager reads the ConfigMap and writes the
@@ -69,9 +120,9 @@ The operator reads a database URL from one place: the key of a Kubernetes Secret
 that `spec.target.urlFrom` names, in the resource's namespace. A tool that writes
 that Secret needs nothing from the operator, and the operator cannot tell which
 tool wrote it. The routing above does not change: the manager still cannot read
-the Secret, and the kubelet resolves the selector into the `PTAH_DB_URL` variable
-of the container that runs Ptah. The operator has no native integration with Vault
-or a cloud secret manager.
+the Secret, and the kubelet projects its key into
+[the database URL file](#credential-files) of the container that runs Ptah. The
+operator has no native integration with Vault or a cloud secret manager.
 
 The behavior in this section comes from one run against these versions, not from
 reading the code. In that run no password appeared in status, Events, plans,
@@ -253,7 +304,7 @@ A value the operator cannot use is reported when the operation that reads it run
 
 | What the Secret holds | What the run reported |
 | --- | --- |
-| No key `url` | The operation waits, as below, with `couldn't find key url in Secret` |
+| No key `url` | The operation waits, as below, with `references non-existent secret key: url` |
 | A `/` in the password, not escaped | `Failed`, `OperationFailed`: `invalid_target: database URL is invalid` |
 | A newline after the URL | The same |
 
@@ -262,17 +313,32 @@ A value the operator cannot use is reported when the operation that reads it run
 Created before the tool has written the Secret, a `PtahSchema` stands in `Observing`
 with `Ready=False`, reason `PodConfigurationError`, and `ReconciliationFailed=False`.
 A `PtahMigration` stands in `Reading` with `Progressing=False` and the same reason.
-The message carries what the kubelet wrote on the operation Pod's container:
+The database URL is [a file in a Secret volume](#credential-files), so the kubelet
+cannot set that volume up and starts none of the Pod's containers. It says why in
+a `FailedMount` Event against the Pod, and the message carries those words:
 
 ```text
-Job <the Job> cannot start its Pod: secret "application-database" not found
+Job <the Job> cannot start its Pod: MountVolume.SetUp failed for volume "database-url" : secret "application-database" not found
 ```
+
+A Secret that exists without the key reads `MountVolume.SetUp failed for volume
+"database-url" : references non-existent secret key: url (volume database-url
+reads Secret <namespace>/application-database)`. The kubelet's words name the key
+and not the Secret, so the operator adds the volume and the Secret it reads, from
+the Pod. A missing registry or Git grant still stops the container that reads it,
+and the message carries what the kubelet wrote on that container, such as
+`couldn't find key registry in Secret <namespace>/<name>`. Before 0.2.11 the
+database URL was a variable too, so the message was the container's
+`secret "application-database" not found` or `couldn't find key url in Secret
+<namespace>/application-database`.
 
 A `PodConfigurationError` Warning Event says the same. Those words hold the names
 of the Secret and the key and nothing the Secret holds. The resource reports this
 within 30 seconds of the Pod reaching that state, which is how often it looks at a
-running read-only operation. When the Secret appears, the kubelet starts the
-container and the operation goes on, and nobody has to touch anything.
+running read-only operation. When the Secret appears, the kubelet sets the volume
+up on its next attempt, and it spaces attempts out to at most about two minutes
+apart, so the operation goes on within that time, and nobody has to touch
+anything.
 
 The Job still has its `spec.execution.activeDeadlineSeconds`. Past that, a
 `PtahSchema` read reports `Failed`, `OperationFailed`: `read Observe result: ptah
@@ -377,8 +443,10 @@ change it.
 
 ### When the credential rotates {#external-secret-stores-rotation}
 
-`PTAH_DB_URL` is a `secretKeyRef`, resolved once when the container starts. A
-rotated Secret reaches the next operation and never a running one. A running
+The runner reads [the database URL file](#credential-files) once, when the
+operation container starts, before it starts Ptah. The kubelet refreshes a Secret
+volume's files while the Pod runs, and nothing reads them again. A rotated Secret
+reaches the next operation and never a running one. A running
 operation keeps the old URL for as long as it lives, and PostgreSQL checks a
 password only when a connection opens, so what a rotation does to it depends on
 whether it opens another one.

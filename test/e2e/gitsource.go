@@ -180,9 +180,10 @@ func gitPlanBound(contract int32, artifactDigest, policyUID string, source *ptah
 
 // gitFetchJob holds an operation Job that reads a Git source to its shape:
 // the runner install and the Git fetch before the operation container, the
-// fetch holding the credential and one of the commits the resource resolved
-// to, and the operation container holding neither and mounting the fetched
-// files read-only.
+// fetch holding the credential grant and one of the commits the resource
+// resolved to, no credential in any container's environment, and the
+// operation container holding neither and mounting the fetched files
+// read-only.
 func gitFetchJob(job *batchv1.Job, commits ...string) error {
 	spec := job.Spec.Template.Spec
 	names := make([]string, 0, len(spec.InitContainers))
@@ -204,6 +205,13 @@ func gitFetchJob(job *batchv1.Job, commits ...string) error {
 	}
 	if !committed || !credential {
 		return fmt.Errorf("the fetch carries commit=%v and a credential grant=%v", committed, credential)
+	}
+	for _, container := range slices.Concat(spec.InitContainers, spec.Containers) {
+		for _, variable := range container.Env {
+			if slices.Contains(credentialVariables, variable.Name) {
+				return fmt.Errorf("container %s carries %s in its environment", container.Name, variable.Name)
+			}
+		}
 	}
 	if len(spec.Containers) != 1 {
 		return fmt.Errorf("%d operation containers", len(spec.Containers))
@@ -242,7 +250,12 @@ func gitResolveJob(job *batchv1.Job) error {
 	repository, database := false, false
 	for _, variable := range spec.Containers[0].Env {
 		repository = repository || variable.Name == "PTAH_OPERATOR_GIT_URL"
-		database = database || variable.Name == "PTAH_DB_URL"
+		database = database || slices.Contains([]string{
+			"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE",
+		}, variable.Name)
+	}
+	for _, mount := range spec.Containers[0].VolumeMounts {
+		database = database || mount.Name == "database-url" || mount.Name == "development-database-url"
 	}
 	if !repository || database {
 		return fmt.Errorf("the Resolve Job names the repository=%v and a database=%v", repository, database)

@@ -517,8 +517,8 @@ func (i buildInput) dataPlane() (
 		mounts = append(mounts, corev1.VolumeMount{Name: policyVolumeName, MountPath: "/verification", ReadOnly: true})
 	case operatorv1alpha1.OperationObserve:
 		target := *i.operation.Target
+		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvSchemaFile, i.schemaFile),
@@ -529,8 +529,8 @@ func (i buildInput) dataPlane() (
 		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 	case operatorv1alpha1.OperationPlan:
 		target := *i.operation.Target
+		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvSchemaFile, i.schemaFile),
@@ -541,7 +541,9 @@ func (i buildInput) dataPlane() (
 		)
 		environment = appendProofTargetBinding(environment, i.schema.Status.PendingObservation)
 		if i.operation.ObservationDev != nil {
-			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.operation.ObservationDev.URLFrom))
+			variable, volume, mount := databaseCredential(runner.EnvDevelopmentDatabaseURLFile,
+				developmentDatabaseURLVolumeName, developmentDatabaseURLDirectory, i.operation.ObservationDev.URLFrom)
+			environment, volumes, mounts = append(environment, variable), append(volumes, volume), append(mounts, mount)
 		}
 		if len(i.operation.ObservationExclude) > 0 {
 			environment = append(environment, literalEnv("PTAH_EXCLUDE", encodeStringArray(i.operation.ObservationExclude)))
@@ -574,8 +576,8 @@ func (i buildInput) dataPlane() (
 			}},
 		})
 		mounts = append(mounts, corev1.VolumeMount{Name: planVolumeName, MountPath: planPath, ReadOnly: true})
+		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvPlanDir, planPath),
@@ -693,7 +695,7 @@ func (b Builder) artifactFetch(
 	volumes = append(volumes, registryVolumes...)
 	mounts = append(mounts, registryMounts...)
 	guardMounts := []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true}}
-	fetchMounts := append([]corev1.VolumeMount(nil), mounts...)
+	fetchMounts := append([]corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true}}, mounts...)
 	guardArgs := []string{"--validate-oci-source", source.ResolvedReference}
 	if source.Transport.CAFrom != nil {
 		volumes = append(volumes, corev1.Volume{
@@ -728,7 +730,7 @@ func (b Builder) artifactFetch(
 	)
 	// The guard is the runner from execution.runnerImage, and it authorizes
 	// the fetch that follows it. It refuses a protocol other than its own
-	// before it authorizes anything; the fetch is Ptah, and is not told.
+	// before it authorizes anything.
 	guardEnvironment = append(guardEnvironment, runnerProtocolEnv())
 	fetchEnvironment := omitEnvironment(environment,
 		runner.EnvOCIAuthMode,
@@ -741,6 +743,10 @@ func (b Builder) artifactFetch(
 	if source.Transport.CAFrom != nil {
 		fetchEnvironment = append(fetchEnvironment, literalEnv("PTAH_OCI_CA_FILE", caSnapshotFilePath))
 	}
+	// The fetch is Ptah's pull behind the runner, which reads the registry
+	// credential from its files and gives it to Ptah's environment alone. The
+	// runner refuses a protocol other than its own before it reads anything.
+	fetchEnvironment = append(fetchEnvironment, runnerProtocolEnv())
 	sort.Slice(guardEnvironment, func(left, right int) bool { return guardEnvironment[left].Name < guardEnvironment[right].Name })
 	sort.Slice(fetchEnvironment, func(left, right int) bool { return fetchEnvironment[left].Name < fetchEnvironment[right].Name })
 	guard := corev1.Container{
@@ -758,8 +764,8 @@ func (b Builder) artifactFetch(
 		Name:            fetchName,
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{ptahBinaryPath},
-		Args:            fetchArgs,
+		Command:         []string{runnerPath},
+		Args:            append(slices.Clone(ociFetchPrefix), fetchArgs...),
 		WorkingDir:      fetchWorkPath,
 		Env:             fetchEnvironment,
 		Resources:       resources,
@@ -849,11 +855,14 @@ func addRegistryAccess(
 		)
 		switch mode {
 		case operatorv1alpha1.RegistryAuthEnvironment:
-			environment = append(environment,
-				optionalSecretEnv("PTAH_OCI_USERNAME", auth.Name, stringOrDefault(auth.UsernameKey, "username")),
-				optionalSecretEnv(runner.EnvOCIPassword, auth.Name, stringOrDefault(auth.PasswordKey, "password")),
-				optionalSecretEnv(runner.EnvOCIToken, auth.Name, stringOrDefault(auth.TokenKey, "token")),
-			)
+			variables, volume, mount := optionalCredentials(registryCredentialsVolumeName, registryCredentialsDirectory, auth.Name, []credentialItem{
+				{fileVariable: runner.EnvOCIUsernameFile, key: stringOrDefault(auth.UsernameKey, "username"), name: "username"},
+				{fileVariable: runner.EnvOCIPasswordFile, key: stringOrDefault(auth.PasswordKey, "password"), name: "password"},
+				{fileVariable: runner.EnvOCITokenFile, key: stringOrDefault(auth.TokenKey, "token"), name: "token"},
+			})
+			environment = append(environment, variables...)
+			volumes = append(volumes, volume)
+			mounts = append(mounts, mount)
 		case operatorv1alpha1.RegistryAuthDockerConfigJSON:
 			key := stringOrDefault(auth.DockerConfigJSONKey, corev1.DockerConfigJsonKey)
 			mode := int32(0o440)
@@ -1194,21 +1203,16 @@ func memoryVolume(size int64) *corev1.EmptyDirVolumeSource {
 	}
 }
 
-func databaseEnv(name string, selector corev1.SecretKeySelector) corev1.EnvVar {
-	copy := *selector.DeepCopy()
-	return corev1.EnvVar{Name: name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &copy}}
-}
-
-func optionalSecretEnv(name, secret, key string) corev1.EnvVar {
-	optional := true
-	return corev1.EnvVar{
-		Name: name,
-		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: secret},
-			Key:                  key,
-			Optional:             &optional,
-		}},
-	}
+// withDatabaseURL gives the operation container the target database URL
+// selector names, as a file.
+func withDatabaseURL(
+	environment []corev1.EnvVar,
+	volumes []corev1.Volume,
+	mounts []corev1.VolumeMount,
+	selector corev1.SecretKeySelector,
+) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
+	variable, volume, mount := databaseCredential(runner.EnvDatabaseURLFile, databaseURLVolumeName, databaseURLDirectory, selector)
+	return append(environment, variable), append(volumes, volume), append(mounts, mount)
 }
 
 func requiredSecretEnv(name, secret, key string) corev1.EnvVar {

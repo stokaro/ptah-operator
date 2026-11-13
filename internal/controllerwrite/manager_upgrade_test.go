@@ -13,6 +13,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/podintent"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -55,17 +56,23 @@ func snapshotTemplateOf(t *testing.T, operation *operatorv1alpha1.ActiveOperatio
 // identity; the webhook takes the recorded identity from the Job, and the
 // claim's snapshot, taken before the earlier manager dispatched, is what the
 // Job has to match. A Job whose runner the claim never recorded is refused.
+//
+// The earlier manager may be 0.2.10, which put the database URL in the
+// container's environment where this release mounts it as a file. The
+// webhook takes that delivery from the Job as well, under the same snapshot.
 func TestPlanPublicationAcceptsAPlanJobThePreviousManagerDispatched(t *testing.T) {
 	t.Parallel()
 
 	previousImage := "example.test/controller@" + digest('8')
 	previousRunner := "example.test/runner@" + digest('9')
 	for _, test := range []struct {
-		name   string
-		mutate func(*batchv1.Job)
-		allow  bool
+		name     string
+		mutate   func(*batchv1.Job)
+		released bool
+		allow    bool
 	}{
 		{name: "the Job the previous manager dispatched", allow: true},
+		{name: "the Job 0.2.10 dispatched, its database URL in its environment", released: true, allow: true},
 		{name: "a runner the claim never recorded", mutate: func(job *batchv1.Job) {
 			job.Spec.Template.Spec.InitContainers[0].Image = "example.test/runner@" + digest('7')
 		}},
@@ -79,8 +86,14 @@ func TestPlanPublicationAcceptsAPlanJobThePreviousManagerDispatched(t *testing.T
 			operation := schema.Status.ActiveOperation
 			expected := expectedJob(schema, operation)
 			recordManager(expected, testControllerImage, testControllerRevision, testRunnerImage)
+			if test.released {
+				withDatabaseURLFile(expected)
+			}
 			dispatched := expected.DeepCopy()
 			recordManager(dispatched, previousImage, "previous-revision", previousRunner)
+			if test.released && !workload.CarryCredentialDelivery(dispatched, &batchv1.Job{}) {
+				t.Fatal("the rebuilt Plan Job names no credential by file, so the released Job is the same Job")
+			}
 			snapshotTemplateOf(t, operation, dispatched, expected)
 
 			terminal := withGeneratedJobIdentity(dispatched)
@@ -108,6 +121,25 @@ func TestPlanPublicationAcceptsAPlanJobThePreviousManagerDispatched(t *testing.T
 			}
 		})
 	}
+}
+
+// withDatabaseURLFile gives job's operation container the database URL the way
+// this release's builder does: a variable naming a file in a read-only Secret
+// volume.
+func withDatabaseURLFile(job *batchv1.Job) {
+	mode := int32(0o440)
+	spec := &job.Spec.Template.Spec
+	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "database-url", VolumeSource: corev1.VolumeSource{
+		Secret: &corev1.SecretVolumeSource{
+			SecretName: "database",
+			Items:      []corev1.KeyToPath{{Key: "url", Path: "url", Mode: &mode}},
+		},
+	}})
+	main := &spec.Containers[0]
+	main.Env = append(main.Env, corev1.EnvVar{Name: runner.EnvDatabaseURLFile, Value: "/credentials/database/url"})
+	main.VolumeMounts = append(main.VolumeMounts, corev1.VolumeMount{
+		Name: "database-url", MountPath: "/credentials/database", ReadOnly: true,
+	})
 }
 
 // TestPendingApplyCleanupAcceptsADispatcherOtherThanThePublisher schedules

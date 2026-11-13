@@ -2242,11 +2242,17 @@ func (r *SchemaReconciler) refreshAdmissionSnapshot(
 // leadership change or a restart mid-Plan the two differ on every pass, and
 // a byte-for-byte comparison would refuse a Job the claim authorized.
 //
+// A Job 0.2.10 dispatched reads its credentials from its environment, where
+// this release mounts them as files, and the rebuild is given that shape back
+// (workload.CarryCredentialDelivery). The snapshot pins it the same way: only
+// a claim made by a release that built that shape recorded its template.
+//
 // Adoption holds only when the two releases build the same Job apart from
-// that identity. A release that also changed the Job or its Pod template fails
-// here, and the caller treats the Job as one it cannot confirm: a dispatched
-// Apply is settled as outcome unknown and the database is observed before
-// anything else runs, and a read-only Job is run again under a new attempt.
+// that identity and that delivery. A release that also changed the Job or its
+// Pod template fails here, and the caller treats the Job as one it cannot
+// confirm: a dispatched Apply is settled as outcome unknown and the database
+// is observed before anything else runs, and a read-only Job is run again
+// under a new attempt.
 func validateAdoptedJobIntent(
 	actual, expected *batchv1.Job,
 	schema *operatorv1alpha1.PtahSchema,
@@ -2256,6 +2262,7 @@ func validateAdoptedJobIntent(
 		return fmt.Errorf("no active operation claims the Job")
 	}
 	workload.CarryManagerIdentity(expected, actual)
+	workload.CarryCredentialDelivery(expected, actual)
 	if err := workload.CarrySealedPlanKey(expected, actual, *operation); err != nil {
 		return fmt.Errorf("adopted Job seal key is invalid: %w", err)
 	}

@@ -71,6 +71,34 @@
             }
           },
           {
+            "name": "database-url",
+            "secret": {
+              "secretName": "database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
+            "name": "development-database-url",
+            "secret": {
+              "secretName": "development-database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
             "name": "schema-source",
             "emptyDir": {
               "medium": "Memory",
@@ -82,6 +110,31 @@
             "emptyDir": {
               "medium": "Memory",
               "sizeLimit": "64Mi"
+            }
+          },
+          {
+            "name": "registry-credentials",
+            "secret": {
+              "secretName": "registry",
+              "items": [
+                {
+                  "key": "user",
+                  "path": "username",
+                  "mode": 288
+                },
+                {
+                  "key": "pass",
+                  "path": "password",
+                  "mode": 288
+                },
+                {
+                  "key": "identity-token",
+                  "path": "token",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420,
+              "optional": true
             }
           },
           {
@@ -255,9 +308,13 @@
             "name": "fetch-schema",
             "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "command": [
-              "/usr/local/bin/ptah"
+              "/runner/ptah-runner"
             ],
             "args": [
+              "--fetch-oci-source",
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--",
               "schema",
               "pull",
               "oci://registry.example/acme/orders@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -276,42 +333,28 @@
                 "value": "/credentials/ca-snapshot/ca.pem"
               },
               {
-                "name": "PTAH_OCI_PASSWORD",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "pass",
-                    "optional": true
-                  }
-                }
-              },
-              {
                 "name": "PTAH_OCI_REGISTRY",
                 "value": "registry.example"
               },
               {
-                "name": "PTAH_OCI_TOKEN",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "identity-token",
-                    "optional": true
-                  }
-                }
+                "name": "PTAH_OPERATOR_OCI_PASSWORD_FILE",
+                "value": "/credentials/registry/password"
               },
               {
-                "name": "PTAH_OCI_USERNAME",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "registry",
-                    "key": "user",
-                    "optional": true
-                  }
-                }
+                "name": "PTAH_OPERATOR_OCI_TOKEN_FILE",
+                "value": "/credentials/registry/token"
+              },
+              {
+                "name": "PTAH_OPERATOR_OCI_USERNAME_FILE",
+                "value": "/credentials/registry/username"
               },
               {
                 "name": "PTAH_PLAIN_HTTP",
                 "value": "false"
+              },
+              {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "1"
               },
               {
                 "name": "TMPDIR",
@@ -329,12 +372,22 @@
             },
             "volumeMounts": [
               {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
+              {
                 "name": "schema-source",
                 "mountPath": "/source"
               },
               {
                 "name": "fetch-work",
                 "mountPath": "/fetch-work"
+              },
+              {
+                "name": "registry-credentials",
+                "readOnly": true,
+                "mountPath": "/credentials/registry"
               },
               {
                 "name": "registry-ca-snapshot",
@@ -394,24 +447,6 @@
                 "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
               },
               {
-                "name": "PTAH_DB_URL",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "database",
-                    "key": "url"
-                  }
-                }
-              },
-              {
-                "name": "PTAH_DEV_URL",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "development-database",
-                    "key": "url"
-                  }
-                }
-              },
-              {
                 "name": "PTAH_EXCLUDE",
                 "value": "archive.*,\"column,with-comma\""
               },
@@ -426,6 +461,14 @@
               {
                 "name": "PTAH_OPERATION_ID",
                 "value": "operation-01"
+              },
+              {
+                "name": "PTAH_OPERATOR_DB_URL_FILE",
+                "value": "/credentials/database/url"
+              },
+              {
+                "name": "PTAH_OPERATOR_DEV_URL_FILE",
+                "value": "/credentials/development-database/url"
               },
               {
                 "name": "PTAH_PLAN_SEAL_PUBLIC_KEY",
@@ -469,6 +512,16 @@
               {
                 "name": "work",
                 "mountPath": "/work"
+              },
+              {
+                "name": "database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/database"
+              },
+              {
+                "name": "development-database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/development-database"
               },
               {
                 "name": "schema-source",

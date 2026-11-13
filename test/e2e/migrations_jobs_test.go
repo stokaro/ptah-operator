@@ -215,17 +215,6 @@ func mtWithoutEnv(container *corev1.Container, name string) {
 	container.Env = kept
 }
 
-// mtWithoutSecret drops every variable that reads the Secret.
-func mtWithoutSecret(container *corev1.Container, secret string) {
-	var kept []corev1.EnvVar
-	for _, variable := range container.Env {
-		if reference := envSecretRef(variable); reference == nil || reference.Name != secret {
-			kept = append(kept, variable)
-		}
-	}
-	container.Env = kept
-}
-
 func mtSetEnv(container *corev1.Container, variable corev1.EnvVar) {
 	for index := range container.Env {
 		if container.Env[index].Name == variable.Name {
@@ -234,6 +223,46 @@ func mtSetEnv(container *corev1.Container, variable corev1.EnvVar) {
 		}
 	}
 	container.Env = append(container.Env, variable)
+}
+
+// mtVolume is the Pod volume of the name.
+func mtVolume(job *batchv1.Job, name string) *corev1.Volume {
+	volumes := job.Spec.Template.Spec.Volumes
+	for index := range volumes {
+		if volumes[index].Name == name {
+			return &volumes[index]
+		}
+	}
+	return nil
+}
+
+// mtWithoutMount drops the container's mount of the volume.
+func mtWithoutMount(container *corev1.Container, name string) {
+	var kept []corev1.VolumeMount
+	for _, mount := range container.VolumeMounts {
+		if mount.Name != name {
+			kept = append(kept, mount)
+		}
+	}
+	container.VolumeMounts = kept
+}
+
+// mtWithMount gives the container the mount the main container of the Job
+// has of the volume.
+func mtWithMount(job *batchv1.Job, container *corev1.Container, name string) {
+	for _, mount := range mtContainer(job, "ptah").VolumeMounts {
+		if mount.Name == name {
+			container.VolumeMounts = append(container.VolumeMounts, mount)
+			return
+		}
+	}
+	for _, mount := range mtContainer(job, "fetch-migrations").VolumeMounts {
+		if mount.Name == name {
+			container.VolumeMounts = append(container.VolumeMounts, mount)
+			return
+		}
+	}
+	panic("no container of the Job mounts " + name)
 }
 
 func mtSecretVar(name, secret, key string) corev1.EnvVar {
@@ -324,8 +353,26 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 		{"a source Job with another runner", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtContainer(job, "install-runner").Image = "example.invalid/other"
 		}},
-		{"a source Job without the registry Secret", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtWithoutSecret(mtContainer(job, "ptah"), mtRegistrySecret)
+		{"a source Job without the registry credential files", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithoutMount(mtContainer(job, "ptah"), "registry-credentials")
+		}},
+		{"a source Job with the registry credential in its environment", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "ptah"), mtSecretVar("PTAH_OCI_PASSWORD", mtRegistrySecret, "password"))
+		}},
+		{"a registry credential file from another Secret", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtVolume(job, "registry-credentials").Secret.SecretName = "another-registry"
+		}},
+		{"a registry credential file anyone can read", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
+			mode := int32(0o444)
+			mtVolume(job, "registry-credentials").Secret.Items[1].Mode = &mode
+		}},
+		{"the registry credential files mounted writable", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
+			container := mtContainer(job, "ptah")
+			for index := range container.VolumeMounts {
+				if container.VolumeMounts[index].Name == "registry-credentials" {
+					container.VolumeMounts[index].ReadOnly = false
+				}
+			}
 		}},
 		{"a source Job over TLS", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtWithoutEnv(mtContainer(job, "ptah"), "PTAH_PLAIN_HTTP")
@@ -335,6 +382,16 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 		}},
 		{"a source Job holding the database URL", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "ptah"), mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "url"))
+		}},
+		{"a source Job naming a database URL file", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"})
+		}},
+		{"a source Job mounting the database Secret", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "anything", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: mtDatabaseSecret}},
+			})
+			container := mtContainer(job, "ptah")
+			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "anything", MountPath: "/anything", ReadOnly: true})
 		}},
 		{"a source Job naming a dev database", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_DEV_URL", Value: "postgres://dev"})
@@ -362,32 +419,65 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 		{"a fetch running another program", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtContainer(job, "fetch-migrations").Command = []string{"/bin/sh"}
 		}},
+		{"a fetch run by Ptah itself", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			fetch := mtContainer(job, "fetch-migrations")
+			fetch.Command, fetch.Args = []string{"/usr/local/bin/ptah"}, fetch.Args[4:]
+		}},
 		{"a fetch that pushes", "history", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtContainer(job, "fetch-migrations").Args[1] = "push"
+			mtContainer(job, "fetch-migrations").Args[5] = "push"
 		}},
 		{"a fetch without arguments", "history", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtContainer(job, "fetch-migrations").Args = nil
 		}},
 		{"no database URL", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtWithoutEnv(mtContainer(job, "ptah"), "PTAH_DB_URL")
+			mtWithoutEnv(mtContainer(job, "ptah"), "PTAH_OPERATOR_DB_URL_FILE")
 		}},
-		{"a literal database URL", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+		{"the database URL file not mounted", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithoutMount(mtContainer(job, "ptah"), "database-url")
+		}},
+		{"the database URL in the environment, as a release before file delivery built it", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			container := mtContainer(job, "ptah")
+			mtWithoutEnv(container, "PTAH_OPERATOR_DB_URL_FILE")
+			mtWithoutMount(container, "database-url")
+			mtSetEnv(container, mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "url"))
+		}},
+		{"a literal database URL beside the file", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_DB_URL", Value: "postgres://literal"})
 		}},
 		{"the database URL from another Secret", "history", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtSetEnv(mtContainer(job, "ptah"), mtSecretVar("PTAH_DB_URL", "another-db", "url"))
+			mtVolume(job, "database-url").Secret.SecretName = "another-db"
 		}},
 		{"the database URL from another key", "history", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtSetEnv(mtContainer(job, "ptah"), mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "password"))
+			mtVolume(job, "database-url").Secret.Items[0].Key = "password"
 		}},
-		{"the database URL from a ConfigMap too", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
-			variable := mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "url")
-			variable.ValueFrom.ConfigMapKeyRef = &corev1.ConfigMapKeySelector{Key: "url"}
-			mtSetEnv(mtContainer(job, "ptah"), variable)
+		{"the database URL file anyone can read", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mode := int32(0o644)
+			mtVolume(job, "database-url").Secret.Items[0].Mode = &mode
 		}},
-		{"two database URLs", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+		{"the database URL file at the volume's default mode", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtVolume(job, "database-url").Secret.Items[0].Mode = nil
+		}},
+		{"the database URL from a ConfigMap", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			volume := mtVolume(job, "database-url")
+			volume.Secret, volume.ConfigMap = nil, &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: mtDatabaseSecret},
+				Items:                volume.Secret.Items,
+			}
+		}},
+		{"the database URL file at another path", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/other"})
+		}},
+		{"two database URL files", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			container := mtContainer(job, "ptah")
-			container.Env = append(container.Env, mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "url"))
+			container.Env = append(container.Env, corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"})
+		}},
+		{"the database URL file mounted writable", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			container := mtContainer(job, "ptah")
+			for index := range container.VolumeMounts {
+				if container.VolumeMounts[index].Name == "database-url" {
+					container.VolumeMounts[index].ReadOnly = false
+				}
+			}
 		}},
 		{"no migrations directory", "history", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtWithoutEnv(mtContainer(job, "ptah"), "PTAH_MIGRATIONS_DIR")
@@ -430,14 +520,29 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 			container := mtContainer(job, "ptah")
 			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registry-ca-snapshot", MountPath: "/ca"})
 		}},
-		{"a fetch without the registry Secret", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
-			mtWithoutSecret(mtContainer(job, "fetch-migrations"), mtRegistrySecret)
+		{"the SQL process mounting the registry credentials", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithMount(job, mtContainer(job, "ptah"), "registry-credentials")
+		}},
+		{"the SQL process naming a registry credential file", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_OPERATOR_OCI_TOKEN_FILE", Value: "/credentials/registry/token"})
+		}},
+		{"a fetch without the registry credential files", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithoutMount(mtContainer(job, "fetch-migrations"), "registry-credentials")
+		}},
+		{"a fetch with the registry credential in its environment", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "fetch-migrations"), mtSecretVar("PTAH_OCI_USERNAME", mtRegistrySecret, "username"))
 		}},
 		{"a fetch over TLS", "history", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtWithoutEnv(mtContainer(job, "fetch-migrations"), "PTAH_PLAIN_HTTP")
 		}},
 		{"a fetch holding the database URL", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "fetch-migrations"), mtSecretVar("PTAH_DB_URL", mtDatabaseSecret, "url"))
+		}},
+		{"a fetch mounting the database URL file", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithMount(job, mtContainer(job, "fetch-migrations"), "database-url")
+		}},
+		{"an authority guard mounting the database URL file", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtWithMount(job, mtContainer(job, "validate-source-authority"), "database-url")
 		}},
 		{"an authority guard reading the database Secret", "history", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "validate-source-authority"), mtSecretVar("ANYTHING", mtDatabaseSecret, "url"))

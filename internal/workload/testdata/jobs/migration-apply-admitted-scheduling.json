@@ -75,6 +75,20 @@
             }
           },
           {
+            "name": "database-url",
+            "secret": {
+              "secretName": "database",
+              "items": [
+                {
+                  "key": "url",
+                  "path": "url",
+                  "mode": 288
+                }
+              ],
+              "defaultMode": 420
+            }
+          },
+          {
             "name": "schema-source",
             "emptyDir": {
               "medium": "Memory",
@@ -273,9 +287,13 @@
             "name": "fetch-migrations",
             "image": "example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "command": [
-              "/usr/local/bin/ptah"
+              "/runner/ptah-runner"
             ],
             "args": [
+              "--fetch-oci-source",
+              "--ptah-binary",
+              "/usr/local/bin/ptah",
+              "--",
               "migrations",
               "pull",
               "oci://registry.example/acme/orders-migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -305,6 +323,10 @@
                 "value": "false"
               },
               {
+                "name": "PTAH_RUNNER_PROTOCOL_VERSION",
+                "value": "1"
+              },
+              {
                 "name": "TMPDIR",
                 "value": "/fetch-work"
               }
@@ -319,6 +341,11 @@
               }
             },
             "volumeMounts": [
+              {
+                "name": "runner",
+                "readOnly": true,
+                "mountPath": "/runner"
+              },
               {
                 "name": "schema-source",
                 "mountPath": "/source"
@@ -390,15 +417,6 @@
                 "value": "sha256:6f908ebab47c9631d890bee38ff295c50403e1a5e40b3d5760aa754e098d1fc2"
               },
               {
-                "name": "PTAH_DB_URL",
-                "valueFrom": {
-                  "secretKeyRef": {
-                    "name": "database",
-                    "key": "url"
-                  }
-                }
-              },
-              {
                 "name": "PTAH_DISPATCH_NOT_AFTER",
                 "value": "2026-08-30T12:02:00Z"
               },
@@ -443,6 +461,10 @@
                 "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
               },
               {
+                "name": "PTAH_OPERATOR_DB_URL_FILE",
+                "value": "/credentials/database/url"
+              },
+              {
                 "name": "PTAH_RUNNER_PROTOCOL_VERSION",
                 "value": "1"
               },
@@ -477,6 +499,11 @@
               {
                 "name": "work",
                 "mountPath": "/work"
+              },
+              {
+                "name": "database-url",
+                "readOnly": true,
+                "mountPath": "/credentials/database"
               },
               {
                 "name": "schema-source",

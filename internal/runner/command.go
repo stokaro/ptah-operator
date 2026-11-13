@@ -240,8 +240,7 @@ const (
 )
 
 func childEnvironment(environment []string) []string {
-	return environmentWithout(
-		environment,
+	return environmentWithout(environmentWithout(environment, credentialFileVariables()...),
 		ptahJSONEnvironment,
 		ptahExcludeEnvironment,
 		ptahIncludeEnvironment,

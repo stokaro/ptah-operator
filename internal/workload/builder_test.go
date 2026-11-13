@@ -2,6 +2,7 @@ package workload
 
 import (
 	"encoding/json"
+	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -39,39 +40,39 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 	}{
 		{
 			operation: operatorv1alpha1.OperationResolve,
-			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN"},
-			absent:    []string{"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR"},
+			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE"},
+			absent:    []string{"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE"},
 		},
 		{
 			operation: operatorv1alpha1.OperationVerify,
-			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_EXPECTED_ARTIFACT_TYPE", "PTAH_OCI_TOKEN"},
-			absent:    []string{"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_PLAN_DIR"},
+			want:      []string{"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_EXPECTED_ARTIFACT_TYPE", "PTAH_OPERATOR_OCI_TOKEN_FILE"},
+			absent:    []string{"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_PLAN_DIR", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE"},
 		},
 		{
 			operation: operatorv1alpha1.OperationObserve,
-			want:      []string{"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_SCHEMA_FILE", "PTAH_LOCK_TIMEOUT", "PTAH_SEVERITY"},
+			want:      []string{"PTAH_OPERATOR_DB_URL_FILE", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_SCHEMA_FILE", "PTAH_LOCK_TIMEOUT", "PTAH_SEVERITY"},
 			absent: []string{
-				"PTAH_DEV_URL", "PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
-				"PTAH_IGNORE", "PTAH_EXCLUDE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
+				"PTAH_DEV_URL", "PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR", "PTAH_OPERATOR_DEV_URL_FILE",
+				"PTAH_IGNORE", "PTAH_EXCLUDE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 				"PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
 			},
 		},
 		{
 			operation: operatorv1alpha1.OperationPlan,
-			want:      []string{"PTAH_DB_URL", "PTAH_COORDINATION_DIGEST", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_EXCLUDE"},
+			want:      []string{"PTAH_OPERATOR_DB_URL_FILE", "PTAH_COORDINATION_DIGEST", "PTAH_OPERATOR_DEV_URL_FILE", "PTAH_SCHEMA_FILE", "PTAH_EXCLUDE"},
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
-				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
+				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 				"PTAH_EXPECTED_TARGET_IDENTITY_DIGEST",
 			},
 		},
 		{
 			operation: operatorv1alpha1.OperationApply,
 			plan:      plan,
-			want:      []string{"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_PLAN_DIR", "PTAH_EXPECTED_PLAN_CONTENT_DIGEST", "PTAH_EXPECTED_COORDINATION_DIGEST", "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST", "PTAH_DISPATCH_NOT_AFTER", "PTAH_LOCK_TIMEOUT", "PTAH_TX_MODE"},
+			want:      []string{"PTAH_OPERATOR_DB_URL_FILE", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_PLAN_DIR", "PTAH_EXPECTED_PLAN_CONTENT_DIGEST", "PTAH_EXPECTED_COORDINATION_DIGEST", "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST", "PTAH_DISPATCH_NOT_AFTER", "PTAH_LOCK_TIMEOUT", "PTAH_TX_MODE"},
 			absent: []string{
-				"PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE",
-				"PTAH_VERIFICATION_POLICY", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
+				"PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_OPERATOR_DEV_URL_FILE",
+				"PTAH_VERIFICATION_POLICY", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OPERATOR_OCI_USERNAME_FILE", "PTAH_OPERATOR_OCI_PASSWORD_FILE", "PTAH_OPERATOR_OCI_TOKEN_FILE",
 				"PTAH_OCI_REGISTRY", "DOCKER_CONFIG", "PTAH_PLAIN_HTTP",
 			},
 		},
@@ -116,14 +117,14 @@ func TestBuildSourceOperationEnvironmentContract(t *testing.T) {
 			operation: operatorv1alpha1.OperationResolve,
 			want: []string{
 				"HOME",
-				"PTAH_OCI_PASSWORD",
 				"PTAH_OCI_REGISTRY",
-				"PTAH_OCI_TOKEN",
-				"PTAH_OCI_USERNAME",
 				"PTAH_OPERATION_ID",
 				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
 				"PTAH_OPERATOR_OCI_AUTH_MODE",
 				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_OPERATOR_OCI_PASSWORD_FILE",
+				"PTAH_OPERATOR_OCI_TOKEN_FILE",
+				"PTAH_OPERATOR_OCI_USERNAME_FILE",
 				"PTAH_PLAIN_HTTP",
 				"PTAH_REQUESTED_REFERENCE",
 				"PTAH_RUNNER_PROTOCOL_VERSION",
@@ -137,14 +138,14 @@ func TestBuildSourceOperationEnvironmentContract(t *testing.T) {
 			want: []string{
 				"HOME",
 				"PTAH_EXPECTED_ARTIFACT_TYPE",
-				"PTAH_OCI_PASSWORD",
 				"PTAH_OCI_REGISTRY",
-				"PTAH_OCI_TOKEN",
-				"PTAH_OCI_USERNAME",
 				"PTAH_OPERATION_ID",
 				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
 				"PTAH_OPERATOR_OCI_AUTH_MODE",
 				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_OPERATOR_OCI_PASSWORD_FILE",
+				"PTAH_OPERATOR_OCI_TOKEN_FILE",
+				"PTAH_OPERATOR_OCI_USERNAME_FILE",
 				"PTAH_PLAIN_HTTP",
 				"PTAH_REQUESTED_REFERENCE",
 				"PTAH_RESOLVED_REFERENCE",
@@ -435,13 +436,9 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 	if schemaFile.Value != sourceFilePath {
 		t.Fatalf("PTAH_SCHEMA_FILE = %q, want isolated local source", schemaFile.Value)
 	}
-	database := requireEnv(t, job, "PTAH_DB_URL")
-	if database.Value != "" || database.ValueFrom == nil || database.ValueFrom.SecretKeyRef == nil {
-		t.Fatal("PTAH_DB_URL must be a SecretKeyRef, not a controller-read value")
-	}
-	if got := database.ValueFrom.SecretKeyRef.Name; got != "database" {
-		t.Fatalf("target Secret name = %q, want database", got)
-	}
+	// The URL is the Secret's, mounted for the runner to read; the manager
+	// never reads it.
+	assertCredentialFile(t, job, job.Spec.Template.Spec.Containers[0], runner.EnvDatabaseURLFile, "database", "url", false)
 	if len(job.Spec.Template.Spec.InitContainers) != 3 {
 		t.Fatalf("init containers = %d, want installer, authority guard, and source fetch", len(job.Spec.Template.Spec.InitContainers))
 	}
@@ -454,16 +451,18 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 		t.Fatalf("source authority guard = %q %q", guard.Command, guard.Args)
 	}
 	fetch := job.Spec.Template.Spec.InitContainers[2]
-	if fetch.Name != fetchContainerName || !reflect.DeepEqual(fetch.Command, []string{ptahBinaryPath}) ||
-		!reflect.DeepEqual(fetch.Args, []string{"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath, "--skip-parse"}) {
+	if fetch.Name != fetchContainerName || !reflect.DeepEqual(fetch.Command, []string{runnerPath}) ||
+		!reflect.DeepEqual(fetch.Args, append(slices.Clone(ociFetchPrefix),
+			"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath, "--skip-parse")) {
 		t.Fatalf("source fetch command = %q %q", fetch.Command, fetch.Args)
 	}
 	if _, ok := containerEnvMap(fetch)["PTAH_DB_URL"]; ok {
 		t.Fatal("registry fetch init received the target database reference")
 	}
-	if _, ok := containerEnvMap(fetch)["PTAH_OCI_TOKEN"]; !ok {
-		t.Fatal("registry fetch init did not receive registry credential references")
+	if _, ok := containerEnvMap(fetch)[runner.EnvDatabaseURLFile]; ok || hasMount(fetch, databaseURLVolumeName) {
+		t.Fatal("registry fetch init received the target database file")
 	}
+	assertCredentialFile(t, job, fetch, runner.EnvOCITokenFile, "registry", "identity-token", true)
 	mainMount := requireMount(t, job.Spec.Template.Spec.Containers[0], sourceVolumeName)
 	if !mainMount.ReadOnly || mainMount.MountPath != sourcePath {
 		t.Fatalf("main source mount = %#v, want read-only %s", mainMount, sourcePath)
@@ -554,11 +553,7 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	database := requireEnv(t, job, "PTAH_DB_URL")
-	if database.ValueFrom == nil || database.ValueFrom.SecretKeyRef == nil ||
-		database.ValueFrom.SecretKeyRef.Name != "applied-target" || database.ValueFrom.SecretKeyRef.Key != "dsn" {
-		t.Fatalf("post-apply database binding = %#v", database.ValueFrom)
-	}
+	assertCredentialFile(t, job, job.Spec.Template.Spec.Containers[0], runner.EnvDatabaseURLFile, "applied-target", "dsn", false)
 	if _, ok := envMap(job)["PTAH_EXCLUDE"]; ok {
 		t.Fatal("raw post-Apply observation unexpectedly received managed-scope exclusions")
 	}
@@ -572,16 +567,19 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 		t.Fatalf("expected target digest = %q, want the applied plan's", got)
 	}
 	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
-	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath, "--skip-parse"}) {
+	if !reflect.DeepEqual(fetch.Args, append(slices.Clone(ociFetchPrefix),
+		"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath, "--skip-parse")) {
 		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
 	}
 	fetchEnvironment := containerEnvMap(fetch)
-	for _, name := range []string{"PTAH_OCI_USERNAME", runner.EnvOCIPassword, runner.EnvOCIToken} {
-		environment := fetchEnvironment[name]
-		if environment.ValueFrom == nil || environment.ValueFrom.SecretKeyRef == nil ||
-			environment.ValueFrom.SecretKeyRef.Name != originalSource.RegistryAuthFrom.Name {
-			t.Fatalf("post-apply %s source = %#v, want persisted registry Secret", name, environment.ValueFrom)
+	for _, name := range []string{runner.EnvOCIUsernameFile, runner.EnvOCIPasswordFile, runner.EnvOCITokenFile} {
+		if fetchEnvironment[name].Value == "" {
+			t.Fatalf("post-apply fetch names no %s", name)
 		}
+	}
+	if credentials := volumeNamed(job, registryCredentialsVolumeName); credentials == nil || credentials.Secret == nil ||
+		credentials.Secret.SecretName != originalSource.RegistryAuthFrom.Name {
+		t.Fatalf("post-apply registry credentials = %#v, want persisted registry Secret", credentials)
 	}
 	if got := fetchEnvironment["PTAH_OCI_REGISTRY"].Value; got != "registry.example" {
 		t.Fatalf("post-apply registry scope = %q, want persisted source authority", got)
@@ -677,27 +675,34 @@ func TestBuildObserveAndPlanSeparateRegistryAndDatabaseCredentials(t *testing.T)
 			mainEnvironment := containerEnvMap(main)
 			fetchEnvironment := containerEnvMap(fetch)
 
-			for _, name := range []string{"PTAH_DB_URL", "PTAH_DEV_URL"} {
+			for _, name := range []string{"PTAH_DB_URL", "PTAH_DEV_URL", runner.EnvDatabaseURLFile, runner.EnvDevelopmentDatabaseURLFile} {
 				if _, ok := fetchEnvironment[name]; ok {
 					t.Errorf("source fetch unexpectedly received %s", name)
 				}
 			}
-			for _, name := range []string{"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "DOCKER_CONFIG", "PTAH_OCI_CA_FILE", "PTAH_OCI_CLIENT_CERT", "PTAH_OCI_CLIENT_KEY"} {
+			for _, name := range []string{databaseURLVolumeName, developmentDatabaseURLVolumeName} {
+				if hasMount(fetch, name) {
+					t.Errorf("source fetch unexpectedly mounts %s", name)
+				}
+			}
+			for _, name := range []string{
+				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "DOCKER_CONFIG", "PTAH_OCI_CA_FILE",
+				"PTAH_OCI_CLIENT_CERT", "PTAH_OCI_CLIENT_KEY", runner.EnvOCIUsernameFile, runner.EnvOCIPasswordFile, runner.EnvOCITokenFile,
+			} {
 				if _, ok := mainEnvironment[name]; ok {
 					t.Errorf("database container unexpectedly received %s", name)
 				}
 			}
-			for _, name := range []string{dockerVolumeName, caVolumeName} {
+			for _, name := range []string{dockerVolumeName, caVolumeName, registryCredentialsVolumeName} {
 				if hasMount(main, name) {
 					t.Errorf("database container unexpectedly mounts %s", name)
 				}
 			}
-			if _, ok := mainEnvironment["PTAH_DB_URL"]; !ok {
-				t.Fatal("database container is missing its target Secret reference")
-			}
+			assertCredentialFile(t, job, main, runner.EnvDatabaseURLFile, "database", "url", false)
 			if operation == operatorv1alpha1.OperationObserve {
-				if _, ok := fetchEnvironment["PTAH_OCI_PASSWORD"]; !ok {
-					t.Fatal("source fetch is missing registry Secret references")
+				assertCredentialFile(t, job, fetch, runner.EnvOCIPasswordFile, "registry", "pass", true)
+				if !slices.Equal(fetch.Command, []string{runnerPath}) || !slices.Equal(fetch.Args[:len(ociFetchPrefix)], ociFetchPrefix) {
+					t.Fatalf("source fetch runs %q %q, want the pull behind the runner", fetch.Command, fetch.Args)
 				}
 			} else {
 				if got := fetchEnvironment["DOCKER_CONFIG"].Value; got != dockerConfigPath || !hasMount(fetch, dockerVolumeName) {
@@ -797,10 +802,10 @@ func TestBuildGuardsSourceAuthorityBeforeCredentialedFetch(t *testing.T) {
 			t.Errorf("Ptah fetch unexpectedly received runner-only %s", name)
 		}
 	}
-	if fetchEnvironment["PTAH_OCI_REGISTRY"].Value != "registry.example" ||
-		fetchEnvironment[runner.EnvOCIPassword].ValueFrom == nil {
+	if fetchEnvironment["PTAH_OCI_REGISTRY"].Value != "registry.example" {
 		t.Fatalf("credentialed fetch lost its scoped access: env=%#v mounts=%#v", fetchEnvironment, fetch.VolumeMounts)
 	}
+	assertCredentialFile(t, job, fetch, runner.EnvOCIPasswordFile, "registry", "pass", true)
 	if got := fetchEnvironment["PTAH_OCI_CA_FILE"].Value; got != caSnapshotFilePath {
 		t.Fatalf("credentialed fetch CA path = %q, want verified snapshot", got)
 	}
@@ -1860,6 +1865,41 @@ func assertSecretReferencesOnly(t *testing.T, job *batchv1.Job) {
 				t.Errorf("container %s environment %s has a non-Secret value source", container.Name, environment.Name)
 			}
 		}
+	}
+}
+
+// assertCredentialFile holds container to reading one credential from a file:
+// the variable names a file under a read-only mount of a Secret volume that
+// projects exactly that Secret's key, and the container has no variable that
+// carries the credential itself.
+func assertCredentialFile(t *testing.T, job *batchv1.Job, container corev1.Container, fileVariable, secret, key string, optional bool) {
+	t.Helper()
+	credential, named := credentialNamedBy(fileVariable)
+	if !named {
+		t.Fatalf("%s names no credential file", fileVariable)
+	}
+	environment := containerEnvMap(container)
+	if _, present := environment[credential.Value]; present {
+		t.Errorf("container %s carries %s in its environment", container.Name, credential.Value)
+	}
+	file := environment[fileVariable].Value
+	directory, name := path.Split(file)
+	directory = strings.TrimSuffix(directory, "/")
+	mount := slices.IndexFunc(container.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.MountPath == directory })
+	if file == "" || mount < 0 || !container.VolumeMounts[mount].ReadOnly {
+		t.Fatalf("container %s names %s = %q, which no read-only mount holds", container.Name, fileVariable, file)
+	}
+	volume := volumeNamed(job, container.VolumeMounts[mount].Name)
+	if volume == nil || volume.Secret == nil || volume.Secret.SecretName != secret {
+		t.Fatalf("%s is in volume %#v, want a volume of Secret %s", fileVariable, volume, secret)
+	}
+	item := slices.IndexFunc(volume.Secret.Items, func(item corev1.KeyToPath) bool { return item.Path == name })
+	if item < 0 || volume.Secret.Items[item].Key != key || volume.Secret.Items[item].Mode == nil ||
+		*volume.Secret.Items[item].Mode != credentialFileMode {
+		t.Fatalf("%s is item %#v of %s, want key %s at mode 0440", fileVariable, volume.Secret.Items, volume.Name, key)
+	}
+	if got := volume.Secret.Optional != nil && *volume.Secret.Optional; got != optional {
+		t.Fatalf("volume %s optional = %v, want %v", volume.Name, got, optional)
 	}
 }
 

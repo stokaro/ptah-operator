@@ -14,11 +14,14 @@ import (
 )
 
 // podConfigurationNamedOnResource holds what a reader meets while a Secret has
-// not arrived, which only a kubelet can produce (#821). The resource names the
-// missing Secret and then the missing key, in the kubelet's words. The Secret in
-// between holds the URL and its password under another key, and neither reaches
-// the resource, an Event or the Pod. Adding the key lets the same Job finish,
-// with no action on the resource.
+// not arrived, which only a kubelet can produce (#821). The database URL is a
+// file in a Secret volume (#843), so the kubelet cannot set the volume up and
+// says why only in a FailedMount Event against the Pod. The resource names the
+// missing Secret and then the missing key, in the kubelet's words, and the
+// volume and Secret the key was looked for in. The Secret in between holds the
+// URL and its password under another key, and neither reaches the resource,
+// an Event or the Pod. Adding the key lets the same Job finish, with no action
+// on the resource.
 //
 // The Job's deadline is far off, so the row ends with a Job that completed, which
 // the Job audit can read: a Job the deadline stopped has no Pod left to audit.
@@ -69,7 +72,8 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 		"metadata": map[string]any{"namespace": d.in.TestNamespace, "name": secret},
 		"data":     secretData(map[string]string{"database": podConfigurationPGDatabase, "not-the-url": target}),
 	})
-	missingKey := "couldn't find key url in Secret " + d.in.TestNamespace + "/" + secret
+	kubeletWords := `MountVolume.SetUp failed for volume "database-url" : references non-existent secret key: url`
+	missingKey := kubeletWords + " (volume database-url reads Secret " + d.in.TestNamespace + "/" + secret + ")"
 	keyless := d.waitForSchema(name, "the schema to name the key the Secret lacks", func(schema *ptahv1alpha1.PtahSchema) bool {
 		return podConfigurationReported(schema, missingKey)
 	})
@@ -78,16 +82,19 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 	}
 	pods := &corev1.PodList{}
 	d.mustList(pods, client.MatchingLabels{"job-name": job})
-	if !kubeletReportedMissingKey(pods.Items, job, missingKey) {
-		d.fatalf("no Pod of Job %s waits in the words the resource carries", job)
+	mounts := &corev1.EventList{}
+	d.mustList(mounts, client.MatchingFields{"involvedObject.kind": "Pod", "reason": "FailedMount"})
+	if !kubeletReportedMountFailure(mounts.Items, pods.Items, job, kubeletWords) {
+		d.fatalf("the kubelet recorded no FailedMount Event against a Pod of Job %s in the words the resource carries", job)
 	}
 	events := warnings()
 	if !podConfigurationEventRecorded(events.Items, keyless, missingKey) {
 		d.fatalf("%s carries no PodConfigurationError Warning saying %s", name, missingKey)
 	}
-	document := append(append(d.jsonBytes(keyless), d.jsonBytes(events)...), d.jsonBytes(pods)...)
-	d.check(holdsNoSecretValue(document, target, password), "read the resource, its Warnings and Job %s's Pods for what the Secret holds", job)
-	d.scan(document, "the resource, its Warnings and the Pods of a Job whose Secret lacks the key")
+	document := append(append(append(d.jsonBytes(keyless), d.jsonBytes(events)...), d.jsonBytes(pods)...), d.jsonBytes(mounts)...)
+	d.check(holdsNoSecretValue(document, target, password),
+		"read the resource, its Warnings, Job %s's Pods and the kubelet's mount Events for what the Secret holds", job)
+	d.scan(document, "the resource, its Warnings, the Pods of a Job whose Secret lacks the key and their mount Events")
 
 	object := &corev1.Secret{}
 	object.Namespace, object.Name = d.in.TestNamespace, secret

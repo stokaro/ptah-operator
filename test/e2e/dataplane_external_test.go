@@ -479,12 +479,14 @@ func applyRuntimeSpec(want applyWorkload) corev1.PodSpec {
 		Containers: []corev1.Container{{
 			Name: "ptah", Image: want.executorImage,
 			Env: []corev1.EnvVar{
-				{Name: "PTAH_DB_URL", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: externalPGSecret}, Key: "url",
-				}}},
+				{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"},
 				{Name: "PTAH_EXPECTED_DATABASE_ENGINE", Value: "PostgreSQL"},
 			},
+			VolumeMounts: []corev1.VolumeMount{{Name: "database-url", MountPath: "/credentials/database", ReadOnly: true}},
 		}},
+		Volumes: []corev1.Volume{{Name: "database-url", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: externalPGSecret, Items: []corev1.KeyToPath{{Key: "url", Path: "url"}},
+		}}}},
 	}
 }
 
