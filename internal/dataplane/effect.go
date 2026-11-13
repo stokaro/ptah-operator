@@ -131,9 +131,17 @@ func (e *PlanEffect) UnmarshalJSON(data []byte) error {
 // the option as absent before, as it does for a view that never existed, so
 // the value it replaces is the one the drop's effect recorded: the new view
 // holds when its value differs from that one. Where the plan may have dropped
-// the view without an effect that says what it held, it holds when either its
-// effect or its SQL would hold it. A view nothing dropped holds when it reads
-// with its readers' rights. Every new view records the option as changed, from
+// the view without an effect that says what it held, it holds whatever it
+// states: the view it replaces may have read with its readers' rights, and one
+// made again with no option reads with its owner's. That is a view named by a
+// DROP VIEW whose effect the operator does not read, and any view after a
+// statement that may drop views it does not name (see dropsUnnamedViews). The
+// same holds for CREATE VIEW and CREATE OR REPLACE VIEW of such a view with no
+// effect the operator reads, which is how Ptah writes a CREATE OR REPLACE VIEW
+// of a view whose state a CASCADE left uncertain. Until Ptah records what such
+// a statement drops (stokaro/ptah#6023), the hold cannot tell a view it took
+// from one it left or one that never existed. A view nothing dropped holds when
+// it reads with its readers' rights. Every new view records the option as changed, from
 // absent to its value, so changed alone would hold every new view; one with its
 // owner's rights is held no more than a new view that states no option.
 func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDrops) (hold, described bool) {
@@ -151,8 +159,9 @@ func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDro
 		drops.drop(view.name, invoker, read)
 		return false, false
 	case !read:
+		taken := view.action != PlanEffectActionAlter && drops.mayHaveTaken(view.name)
 		drops.forgetNamed(view.name)
-		return false, false
+		return taken, false
 	}
 	replaced, known, dropped := drops.recreate(invoker.object, view.name)
 	switch {
@@ -161,7 +170,7 @@ func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDro
 	case known:
 		return replaced != *invoker.after, true
 	case dropped:
-		return *invoker.after, false
+		return true, true
 	default:
 		return *invoker.after, true
 	}
@@ -244,7 +253,8 @@ type viewDrops struct {
 	// unread is the views a DROP VIEW dropped without an effect the operator
 	// reads, as readQualifiedName spells the names the SQL gives them. Ptah
 	// writes none for a view whose state it could not follow, such as one an
-	// earlier CASCADE may already have taken.
+	// earlier CASCADE may already have taken, and for a DROP VIEW IF EXISTS of
+	// a view the database did not hold.
 	unread []string
 	// unnamed is set once a statement may have dropped a view it does not
 	// name.
@@ -278,6 +288,13 @@ func (d *viewDrops) recreate(object PlanEffectObject, name string) (replaced, kn
 	delete(d.held, object)
 	d.unread = slices.DeleteFunc(d.unread, func(unread string) bool { return unread == name })
 	return replaced, known, dropped
+}
+
+// mayHaveTaken reports whether the plan may have dropped a view name may name
+// without an effect that says what it held, for a statement that makes the
+// view and whose own effect the operator does not read.
+func (d *viewDrops) mayHaveTaken(name string) bool {
+	return d.unnamed || slices.ContainsFunc(d.unread, func(unread string) bool { return sameViewName(unread, name) })
 }
 
 // forgetNamed forgets what a drop's effect recorded for any view name may
@@ -452,6 +469,25 @@ func readSQLKeywords(statement string, keywords ...string) (string, bool) {
 func viewNamed(object PlanEffectObject, name string) bool {
 	quoted := quoteSQLIdentifier(object.Name)
 	return name == quoted || object.Schema != "" && name == quoteSQLIdentifier(object.Schema)+"."+quoted
+}
+
+// sameViewName reports whether two names, as readQualifiedName spells them,
+// may name the same view: the same name, and the same schema where both state
+// one. An unqualified name may name a view in any schema.
+func sameViewName(a, b string) bool {
+	aSchema, aView := splitViewName(a)
+	bSchema, bView := splitViewName(b)
+	return aView == bView && (aSchema == "" || bSchema == "" || aSchema == bSchema)
+}
+
+// splitViewName splits a name readQualifiedName spelled into its schema, empty
+// where it states none, and the view's own name.
+func splitViewName(name string) (schema, view string) {
+	first, rest, _ := readIdentifierPart(name)
+	if after, qualified := strings.CutPrefix(rest, "."); qualified {
+		return first, after
+	}
+	return "", first
 }
 
 // quoteSQLIdentifier spells an identifier the way readQualifiedName keeps a
