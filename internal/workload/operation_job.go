@@ -27,6 +27,15 @@ const (
 	defaultTerminationGracePeriodSeconds = int64(runner.DefaultTerminationGracePeriod / time.Second)
 )
 
+// CleanupTTLSeconds is the ttlSecondsAfterFinished a read-only operation Job is
+// created with, and the one the manager gives every other Job once it has
+// finished with it (jobclaim.CleanupTTLSeconds). Kubernetes counts it from the
+// moment the Job finishes, so it ends nothing that is running: a read Job runs
+// until it stops or reaches its deadline, and is collected five minutes later,
+// whichever claim let go of it. An Apply Job is created with no TTL, because how
+// long its Pod log is kept depends on what the run reported.
+const CleanupTTLSeconds int32 = 300
+
 // operationFamily is what is fixed for every Job one resource kind dispatches.
 type operationFamily struct {
 	ownerKind string
@@ -81,7 +90,10 @@ type operationJob struct {
 
 	// mutating bounds the Job by the claim's execution window rather than by
 	// spec.execution.activeDeadlineSeconds.
-	mutating          bool
+	mutating bool
+	// readOnly creates the Job with its cleanup TTL (CleanupTTLSeconds). It is
+	// false for an Apply and for a type this binary does not define.
+	readOnly          bool
 	startedAt         metav1.Time
 	executionNotAfter *metav1.Time
 	// terminationGracePeriodSeconds overrides the default when positive.
@@ -308,6 +320,10 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 				},
 			},
 		},
+	}
+	if spec.readOnly {
+		ttl := CleanupTTLSeconds
+		job.Spec.TTLSecondsAfterFinished = &ttl
 	}
 	// The Job wire format omits an empty selector. Build that same form so
 	// strict claim comparisons still match after the API decodes the request.

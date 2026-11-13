@@ -84,11 +84,11 @@ func TestASuspendedReadOnlyClaimNamesTheRunningJobItLeaves(t *testing.T) {
 		// the Job and starts to wait for it.
 		refused bool
 	}{
-		{name: "a Job the claim supervises", shape: runShape{dispatcher: current, recorded: true}},
-		{name: "a Job the claim never recorded", shape: runShape{dispatcher: current}},
+		{name: "a Job the claim supervises", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true}},
+		{name: "a Job the claim never recorded", shape: runShape{dispatcher: current, createdWithoutTTL: true}},
 		{
 			name:    "a Job the claim was waiting for after refusing it",
-			shape:   runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true},
+			shape:   runShape{dispatcher: predecessor, alter: withAnExecutorSetting, recorded: true, createdWithoutTTL: true},
 			refused: true,
 		},
 	} {
@@ -166,28 +166,28 @@ func TestASuspendedReadOnlyClaimGoesAtOnceWhereItOwesItsJobNothingItCanGive(t *t
 		stays string
 	}{
 		{
-			name: "a finished Job", shape: runShape{dispatcher: current, recorded: true},
+			name: "a finished Job", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			finished: true, patches: 1, ttl: "300",
 		},
 		{
-			name: "a finished Job the claim never recorded", shape: runShape{dispatcher: current},
+			name: "a finished Job the claim never recorded", shape: runShape{dispatcher: current, createdWithoutTTL: true},
 			finished: true, recordsIt: true, patches: 1, ttl: "300",
 		},
 		{
-			name: "a Job that already has its TTL", shape: runShape{dispatcher: current, recorded: true},
+			name: "a Job that already has its TTL", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			collected: true, ttl: "300",
 		},
 		{
-			name: "a Job that replaced the claim's", shape: runShape{dispatcher: current, recorded: true},
+			name: "a Job that replaced the claim's", shape: runShape{dispatcher: current, recorded: true, createdWithoutTTL: true},
 			replaced: true, ttl: "none",
 		},
 		{
-			name: "a Job under another epoch", shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true},
+			name: "a Job under another epoch", shape: runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true},
 			ttl: "none", stays: "the Job runs under another execution epoch than its claim",
 		},
 		{
 			name:  "a Job under another epoch whose UID the claim never recorded",
-			shape: runShape{dispatcher: current, alter: underAnotherEpoch}, ttl: "none",
+			shape: runShape{dispatcher: current, alter: underAnotherEpoch, createdWithoutTTL: true}, ttl: "none",
 			stays: "its claim never recorded the Job's UID, and the Job is not the one the claim fixes",
 		},
 	} {
@@ -252,7 +252,7 @@ func TestASuspendedReadOnlyClaimKeepsAFinishedJobWhoseTTLWriteIsLost(t *testing.
 	ctx := context.Background()
 
 	current := workloadBuilderForMigrations()
-	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 	run.migration.Spec.Suspend = true
 	reconciler, api := run.reconciler(t, current)
 	finishMigrationJob(t, api, run, batchv1.JobComplete)
@@ -301,7 +301,7 @@ func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 
-		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 		reconciler, api := run.reconciler(t, next)
 		reconciler.Client = admittedJobWrites(api, next)
 		recorder := record.NewFakeRecorder(64)
@@ -346,7 +346,7 @@ func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 		ctx := context.Background()
 
 		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory,
-			runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true})
+			runShape{dispatcher: current, alter: underAnotherEpoch, recorded: true, createdWithoutTTL: true})
 		reconciler, api := run.reconciler(t, next)
 		reconciler.Client = admittedJobWrites(api, next)
 		recorder := record.NewFakeRecorder(64)
@@ -373,7 +373,7 @@ func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 
-		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 		reconciler, api := run.reconciler(t, next)
 		admitted := admittedJobWrites(api, next)
 		reconciler.Client = admitted
@@ -411,7 +411,7 @@ func TestARotationCollectsTheReadOnlyJobItsClaimLeaves(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 
-		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true})
+		run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationHistory, runShape{dispatcher: current, recorded: true, createdWithoutTTL: true})
 		reconciler, api := run.reconciler(t, next)
 		reconciler.Client = admittedJobWrites(api, next)
 		lost := errors.New("connection reset by peer")

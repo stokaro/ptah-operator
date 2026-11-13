@@ -12,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -19,13 +20,19 @@ import (
 )
 
 const (
-	cleanupTTLValueMessage = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an Apply that failed"
-	cleanupTTLLongMessage  = "only an Apply Job keeps 86400 seconds"
+	cleanupTTLValueMessage    = "a Job's cleanup TTL is 300 seconds, or 86400 seconds for the Job of an Apply that failed"
+	cleanupTTLLongMessage     = "only an Apply Job keeps 86400 seconds"
+	cleanupTTLCreationMessage = "only a read-only Job is created with a cleanup TTL"
 )
 
 // cleanupJobs are finished Jobs the rows send a cleanup TTL to, one of each kind
 // the guard tells apart. Nothing here runs them, so the administrator stores each
 // with the status the Job controller would have written.
+//
+// The manager writes a TTL only to a Job that carries none. This release creates
+// a read-only Job with its TTL already set, so the read-only Jobs here are the
+// ones a release before it created, with none: the manager still gives those
+// their TTL once they finish.
 type cleanupJobs struct {
 	readOnly, migrationReadOnly, schemaApply, migrationApply, alreadyHarvested *batchv1.Job
 }
@@ -35,11 +42,14 @@ var cleanupFixtures cleanupJobs
 // asApplyJob relabels a built Resolve Job as the Apply of its resource. The
 // guard reads the operation from the label and the Job's name from it, and holds
 // an Apply to the annotations its builder writes, which is all this needs of one.
+// An Apply is created with no cleanup TTL, which the read it was built from
+// carries.
 func asApplyJob(job *batchv1.Job, namePrefix, built, word string) *batchv1.Job {
 	const operationLabel = "operator.ptah.run/operation"
 	job.Name = namePrefix + "apply-" + word + "-" + strings.TrimPrefix(job.Name, namePrefix+built+"-")
 	job.Labels[operationLabel] = "apply"
 	job.Spec.Template.Labels[operationLabel] = "apply"
+	job.Spec.TTLSecondsAfterFinished = nil
 	for _, annotations := range []map[string]string{job.Annotations, job.Spec.Template.Annotations} {
 		workload.MarkMutatingOperation(annotations)
 		if namePrefix == "ptah-" {
@@ -123,6 +133,8 @@ func setupCleanupJobs(ctx context.Context) error {
 		migrationApply:    asApplyJob(migrationApply, "ptah-m-", "history", "cleanup"),
 		alreadyHarvested:  asApplyJob(harvested, "ptah-", "resolve", "harvested"),
 	}
+	cleanupFixtures.readOnly.Spec.TTLSecondsAfterFinished = nil
+	cleanupFixtures.migrationReadOnly.Spec.TTLSecondsAfterFinished = nil
 	cleanupFixtures.alreadyHarvested.Spec.TTLSecondsAfterFinished = ptr.To(int32(300))
 	start := metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
 	finish := metav1.NewTime(start.Add(time.Minute))
@@ -207,6 +219,75 @@ func cleanupRows(t *testing.T, c *catalog) {
 		Name: "Job write guard lets a read-only Job keep the long cleanup TTL", Policies: []string{jobGuard},
 		Apply:  policyenv.DropValidations(jobGuard, cleanupTTLLongMessage),
 		Breaks: []string{readOnlyLong, migrationLong}, Admits: true,
+	})
+	creationRows(c, jobGuard)
+}
+
+// creationRows sends the manager's create of a Job with each cleanup TTL the
+// guard tells apart. A read-only Job is created with the short TTL, which
+// schemaJobRow and migrationJobRow already send from the builder; an Apply is
+// created with none, and the row that sends one without proves the relabeled
+// Apply is a Job the guard admits, so the TTL is all the refused rows change.
+func creationRows(c *catalog, jobGuard string) {
+	manager := env.Manager()
+	created := func(build func() (*batchv1.Job, error), edit func(*batchv1.Job)) func(context.Context, *policyenv.Env) error {
+		return as(manager, dryRunCreate(func() (client.Object, error) {
+			job, err := build()
+			if err != nil {
+				return nil, err
+			}
+			edit(job)
+			return job, nil
+		}))
+	}
+	withTTL := func(seconds *int32) func(*batchv1.Job) {
+		return func(job *batchv1.Job) { job.Spec.TTLSecondsAfterFinished = seconds }
+	}
+	schemaApply := func(ttl *int32) func(*batchv1.Job) {
+		return func(job *batchv1.Job) { withTTL(ttl)(asApplyJob(job, "ptah-", "resolve", "created")) }
+	}
+	migrationApply := func(ttl *int32) func(*batchv1.Job) {
+		return func(job *batchv1.Job) { withTTL(ttl)(asApplyJob(job, "ptah-m-", "history", "created")) }
+	}
+
+	const (
+		historyCreated        = "manager dispatches a migration history read with its cleanup TTL"
+		schemaApplyCreated    = "manager dispatches a schema Apply Job with no cleanup TTL"
+		migrationApplyCreated = "manager dispatches a migration Apply Job with no cleanup TTL"
+		schemaApplyShort      = "manager dispatches a schema Apply Job carrying the short cleanup TTL"
+		migrationApplyShort   = "manager dispatches a migration Apply Job carrying the short cleanup TTL"
+		readOnlyLong          = "manager dispatches a read-only Job carrying the long cleanup TTL"
+		readOnlyOther         = "manager dispatches a read-only Job carrying a cleanup TTL that is not the short one"
+	)
+	c.row(policyenv.Row{Name: historyCreated, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		job, err := migrationHistoryJob()
+		if err == nil && (job.Spec.TTLSecondsAfterFinished == nil || *job.Spec.TTLSecondsAfterFinished != workload.CleanupTTLSeconds) {
+			err = fmt.Errorf("the builder creates a history read with TTL %v, not %d", job.Spec.TTLSecondsAfterFinished, workload.CleanupTTLSeconds)
+		}
+		return job, err
+	}))})
+	c.row(policyenv.Row{Name: schemaApplyCreated, Do: created(resolveJob, schemaApply(nil))})
+	c.row(policyenv.Row{Name: migrationApplyCreated, Do: created(migrationHistoryJob, migrationApply(nil))})
+	c.row(policyenv.Row{
+		Name: schemaApplyShort, Deny: []string{jobGuard}, Message: cleanupTTLCreationMessage,
+		Do: created(resolveJob, schemaApply(ptr.To(workload.CleanupTTLSeconds))),
+	})
+	c.row(policyenv.Row{
+		Name: migrationApplyShort, Deny: []string{jobGuard}, Message: cleanupTTLCreationMessage,
+		Do: created(migrationHistoryJob, migrationApply(ptr.To(workload.CleanupTTLSeconds))),
+	})
+	c.row(policyenv.Row{
+		Name: readOnlyLong, Deny: []string{jobGuard}, Message: cleanupTTLCreationMessage,
+		Do: created(resolveJob, withTTL(ptr.To(int32(86400)))),
+	})
+	c.row(policyenv.Row{
+		Name: readOnlyOther, Deny: []string{jobGuard}, Message: cleanupTTLCreationMessage,
+		Do: created(migrationResolveJob, withTTL(ptr.To(workload.CleanupTTLSeconds+1))),
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard lets any Job be created with any cleanup TTL", Policies: []string{jobGuard},
+		Apply:  policyenv.DropValidations(jobGuard, cleanupTTLCreationMessage),
+		Breaks: []string{schemaApplyShort, migrationApplyShort, readOnlyLong, readOnlyOther}, Admits: true,
 	})
 }
 

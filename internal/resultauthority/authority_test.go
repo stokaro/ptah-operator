@@ -31,6 +31,38 @@ func TestAllOperationJobs(t *testing.T) {
 	}
 }
 
+// A read-only Job is created with its cleanup TTL, and the Pod it runs still
+// publishes its result under it. A read Job an earlier release created carries
+// none; any other TTL is one no manager writes on a read before the result is in.
+func TestReadOnlyJobPublishesUnderItsCreationTTL(t *testing.T) {
+	for _, name := range []string{"schema-observe", "schema-plan-dev-fence-scheduling", "migration-history"} {
+		for _, test := range []struct {
+			name     string
+			ttl      *int32
+			admitted bool
+		}{
+			{"its cleanup TTL", ptr.To(workload.CleanupTTLSeconds), true},
+			{"no TTL", nil, true},
+			{"the long TTL", ptr.To(int32(86400)), false},
+		} {
+			t.Run(name+" with "+test.name, func(t *testing.T) {
+				f := resulttest.New(t, name)
+				if ttl := f.Job.Spec.TTLSecondsAfterFinished; ttl == nil || *ttl != workload.CleanupTTLSeconds {
+					t.Fatalf("the golden %s Job carries TTL %v, want %d", name, ttl, workload.CleanupTTLSeconds)
+				}
+				f.Job.Spec.TTLSecondsAfterFinished = test.ttl
+				err := (Authorizer{Reader: f.Client(t)}).Check(t.Context(), f.Identity)
+				if test.admitted && err != nil {
+					t.Fatalf("Check() = %v, want the result authorized", err)
+				}
+				if !test.admitted && !errors.Is(err, resultdelivery.ErrAuthority) {
+					t.Fatalf("Check() = %v, want an authority refusal", err)
+				}
+			})
+		}
+	}
+}
+
 func TestRefusals(t *testing.T) {
 	cases := map[string]func(*resulttest.Fixture){
 		"subject UID":     func(f *resulttest.Fixture) { f.Subject.SetUID("replacement") },
