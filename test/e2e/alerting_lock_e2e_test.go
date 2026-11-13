@@ -329,9 +329,10 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	// so the owner's own Resolve and Plan each held the gauge above zero for a
 	// moment, and a scrape that read one leaves a pending series until a later
 	// scrape reads zero and the next evaluation drops it. The Apply claim bound
-	// above came after the last of those releases. A series that outlives two
-	// scrapes, one scrape timeout and an evaluation from now is an incident
-	// this lane did not cause.
+	// above came after the last of those releases, so from now a scrape that
+	// reads zero finishes within one interval and its timeout, and the next
+	// evaluation, one interval later, drops the series. One that outlives that
+	// is an incident this lane did not cause.
 	query := fmt.Sprintf(`ALERTS{alertname=%q,family=%q}`, alLockAlert, family)
 	if err := harness.Wait(a.ctx, "no lock-release series for this family", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
 		return a.noActiveAlerts(query), "a series is active", nil
