@@ -189,6 +189,21 @@ func (b Builder) gitFetch(
 	if err := sourcebinding.ValidateGit(binding); err != nil {
 		return corev1.Container{}, nil, err
 	}
+	return b.remoteFetch(gitFetchContainerName, "--fetch-git-source", destination, resources,
+		func(environment []corev1.EnvVar, volumes []corev1.Volume, mounts []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
+			return addGitAccess(gitFetchRequest(binding, schema), environment, volumes, mounts)
+		})
+}
+
+// remoteFetch builds the init container a Git or an HTTPS fetch runs in: the
+// runner, with the source volume to write and a work directory of its own,
+// and the access add gives it. It is the one container in the Pod that holds
+// the source's credential.
+func (b Builder) remoteFetch(
+	name, flag, destination string,
+	resources corev1.ResourceRequirements,
+	add func([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error),
+) (corev1.Container, []corev1.Volume, error) {
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
 		literalEnv("TMPDIR", fetchWorkPath),
@@ -203,25 +218,25 @@ func (b Builder) gitFetch(
 		{Name: sourceVolumeName, MountPath: sourcePath},
 		{Name: fetchWorkVolumeName, MountPath: fetchWorkPath},
 	}
-	environment, volumes, mounts, err := addGitAccess(gitFetchRequest(binding, schema), environment, volumes, mounts)
+	environment, volumes, mounts, err := add(environment, volumes, mounts)
 	if err != nil {
 		return corev1.Container{}, nil, err
 	}
 	sortEnvironment(environment)
 	return corev1.Container{
-		Name:            gitFetchContainerName,
+		Name:            name,
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{runnerPath},
-		Args:            []string{"--fetch-git-source", destination, "--ptah-binary", ptahBinaryPath},
+		Args:            []string{flag, destination, "--ptah-binary", ptahBinaryPath},
 		WorkingDir:      fetchWorkPath,
 		Env:             environment,
 		Resources:       resources,
 		SecurityContext: hardenedContainerContext(),
 		VolumeMounts:    mounts,
-		// The refusal a person has to read: the runner names the commit and
-		// digest it was held to, and Ptah's own reason, redacted, never a
-		// credential.
+		// The refusal a person has to read: the runner names the content and
+		// the download or commit it was held to, and Ptah's own reason,
+		// redacted, never a credential.
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, volumes, nil
 }

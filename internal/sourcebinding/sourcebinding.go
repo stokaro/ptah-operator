@@ -47,6 +47,26 @@ func GitPlanSource(repository, path, contentDigest string) *operatorv1alpha1.Pla
 	}
 }
 
+// HTTPSRevision is what a plan computed from an HTTPS source binds as its
+// revision: "sha256:" and the SHA-256 of the URL and the selected path,
+// joined by a newline. It never binds the download digest: an archive
+// published again as other bytes that leaves the selected files as they were
+// keeps the plan, once the spec names its digest.
+func HTTPSRevision(download, path string) string {
+	sum := sha256.Sum256([]byte(download + "\n" + path))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// HTTPSPlanSource is what a plan computed from an HTTPS source binds: the URL
+// and path, as HTTPSRevision, and the content digest of the selected files.
+func HTTPSPlanSource(download, path, contentDigest string) *operatorv1alpha1.PlanSourceBinding {
+	return &operatorv1alpha1.PlanSourceBinding{
+		Kind:          operatorv1alpha1.SourceKindHTTPS,
+		Revision:      HTTPSRevision(download, path),
+		ContentDigest: contentDigest,
+	}
+}
+
 // ConfigMapPlanSource is what a plan computed from a ConfigMap source binds:
 // the ConfigMap's UID and the content digest of the selected files.
 func ConfigMapPlanSource(revision operatorv1alpha1.ConfigMapSourceRevision, snapshot operatorv1alpha1.SourceSnapshotBinding) *operatorv1alpha1.PlanSourceBinding {
@@ -59,10 +79,14 @@ func ConfigMapPlanSource(revision operatorv1alpha1.ConfigMapSourceRevision, snap
 
 // SchemaPlanSource is what a plan computed from a schema's resolved source
 // binds: the artifact digest of an OCI source, or the source binding of a
-// ConfigMap or Git one. A source that has not been read yet binds nothing.
+// ConfigMap, Git or HTTPS one. A source that has not been read yet binds
+// nothing.
 func SchemaPlanSource(status operatorv1alpha1.SchemaSourceStatus) (string, *operatorv1alpha1.PlanSourceBinding) {
 	if git := status.Git; git != nil {
 		return "", withPolicy(GitPlanSource(git.URL, git.Path, git.ContentDigest), status.SourcePolicy)
+	}
+	if https := status.HTTPS; https != nil {
+		return "", withPolicy(HTTPSPlanSource(https.URL, https.Path, https.ContentDigest), status.SourcePolicy)
 	}
 	if status.ConfigMap != nil && status.Snapshot != nil {
 		return "", withPolicy(ConfigMapPlanSource(*status.ConfigMap, *status.Snapshot), status.SourcePolicy)
@@ -81,7 +105,7 @@ func withPolicy(source *operatorv1alpha1.PlanSourceBinding, policy *operatorv1al
 
 // MigrationPlanSource is what a plan computed from a migration's resolved
 // source binds: the artifact digest of an OCI source, or the source binding
-// of a ConfigMap or Git one.
+// of a ConfigMap, Git or HTTPS one.
 func MigrationPlanSource(
 	artifact *operatorv1alpha1.SourceAccessBinding,
 	revision *operatorv1alpha1.ConfigMapSourceRevision,
@@ -92,6 +116,9 @@ func MigrationPlanSource(
 	}
 	if git := artifact.Git; git != nil {
 		return "", withPolicy(GitPlanSource(git.URL, git.Path, git.ContentDigest), policy)
+	}
+	if https := artifact.HTTPS; https != nil {
+		return "", withPolicy(HTTPSPlanSource(https.URL, https.Path, https.ContentDigest), policy)
 	}
 	if artifact.Snapshot != nil {
 		if revision == nil {
@@ -151,16 +178,24 @@ func SamePlanSource(artifactA string, sourceA *operatorv1alpha1.PlanSourceBindin
 	return artifactA == artifactB && Equal(sourceA, sourceB)
 }
 
-// ValidateAccess holds an access binding to one of its three shapes: an OCI
-// reference pinned to a matching digest, a well-formed snapshot, or a Git
-// commit, the last two with nothing that belongs to a registry.
+// ValidateAccess holds an access binding to one of its four shapes: an OCI
+// reference pinned to a matching digest, a well-formed snapshot, a Git commit
+// or an HTTPS download, the last three with nothing that belongs to a
+// registry.
 func ValidateAccess(binding operatorv1alpha1.SourceAccessBinding) error {
+	registry := binding.ResolvedReference != "" || binding.Digest != "" || binding.RegistryAuthFrom != nil ||
+		binding.Transport.PlainHTTP || binding.Transport.CAFrom != nil
 	if binding.Git != nil {
-		if binding.Snapshot != nil || binding.ResolvedReference != "" || binding.Digest != "" || binding.RegistryAuthFrom != nil ||
-			binding.Transport.PlainHTTP || binding.Transport.CAFrom != nil {
-			return errors.New("a Git access binding names no registry and no snapshot")
+		if binding.Snapshot != nil || binding.HTTPS != nil || registry {
+			return errors.New("a Git access binding names no registry, no snapshot and no download")
 		}
 		return ValidateGit(*binding.Git)
+	}
+	if binding.HTTPS != nil {
+		if binding.Snapshot != nil || registry {
+			return errors.New("an HTTPS access binding names no registry and no snapshot")
+		}
+		return ValidateHTTPS(*binding.HTTPS)
 	}
 	if binding.Snapshot == nil {
 		if err := ocireference.ValidatePinned(binding.ResolvedReference, binding.Digest); err != nil {
@@ -192,6 +227,10 @@ func AccessGives(binding operatorv1alpha1.SourceAccessBinding, artifactDigest st
 		return source != nil && artifactDigest == "" && source.Kind == operatorv1alpha1.SourceKindGit &&
 			git.ContentDigest == source.ContentDigest && GitRevision(git.URL, git.Path) == source.Revision
 	}
+	if https := binding.HTTPS; https != nil {
+		return source != nil && artifactDigest == "" && source.Kind == operatorv1alpha1.SourceKindHTTPS &&
+			https.ContentDigest == source.ContentDigest && HTTPSRevision(https.URL, https.Path) == source.Revision
+	}
 	if binding.Snapshot != nil {
 		return source != nil && artifactDigest == "" && binding.Snapshot.ContentDigest == source.ContentDigest
 	}
@@ -200,14 +239,21 @@ func AccessGives(binding operatorv1alpha1.SourceAccessBinding, artifactDigest st
 
 // SchemaAccess is the access binding a schema's resolved source gives later
 // operations: the snapshot of a ConfigMap source, the resolved commit of a
-// Git source with the spec's credential and trust selectors, or nil for an
-// OCI source, whose binding the caller builds from the registry selectors.
+// Git source or the resolved download of an HTTPS one with the spec's
+// credential and trust selectors, or nil for an OCI source, whose binding the
+// caller builds from the registry selectors.
 func SchemaAccess(spec operatorv1alpha1.SourceSpec, status operatorv1alpha1.SchemaSourceStatus) *operatorv1alpha1.SourceAccessBinding {
 	if status.Git != nil {
 		if spec.Git == nil {
 			return nil
 		}
 		return &operatorv1alpha1.SourceAccessBinding{Git: GitAccess(*spec.Git, *status.Git)}
+	}
+	if status.HTTPS != nil {
+		if spec.HTTPS == nil {
+			return nil
+		}
+		return &operatorv1alpha1.SourceAccessBinding{HTTPS: HTTPSAccess(*spec.HTTPS, *status.HTTPS)}
 	}
 	if status.Snapshot == nil {
 		return nil
@@ -284,12 +330,80 @@ func ValidateGit(git operatorv1alpha1.GitSourceBinding) error {
 	return nil
 }
 
+// HTTPSAccess is what an operation fetches a resolved HTTPS source by: the
+// download and the content a resolution found, and the credential and trust
+// selectors the spec names now.
+func HTTPSAccess(spec operatorv1alpha1.HTTPSSourceSpec, revision operatorv1alpha1.HTTPSSourceRevision) *operatorv1alpha1.HTTPSSourceBinding {
+	binding := &operatorv1alpha1.HTTPSSourceBinding{
+		URL: revision.URL, Digest: revision.Digest, Format: revision.Format, Path: revision.Path,
+		ContentDigest: revision.ContentDigest,
+	}
+	if spec.AuthFrom != nil {
+		binding.AuthFrom = spec.AuthFrom.DeepCopy()
+	}
+	spec.Transport.DeepCopyInto(&binding.Transport)
+	return binding
+}
+
+// HTTPSResolved reports whether a resolution answered the HTTPS source the
+// spec names now: the same URL, digest, format and path. The digest is part
+// of the spec, so a new digest is a new source and is resolved again.
+func HTTPSResolved(spec *operatorv1alpha1.HTTPSSourceSpec, revision *operatorv1alpha1.HTTPSSourceRevision) bool {
+	return spec != nil && revision != nil && revision.URL == spec.URL && revision.Digest == spec.Digest &&
+		revision.Format == spec.Format && revision.Path == spec.Path
+}
+
+// ValidateHTTPS holds an HTTPS access binding to what a fetch can act on: an
+// https:// URL with no credential, query or fragment, a download digest, a
+// format, a clean path that fits it, a content digest, and selectors that
+// name a Secret and a required ConfigMap key.
+func ValidateHTTPS(binding operatorv1alpha1.HTTPSSourceBinding) error {
+	parsed, err := url.Parse(binding.URL)
+	switch {
+	case err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Opaque != "":
+		return errors.New("an HTTPS access binding names an https:// download")
+	case parsed.User != nil:
+		return errors.New("an HTTPS access binding's URL carries no credential")
+	case parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "":
+		return errors.New("an HTTPS access binding's URL has no query and no fragment")
+	case parsed.Path == "" || parsed.Path == "/":
+		return errors.New("an HTTPS access binding's URL names a path")
+	case !contentDigestPattern.MatchString(binding.Digest):
+		return errors.New("an HTTPS access binding names the download's digest")
+	case !contentDigestPattern.MatchString(binding.ContentDigest):
+		return errors.New("an HTTPS access binding names a content digest")
+	case binding.AuthFrom != nil && strings.TrimSpace(binding.AuthFrom.Name) == "":
+		return errors.New("an HTTPS access binding's credential selector names a Secret")
+	}
+	switch binding.Format {
+	case operatorv1alpha1.HTTPSFormatFile:
+		if binding.Path == "." || strings.Contains(binding.Path, "/") || sourcecontent.ValidatePath(binding.Path) != nil {
+			return errors.New("an HTTPS access binding of a File names the one name the download is given")
+		}
+	case operatorv1alpha1.HTTPSFormatTarGzip, operatorv1alpha1.HTTPSFormatZip:
+		if binding.Path != "." && sourcecontent.ValidatePath(binding.Path) != nil {
+			return errors.New("an HTTPS access binding names a clean relative path")
+		}
+	default:
+		return errors.New("an HTTPS access binding names File, TarGzip or Zip")
+	}
+	if selector := binding.Transport.CAFrom; selector != nil &&
+		(selector.Name == "" || selector.Key == "" || (selector.Optional != nil && *selector.Optional)) {
+		return errors.New("an HTTPS access binding's trust names a required ConfigMap key")
+	}
+	return nil
+}
+
 // SchemaSourceReady reports whether later operations may read a schema's
-// source: a verified OCI artifact, or the snapshot of the ConfigMap the spec
+// source: a verified OCI artifact, the snapshot of the ConfigMap the spec
+// names, or the Git commit or HTTPS download resolved for the source the spec
 // names.
 func SchemaSourceReady(spec operatorv1alpha1.SourceSpec, status operatorv1alpha1.SchemaSourceStatus) bool {
 	if status.Git != nil {
 		return GitResolved(spec.Git, status.Git)
+	}
+	if status.HTTPS != nil {
+		return HTTPSResolved(spec.HTTPS, status.HTTPS)
 	}
 	if status.Snapshot != nil {
 		return spec.ConfigMap != nil && status.ConfigMap != nil && status.ConfigMap.Name == spec.ConfigMap.Name

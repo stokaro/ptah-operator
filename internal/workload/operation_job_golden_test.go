@@ -26,6 +26,10 @@ const goldenJobDirectory = "testdata/jobs"
 type goldenJobCase struct {
 	name  string
 	build func() (*batchv1.Job, error)
+	// unreleased is a case no release before file delivery could build: its
+	// source did not exist then, so no Job of it can be running when the
+	// manager is upgraded, and testdata/jobs-v0.2.10 holds none.
+	unreleased bool
 }
 
 // The operation Job is read by more than the kubelet. The controller-write
@@ -39,8 +43,9 @@ type goldenJobCase struct {
 // the CA snapshot with and without credentials, plain HTTP, the development
 // database and the plan fence, the Apply window and termination grace, the
 // admission snapshot, every scheduling knob spec.execution offers, set and
-// left unset, and a Git source by https:// and by ssh://, resolved in the
-// operation container and fetched before it.
+// left unset, a Git source by https:// and by ssh://, and an HTTPS source as
+// a file and as an archive, each resolved in the operation container and
+// fetched before it.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -357,6 +362,45 @@ func goldenJobCases() []goldenJobCase {
 				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
 				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
 				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
+		{
+			name:       "schema-resolve-https-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				return builder.Build(httpsSchemaFixture(httpsFileSpec()), operationFixture(operatorv1alpha1.OperationResolve), nil)
+			},
+		},
+		{
+			name:       "schema-plan-https-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsFileSpec()
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				return builder.Build(httpsSchemaFixture(spec), operation, nil)
+			},
+		},
+		{
+			name:       "migration-resolve-https-archive",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: httpsArchiveSpec()}
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			name:       "migration-apply-https-archive",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsArchiveSpec()
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},

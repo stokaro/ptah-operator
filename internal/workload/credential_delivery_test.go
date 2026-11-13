@@ -28,13 +28,13 @@ const releasedJobDirectory = "testdata/jobs-v0.2.10"
 // that Job byte for byte.
 func TestCarryCredentialDeliveryRebuildsEveryReleasedJob(t *testing.T) {
 	t.Parallel()
-	cases := goldenJobCases()
+	cases := slices.DeleteFunc(goldenJobCases(), func(test goldenJobCase) bool { return test.unreleased })
 	entries, err := os.ReadDir(releasedJobDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != len(cases) {
-		t.Fatalf("%s holds %d Jobs, want one for each of the %d golden cases", releasedJobDirectory, len(entries), len(cases))
+		t.Fatalf("%s holds %d Jobs, want one for each of the %d golden cases a released builder could write", releasedJobDirectory, len(entries), len(cases))
 	}
 	rewritten := 0
 	for _, test := range cases {

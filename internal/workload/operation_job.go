@@ -118,8 +118,8 @@ type artifactFetchRequest struct {
 	source        operatorv1alpha1.SourceAccessBinding
 	containerName string
 	args          []string
-	// destination is the directory under the source volume a snapshot or a
-	// Git commit is copied into.
+	// destination is the directory under the source volume a snapshot, a
+	// Git commit or an HTTPS download is copied into.
 	destination string
 	// schema says the source is a schema file rather than a migration
 	// directory.
@@ -217,6 +217,13 @@ func (b Builder) buildOperationJob(spec operationJob) (*batchv1.Job, error) {
 		switch {
 		case fetch.source.Git != nil:
 			fetchContainer, fetchVolumes, err := b.gitFetch(*fetch.source.Git, fetch.schema, fetch.destination, resources)
+			if err != nil {
+				return nil, err
+			}
+			initContainers = append(initContainers, fetchContainer)
+			volumes = append(volumes, fetchVolumes...)
+		case fetch.source.HTTPS != nil:
+			fetchContainer, fetchVolumes, err := b.httpsFetch(*fetch.source.HTTPS, fetch.schema, fetch.destination, resources)
 			if err != nil {
 				return nil, err
 			}
