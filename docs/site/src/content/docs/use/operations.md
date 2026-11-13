@@ -2153,11 +2153,12 @@ nothing about whether the mutation was ever accounted for.
 
 ```sh
 kubectl ptah migration orders -n application
-kubectl get ptahmigration orders -o jsonpath='{.status.unresolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 ```
 
 The first prints the record under `Unresolved run`, apart from the last run,
-with the migration's UID; the second is the record as stored.
+with the migration's UID; the second adds every field of the record the
+plugin knows, and of the last run beside it.
 
 The record names the attempt (`operationID`), the plan it was
 carrying out, and the credential-free identity of a database. It names the Job
@@ -2323,12 +2324,13 @@ resource is suspended, and reads the database again before it plans anything.
 are gone, and `status.resolvedRun` names the run, the acknowledgment and you:
 
 ```sh
-kubectl -n application get ptahmigration orders -o jsonpath='{.status.resolvedRun}' | jq
+kubectl ptah migration orders -n application --details
 kubectl -n application get ptahmigrationrunacknowledgment orders-run-accounted-for
 ```
 
-`kubectl ptah migration orders -n application` prints the same as a
-`Settled run` line, and lists the acknowledgment with its conditions.
+`kubectl ptah migration orders -n application` prints it as a `Settled run`
+line, and lists the acknowledgment with its conditions; `--details` adds
+every field of the record the plugin knows.
 
 The acknowledgment reads `Consumed=True`, and a Normal Event,
 `UnresolvedRunAcknowledged`, names who acknowledged which run. The resource then

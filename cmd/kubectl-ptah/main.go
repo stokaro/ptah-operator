@@ -224,6 +224,7 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the lock owed, the revision rows")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -252,7 +253,11 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := migrationview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := migrationview.Load
+	if *details {
+		load = migrationview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, migrationview.ErrMigrationNotFound) {
@@ -282,6 +287,7 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
 		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+		details     = flags.Bool("details", false, "also print every status field this plugin knows: the operation claimed, the proof owed, the lock owed")
 	)
 	if err := flags.Parse(arguments); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -310,7 +316,11 @@ func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) i
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	view, err := schemaview.Load(ctx, reader, resolved, flags.Arg(0))
+	load := schemaview.Load
+	if *details {
+		load = schemaview.LoadWithDetails
+	}
+	view, err := load(ctx, reader, resolved, flags.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
 		if errors.Is(err, schemaview.ErrSchemaNotFound) {
@@ -457,6 +467,16 @@ data plan is reading values.
   kubectl ptah schema storefront -n application -o json
   kubectl ptah migration orders -n application
   kubectl ptah migration orders -n application -o json
+
+--details adds, after the view, every status field this plugin's API version
+knows: the operation the resource has claimed and what it knows of its Job,
+the proof an Apply still owes, a Lease release still owed, when it was last
+read and is read next, the execution binding, and for a migration the revision
+rows and each run whole. With -o json it adds details.status, the status as
+this plugin decodes it; a field a newer operator added is not in it.
+
+  kubectl ptah schema storefront -n application --details
+  kubectl ptah migration orders -n application --details -o json
 
 Listing the approvals and acknowledgments takes list on them, which reading the
 resource does not. Without it the command still prints the resource, with one

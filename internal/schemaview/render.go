@@ -87,6 +87,9 @@ func renderText(out io.Writer, view View) error {
 		text.WriteString("\nConditions:\n")
 		statusview.WriteTable(&text, "  ", view.Conditions, view.Generation)
 	}
+	if view.Details != nil {
+		renderDetails(&text, view)
+	}
 	text.WriteString("\n")
 	if view.Plan != nil {
 		fmt.Fprintf(&text, "kubectl ptah plan %s -n %s prints the SQL this plan holds.\n", view.Schema, view.Namespace)
