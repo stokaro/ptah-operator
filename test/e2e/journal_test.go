@@ -252,9 +252,10 @@ func operatorJournalOfAnApply(
 	}}
 	settled := &ptahv1alpha1.PtahSchemaStatus{Phase: ptahv1alpha1.PhaseInSync}
 	ended := start.Add(time.Minute)
-	journal := lifecyclejournal.Record(nil, lifecyclejournal.SchemaEntries(applying, owed, nil, ended), ended)
+	journal, _ := lifecyclejournal.Record(nil, lifecyclejournal.SchemaEntries(applying, owed, nil, ended), ended)
 	proved := ended.Add(time.Minute)
-	return lifecyclejournal.Record(journal, lifecyclejournal.SchemaEntries(owed, settled, journal, proved), proved)
+	journal, _ = lifecyclejournal.Record(journal, lifecyclejournal.SchemaEntries(owed, settled, journal, proved), proved)
+	return journal
 }
 
 // applyJournaledAs reads the journal the operator keeps for an Apply, and refuses
