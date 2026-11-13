@@ -79,7 +79,8 @@ func (h *RunAcknowledgmentHandler) Handle(ctx context.Context, req cradmission.R
 		if err != nil {
 			return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("encode stamped acknowledgment: %w", err))
 		}
-		return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
+		return withStampAnnotations(cradmission.PatchResponseFromRaw(req.Object.Raw, mutated),
+			acknowledgment.Spec.MutationRequestUID, acknowledgment.Spec.AcknowledgedBy.Username)
 	}
 
 	if err := acknowledgmentIdentityMatchesRequest(acknowledgment.Spec, req.UserInfo); err != nil {

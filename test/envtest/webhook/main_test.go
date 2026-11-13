@@ -132,14 +132,20 @@ func TestMain(m *testing.M) {
 
 	// The chart is rendered only when a control plane will run: without one
 	// every test skips, and a machine without helm should skip too.
+	var auditDirectory string
 	if os.Getenv(harness.AssetsVariable) != "" {
 		if err := installChartWebhooks(); err != nil {
 			fmt.Fprintf(os.Stderr, "prepare the chart's webhooks: %v\n", err)
 			os.Exit(1)
 		}
+		var err error
+		if auditDirectory, err = enableAuditLog(); err != nil {
+			fmt.Fprintf(os.Stderr, "prepare the API server's audit log: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	os.Exit(plane.Main(m, func() error {
+	code := plane.Main(m, func() error {
 		var err error
 		admin, err = client.New(plane.Config, client.Options{Scheme: scheme})
 		if err != nil {
@@ -151,7 +157,11 @@ func TestMain(m *testing.M) {
 		}
 		plane.Cleanup(stop)
 		return nil
-	}))
+	})
+	if auditDirectory != "" {
+		_ = os.RemoveAll(auditDirectory)
+	}
+	os.Exit(code)
 }
 
 // installChartWebhooks renders the chart and hands its two webhook
