@@ -782,6 +782,14 @@ func TestJournalUsernamesFitTheAPIsBound(t *testing.T) {
 	}
 }
 
+// lostLog is a run's record in schema_migrations_log with its applied entry
+// refused.
+func lostLog() *operatorv1alpha1.MigrationLogStatus {
+	return &operatorv1alpha1.MigrationLogStatus{Written: 1, Lost: 1, Losses: []operatorv1alpha1.MigrationLogLossStatus{{
+		Version: 14, State: operatorv1alpha1.MigrationLogEntryApplied, SQLState: "22001", ErrorNumber: 1406,
+	}}}
+}
+
 func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 	t.Parallel()
 	planRef := &operatorv1alpha1.ImmutableObjectReference{Name: "billing-plan", UID: "plan-uid"}
@@ -874,6 +882,20 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			want: []operatorv1alpha1.JournalEntry{{
 				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
 				JobUID: "job-2", Outcome: operatorv1alpha1.JournalFailed, AppliedVersions: 2, Failure: run.Failure,
+			}},
+		},
+		{
+			// The entry is what still says so once the next run replaces
+			// lastRun.
+			name:   "a run whose log entries the database refused",
+			before: operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-2", StartedAt: run.StartedAt,
+				FinishedAt: run.FinishedAt, AppliedVersions: []int64{14}, MigrationLog: lostLog(),
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				JobUID: "job-2", Outcome: operatorv1alpha1.JournalSucceeded, AppliedVersions: 1, MigrationLog: lostLog(),
 			}},
 		},
 		{

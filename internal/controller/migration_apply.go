@@ -462,6 +462,10 @@ type migrationRunAccount struct {
 	applied []int64
 	message string
 	failure *operatorv1alpha1.MigrationRunFailureStatus
+	// migrationLog is what the run's writes to schema_migrations_log came to,
+	// and nil when its report carried none. Only a frame's report can say; a
+	// termination summary carries no such fact.
+	migrationLog *operatorv1alpha1.MigrationLogStatus
 	// stoppedBeforeSelecting is a run that failed before Ptah selected any
 	// migration, so it ran nothing and read no history. Only a frame's report
 	// can say so; a termination summary cannot tell it from a first migration
@@ -564,6 +568,9 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		applied: boundedVersions(report.Applied, 256),
 		message: migrationRunMessage(*report),
 		failure: migrationRunFailure(report.Failure),
+		// Ptah reports no log for a run that stopped before it selected
+		// anything, so this is nil for each one that returns early below.
+		migrationLog: migrationLogStatus(report.MigrationLog),
 		// The run reads the revision table after it stops, so this is the row the
 		// next reading finds.
 		leftDirtyRevision: dirtyRevision(*report) != nil,
@@ -632,10 +639,12 @@ func (r *MigrationReconciler) recordMigrationRun(
 		DispatchedBy:    dispatcherRecord(job),
 		Message:         bounded(message, 1024),
 		Failure:         run.failure,
+		MigrationLog:    run.migrationLog,
 	}
 	recordMigrationRunProvenance(migration.Status.LastRun, migration, operation, reportedTarget)
 	migration.Status.Plan = nil
 	setMigrationTargetFailure(migration, run.targetFailure)
+	setMigrationRunLogged(migration, run.migrationLog, migration.Status.LastRun.OperationID)
 	if run.openedTarget {
 		setMigrationTargetOpened(migration, "The Apply opened the database")
 	}
