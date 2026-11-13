@@ -5,9 +5,10 @@ Journal:              15 entries, complete since 2026-10-24T18:16:13Z
 
 The journal is the operator's own bounded record in status.journal, in the order
 it recorded the entries, oldest first. It keeps at most 64 entries, none more
-than 30 days older than the newest, and is not an audit archive. Nothing before
-2026-10-24T18:16:13Z is recorded here, apart from what the bounds keep of a plan
-nothing has carried out yet. Each entry is dated by the status it was derived
+than 30 days older than the newest, and is not an audit archive. It is complete
+from 2026-10-24T18:16:13Z, and an event before then may be missing. Entries
+dated before it are ones the bounds keep, or ones dated by a time their status
+carried from before it began. Each entry is dated by the status it was derived
 from, so a time can be earlier than the entry above it.
 
 2026-10-24T18:16:55Z  PlanPublished
@@ -16,6 +17,7 @@ from, so a time can be earlier than the entry above it.
 2026-10-24T18:17:03Z  ApplyFinished, Succeeded
   Started:            2026-10-24T18:16:55Z, 8s before it ended
   Plan:               ptah-plan-a0bc2ff3689d678799b4e26e (no longer stored)
+  Proof:              the Verified entry at 2026-10-24T18:17:22Z, InSync
 2026-10-24T18:16:55Z  PlanPublished
   Plan:               ptah-plan-a0bc2ff3689d678799b4e26e (no longer stored)
   Statements:         3
@@ -31,6 +33,7 @@ from, so a time can be earlier than the entry above it.
 2026-10-24T18:29:00Z  ApplyFinished, Succeeded
   Started:            2026-10-24T18:28:52Z, 8s before it ended
   Plan:               ptah-plan-745692fb6a6c6b38e0d4d54b (no longer stored)
+  Proof:              the Verified entry at 2026-10-24T18:29:14Z, InSync
 2026-10-24T18:18:08Z  PlanPublished
   Plan:               ptah-plan-745692fb6a6c6b38e0d4d54b (no longer stored)
   Statements:         2, destructive
@@ -49,6 +52,7 @@ from, so a time can be earlier than the entry above it.
 2026-10-24T18:31:33Z  ApplyFinished, Succeeded
   Started:            2026-10-24T18:31:23Z, 10s before it ended
   Plan:               ptah-plan-7bc832764f0f9c263509220f (stored)
+  Proof:              the Verified entry at 2026-10-24T18:31:46Z, InSync
 2026-10-24T18:31:07Z  PlanPublished
   Plan:               ptah-plan-7bc832764f0f9c263509220f (stored)
   Statements:         2

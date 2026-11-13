@@ -47,6 +47,7 @@ export const sidebar = [
       { label: 'Operations', link: '/use/operations/' },
       { label: 'Recover operator state', link: '/use/recovery/' },
       { label: 'Security model', link: '/use/security/' },
+      { label: 'Audit a database change', link: '/use/audit/' },
     ],
   },
   // Architecture first, then the field reference generated from the API types
