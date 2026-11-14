@@ -20,7 +20,10 @@ import (
 
 // planDocument is the native plan Ptah writes, as the plan's chunks hold it.
 type planDocument struct {
-	FormatVersion   int      `json:"format_version"`
+	FormatVersion int `json:"format_version"`
+	// Name is the name Ptah gave the plan, which the schema apply log's
+	// entries name it by.
+	Name            string   `json:"name"`
 	Dialect         string   `json:"dialect"`
 	FromFingerprint string   `json:"from_fingerprint"`
 	ToFingerprint   string   `json:"to_fingerprint"`

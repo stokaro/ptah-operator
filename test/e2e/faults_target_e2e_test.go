@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -11,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/operate"
 )
 
 // targetSecretChanges holds each approved Apply Pod before it can start,
@@ -308,7 +310,9 @@ func (f *faultRun) finishedApplyProvedUnderTheFirstLogin() {
 // approval of its own.
 //
 // It connects as an account that holds the grant support/databases.md shows on
-// the database and nothing else. root drops the column.
+// the database and nothing else. root drops the column. The fresh Apply is the
+// first to send a statement, so it creates Ptah's schema apply log and loses
+// both its entries; laterMySQLApplyKeepsItsLog then takes the page's next step.
 func (f *faultRun) mysqlDriftBeforeDispatch() {
 	f.t.Helper()
 	const name, database, secret = "e2e-mysql-approved-drift", "e2e_mysql_approved_drift", "e2e-mysql-approved-drift-db"
@@ -384,5 +388,83 @@ func (f *faultRun) mysqlDriftBeforeDispatch() {
 	if f.addedJobCount(name, "apply") != 2 {
 		f.fatalf("MySQL did not run exactly the refused and freshly approved Jobs")
 	}
-	f.logf("PASS MySQL drift after approval: stale plan refused; fresh approval applied against the changed database")
+	f.laterMySQLApplyKeepsItsLog(name, database, user, fresh)
+	f.logf("PASS MySQL drift after approval: stale plan refused; fresh approval applied against the changed database; " +
+		"after the apply log grant a later Apply kept both its entries")
+}
+
+// laterMySQLApplyKeepsItsLog takes the step support/databases.md shows once an
+// Apply has created the schema apply log: root grants the documented account
+// INSERT on that table, by the statement the page shows. A later Apply under
+// that account then keeps its started and applied entries, both naming its
+// plan and the digest of its bytes, and the log holds nothing of the fresh
+// Apply, which ran before the grant.
+//
+// root drops enabled again for the later plan to add back. Dropping fault_token
+// instead would return the database to the seed's shape, and the plan of that
+// change is the original plan byte for byte: same name, same digest, measured
+// with the v0.28.0 image. A read on request starts the read, since the next
+// interval is an hour away.
+func (f *faultRun) laterMySQLApplyKeepsItsLog(name, database, user string, fresh *ptahv1alpha1.PtahSchemaPlan) {
+	f.t.Helper()
+	if got := f.query("mysql", database, mysqlApplyLogQuery); got != mysqlApplyLogEmpty {
+		f.fatalf("the first MySQL Apply under the page's grant left %s in %s, and it can insert nothing there", got, mysqlApplyLogTable)
+	}
+	f.grantMySQLApplyLog(database, user)
+	f.query("mysql", database, "ALTER TABLE e2e_widgets DROP COLUMN enabled")
+	f.assertColumn("mysql", database, "enabled", 0)
+	f.requestRead(name)
+	waiting := f.waitForSchema(name, "a plan of the second MySQL drift, waiting for approval", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return planAwaitingApproval(resource) && resource.Status.Plan.UID != fresh.UID
+	})
+	later := f.schemaPlan(waiting.Status.Plan.Name)
+	raw, _ := f.rebuildPlanDocument(later)
+	f.scan(raw, "the later MySQL drift plan")
+	document, err := parsePlanDocument(raw)
+	f.check(err, "parse the later MySQL drift plan")
+	f.check(planBoundToDocument(later, document, sha256Digest(raw)), "bind the later MySQL drift plan to its native document")
+	if later.Spec.ContentDigest == fresh.Spec.ContentDigest {
+		f.fatalf("the later MySQL plan is the fresh one byte for byte, so the log could not tell their entries apart")
+	}
+	beforeApply := f.checkpointJobs(name, "apply")
+	f.createApproval(name, name+"-later")
+	f.waitForApprovedPlanConverged(name, later.Spec.ArtifactDigest, later.Spec.Fingerprint,
+		string(later.UID), "the later MySQL drift plan to converge")
+	f.check(automaticApplyResult(f.captureOneNewJobResult(name, "apply", beforeApply, nil),
+		later.Spec.ContentDigest, later.Spec.CoordinationDigest, later.Spec.TargetIdentityDigest),
+		"bind the later MySQL Apply to its exact approved plan")
+	if got, want := f.query("mysql", database, mysqlApplyLogQuery), mysqlApplyLogOfOneApply(document.Name, later.Spec.ContentDigest); got != want {
+		f.fatalf("%s after the later MySQL Apply reads %s, and one Apply that kept both entries reads %s", mysqlApplyLogTable, got, want)
+	}
+}
+
+// grantMySQLApplyLog runs, as root, the page's grant of INSERT on the schema
+// apply log to the documented account user, and reads back that the account
+// then holds that one table grant beside the page's grant on database, and
+// nothing else. MySQL refuses the grant with error 1146 until an Apply has
+// created the table.
+func (f *faultRun) grantMySQLApplyLog(database, user string) {
+	f.t.Helper()
+	f.query("mysql", database, documentedMySQLApplyLogGrant(database, "'"+user+"'@'%'"))
+	for _, reading := range []struct{ query, want string }{
+		{documentedMySQLAccountQuery(user, database), documentedMySQLAccountReadingWithApplyLog()},
+		{documentedMySQLTableGrantsQuery(user), documentedMySQLApplyLogGrantReading(database)},
+	} {
+		held, err := f.mysqlRootWith(f.ctx, database, reading.query)
+		f.check(err, "read what MySQL account %s holds", user)
+		if held = strings.TrimSpace(held); held != reading.want {
+			f.fatalf("MySQL account %s holds %s after the apply log grant, and the documented account holds %s", user, held, reading.want)
+		}
+	}
+}
+
+// requestRead asks a schema to read its database now, the way kubectl ptah
+// refresh does: a read request later than any the schema holds or answered.
+func (f *faultRun) requestRead(name string) {
+	f.t.Helper()
+	schema := f.schema(name)
+	value := operate.NextReadRequest(time.Now(), schema.Annotations[ptahv1alpha1.ReadRequestAnnotation], schema.Status.LastReadRequest)
+	f.patchSchema(name, map[string]any{"metadata": map[string]any{
+		"annotations": map[string]any{ptahv1alpha1.ReadRequestAnnotation: value},
+	}})
 }
