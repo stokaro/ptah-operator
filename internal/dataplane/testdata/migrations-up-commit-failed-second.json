@@ -29,7 +29,8 @@
     "sqlstate": "23503"
   },
   "migration_log": {
-    "written": 4
+    "written": 4,
+    "run_reference": "sha256:7cc04b7727db573396b8bc5e57c03c2cf8fc354054c7422b578e2c03d1f4ea47"
   },
   "status": {
     "current_version": 1,
@@ -56,9 +57,9 @@
       "applied": 0,
       "total": 1,
       "error": "ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)",
-      "execution_time": 8000000,
+      "execution_time": 2000000,
       "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
-      "applied_at": "2026-11-07T17:03:00.973052Z",
+      "applied_at": "2026-11-14T16:45:24.170929Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -69,8 +70,8 @@
         "description": "Create",
         "checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
         "applied_checksum": "a29a6e34c6b14a1dba5b4b3d44fcc01de7651203e92dd411eb4cc1d859150f00",
-        "applied_at": "2026-11-07T17:03:00.970995Z",
-        "execution_time_ms": 10,
+        "applied_at": "2026-11-14T16:45:24.170438Z",
+        "execution_time_ms": 4,
         "state": "applied"
       },
       {
@@ -78,8 +79,8 @@
         "version_key": "2",
         "description": "Orphan",
         "checksum": "b04d2507b96d95c46cd8317a755c78b2a88d248b5cd20d1b04cfec2dd6289984",
-        "applied_at": "2026-11-07T17:03:00.973052Z",
-        "execution_time_ms": 8,
+        "applied_at": "2026-11-14T16:45:24.170929Z",
+        "execution_time_ms": 2,
         "state": "dirty"
       }
     ],

@@ -605,6 +605,12 @@ func (i buildInput) dataPlane() (
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.schema.Spec.Policy.LockTimeout.Duration, 30*time.Second)),
 			literalEnv("PTAH_TX_MODE", stringOrDefault(i.schema.Spec.Policy.TransactionMode, "file")),
 		)
+		// Who the run records in ptah_schema_apply_log, and why that name. The
+		// run reference beside them is the runner's to pass: it is the claim's
+		// operation ID, which the runner already holds.
+		if actor, origin := SchemaApplyActor(i.schema); actor != "" {
+			environment = append(environment, literalEnv(EnvActor, actor), literalEnv(EnvActorOrigin, origin))
+		}
 		annotations[AnnotationPlanFingerprint] = i.plan.Spec.Fingerprint
 		annotations[AnnotationPlanContentDigest] = i.plan.Spec.ContentDigest
 	}

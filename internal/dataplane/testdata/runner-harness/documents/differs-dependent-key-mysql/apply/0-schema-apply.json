@@ -19,6 +19,7 @@
     "error_number": 3730
   },
   "apply_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:2b7b41ea183ff3b29fb658ecee1ea556b9c9b0b858ea70f62e31230f074e7999"
   }
 }

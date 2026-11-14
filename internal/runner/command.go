@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -239,11 +240,52 @@ const (
 	ptahIncludeEnvironment = "PTAH_INCLUDE"
 )
 
+// ptahRunReferenceEnvironment fills --run-reference on schema apply and
+// migrations up, Ptah v0.28.0's binding for the caller's identifier of a run.
+// The reference an Apply records is the claim's operation ID, and the runner
+// passes it as an argument it builds (withRunReference), so the variable is
+// removed from every child: no other value can reach the logs through it, and
+// a reference never reaches a command that writes no log entry.
+const ptahRunReferenceEnvironment = "PTAH_RUN_REFERENCE"
+
+// maxRunReferenceBytes is the widest run reference Ptah's logs store: the
+// width of their run_reference column, and the bound Ptah v0.28.0 holds the
+// flag to before it connects (ValidateRunReference in migration/migrator).
+const maxRunReferenceBytes = 255
+
+// withRunReference hands an Apply's child its claim's operation ID as Ptah's
+// run reference, so every entry the run writes to the database's own log names
+// the operation the journal and the resource's status name. The result
+// document reports the reference the entries carry, and the runner holds it to
+// this one (dataplane.RunLogReference.CheckRunReference).
+//
+// The ID is held to the form Ptah stores as given -- 1 to 255 visible ASCII
+// characters -- before the child is started. Ptah refuses any other form
+// itself, but only once the child is running, and a mutating child that ran
+// is a run whose outcome has to be observed before anything is retried. The
+// manager's IDs are SHA-256 digests, which always pass. One argument carries
+// the flag and its value, so a value that starts with a dash is not read as
+// a flag.
+func withRunReference(spec CommandSpec, operationID string) (CommandSpec, error) {
+	if operationID == "" || len(operationID) > maxRunReferenceBytes {
+		return CommandSpec{}, fmt.Errorf("the operation ID is %d bytes, and a run reference is 1 to %d",
+			len(operationID), maxRunReferenceBytes)
+	}
+	for index := range len(operationID) {
+		if character := operationID[index]; character < '!' || character > '~' {
+			return CommandSpec{}, errors.New("the operation ID holds a character a run reference cannot")
+		}
+	}
+	spec.Args = append(slices.Clone(spec.Args), "--run-reference="+operationID)
+	return spec, nil
+}
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(environmentWithout(environment, credentialFileVariables()...),
 		ptahJSONEnvironment,
 		ptahExcludeEnvironment,
 		ptahIncludeEnvironment,
+		ptahRunReferenceEnvironment,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,

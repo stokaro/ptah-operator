@@ -115,7 +115,7 @@ func TestMigrationRunCarriesPtahV023CommitFailure(t *testing.T) {
 			if !strings.Contains(document, quoted) {
 				t.Fatal("the captured document no longer quotes the constraint, so this row proves nothing about redaction")
 			}
-			operationID := "migration-v023-commit"
+			operationID := capturedOperationID(t, document)
 			result := Run(context.Background(), Config{
 				Operation:   OperationMigrationApply,
 				Environment: withRunnerProtocol(migrationApplyEnvironment(t, operationID)),
@@ -157,7 +157,7 @@ func TestMigrationRunCarriesAFailedMySQLIndexBuild(t *testing.T) {
 	if !strings.Contains(document, marker) {
 		t.Fatal("the captured document no longer quotes the row in its dirty revision, so this row proves nothing about clearing it")
 	}
-	operationID := "migration-mysql-index-failed"
+	operationID := capturedOperationID(t, document)
 	result := Run(context.Background(), Config{
 		Operation: OperationMigrationApply,
 		// The apply binds the target digest to the URL, so this row keeps the

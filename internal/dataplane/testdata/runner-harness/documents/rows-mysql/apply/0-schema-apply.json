@@ -22,6 +22,7 @@
     }
   ],
   "apply_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:7210e35b0c97d7cc67b094e171c64fdc6203393bec974a248f152ba7f72dc165"
   }
 }

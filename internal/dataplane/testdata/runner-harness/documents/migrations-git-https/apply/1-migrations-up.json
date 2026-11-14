@@ -16,7 +16,8 @@
     "1"
   ],
   "migration_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:c523f10ce91db3d3c210281d2117eb08cb3498a2ac8f69d6d92da26cef91d496"
   },
   "status": {
     "current_version": 1,
@@ -38,8 +39,8 @@
         "description": "Create Parts",
         "checksum": "7e68677f8835d267f2e134414a1b79b092490248199efcbcd92e31685f75fdc7",
         "applied_checksum": "7e68677f8835d267f2e134414a1b79b092490248199efcbcd92e31685f75fdc7",
-        "applied_at": "2026-11-07T17:02:35.682459Z",
-        "execution_time_ms": 8,
+        "applied_at": "2026-11-14T16:39:53.297202Z",
+        "execution_time_ms": 3,
         "state": "applied"
       }
     ],

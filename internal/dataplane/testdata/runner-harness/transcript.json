@@ -834,7 +834,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:54681378d310017adfd378422c57a39e4f734c70915c8b2c152e77a2e3149992"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -1147,7 +1148,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:2b7b41ea183ff3b29fb658ecee1ea556b9c9b0b858ea70f62e31230f074e7999"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nDROP TABLE `differs_parent`;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 3730 (HY000): Cannot drop table 'differs_parent' referenced by a foreign key constraint 'child_ibfk_1' on table 'child'.\nSQL: DROP TABLE `differs_parent`\n",
@@ -1491,7 +1493,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:2550d1151d6a9c18f622ac02e50484d9a599dab63dedc489acac66a92724d7ba"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nDROP TABLE \"differs_parent\";\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: cannot drop table differs_parent because other objects depend on it (SQLSTATE 2BP01)\nSQL: DROP TABLE \"differs_parent\"\n",
@@ -1834,7 +1837,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:95eb8a07b65f431a47cf9f59438ab39a8e08c724ab6b3d944e11c101f475d3cb"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nDROP TABLE `differs_parent`;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -2152,7 +2156,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:f96b70515237d14e1f4d8dd2abb64ea498b662de4e01a6c131b6dd5bbd297e34"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nDROP TABLE \"differs_parent\";\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: cannot drop table differs_parent because other objects depend on it (SQLSTATE 2BP01)\nSQL: DROP TABLE \"differs_parent\"\n",
@@ -2495,7 +2500,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:d8ecbd1d48b426454c8d99eb7f193d7c99b9099634c29077de29223a77015d90"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -3218,7 +3224,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:b6c70edb1a0bbe4a77bea8703e9cdc31ab9ab811a2b7647db0d9d25b605321ea"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -3892,10 +3899,11 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:3057e3967166e2e407c1d2915578cebb237f51bb757d3f8a63a7006312600f58"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nAuto-approval enabled; applying schema changes.\n2026/11/14 12:17:40 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 12:17:40 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=applied error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nAuto-approval enabled; applying schema changes.\n2026/11/14 16:44:05 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 16:44:05 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=applied error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-login-documented-mysql/apply/0-schema-apply.json"
       }
     ],
@@ -4565,10 +4573,11 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4b3da82c4ff26d5cf45df841b0b9d6049bdba9e45d65c2f73d718f14567d8f0a"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nAuto-approval enabled; applying schema changes.\n2026/11/14 12:17:35 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 12:17:35 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=unknown error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`\n",
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nAuto-approval enabled; applying schema changes.\n2026/11/14 16:43:48 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 16:43:48 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=unknown error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`\n",
         "stdout": "runner-harness/documents/differs-login-show-routine-mysql/apply/0-schema-apply.json"
       }
     ],
@@ -5116,7 +5125,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:b78f359fb5861baad68f3534bbbb9b5bfd2b594e24f36aed7959519e780ab054"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE SCHEMA IF NOT EXISTS \"differs_app\";\nCREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -5429,7 +5439,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:58efcbe9c64f2e8f054e4ac7d69d05e7cad2f6daefad1fb711ac24400b2c3101"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE SCHEMA IF NOT EXISTS \"differs_app\";\nCREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -5742,7 +5753,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:368671549b5f1b28d62716c59014cf2fce8358160c1aa6cf9747ada5a9ded2d5"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -6603,7 +6615,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:dcf947df3199a1df74208f04ef83f7876b33b73389b0d5841205ced89aef62a8"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -6791,7 +6804,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:776e068dcbeb2eb5c871bdc5ab1553006725664933da2109b33daabf361c10e5"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: partition constraint of relation \"differs_e1\" is violated by some row (SQLSTATE 23514)\nSQL: ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')\n",
@@ -6999,7 +7013,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4b90096ca709df97f10feb498da8ce82d9c8d384e65f2f7d782fbf5e5b74eb20"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -7187,7 +7202,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:f4d1a4422caf8b5130bb932195944ac70f8bc2f7e126c97ac4aa686db32e64d9"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -7471,7 +7487,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:6040240dd7dee5b37f94b7eb9168dc71e91fdda8236235128106764847fa637a"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -7659,7 +7676,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:1b195cc0974829dffb26fc53c0ac3e135b908569dbe4754ca8026fb98d92ac79"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -7977,7 +7995,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:42b052257b139be7c61e0775aef03a95da9a10cd3cea51b666fa45403981d24b"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -8295,7 +8314,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:b75adbc8f7860b16c37baada34f5bcf87516612a9c281c4f3208dbb59b23cc84"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"differs_items_id_seq\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -8618,7 +8638,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:7099412015016c3e963f7700ed237e044e2771480158582d9cf231202e3757a1"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE OR REPLACE SQL SECURITY INVOKER VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -8941,7 +8962,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4114ba6eca5d1eb7580a19531edba2188f4ea259ca993ccb512d71a01a335449"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=false);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -9264,7 +9286,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:813d37e52ae926d1dd6d7a5d91e6244949044cad7df3ef7fac8efe85bbcbd180"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -9587,7 +9610,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:2d60a967b00a9733bf1c6d00d0d17e24d73cad5edf338ba64c759511be20e0cc"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -9910,7 +9934,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:e281ef9818d2be5da83afd2d1703418c11749d83564beae2556cd138cd7be34a"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -10431,7 +10456,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=true);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -10754,7 +10780,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4683c4a1353c984090b0e9e4409d379ce6308bbde8e13ecc40234d8842bd2b37"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -11275,7 +11302,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4cc539ba36b8dbc6d3e942e31d0815ae4738292d4d38776715cb03c8c80ec849"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -11533,7 +11561,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:395ca64b18d633b8ad15e8e1525fe2104b9e6651c3217bd0b498370a20220059"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 'harness_refused'\n",
@@ -11572,6 +11601,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:bdacb969970deaa783967e16d3f1052d4ee82382cb8b3c0074afe171c935595d",
           "--dry-run"
         ],
         "exit": 2,
@@ -11712,7 +11742,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:4321e92c701063ca9410b863d9fc2be42b01724b118946a7682f509c301477f3"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: Error 1044 (42000): Access denied for user 'nodb'@'%' to database 'harness_refused'\n",
@@ -11753,7 +11784,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:18d00708060c45d2c2a7c5e6941bef6da334b7d8712b7f5dbc7ed3455da58441"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: Error 1049 (42000): Unknown database 'no_such_db'\n",
@@ -11792,6 +11824,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:b81737d3cdfaf721d189f2f42b6fec046c1b33fcff8e82c1a6194b6fea979936",
           "--dry-run"
         ],
         "exit": 2,
@@ -11932,7 +11965,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:8a8850bf968bb35ebfe8deed6638fd282ca941f93f10ee9d99a3970580ce970d"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: Error 1049 (42000): Unknown database 'no_such_db'\n",
@@ -11973,7 +12007,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4721643a13c8cab8f86ca0c29f2dbabbd1f09897ba6b35363efca7f15a9b949a"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'<address>' (using password: YES)\n",
@@ -12012,6 +12047,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:af777ac354505b16e829144677d5c987079b29bb1d338150e0cc994809c33f31",
           "--dry-run"
         ],
         "exit": 2,
@@ -12152,7 +12188,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:5539e94ddb1139f6a77092030561d3c91d583c5d35ccb498849ee4cdcf2acce6"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: Error 1045 (28000): Access denied for user 'root'@'<address>' (using password: YES)\n",
@@ -12193,7 +12230,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:1c2f89850c5f0ec853fb8bb3d98627fdeb34d5a5af65f813c1f6f91dbb4dfa72"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: dial tcp <address>: connect: connection refused\n",
@@ -12232,6 +12270,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:ea361aa31cf8d33fd2021dd7361bdbade200d8fb161756f80075a02314998cec",
           "--dry-run"
         ],
         "exit": 2,
@@ -12372,7 +12411,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:6c83afb867c1cc6274bc478c101f525ea5ba573b86905589a9771b3be30f54a4"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: dial tcp <address>: connect: connection refused\n",
@@ -12413,7 +12453,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:37b10f058f5f34b5a7b484519b3f4034de25c6746bbad7a199f20d03e460d300"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match harness-mysql\n",
@@ -12452,6 +12493,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:8bc252b0d5b1270fcc8bc6260f28879680c302d7f98f91cf93dbe05def2585c0",
           "--dry-run"
         ],
         "exit": 2,
@@ -12592,7 +12634,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:2b331dc1e9dfc20e38dd8eb107fb367c28de015731d6560e8edb5516a6a965b2"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: tls: failed to verify certificate: x509: certificate is not valid for any names, but wanted to match harness-mysql\n",
@@ -12633,7 +12676,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:4d339f7205876388508d8cfa017de0809d68ae2fde33e8e6bb214e4954ecdf0e"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: dial tcp: lookup harness-no-such-host.invalid on <address>: server misbehaving\n",
@@ -12672,6 +12716,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:941d86c5feb9ece9cc7a7dc3ac6f8fabfe53c960a28ffbb91d4cc18d585ee295",
           "--dry-run"
         ],
         "exit": 2,
@@ -12812,7 +12857,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:1b39e4b04a15a0d0e5b8ea4d6db8fe64c53e1e0ff0455bee7e0163679f2573e2"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: dial tcp: lookup harness-no-such-host.invalid on <address>: server misbehaving\n",
@@ -12853,7 +12899,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:fb212313f8bff875f4abe80a9a0bab99afc7f39c5a42d52c0f0618bd06811c9a"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=noconnect database=harness_refused`: <address> (harness-postgres): server error: FATAL: permission denied for database \"harness_refused\" (SQLSTATE 42501)\n",
@@ -12892,6 +12939,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:b4d7ce23b0df16bcee6a0abb74e3237bee2a37dbff9d132d32eec04887bc6896",
           "--dry-run"
         ],
         "exit": 2,
@@ -13032,7 +13080,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:b3e2d843a69f0087c693c8af1fbe877f5bf08ca0b2250da84db395ac9c21611f"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=noconnect database=harness_refused`: <address> (harness-postgres): server error: FATAL: permission denied for database \"harness_refused\" (SQLSTATE 42501)\n",
@@ -13073,7 +13122,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:288ac55de79fe4f00abcc6679b5ffb0777fa186939a66b49a126d563a5edb750"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=postgres database=no_such_db`: <address> (harness-postgres): server error: FATAL: database \"no_such_db\" does not exist (SQLSTATE 3D000)\n",
@@ -13112,6 +13162,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:cb1c11d0f2f608257a84c15a04cf9d8f49d3c985f37cd9514c7d282d0409dde8",
           "--dry-run"
         ],
         "exit": 2,
@@ -13252,7 +13303,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:944beab9c429be4c53803ed0b43577ef2274deb09e509e4d4df9bf49471cb60c"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=postgres database=no_such_db`: <address> (harness-postgres): server error: FATAL: database \"no_such_db\" does not exist (SQLSTATE 3D000)\n",
@@ -13293,7 +13345,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:e2f51a9196bd64dae017bd9446b1a41d8466a7a93ac37eda39f455904425140d"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"postgres\" (SQLSTATE 28P01)\n",
@@ -13332,6 +13385,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:915e8c54ec9f79d0ed5394921d0085c12faee0795815ce42c8b5a531cf158a52",
           "--dry-run"
         ],
         "exit": 2,
@@ -13472,7 +13526,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:b3f7b3f78d785116f091590a8d618dcee312534a2316aeb8ced3554ac2377a76"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"postgres\" (SQLSTATE 28P01)\n",
@@ -13513,7 +13568,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:d545d3ac60533a8cce3bbcf9ad1bbb209aefac88e06a7e8dd02250164de68388"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): dial error: dial tcp <address>: connect: connection refused\n",
@@ -13552,6 +13608,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:d0fa0dceb0e88c143f6cac71dbf195673d63e1981ed129c0c0aa0aa0849aa509",
           "--dry-run"
         ],
         "exit": 2,
@@ -13692,7 +13749,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:854b8eab8b3ba7297ed737014cf6ae5ecec0576bc309ff2939f2fc069814a46c"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): dial error: dial tcp <address>: connect: connection refused\n",
@@ -13733,7 +13791,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:29ba757fa21dd815ebd444226631e1b76b84eb8a661b8987dcec3220a74e6a58"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=nobody database=harness_fault`: <address> (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)\n",
@@ -13772,6 +13831,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:9f0bfd77b540ebf8a19b20ab381dfb7f804898fba4038faf3043436a9ddc371b",
           "--dry-run"
         ],
         "exit": 2,
@@ -13912,7 +13972,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:5c64cd40477c1d291d351b9113c01a7df95deb6a0f0b576a2261197629462980"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=nobody database=harness_fault`: <address> (harness-postgres): failed SASL auth: FATAL: password authentication failed for user \"nobody\" (SQLSTATE 28P01)\n",
@@ -13953,7 +14014,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:a4c69d56a0b72a0970378e7bfe1c23b92eee7d42b56f6d2fa58e2e0855c23783"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead\n",
@@ -13992,6 +14054,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:d3c037310c7dbc7d8957b8124926ea4aeab09cadf1b4641522ab86ff23ba14c8",
           "--dry-run"
         ],
         "exit": 2,
@@ -14132,7 +14195,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:153f9ed1b0279e87fe88906b585a1be29d03f90dc15c63a2b86e288bfd3dbf9b"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=postgres database=harness_fault`: <address> (harness-postgres): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead\n",
@@ -14173,7 +14237,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:cb56e47bc2901c51e3e37b45ca0baae63ce2cea7313fff8a5ec5a1907491a48e"
         ],
         "exit": 2,
         "stderr": "error: connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: hostname resolving error: lookup harness-no-such-host.invalid on <address>: server misbehaving\n",
@@ -14212,6 +14277,7 @@
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
           "--json",
+          "--run-reference=sha256:7d5299f84da0a27dc27028f70209d8428de8f17791eb548bff6cb6e24acf17ca",
           "--dry-run"
         ],
         "exit": 2,
@@ -14352,7 +14418,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:2a2de8e17921272a4ce7d64610618acdfd97b89b1c3a95e3320d2fb27900e17e"
         ],
         "exit": 2,
         "stderr": "error: error connecting to database: failed to ping database: failed to connect to `user=postgres database=harness_fault`: hostname resolving error: lookup harness-no-such-host.invalid on <address>: server misbehaving\n",
@@ -14476,7 +14543,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:22c1a9cdd126211f1085406454a0eee1dd2e4bbb3f480f624efe17b4da9987a3"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_checkpoint_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 4\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=4\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=Snapshot\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=Snapshot\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=4 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=4 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -14782,7 +14850,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:d32825f1a2401962ca251f5e719f0ff832407ee1ce16315013eaa30b237bff07"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_commit_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Create\nerror: error running migrations: failed to commit transaction for migration 1: ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)\n",
@@ -15030,7 +15099,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:7cc04b7727db573396b8bc5e57c03c2cf8fc354054c7422b578e2c03d1f4ea47"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_commit_second_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Create\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=Create\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=Orphan\nerror: error running migrations: failed to commit transaction for migration 2: ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)\n",
@@ -15310,7 +15380,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:20023c0f00a1bba4e2d7a8f372c61c03df9dcab0b7f16deb10eb09b3ba6e5120"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_failed_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Journal\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Journal\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Read Ledger\"\nerror: error running migrations: failed to apply migration 2: failed to execute migration SQL: SQL execution failed: ERROR: relation \"ledger_entries\" does not exist (SQLSTATE 42P01)\nSQL: SELECT count(*) FROM ledger_entries\n",
@@ -15600,7 +15671,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:c523f10ce91db3d3c210281d2117eb08cb3498a2ac8f69d6d92da26cef91d496"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_git_migrations_https?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Parts\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Parts\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -15796,7 +15868,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:1f5c8fc6753beed48473977dbb433b6eb038bf42e04468bf2d8d65c30a87f50b"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_git_migrations\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Parts\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Parts\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -16052,7 +16125,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:84865a66751db1d566376d92101b23f0b0ca1b9e4a7b6d9805a325748973266c"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_log_lost_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -16390,7 +16464,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:873d9258f10acbb0767558cbcdfbac66ebe61ab4736e93b35fa4a27812b4257c"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_migrations_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -16824,7 +16899,8 @@
           "--tx-mode",
           "none",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:2320f1226acbfdb5e1d89a11a8b0b090d19462694bcebe95f00e654066fba7f1"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_partial_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: none\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Journal\"\ntime=<time> level=INFO msg=\"Applied non-transactional migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Journal\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Fill Ledger\"\nerror: error running migrations: failed to apply migration 2: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)\n",
@@ -17105,7 +17181,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:bb75d4bf03f899defaf24f4d2f9d20a858ce77e2ec52bbaef450e4dd52db5569"
         ],
         "exit": 0,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_migrations_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
@@ -17425,7 +17502,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:e238787c6e103842d8153275747dc4c12139e3c8730398edf350b411c42a9eed"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -17693,7 +17771,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:a9021452fd7311fba0e45cffc339db39a6d2b471d4aaa6b4b4743d14e227cf3d"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -17946,7 +18025,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:7210e35b0c97d7cc67b094e171c64fdc6203393bec974a248f152ba7f72dc165"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE `regions` (\n  `code` VARCHAR(8) PRIMARY KEY,\n  `name` VARCHAR(64) NOT NULL\n);\nCREATE TABLE `countries` (\n  `code` VARCHAR(2) PRIMARY KEY,\n  `name` VARCHAR(64) NOT NULL,\n  `region_code` VARCHAR(8) NOT NULL\n);\nALTER TABLE `countries` ADD CONSTRAINT `fk_countries_region` FOREIGN KEY (`region_code`) REFERENCES `regions`(`code`);\nINSERT INTO `regions` (`code`, `name`) VALUES ('amer', 'Americas');\nINSERT INTO `regions` (`code`, `name`) VALUES ('emea', 'Europe, Middle East and Africa');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -18331,7 +18411,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\");\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -18716,7 +18797,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -19150,7 +19232,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:fb67e4f5224ce06b5aff0949623d6da39ecb0e9b6921fc9a87a8006c1d7959a4"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -19374,7 +19457,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:3c6bdfc4c47c6f818a8d001243be6a1eab54bf3f66b35281d1adf460fdc21e42"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -19407,7 +19491,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:080a624af4fbbbe3558475b5722aa126975ca81fd53dc9e868221214cf93927f"
         ],
         "exit": 2,
         "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:17cff4a0711a79bf6f8dcbaa191df91410b6e3a9b7785c99cf602d1f00aaa471, database sha256:6dd7a885808eabf890e8923bb9cca376a7795cf60a14d13a21860858ff6be315); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
@@ -19445,7 +19530,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:de7a9b166a12e8ae9efaa7bf4ab4b7689eb6b34945aaf24f07fedb29e24567c8"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE `e2e_order_parent` (\n  `id` bigint PRIMARY KEY\n);\nCREATE TABLE `e2e_order_child` (\n  `a` bigint NOT NULL,\n  `b` bigint NOT NULL\n);\nCREATE TABLE `e2e_widgets` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(255) NOT NULL\n);\nCREATE INDEX `b_2` ON `e2e_order_child` (`b`);\nALTER TABLE `e2e_order_child` ADD CONSTRAINT `b` FOREIGN KEY (`a`) REFERENCES `e2e_order_parent`(`id`);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -20045,7 +20131,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:420dfc966f0c4faf513a9801736f7581e1cc343ffa8d08d4731fbb36857c28ad"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -20078,7 +20165,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:a9b48b550116d3bba765b81933285a94622ddcfd3a009db36b574f907f5dd59d"
         ],
         "exit": 2,
         "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:cac0e4e6111ffac6691afda29e0af0df5124bb595a8f0870efcc0530031a6fd2, database sha256:028a109c50a15e1ab3b7c7760993162f6e87a5501196b6aca4334ab728148a39); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
@@ -20116,7 +20204,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:bf09f6a9c67be0d070be66ef450704abc061b300f7fc64b53152f8e1a3f452f8"
         ],
         "exit": 0,
         "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
@@ -20879,7 +20968,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:93d6129860652681dc5e646e3abf3a1c07970bf372ffebe316538875275c0f02"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nALTER TABLE `items` MODIFY COLUMN `qty` integer;\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1366 (HY000): Incorrect integer value: 'row-value-not-a-number' for column 'qty' at row 1\nSQL: ALTER TABLE `items` MODIFY COLUMN `qty` integer\n",
@@ -21161,7 +21251,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:8502eda12a33db5dad1ac56235701429289b0d6087182ff3d3eda3e121d26225"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_control_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'esc-\u001b[2K-\rFORGED-TEXT' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)\n",
@@ -21343,7 +21434,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:85d6daffc43ed60415a19a8da5717b87705c870d10cd6528684969c086ec154a"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_literal_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'declared-literal-in-plan@example.com' for key 'orders.customer_email'\nSQL: INSERT INTO orders (id, customer_email) VALUES (2, 'declared-literal-in-plan@example.com')\n",
@@ -21525,7 +21617,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:9cb23a962a1ec67fe44783607ee167a9585371dcb3ab127ef03100ae99f1d785"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_syntax_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'' at line 1\nSQL: CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'\n",
@@ -21694,7 +21787,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:1b7778cf61c2787555361dcfeb2e7025ada658f6b2f7c80703432049685fce3c"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`);\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)\n",
@@ -21976,7 +22070,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:d67ea4e79b217d1626a05d678cffb2b823a0b2e365029078a89e2ef43a2213a9"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_my_unique_up\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)\n",
@@ -22158,7 +22253,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:da7a3e6b0eabea207f08c23a53f28edf4e01fba48e7385729c565985ea9a2c6c"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_insert_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: duplicate key value violates unique constraint \"orders_pkey\" (SQLSTATE 23505)\nSQL: INSERT INTO orders (id, customer_id, note) VALUES (1, 7, 'literal-in-the-migration-file')\n",
@@ -22339,7 +22435,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:e62ef0def8f467def62fd4d8b8f0f912dad81e0270b367386394e2c5574a8393"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_literal_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"declared-literal-in-plan\" (SQLSTATE 22P02)\nSQL: INSERT INTO items (id, qty) VALUES (1, 'declared-literal-in-plan')\n",
@@ -22520,7 +22617,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:92587b4a2ff6d554e0f18624f74cb8309416250d24f4bc1a7283754a9b54664d"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_rowcast_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: invalid input syntax for type integer: \"row-value-not-a-number\" (SQLSTATE 22P02)\nSQL: ALTER TABLE items ALTER COLUMN qty TYPE integer USING qty::integer\n",
@@ -22688,7 +22786,8 @@
           "--plan",
           "/work/ptah-plan-<random>.hcl",
           "--auto-approve",
-          "--json"
+          "--json",
+          "--run-reference=sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61"
         ],
         "exit": 2,
         "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")\n",
@@ -22969,7 +23068,8 @@
           "/source/migrations",
           "--json",
           "--expect-sequence",
-          "/work/ptah-expected-sequence-<random>.json"
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:83cb3e82cc132a984319dbba846b076a757303d9fe68df410aabb54601910030"
         ],
         "exit": 2,
         "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_pg_unique_up?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 1\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=1\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=Change\nerror: error running migrations: failed to apply migration 1: failed to execute migration SQL: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_id)\n",

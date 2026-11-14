@@ -195,6 +195,14 @@
                 "value": "/work"
               },
               {
+                "name": "PTAH_ACTOR",
+                "value": "oidc:Jos%C3%A9 Garc%C3%ADa"
+              },
+              {
+                "name": "PTAH_ACTOR_ORIGIN",
+                "value": "admission"
+              },
+              {
                 "name": "PTAH_CONNECT_TIMEOUT",
                 "value": "7s"
               },

@@ -30,7 +30,7 @@ func executorActor(t *testing.T, job *batchv1.Job) (string, bool) {
 			continue
 		}
 		for _, variable := range container.Env {
-			if variable.Name == workload.EnvMigrationActor {
+			if variable.Name == workload.EnvActor {
 				return variable.Value, true
 			}
 		}
@@ -387,9 +387,9 @@ func TestAJobCarryingAnotherNameIsNotItsClaims(t *testing.T) {
 							continue
 						}
 						for variable := range containers[index].Env {
-							if containers[index].Env[variable].Name == workload.EnvMigrationActor {
+							if containers[index].Env[variable].Name == workload.EnvActor {
 								containers[index].Env[variable] = corev1.EnvVar{
-									Name: workload.EnvMigrationActor, Value: "someone-else",
+									Name: workload.EnvActor, Value: "someone-else",
 								}
 								return
 							}

@@ -347,6 +347,12 @@ func Run(ctx context.Context, config Config) Result {
 		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
 		return result
 	}
+	if config.Operation.Mutating() {
+		if spec, err = withRunReference(spec, inputs.OperationID); err != nil {
+			setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
+			return result
+		}
+	}
 	spec.Env = childEnvironment(environment)
 	if config.Operation == OperationApply {
 		// An exact, digest-checked plan is the only desired input to apply.
@@ -508,6 +514,20 @@ func decodeMigrationReport(
 		if result.Error == nil {
 			setResultError(result, "invalid_migration_run_output",
 				errors.New("migration run output failed strict validation"), redactor, config.Diagnostics)
+		}
+		return
+	}
+	// The log entries the run wrote name the operation it was given, or the
+	// document is not this run's account. Its report is left out of the
+	// frame, which keeps claiming the started, uncertain mutation the run was
+	// before the child ran.
+	logReference, err := dataplane.DecodeMigrationLogReference(outcome.stdout.bytes())
+	if err == nil {
+		err = logReference.CheckRunReference(result.OperationID)
+	}
+	if err != nil {
+		if result.Error == nil {
+			setResultError(result, "invalid_migration_run_output", err, redactor, config.Diagnostics)
 		}
 		return
 	}
@@ -1452,6 +1472,13 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 	report, err := dataplane.DecodeSchemaApply(outcome.stdout.bytes())
 	if err != nil {
 		setResultError(result, "invalid_apply_output", reportDecodeError("apply", outcome), redactor, diagnostics)
+		return
+	}
+	// Whatever the outcome, the log entries the run wrote name the operation
+	// it was given, or the document is not this run's account and cannot
+	// settle anything.
+	if err := report.ApplyLog.CheckRunReference(result.OperationID); err != nil {
+		setResultError(result, "invalid_apply_output", err, redactor, diagnostics)
 		return
 	}
 	switch report.Outcome {

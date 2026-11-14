@@ -21,7 +21,8 @@
     "error_number": 1064
   },
   "migration_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:9cb23a962a1ec67fe44783607ee167a9585371dcb3ab127ef03100ae99f1d785"
   },
   "status": {
     "current_version": 0,
@@ -44,9 +45,9 @@
       "total": 1,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'' at line 1\nSQL: CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'",
       "error_stmt": "CREAT USER 'app'@'%' IDENTIFIED BY 'plan-secret-literal'",
-      "execution_time": 11000000,
+      "execution_time": 4000000,
       "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
-      "applied_at": "2026-11-07T17:03:38Z",
+      "applied_at": "2026-11-14T16:40:49Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -56,8 +57,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "6ab9f8db23d171f34bee425b6e2985d0ae428d17cedc36cdfa36de404366871c",
-        "applied_at": "2026-11-07T17:03:38Z",
-        "execution_time_ms": 11,
+        "applied_at": "2026-11-14T16:40:49Z",
+        "execution_time_ms": 4,
         "state": "dirty"
       }
     ],

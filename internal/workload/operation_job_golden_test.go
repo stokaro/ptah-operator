@@ -258,11 +258,16 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// A released builder named nobody to Ptah; this release names the
+			// approver status.plan copied from the approval, and the origin of
+			// that name. The upgrade from 0.2.12 moves the executor, which
+			// retires such a claim anyway.
 			name: "schema-apply-admitted-scheduling",
 			build: func() (*batchv1.Job, error) {
 				schema := schemaFixture()
 				setGoldenScheduling(&schema.Spec.Execution)
 				plan := planFixture(schema, builder)
+				schema.Status.Plan.Approval.Approver = operatorv1alpha1.ApprovalIdentity{Username: "oidc:José García"}
 				operation := operationFixture(operatorv1alpha1.OperationApply)
 				operation.AdmissionSnapshot = goldenAdmissionSnapshot()
 				dispatchNotAfter := metav1.NewTime(operation.StartedAt.Add(300 * time.Second))
@@ -272,6 +277,7 @@ func goldenJobCases() []goldenJobCase {
 				operation.TerminationGracePeriodSeconds = 45
 				return builder.Build(schema, operation, plan)
 			},
+			rebuildAdds: []string{EnvActor, EnvActorOrigin},
 		},
 		{
 			// A registry credential on the system roots. A released builder

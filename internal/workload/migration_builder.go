@@ -292,8 +292,15 @@ func migrationDataPlane(
 			// Only from the claim, and only when the claim carries a name. A
 			// claim a release without the field wrote has none, so this builds
 			// the Job that release dispatched and a later manager adopts it.
+			// The origin goes beside the name and never alone, because Ptah
+			// refuses an origin with no name. No release that wrote a name set
+			// the origin, and none ran the executor this one pins, so the Job
+			// such a claim dispatched differs from this rebuild already.
 			if operation.Actor != "" {
-				environment = append(environment, literalEnv(EnvMigrationActor, operation.Actor))
+				environment = append(environment,
+					literalEnv(EnvActor, operation.Actor),
+					literalEnv(EnvActorOrigin, MigrationActorOrigin(operation)),
+				)
 			}
 		}
 	}

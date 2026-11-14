@@ -29,7 +29,8 @@
     "error_number": 1062
   },
   "migration_log": {
-    "written": 4
+    "written": 4,
+    "run_reference": "sha256:2320f1226acbfdb5e1d89a11a8b0b090d19462694bcebe95f00e654066fba7f1"
   },
   "status": {
     "current_version": 1,
@@ -57,9 +58,9 @@
       "total": 4,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry '1' for key 'ledger.PRIMARY'\nSQL: INSERT INTO ledger VALUES (1)",
       "error_stmt": "INSERT INTO ledger VALUES (1)",
-      "execution_time": 6000000,
+      "execution_time": 2000000,
       "checksum": "partial:h1:HyP+tAg96GTmus3pzv8o/oGYXxDefyVeyBgmLsZlUUM=",
-      "applied_at": "2026-11-07T17:02:56Z",
+      "applied_at": "2026-11-14T16:45:28Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -70,8 +71,8 @@
         "description": "Create Journal",
         "checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
         "applied_checksum": "67f4527b52ac79b49c44f4aec04c7aee71d39f464407d9fadda8168bb411cc53",
-        "applied_at": "2026-11-07T17:02:56Z",
-        "execution_time_ms": 5,
+        "applied_at": "2026-11-14T16:45:28Z",
+        "execution_time_ms": 3,
         "state": "applied"
       },
       {
@@ -79,8 +80,8 @@
         "version_key": "2",
         "description": "Fill Ledger",
         "checksum": "cb937b6f11b3ba9d30c121794bf0e15c327c2b0f8a62e6c228c603ac78e9c079",
-        "applied_at": "2026-11-07T17:02:56Z",
-        "execution_time_ms": 6,
+        "applied_at": "2026-11-14T16:45:28Z",
+        "execution_time_ms": 2,
         "state": "dirty"
       }
     ],

@@ -484,7 +484,7 @@ func TestValidationHandlerBindsMigrationApplyJobsToTheActorTheirClaimRecords(t *
 	carried := func(job *batchv1.Job) *corev1.EnvVar {
 		environment := job.Spec.Template.Spec.Containers[0].Env
 		for index := range environment {
-			if environment[index].Name == workload.EnvMigrationActor {
+			if environment[index].Name == workload.EnvActor {
 				return &environment[index]
 			}
 		}

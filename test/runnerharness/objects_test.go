@@ -400,7 +400,13 @@ func (s *schemaRun) publishPlan(name string, content []byte) {
 		PtahVersion:            plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage,
 		RunnerImage: plan.Spec.RunnerImage, RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion,
 		Destructive: plan.Spec.Destructive, StatementCount: plan.Spec.StatementCount,
-		Approval: &operatorv1alpha1.ConsumedApprovalStatus{Name: "harness-approval", UID: "harness-approval"},
+		// The approver is what the Job names to Ptah as the actor, with the
+		// origin admission, so every Apply here hands both to Ptah's own
+		// bindings.
+		Approval: &operatorv1alpha1.ConsumedApprovalStatus{
+			Name: "harness-approval", UID: "harness-approval",
+			Approver: operatorv1alpha1.ApprovalIdentity{Username: "harness:approver"},
+		},
 	}
 }
 
