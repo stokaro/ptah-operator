@@ -1,0 +1,186 @@
+[
+  {
+    "url": "postgres://app:secret@db.example/accounts",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "postgres://app:secret@DB.Example:5432/accounts",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "postgres://app@db.example:5433/accounts",
+    "digest": "sha256:3f5a6697a99be8f592472296bb1a6c7417e1ef9542527cbac901b05b80781db0"
+  },
+  {
+    "url": "postgres://app@db.example:05433/accounts",
+    "digest": "sha256:3f5a6697a99be8f592472296bb1a6c7417e1ef9542527cbac901b05b80781db0"
+  },
+  {
+    "url": "postgresql://app@db.example/accounts",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "pgx://app@db.example/accounts",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "POSTGRES://app@db.example/accounts",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "postgres://app@db.example./accounts",
+    "digest": "sha256:946acfb7ffc8beaac9879f391ef563f07ee6db1f9d89c0ba4d2b43991dfd5e54"
+  },
+  {
+    "url": "postgres://app@db_primary.example/accounts",
+    "digest": "sha256:35e27199a232fb0c12933628ffbca06a330aa56d18bfde45e456e363ce02f744"
+  },
+  {
+    "url": "postgres://app@localhost/accounts",
+    "digest": "sha256:08da114196a0649fd496c0403ce5f3ed8abacf9bfb4ac16d83ab9e4d565e4ec5"
+  },
+  {
+    "url": "postgres://app@127.0.0.1/accounts",
+    "digest": "sha256:42a55e1c15ddd80df6bbe1e626395d2bf87474beb46c88d10615b36bea8e13ef"
+  },
+  {
+    "url": "postgres://app@010.0.0.1/accounts",
+    "digest": "sha256:43efdce68fee43c9d3d98cf3a6d11ea6abfa3731551e5a21f08c48dfcaf38a70"
+  },
+  {
+    "url": "postgres://app@[2001:db8::1]/accounts",
+    "digest": "sha256:2d1e8e4bd1b8519a12c8d24947315778ae3464fe283d48ed8055a111094a4390"
+  },
+  {
+    "url": "postgres://app@[2001:0DB8:0:0:0:0:0:1]:5432/accounts",
+    "digest": "sha256:2d1e8e4bd1b8519a12c8d24947315778ae3464fe283d48ed8055a111094a4390"
+  },
+  {
+    "url": "postgres://app@[2001:db8::1]:6432/accounts",
+    "digest": "sha256:cdc625103b672e922819ab23946ca65c48c5bb0dedf3ded44f02f5965cd1ad87"
+  },
+  {
+    "url": "postgres://app@[::ffff:192.0.2.1]/accounts",
+    "digest": "sha256:d3b2e32db6f3212a19ce9b997fec428d6abcfc72beaadc38bf8817c69da88dbd"
+  },
+  {
+    "url": "postgres://app@[fe80::1%25eth0]/accounts",
+    "digest": "sha256:75edd8d5b8f990d3153fc46f05954936d2c363fd2054533ac03587aced39af94"
+  },
+  {
+    "url": "postgres://app@[FE80::1%25ETH0]:5432/accounts",
+    "digest": "sha256:75edd8d5b8f990d3153fc46f05954936d2c363fd2054533ac03587aced39af94"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=DB.Example&port=6543",
+    "digest": "sha256:9727bcc67e9ae6b624a080b867f23032be3cfd12986a5d418ad5c8aed6cc5a42"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%20db.example%20",
+    "digest": "sha256:e6720b05493591ee2def3b0462ab8f42f63521241024ab92d2dd7aa859e2c6c0"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%5B2001:db8::1%5D",
+    "digest": "sha256:2d1e8e4bd1b8519a12c8d24947315778ae3464fe283d48ed8055a111094a4390"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=2001:DB8::1",
+    "digest": "sha256:2d1e8e4bd1b8519a12c8d24947315778ae3464fe283d48ed8055a111094a4390"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%2Fvar%2Frun%2Fpostgresql",
+    "digest": "sha256:81a6c08c10def15098512201634e23ec57035c29f18d8b20c11ff8bbac0ca988"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%2Fvar%2Frun%2Fpostgresql&port=5433",
+    "digest": "sha256:721ed54e6ff0d2dff836feac72cf5186d5bf3c846055b3534aaa89927f04ef76"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%2FVar%2FRun%2FPG",
+    "digest": "sha256:0455a62ebccf2d5f0aa6927227b4aff059647135ff2745fc1e883519f74a72f3"
+  },
+  {
+    "url": "postgres://app@ignored/accounts?host=%2Fvar%2Frun%2F%C4%B0nternal",
+    "digest": "sha256:aa2f68521cef5cf2857cf6199c4c51041c5eca59042192f60cb91e32ae02c6b7"
+  },
+  {
+    "url": "postgres:///accounts?host=%2Ftmp",
+    "digest": "sha256:17f4efe45fd09b3eb0fb48d7e4619f91635f16db4ae353f1f29e6b48fb4ae5f0"
+  },
+  {
+    "url": "postgres://app@db.example/%C4%B0nventory",
+    "digest": "sha256:a402e5006d1d9d2a4068ecfc53f7d7837f2d9f30c5ab13225933dc31d6fe314b"
+  },
+  {
+    "url": "postgres://%C4%B0nventory@db.example/accounts",
+    "digest": "sha256:45acf399ba38edc1fc1283c265f540a095e410b99b5104638a5527c46e0a3e0c"
+  },
+  {
+    "url": "postgres://app@db.example/accounts?application_name=%C4%B0nventory",
+    "digest": "sha256:c0303524207df2d006d2beb04d7314cea7c4b3e20be8bc881989134a75320b5e"
+  },
+  {
+    "url": "mysql://app@db.example/accounts",
+    "digest": "sha256:28977eec98d97b234828162e49ddc8103361b37e6ab6a8bbf7eac35e101c8424"
+  },
+  {
+    "url": "mysql://app@DB.Example:3307/accounts",
+    "digest": "sha256:4a01cedcf3d021ff7052e7dd4ec728e672fdd1a4c17f1ba52e90b2298101b3e1"
+  },
+  {
+    "url": "mariadb://app@db.example:3306/accounts",
+    "digest": "sha256:28977eec98d97b234828162e49ddc8103361b37e6ab6a8bbf7eac35e101c8424"
+  },
+  {
+    "url": "mysql://app@127.0.0.1:3306/accounts",
+    "digest": "sha256:0e5cf6f62d07a622041ab809b84078f676b872407345bb0e71636238f1837a37"
+  },
+  {
+    "url": "mysql://app@[2001:db8::1]:3307/accounts",
+    "digest": "sha256:c0d46dd721c22ab1d273f418b2e910484cfec8309a0f8f6537f19dac73ce4372"
+  },
+  {
+    "url": "mysql://app:secret@tcp(DB.EXAMPLE:3306)/accounts",
+    "digest": "sha256:28977eec98d97b234828162e49ddc8103361b37e6ab6a8bbf7eac35e101c8424"
+  },
+  {
+    "url": "mariadb://app@tcp(db.example:3307)/accounts",
+    "digest": "sha256:4a01cedcf3d021ff7052e7dd4ec728e672fdd1a4c17f1ba52e90b2298101b3e1"
+  },
+  {
+    "url": "tcp(DB.EXAMPLE)/accounts",
+    "digest": "sha256:2cd41c74a7b48275e133eb9e596038644861c1453310b067cd842174bbaa324e"
+  },
+  {
+    "url": "app@tcp(db.example:03306)/accounts",
+    "digest": "sha256:28977eec98d97b234828162e49ddc8103361b37e6ab6a8bbf7eac35e101c8424"
+  },
+  {
+    "url": "mysql://app@tcp([2001:DB8::1]:3307)/accounts",
+    "digest": "sha256:c0d46dd721c22ab1d273f418b2e910484cfec8309a0f8f6537f19dac73ce4372"
+  },
+  {
+    "url": "tcp(::1)/accounts",
+    "digest": "sha256:8207fc430cbf4b98bf5833dc31ce8b7935c1fff7420c5434363a1392a9826ba9"
+  },
+  {
+    "url": "mysql://app@tcp([fe80::1%eth0]:3306)/accounts",
+    "digest": "sha256:7433c1a5790f090209ba74c290256188f592637dc101b997ff8e38d6e5ee35eb"
+  },
+  {
+    "url": "mysql://app@tcp(db.%C4%B0nternal:3306)/accounts",
+    "digest": "sha256:aa8ee83aa37064b8948ddf6dc0c6c41608e79227b205dc186075848e3d6ecd94"
+  },
+  {
+    "url": "mysql://app@unix(/var/run/mysqld/mysqld.sock)/accounts",
+    "digest": "sha256:035b2da21b80930d2a99e922de7019d0ff2e089f80a2f56dfdfbc9073ff049bc"
+  },
+  {
+    "url": "unix(/var/run/mysqld/İnternal.sock)/accounts",
+    "digest": "sha256:e4c2052bbecb90c5221f712c4e6948b5abec48dfdb9121b6805f3b27ff5b738e"
+  },
+  {
+    "url": "mysql://app@tcp(db.example)/%C4%B0nventory",
+    "digest": "sha256:db46d5c980223a0abe0a07e063da0bc350f04cfdf1dceb227ea74656252b5075"
+  }
+]
