@@ -417,6 +417,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:75124c5054c6759e4adee20ac20bba5bbac81ded4b6b316f20ab6caa60e13ca4",
       "reason": "Pull an HTTPS source (#1041). A Resolve may run ptah schema or migrations pull on an https:// URL held to the pinned download digest; its frame carries resolvedDownloadDigest beside the content digest and bytes. A new fetch mode, --fetch-https-source, pulls the bound download before an operation, held to both digests. Before Ptah runs, the runner refuses as invalid_https_access a credential for another host, a grant with no credential, a mixed or incomplete credential, a CA that does not give its granted digest and a CA pin with no CA selected. HTTPS and Git refuse a URL host or host grant outside printable ASCII, naming it escaped, and compare hosts without ASCII case; Git refuses a CA pin with no CA. For Git that only narrows what was accepted and fails closed, as invalid_git_access at a Resolve and git_source_refused in a fetch step; an older manager meets none of it, since its Jobs run its own runner and it harvests only Jobs its binding rebuilds. OCI Jobs are unchanged. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:4822f27f032db454ee32ddf85e1132fdc497074a03aca4f7fc1281a27595f72a",
+      "reason": "Refuse a registry CA pin with no CA (#1083). Over HTTPS the builder now projects a registry Secret's caSHA256 as an optional grant whenever registryAuthFrom is set, so a Secret that pins a CA reaches the runner under a source that selects none. The runner already refused a CA grant with no CA, a pairing no Job could carry before; its message now names transport.caFrom. It fails closed before any child, as the invalid_oci_access every protocol-1 manager reads at a Resolve or a Verify and as the authority guard's exit 2 before a fetch. Plain HTTP carries no pin, and a Job without the grant runs as before, so what the runner accepts only narrows. Commands, arguments, frames, delivery identity and SQL authority are the same. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }
