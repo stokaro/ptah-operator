@@ -66,11 +66,10 @@ pulled under the system roots, and has the same two ways out. A Resolve or a
 Verify fails with `invalid_oci_access`, and in an Observe, a Plan, or a
 migration's History or Apply the `validate-source-authority` step exits with
 status 2 before the fetch starts. A source over plain HTTP does not read the
-pin. A database URL whose
-host holds a character outside printable ASCII, written directly or
-percent-escaped, now stops every operation that reads the database with
-`invalid_target` before the runner connects: write an internationalized name
-in its `xn--` form. Nothing else.
+pin. A database URL whose host holds a character outside printable ASCII,
+written directly or percent-escaped, now stops every operation that reads the
+database with `invalid_target` before the runner connects: write an
+internationalized name in its `xn--` form. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,
