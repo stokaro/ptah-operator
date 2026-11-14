@@ -151,9 +151,11 @@ func downloadRefused(message, served, pinned string) error {
 // httpsFetchJob holds an operation Job that reads an HTTPS source to its
 // shape: the runner install and the HTTPS fetch before the operation
 // container, the fetch holding one of the downloads the resource resolved to
-// and, for a credentialed source, the credential grant and the credential
-// files; no credential in any container's environment; and the operation
-// container holding neither and mounting the fetched files read-only.
+// and, for a credentialed source, the host and CA grants from the credential's
+// Secret and the credential files; no credential in any container's
+// environment; and the operation container holding neither and mounting the
+// fetched files read-only. The CA grant reaches the fetch whether or not the
+// source selects a CA, so the owner's pin binds the system roots out too.
 func httpsFetchJob(job *batchv1.Job, credentialed bool, downloads ...string) error {
 	spec := job.Spec.Template.Spec
 	names := make([]string, 0, len(spec.InitContainers))
@@ -164,23 +166,31 @@ func httpsFetchJob(job *batchv1.Job, credentialed bool, downloads ...string) err
 		return fmt.Errorf("init containers %v, want the runner install and the HTTPS fetch", names)
 	}
 	fetch := spec.InitContainers[1]
-	pinned, content, grant := false, false, false
+	pinned, content := false, false
+	var hostGrant, caGrant *corev1.SecretKeySelector
 	for _, variable := range fetch.Env {
+		var reference *corev1.SecretKeySelector
+		if variable.ValueFrom != nil {
+			reference = variable.ValueFrom.SecretKeyRef
+		}
 		switch {
 		case variable.Name == "PTAH_OPERATOR_HTTPS_DIGEST" && slices.Contains(downloads, variable.Value):
 			pinned = true
 		case variable.Name == "PTAH_OPERATOR_EXPECTED_CONTENT_DIGEST" && strings.HasPrefix(variable.Value, "sha256:"):
 			content = true
-		case variable.Name == "PTAH_OPERATOR_HTTPS_HOST_GRANT" && variable.ValueFrom != nil && variable.ValueFrom.SecretKeyRef != nil:
-			grant = true
+		case variable.Name == "PTAH_OPERATOR_HTTPS_HOST_GRANT" && reference != nil && reference.Key == ptahv1alpha1.HTTPSHostSecretKey:
+			hostGrant = reference
+		case variable.Name == "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT" && reference != nil && reference.Key == ptahv1alpha1.HTTPSCASHA256SecretKey:
+			caGrant = reference
 		}
 	}
+	grant := hostGrant != nil && caGrant != nil && hostGrant.Name == caGrant.Name
 	files := slices.ContainsFunc(fetch.VolumeMounts, func(mount corev1.VolumeMount) bool {
 		return mount.Name == httpsCredentialsVolume && mount.ReadOnly
 	})
 	if !pinned || !content || grant != credentialed || files != credentialed {
-		return fmt.Errorf("the fetch carries a resolved download=%v, a content digest=%v, a grant=%v and the credential files=%v; credentialed=%v",
-			pinned, content, grant, files, credentialed)
+		return fmt.Errorf("the fetch carries a resolved download=%v, a content digest=%v, the host and CA grants of one Secret=%v "+
+			"and the credential files=%v; credentialed=%v", pinned, content, grant, files, credentialed)
 	}
 	for _, container := range slices.Concat(spec.InitContainers, spec.Containers) {
 		for _, variable := range container.Env {

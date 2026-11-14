@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -202,6 +203,9 @@ func httpsJobFixture(initContainers []string, credentialed bool, mainEnv []corev
 				container.Env = append(container.Env,
 					corev1.EnvVar{Name: "PTAH_OPERATOR_HTTPS_HOST_GRANT", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{Name: httpsBasicCredential}, Key: "host",
+					}}},
+					corev1.EnvVar{Name: "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: httpsBasicCredential}, Key: "caSHA256",
 					}}},
 					corev1.EnvVar{Name: "PTAH_OPERATOR_HTTPS_PASSWORD_FILE", Value: "/credentials/https/password"},
 				)
@@ -424,5 +428,163 @@ func TestHTTPSNoRequestForNeedsSomeRequestsAndNoneForThePath(t *testing.T) {
 	}
 	if httpsNoRequestFor(nil, testHTTPSHost, "/bearer/schema.sql") == nil {
 		t.Error("httpsNoRequestFor accepted a log with no request")
+	}
+}
+
+// builtJob is a Job the operation Job builder wrote: the golden files
+// internal/workload holds every builder change to, so a filter read against
+// them reads what the operator dispatches rather than what a test assumed.
+func builtJob(t *testing.T, name string) *batchv1.Job {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", "internal", "workload", "testdata", "jobs", name+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := &batchv1.Job{}
+	if err := json.Unmarshal(body, job); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	return job
+}
+
+// The builder's fixtures pin these downloads: httpsFileSpec and
+// httpsArchiveSpec in internal/workload.
+var (
+	builtFileDownload    = "sha256:" + strings.Repeat("d", 64)
+	builtArchiveDownload = "sha256:" + strings.Repeat("e", 64)
+)
+
+func TestHTTPSJobFiltersAcceptWhatTheBuilderWrites(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name, download string
+		credentialed   bool
+	}{
+		{"schema-plan-https-file", builtFileDownload, true},
+		{"migration-apply-https-archive", builtArchiveDownload, false},
+		{"migration-apply-https-archive-token", builtArchiveDownload, true},
+	} {
+		if err := httpsFetchJob(builtJob(t, row.name), row.credentialed, row.download); err != nil {
+			t.Errorf("httpsFetchJob refused the builder's %s: %v", row.name, err)
+		}
+	}
+	for _, name := range []string{"schema-resolve-https-file", "migration-resolve-https-archive"} {
+		if err := httpsResolveJob(builtJob(t, name)); err != nil {
+			t.Errorf("httpsResolveJob refused the builder's %s: %v", name, err)
+		}
+	}
+}
+
+func TestHTTPSFetchJobRefusesTheBuilderJobChanged(t *testing.T) {
+	t.Parallel()
+	// changed is the builder's credentialed Plan Job with change applied to
+	// its fetch container and its operation container.
+	changed := func(change func(fetch, main *corev1.Container, spec *corev1.PodSpec)) *batchv1.Job {
+		job := builtJob(t, "schema-plan-https-file")
+		spec := &job.Spec.Template.Spec
+		change(&spec.InitContainers[1], &spec.Containers[0], spec)
+		return job
+	}
+	without := func(env []corev1.EnvVar, name string) []corev1.EnvVar {
+		return slices.DeleteFunc(slices.Clone(env), func(variable corev1.EnvVar) bool { return variable.Name == name })
+	}
+	for name, job := range map[string]*batchv1.Job{
+		"no host grant": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.Env = without(fetch.Env, "PTAH_OPERATOR_HTTPS_HOST_GRANT")
+		}),
+		"no CA grant": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.Env = without(fetch.Env, "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT")
+		}),
+		"a CA grant from another Secret": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			for index := range fetch.Env {
+				if fetch.Env[index].Name == "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT" {
+					fetch.Env[index].ValueFrom.SecretKeyRef.Name = "another-owner"
+				}
+			}
+		}),
+		"a CA grant read from another key": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			for index := range fetch.Env {
+				if fetch.Env[index].Name == "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT" {
+					fetch.Env[index].ValueFrom.SecretKeyRef.Key = "host"
+				}
+			}
+		}),
+		"a CA grant written as a value": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.Env = append(without(fetch.Env, "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT"),
+				corev1.EnvVar{Name: "PTAH_OPERATOR_HTTPS_CA_SHA256_GRANT", Value: "sha256:" + strings.Repeat("c", 64)})
+		}),
+		"no content digest": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.Env = without(fetch.Env, "PTAH_OPERATOR_EXPECTED_CONTENT_DIGEST")
+		}),
+		"the credential files unmounted": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.VolumeMounts = slices.DeleteFunc(fetch.VolumeMounts, func(mount corev1.VolumeMount) bool { return mount.Name == httpsCredentialsVolume })
+		}),
+		"the token in the fetch's environment": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) {
+			fetch.Env = append(fetch.Env, corev1.EnvVar{Name: "PTAH_HTTPS_TOKEN", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "files-token"}, Key: "token"},
+			}})
+		}),
+		"the fetch renamed": changed(func(fetch, _ *corev1.Container, _ *corev1.PodSpec) { fetch.Name = gitFetchInit }),
+		"the CA in the operation container": changed(func(_, main *corev1.Container, _ *corev1.PodSpec) {
+			main.VolumeMounts = append(main.VolumeMounts, corev1.VolumeMount{Name: httpsCAVolume, MountPath: "/credentials/https-ca", ReadOnly: true})
+		}),
+		"a grant in the operation container": changed(func(fetch, main *corev1.Container, _ *corev1.PodSpec) {
+			for _, variable := range fetch.Env {
+				if variable.Name == "PTAH_OPERATOR_HTTPS_HOST_GRANT" {
+					main.Env = append(main.Env, variable)
+				}
+			}
+		}),
+		"the fetched files writable": changed(func(_, main *corev1.Container, _ *corev1.PodSpec) {
+			for index := range main.VolumeMounts {
+				if main.VolumeMounts[index].Name == "schema-source" {
+					main.VolumeMounts[index].ReadOnly = false
+				}
+			}
+		}),
+		"a second operation container": changed(func(_, main *corev1.Container, spec *corev1.PodSpec) {
+			spec.Containers = append(spec.Containers, *main.DeepCopy())
+		}),
+	} {
+		if httpsFetchJob(job, true, builtFileDownload) == nil {
+			t.Errorf("httpsFetchJob accepted the builder's Plan Job with %s", name)
+		}
+	}
+	plan := builtJob(t, "schema-plan-https-file")
+	for name, call := range map[string]func() error{
+		"another download":                    func() error { return httpsFetchJob(plan, true, builtArchiveDownload) },
+		"a credentialed fetch read as public": func() error { return httpsFetchJob(plan, false, builtFileDownload) },
+		"a public fetch read as credentialed": func() error {
+			return httpsFetchJob(builtJob(t, "migration-apply-https-archive"), true, builtArchiveDownload)
+		},
+		"a Resolve Job": func() error { return httpsFetchJob(builtJob(t, "schema-resolve-https-file"), true, builtFileDownload) },
+	} {
+		if call() == nil {
+			t.Errorf("httpsFetchJob accepted %s", name)
+		}
+	}
+}
+
+func TestHTTPSResolveJobRefusesTheBuilderJobChanged(t *testing.T) {
+	t.Parallel()
+	for name, job := range map[string]*batchv1.Job{
+		"a Plan Job": builtJob(t, "schema-plan-https-file"),
+		"a database URL file": func() *batchv1.Job {
+			job := builtJob(t, "schema-resolve-https-file")
+			main := &job.Spec.Template.Spec.Containers[0]
+			main.Env = append(main.Env, corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"})
+			main.VolumeMounts = append(main.VolumeMounts, corev1.VolumeMount{Name: "database-url", MountPath: "/credentials/database", ReadOnly: true})
+			return job
+		}(),
+		"no download": func() *batchv1.Job {
+			job := builtJob(t, "migration-resolve-https-archive")
+			main := &job.Spec.Template.Spec.Containers[0]
+			main.Env = slices.DeleteFunc(main.Env, func(variable corev1.EnvVar) bool { return variable.Name == "PTAH_OPERATOR_HTTPS_URL" })
+			return job
+		}(),
+	} {
+		if httpsResolveJob(job) == nil {
+			t.Errorf("httpsResolveJob accepted the builder's Job as %s", name)
+		}
 	}
 }
