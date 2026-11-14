@@ -1626,6 +1626,69 @@ func TestApplyChecksTargetIdentityBeforeDispatch(t *testing.T) {
 	}
 }
 
+// stokaro/ptah-operator#1084. Each URL below names the planned host with a
+// character strings.ToLower folds to an ASCII letter, so the target identity
+// used to read it as the planned target and the Apply ran its plan against
+// whatever the other name reached. Every operation that reads the database
+// refuses it as invalid_target before it reads anything else the Job binds,
+// and starts no child.
+func TestARunRefusesAHostOutsidePrintableASCIIBeforeDispatch(t *testing.T) {
+	t.Parallel()
+
+	planDir := t.TempDir()
+	plan := []byte(validPlanDocument("CREATE TABLE target_host (id bigint)"))
+	if err := os.WriteFile(filepath.Join(planDir, "chunk-001"), plan, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		name, planned, database string
+	}{
+		{name: "U+0130", planned: "postgres://app:old@db.internal/app", database: "postgres://app:new@db.\u0130nternal/app"},
+		{name: "U+0130 percent-escaped", planned: "postgres://app:old@db.internal/app", database: "postgres://app:new@db.%C4%B0nternal/app"},
+		{name: "the Kelvin sign", planned: "postgres://app:old@keys.internal/app", database: "postgres://app:new@\u212Aeys.internal/app"},
+	} {
+		plannedDigest, err := TargetIdentityDigest(row.planned)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, operation := range []Operation{
+			OperationApply, OperationMigrationApply, OperationObserve, OperationPlan, OperationMigrationHistory,
+		} {
+			t.Run(row.name+"/"+string(operation), func(t *testing.T) {
+				t.Parallel()
+				environment := []string{
+					envOperationID + "=target-host",
+					envDatabaseURL + "=" + row.database,
+					envCoordinationDigest + "=" + testCoordinationDigest(),
+					envExpectedDatabaseEngine + "=PostgreSQL",
+				}
+				if operation.Mutating() {
+					environment = append(environment,
+						envExpectedCoordination+"="+testCoordinationDigest(),
+						envPlanDir+"="+planDir,
+						envExpectedPlanDigest+"="+sha256Digest(plan),
+						envExpectedTargetDigest+"="+plannedDigest,
+						envDispatchNotAfter+"=2099-01-01T00:00:00Z",
+						envExecutionNotAfter+"=2099-01-01T00:00:00Z",
+						envTerminationGracePeriod+"=30",
+					)
+				}
+				executor := &scriptedExecutor{t: t}
+				result := Run(context.Background(), Config{Operation: operation, Environment: withRunnerProtocol(environment), Executor: executor})
+				if result.Error == nil || result.Error.Code != "invalid_target" {
+					t.Fatalf("Run() error = %#v, want invalid_target", result.Error)
+				}
+				if !strings.Contains(result.Error.Message, "is not printable ASCII") || !strings.Contains(result.Error.Message, "xn-- form") {
+					t.Fatalf("Run() error message = %q, want the host refused with its xn-- form named", result.Error.Message)
+				}
+				if len(executor.calls) != 0 || result.MutationStarted || result.Uncertain || result.TargetIdentityDigest != "" {
+					t.Fatalf("a refused host dispatched work or named a target: calls=%d result=%#v", len(executor.calls), result)
+				}
+			})
+		}
+	}
+}
+
 func TestDatabaseOperationsRejectInvalidOrMismatchedCoordinationBinding(t *testing.T) {
 	t.Parallel()
 
