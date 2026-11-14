@@ -339,7 +339,7 @@ never something the server decides.
 
 `url` takes `https://` only, with no user name, password, query or fragment,
 in at most 2,048 bytes. Its host is ASCII letters, digits, dots and hyphens,
-or an IP address in brackets, with an optional port, so an internationalized
+or an IPv6 address in brackets, with an optional port, so an internationalized
 name is written in its `xn--` form; the host compares as it does for Git.
 `format` says what the download is:
 

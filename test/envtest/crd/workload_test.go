@@ -694,7 +694,9 @@ func httpsRefusals(source string) []refusal {
 	// A host that is not ASCII is refused: strings.ToLower reads U+0130 as
 	// "i", and Go's transport dials the IDNA form, another name. So are a
 	// percent escape, which url.Parse decodes in a host, an underscore and a
-	// user, none of which the pattern's authority admits.
+	// user, none of which the pattern's authority admits. A bracketed host
+	// with no colon is not IPv6, and url.Parse refuses it, so the pattern
+	// refuses it too rather than store a URL Resolve cannot read.
 	for _, url := range []string{
 		"http://artifacts.example.com/orders.tar.gz", "https://bot:token@artifacts.example.com/orders.tar.gz",
 		"https://artifacts.example.com/orders.tar.gz?sig=abc", "https://artifacts.example.com/orders.tar.gz#v1",
@@ -702,7 +704,8 @@ func httpsRefusals(source string) []refusal {
 		"https://art\u0130facts.example.com/orders.tar.gz", "https://art%C4%B0facts.example.com/orders.tar.gz",
 		"https://artifacts_example.com/orders.tar.gz", "https://bot@artifacts.example.com/orders.tar.gz",
 		"https://artifacts.example.com:/orders.tar.gz", "https://artifacts.example.com:123456/orders.tar.gz",
-		"https://[fe80::1%25eth0]/orders.tar.gz",
+		"https://[fe80::1%25eth0]/orders.tar.gz", "https://[1.2.3.4]/orders.tar.gz",
+		"https://[cafe.de]/orders.tar.gz", "https://[.]/orders.tar.gz",
 	} {
 		rows = append(rows, refusal{
 			name:   fmt.Sprintf("%s.https.url %q", source, url),

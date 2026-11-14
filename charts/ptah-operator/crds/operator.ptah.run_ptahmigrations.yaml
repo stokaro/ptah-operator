@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "20"
-    operator.ptah.run/crd-schema-digest: "sha256:c035e8aded4477905a5a5331b43e77d615f68beeb8c1165e57c6e32eee84bc1d"
+    operator.ptah.run/crd-schema-digest: "sha256:45cb5d2bd56f0df368fa6b3c0ff4b4c63f5c41fc6c90566f71013279655f99ce"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -230,7 +230,7 @@ spec:
                       url:
                         maxLength: 2048
                         minLength: 11
-                        pattern: ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?/[^[:space:]?#]+$
+                        pattern: ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*\])(:[0-9]{1,5})?/[^[:space:]?#]+$
                         type: string
                     required:
                     - digest
