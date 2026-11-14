@@ -525,8 +525,13 @@ authentication is configured, the same authentication Secret must contain the
 fixed `caSHA256` key with the exact lowercase `sha256:<64 hex>` digest of the
 selected ConfigMap bytes. A missing, malformed, or mismatched grant stops the
 Job before any Ptah process or network request. The key name cannot be selected
-by a schema author. Anonymous registry access may use a custom CA without a
-Secret grant, but it is still size-bounded and snapshotted before use.
+by a schema author. The pin holds the other way too: a resource that names a
+Secret holding `caSHA256` and selects no CA is stopped at the same point,
+rather than sending the credential under the system roots. Over plain
+HTTP, which speaks no TLS, the pin is not read, and the Secret's
+`allowPlainHTTP` grant decides. Anonymous registry access may use a custom CA
+without a Secret grant, but it is still size-bounded and snapshotted before
+use.
 
 A registry that requires a client certificate is not supported, and the API
 has no field for one. The pinned executor loads a client pair into a

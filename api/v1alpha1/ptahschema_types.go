@@ -82,7 +82,8 @@ const (
 	RegistryAllowPlainHTTPSecretKey = "allowPlainHTTP"
 	// RegistryCASHA256SecretKey is the fixed Secret key by which the same
 	// credential owner grants one exact custom CA bundle. Its value must be the
-	// lowercase SHA-256 digest of the selected ConfigMap bytes. It is
+	// lowercase SHA-256 digest of the selected ConfigMap bytes, and an HTTPS
+	// source that names the Secret and selects no CA is refused. It is
 	// intentionally not selectable by a PtahSchema author.
 	RegistryCASHA256SecretKey = "caSHA256"
 
@@ -638,7 +639,8 @@ type OCITransportSpec struct {
 
 	// CAFrom selects a custom CA bundle. When registryAuthFrom is present, that
 	// same Secret must contain caSHA256 with the exact lowercase SHA-256 digest
-	// of the selected bytes.
+	// of the selected bytes, and an HTTPS source whose Secret holds caSHA256
+	// is refused without it.
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
 }
 

@@ -59,7 +59,14 @@ where it sent the credential under the system roots: select the CA the Secret
 pins, or remove `caSHA256` from the Secret if the system roots are what its
 owner grants. Either refusal fails a Resolve with `invalid_git_access`; an
 Observe, a Plan or an Apply that meets it in its fetch step stops with
-`git_source_refused` in that step's termination message. Nothing else.
+`git_source_refused` in that step's termination message. An OCI source with
+`registryAuthFrom` over HTTPS that selects no `transport.caFrom` under a
+registry Secret holding `caSHA256` now stops before Ptah runs as well, where it
+pulled under the system roots, and has the same two ways out. A Resolve or a
+Verify fails with `invalid_oci_access`, and in an Observe, a Plan, or a
+migration's History or Apply the `validate-source-authority` step exits with
+status 2 before the fetch starts. A source over plain HTTP does not read the
+pin. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,

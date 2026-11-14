@@ -1444,6 +1444,16 @@ CA and its Secret-owned digest grant together; until both projections agree,
 read-only source operations fail closed. Anonymous custom-CA sources do not
 need a Secret grant but use the same per-Job snapshot boundary and 1 MiB limit.
 
+A registry Secret that holds `caSHA256` binds the credential to that CA, so an
+HTTPS source that names the Secret and selects no `transport.caFrom` fails
+before the registry client starts too, rather than pulling under the system
+roots. A Resolve or a Verify fails with `invalid_oci_access`, naming the field
+to set; an Observe, a Plan, or a migration's History or Apply stops at its
+`validate-source-authority` step. To move such a source to the system roots,
+remove `caFrom` from the resource and `caSHA256` from the Secret together;
+until both have changed, read-only source operations fail closed. A plain-HTTP
+source does not read the pin.
+
 Digest-pinned references reduce change ambiguity and are recommended for
 production. Promote the same digest between environments rather than rebuilding
 equivalent tags; [`kubectl ptah set-source`](#set-source) takes nothing else.
