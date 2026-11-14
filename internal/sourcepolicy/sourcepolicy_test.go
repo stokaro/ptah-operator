@@ -3,6 +3,7 @@ package sourcepolicy_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -54,6 +55,38 @@ func TestAPolicyRefusesWhatItsRulesDoNotAllow(t *testing.T) {
 	} {
 		if !errors.Is(check, sourcepolicy.ErrRefused) {
 			t.Errorf("%s was not refused: %v", name, check)
+		}
+	}
+}
+
+// A host compares as printable ASCII. strings.ToLower reads U+0130 as "i"
+// and strings.EqualFold reads the Kelvin sign as "k", while Go's transport
+// dials either by its IDNA form, another name than the entry's.
+func TestAPolicyComparesHostsAsASCII(t *testing.T) {
+	t.Parallel()
+	policy, err := sourcepolicy.Parse([]byte(document))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, check := range map[string]error{
+		"a Git host with U+0130":      policy.CheckGitHost("g\u0130t.example.com"),
+		"a Git host and port with it": policy.CheckGitHost("g\u0130t.example.com:2222"),
+		"a download host with U+0130": policy.CheckHTTPSHost("f\u0130les.example.com:8443"),
+	} {
+		if !errors.Is(check, sourcepolicy.ErrRefused) || !strings.Contains(fmt.Sprint(check), "in its xn-- form") {
+			t.Errorf("%s: %v, want a refusal that says to write the xn-- form", name, check)
+		}
+	}
+	kelvin, err := sourcepolicy.Parse([]byte("allowedGitHosts:\n  - \u212aelvin.example\nallowedHTTPSHosts:\n  - \u212aelvin.example\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, check := range map[string]error{
+		"a Git host an entry names only by Unicode folding":      kelvin.CheckGitHost("kelvin.example"),
+		"a download host an entry names only by Unicode folding": kelvin.CheckHTTPSHost("KELVIN.example"),
+	} {
+		if !errors.Is(check, sourcepolicy.ErrRefused) || !strings.Contains(fmt.Sprint(check), "does not name") {
+			t.Errorf("%s: %v, want it refused as not named", name, check)
 		}
 	}
 }

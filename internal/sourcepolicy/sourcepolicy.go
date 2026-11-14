@@ -31,6 +31,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 // MaxDocumentBytes bounds the policy document.
@@ -114,29 +115,37 @@ func Read(ctx context.Context, reader client.Reader, namespace string, selector 
 }
 
 // CheckGitHost refuses a Git source whose authority, host[:port], the policy
-// does not allow. Hosts compare without case.
+// does not allow. Hosts compare as printable ASCII without case, as
+// internal/sourcehost says.
 func (p Policy) CheckGitHost(authority string) error {
 	if p.AllowedGitHosts == nil {
 		return nil
 	}
-	if slices.ContainsFunc(*p.AllowedGitHosts, func(allowed string) bool { return strings.EqualFold(allowed, authority) }) {
-		return nil
-	}
-	return fmt.Errorf("%w: allowedGitHosts does not name %s", ErrRefused, authority)
+	return checkHost("allowedGitHosts", *p.AllowedGitHosts, authority)
 }
 
 // CheckHTTPSHost refuses an HTTPS source whose authority, host[:port], the
-// policy does not allow. Hosts compare without case. allowedGitHosts says
-// nothing about an HTTPS source: a host a team clones from is not one it
-// downloads from.
+// policy does not allow. Hosts compare as printable ASCII without case.
+// allowedGitHosts says nothing about an HTTPS source: a host a team clones
+// from is not one it downloads from.
 func (p Policy) CheckHTTPSHost(authority string) error {
 	if p.AllowedHTTPSHosts == nil {
 		return nil
 	}
-	if slices.ContainsFunc(*p.AllowedHTTPSHosts, func(allowed string) bool { return strings.EqualFold(allowed, authority) }) {
+	return checkHost("allowedHTTPSHosts", *p.AllowedHTTPSHosts, authority)
+}
+
+// checkHost refuses an authority that rule's list does not name. An
+// authority that is not printable ASCII is refused by name, since no entry
+// can name it: an entry that is not printable ASCII names nothing.
+func checkHost(rule string, allowed []string, authority string) error {
+	if err := sourcehost.CheckASCII(authority); err != nil {
+		return fmt.Errorf("%w: %s compares hosts as ASCII: %w", ErrRefused, rule, err)
+	}
+	if slices.ContainsFunc(allowed, func(entry string) bool { return sourcehost.Equal(entry, authority) }) {
 		return nil
 	}
-	return fmt.Errorf("%w: allowedHTTPSHosts does not name %s", ErrRefused, authority)
+	return fmt.Errorf("%w: %s does not name %s", ErrRefused, rule, authority)
 }
 
 // CheckConfigMap refuses a ConfigMap source the policy does not allow.

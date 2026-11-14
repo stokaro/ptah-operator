@@ -48,7 +48,7 @@ func checkHTTPSSource(policy *sourcepolicy.Policy, spec *operatorv1alpha1.HTTPSS
 	if policy == nil {
 		return nil
 	}
-	if err := policy.CheckHTTPSHost(gitAuthority(spec.URL)); err != nil {
+	if err := policy.CheckHTTPSHost(sourceAuthority(spec.URL)); err != nil {
 		return fmt.Errorf("%w: %w", errSourceRefused, err)
 	}
 	if err := policy.CheckContentBytes(contentBytes); err != nil {
