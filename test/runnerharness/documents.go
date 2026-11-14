@@ -50,7 +50,20 @@ func DecodeDocument(args []string, exit int, stdout []byte) error {
 		_, err := dataplane.DecodeMigrationStatus(stdout)
 		return err
 	case "migrations up":
-		_, err := dataplane.DecodeMigrationRun(stdout)
+		report, err := dataplane.DecodeMigrationRun(stdout)
+		if err == nil && report.DriftCheck != nil {
+			return errors.New("a run nobody asked to check reports a drift check")
+		}
+		return err
+	case "migrations up --check-drift":
+		// The runner accepts a requested run with no check only when it
+		// stopped before the check; every run this harness asks to check
+		// reaches it, so a missing check is a release that stopped reporting
+		// it.
+		report, err := dataplane.DecodeMigrationRun(stdout)
+		if err == nil && report.DriftCheck == nil {
+			return errors.New("a run asked to check for drift reports no drift check")
+		}
 		return err
 	case "schema validate":
 		// Text for a person, which SchemaSourceProblem and

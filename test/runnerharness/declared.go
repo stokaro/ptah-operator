@@ -59,6 +59,7 @@ var Declared = struct {
 		"migrations pull",
 		"migrations status",
 		"migrations up",
+		"migrations up --check-drift",
 		"oci inspect",
 		"oci resolve",
 		"oci verify",
@@ -73,14 +74,18 @@ var Declared = struct {
 
 // CommandWords names a Ptah command by its first two arguments. The plan
 // validation is a command of its own: it reads the same report at another
-// outcome, and a release can change one and not the other.
+// outcome, and a release can change one and not the other. So is a run that
+// checks for drift first: its document carries the check, and a release can
+// change the check and leave the run as it was.
 func CommandWords(args []string) string {
 	if len(args) < 2 {
 		return strings.Join(args, " ")
 	}
 	words := args[0] + " " + args[1]
-	if slices.Contains(args, "--dry-run") {
-		words += " --dry-run"
+	for _, flag := range []string{"--dry-run", "--check-drift"} {
+		if slices.Contains(args, flag) {
+			words += " " + flag
+		}
 	}
 	return words
 }

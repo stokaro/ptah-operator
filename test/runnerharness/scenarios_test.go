@@ -372,6 +372,65 @@ func migrationFailures(t *testing.T, l *lab) {
 	})
 }
 
+// driftChecks run an Apply that asks Ptah to compare the target with its
+// applied history first, on PostgreSQL. Each row reads a history whose first
+// two versions an unchecked run applied, then plans the third: a clean target
+// lets it run, a column added outside the migrations stops it with nothing
+// applied, and a shadow that already holds a table stops it before any
+// replay.
+func driftChecks(t *testing.T, l *lab) {
+	t.Helper()
+	for _, row := range []struct {
+		name, stored string
+		// change is what happens to the two databases after the unchecked
+		// run and before the checked one.
+		change func(t *testing.T, target, shadow string)
+		code   string
+	}{
+		{name: "drift-clean-postgres", change: func(*testing.T, string, string) {}},
+		{
+			name: "drift-drifted-postgres", stored: "migrations-up-drifted-postgres.json", code: "child_exit",
+			change: func(t *testing.T, target, _ string) {
+				l.sql(t, enginePostgres, target, "ALTER TABLE e2e_migration_widgets ADD COLUMN nickname TEXT")
+			},
+		},
+		{
+			name: "drift-shadow-not-empty-postgres", stored: "migrations-up-drift-shadow-not-empty-postgres.json", code: "child_exit",
+			change: func(t *testing.T, _, shadow string) {
+				l.sql(t, enginePostgres, shadow, "CREATE TABLE left_behind (id INTEGER PRIMARY KEY)")
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			family := "migrations-" + row.name
+			database := "harness_" + strings.ReplaceAll(row.name, "-", "_")
+			l.createDatabase(t, enginePostgres, database)
+			l.createDatabase(t, enginePostgres, database+"_shadow")
+			older := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-older-postgresql")
+			run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(older))
+			run.resolve("resolve-v1")
+			run.applyPlanned("apply-v1", pending(t, family, run.history("history-v1")))
+
+			current := l.publish(t, "migrations", "migrations/"+family, "v2", "--migrations-dir", "/fixtures/migrations-postgresql")
+			run.migration.Spec.Artifact = ociSource(current)
+			run.checkDrift(l.databaseURL(enginePostgres, database+"_shadow"))
+			row.change(t, database, database+"_shadow")
+			run.resolve("resolve-v2")
+			before := run.history("history-pending")
+			var adjust []func(*rowSpec)
+			if row.stored != "" {
+				adjust = append(adjust, storedAs("migrations up --check-drift", row.stored))
+			}
+			if row.code != "" {
+				adjust = append(adjust, wantCode(row.code))
+			}
+			run.applyPlanned("apply", pending(t, family, before), adjust...)
+			run.history("history-after")
+		})
+	}
+}
+
 // narrowMigrationLog is Ptah's schema_migrations_log for MySQL with the actor
 // column cut to 16 characters, which no name the manager records fits.
 const narrowMigrationLog = `CREATE TABLE schema_migrations_log (

@@ -64,6 +64,10 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 			t.Parallel()
 			migrationFailures(t, l)
 		})
+		t.Run("drift-checks", func(t *testing.T) {
+			t.Parallel()
+			driftChecks(t, l)
+		})
 		t.Run("git", func(t *testing.T) {
 			t.Parallel()
 			gitLifecycles(t, l)

@@ -1,0 +1,65 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "applied",
+  "planned": [
+    1,
+    2
+  ],
+  "planned_keys": [
+    "1",
+    "2"
+  ],
+  "applied": [
+    1,
+    2
+  ],
+  "applied_keys": [
+    "1",
+    "2"
+  ],
+  "migration_log": {
+    "written": 4,
+    "run_reference": "sha256:05bee4a844ceab77ff1f2eb75294e4da9cc90242ab95ae8a57949faa4b074e99"
+  },
+  "status": {
+    "current_version": 2,
+    "applied_migrations": [
+      1,
+      2
+    ],
+    "applied_migration_keys": [
+      "1",
+      "2"
+    ],
+    "pending_migrations": [],
+    "out_of_order_migrations": [],
+    "total_migrations": 2,
+    "has_pending_changes": false,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Widgets",
+        "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+        "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+        "applied_at": "2026-11-14T23:47:22.265434Z",
+        "execution_time_ms": 3,
+        "state": "applied"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Add Widget Color",
+        "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+        "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+        "applied_at": "2026-11-14T23:47:22.269879Z",
+        "execution_time_ms": 3,
+        "state": "applied"
+      }
+    ],
+    "current_version_key": "2"
+  }
+}

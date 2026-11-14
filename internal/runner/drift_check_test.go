@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -398,5 +400,62 @@ func TestTheShadowDatabaseIsRedacted(t *testing.T) {
 	got := redactor.Redact("dial " + testShadowURL + " as shadow with " + testShadowPassword)
 	if strings.Contains(got, testShadowPassword) || strings.Contains(got, testShadowURL) {
 		t.Fatalf("Redact() = %q, want the shadow URL and its password redacted", got)
+	}
+}
+
+// What Ptah v0.28.0 printed for a target holding a column nobody migrated, and
+// for a shadow holding a table (see internal/dataplane/testdata): the first
+// line of Ptah's error reaches the Pod log, where the manager's message points,
+// and nothing Ptah named reaches the frame.
+func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
+	t.Parallel()
+	expected := shadowDigest(t, testShadowURL)
+	for _, row := range []struct {
+		document, logged, named string
+		exitCode                int
+		want                    dataplane.MigrationDriftSummary
+	}{
+		{
+			document: "migrations-up-drifted-postgres.json", exitCode: 1,
+			logged: "ptah-runner: ptah reported: the database schema differs from the schema its 2 applied migrations produce, " +
+				"in 1 place, so no pending migration was run; first: extra column e2e_migration_widgets.nickname\n",
+			named: "nickname", want: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 1},
+		},
+		{
+			document: "migrations-up-drift-shadow-not-empty-postgres.json", exitCode: 2,
+			logged: "ptah-runner: ptah reported: the drift check could not compare the database with its applied history, " +
+				"so no pending migration was run: applied history shadow check failed: connected database is not clean: " +
+				"found table \"left_behind\" in schema \"public\"",
+			named: "left_behind", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean"},
+		},
+	} {
+		t.Run(row.document, func(t *testing.T) {
+			t.Parallel()
+			document, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", row.document))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var log bytes.Buffer
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(document), exitCode: row.exitCode}}}
+			result := Run(context.Background(), Config{
+				Operation:   OperationMigrationApply,
+				Environment: driftApplyEnvironment(t, "drift-sentence", testShadowURL, expected),
+				Executor:    executor,
+				Diagnostics: &log,
+			})
+			if !strings.Contains(log.String(), row.logged) {
+				t.Fatalf("the Pod log reads %q, want Ptah's sentence %q", log.String(), row.logged)
+			}
+			if result.MigrationRun == nil || result.MigrationRun.DriftSummary == nil || *result.MigrationRun.DriftSummary != row.want {
+				t.Fatalf("the run frames %#v, want summary %+v", result.MigrationRun, row.want)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			if bytes.Contains(frame, []byte(row.named)) {
+				t.Fatalf("the frame carries %q, which Ptah named: %s", row.named, frame)
+			}
+		})
 	}
 }

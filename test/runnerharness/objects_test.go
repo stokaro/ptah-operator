@@ -33,6 +33,7 @@ const (
 	bindingEpoch     = "v1-33333333333333333333333333333333"
 	databaseSecret   = "harness-database"
 	databaseKey      = "url"
+	shadowSecret     = "harness-shadow-database"
 	policyConfigMap  = "harness-policy"
 	policyKey        = "policy.yaml"
 )
@@ -445,6 +446,19 @@ type migrationRun struct {
 	// actor is the name an Apply records in schema_migrations_log, as the
 	// manager passes it. A row that sets none leaves Ptah its own fallback.
 	actor string
+	// shadowURL is the drift check's shadow database, and shadowID the
+	// identity the last history reading reported for it, which an Apply's plan
+	// binds as the controller's would.
+	shadowURL, shadowID string
+}
+
+// checkDrift has every later History and Apply name shadowURL as the drift
+// check's shadow database, from a Secret of its own.
+func (m *migrationRun) checkDrift(shadowURL string) {
+	m.shadowURL = shadowURL
+	m.migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
+		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: shadowSecret}, Key: databaseKey},
+	}}
 }
 
 func (l *lab) newMigration(t *testing.T, family, engine, url string, artifact operatorv1alpha1.SourceSpec) *migrationRun {
@@ -485,9 +499,13 @@ func (m *migrationRun) source() runnerharness.Source {
 }
 
 func (m *migrationRun) row(name string, operation runner.Operation, job *batchv1.Job) rowSpec {
+	cluster := m.l.cluster(m.url, m.policy, nil)
+	if m.shadowURL != "" {
+		cluster.Secrets[shadowSecret] = map[string][]byte{databaseKey: []byte(m.shadowURL)}
+	}
 	return rowSpec{
 		name: m.family + "/" + name, operation: operation, source: m.source(), engine: engineName(m.engine),
-		job: job, cluster: m.l.cluster(m.url, m.policy, nil),
+		job: job, cluster: cluster,
 	}
 }
 
@@ -547,7 +565,18 @@ func (m *migrationRun) history(name string, adjust ...func(*rowSpec)) rowOutcome
 	for _, change := range adjust {
 		change(&row)
 	}
-	return m.l.runRow(m.t, row)
+	outcome := m.l.runRow(m.t, row)
+	if m.shadowURL != "" {
+		want, err := runner.TargetIdentityDigest(m.shadowURL)
+		if err != nil {
+			m.t.Fatal(err)
+		}
+		if outcome.result.ShadowIdentityDigest != want {
+			m.t.Errorf("%s: the history read reports the shadow as %q, not %q", row.name, outcome.result.ShadowIdentityDigest, want)
+		}
+		m.shadowID = outcome.result.ShadowIdentityDigest
+	}
+	return outcome
 }
 
 // applyPlanned runs the migrations a history reading selected.
@@ -566,6 +595,9 @@ func (m *migrationRun) applyPlanned(name string, planned []operatorv1alpha1.Plan
 			TargetIdentityDigest: m.targetID,
 			Migrations:           planned,
 		},
+	}
+	if m.migration.Spec.Policy.DriftCheck != nil {
+		plan.Spec.ShadowIdentityDigest = m.shadowID
 	}
 	operation.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}
 	dispatchNotAfter := metav1.NewTime(operation.StartedAt.Add(300 * time.Second))

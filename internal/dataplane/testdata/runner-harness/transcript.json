@@ -3903,7 +3903,7 @@
           "--run-reference=sha256:3057e3967166e2e407c1d2915578cebb237f51bb757d3f8a63a7006312600f58"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nAuto-approval enabled; applying schema changes.\n2026/11/14 16:44:05 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 16:44:05 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=applied error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64);\nAuto-approval enabled; applying schema changes.\n<time> WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\n<time> WARN Could not append to the schema apply log table=ptah_schema_apply_log state=applied error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'<address>' for table 'ptah_schema_apply_log'\"\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-login-documented-mysql/apply/0-schema-apply.json"
       }
     ],
@@ -4577,7 +4577,7 @@
           "--run-reference=sha256:4b3da82c4ff26d5cf45df841b0b9d6049bdba9e45d65c2f73d718f14567d8f0a"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nAuto-approval enabled; applying schema changes.\n2026/11/14 16:43:48 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\n2026/11/14 16:43:48 WARN Could not append to the schema apply log table=ptah_schema_apply_log state=unknown error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`\n",
+        "stderr": "Planned schema changes:\nDROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`;\nDROP PROCEDURE `harness_differs_login_show_routine_mysql`.`differs_hand_proc`;\nDROP TRIGGER `differs_hand_trigger`;\nAuto-approval enabled; applying schema changes.\n<time> WARN Could not append to the schema apply log table=ptah_schema_apply_log state=started error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\n<time> WARN Could not append to the schema apply log table=ptah_schema_apply_log state=unknown error=\"Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'<address>' for table 'ptah_schema_apply_log'\"\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: Error 1370 (42000): alter routine command denied to user 'harness_login_show_routine'@'%' for routine 'harness_differs_login_show_routine_mysql.differs_hand_fn'\nSQL: DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`\n",
         "stdout": "runner-harness/documents/differs-login-show-routine-mysql/apply/0-schema-apply.json"
       }
     ],
@@ -15350,6 +15350,1462 @@
       "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
       "resolvedReference": "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
       "resolvedSize": 1543,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up --check-drift",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--check-drift",
+          "--run-reference=sha256:2ff0ea7b1873800d7cd8d9df9ee17809f3e5b5beb9131451c6eb285285f19a15"
+        ],
+        "exit": 0,
+        "stderr": "time=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_drift_clean_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 2\nTotal migrations: 3\nPending migrations: 1\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=2 totalMigrations=3\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\nDrift check: the database matches the schema its 2 applied migrations produce\n",
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply/1-migrations-up---check-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationRun": {
+        "applied": [
+          3
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "driftSummary": {
+          "outcome": "clean"
+        },
+        "migration_log": {
+          "written": 2
+        },
+        "outcome": "applied",
+        "planned": [
+          3
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 3,
+          "has_pending_changes": false,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "description": "Recolor First Widget",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 3,
+              "version_key": "3"
+            }
+          ],
+          "pending_migrations": [],
+          "total_migrations": 3
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:2ff0ea7b1873800d7cd8d9df9ee17809f3e5b5beb9131451c6eb285285f19a15",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:470f38a64c1c062d1c61237a228f81cc4a88ff708fb498e50e336450237cb734",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2539c38742f5d1aede17813470f869347c8bcc52d65ff328d70b861e343c027f"
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/apply-v1",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:414c67421fb6e26b878396f3d7abbe8f332e2196dd5ba0a6e5b9846181853c57"
+        ],
+        "exit": 0,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_drift_clean_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply-v1/1-migrations-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationRun": {
+        "applied": [
+          1,
+          2
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "migration_log": {
+          "written": 4
+        },
+        "outcome": "applied",
+        "planned": [
+          1,
+          2
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 2,
+          "has_pending_changes": false,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            }
+          ],
+          "pending_migrations": [],
+          "total_migrations": 2
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:414c67421fb6e26b878396f3d7abbe8f332e2196dd5ba0a6e5b9846181853c57",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2539c38742f5d1aede17813470f869347c8bcc52d65ff328d70b861e343c027f"
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/history-after",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-after/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-after/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 3,
+        "has_pending_changes": false,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:3ef90f70e308fab9a71272e93ba053b51b4a915a58e9b05d0e2e822a41365ee9",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:470f38a64c1c062d1c61237a228f81cc4a88ff708fb498e50e336450237cb734",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2539c38742f5d1aede17813470f869347c8bcc52d65ff328d70b861e343c027f"
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 2,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:0d95659d803551033ababf48b0407197c0ccd42453810f8fe2aacb8c3af4813a",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:470f38a64c1c062d1c61237a228f81cc4a88ff708fb498e50e336450237cb734",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2539c38742f5d1aede17813470f869347c8bcc52d65ff328d70b861e343c027f"
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/history-v1",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-v1/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:9ef7069bc72d73790b67e44d92a7cac6a1e70fd8bbf4881783c343c6cd1067fa",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2539c38742f5d1aede17813470f869347c8bcc52d65ff328d70b861e343c027f"
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/resolve-v1",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/resolve-v1/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:09e0246b7e6d058efb789a82b4638c9417f7e4d3fc6a789d477bf16dfa4bdfa2",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+      "resolvedSize": 1580,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-clean-postgres/resolve-v2",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres:v2",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-clean-postgres/resolve-v2/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:8bbeb299ef759c46c5b9f2edd2eb36d412b9505d9c5a8b50ed4e79721a2e42ac",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
+      "resolvedSize": 2074,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up --check-drift",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--check-drift",
+          "--run-reference=sha256:cb26e3df238fa694f8b204f08c7d0e640ba4789e00044995d46a4c3bac65f622"
+        ],
+        "exit": 1,
+        "stderr": "time=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\nDrift check: the database differs from the schema its 2 applied migrations produce:\n  - extra column e2e_migration_widgets.nickname\nNo pending migration was run. Bring the database back to its history, or record the change in a migration, then run again.\n",
+        "stdout": "migrations-up-drifted-postgres.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 1,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 1"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "driftSummary": {
+          "findings": 1,
+          "outcome": "drifted"
+        },
+        "migration_log": {
+          "written": 0
+        },
+        "outcome": "failed",
+        "planned": [
+          3
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 2,
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "description": "Recolor First Widget",
+              "state": "pending",
+              "version": 3,
+              "version_key": "3"
+            }
+          ],
+          "pending_migrations": [
+            3
+          ],
+          "total_migrations": 3
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:cb26e3df238fa694f8b204f08c7d0e640ba4789e00044995d46a4c3bac65f622",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:0634d30a4901e5c838ea400632dcf7c3066d172598d3358c8be3be51294b86e1",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2980e9c116bda7581f51b9b490f1f3883223ce5c6e0f1b4b48741ad3924aa1b3"
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/apply-v1",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/apply-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:05bee4a844ceab77ff1f2eb75294e4da9cc90242ab95ae8a57949faa4b074e99"
+        ],
+        "exit": 0,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_drift_drifted_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/apply-v1/1-migrations-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationRun": {
+        "applied": [
+          1,
+          2
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "migration_log": {
+          "written": 4
+        },
+        "outcome": "applied",
+        "planned": [
+          1,
+          2
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 2,
+          "has_pending_changes": false,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            }
+          ],
+          "pending_migrations": [],
+          "total_migrations": 2
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:05bee4a844ceab77ff1f2eb75294e4da9cc90242ab95ae8a57949faa4b074e99",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2980e9c116bda7581f51b9b490f1f3883223ce5c6e0f1b4b48741ad3924aa1b3"
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/history-after",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-after/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-after/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 2,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:8a45a122861c685879556a1c8468ad9f5526ac854112a97700cf2e2a518be2b0",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:0634d30a4901e5c838ea400632dcf7c3066d172598d3358c8be3be51294b86e1",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2980e9c116bda7581f51b9b490f1f3883223ce5c6e0f1b4b48741ad3924aa1b3"
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 2,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:e680e577cfdeb6b36dffcd0cf4edaeab5a857a4c84fe9c93a68163b5cfb86336",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:0634d30a4901e5c838ea400632dcf7c3066d172598d3358c8be3be51294b86e1",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2980e9c116bda7581f51b9b490f1f3883223ce5c6e0f1b4b48741ad3924aa1b3"
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/history-v1",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-v1/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:02ab5654b1548fa3df92a418cd0927316c4b7f1a9f1546ad19f76a8d4c69ef9d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:2980e9c116bda7581f51b9b490f1f3883223ce5c6e0f1b4b48741ad3924aa1b3"
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/resolve-v1",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/resolve-v1/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:d5658040815acecd19770287d18f5e091bac76a35cbc3f6e5fb59e9c92c0dd31",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+      "resolvedSize": 1580,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-drifted-postgres/resolve-v2",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres:v2",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/resolve-v2/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:c4c95616a2b822f351f95dc574f3840e02d578df9eed2961a7e989ad832a57fe",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
+      "resolvedSize": 2074,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up --check-drift",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--check-drift",
+          "--run-reference=sha256:cfbc2c05b4a7afed96a424978072b665a6eaddbea418fcd2e96aa79faafc90d9"
+        ],
+        "exit": 2,
+        "stderr": "error: error running migrations: the drift check could not compare the database with its applied history, so no pending migration was run: applied history shadow check failed: connected database is not clean: found table \"left_behind\" in schema \"public\"; Ptah resets this database before and after the replay, so point the URL at an empty database\n",
+        "stdout": "migrations-up-drift-shadow-not-empty-postgres.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "driftSummary": {
+          "outcome": "unable",
+          "reason": "not_clean",
+          "stage": "claim"
+        },
+        "migration_log": {
+          "written": 0
+        },
+        "outcome": "failed",
+        "planned": [
+          3
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 2,
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "description": "Recolor First Widget",
+              "state": "pending",
+              "version": 3,
+              "version_key": "3"
+            }
+          ],
+          "pending_migrations": [
+            3
+          ],
+          "total_migrations": 3
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:cfbc2c05b4a7afed96a424978072b665a6eaddbea418fcd2e96aa79faafc90d9",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:cabc51fea66f05d84b8ccd75bf8ffb80868a3392e57d90ba8cddb855ca2ce209",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0552fe1e47bc0fe9dda65194cac91b8bbd4c1a8dabc91f1eda91903c79e6f58a"
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/apply-v1",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/apply-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:1dfbaa369972189a4fd6e95aa615c83004e4d0e837dd925397012ca4a9996e74"
+        ],
+        "exit": 0,
+        "stderr": "=== MIGRATE UP ===\nDatabase: postgres://postgres:***@harness-postgres:5432/harness_drift_shadow_not_empty_postgres?sslmode=disable\nDialect: postgres\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 2\nPending migrations: 2\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=2\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/apply-v1/1-migrations-up.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationRun": {
+        "applied": [
+          1,
+          2
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "migration_log": {
+          "written": 4
+        },
+        "outcome": "applied",
+        "planned": [
+          1,
+          2
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 2,
+          "has_pending_changes": false,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            }
+          ],
+          "pending_migrations": [],
+          "total_migrations": 2
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:1dfbaa369972189a4fd6e95aa615c83004e4d0e837dd925397012ca4a9996e74",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0552fe1e47bc0fe9dda65194cac91b8bbd4c1a8dabc91f1eda91903c79e6f58a"
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/history-after",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-after/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-after/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 2,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:bea88f66d7e7bb89a0d8447fcd081263aa918f9d2eae05cfa28a0bf6055e1d32",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:cabc51fea66f05d84b8ccd75bf8ffb80868a3392e57d90ba8cddb855ca2ce209",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0552fe1e47bc0fe9dda65194cac91b8bbd4c1a8dabc91f1eda91903c79e6f58a"
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 2,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:fcd9e408c84de8e684a1edb0f264051a7fdf96c03bd9ea41e6a3ce1321e96fda",
+      "protocolVersion": 1,
+      "shadowIdentityDigest": "sha256:cabc51fea66f05d84b8ccd75bf8ffb80868a3392e57d90ba8cddb855ca2ce209",
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0552fe1e47bc0fe9dda65194cac91b8bbd4c1a8dabc91f1eda91903c79e6f58a"
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/history-v1",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-v1/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-v1/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+            "description": "Create Widgets",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+            "description": "Add Widget Color",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:a6f74d495d7a1e3e3127e6c0e06edf8cfd40da88fab52c792471635a3edb9333",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0552fe1e47bc0fe9dda65194cac91b8bbd4c1a8dabc91f1eda91903c79e6f58a"
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/resolve-v1",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/resolve-v1/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:01b961c615590996e57f106549bf024d4ed08cf8f410ceb161e4754f2f1ef635",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+      "resolvedSize": 1580,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "migrations-drift-shadow-not-empty-postgres/resolve-v2",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres:v2",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/resolve-v2/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:93312e0db5ffcc0b41dc1e8b939e53fa4c6b2c6256abe09a5560adabfa07a640",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
+      "resolvedSize": 2074,
       "stdout": ""
     }
   },
