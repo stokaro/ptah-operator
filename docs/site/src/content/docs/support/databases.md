@@ -149,6 +149,11 @@ Apply has created it. MySQL refuses the grant while the table does not exist:
 GRANT INSERT ON `app`.`ptah_schema_apply_log` TO 'ptah'@'%';
 ```
 
+A table grant reads the database name as written, so leave each `_` and `%`
+unescaped here. `` `my\_app`.`ptah_schema_apply_log` `` names a database that
+does not exist, and MySQL refuses it with the same error 1146 it gives before
+the table exists.
+
 The operator rejects credential-bearing principal DDL and MySQL connection
 parameters that can inject session SQL. `multiStatements` is always rejected.
 Conventional IPv6 MySQL URLs must include an explicit port; the network DSN form
