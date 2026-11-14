@@ -77,7 +77,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.12/](https:/
 
 - Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its seventh and number 13 limitations.
+**Limitations:** the same as [`edge`](#edge) without its seventh and thirteenth limitations.
 
 ### v0.2.11
 
@@ -89,7 +89,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.11/](https:/
 
 - Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, twelfth and number 13 limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, twelfth and thirteenth limitations.
 
 ### v0.2.10
 
@@ -99,7 +99,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.10/](https:/
 
 **Verified:** the same as [`v0.2.11`](#v0211).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eleventh, twelfth and number 13 limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eleventh, twelfth and thirteenth limitations.
 
 ### v0.2.9
 
@@ -111,7 +111,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, tenth, eleventh, twelfth and number 13 limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, tenth, eleventh, twelfth and thirteenth limitations.
 
 ### v0.2.8
 

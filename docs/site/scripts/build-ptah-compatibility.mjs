@@ -157,7 +157,11 @@ function sameAs(field, entry, earlier) {
 }
 
 // ORDINALS name a list position the way a reader counts it.
-const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+const ORDINALS = [
+  'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth',
+  'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth',
+  'eighteenth', 'nineteenth', 'twentieth',
+];
 
 function ordinals(indices) {
   const names = indices.map((index) => ORDINALS[index] ?? `number ${index + 1}`);
@@ -430,7 +434,7 @@ function selftest() {
   if (reorderedBlock.slice(reorderedBlock.indexOf('### v0.3.0'), reorderedBlock.indexOf('### v0.4.0')).includes('without its')) {
     throw new Error('a list in another order was referenced as a narrower copy');
   }
-  if (ordinals([1]) !== 'second' || ordinals([10]) !== 'eleventh' || ordinals([0, 2, 12]) !== 'first, third and number 13') {
+  if (ordinals([1]) !== 'second' || ordinals([10]) !== 'eleventh' || ordinals([0, 2, 12]) !== 'first, third and thirteenth' || ordinals([20]) !== 'number 21') {
     throw new Error('list positions are not named the way a reader counts them');
   }
   if (anchor({ operator: 'v0.2.0' }) !== 'v020') throw new Error('a version anchor is not the heading slug');
