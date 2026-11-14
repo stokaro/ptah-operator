@@ -146,13 +146,20 @@ func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
 		t.Fatal(err)
 	}
 	groups := original["spec"].(map[string]any)["groups"].([]any)
-	examined := 0
+	examined, held := 0, 0
 	for gi, group := range groups {
 		rules := group.(map[string]any)["rules"].([]any)
 		for ri, value := range rules {
 			examined++
 			name := value.(map[string]any)["alert"].(string)
-			for _, mutation := range []string{"missing", "expression", "delay", "keep firing", "duplicate"} {
+			mutations := []string{"missing", "expression", "delay", "keep firing", "duplicate"}
+			// A rule over the state reading that lost its hold resolves on a
+			// failed read; one that never had a hold has nothing to drop.
+			if _, ok := value.(map[string]any)["keep_firing_for"]; ok {
+				held++
+				mutations = append(mutations, "no hold")
+			}
+			for _, mutation := range mutations {
 				t.Run(name+"/"+mutation, func(t *testing.T) {
 					var document map[string]any
 					if err := yaml.Unmarshal([]byte(rendered), &document); err != nil {
@@ -186,6 +193,8 @@ func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
 						rule["for"] = "10m"
 					case "keep firing":
 						rule["keep_firing_for"] = "10m"
+					case "no hold":
+						delete(rule, "keep_firing_for")
 					case "duplicate":
 						g["rules"] = append(list, rule)
 					}
@@ -199,6 +208,34 @@ func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
 	}
 	if examined != 11 {
 		t.Fatalf("examined %d rules, want all eleven chart rules", examined)
+	}
+	// The unresolved, overdue, stalled and lock rules. The plan-store rule
+	// holds through a failed read by its own expression.
+	if held != 4 {
+		t.Fatalf("%d rendered rules carry a hold, want the four over the state reading", held)
+	}
+}
+
+// The bounds the rows compute from alStateReadGapHold are the hold the chart
+// renders only while the two spell the same duration.
+func TestAlStateReadGapHoldIsTheChartsHold(t *testing.T) {
+	t.Parallel()
+	hold, err := time.ParseDuration(alStateReadGapHoldText)
+	if err != nil || hold != alStateReadGapHold {
+		t.Fatalf("the rows bound resolutions by %s, and the profile expects the chart's %q (%v)", alStateReadGapHold, alStateReadGapHoldText, err)
+	}
+	found := 0
+	for name, rule := range alProfileRuleTargets() {
+		if rule.KeepFiringFor == "" {
+			continue
+		}
+		found++
+		if rule.KeepFiringFor != alStateReadGapHoldText {
+			t.Errorf("%s holds for %q, and the rows bound its resolution by %s", name, rule.KeepFiringFor, alStateReadGapHold)
+		}
+	}
+	if found != 4 {
+		t.Fatalf("%d profile rules hold through a failed read, want four", found)
 	}
 }
 

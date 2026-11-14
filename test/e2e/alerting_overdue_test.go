@@ -159,7 +159,8 @@ func TestOverdueNotificationsUsePersistedDeadlineAndNativeRecovery(t *testing.T)
 		t.Fatal("late or premature alert passed")
 	}
 	recovery := deadline.Add(3 * time.Minute)
-	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: recovery.Add(time.Second), ReceivedAt: recovery.Add(45 * time.Second)}
+	// The rule's 30-second hold plus the 45-second delivery target.
+	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: recovery.Add(alStateReadGapHold), ReceivedAt: recovery.Add(75 * time.Second)}
 	if !alOverdueCleared(firing, resolved, recovery) {
 		t.Fatal("native recovery rejected")
 	}

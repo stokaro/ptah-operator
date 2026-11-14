@@ -152,7 +152,7 @@ func TestAlLockNotificationKeepsTheFrozenNativeBounds(t *testing.T) {
 		t.Fatal("early firing hidden by late delivery")
 	}
 	released := completed.Add(120 * time.Second)
-	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: released.Add(time.Second), ReceivedAt: released.Add(alDetectionSlack)}
+	resolved := alDelivery{StartsAt: firing.StartsAt, EndsAt: released.Add(alStateReadGapHold), ReceivedAt: released.Add(alStateReadGapHold + alDetectionSlack)}
 	if !alOverdueCleared(firing, resolved, released) {
 		t.Fatal("exact release resolution refused")
 	}

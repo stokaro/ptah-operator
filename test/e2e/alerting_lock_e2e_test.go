@@ -466,7 +466,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 		read()
 		return !released.IsZero() && !alLockReading(object).owed, "waiting for original holder removal and cleared obligation", nil
 	}), "observe release completion")
-	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alLockAlert, labels: labels}, "the owed-lock resolution", max(time.Until(released.Add(alDetectionSlack)), alDeliveryPoll), index+1, checkRuntime)
+	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alLockAlert, labels: labels}, "the owed-lock resolution", max(time.Until(released.Add(alStateReadGapHold+alDetectionSlack)), alDeliveryPoll), index+1, checkRuntime)
 	if !alOverdueCleared(firing, resolved, released) || !a.noActiveAlerts(query) {
 		a.fatalf("owed-lock resolution missed the native release deadline")
 	}

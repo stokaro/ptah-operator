@@ -13,16 +13,50 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-const alUnresolvedMetric = "ptah_operator_unresolved_attempts"
+const (
+	alUnresolvedMetric = "ptah_operator_unresolved_attempts"
+	alViewSyncedMetric = "ptah_operator_unresolved_view_synced"
+)
+
+// alUnresolvedHistoryMetrics are the series one unresolved history snapshot
+// reads.
+var alUnresolvedHistoryMetrics = []string{alUnresolvedMetric, alViewSyncedMetric, alViewReadFailuresMetric, "up", "scrape_duration_seconds"}
+
+var errAlReadGapOutlastedHold = errors.New("a declared failed read outlasted the rules' hold")
 
 type alUnresolvedHistory struct {
-	appeared, cleared, through time.Time
-	latest                     int
+	// appeared and cleared are when the leader's scrape that first read the
+	// incident, and the one that first read it gone, completed.
+	appeared, cleared time.Time
+	// appearedScrape is the first incident scrape's own timestamp, and
+	// withheldSince the first of the declared failed reads directly before
+	// it, if any: those reads kept the gauge from reading the incident.
+	appearedScrape, withheldSince time.Time
+	// heldFrom is the first leader scrape after the last one that read the
+	// incident. The rule cannot have stopped seeing it earlier, so its hold
+	// started no earlier either.
+	heldFrom time.Time
+	// through is the last scrape that read the gauge.
+	through time.Time
+	latest  int
+	// declared counts the leader's declared failed reads since the baseline.
+	declared int
 }
 
 // Both the healthy zero baseline and the incident must be native leader
 // samples. A missing gauge, unhealthy follower, or gap is not a zero.
-func alReadUnresolvedHistory(gaugeBody, upBody, durationBody []byte, pods []string, leader, family string, started, queriedAt time.Time) (alUnresolvedHistory, error) {
+//
+// A scrape whose state read failed publishes no gauge: the manager never
+// presents a partial census. Such a scrape is accepted only where the leader
+// declared it in that same scrape, with its view reported unsynchronized and
+// its read-failure counter risen from the scrape before; any other missing
+// gauge is a scrape this history lost. A declared gap establishes nothing
+// about the incident. The rule holds a firing alert through it for
+// alStateReadGapHold, so a gap that lasts as long as that, from its first
+// failed read to the completion of the scrape that reads again, may have
+// resolved the incident and fails the history rather than stretching what it
+// proves.
+func alReadUnresolvedHistory(gaugeBody, syncedBody, failuresBody, upBody, durationBody []byte, pods []string, leader, family string, started, queriedAt time.Time) (alUnresolvedHistory, error) {
 	h := alUnresolvedHistory{}
 	if family != "schema" && family != "migration" {
 		return h, errors.New("unknown unresolved family")
@@ -34,7 +68,6 @@ func alReadUnresolvedHistory(gaugeBody, upBody, durationBody []byte, pods []stri
 	if !health.firstFailure.IsZero() {
 		return h, errors.New("unresolved proof lost a healthy scrape")
 	}
-	h.through = health.scrapedThrough
 	series, err := alAdmissionNativeMatrix(gaugeBody)
 	if err != nil {
 		return h, err
@@ -43,7 +76,11 @@ func alReadUnresolvedHistory(gaugeBody, upBody, durationBody []byte, pods []stri
 		return h, errors.New("unresolved gauge must name the original leader and family alone")
 	}
 	since := started.Add(-2 * alScrapeInterval)
-	values, err := alAdmissionNativeSamples(series[0], since, queriedAt, true)
+	// The scrape history already proves a fresh committed scrape and no gap
+	// between scrapes. Gaps in the gauge are judged against those scrapes
+	// below, so the parser checks only order: a gap boundary at queriedAt
+	// exempts every sample.
+	values, err := alNativeSamples(series[0], queriedAt, queriedAt, true, false)
 	if err != nil {
 		return h, err
 	}
@@ -66,15 +103,61 @@ func alReadUnresolvedHistory(gaugeBody, upBody, durationBody []byte, pods []stri
 			}
 		}
 	}
-	for len(times) > 1 && !times[1].at.After(since) {
+	// The baseline is the last reading at or before since, and the scrapes
+	// from it on are the ones the gauge must account for.
+	for len(times) != 0 && times[0].at.Before(values[0].at) {
 		times = times[1:]
 	}
-	if len(values) != len(times) {
-		return h, errors.New("unresolved gauge omitted a native scrape")
+	if len(times) == 0 || !times[0].at.Equal(values[0].at) {
+		return h, errors.New("unresolved gauge lost its scrape identity")
 	}
-	for i, v := range values {
-		if !v.at.Equal(times[i].at) || v.value > 1 {
-			return h, errors.New("unresolved gauge lost its scrape or acquired another incident")
+	synced, err := alLeaderViewSynced(syncedBody, leader, health.leaderInstance, queriedAt)
+	if err != nil {
+		return h, err
+	}
+	// A nil body would declare no failure. The view is always read here, so
+	// an absent counter must not stand in for a declared nothing.
+	if failuresBody == nil {
+		return h, errors.New("unresolved history has no read-failure counter")
+	}
+	failures, err := alReadFailureCounts(failuresBody, leader, health.leaderInstance, queriedAt)
+	if err != nil {
+		return h, err
+	}
+	next := 0
+	var gapFrom, lastRead time.Time
+	for i, scrape := range times {
+		completed := scrape.at.Add(time.Duration(scrape.value * float64(time.Second)))
+		if next == len(values) || !values[next].at.Equal(scrape.at) {
+			if next < len(values) && values[next].at.Before(scrape.at) {
+				return h, errors.New("unresolved gauge lost its scrape identity")
+			}
+			// times[0] is the baseline reading, so i is at least 1 here.
+			now, counted := failures[scrape.at.UnixNano()]
+			before, wasCounted := failures[times[i-1].at.UnixNano()]
+			view, reported := synced[scrape.at.UnixNano()]
+			if !counted || !wasCounted || now <= before || !reported || view != 0 {
+				return h, errors.New("unresolved gauge omitted a native scrape")
+			}
+			if gapFrom.IsZero() {
+				gapFrom = scrape.at
+			}
+			if !h.appeared.IsZero() && h.cleared.IsZero() && h.heldFrom.IsZero() {
+				h.heldFrom = scrape.at
+			}
+			h.declared++
+			continue
+		}
+		v := values[next]
+		next++
+		if view, reported := synced[scrape.at.UnixNano()]; !reported || view != 1 {
+			return h, errors.New("unresolved gauge was read without a synchronized view")
+		}
+		if !gapFrom.IsZero() && completed.Sub(gapFrom) >= alStateReadGapHold {
+			return h, errAlReadGapOutlastedHold
+		}
+		if v.value > 1 {
+			return h, errors.New("unresolved gauge acquired another incident")
 		}
 		if !v.at.After(started) && v.value != 0 {
 			return h, errors.New("an unresolved incident preceded fault injection")
@@ -84,26 +167,99 @@ func alReadUnresolvedHistory(gaugeBody, upBody, durationBody []byte, pods []stri
 				return h, errors.New("unresolved incident recurred after recovery")
 			}
 			if h.appeared.IsZero() {
-				h.appeared = v.at.Add(time.Duration(times[i].value * float64(time.Second)))
+				h.appeared, h.appearedScrape, h.withheldSince = completed, v.at, gapFrom
 			}
+			// A gap inside the incident ended with the incident read again.
+			h.heldFrom = time.Time{}
 		} else if !h.appeared.IsZero() && h.cleared.IsZero() {
-			h.cleared = v.at.Add(time.Duration(times[i].value * float64(time.Second)))
+			h.cleared = completed
+			if h.heldFrom.IsZero() {
+				h.heldFrom = v.at
+			}
 		}
+		gapFrom, lastRead = time.Time{}, v.at
 		h.latest = int(v.value)
 	}
+	if next != len(values) {
+		return h, errors.New("unresolved gauge lost its scrape identity")
+	}
+	if !gapFrom.IsZero() && queriedAt.Sub(gapFrom) >= alStateReadGapHold {
+		return h, errAlReadGapOutlastedHold
+	}
+	// What a failed read did not observe is not covered: the history ends at
+	// the last scrape that carried the gauge.
+	h.through = earlierTime(health.scrapedThrough, lastRead)
 	return h, nil
 }
 
+// alLeaderViewSynced reads the leader's synchronized-view gauge by scrape
+// timestamp. Followers report their own unsynchronized view and are not read.
+func alLeaderViewSynced(body []byte, leader, instance string, queriedAt time.Time) (map[int64]float64, error) {
+	series, err := alAdmissionNativeMatrix(body)
+	if err != nil {
+		return nil, err
+	}
+	views := map[int64]float64{}
+	found := false
+	for _, row := range series {
+		if row.Metric["__name__"] != alViewSyncedMetric || row.Metric["job"] != alScrapeJob {
+			return nil, errors.New("view history includes another metric or scrape job")
+		}
+		if row.Metric["pod"] != leader {
+			continue
+		}
+		if row.Metric["instance"] != instance || found {
+			return nil, errors.New("the synchronized view must come from the original leader alone")
+		}
+		found = true
+		// Only order is checked here: a scrape without its view sample is
+		// refused where the history reads that scrape.
+		samples, err := alNativeSamples(row, queriedAt, queriedAt, true, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, sample := range samples {
+			if sample.value != 0 && sample.value != 1 {
+				return nil, errors.New("the synchronized view is neither 0 nor 1")
+			}
+			views[sample.at.UnixNano()] = sample.value
+		}
+	}
+	return views, nil
+}
+
+// withheldAfter is how long declared failed reads directly before the first
+// incident scrape kept the gauge from reading an incident recorded at
+// recorded. A failed read before the record existed withheld nothing.
+func (h alUnresolvedHistory) withheldAfter(recorded time.Time) time.Duration {
+	if h.withheldSince.IsZero() {
+		return 0
+	}
+	from := laterTime(h.withheldSince, recorded)
+	if !h.appearedScrape.After(from) {
+		return 0
+	}
+	return h.appearedScrape.Sub(from)
+}
+
 // The controller's persisted timestamps date both bounds. Neither a later
-// poll nor a later scrape may extend the frozen 45-second delivery target.
+// poll nor a later scrape may extend the frozen 45-second delivery target;
+// only reads the leader declared failed may, by the time they withheld the
+// incident, since the rule cannot fire on a count it was not given.
 func alUnresolvedDelivered(d alDelivery, h alUnresolvedHistory, recorded time.Time) bool {
 	return !recorded.IsZero() && !h.appeared.IsZero() && h.cleared.IsZero() && h.latest == 1 && !h.appeared.Before(recorded) &&
-		!d.StartsAt.Before(recorded) && !d.ReceivedAt.Before(d.StartsAt) && !d.ReceivedAt.After(recorded.Add(alDetectionSlack))
+		!d.StartsAt.Before(recorded) && !d.ReceivedAt.Before(d.StartsAt) && !d.ReceivedAt.After(recorded.Add(alDetectionSlack+h.withheldAfter(recorded)))
 }
+
+// The rule holds the incident for alStateReadGapHold after it last saw it, so
+// the receiver hears of the resolution no earlier than that after the first
+// scrape that did not read it, and no later than the hold plus the delivery
+// target after the record was accounted for.
 func alUnresolvedCleared(firing, resolved alDelivery, h alUnresolvedHistory, recorded, accounted time.Time) bool {
-	return !recorded.IsZero() && accounted.After(recorded) && !h.cleared.IsZero() && !h.cleared.Before(accounted) && h.latest == 0 &&
+	return !recorded.IsZero() && accounted.After(recorded) && !h.cleared.IsZero() && !h.cleared.Before(accounted) && h.latest == 0 && !h.heldFrom.IsZero() &&
 		!firing.StartsAt.IsZero() && resolved.StartsAt.Equal(firing.StartsAt) && !resolved.EndsAt.Before(accounted) &&
-		!resolved.ReceivedAt.Before(resolved.EndsAt) && !resolved.ReceivedAt.After(accounted.Add(alDetectionSlack)) && !h.through.Before(resolved.ReceivedAt)
+		!resolved.EndsAt.Before(h.heldFrom.Add(alStateReadGapHold)) && !resolved.ReceivedAt.Before(resolved.EndsAt) &&
+		!resolved.ReceivedAt.After(accounted.Add(alStateReadGapHold+alDetectionSlack)) && !h.through.Before(resolved.ReceivedAt)
 }
 
 // Validate the closed pre-acknowledgment interval, including events between

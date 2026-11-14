@@ -207,7 +207,10 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	trace, err := alReadSchemaUnresolvedTrace(schemas.snapshot(), original, false)
 	a.check(err, "bind the original unknown schema and its timestamp")
 	labels := map[string]string{"family": "schema", "operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}
-	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alUnresolvedApply, labels: labels}, "the exact unresolved schema notification", alDetectionSlack, from, check)
+	// Failed reads the leader declared can withhold the incident from the
+	// rule, never for as long as the hold; alUnresolvedDelivered grants
+	// exactly the time they withheld it.
+	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alUnresolvedApply, labels: labels}, "the exact unresolved schema notification", alDetectionSlack+alStateReadGapHold, from, check)
 	h := a.unresolvedHistory(names, leader, "schema", started, "firing")
 	count, _ := alAlertedCount(firing.Annotations["summary"])
 	if !alUnresolvedDelivered(firing, h, trace.recorded) || count != "1" || firing.Labels["severity"] != "critical" || firing.Annotations["runbook_url"] != a.runbookBase+"#unresolved-gauges" || !alRunbookAnchor(a.operationsPage(), "unresolved-gauges") {
@@ -282,8 +285,10 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, recovered)
 	trace, err = alReadSchemaUnresolvedTrace(schemas.snapshot(), original, true)
 	a.check(err, "retain original-target Observe and Plan before resolution")
-	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUnresolvedApply, labels: labels}, "the unresolved schema recovery notification", alDetectionSlack, index+1, check)
-	a.check(harness.Wait(a.ctx, "native schema recovery samples", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
+	// The rule keeps firing for alStateReadGapHold after the reading that
+	// cleared the incident.
+	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUnresolvedApply, labels: labels}, "the unresolved schema recovery notification", alStateReadGapHold+alDetectionSlack, index+1, check)
+	a.check(harness.Wait(a.ctx, "native schema recovery samples", 2*alScrapeInterval+alScrapeTimeout+alStateReadGapHold, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		h = a.unresolvedHistory(names, leader, "schema", started, "")
 		return !h.through.Before(resolved.ReceivedAt), "waiting for recovery scrape coverage", nil

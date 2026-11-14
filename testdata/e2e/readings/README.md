@@ -32,6 +32,19 @@ labels are unchanged. The plan-store interval tests require a complete, fresh
 baseline before pruning and reject a missing gauge inside either timing window.
 An earlier gap during export cannot invalidate a later complete baseline.
 
+`prometheus-unresolved-read-gap-schema.json` and
+`prometheus-unresolved-read-gap-migration.json` are the native Prometheus
+snapshots the `unresolved-apply` row printed for its MySQL lanes when it failed
+in the alerting-operations job for Kubernetes 1.35 on PostgreSQL 16 of CI run
+43593974962, stored byte for byte. The leader's scrapes at 12:46:42.241 and
+12:46:47.241 took 3.005 seconds, the snapshot read's own timeout, and carried
+no unresolved gauge. The row queried neither the synchronized view nor the
+read-failure counter, so
+`TestAlUnresolvedHistoryAcceptsTheCIReadFailureOnlyWhenDeclared` rebuilds both
+from the scrapes each snapshot holds. It requires the history to refuse the
+snapshot when the leader did not declare the failed reads, and to accept it
+when it did.
+
 `upgrade-recovery-boundaries.json` projects the four native upgrade probes from
 Kubernetes 1.35.8 at `5b572b0f`. It keeps their identities, policy, interval,
 read timestamp, plan reference, and conditions. Both schema readings completed
