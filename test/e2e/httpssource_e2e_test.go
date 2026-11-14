@@ -447,14 +447,6 @@ func (c *httpsRun) query(database, statement string) string {
 	return trimmedSQL(output)
 }
 
-func (c *httpsRun) schemaPlans(name string) int {
-	c.t.Helper()
-	plans := &ptahv1alpha1.PtahSchemaPlanList{}
-	c.check(c.cluster.Client.List(c.ctx, plans, client.InNamespace(c.in.TestNamespace), client.MatchingLabels{labelSchema: name}),
-		"list the plans of %s", name)
-	return len(plans.Items)
-}
-
 func (c *httpsRun) jobsOf(label, name string) []batchv1.Job {
 	c.t.Helper()
 	jobs := &batchv1.JobList{}
@@ -621,12 +613,17 @@ func (c *httpsRun) schemaFromAZip() {
 // hold the same selected file. The Resolve the next edit causes is refused,
 // naming the digest the server served and the one the spec pins, and the
 // schema keeps what it applied. Once the spec names the new digest, the
-// Resolve records the same content and no plan is published: the plan binds
-// the content, not the download.
+// Resolve records the same content and the schema settles on the plan it
+// had applied: the plan binds the content, not the download.
+//
+// The applied record is the proof. A Resolve that read the new digest as new
+// content would clear it, and the schema would still reach InSync, through an
+// Observe that finds the database as declared and a Plan with nothing to
+// publish, with no record of what it applied. So a count of published plans
+// reads the same whichever way the Resolve went; the plan reference does not.
 func (c *httpsRun) republishedZip() {
 	c.t.Helper()
 	before := c.waitForSchema(httpsZipSchema, 1, "the zip schema to be in sync", inSyncSchema)
-	plans := c.schemaPlans(httpsZipSchema)
 	first, republished := c.digests[httpsfixture.SchemaArchive], c.digests[httpsfixture.SchemaArchiveRepublished]
 	content, err := httpsfixture.SchemaContent(path.Base(httpsfixture.SchemaInArchive))
 	c.check(err, "digest the schema")
@@ -661,10 +658,8 @@ func (c *httpsRun) republishedZip() {
 	if kept.Status.Applied == nil || kept.Status.Applied.PlanRef != before.Status.Applied.PlanRef {
 		c.fatalf("the new digest moved the applied record from %+v to %+v", before.Status.Applied, kept.Status.Applied)
 	}
-	if after := c.schemaPlans(httpsZipSchema); after != plans {
-		c.fatalf("a republished archive with the same selected file published %d plans", after-plans)
-	}
-	c.logf("PASS a republished zip was refused naming both digests, and once pinned kept its plan: %s", refusal)
+	c.logf("PASS a republished zip was refused naming both digests, and once pinned still records %s as applied: %s",
+		kept.Status.Applied.PlanRef.Name, refusal)
 }
 
 // resolveNow edits a schema's interval, which the controller answers with a
