@@ -323,6 +323,7 @@ A value the operator cannot use is reported when the operation that reads it run
 | No key `url` | The operation waits, as below, with `references non-existent secret key: url` |
 | A `/` in the password, not escaped | `Failed`, `OperationFailed`: `invalid_target: database URL is invalid` |
 | A newline after the URL | The same |
+| A host outside printable ASCII, such as `db.İnternal` or `db.%C4%B0nternal` | `Failed`, `OperationFailed`: `invalid_target: the database URL: the host "db.\u0130nternal" is not printable ASCII: write an internationalized name in its xn-- form` |
 
 ### Before the Secret exists {#external-secret-stores-not-synced}
 

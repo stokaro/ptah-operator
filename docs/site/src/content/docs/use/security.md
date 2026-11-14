@@ -829,7 +829,12 @@ not merely host and database names. Rotating password or certificate bytes is
 allowed when the non-secret route and certificate paths stay fixed, while a
 change to TLS verification, channel binding, authentication requirements, or
 plaintext fallback invalidates the plan before the mutating child dispatches. The
-username is part of that identity too. What each kind of rotation did to a waiting
+username is part of that identity too. The host is bound as ASCII without case: a
+host in capitals is the same target, and a host that holds any other character,
+written directly or percent-escaped, is refused as `invalid_target` before the
+runner connects, since Unicode case folding reads `İ` as `i` and would give two
+names one identity. Write an internationalized name in its `xn--` form. A unix
+socket path is bound byte for byte. What each kind of rotation did to a waiting
 plan and a running Apply, as measured, is in
 [When the credential rotates](../../reference/credentials-and-admission/#external-secret-stores-rotation).
 
