@@ -100,6 +100,10 @@ func TestValidateOCISourceAccessFailsClosed(t *testing.T) {
 			envOCIRegistry + "=registry.example", EnvOCIAuthRegistryGrant + "=registry.example",
 			EnvOCIAllowPlainHTTPGrant + "=TRUE",
 		},
+		"CA pin without the CA": {
+			EnvOCIAuthMode + "=Environment", envOCIRegistry + "=registry.example",
+			EnvOCIAuthRegistryGrant + "=registry.example", EnvOCICASHA256Grant + "=sha256:" + strings.Repeat("a", 64),
+		},
 	} {
 		environment := environment
 		t.Run(name, func(t *testing.T) {
@@ -211,6 +215,74 @@ func TestRunnerRejectsUnauthorizedRegistryGrantBeforeChild(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A registry Secret that pins its CA has not agreed to the system roots: a
+// source that selects no CA is refused before Ptah runs, and the refusal
+// names the field to set. The same source without the pin reaches Ptah, so
+// the refusal is the pin's.
+func TestRunnerRefusesARegistryCAPinWithoutTheCABeforeChild(t *testing.T) {
+	t.Parallel()
+
+	const reference = "oci://registry.example/team/schema:stable"
+	pin := "sha256:" + strings.Repeat("a", 64)
+	for _, operation := range []Operation{OperationResolve, OperationVerify} {
+		for _, mode := range []string{ociAuthEnvironment, ociAuthDockerConfigJSON} {
+			t.Run(string(operation)+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				executor := &scriptedExecutor{t: t}
+				result := Run(t.Context(), Config{
+					Operation: operation,
+					Environment: withRunnerProtocol([]string{
+						envOperationID + "=" + string(operation) + "-ca-pin-without-ca",
+						envRequestedReference + "=" + reference,
+						EnvOCIAuthMode + "=" + mode,
+						envOCIRegistry + "=registry.example",
+						EnvOCIAuthRegistryGrant + "=registry.example",
+						EnvOCICASHA256Grant + "=" + pin,
+					}),
+					Executor: executor,
+				})
+				if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
+					t.Fatalf("Run() = %#v", result)
+				}
+				for _, remedy := range []string{"caSHA256", "transport.caFrom"} {
+					if !strings.Contains(result.Error.Message, remedy) {
+						t.Errorf("the refusal %q does not name %s", result.Error.Message, remedy)
+					}
+				}
+				requireInvalidOCIAccessPreChildFrame(t, result)
+				if len(executor.calls) != 0 {
+					t.Fatalf("executor received %d calls before the CA pin refusal", len(executor.calls))
+				}
+			})
+		}
+	}
+
+	t.Run("the same Resolve without the pin", func(t *testing.T) {
+		t.Parallel()
+		digest := "sha256:" + strings.Repeat("b", 64)
+		executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
+			stdout: fmt.Sprintf(
+				`{"reference":%q,"pinned_reference":"oci://registry.example/team/schema@%s","digest":%q,"media_type":"application/vnd.oci.image.manifest.v1+json","size":42}`,
+				reference, digest, digest,
+			),
+		}}}
+		result := Run(t.Context(), Config{
+			Operation: OperationResolve,
+			Environment: withRunnerProtocol([]string{
+				envOperationID + "=resolve-system-roots",
+				envRequestedReference + "=" + reference,
+				EnvOCIAuthMode + "=" + ociAuthEnvironment,
+				envOCIRegistry + "=registry.example",
+				EnvOCIAuthRegistryGrant + "=registry.example",
+			}),
+			Executor: executor,
+		})
+		if result.Error != nil || result.ResolvedDigest != digest || len(executor.calls) != 1 {
+			t.Fatalf("Run() = %#v after %d calls, want the Resolve to reach Ptah", result, len(executor.calls))
+		}
+	})
 }
 
 func requireInvalidOCIAccessPreChildFrame(t *testing.T, result Result) {

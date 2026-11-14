@@ -900,11 +900,15 @@ func addRegistryAccess(
 				operatorv1alpha1.RegistryAllowPlainHTTPSecretKey,
 			))
 		}
-		if transport.CAFrom != nil {
-			environment = append(environment, requiredSecretEnv(
+		// Plain HTTP makes no TLS connection, so a CA pin has nothing to bind
+		// there; sending the credential in clear text takes the owner's
+		// allowPlainHTTP grant instead.
+		if !transport.PlainHTTP {
+			environment = append(environment, caGrantEnv(
 				runner.EnvOCICASHA256Grant,
 				auth.Name,
 				operatorv1alpha1.RegistryCASHA256SecretKey,
+				transport.CAFrom != nil,
 			))
 		}
 	}
