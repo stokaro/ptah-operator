@@ -116,6 +116,10 @@ func TestDecisionAfterRunRefusesEachClause(t *testing.T) {
 		"another run": func(*ptahv1alpha1.PtahMigrationStatus) string { return "another-job" },
 		"no run":      func(status *ptahv1alpha1.PtahMigrationStatus) string { status.LastRun = nil; return refused },
 		"no plan":     func(status *ptahv1alpha1.PtahMigrationStatus) string { status.Plan = nil; return refused },
+		"a plan with no name": func(status *ptahv1alpha1.PtahMigrationStatus) string {
+			status.Plan.Name = ""
+			return refused
+		},
 		"a decision already made": func(status *ptahv1alpha1.PtahMigrationStatus) string {
 			setReadingCondition(status, ptahv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, "Approved")
 			return refused
