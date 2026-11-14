@@ -16,6 +16,54 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.13
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRD schemas do not change. The executor moves to Ptah
+v0.28.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.28.0 and planned.
+A schema Apply that sends a statement now creates the table
+`ptah_schema_apply_log` in the target database, as the login in the schema's
+Secret, and writes a row to it before its first statement and one when it ends. A tool that lists the tables a
+database should hold, or an audit that alerts on `CREATE TABLE`, has to expect
+that table. Under the MySQL and MariaDB grant
+[MySQL authority](../databases/#mysql-authority) documents, the login can create
+the table and not insert into it, so both rows are lost while the Apply ends as
+before. Where you want the rows, grant `INSERT` on the table once an Apply has
+created it. A MySQL or MariaDB migration login without `ALTER` on
+`schema_migrations_log` loses that log's rows from its first run under v0.28.0,
+and `RunLogged` goes `False` with `LogEntriesLost`; add the two columns
+[Who the database's log names](../../use/migrations/#who-the-databases-log-names)
+shows before the upgrade. A database audit that lists what the executor sends
+has to expect the statements the executor bullet names. Nothing else.
+
+- **A schema Apply leaves a record in the database.** Ptah v0.28.0 keeps a log
+  of each schema Apply that sends a statement
+  ([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)): a `started`
+  row before the first statement, and one when the Apply ends with its outcome
+  and the statement it stopped at, both naming the plan and its digest. A write
+  the database refuses changes neither the outcome nor the exit status, and the
+  operator does not read what Ptah reports about those writes, so a lost row
+  shows nowhere in the resource. Nothing is written for a dry run, a stale plan
+  Ptah refuses, or a plan with no changes. The rows name no approver and no
+  operation yet, since the operator passes Ptah neither; the API audit log is
+  still the record of who approved a schema change.
+  [What the operator records](../../use/audit/#coverage) lists the table.
+- **The migration log gains two columns.** Ptah v0.28.0 adds `run_reference`
+  and `actor_origin` to `schema_migrations_log`, nullable, and adds them to a
+  log an earlier build created on the first run that writes to it. The
+  operator fills neither yet.
+- **Executor.** The verified executor is now Ptah v0.28.0. Each schema read of
+  both engines leaves `ptah_schema_apply_log` out of its catalog queries, beside
+  the migration tables it already left out, and sends nothing else new. The
+  Apply adds `CREATE TABLE IF NOT EXISTS ptah_schema_apply_log` and an `INSERT`
+  for each row, and on PostgreSQL a read of the table's owner before and after
+  the `CREATE`. A migration run adds an `ALTER TABLE` of
+  `schema_migrations_log` once, where the log lacks the new columns.
+  `migrations up` can now check drift against the applied history
+  ([stokaro/ptah#5994](https://github.com/stokaro/ptah/pull/5994)), and the
+  operator does not ask it to.
+
 ## 0.2.12
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
