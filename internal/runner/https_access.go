@@ -166,8 +166,13 @@ func PrepareHTTPSSourceAccess(source HTTPSSource, environment []string, tempDir 
 	credentialed := username != "" || token != ""
 	if credentialed {
 		grant := values[EnvHTTPSHostGrant]
-		if grant != "" && sourcehost.CheckASCII(grant) != nil {
-			return httpsTrust{}, nil, fmt.Errorf("the HTTPS credential's host grant is not printable ASCII: %w", sourcehost.ErrNotASCII)
+		// A grant is not a credential, so the refusal names it, escaped: a
+		// Secret written by kubectl create secret --from-file ends in a
+		// newline, and only the escaped value shows it.
+		if grant != "" {
+			if err := sourcehost.CheckASCII(grant); err != nil {
+				return httpsTrust{}, nil, fmt.Errorf("the HTTPS credential's host grant is refused: %w", err)
+			}
 		}
 		if !sourcehost.Equal(grant, source.authority()) {
 			return httpsTrust{}, nil, errors.New("the HTTPS credential is not granted for the source's host")

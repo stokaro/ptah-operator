@@ -157,8 +157,13 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 	credentialed := values[EnvGitUsername] != "" || values[EnvGitPassword] != "" || values[EnvGitSSHKeyFile] != ""
 	if credentialed {
 		grant := values[EnvGitHostGrant]
-		if grant != "" && sourcehost.CheckASCII(grant) != nil {
-			return gitTrust{}, nil, fmt.Errorf("the Git credential's host grant is not printable ASCII: %w", sourcehost.ErrNotASCII)
+		// A grant is not a credential, so the refusal names it, escaped: a
+		// Secret written by kubectl create secret --from-file ends in a
+		// newline, and only the escaped value shows it.
+		if grant != "" {
+			if err := sourcehost.CheckASCII(grant); err != nil {
+				return gitTrust{}, nil, fmt.Errorf("the Git credential's host grant is refused: %w", err)
+			}
 		}
 		if !sourcehost.Equal(grant, source.authority()) {
 			return gitTrust{}, nil, errors.New("the Git credential is not granted for the source's host")

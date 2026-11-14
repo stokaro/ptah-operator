@@ -115,7 +115,12 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		{name: "a URL host with U+0130 and no credential",
 			source: GitSource{URL: "https://g%C4%B0t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"}, refusal: "in its xn-- form"},
 		{name: "a host grant with U+0130 for the ASCII name", source: https,
-			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=g\u0130t.example.com"}, refusal: "host grant is not printable ASCII"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=g\u0130t.example.com"},
+			refusal:     `host grant is refused: the host "g\u0130t.example.com" is not printable ASCII`},
+		// kubectl create secret --from-file keeps the file's last newline.
+		{name: "a host grant with a trailing newline", source: https,
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com\n"},
+			refusal:     `host grant is refused: the host "git.example.com\n" is not printable ASCII`},
 		{name: "an xn-- host granted as written",
 			source:      GitSource{URL: "https://xn--git-9dc.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
 			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=xn--git-9dc.EXAMPLE.com"}},

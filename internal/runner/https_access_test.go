@@ -109,7 +109,12 @@ func TestPrepareHTTPSSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 			source:  with(archive, func(s *HTTPSSource) { s.URL = "https://f%C4%B0les.example.com/app/1.4.0/app.tar.gz" }),
 			refusal: "in its xn-- form"},
 		{name: "a host grant with U+0130 for the ASCII name", source: archive,
-			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=f\u0130les.example.com"}, refusal: "host grant is not printable ASCII"},
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=f\u0130les.example.com"},
+			refusal:     `host grant is refused: the host "f\u0130les.example.com" is not printable ASCII`},
+		// kubectl create secret --from-file keeps the file's last newline.
+		{name: "a host grant with a trailing newline", source: archive,
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=files.example.com\n"},
+			refusal:     `host grant is refused: the host "files.example.com\n" is not printable ASCII`},
 		{name: "an xn-- host granted as written",
 			source:      with(archive, func(s *HTTPSSource) { s.URL = "https://xn--files-8fd.example.com/app/1.4.0/app.tar.gz" }),
 			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=XN--FILES-8FD.example.com"}},
