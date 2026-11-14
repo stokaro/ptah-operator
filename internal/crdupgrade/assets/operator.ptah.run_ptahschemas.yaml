@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "19"
-    operator.ptah.run/crd-schema-digest: "sha256:c66e75af1cf03886ec0260fafff6c661c1fce4d6ee9932d5dc7abeadaa007653"
+    operator.ptah.run/crd-schema-version: "20"
+    operator.ptah.run/crd-schema-digest: "sha256:c6e444323c2ea7369706864bd5f27a0f672210fa0663d0046861abba94aa2bec"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1917,6 +1917,53 @@ spec:
                         lastAt:
                           format: date-time
                           type: string
+                        migrationLog:
+                          properties:
+                            losses:
+                              items:
+                                properties:
+                                  errorNumber:
+                                    format: int32
+                                    maximum: 65535
+                                    minimum: 0
+                                    type: integer
+                                  sqlState:
+                                    pattern: ^[0-9A-Z]{5}$
+                                    type: string
+                                  state:
+                                    enum:
+                                    - Started
+                                    - Applied
+                                    - Failed
+                                    type: string
+                                  version:
+                                    format: int64
+                                    minimum: 1
+                                    type: integer
+                                required:
+                                - state
+                                - version
+                                type: object
+                              maxItems: 16
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            lost:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                            written:
+                              format: int32
+                              minimum: 0
+                              type: integer
+                          required:
+                          - lost
+                          - written
+                          type: object
+                          x-kubernetes-validations:
+                          - message: losses lists the first lost entries, up to 16,
+                              and lost counts them all
+                            rule: 'has(self.losses) ? size(self.losses) == (self.lost
+                              < 16 ? self.lost : 16) : self.lost == 0'
                         operation:
                           enum:
                           - Resolve

@@ -2,11 +2,11 @@ package crdschemahistory
 
 import "testing"
 
-// TestHTTPSSourceBreakHoldsForEveryVersion18Object holds the declared break to
-// its reason: every rule schema version 19 changes or adds holds for each
-// shape a version 18 schema admitted, and each refuses an object it exists to
+// TestHTTPSSourceBreakHoldsForEveryVersion19Object holds the declared break to
+// its reason: every rule schema version 20 changes or adds holds for each
+// shape a version 19 schema admitted, and each refuses an object it exists to
 // refuse, so the evaluation is not vacuous.
-func TestHTTPSSourceBreakHoldsForEveryVersion18Object(t *testing.T) {
+func TestHTTPSSourceBreakHoldsForEveryVersion19Object(t *testing.T) {
 	t.Parallel()
 	policy := map[string]any{"name": "verification", "key": "policy.yaml"}
 	configMap := map[string]any{"name": "orders-schema", "items": []any{map[string]any{"key": "a", "path": "a.sql"}}}
@@ -29,7 +29,7 @@ func TestHTTPSSourceBreakHoldsForEveryVersion18Object(t *testing.T) {
 	}
 	for _, source := range sources {
 		if !evaluateRule(t, ruleOneOfFourSources, source) {
-			t.Errorf("%q refuses the version 18 source %v", ruleOneOfFourSources, source)
+			t.Errorf("%q refuses the version 19 source %v", ruleOneOfFourSources, source)
 		}
 		if !evaluateRule(t, ruleSchemaHTTPSFile, map[string]any{"desired": source}) {
 			t.Errorf("%q refuses the schema spec desiring %v", ruleSchemaHTTPSFile, source)
@@ -40,7 +40,7 @@ func TestHTTPSSourceBreakHoldsForEveryVersion18Object(t *testing.T) {
 	}
 	for _, binding := range bindings {
 		if !evaluateRule(t, ruleOneOfFourBindings, binding) {
-			t.Errorf("%q refuses the version 18 binding %v", ruleOneOfFourBindings, binding)
+			t.Errorf("%q refuses the version 19 binding %v", ruleOneOfFourBindings, binding)
 		}
 	}
 	for rule, self := range map[string]map[string]any{

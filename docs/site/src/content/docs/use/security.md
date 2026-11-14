@@ -780,14 +780,20 @@ cut cannot be recovered from the log. Encoding can take a name over the bound: a
 Cyrillic letter takes 6 bytes and an emoji 12.
 
 **When the row is lost.** Ptah writes the log beside the run, and a failed write
-does not fail the run: the migration applies and exits 0, and the only trace is
-a warning on the executor's stderr. The encoded name itself no longer causes
-that. Measured on Ptah v0.18.0, it is stored byte for byte in MySQL under
-`latin1`, `utf8mb3` and `utf8mb4`, strict or not, and in PostgreSQL under
-`LATIN1`, `SQL_ASCII` and `UTF8`. Anything else that refuses the write still
-loses the row, such as a trigger or a privilege that makes the table read-only.
-A run Ptah stops before it selects a migration writes no row at all, as on a
-database it could not open or a history that moved after the approval.
+does not fail the run: the migration applies and exits 0. The run's report names
+each entry the database refused, and the operator records the count and the
+codes the database answered with on `status.lastRun.migrationLog` and the run's
+journal entry, and sets `RunLogged` False until a later run writes all of its
+entries. It keeps none of Ptah's message about the refusal, which can quote the
+name. The encoded name itself no longer causes a lost row. Measured on Ptah
+v0.18.0, it is stored byte for byte in MySQL under `latin1`, `utf8mb3` and
+`utf8mb4`, strict or not, and in PostgreSQL under `LATIN1`, `SQL_ASCII` and
+`UTF8`. Anything else that refuses the write still loses the row, such as a
+trigger, a privilege that makes the table read-only, or a table created before
+Ptah created it with a narrower `actor` column, which MySQL refuses with error
+1406. A run Ptah stops before it selects a migration writes no row at all, as on
+a database it could not open or a history that moved after the approval, and
+reports none lost.
 
 ## Output handling
 

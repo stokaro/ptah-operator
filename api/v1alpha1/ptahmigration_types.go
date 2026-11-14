@@ -543,6 +543,14 @@ type MigrationRunStatus struct {
 	// for a reader that should not depend on their wording.
 	// +optional
 	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
+
+	// MigrationLog is what the run's writes to the database's own record of
+	// migrations came to, when the run reported it. It is absent for a run
+	// that left no readable report, for one that stopped before it selected
+	// anything, and for one a release without this field recorded: none of
+	// them says whether the record is complete.
+	// +optional
+	MigrationLog *MigrationLogStatus `json:"migrationLog,omitempty"`
 }
 
 // MigrationRunAuthorizationKind says what allowed a run.
@@ -626,6 +634,68 @@ type MigrationRunFailureStatus struct {
 	// +optional
 	SQLState string `json:"sqlState,omitempty"`
 	// ErrorNumber is MySQL's own error number, zero on every other protocol.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	ErrorNumber int32 `json:"errorNumber,omitempty"`
+}
+
+// MigrationLogStatus is what a run's writes to schema_migrations_log came to:
+// the table Ptah keeps beside the revision table, with an entry before each
+// migration a run starts and one after it applied or failed, naming the
+// actor, the approver for a run a person approved. It is the record of the run
+// that stays with the database after the cluster is gone.
+//
+// The database can refuse an entry and keep the migration, as MySQL refuses a
+// value longer than the table's column holds. The run carries on, so its
+// outcome, which Ptah reads from the revision table, is unchanged, and nothing
+// writes the entry later. This says how many entries the record lacks and
+// why, with the code the database answered and none of its message, which can
+// quote the value it refused.
+// +kubebuilder:validation:XValidation:rule="has(self.losses) ? size(self.losses) == (self.lost < 16 ? self.lost : 16) : self.lost == 0",message="losses lists the first lost entries, up to 16, and lost counts them all"
+type MigrationLogStatus struct {
+	// Written is how many of the run's entries the database accepted.
+	// +kubebuilder:validation:Minimum=0
+	Written int32 `json:"written"`
+	// Lost is how many it refused. The record of the run is incomplete when
+	// it is not zero.
+	// +kubebuilder:validation:Minimum=0
+	Lost int32 `json:"lost"`
+	// Losses are the first sixteen entries the database refused, in the order
+	// the run tried them.
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Losses []MigrationLogLossStatus `json:"losses,omitempty"`
+}
+
+// MigrationLogEntryState is what a migration log entry records.
+// +kubebuilder:validation:Enum=Started;Applied;Failed
+type MigrationLogEntryState string
+
+const (
+	// MigrationLogEntryStarted is the entry written before a migration runs.
+	MigrationLogEntryStarted MigrationLogEntryState = "Started"
+	// MigrationLogEntryApplied is the entry written after it applied.
+	MigrationLogEntryApplied MigrationLogEntryState = "Applied"
+	// MigrationLogEntryFailed is the entry written after it failed.
+	MigrationLogEntryFailed MigrationLogEntryState = "Failed"
+)
+
+// MigrationLogLossStatus is one entry the database refused.
+type MigrationLogLossStatus struct {
+	// Version is the migration the entry is about.
+	// +kubebuilder:validation:Minimum=1
+	Version int64 `json:"version"`
+	// State is what the entry would have recorded.
+	State MigrationLogEntryState `json:"state"`
+	// SQLState is the SQLSTATE the database answered with, empty when it gave
+	// none.
+	// +kubebuilder:validation:Pattern=`^[0-9A-Z]{5}$`
+	// +optional
+	SQLState string `json:"sqlState,omitempty"`
+	// ErrorNumber is MySQL's own error number, such as 1406 for a value too
+	// long for its column, and zero on every other protocol.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=65535
 	// +optional
@@ -867,6 +937,11 @@ const (
 	// ConditionMigrationDatabaseReachable reports whether the target answered
 	// the last operation that opened it, and why it did not.
 	ConditionMigrationDatabaseReachable = "DatabaseReachable"
+	// ConditionMigrationRunLogged reports whether the database accepted every
+	// entry the last run that reported on schema_migrations_log wrote there.
+	// It stays as it is until the next run that reports, so a run that left no
+	// report does not clear a record another run left incomplete.
+	ConditionMigrationRunLogged = "RunLogged"
 )
 
 // +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.size() <= 63",message="metadata.name must be at most 63 bytes, because it is carried whole in the labels of the Jobs this resource dispatches",optionalOldSelf=true
@@ -920,6 +995,13 @@ const (
 	// never rolls a database back to match an older artifact, and which of the
 	// two is wrong is not a question a controller can answer.
 	ReasonHistoryAhead ConditionReason = "HistoryAhead"
+	// ReasonLogWritten means the database accepted every entry the last run
+	// that reported on schema_migrations_log wrote there.
+	ReasonLogWritten ConditionReason = "LogWritten"
+	// ReasonLogEntriesLost means the database refused entries that run wrote
+	// to schema_migrations_log, so its record of the run is incomplete. The
+	// run's outcome is unchanged: the migrations it applied are applied.
+	ReasonLogEntriesLost ConditionReason = "LogEntriesLost"
 )
 
 // ConditionMigrationArtifactVerified reports that the resolved artifact

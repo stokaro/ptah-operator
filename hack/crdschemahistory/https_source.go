@@ -2,31 +2,31 @@ package crdschemahistory
 
 import "strconv"
 
-// A resource's source union gains an HTTPS download (#1041). Schema version 19
-// changes the rules that existed at version 18 so they count four members
+// A resource's source union gains an HTTPS download (#1041). Schema version 20
+// changes the rules that existed at version 19 so they count four members
 // instead of three, and adds one rule to each kind's spec, and the verifier
 // cannot tell on its own that no stored object fails them. None does, because
-// a version 18 object had no https field:
+// a version 19 object had no https field:
 //
-//   - a source at version 18 had exactly one of ociRef, configMap and git, so
+//   - a source at version 19 had exactly one of ociRef, configMap and git, so
 //     it has exactly one of the four;
-//   - an access binding at version 18 had exactly one of resolvedReference,
+//   - an access binding at version 19 had exactly one of resolvedReference,
 //     snapshot and git, so it has exactly one of the four;
-//   - a schema's spec at version 18 had no desired.https, so the rule that an
+//   - a schema's spec at version 19 had no desired.https, so the rule that an
 //     HTTPS path selects a file holds for it, and a migration's spec had no
 //     artifact.https, so the rule that its format is an archive holds.
 //
-// TestHTTPSSourceBreakHoldsForEveryVersion18Object evaluates each rule against
+// TestHTTPSSourceBreakHoldsForEveryVersion19Object evaluates each rule against
 // those shapes.
 var httpsSourceBreak = declaredBreak{
-	version: 19,
+	version: 20,
 	reason: "a source may be an HTTPS download; the source and access-binding rules count four members, a schema's " +
 		"HTTPS path has to select a file, a migration's HTTPS format has to be an archive, and every object a " +
-		"version 18 schema admitted had exactly one of the other three and no https",
+		"version 19 schema admitted had exactly one of the other three and no https",
 	transitions: httpsSourceTransitions(),
 }
 
-// The rules schema version 19 changes, as the API types declare them.
+// The rules schema version 20 changes, as the API types declare them.
 const (
 	ruleOneOfFourSources      = "[has(self.ociRef), has(self.configMap), has(self.git), has(self.https)].filter(set, set).size() == 1"
 	ruleOneOfFourBindings     = "[has(self.resolvedReference), has(self.snapshot), has(self.git), has(self.https)].filter(set, set).size() == 1"

@@ -436,6 +436,9 @@ type migrationRun struct {
 	migration *operatorv1alpha1.PtahMigration
 	targetID  string
 	realm     string
+	// actor is the name an Apply records in schema_migrations_log, as the
+	// manager passes it. A row that sets none leaves Ptah its own fallback.
+	actor string
 }
 
 func (l *lab) newMigration(t *testing.T, family, engine, url string, artifact operatorv1alpha1.SourceSpec) *migrationRun {
@@ -562,6 +565,7 @@ func (m *migrationRun) applyPlanned(name string, planned []operatorv1alpha1.Plan
 	dispatchNotAfter := metav1.NewTime(operation.StartedAt.Add(300 * time.Second))
 	operation.DispatchNotAfter = &dispatchNotAfter
 	operation.ExecutionNotAfter = dispatchNotAfter.DeepCopy()
+	operation.Actor = m.actor
 	job := m.build(operation, plan)
 	row := m.row(name, runner.OperationMigrationApply, job)
 	for _, change := range adjust {

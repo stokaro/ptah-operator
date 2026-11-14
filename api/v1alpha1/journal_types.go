@@ -219,6 +219,11 @@ type JournalEntry struct {
 	// status.lastRun.failure said.
 	// +optional
 	Failure *MigrationRunFailureStatus `json:"failure,omitempty"`
+	// MigrationLog is what a PtahMigration's run wrote to the database's own
+	// record of migrations, as status.lastRun.migrationLog said. A run whose
+	// lost count is not zero left that record incomplete.
+	// +optional
+	MigrationLog *MigrationLogStatus `json:"migrationLog,omitempty"`
 	// ApplyFailure is where a PtahSchema's Apply stopped, as
 	// status.pendingObservation.applyFailure said. An Apply that ends Unknown
 	// carries it when the run named the statement it stopped at.

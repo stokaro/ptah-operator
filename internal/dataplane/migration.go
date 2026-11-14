@@ -158,9 +158,13 @@ type MigrationRunReport struct {
 	Applied         []int64 `json:"applied,omitempty"`
 	// Error is why the run failed. Its message can quote a row, so the runner
 	// reads its kind and drops the object before the report reaches a frame.
-	Error   *CommandError          `json:"error,omitempty"`
-	Failure *MigrationRunFailure   `json:"failure,omitempty"`
-	Status  *MigrationStatusReport `json:"status,omitempty"`
+	Error   *CommandError        `json:"error,omitempty"`
+	Failure *MigrationRunFailure `json:"failure,omitempty"`
+	// MigrationLog is what the run's writes to the migration log came to. A
+	// run that keeps no log, or a Ptah before v0.23.0, reports none, which
+	// says nothing either way about the log.
+	MigrationLog *MigrationLogReport    `json:"migration_log,omitempty"`
+	Status       *MigrationStatusReport `json:"status,omitempty"`
 }
 
 // StoppedBeforeSelecting reports a run that failed before Ptah selected any
@@ -449,6 +453,11 @@ func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
 	}
 	if report.Failure != nil {
 		if err := report.Failure.validate(report); err != nil {
+			return MigrationRunReport{}, err
+		}
+	}
+	if report.MigrationLog != nil {
+		if err := report.MigrationLog.Validate(report.Planned); err != nil {
 			return MigrationRunReport{}, err
 		}
 	}

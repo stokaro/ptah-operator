@@ -62,8 +62,11 @@ func TestTextPrintsEveryFieldAnEntryRecords(t *testing.T) {
 		"AppliedVersions":  int32(13),
 		"Failure":          &operatorv1alpha1.MigrationRunFailureStatus{Version: 17, Statement: 19, Statements: 23, SQLState: "42P07", ErrorNumber: 1050},
 		"ApplyFailure":     &operatorv1alpha1.SchemaApplyFailureStatus{Statement: 29, Statements: 31, SQLState: "23505", ErrorNumber: 1062},
-		"Acknowledgment":   "field-acknowledgment",
-		"AcknowledgedBy":   "field-acknowledger@example.com",
+		"MigrationLog": &operatorv1alpha1.MigrationLogStatus{Written: 37, Lost: 1, Losses: []operatorv1alpha1.MigrationLogLossStatus{
+			{Version: 47, State: operatorv1alpha1.MigrationLogEntryApplied, SQLState: "22001", ErrorNumber: 1406},
+		}},
+		"Acknowledgment": "field-acknowledgment",
+		"AcknowledgedBy": "field-acknowledger@example.com",
 	}
 	// What the text says for each field, where it is not the value itself.
 	printed := map[string]string{
@@ -79,6 +82,8 @@ func TestTextPrintsEveryFieldAnEntryRecords(t *testing.T) {
 		"AppliedVersions":  "  Versions applied:   13\n",
 		"Failure":          "  Stopped at:         version 17, statement 19 of 23, SQLSTATE 42P07, error 1050\n",
 		"ApplyFailure":     "  Stopped at:         statement 29 of 31, SQLSTATE 23505, error 1062\n",
+		"MigrationLog": "  Migration log:      1 of 38 entries refused, so the database's record of the run is incomplete: " +
+			"version 47 Applied (SQLSTATE 22001, error 1406)\n",
 	}
 
 	var entry operatorv1alpha1.JournalEntry

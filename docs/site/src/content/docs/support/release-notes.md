@@ -19,9 +19,13 @@ out of silence.
 ## 0.2.12
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRD schemas gain the HTTPS source, so the CRD schema
-version moves and [a rollback](../../use/operations/#rollback) to 0.2.11 is
-refused once this release has updated the CRDs. An installation that renders
+on the upgrade. The CRD schemas gain the record of a migration run's
+`schema_migrations_log` writes and the HTTPS source, so the CRD schema version
+moves from 18 to 20. Once this release's hook has updated the CRDs, 0.2.11's
+CRD hook refuses [a rollback](../../use/operations/#rollback) to 0.2.11: a
+release's hook refuses CRD schemas newer than the release reads, and 0.2.11
+reads neither field.
+An installation that renders
 the chart's rules gains `PtahOperatorJournalLinesDropped`. Set
 `monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
 The executor moves to Ptah v0.26.0, which retires the execution binding:
@@ -44,8 +48,25 @@ waits for an approval. An alert or a script that matches `child_exit` or
 match `desired_schema_invalid`, and an index on a column its table does not
 declare now stops the Observe and the Plan with that reason rather than
 reaching the database at Apply. A database audit that lists what the executor
-sends has to expect the reads the executor bullet names. Nothing else.
+sends has to expect the reads the executor bullet names. A consumer that reads
+every condition of a `PtahMigration` has to expect `RunLogged`. Nothing else.
 
+- **A migration run says when the database lost its log entries.** Ptah
+  writes an entry to `schema_migrations_log` before and after each migration,
+  and a write the database refuses does not stop the run. Since v0.23.0 Ptah
+  reports each entry it lost
+  ([stokaro/ptah#5541](https://github.com/stokaro/ptah/pull/5541)), and the
+  operator now records it: `status.lastRun.migrationLog` and the run's
+  `RunFinished` journal entry count the entries the database accepted and
+  refused, and name the first sixteen refused by version, state, SQLSTATE and
+  MySQL error number. The new `RunLogged` condition is `False` with
+  `LogEntriesLost` until a later run writes all of its entries, and `True` with
+  `LogWritten` then. Neither carries Ptah's message, which can quote the value
+  refused. The run's outcome does not change. `kubectl ptah migration` and
+  `kubectl ptah history` print the record. The runner carries it as an
+  optional field of the run it already reports, so the runner protocol stays 1.
+  [A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
+  says what to check.
 - **A source can be an HTTPS download pinned by its digest.**
   `spec.desired.https` and `spec.artifact.https` name a URL, the SHA-256 of
   the bytes it serves, a format (`File`, `TarGzip` or `Zip`) and the path the

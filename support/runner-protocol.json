@@ -405,7 +405,12 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:326b626834adc3fd103b8d6d7706b5251cffe2ba12af0fdf329727930b172b8e",
+      "sourceDigest": "sha256:bb976e641f9967dab965f07f6882c23cf1926838098531e61901e96bede4a756",
+      "reason": "Carry the entries a migration run could not write to its log (#1063). A migrations up report may carry Ptah's migration_log: how many entries the run wrote to schema_migrations_log and, for each the database refused, the operation, version, state, SQLSTATE and MySQL error number. internal/dataplane holds it to the forms Ptah's contract gives and to two entries for each planned migration, the runner clears every message before the frame, since Ptah's can quote the value refused, and the manager refuses a frame whose record still carries one. The outcome is read as before, so a run whose log was refused still applies. Commands, arguments, delivery identity, SQL authority and retry limits are the same, and protocol 1 stays. A manager without this change decodes the frame leniently and reads it without the record, and a 0.2.11 manager does not meet one: it harvests a Job only when its own execution binding rebuilds it, and the binding names the Ptah version and the executor image, which differ."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:b199bec8428ded7f7db7a2571f7c94e0a4d0da4605a97c59bdf398914fad79eb",
       "reason": "Pull an HTTPS source (#1041). A Resolve may run ptah schema or migrations pull on an https:// URL held to the download digest the spec pins, and its frame carries resolvedDownloadDigest beside resolvedContentDigest and resolvedContentBytes, on a Resolve only and never beside a commit or an OCI descriptor. A new fetch mode, --fetch-https-source, pulls the bound download before an operation, held to both digests, and copies only files that give the content digest. Before Ptah runs, the runner refuses as invalid_https_access a credential granted for another host, a grant with no credential, a mixed or incomplete credential and a CA that does not give its granted digest. OCI and Git Jobs run the same commands with the same arguments and frames. A manager without this change never meets the new field: it builds no HTTPS Job, and it harvests a Job only when its own execution binding rebuilds it. Protocol 1 stays."
     }
   ]

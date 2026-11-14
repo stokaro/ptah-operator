@@ -616,6 +616,19 @@ store it, and so are `%` and `$`. An ordinary username or email reads unchanged,
 and `oidc:José García` reads `oidc:Jos%C3%A9 Garc%C3%ADa`. Read it back with a
 percent decoder that leaves `+` alone, such as Python's `urllib.parse.unquote`.
 
+A row the database refuses does not stop the run, and nothing writes it later.
+The run's `status.lastRun.migrationLog` and its `RunFinished` journal entry say
+how many rows it wrote and lost, and `RunLogged` turns False with
+`LogEntriesLost` until a later run writes all of its rows:
+
+```text
+  Migration log:      6 of 6 entries refused, so the database's record of the run is incomplete: version 1 Started (SQLSTATE 22001, error 1406), ...
+```
+
+The outcome stays what the revision table says.
+[A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
+says what to check.
+
 The value is personal data, and `provided` means Ptah took the name on trust.
 [The approver's name in the target
 database](../security/#approver-in-the-database) says what that means and when a

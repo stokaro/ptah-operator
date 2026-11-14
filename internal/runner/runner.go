@@ -522,6 +522,10 @@ func decodeMigrationReport(
 	}
 	report.Error = nil
 	redactMigrationHistoryError(report.Status)
+	// A lost log entry's message can quote part of the value the database
+	// refused, such as the actor. What the frame keeps of it is the entry and
+	// the code the database answered with.
+	report.MigrationLog.ClearMessages()
 	result.MigrationRun = &report
 	// The report is the only thing that may narrow what was claimed before the
 	// child ran: an outcome that moved nothing releases the mutation claim, and
