@@ -413,7 +413,8 @@ func (c *httpsRun) reset() {
 		objects = append(objects, &ptahv1alpha1.PtahMigration{ObjectMeta: c.meta(name)})
 	}
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema, httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema,
+		httpsSizePolicySchema,
 	} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: c.meta(name)})
 	}
@@ -738,9 +739,45 @@ func (c *httpsRun) onlyResolveJobs(label, name string) {
 
 // redirectToAnotherOrigin names a credentialed download whose URL redirects
 // to the other Service name. Ptah refuses the redirect at the Resolve, so
-// the credential goes nowhere else: the other origin received no request.
+// the credential goes nowhere else: the other origin received no credential
+// and no request for the path the redirect names.
+//
+// The same redirect with no credential set comes first, and Ptah follows it:
+// that Resolve reads the file from the other origin, which the server logs
+// under the other name. It is what makes the other origin's silence a
+// refusal rather than an origin nothing could reach.
 func (c *httpsRun) redirectToAnotherOrigin() {
 	c.t.Helper()
+	content, err := httpsfixture.SchemaContent(httpsfixture.SchemaFile)
+	c.check(err, "digest the schema")
+	control := httpsSourceDocument{
+		url: c.url("away/public", httpsfixture.SchemaFile), digest: c.digests[httpsfixture.SchemaFile],
+		format: ptahv1alpha1.HTTPSFormatFile, path: httpsfixture.SchemaFile,
+	}
+	c.check(c.create(c.schemaDocument(httpsRedirectControl, httpsSchemaSecret, httpsRefusedKey, control)), "create PtahSchema %s", httpsRedirectControl)
+	// The resolution is what this waits for, and it is recorded before the
+	// Observe that follows it reads the database, so an Observe that fails
+	// afterwards on the shared target does not fail the control.
+	var followed *ptahv1alpha1.PtahSchema
+	c.wait(httpsRedirectControl+" to follow the redirect without a credential", func() (bool, string) {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if err := c.get(httpsRedirectControl, schema); err != nil {
+			return false, err.Error()
+		}
+		if schema.Status.Source.HTTPS != nil {
+			followed = schema
+			return true, ""
+		}
+		if failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed); failed != nil &&
+			failed.Status == metav1.ConditionTrue {
+			c.fatalf("%s was refused at its Resolve; %s", httpsRedirectControl, failedConditions(c.scanner, schema.Status.Conditions))
+		}
+		return false, string(schema.Status.Phase)
+	})
+	c.check(httpsResolvedTo(followed.Status.Source.HTTPS, control.url, ptahv1alpha1.HTTPSFormatFile, httpsfixture.SchemaFile,
+		control.digest, content), "the source of %s", httpsRedirectControl)
+	c.deleteAndWait(followed)
+
 	source := httpsSourceDocument{
 		url: c.url("away/basic", httpsfixture.SchemaFile), digest: c.digests[httpsfixture.SchemaFile],
 		format: ptahv1alpha1.HTTPSFormatFile, path: httpsfixture.SchemaFile, credential: httpsBasicCredential,
@@ -748,8 +785,12 @@ func (c *httpsRun) redirectToAnotherOrigin() {
 	c.check(c.create(c.schemaDocument(httpsRedirectSchema, httpsSchemaSecret, httpsRefusedKey, source)), "create PtahSchema %s", httpsRedirectSchema)
 	refusal := c.refusedAtResolve(httpsRedirectSchema, says(httpsRedirectRefusal))
 	c.deleteAndWait(c.onlyResolved(httpsRedirectSchema))
-	c.check(httpsRedirectStoppedAtTheOrigin(c.requests(), c.host, "/away/basic/"+httpsfixture.SchemaFile, c.other), "the server's log")
-	c.logf("PASS a redirect to another origin was refused with the credential set, and that origin received nothing: %s", refusal)
+	c.check(httpsRedirectStoppedAtTheOrigin(c.requests(), c.host, c.other,
+		httpsRedirect{from: "/away/basic/" + httpsfixture.SchemaFile, to: "/basic/" + httpsfixture.SchemaFile},
+		httpsRedirect{from: "/away/public/" + httpsfixture.SchemaFile, to: "/public/" + httpsfixture.SchemaFile},
+	), "the server's log")
+	c.logf("PASS a redirect to another origin was followed with no credential and refused with one, "+
+		"and that origin received neither the credential nor the request: %s", refusal)
 }
 
 // credentialForAnotherHost names a credential whose owner granted it for
@@ -764,7 +805,7 @@ func (c *httpsRun) credentialForAnotherHost() {
 	c.check(c.create(c.schemaDocument(httpsElsewhereSchema, httpsSchemaSecret, httpsRefusedKey, source)), "create PtahSchema %s", httpsElsewhereSchema)
 	refusal := c.refusedAtResolve(httpsElsewhereSchema, says(httpsElsewhereRefusal))
 	c.deleteAndWait(c.onlyResolved(httpsElsewhereSchema))
-	c.check(httpsNoRequestFor(c.requests(), "/bearer/"+httpsfixture.SchemaFile), "the server's log")
+	c.check(httpsNoRequestFor(c.requests(), c.host, "/bearer/"+httpsfixture.SchemaFile), "the server's log")
 	c.logf("PASS a credential granted for another host was refused before Ptah ran: %s", refusal)
 }
 
@@ -836,7 +877,7 @@ func (c *httpsRun) sourcePolicy() {
 	if jobs := c.jobsOf(labelSchema, httpsHostPolicySchema); len(jobs) != 0 {
 		c.fatalf("a host the policy refuses got %d Jobs, the first %s", len(jobs), jobs[0].Name)
 	}
-	c.check(httpsNoRequestFor(c.requests(), "/public/"+httpsfixture.SchemaFile), "the server's log")
+	c.check(httpsNoRequestFor(c.requests(), c.host, "/public/"+httpsfixture.SchemaFile), "the server's log")
 	c.deleteAndWait(schema)
 
 	// The republished row left the server answering the zip with its second
@@ -877,7 +918,8 @@ func (c *httpsRun) cleanup() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema, httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema,
+		httpsSizePolicySchema,
 	} {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {

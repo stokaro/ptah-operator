@@ -63,6 +63,11 @@ const (
 	// httpsInterval is long enough that no periodic refresh lands inside the
 	// phase: every Resolve the phase sees is one it caused.
 	httpsInterval = "1h"
+
+	// httpsRedirectControl is the redirect row's control: the same redirect
+	// to the other origin with no credential set, which Ptah follows. It
+	// takes the refused sources' realm, and is removed once it resolved.
+	httpsRedirectControl = "e2e-https-redirect-public"
 )
 
 // What the refused sources' rows match in a condition message: Ptah's words
@@ -286,19 +291,38 @@ func httpsServing(logs, file, digest string) bool {
 	return last == digest
 }
 
+// httpsRedirect is a path the server redirects to the other origin and the
+// path it names there.
+type httpsRedirect struct{ from, to string }
+
 // httpsRedirectStoppedAtTheOrigin holds the server's requests to a redirect
-// that Ptah refused to follow: the redirect itself was asked for with the
-// credential and answered, and the other origin received no request at all.
-func httpsRedirectStoppedAtTheOrigin(requests []httpsServed, host, redirect, otherHost string) error {
-	asked := false
+// that Ptah refused to follow beside one it followed. The refused redirect
+// was asked for with the credential and answered on host, and the other
+// origin received neither a credential nor a request for the path it names.
+// The control, the same redirect asked for with no credential, reached the
+// other origin under otherHost: without it, an origin that was unreachable or
+// logged under another name would read as one Ptah never contacted.
+func httpsRedirectStoppedAtTheOrigin(requests []httpsServed, host, otherHost string, refused, control httpsRedirect) error {
+	asked, redirected, followed := false, false, false
 	for _, request := range requests {
-		if request.host == otherHost {
-			return fmt.Errorf("the other origin received %s %s", request.credential, request.path)
+		if request.host == otherHost && (request.credential != "" || request.path == refused.to) {
+			return fmt.Errorf("the other origin received %q %s", request.credential, request.path)
 		}
-		asked = asked || (request.host == host && request.path == redirect && request.status == 302 && request.credential != "")
+		switch {
+		case request.host == host && request.path == refused.from && request.status == 302 && request.credential != "":
+			asked = true
+		case request.host == host && request.path == control.from && request.status == 302 && request.credential == "":
+			redirected = true
+		case request.host == otherHost && request.path == control.to && request.status == 200 && redirected:
+			followed = true
+		}
 	}
-	if !asked {
-		return fmt.Errorf("the server logged no credentialed request for %s that it redirected, in %d requests", redirect, len(requests))
+	switch {
+	case !asked:
+		return fmt.Errorf("the server logged no credentialed request for %s that it redirected, in %d requests", refused.from, len(requests))
+	case !followed:
+		return fmt.Errorf("the server logged no redirect from %s on %s followed to %s on %s without a credential, in %d requests",
+			control.from, host, control.to, otherHost, len(requests))
 	}
 	return nil
 }
@@ -322,14 +346,16 @@ func httpsRedirectFollowed(requests []httpsServed, host, from, to, scheme string
 	return fmt.Errorf("the server logged no %s redirect from %s followed to %s on %s, in %d requests", scheme, from, to, host, len(requests))
 }
 
-// httpsNoRequestFor holds the server's requests to having none for path, and
-// to having some: an empty reading cannot show that a path received nothing.
-func httpsNoRequestFor(requests []httpsServed, path string) error {
+// httpsNoRequestFor holds the server's requests to having none for path on
+// host, and to having some: an empty reading cannot show that a path received
+// nothing. The host is part of the URL a row names: the redirect row's control
+// reads /public/ on the other origin, a URL no other row names.
+func httpsNoRequestFor(requests []httpsServed, host, path string) error {
 	if len(requests) == 0 {
 		return errors.New("the server logged no request at all")
 	}
 	for _, request := range requests {
-		if request.path == path {
+		if request.host == host && request.path == path {
 			return fmt.Errorf("the server received %s %s from %s", request.credential, request.path, request.host)
 		}
 	}

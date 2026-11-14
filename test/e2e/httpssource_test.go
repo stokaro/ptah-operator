@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -303,6 +304,8 @@ const testHTTPSServerLog = `2026/11/13 20:10:01 serving /files over https :8443
 2026/11/13 20:10:09 e2e-https.ptah-test.svc /public/schema.zip  200
 2026/11/13 20:11:30 file schema.zip is sha256:2222222222222222222222222222222222222222222222222222222222222222
 2026/11/13 20:12:00 e2e-https.ptah-test.svc /away/basic/schema.sql Basic 302
+2026/11/13 20:12:20 e2e-https.ptah-test.svc /away/public/schema.sql  302
+2026/11/13 20:12:20 e2e-https-other.ptah-test.svc /public/schema.sql  200
 `
 
 func TestHTTPSServerRequestsReadsEveryRequestAndNothingElse(t *testing.T) {
@@ -313,6 +316,8 @@ func TestHTTPSServerRequestsReadsEveryRequestAndNothingElse(t *testing.T) {
 		{testHTTPSHost, "/basic/schema.sql", "Basic", 200},
 		{testHTTPSHost, "/public/schema.zip", "", 200},
 		{testHTTPSHost, "/away/basic/schema.sql", "Basic", 302},
+		{testHTTPSHost, "/away/public/schema.sql", "", 302},
+		{testHTTPSOther, "/public/schema.sql", "", 200},
 	}
 	if len(requests) != len(want) {
 		t.Fatalf("read %+v, want %+v", requests, want)
@@ -343,19 +348,38 @@ func TestHTTPSServingReadsTheLastDigestOfTheFile(t *testing.T) {
 
 func TestHTTPSRedirectStoppedAtTheOriginNeedsTheRedirectAndNothingElsewhere(t *testing.T) {
 	t.Parallel()
+	refused := httpsRedirect{from: "/away/basic/schema.sql", to: "/basic/schema.sql"}
+	control := httpsRedirect{from: "/away/public/schema.sql", to: "/public/schema.sql"}
 	requests := httpsServerRequests(testHTTPSServerLog)
-	if err := httpsRedirectStoppedAtTheOrigin(requests, testHTTPSHost, "/away/basic/schema.sql", testHTTPSOther); err != nil {
+	if err := httpsRedirectStoppedAtTheOrigin(requests, testHTTPSHost, testHTTPSOther, refused, control); err != nil {
 		t.Fatal(err)
 	}
-	followed := append(requests, httpsServed{testHTTPSOther, "/basic/schema.sql", "Basic", 200})
-	anonymous := httpsServerRequests(strings.ReplaceAll(testHTTPSServerLog, "/away/basic/schema.sql Basic 302", "/away/basic/schema.sql  302"))
-	for name, requests := range map[string][]httpsServed{
-		"a request to the other origin":     followed,
-		"no redirect asked for":             requests[:3],
-		"a redirect without the credential": anonymous,
-		"nothing read":                      nil,
+	// with is the reading with its request at index replaced.
+	with := func(index int, request httpsServed) []httpsServed {
+		changed := slices.Clone(requests)
+		changed[index] = request
+		return changed
+	}
+	controlRedirect, controlFile := requests[4], requests[5]
+	for name, reading := range map[string][]httpsServed{
+		"the refused path followed with the credential": append(slices.Clone(requests), httpsServed{testHTTPSOther, refused.to, "Basic", 200}),
+		// Go drops Authorization on a redirect to another host, so a
+		// followed redirect can arrive with no credential at all.
+		"the refused path followed without it": append(slices.Clone(requests), httpsServed{testHTTPSOther, refused.to, "", 401}),
+		"a credential at the other origin":     with(5, httpsServed{testHTTPSOther, control.to, "Basic", 200}),
+		"no credentialed redirect asked for":   slices.Delete(slices.Clone(requests), 3, 4),
+		"the redirect asked for without the credential": httpsServerRequests(strings.ReplaceAll(testHTTPSServerLog,
+			"/away/basic/schema.sql Basic 302", "/away/basic/schema.sql  302")),
+		// The reading the row accepted before it had a control: an other
+		// origin that never answered reads exactly like one Ptah stayed away from.
+		"no control":                               requests[:4],
+		"the control redirected, not followed":     requests[:5],
+		"the control followed on the first origin": with(5, httpsServed{testHTTPSHost, control.to, "", 200}),
+		"the control's file before its redirect":   append(slices.Clone(requests[:4]), controlFile, controlRedirect),
+		"the control's file refused":               with(5, httpsServed{testHTTPSOther, control.to, "", 404}),
+		"nothing read":                             nil,
 	} {
-		if httpsRedirectStoppedAtTheOrigin(requests, testHTTPSHost, "/away/basic/schema.sql", testHTTPSOther) == nil {
+		if httpsRedirectStoppedAtTheOrigin(reading, testHTTPSHost, testHTTPSOther, refused, control) == nil {
 			t.Errorf("httpsRedirectStoppedAtTheOrigin accepted %s", name)
 		}
 	}
@@ -385,13 +409,20 @@ func TestHTTPSRedirectFollowedNeedsTheRedirectThenTheFile(t *testing.T) {
 func TestHTTPSNoRequestForNeedsSomeRequestsAndNoneForThePath(t *testing.T) {
 	t.Parallel()
 	requests := httpsServerRequests(testHTTPSServerLog)
-	if err := httpsNoRequestFor(requests, "/bearer/schema.sql"); err != nil {
+	if err := httpsNoRequestFor(requests, testHTTPSHost, "/bearer/schema.sql"); err != nil {
 		t.Fatal(err)
 	}
-	if httpsNoRequestFor(requests, "/basic/schema.sql") == nil {
+	// The log holds /public/schema.sql on the other origin alone.
+	if err := httpsNoRequestFor(requests, testHTTPSHost, "/public/schema.sql"); err != nil {
+		t.Fatalf("httpsNoRequestFor refused a path only another host received: %v", err)
+	}
+	if httpsNoRequestFor(requests, testHTTPSHost, "/basic/schema.sql") == nil {
 		t.Error("httpsNoRequestFor accepted a path the server received")
 	}
-	if httpsNoRequestFor(nil, "/bearer/schema.sql") == nil {
+	if httpsNoRequestFor(requests, testHTTPSOther, "/public/schema.sql") == nil {
+		t.Error("httpsNoRequestFor accepted a path the other origin received")
+	}
+	if httpsNoRequestFor(nil, testHTTPSHost, "/bearer/schema.sql") == nil {
 		t.Error("httpsNoRequestFor accepted a log with no request")
 	}
 }
