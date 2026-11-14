@@ -26,7 +26,7 @@ them.
 | Was it approved before it ran? | The journal's order and the approval's `Consumed` condition | A migration's `actor` names its approver, or the `apply-always` prefix for a run no one approved |
 | Did a second person approve it? | [`approvals.requireDistinctApprover`](../approvals/#refusing-a-self-approval), when the installation turned it on | No |
 | What ran, exactly? | A schema plan's chunks hold its SQL. A migration plan holds versions and checksums, and the statements are in the artifact | A migration's versions and checksums, in the database |
-| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration, in the database. For either family, the journal lines a collector kept |
+| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration, in the database. For a schema, since Ptah v0.28.0, in `ptah_schema_apply_log` where the login may insert into it. For either family, the journal lines a collector kept |
 | An approval or a policy? | A migration run's `authorization` in the journal. For a schema, whether an `ApprovalAccepted` comes before the `ApplyFinished` | A migration's `actor` |
 | Was the database changed outside this process? | Drift readings and the plans they publish | No |
 | Could the record have been changed, and would anyone notice? | [Who can change the record](#integrity) | |
@@ -97,7 +97,8 @@ documentation and the run did not exercise it.
 | Verification after Apply | The journal's `Verified`: `InSync` or `DriftRemains` | The manager | The journal's bounds | Measured |
 | `apply: Always` | No approval, so no `ApprovalAccepted` before the `ApplyFinished` | The manager | The journal's bounds | Read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
-| Anything, in the target database | Nothing. Ptah keeps no table for a declared schema | | | Measured |
+| Anything, in the target database | Nothing at Ptah v0.23.0, which keeps no table for a declared schema | | | Measured |
+| An Apply, in the target database, since Ptah v0.28.0 | `ptah_schema_apply_log`: a row before the first statement and one when the Apply ends, with the plan's name and digest, the outcome and the statement it stopped at. No approver and no operation ID. Under [the documented MySQL grant](../../support/databases/#mysql-authority) both rows are lost | Ptah in the Apply Pod, as the login in the schema's Secret | The database until someone deletes the rows | Read |
 
 Both failed Applies ended `Unknown`, and at 0.2.10 the journal said no more
 than that. What failed is in the Pod log for 24 hours. On MySQL that line read
@@ -454,8 +455,10 @@ covers the SQL of a schema plan.
 `schema_migrations_log` is an ordinary table that the login running migrations
 can write. A database's own audit facility, writing somewhere that login cannot
 reach, is what shows a row was changed afterwards, and a copy of the rows kept
-outside the database is what keeps them. A schema change leaves nothing in the
-database to protect, so for a `PtahSchema` the API audit log is the record.
+outside the database is what keeps them. Since Ptah v0.28.0
+`ptah_schema_apply_log` is the same for a `PtahSchema`: a table the login in its
+Secret can write. Its rows name no approver, so for who approved a schema change
+the API audit log is the record.
 
 ## Privacy {#privacy}
 
