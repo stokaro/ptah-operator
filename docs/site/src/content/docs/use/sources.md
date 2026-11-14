@@ -236,6 +236,12 @@ the credential's owner decides where it may be sent.
 host is not that one, so a resource's author cannot point the credential at
 another server.
 
+Hosts compare as ASCII, without case. The fetch refuses a URL whose host, or a
+Secret whose `host`, holds any other character, before Ptah runs: the
+transport would dial such a name by another, its IDNA form, so write an
+internationalized name in its `xn--` form in the URL, in the Secret and in a
+[source policy](../security/#source-policies).
+
 ```sh
 kubectl -n application create secret generic orders-git \
   --from-literal=host=git.example.com \
@@ -328,7 +334,10 @@ new digest in the spec, so a source that moves is an edit of the resource,
 never something the server decides.
 
 `url` takes `https://` only, with no user name, password, query or fragment,
-in at most 2,048 bytes. `format` says what the download is:
+in at most 2,048 bytes. Its host is ASCII letters, digits, dots and hyphens,
+or an IP address in brackets, with an optional port, so an internationalized
+name is written in its `xn--` form; the host compares as it does for Git.
+`format` says what the download is:
 
 - `File`: one file, which `path` names. Its extension tells a schema's format,
   as a ConfigMap item's does. A migration directory cannot be one file.
@@ -406,7 +415,9 @@ resource reads, and choose an interval measured in hours rather than minutes.
 token, never both, and `host`, the only `host[:port]` the credential is sent
 to. The fetch refuses a URL whose host is not that one, and Ptah refuses a
 redirect to another origin while a credential is set, so a resource's author
-cannot point the credential at another server.
+cannot point the credential at another server. The host compares as ASCII
+without case, as for Git, and a Secret whose `host` holds any other character
+is refused.
 
 ```sh
 kubectl -n application create secret generic orders-artifacts \

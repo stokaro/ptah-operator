@@ -573,7 +573,9 @@ names its own scope in fixed keys a resource's author cannot choose: `host`,
 the only `host[:port]` the credential is sent to, and `caSHA256` or
 `knownHostsSHA256`, the digests of the trust it may be sent under. A resource
 that names the Secret with another URL, CA or known-hosts file is refused in
-the Pod before Ptah starts. A credential goes in the Secret, never in the URL,
+the Pod before Ptah starts. Hosts compare as ASCII without case, and a URL or a
+`host` that holds any other character is refused, so a name that folds to the
+granted one cannot reach the server its IDNA form names. A credential goes in the Secret, never in the URL,
 which the API refuses with one. Over `ssh://` the known hosts are required:
 the fetch never trusts a host key on first use.
 
@@ -626,7 +628,10 @@ maxContentBytes: 1048576  # the most the selected files may hold together
 
 A rule that is absent refuses nothing, and a list that is present and empty
 allows nothing of its kind. A field the document does not define is refused,
-so a misspelled rule is not read as one kept. The manager reads the policy,
+so a misspelled rule is not read as one kept. Hosts compare as ASCII without
+case: a source whose host holds any other character is refused by name, and an
+entry that holds one allows nothing, since the fetch would dial such a name by
+its IDNA form. Write an internationalized name in its `xn--` form. The manager reads the policy,
 never the source's credential: a Git or HTTPS host it does not allow gets no
 Resolve Job, so the credential is never sent there; a ConfigMap it does not
 allow, or files that hold too much, leave no snapshot; a Git commit or an HTTPS

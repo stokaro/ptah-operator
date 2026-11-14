@@ -49,7 +49,11 @@ match `desired_schema_invalid`, and an index on a column its table does not
 declare now stops the Observe and the Plan with that reason rather than
 reaching the database at Apply. A database audit that lists what the executor
 sends has to expect the reads the executor bullet names. A consumer that reads
-every condition of a `PtahMigration` has to expect `RunLogged`. Nothing else.
+every condition of a `PtahMigration` has to expect `RunLogged`. A Git source
+whose URL host, or whose credential Secret's `host`, holds a character outside
+printable ASCII now stops before Ptah runs with `invalid_git_access`, and
+`allowedGitHosts` no longer admits such a host: write an internationalized name
+in its `xn--` form in all three places. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,
@@ -78,6 +82,12 @@ every condition of a `PtahMigration` has to expect `RunLogged`. Nothing else.
   `ArtifactResolved` says `DownloadVerified`, and a source policy gains
   `allowedHTTPSHosts`. [From HTTPS](../../use/sources/#from-https) has the
   fields and what each interval costs in downloads.
+- **Source hosts compare as ASCII.** The credential grant and a source policy
+  compared a Git host with Unicode case folding, so a URL whose host held
+  U+0130, which folds to `i`, matched a grant for the ASCII name while the
+  transport dialed its IDNA form, another host. The runner and the source
+  policy now refuse a host with any byte outside printable ASCII, written
+  directly or percent-escaped, and compare the rest without ASCII case.
 - **Executor.** The verified executor is now Ptah v0.26.0. Each PostgreSQL
   schema read now also reads the inherit and set options of a role membership,
   whether the role it runs as is a superuser, the foreign tables that keep an
