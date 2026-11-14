@@ -178,7 +178,8 @@ func PrepareHTTPSSourceAccess(source HTTPSSource, environment []string, tempDir 
 	caSource, caGrant := values[EnvHTTPSCASourceFile], values[EnvHTTPSCASHA256Grant]
 	if caSource == "" {
 		if caGrant != "" {
-			return httpsTrust{}, nil, errors.New("an HTTPS certificate authority digest grant was supplied without the certificate authority")
+			return httpsTrust{}, nil, errors.New("an HTTPS certificate authority digest grant was supplied without the certificate authority: " +
+				"the credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom")
 		}
 		return httpsTrust{}, func() {}, nil
 	}

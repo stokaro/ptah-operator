@@ -174,15 +174,16 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 		}
 	}
 	for _, item := range []struct {
-		source, grant, name string
-		into                *string
+		source, grant, name, key, field string
+		into                            *string
 	}{
-		{values[EnvGitCASourceFile], values[EnvGitCASHA256Grant], "certificate authority", &trust.caFile},
-		{values[EnvGitKnownHostsSourceFile], values[EnvGitKnownHostsSHA256Grant], "known hosts", &trust.knownHostsFile},
+		{values[EnvGitCASourceFile], values[EnvGitCASHA256Grant], "certificate authority", "caSHA256", "transport.caFrom", &trust.caFile},
+		{values[EnvGitKnownHostsSourceFile], values[EnvGitKnownHostsSHA256Grant], "known hosts", "knownHostsSHA256", "transport.knownHostsFrom", &trust.knownHostsFile},
 	} {
 		if item.source == "" {
 			if item.grant != "" {
-				return gitTrust{}, nil, fmt.Errorf("a Git %s digest grant was supplied without the %s", item.name, item.name)
+				return gitTrust{}, nil, fmt.Errorf("a Git %s digest grant was supplied without the %s: the credential's Secret pins %s, so the source has to select it in %s",
+					item.name, item.name, item.key, item.field)
 			}
 			continue
 		}

@@ -45,7 +45,7 @@ type goldenJobCase struct {
 // admission snapshot, every scheduling knob spec.execution offers, set and
 // left unset, a Git source by https:// and by ssh://, and an HTTPS source as
 // a file and as an archive, each resolved in the operation container and
-// fetched before it.
+// fetched before it, and fetched with a credential on the system roots.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -389,6 +389,22 @@ func goldenJobCases() []goldenJobCase {
 				migration := migrationFixture()
 				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: httpsArchiveSpec()}
 				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			// A credential on the system roots: the owner's CA pin, if the
+			// Secret holds one, still reaches the fetch.
+			name:       "migration-apply-https-archive-token",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsArchiveSpec()
+				spec.AuthFrom = &operatorv1alpha1.HTTPSAuthSource{Name: "files-token"}
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},
 		{

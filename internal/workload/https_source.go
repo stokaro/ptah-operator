@@ -98,10 +98,8 @@ func addHTTPSAccess(
 		environment = append(environment, variables...)
 		volumes = append(volumes, volume)
 		mounts = append(mounts, mount)
-		if request.transport.CAFrom != nil {
-			environment = append(environment,
-				requiredSecretEnv(runner.EnvHTTPSCASHA256Grant, auth.Name, operatorv1alpha1.HTTPSCASHA256SecretKey))
-		}
+		environment = append(environment, caGrantEnv(
+			runner.EnvHTTPSCASHA256Grant, auth.Name, operatorv1alpha1.HTTPSCASHA256SecretKey, request.transport.CAFrom != nil))
 	}
 	if selector := request.transport.CAFrom; selector != nil {
 		if selector.Name == "" || selector.Key == "" || (selector.Optional != nil && *selector.Optional) {

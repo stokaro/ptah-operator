@@ -132,9 +132,12 @@ func addGitAccess(
 			volumes = append(volumes, volume)
 			mounts = append(mounts, mount)
 		}
-		if request.transport.CAFrom != nil {
-			environment = append(environment,
-				requiredSecretEnv(runner.EnvGitCASHA256Grant, auth.Name, operatorv1alpha1.GitCASHA256SecretKey))
+		// An ssh:// fetch makes no TLS connection, so a CA pin has nothing to
+		// bind there; its server is bound by the known-hosts grant, which
+		// ssh requires.
+		if !ssh {
+			environment = append(environment, caGrantEnv(
+				runner.EnvGitCASHA256Grant, auth.Name, operatorv1alpha1.GitCASHA256SecretKey, request.transport.CAFrom != nil))
 		}
 		if request.transport.KnownHostsFrom != nil {
 			environment = append(environment,

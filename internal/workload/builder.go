@@ -1246,6 +1246,28 @@ func requiredSecretEnv(name, secret, key string) corev1.EnvVar {
 	}
 }
 
+// optionalSecretEnv is a variable the kubelet leaves out when the Secret
+// holds no such key.
+func optionalSecretEnv(name, secret, key string) corev1.EnvVar {
+	variable := requiredSecretEnv(name, secret, key)
+	optional := true
+	variable.ValueFrom.SecretKeyRef.Optional = &optional
+	return variable
+}
+
+// caGrantEnv carries a credential Secret's CA digest to the runner. With a
+// CA selected the Secret has to hold one, so the Pod does not start without
+// it. With none selected it still reaches the runner when the Secret holds
+// one, because an owner who pinned the CA a credential may be sent under has
+// not agreed to the system roots either, and the runner refuses that
+// pairing before the executor runs.
+func caGrantEnv(name, secret, key string, caSelected bool) corev1.EnvVar {
+	if caSelected {
+		return requiredSecretEnv(name, secret, key)
+	}
+	return optionalSecretEnv(name, secret, key)
+}
+
 func selectEnvironment(environment []corev1.EnvVar, names ...string) []corev1.EnvVar {
 	selected := make(map[string]struct{}, len(names))
 	for _, name := range names {

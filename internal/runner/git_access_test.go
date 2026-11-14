@@ -128,7 +128,7 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		}, refusal: "not the one the credential's owner granted"},
 		{name: "CA grant without the CA", source: https, environment: []string{
 			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
-		}, refusal: "without the certificate authority"},
+		}, refusal: "without the certificate authority: the credential's Secret pins caSHA256, so the source has to select it in transport.caFrom"},
 		{name: "ssh without known hosts", source: ssh, refusal: "needs known hosts"},
 		{name: "unreadable CA", source: https, environment: []string{EnvGitCASourceFile + "=" + filepath.Join(directory, "missing")},
 			refusal: "read the Git certificate authority"},

@@ -127,7 +127,7 @@ func TestPrepareHTTPSSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		}, refusal: "not the one the credential's owner granted"},
 		{name: "a CA grant without the CA", source: archive, environment: []string{
 			EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=files.example.com", EnvHTTPSCASHA256Grant + "=" + gitTestDigest(ca),
-		}, refusal: "without the certificate authority"},
+		}, refusal: "without the certificate authority: the credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom"},
 		{name: "an unreadable CA", source: archive, environment: []string{EnvHTTPSCASourceFile + "=" + filepath.Join(directory, "missing")},
 			refusal: "read the HTTPS certificate authority"},
 		{name: "http://", source: with(archive, func(s *HTTPSSource) { s.URL = "http://files.example.com/app.tar.gz" }),

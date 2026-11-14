@@ -136,6 +136,37 @@ func TestBuildResolvesAnHTTPSSourceInTheOperationContainer(t *testing.T) {
 		}
 		assertHTTPSMountsReadOnly(t, main)
 	})
+	// The owner's CA pin reaches the runner even when the resource selects
+	// no CA, which refuses the pairing; the kubelet leaves the variable out
+	// when the Secret pins nothing.
+	t.Run("a File behind a token on the system roots", func(t *testing.T) {
+		t.Parallel()
+		spec := httpsFileSpec()
+		spec.Transport = operatorv1alpha1.HTTPSTransportSpec{}
+		job, err := builderFixture().Build(httpsSchemaFixture(spec), operationFixture(operatorv1alpha1.OperationResolve), nil)
+		if err != nil {
+			t.Fatalf("Build() = %v", err)
+		}
+		env := envMap(job)
+		for name, want := range map[string]struct {
+			key      string
+			optional bool
+		}{
+			runner.EnvHTTPSHostGrant:     {operatorv1alpha1.HTTPSHostSecretKey, false},
+			runner.EnvHTTPSCASHA256Grant: {operatorv1alpha1.HTTPSCASHA256SecretKey, true},
+		} {
+			secret, key, optional := secretKeyOf(env[name])
+			if secret != "files-token" || key != want.key || optional != want.optional {
+				t.Errorf("%s reads %s/%s optional=%v, want files-token/%s optional=%v", name, secret, key, optional, want.key, want.optional)
+			}
+		}
+		if _, present := env[runner.EnvHTTPSCASourceFile]; present {
+			t.Errorf("a source with no CA selected carries %s", runner.EnvHTTPSCASourceFile)
+		}
+		if volumeNamed(job, httpsCAVolumeName) != nil {
+			t.Fatal("a source with no CA selected mounts one")
+		}
+	})
 	t.Run("a public archive of migrations", func(t *testing.T) {
 		t.Parallel()
 		migration := migrationFixture()
