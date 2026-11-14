@@ -230,6 +230,9 @@ type Result struct {
 	// documents Ptah produced, validated before they were carried here: the
 	// controller decides from the database's own account rather than from this
 	// process's exit status.
+	//
+	// The run's log report names each entry the database refused with none of
+	// its message, and a frame from a runner that predates it carries none.
 	MigrationHistory *dataplane.MigrationStatusReport `json:"migrationHistory,omitempty"`
 	MigrationRun     *dataplane.MigrationRunReport    `json:"migrationRun,omitempty"`
 	// ApplyFailure is where a schema Apply that sent a statement stopped, as
@@ -857,6 +860,16 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.MigrationRun != nil && result.Operation != OperationMigrationApply {
 		return fmt.Errorf("%w: migration run report on an unrelated operation", ErrMalformedFrame)
+	}
+	if report := result.MigrationRun; report != nil && report.MigrationLog != nil {
+		if err := report.MigrationLog.Validate(report.Planned); err != nil {
+			return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
+		}
+		for _, loss := range report.MigrationLog.Lost {
+			if loss.Message != "" {
+				return fmt.Errorf("%w: a lost migration log entry carries its message", ErrMalformedFrame)
+			}
+		}
 	}
 	if failure := result.ApplyFailure; failure != nil {
 		if result.Operation != OperationApply || result.Error == nil || !LeavesReportedError(result.Error.Code) {

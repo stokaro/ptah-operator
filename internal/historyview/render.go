@@ -182,6 +182,9 @@ func renderEntry(text *strings.Builder, view View, entry Entry) {
 	if failure := entry.ApplyFailure; failure != nil {
 		field("Stopped at", applyFailureText(*failure))
 	}
+	if log := entry.MigrationLog; log != nil {
+		field("Migration log", statusview.MigrationLog(*log))
+	}
 	field("Acknowledgment", acknowledgmentText(entry))
 	field("Acknowledged by", statusview.Clean(entry.AcknowledgedBy))
 	if entry.Type == operatorv1alpha1.JournalRunAcknowledged {

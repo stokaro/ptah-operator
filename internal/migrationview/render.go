@@ -173,6 +173,9 @@ func renderLastRun(text *strings.Builder, run *RunView) {
 		}
 		field("Stopped at", stopped)
 	}
+	if log := run.MigrationLog; log != nil {
+		field("Migration log", statusview.MigrationLog(*log))
+	}
 	field("Message", statusview.Clean(run.Message))
 }
 

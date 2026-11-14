@@ -260,3 +260,18 @@ row plans the same artifacts on kind; `TestViewInvokerPlannedReadsEachStepOfTheR
 holds `viewInvokerPlanned` to accepting each for its own step and to refusing it
 for the other two, the runner harness's plans of the same shapes over another
 view, and copies with the one field each mistake would change.
+
+`refused-log-mysql.json` is what the `migration-faults-mysql` phase's
+`mysql-refused-migration-log` row printed on a local kind run on November 13,
+2026, with Kubernetes 1.36.4, operator `3bbbcdd1`, the Ptah v0.26.0 release
+image `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`
+and `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`.
+The migration ran under `apply: Always` against a database whose
+`schema_migrations_log` was created first with a 16-character `actor` column, so
+MySQL refused all six entries with error 1406 while the three migrations
+applied. It is the status document the row's wait matched, the first that
+carried the run's record, with the metadata that identifies it.
+`TestEveryLogEntryLostRefusesEachClause` holds `everyLogEntryLost` to accepting
+it and to refusing copies with the one field each mistake would change. It
+names the lab namespace, the Job and the plan, and holds no credentials or SQL:
+the only credential words are the key names of the registry Secret.

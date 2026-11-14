@@ -36,6 +36,8 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"in sync", operatorv1alpha1.ReasonInSync, "InSync"},
 		{"job completed", operatorv1alpha1.ReasonJobCompleted, "JobCompleted"},
 		{"lease continuity lost", operatorv1alpha1.ReasonLeaseContinuityLost, "LeaseContinuityLost"},
+		{"log entries lost", operatorv1alpha1.ReasonLogEntriesLost, "LogEntriesLost"},
+		{"log written", operatorv1alpha1.ReasonLogWritten, "LogWritten"},
 		{"no changes", operatorv1alpha1.ReasonNoChanges, "NoChanges"},
 		{"not required", operatorv1alpha1.ReasonNotRequired, "NotRequired"},
 		{"observed", operatorv1alpha1.ReasonObserved, "Observed"},

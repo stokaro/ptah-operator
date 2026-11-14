@@ -838,6 +838,20 @@ recorded whether it committed. Since v0.26.0 a `CREATE INDEX` the server refused
 on an InnoDB table is not one of them: the run is `Failed`
 ([stokaro/ptah#5838](https://github.com/stokaro/ptah/pull/5838)).
 
+`status.lastRun.migrationLog` records what the run's writes to
+`schema_migrations_log` came to: how many entries the database accepted, how
+many it refused, and the first sixteen it refused by version, by the state the
+entry would have recorded, and by the SQLSTATE and MySQL error number it
+answered with. Ptah writes an entry before each migration and one after, and a
+write the database refuses does not stop the migration, so the run's report is
+the only witness to a lost entry and nothing writes it later. The run's outcome
+does not change: Ptah reads it from the revision table. The `RunFinished` entry
+carries the same record, and `RunLogged` says it until a later run writes all of
+its entries. A run whose report carried no record names none: one that left no
+readable report, one that stopped before it selected a migration, and one an
+earlier release recorded. Ptah's message about the refusal can quote the value
+refused, so neither carries it.
+
 A schema's Apply records where it stopped the same way, in `applyFailure` on its
 `ApplyFinished` entry and in `status.pendingObservation.applyFailure` until the
 observation that follows settles: the position of the statement it stopped at,

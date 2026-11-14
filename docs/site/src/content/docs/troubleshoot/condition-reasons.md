@@ -45,6 +45,8 @@ decision.
 | `InSync` | Independent read-only planning proved convergence. |
 | `JobCompleted` | Apply exited and independent convergence proof remains pending. |
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
+| `LogEntriesLost` | `RunLogged` is false because the database refused entries the last run wrote to `schema_migrations_log`, so its own record of that run is incomplete. The run's outcome is unchanged. See [A run whose log entries the database refused](#a-run-whose-log-entries-the-database-refused). |
+| `LogWritten` | `RunLogged` is true because the database accepted every entry the last run wrote to `schema_migrations_log`. |
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. On `ApprovalRequired` it says the database converged while a plan was outstanding, so nothing is left to approve. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
@@ -155,6 +157,33 @@ A run that failed on a statement says the same, with the migration it failed
 in and the count of those before it that it applied. The statement the
 database refused is in that file, and
 [its Pod log](#a-statement-the-database-refused) holds what the database said.
+
+## A run whose log entries the database refused
+
+`RunLogged` False with `LogEntriesLost` is a run that applied what its outcome
+says and left the database's own record of it incomplete:
+
+```
+lastRun: outcome Applied
+migrationLog: written 0, lost 6, losses: version 1 Started, SQLSTATE 22001, error 1406, ...
+"The database refused 6 of the 6 entries the run of operation sha256:... wrote to schema_migrations_log with SQLSTATE 22001 (error 1406), so its own record of the run is incomplete. ..."
+```
+
+Ptah writes an entry to `schema_migrations_log` before each migration and one
+after it. A write the database refuses does not stop the migration, and nothing
+writes the entry later, so the table is missing the actor, the times and the
+outcome of those attempts. `status.lastRun.migrationLog` and the run's
+`RunFinished` journal entry name the first sixteen entries by version and state,
+with the SQLSTATE and the MySQL error number. Neither carries Ptah's message,
+which can quote the value the database refused; the Pod log holds it while the
+Job lasts.
+
+The codes say what refused the write. MySQL's 1406 (`22001`) is a value longer
+than its column, as when the table was created before Ptah created it, with a
+narrower `actor` column than Ptah's 256 characters. A trigger, a privilege that
+makes the table read-only, or a full disk refuse it too. Fix what refused it,
+and the next run writes its entries in full and sets `RunLogged` True. The
+journal entry stays the record of the run whose entries were lost.
 
 ## A statement the database refused
 

@@ -611,7 +611,7 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 		m.migrationSecret(), "branch", "adopt", "checkpoint", "txmode", "uncertain", "unknown-layer", "unreadable-oci",
 		"egress", "late-dispatch", "isolated-node", "stopped", "lost-log", "apply-guard", "release-fault",
 		"restore", "deletion", "drill", "suspend", "retry", "retarget", "approval-policy", "approval-transaction-mode",
-		"hung-result", "result-progress",
+		"hung-result", "result-progress", "refused-log",
 	} {
 		name := secret
 		if !strings.HasPrefix(name, "e2e-") {
@@ -645,7 +645,7 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 		"ptah_e2e_apply_guard", "ptah_e2e_release_fault", "ptah_e2e_restore", "ptah_e2e_deletion",
 		"ptah_e2e_drill", "ptah_e2e_suspend", "ptah_e2e_retarget", "ptah_e2e_retarget_other",
 		"ptah_e2e_approval_policy", "ptah_e2e_approval_transaction_mode",
-		"ptah_e2e_hung_result", "ptah_e2e_result_progress",
+		"ptah_e2e_hung_result", "ptah_e2e_result_progress", "ptah_e2e_refused_log",
 	} {
 		m.dropDatabase(database)
 	}

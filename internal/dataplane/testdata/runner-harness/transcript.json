@@ -14493,6 +14493,9 @@
         ],
         "contract_version": 2,
         "direction": "up",
+        "migration_log": {
+          "written": 4
+        },
         "outcome": "applied",
         "planned": [
           3,
@@ -14803,6 +14806,9 @@
           "statements": 3,
           "version": 1
         },
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "failed",
         "planned": [
           1
@@ -15050,6 +15056,9 @@
           "statement": 0,
           "statements": 1,
           "version": 2
+        },
+        "migration_log": {
+          "written": 4
         },
         "outcome": "failed",
         "planned": [
@@ -15326,6 +15335,9 @@
           "statement": 2,
           "statements": 3,
           "version": 2
+        },
+        "migration_log": {
+          "written": 4
         },
         "outcome": "failed",
         "planned": [
@@ -15604,6 +15616,9 @@
         ],
         "contract_version": 2,
         "direction": "up",
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "applied",
         "planned": [
           1
@@ -15797,6 +15812,9 @@
         ],
         "contract_version": 2,
         "direction": "up",
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "applied",
         "planned": [
           1
@@ -16008,6 +16026,344 @@
     }
   },
   {
+    "name": "migrations-log-lost-mysql/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json"
+        ],
+        "exit": 0,
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_log_lost_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
+        "stdout": "migrations-up-log-lost-mysql.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationRun": {
+        "applied": [
+          1,
+          2,
+          3
+        ],
+        "contract_version": 2,
+        "direction": "up",
+        "migration_log": {
+          "lost": [
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "started",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "started",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "started",
+              "version": 3,
+              "version_key": "3"
+            },
+            {
+              "error_number": 1406,
+              "operation": "up",
+              "sqlstate": "22001",
+              "state": "applied",
+              "version": 3,
+              "version_key": "3"
+            }
+          ],
+          "written": 0
+        },
+        "outcome": "applied",
+        "planned": [
+          1,
+          2,
+          3
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 3,
+          "has_pending_changes": false,
+          "migrations": [
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+              "checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+              "description": "Create Widgets",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+              "checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+              "description": "Add Widget Color",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 2,
+              "version_key": "2"
+            },
+            {
+              "applied_at": "<volatile>",
+              "applied_checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+              "description": "Recolor First Widget",
+              "execution_time_ms": 0,
+              "state": "applied",
+              "version": 3,
+              "version_key": "3"
+            }
+          ],
+          "pending_migrations": [],
+          "total_migrations": 3
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:84865a66751db1d566376d92101b23f0b0ca1b9e4a7b6d9805a325748973266c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b75dab92e7ab946935c31ecfd8ddfc8a1637393c230789c05fbaf218ff8c594a"
+    }
+  },
+  {
+    "name": "migrations-log-lost-mysql/history-applied",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-applied/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-applied/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 3,
+        "has_pending_changes": false,
+        "migrations": [
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+            "checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+            "description": "Create Widgets",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+            "checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+            "description": "Add Widget Color",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "applied_at": "<volatile>",
+            "applied_checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "execution_time_ms": 0,
+            "state": "applied",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:0552ba9cbf5a63df0356016ee843117405b15c712ec7ae7480b3f95ac79217fc",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b75dab92e7ab946935c31ecfd8ddfc8a1637393c230789c05fbaf218ff8c594a"
+    }
+  },
+  {
+    "name": "migrations-log-lost-mysql/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "c8df07c7da0d3d1f7526202a8a3bbb4a8f82e138fcbf239c65d723b2c22f1f57",
+            "description": "Create Widgets",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "6e477d09d93468be12290fbc6085b39a9112d46e726585aece1fc4195d9d4f34",
+            "description": "Add Widget Color",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          },
+          {
+            "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+            "description": "Recolor First Widget",
+            "state": "pending",
+            "version": 3,
+            "version_key": "3"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2,
+          3
+        ],
+        "total_migrations": 3
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:19beaddf942e15c1352c6fbab846a163cae7caaf3d5b0cf09c273ef45b2f382a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:b75dab92e7ab946935c31ecfd8ddfc8a1637393c230789c05fbaf218ff8c594a"
+    }
+  },
+  {
+    "name": "migrations-log-lost-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-log-lost-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-log-lost-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:9ea753e598de4cec66bb66484d2246c4499092281edcee2ff43a16b0d4abe8dc",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
+      "resolvedSize": 2074,
+      "stdout": ""
+    }
+  },
+  {
     "name": "migrations-mysql/apply",
     "operation": "migration-apply",
     "source": "oci",
@@ -16052,6 +16408,9 @@
         ],
         "contract_version": 2,
         "direction": "up",
+        "migration_log": {
+          "written": 6
+        },
         "outcome": "applied",
         "planned": [
           1,
@@ -16492,6 +16851,9 @@
           "statements": 4,
           "version": 2
         },
+        "migration_log": {
+          "written": 4
+        },
         "outcome": "partial",
         "planned": [
           1,
@@ -16761,6 +17123,9 @@
         ],
         "contract_version": 2,
         "direction": "up",
+        "migration_log": {
+          "written": 6
+        },
         "outcome": "applied",
         "planned": [
           1,
@@ -20820,6 +21185,9 @@
           "statements": 1,
           "version": 1
         },
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "failed",
         "planned": [
           1
@@ -20999,6 +21367,9 @@
           "statements": 1,
           "version": 1
         },
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "failed",
         "planned": [
           1
@@ -21177,6 +21548,9 @@
           "statement": 1,
           "statements": 1,
           "version": 1
+        },
+        "migration_log": {
+          "written": 2
         },
         "outcome": "failed",
         "planned": [
@@ -21626,6 +22000,9 @@
           "statements": 1,
           "version": 1
         },
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "failed",
         "planned": [
           1
@@ -21803,6 +22180,9 @@
           "statement": 1,
           "statements": 1,
           "version": 1
+        },
+        "migration_log": {
+          "written": 2
         },
         "outcome": "failed",
         "planned": [
@@ -21982,6 +22362,9 @@
           "statements": 1,
           "version": 1
         },
+        "migration_log": {
+          "written": 2
+        },
         "outcome": "failed",
         "planned": [
           1
@@ -22159,6 +22542,9 @@
           "statement": 1,
           "statements": 1,
           "version": 1
+        },
+        "migration_log": {
+          "written": 2
         },
         "outcome": "failed",
         "planned": [
@@ -22605,6 +22991,9 @@
           "statement": 1,
           "statements": 1,
           "version": 1
+        },
+        "migration_log": {
+          "written": 2
         },
         "outcome": "failed",
         "planned": [

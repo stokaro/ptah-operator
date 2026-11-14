@@ -345,6 +345,9 @@ func runFinished(run *operatorv1alpha1.MigrationRunStatus) operatorv1alpha1.Jour
 	if run.Failure != nil {
 		entry.Failure = run.Failure.DeepCopy()
 	}
+	// The entry outlives lastRun, which the next run replaces, so it keeps
+	// what this run left in the database's own record.
+	entry.MigrationLog = run.MigrationLog.DeepCopy()
 	withRunIdentity(&entry, run)
 	return entry
 }

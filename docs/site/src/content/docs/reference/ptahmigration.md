@@ -674,6 +674,14 @@ spec:
 | `status.journal.entries[].jobName` | `string` | JobName is the Job an Apply or a run ran as. It is absent when no Job was confirmed. |
 | `status.journal.entries[].jobUID` | `string` | JobUID is that Job's UID, which outlives the Job and tells it from a later Job that takes the name. |
 | `status.journal.entries[].lastAt` | `string` | LastAt is the latest attempt an OperationFailed entry folds. A single failure has none. |
+| `status.journal.entries[].migrationLog` | `object` | MigrationLog is what a PtahMigration's run wrote to the database's own record of migrations, as status.lastRun.migrationLog said. A run whose lost count is not zero left that record incomplete. |
+| `status.journal.entries[].migrationLog.losses` | `[]object` | Losses are the first sixteen entries the database refused, in the order the run tried them. |
+| `status.journal.entries[].migrationLog.losses[].errorNumber` | `integer` | ErrorNumber is MySQL's own error number, such as 1406 for a value too long for its column, and zero on every other protocol. |
+| `status.journal.entries[].migrationLog.losses[].sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.journal.entries[].migrationLog.losses[].state` | `string`, required, one of `Started`, `Applied`, `Failed` | State is what the entry would have recorded. |
+| `status.journal.entries[].migrationLog.losses[].version` | `integer`, required | Version is the migration the entry is about. |
+| `status.journal.entries[].migrationLog.lost` | `integer`, required | Lost is how many it refused. The record of the run is incomplete when it is not zero. |
+| `status.journal.entries[].migrationLog.written` | `integer`, required | Written is how many of the run's entries the database accepted. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
 | `status.journal.entries[].operationID` | `string` | OperationID is the Apply claim an entry concerns: a PtahSchema's ApplyFinished and the Verified entry of the proof after it, or a PtahMigration's RunFinished, Verified or RunAcknowledged. It is what joins them: entries of one execution carry the same one, and neither their order nor their times are the join. ApprovalUID is what joins an ApprovalAccepted entry to the Apply or the run that consumed it, since a claim withdrawn before dispatch leaves the approval to the next one. An entry a release before this field wrote has none. |
 | `status.journal.entries[].outcome` | `string`, one of `Succeeded`, `Failed`, `Partial`, `Unknown`, `UpToDate`, `InSync`, `DriftRemains`, `Superseded`, `Pending`, `Blocked` | Outcome is how an Apply, a proof or a run ended. On a PtahMigration's Verified entry it is what the reading after the run found, and on a RunAcknowledged entry how the run that person settled ended. |
@@ -714,6 +722,14 @@ spec:
 | `status.lastRun.jobName` | `string` | JobName and JobUID identify the execution this evidence came from. The UID is what makes a replacement Job with the same name a different run. |
 | `status.lastRun.jobUID` | `string` | JobUID is that Job's UID. |
 | `status.lastRun.message` | `string` | Message is a safe explanation. It never carries database rows, and never carries the SQL a migration ran. |
+| `status.lastRun.migrationLog` | `object` | MigrationLog is what the run's writes to the database's own record of migrations came to, when the run reported it. It is absent for a run that left no readable report, for one that stopped before it selected anything, and for one a release without this field recorded: none of them says whether the record is complete. |
+| `status.lastRun.migrationLog.losses` | `[]object` | Losses are the first sixteen entries the database refused, in the order the run tried them. |
+| `status.lastRun.migrationLog.losses[].errorNumber` | `integer` | ErrorNumber is MySQL's own error number, such as 1406 for a value too long for its column, and zero on every other protocol. |
+| `status.lastRun.migrationLog.losses[].sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
+| `status.lastRun.migrationLog.losses[].state` | `string`, required, one of `Started`, `Applied`, `Failed` | State is what the entry would have recorded. |
+| `status.lastRun.migrationLog.losses[].version` | `integer`, required | Version is the migration the entry is about. |
+| `status.lastRun.migrationLog.lost` | `integer`, required | Lost is how many it refused. The record of the run is incomplete when it is not zero. |
+| `status.lastRun.migrationLog.written` | `integer`, required | Written is how many of the run's entries the database accepted. |
 | `status.lastRun.operationID` | `string` | OperationID is the Apply claim that ran. It is what makes two executions of a byte-identical plan two runs. A run a release without this field recorded has none, and neither that nor anything else below is guessed for it. |
 | `status.lastRun.outcome` | `string`, required, one of `UpToDate`, `Applied`, `Failed`, `Partial`, `Unknown` | Outcome is the verdict Ptah read from the revision table. |
 | `status.lastRun.planFingerprint` | `string` | PlanFingerprint is that plan's spec.fingerprint when the claim was written, which binds the sequence, the history it was computed against, the source, the policy, the target and the execution binding. It is absent for a claim a release without the field wrote. |
