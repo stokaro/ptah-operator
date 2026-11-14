@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,25 @@ func approvedSchemaApplyJournal(t *testing.T, approvalUID types.UID, operationID
 	return &ptahv1alpha1.LifecycleJournal{Entries: entries}
 }
 
+// withFailedAttempt is the journal given with a RunFinished entry ahead of its
+// own: the same approval, another operation, and the outcome Failed.
+func withFailedAttempt(t *testing.T, journal *ptahv1alpha1.LifecycleJournal) *ptahv1alpha1.LifecycleJournal {
+	t.Helper()
+	failed := journal.DeepCopy()
+	for index := range failed.Entries {
+		if failed.Entries[index].Type != ptahv1alpha1.JournalRunFinished {
+			continue
+		}
+		attempt := *failed.Entries[index].DeepCopy()
+		attempt.Outcome = ptahv1alpha1.JournalFailed
+		attempt.OperationID = "sha256:" + strings.Repeat("1b", 32)
+		failed.Entries = slices.Insert(failed.Entries, index, attempt)
+		return failed
+	}
+	t.Fatal("the reading holds no RunFinished entry")
+	return nil
+}
+
 func TestFinishedRunOfFindsTheRunAnApprovalOrAPolicyAuthorized(t *testing.T) {
 	t.Parallel()
 
@@ -67,6 +87,13 @@ func TestFinishedRunOfFindsTheRunAnApprovalOrAPolicyAuthorized(t *testing.T) {
 		{
 			name: "a migration run a person approved", journal: approved, entryType: ptahv1alpha1.JournalRunFinished,
 			approvalUID: "6ff1f350-6a90-49f7-a124-1d02bc0d1743", want: "sha256:9798b1a53fe9673ffee44b6b38900db3fbeec94c414e81dfd6786d8424d94a4e",
+		},
+		{
+			// An attempt that failed and the retry that succeeded, under one
+			// approval: the retry is the run whose rows the log keeps.
+			name: "a migration run a person approved after an attempt that failed", journal: withFailedAttempt(t, approved),
+			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: "6ff1f350-6a90-49f7-a124-1d02bc0d1743",
+			want: "sha256:9798b1a53fe9673ffee44b6b38900db3fbeec94c414e81dfd6786d8424d94a4e",
 		},
 		{
 			name: "a migration run its policy allowed", journal: policyRunJournal(t), entryType: ptahv1alpha1.JournalRunFinished,
@@ -114,19 +141,19 @@ func TestFinishedRunOfRefusesARunItCannotJoin(t *testing.T) {
 		approvalUID types.UID
 		says        string
 	}{
-		{name: "another approval", entryType: ptahv1alpha1.JournalRunFinished, approvalUID: "another-uid", says: "holds 0 RunFinished entries under approval UID another-uid"},
+		{name: "another approval", entryType: ptahv1alpha1.JournalRunFinished, approvalUID: "another-uid", says: "holds 0 succeeded RunFinished entries under approval UID another-uid"},
 		// The approved run is not one its policy allowed.
-		{name: "no approval where a person approved", entryType: ptahv1alpha1.JournalRunFinished, says: "holds 0 RunFinished entries under no approval"},
-		{name: "a schema's entry type on a migration", entryType: ptahv1alpha1.JournalApplyFinished, approvalUID: approvalUID, says: "holds 0 ApplyFinished entries"},
+		{name: "no approval where a person approved", entryType: ptahv1alpha1.JournalRunFinished, says: "holds 0 succeeded RunFinished entries under no approval"},
+		{name: "a schema's entry type on a migration", entryType: ptahv1alpha1.JournalApplyFinished, approvalUID: approvalUID, says: "holds 0 succeeded ApplyFinished entries"},
 		{
 			name:      "a run journaled twice",
 			mutate:    func(j *ptahv1alpha1.LifecycleJournal) { j.Entries = append(j.Entries, *finished(j)) },
-			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: "holds 2 RunFinished entries",
+			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: "holds 2 succeeded RunFinished entries",
 		},
 		{
 			name:      "a run of unknown outcome",
 			mutate:    func(j *ptahv1alpha1.LifecycleJournal) { finished(j).Outcome = ptahv1alpha1.JournalUnknown },
-			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: `records outcome "Unknown"`,
+			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: `holds 0 succeeded RunFinished entries under approval UID 6ff1f350-6a90-49f7-a124-1d02bc0d1743, want one: of 4 entries, [approval UID "6ff1f350-6a90-49f7-a124-1d02bc0d1743" Unknown at`,
 		},
 		{
 			name: "a run the policy authorized under an approval",
@@ -148,7 +175,7 @@ func TestFinishedRunOfRefusesARunItCannotJoin(t *testing.T) {
 		{
 			name:      "no journal",
 			mutate:    func(j *ptahv1alpha1.LifecycleJournal) { j.Entries = nil },
-			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: "holds 0 RunFinished entries",
+			entryType: ptahv1alpha1.JournalRunFinished, approvalUID: approvalUID, says: "holds 0 succeeded RunFinished entries",
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
