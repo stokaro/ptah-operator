@@ -10,8 +10,9 @@ Kubernetes acceptance or a production qualification result.
 Captured on October 23, 2026 with the Ptah v0.15.0 release image, taken again
 on October 25, 2026 with v0.16.0, on November 2, 2026 with v0.17.0, on
 November 4, 2026 with v0.18.0, on November 6, 2026 with v0.22.0, on November 7,
-2026 with v0.23.0, and on November 13, 2026 with the Ptah v0.26.0 release image,
-commit `1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`.
+2026 with v0.23.0, on November 13, 2026 with v0.26.0, and on November 14, 2026
+with the Ptah v0.28.0 release image, commit
+`2ee460a688d63f34e853b1eee4228a2463a6baa8`.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -35,22 +36,37 @@ runs in its own container, and every container, anonymous volume and network the
 run created is removed. The `documented-` readings use the login the databases
 page documents instead, as [the documented login](#the-documented-login) says.
 
-Before the v0.26.0 capture, the same procedure ran with the executor of the
-previous pin, the Ptah v0.23.0 release image, as it ran with v0.22.0 before the
-v0.23.0 capture, with v0.18.0 before the v0.22.0 one, with v0.17.0 before the
+Before the v0.28.0 capture, the same procedure ran with the executor of the
+previous pin, the Ptah v0.26.0 release image, as it ran with v0.23.0 before the
+v0.26.0 capture, with v0.22.0 before the v0.23.0 one, with v0.18.0 before the v0.22.0 one, with v0.17.0 before the
 v0.18.0 one, with v0.16.0 before the v0.17.0 one, with v0.15.0 before the
 v0.16.0 one and with v0.14.0 before the v0.15.0 one. Each time it reproduced
 every earlier checked-in reading record for record, PostgreSQL parameters
 included, and all four saved exclusion plans byte for byte. The v0.22.0 run
-reproduced the three PostgreSQL 18 witnesses as well, and the v0.23.0 run the
-witnesses of PostgreSQL 18 and 16. That is what makes the new readings a statement about the executor rather
+reproduced the three PostgreSQL 18 witnesses as well, and the v0.23.0 and
+v0.26.0 runs the witnesses of PostgreSQL 18 and 16. That is what makes the new readings a statement about the executor rather
 than about a different procedure.
 
 `--contract` writes the contract from a directory of readings. Run on the
 v0.14.0 readings, and again on the v0.16.0 readings, it reproduced the contract
 then checked in byte for byte, and the probe's unit test holds the checked-in
-contract to the checked-in readings. The v0.26.0 contract is the one it wrote
-from the v0.26.0 readings.
+contract to the checked-in readings. The v0.28.0 contract is the one it wrote
+from the v0.28.0 readings.
+
+Against v0.26.0, v0.28.0 changed every schema reading on both engines and no
+migration reading: both migration History readings and both restored-history
+refusals matched record for record. Ptah now keeps a log of each schema Apply in
+the table `ptah_schema_apply_log`
+([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)), and each schema
+read leaves that table out beside the migration tables it already left out. That
+predicate is the only change: 25 of the contract's 97 statements gain it, 15 on
+PostgreSQL and 10 on MySQL, no statement is added or dropped, and no record count
+of a diagnostic moved. The allowed Apply creates the table and writes a `started`
+row before its first statement and an `applied` row after it, so its journal
+grows by six records on PostgreSQL, where it also reads the table's owner before
+and after the `CREATE`, and by nine on MySQL, where the second row arrives on a
+connection of its own. All four saved exclusion plans are unchanged byte for
+byte.
 
 Against v0.23.0, v0.26.0 changed every schema reading on both engines and no
 migration reading but one: both migration History readings and the PostgreSQL
@@ -415,7 +431,7 @@ databases page lists `TEMPORARY` for that reason.
 | `drift-stale-apply` | `enabled` dropped under the saved plan; Apply refused `stale-plan` (exit 2), lock timeout 60s | 53 | 52 (23) |
 | `drift-observe`, `drift-plan` | the changed database, observed and planned again | 56, 101 | 44 (20), 85 (39) |
 | `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 53 | 52 (23) |
-| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 57 | 56 (27) |
+| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 63 | 65 (30) |
 | `documented-exclusion-wide-observe`, `-plan`, `documented-exclusion-narrow-…` | the exclusion sequences as the documented login | 56, 101 | 44 (20), 85 (39) |
 | `documented-drift-stale-apply`, `-drift-observe`, `-drift-plan`, `-drift-validate-plan` | the drift sequence as the documented login | 53, 56, 101, 53 | 52 (23), 44 (20), 85 (39), 52 (23) |
 | `lock-45-plan`, `lock-60-plan` | MySQL only: a runner Plan's two plan reads and dry-run validation under a 45s or 60s lock timeout | | 222 (101) |
@@ -434,7 +450,7 @@ writes fewer of them: the `-- ALTER statements: --` and `-- POSTGRES TABLE`
 and `-- MYSQL TABLE` headers are gone, and a comment that names the change,
 such as `-- Add/modify columns for table: e2e_widgets`, stays. v0.22.0 writes none
 of them, and drops the excluded table with `DROP TABLE` alone, without `IF EXISTS`
-or `CASCADE`. v0.23.0 and v0.26.0 plan the same statements.
+or `CASCADE`. v0.23.0, v0.26.0 and v0.28.0 plan the same statements.
 
 ## Operations
 
