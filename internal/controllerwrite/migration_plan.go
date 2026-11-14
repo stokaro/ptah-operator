@@ -122,6 +122,9 @@ func validateMigrationPlanShape(
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return errors.New("plan target identity does not match the database the history came from")
 	}
+	if plan.Spec.ShadowIdentityDigest != history.ShadowIdentityDigest {
+		return errors.New("plan shadow identity does not match the shadow database the history read named")
+	}
 	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if !sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {
 		return errors.New("plan artifact digest does not match the resolved artifact")
@@ -151,6 +154,7 @@ func validateMigrationPlanShape(
 		Source:                   sourcebinding.Fingerprint(plan.Spec.Source),
 		CoordinationDigest:       plan.Spec.CoordinationDigest,
 		TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
+		ShadowIdentityDigest:     plan.Spec.ShadowIdentityDigest,
 		PolicyFingerprint:        plan.Spec.PolicyFingerprint,
 		VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,

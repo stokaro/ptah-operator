@@ -193,10 +193,14 @@ type Result struct {
 	Operation       Operation `json:"operation"`
 	OperationID     string    `json:"operationId"`
 	// ChildExitCode is -1 when the runner refused the operation before child dispatch.
-	ChildExitCode            int                   `json:"childExitCode"`
-	Stdout                   string                `json:"stdout"`
-	CoordinationDigest       string                `json:"coordinationDigest,omitempty"`
-	TargetIdentityDigest     string                `json:"targetIdentityDigest,omitempty"`
+	ChildExitCode        int    `json:"childExitCode"`
+	Stdout               string `json:"stdout"`
+	CoordinationDigest   string `json:"coordinationDigest,omitempty"`
+	TargetIdentityDigest string `json:"targetIdentityDigest,omitempty"`
+	// ShadowIdentityDigest is the credential-free identity of the shadow
+	// database a migration drift check replays into, on the history read and
+	// the Apply of a resource that asks for the check, and nowhere else.
+	ShadowIdentityDigest     string                `json:"shadowIdentityDigest,omitempty"`
 	VerificationPolicyDigest string                `json:"verificationPolicyDigest,omitempty"`
 	DriftReportDigest        string                `json:"driftReportDigest,omitempty"`
 	ObservedDialect          string                `json:"observedDialect,omitempty"`
@@ -823,6 +827,7 @@ func validateResult(result Result, options ParseOptions) error {
 	for name, digest := range map[string]string{
 		"coordination":        result.CoordinationDigest,
 		"target identity":     result.TargetIdentityDigest,
+		"shadow identity":     result.ShadowIdentityDigest,
 		"verification policy": result.VerificationPolicyDigest,
 		"drift report":        result.DriftReportDigest,
 		"resolved source":     result.ResolvedDigest,
@@ -876,6 +881,25 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.MigrationRun != nil && result.Operation != OperationMigrationApply {
 		return fmt.Errorf("%w: migration run report on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.ShadowIdentityDigest != "" && result.Operation != OperationMigrationHistory && result.Operation != OperationMigrationApply {
+		return fmt.Errorf("%w: shadow identity on an operation that reads no shadow database", ErrMalformedFrame)
+	}
+	if report := result.MigrationRun; report != nil {
+		if report.DriftCheck != nil {
+			return fmt.Errorf("%w: migration run report carries Ptah's drift check text", ErrMalformedFrame)
+		}
+		if summary := report.DriftSummary; summary != nil {
+			if result.ShadowIdentityDigest == "" {
+				return fmt.Errorf("%w: drift check from an Apply that holds no shadow database", ErrMalformedFrame)
+			}
+			if err := summary.Validate(); err != nil {
+				return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
+			}
+			if summary.Refused() && (report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 || report.Failure != nil) {
+				return fmt.Errorf("%w: a refusing drift check beside a run that ran migrations", ErrMalformedFrame)
+			}
+		}
 	}
 	if report := result.MigrationRun; report != nil && report.MigrationLog != nil {
 		if err := report.MigrationLog.Validate(report.Planned); err != nil {

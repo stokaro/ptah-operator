@@ -183,7 +183,7 @@ func TestAHistorySentenceAgreesWithItsCountOfMigrations(t *testing.T) {
 				TotalMigrations: 1 + row.count, Migrations: records(row.state, row.count),
 			}
 			reconciler := &MigrationReconciler{}
-			if err := reconciler.recordMigrationHistory(migration, report, testDigest); err != nil {
+			if err := reconciler.recordMigrationHistory(migration, report, testDigest, ""); err != nil {
 				t.Fatal(err)
 			}
 			assertMigrationCondition(t, migration, row.conditionType, row.want)

@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
@@ -165,6 +166,14 @@ type MigrationRunReport struct {
 	// says nothing either way about the log.
 	MigrationLog *MigrationLogReport    `json:"migration_log,omitempty"`
 	Status       *MigrationStatusReport `json:"status,omitempty"`
+	// DriftCheck is the check --check-drift ran, as Ptah wrote it. A run
+	// that was not asked for one, or that stopped before it, carries none.
+	// The runner reads it into DriftSummary and drops it before the report
+	// reaches a frame.
+	DriftCheck *MigrationDriftCheck `json:"drift_check,omitempty"`
+	// DriftSummary is what a frame keeps of DriftCheck. Ptah writes no such
+	// field.
+	DriftSummary *MigrationDriftSummary `json:"driftSummary,omitempty"`
 }
 
 // StoppedBeforeSelecting reports a run that failed before Ptah selected any
@@ -460,6 +469,12 @@ func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
 		if err := report.MigrationLog.Validate(report.Planned); err != nil {
 			return MigrationRunReport{}, err
 		}
+	}
+	if report.DriftSummary != nil {
+		return MigrationRunReport{}, errors.New("migration run carries a drift summary, which Ptah does not write")
+	}
+	if err := report.validateDriftCheck(); err != nil {
+		return MigrationRunReport{}, err
 	}
 	// A failed run that read no history afterwards stopped before it
 	// selected anything. One that names a selection, an applied version or a

@@ -144,6 +144,28 @@ func Run(ctx context.Context, config Config) Result {
 		setResultError(&result, "missing_target", errors.New("PTAH_DB_URL is required"), redactor, config.Diagnostics)
 		return result
 	}
+	// A drift check's shadow database is read by the two operations that bind
+	// it: the history read learns its identity for the plan, and the Apply
+	// checks against it. It is never the target, which the check would empty.
+	// The refusals name no part of the URL.
+	if shadowURL := values[EnvShadowDatabaseURL]; shadowURL != "" {
+		if config.Operation != OperationMigrationHistory && config.Operation != OperationMigrationApply {
+			setResultError(&result, "invalid_configuration",
+				errors.New("only a migration history read or a migration Apply reads a shadow database"), redactor, config.Diagnostics)
+			return result
+		}
+		shadowDigest, err := TargetIdentityDigest(shadowURL)
+		if err != nil {
+			setResultError(&result, "invalid_shadow",
+				errors.New("the shadow database URL is not a PostgreSQL or MySQL URL with a host and a database"), redactor, config.Diagnostics)
+			return result
+		}
+		if shadowDigest == result.TargetIdentityDigest {
+			setResultError(&result, "shadow_is_target", errors.New("the shadow database is the target database"), redactor, config.Diagnostics)
+			return result
+		}
+		result.ShadowIdentityDigest = shadowDigest
+	}
 	// One authority block for both mutating families. A schema Apply and a
 	// migration Apply reach the same database through the same kind of Pod, so
 	// a boundary that holds for one and not the other is not a boundary: it
@@ -163,6 +185,10 @@ func Run(ctx context.Context, config Config) Result {
 			return result
 		}
 		if config.Operation == OperationMigrationApply {
+			if code, err := shadowBindingRefusal(result.ShadowIdentityDigest, inputs.ExpectedShadowDigest); err != nil {
+				setResultError(&result, code, err, redactor, config.Diagnostics)
+				return result
+			}
 			// A migration Apply that names no approved sequence, or no
 			// history that sequence was computed against, has nothing behind
 			// it. The sequence itself is what bounds the child: it goes to
@@ -354,6 +380,11 @@ func Run(ctx context.Context, config Config) Result {
 		}
 	}
 	spec.Env = childEnvironment(environment)
+	if config.Operation == OperationMigrationApply && inputs.ExpectedShadowDigest != "" {
+		// The one child the shadow reaches: the Apply BuildCommand passed
+		// --check-drift to, whose shadow the plan bound.
+		spec.Env = append(spec.Env, EnvShadowDatabaseURL+"="+values[EnvShadowDatabaseURL])
+	}
 	if config.Operation == OperationApply {
 		// An exact, digest-checked plan is the only desired input to apply.
 		spec.Env = environmentWithout(spec.Env, envSchemaFile)
@@ -541,6 +572,17 @@ func decodeMigrationReport(
 		setTargetFailure(result, kind, redactor, config.Diagnostics)
 	}
 	report.Error = nil
+	// A run asked for the check answers it, or stops before it; one that
+	// was not asked answers nothing. Anything else is a run whose report
+	// cannot say whether the check stood between the history and the
+	// migrations, so it is no report at all, and the frame keeps claiming an
+	// uncertain mutation.
+	if err := driftCheckAnswersRequest(report, inputs.ExpectedShadowDigest != ""); err != nil {
+		setResultError(result, "invalid_migration_run_output", err, redactor, config.Diagnostics)
+		return
+	}
+	report.DriftSummary = report.DriftCheck.Summary()
+	report.DriftCheck = nil
 	redactMigrationHistoryError(report.Status)
 	// A lost log entry's message can quote part of the value the database
 	// refused, such as the actor. What the frame keeps of it is the entry and
@@ -555,6 +597,22 @@ func decodeMigrationReport(
 	// Partial and unknown are the two outcomes no retry may follow.
 	result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
 		report.Outcome == dataplane.MigrationOutcomeUnknown
+}
+
+// driftCheckAnswersRequest holds a run report's drift check to whether the
+// runner asked for one. A run that was asked and carries none ran no check, and
+// is accepted only when it applied nothing and failed: the expected-sequence
+// guard runs before the check, and a run that stopped before selecting ran
+// neither.
+func driftCheckAnswersRequest(report dataplane.MigrationRunReport, requested bool) error {
+	switch {
+	case !requested && report.DriftCheck != nil:
+		return errors.New("migration run reports a drift check nobody asked for")
+	case requested && report.DriftCheck == nil &&
+		(report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 || report.Failure != nil):
+		return errors.New("migration run was asked for a drift check, reports none, and went on to run migrations")
+	}
+	return nil
 }
 
 // migrationStatusFailureKind is the kind of failure a status run's failure
@@ -1665,6 +1723,26 @@ func sanitizedCapturedText(content []byte, redactor Redactor, truncated bool, li
 
 func outputWasTruncated(result *Result) bool {
 	return result.Truncation != nil
+}
+
+// shadowBindingRefusal is the refusal of a migration Apply whose shadow
+// database is not the one its plan bound: the error code and the error, or an
+// empty code and nil when the two agree. A plan that binds none is an Apply
+// that checks nothing, and a shadow beside it is a Job nobody planned.
+func shadowBindingRefusal(observed, expected string) (string, error) {
+	switch {
+	case expected == "" && observed == "":
+		return "", nil
+	case expected == "":
+		return "shadow_binding_mismatch", errors.New("the Job holds a shadow database its plan does not bind")
+	case !validProtocolDigest(expected):
+		return "missing_shadow_binding", errors.New("the expected shadow identity digest is not a SHA-256 digest")
+	case observed == "":
+		return "missing_shadow", errors.New("the plan binds a shadow database and the Job holds none")
+	case observed != expected:
+		return "shadow_binding_mismatch", errors.New("the shadow database changed after planning")
+	}
+	return "", nil
 }
 
 // targetBindingRefusal is the refusal of a database operation bound to an

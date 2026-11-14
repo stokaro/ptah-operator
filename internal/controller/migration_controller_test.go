@@ -631,7 +631,7 @@ func TestMigrationPlanningReportsWorkBeforeThePlanIsPublished(t *testing.T) {
 	}
 
 	reconciler := &MigrationReconciler{}
-	if err := reconciler.recordMigrationHistory(migration, report, testDigest); err != nil {
+	if err := reconciler.recordMigrationHistory(migration, report, testDigest, ""); err != nil {
 		t.Fatalf("recordMigrationHistory() error = %v", err)
 	}
 

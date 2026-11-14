@@ -291,6 +291,11 @@ func TestHTTPSResolveJobNeedsTheDownloadAndNoDatabase(t *testing.T) {
 			append(download, corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"}), nil),
 		"a database URL mount": httpsJobFixture([]string{"install-runner"}, true, download,
 			[]corev1.VolumeMount{{Name: "database-url", MountPath: "/credentials/database", ReadOnly: true}}),
+		"a shadow database URL": httpsJobFixture([]string{"install-runner"}, true, append(download, corev1.EnvVar{Name: "PTAH_SHADOW_DB"}), nil),
+		"a shadow database URL file": httpsJobFixture([]string{"install-runner"}, true,
+			append(download, corev1.EnvVar{Name: "PTAH_OPERATOR_SHADOW_DB_URL_FILE", Value: "/credentials/shadow-database/url"}), nil),
+		"a shadow database URL mount": httpsJobFixture([]string{"install-runner"}, true, download,
+			[]corev1.VolumeMount{{Name: "shadow-database-url", MountPath: "/credentials/shadow-database", ReadOnly: true}}),
 	} {
 		if httpsResolveJob(job) == nil {
 			t.Errorf("httpsResolveJob accepted %s", name)

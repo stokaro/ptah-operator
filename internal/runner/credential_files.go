@@ -28,6 +28,9 @@ const (
 	// EnvDevelopmentDatabaseURLFile names the file holding the development
 	// database URL a Plan may use.
 	EnvDevelopmentDatabaseURLFile = "PTAH_OPERATOR_DEV_URL_FILE"
+	// EnvShadowDatabaseURLFile names the file holding the URL of the shadow
+	// database a migration's drift check replays into.
+	EnvShadowDatabaseURLFile = "PTAH_OPERATOR_SHADOW_DB_URL_FILE"
 	// EnvOCIUsernameFile, EnvOCIPasswordFile and EnvOCITokenFile name the
 	// files an Environment-mode registry credential is projected into.
 	EnvOCIUsernameFile = "PTAH_OPERATOR_OCI_USERNAME_FILE"
@@ -69,6 +72,7 @@ func CredentialFiles() []CredentialFile {
 	return []CredentialFile{
 		{File: EnvDatabaseURLFile, Value: EnvDatabaseURL},
 		{File: EnvDevelopmentDatabaseURLFile, Value: EnvDevelopmentDatabaseURL},
+		{File: EnvShadowDatabaseURLFile, Value: EnvShadowDatabaseURL},
 		{File: EnvOCIUsernameFile, Value: envOCIUsername},
 		{File: EnvOCIPasswordFile, Value: EnvOCIPassword},
 		{File: EnvOCITokenFile, Value: EnvOCIToken},

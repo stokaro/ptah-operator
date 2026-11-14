@@ -27,10 +27,12 @@ import (
 const (
 	databaseURLVolumeName            = "database-url"
 	developmentDatabaseURLVolumeName = "development-database-url"
+	shadowDatabaseURLVolumeName      = "shadow-database-url"
 	registryCredentialsVolumeName    = "registry-credentials"
 
 	databaseURLDirectory            = "/credentials/database"
 	developmentDatabaseURLDirectory = "/credentials/development-database"
+	shadowDatabaseURLDirectory      = "/credentials/shadow-database"
 	registryCredentialsDirectory    = "/credentials/registry"
 
 	// databaseURLFile is the name a database URL is projected under.

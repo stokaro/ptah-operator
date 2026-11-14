@@ -36,6 +36,7 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
+| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -82,9 +83,11 @@ decision.
 | `RunnerProtocolMismatch` | The runner refused the Job before starting the executor, because `execution.runnerImage` is a runner that speaks another protocol than this manager. The operation is tried again after the failure interval; set `execution.runnerImage` to the runner of the manager's own release. |
 | `RunNotUnresolved` | A `PtahMigrationRunAcknowledgment` named a run its migration was not waiting on, so it settled nothing. Read the migration's `status.unresolvedRun` for the run it does record, or `status.resolvedRun` for what settled the one you named. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
+| `SchemaDrifted` | A migration Apply ran nothing because `spec.policy.driftCheck` found the target's schema differing from the one its applied migrations produce. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
+| `ShadowDatabaseUnavailable` | A migration Apply ran nothing because the shadow database `spec.policy.driftCheck` names could not be used: unreachable, not empty, the target under another name, or the replay into it failed. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `SnapshotTaken` | A ConfigMap source was read and the files it selects were copied into the snapshot every later operation reads. |
 | `SourceFreshnessUnknown` | Currentness cannot be proven because source refresh did not complete. |
 | `SourceRefreshPending` | Dependent currentness is unknown during source refresh. |
@@ -158,6 +161,71 @@ A run that failed on a statement says the same, with the migration it failed
 in and the count of those before it that it applied. The statement the
 database refused is in that file, and
 [its Pod log](#a-statement-the-database-refused) holds what the database said.
+
+## A migration whose drift check refused the run
+
+A `PtahMigration` whose `spec.policy.driftCheck` names a shadow database has
+Ptah compare the target with the schema its applied migrations produce before
+any pending migration runs. A check that does not come back clean stops the
+run, and the reason says which answer it was:
+
+```
+lastRun: outcome Failed
+Ready=False SchemaDrifted
+"The drift check found 1 difference between the database's schema and the one its applied migrations produce, so the run applied nothing: something changed the schema outside the migrations. What Ptah reported is in the Pod log for 24 hours after the Job finishes: kubectl logs -n application job/ptah-apply-orders-5d06b0eaaa30addb -c ptah"
+```
+
+- `SchemaDrifted`: the target holds an object the applied migrations do not
+  create, lacks one they do, or holds one differently. Find what changed the
+  schema outside the migrations. Bring the database back to its history, or
+  record the change in a migration, and the next Apply runs.
+- `DriftCheckUnsupported`: the check could not decide. At stage `history` the
+  applied history cannot be replayed, as when an applied revision's file is
+  gone or a lower version was applied after a higher one. At stage
+  `schema-match` the read of the target could not describe an object the
+  applied migrations create. The check cannot run on this database as it
+  stands: remove `spec.policy.driftCheck` to run without it, or fix the history
+  first.
+- `ShadowDatabaseUnavailable`: the shadow database could not be used. It did
+  not answer, it already holds something (stage `claim`, reason `not_clean`),
+  it is the target under another name (stage `realm-check`), its user lacks
+  what Ptah needs to empty it, or the replay of the applied migrations failed
+  on it. Check the URL the shadow Secret holds, and that the database is empty
+  and belongs to this resource alone.
+
+In every case the run applied nothing and the revision table is as the plan
+read it. `Ready` and `Progressing` carry the reason, `status.lastRun` records
+the run as `Failed` with the same message, and a `MigrationRunFinished`
+Warning Event carries it too. The resource waits
+`spec.execution.failureRetryInterval` and starts again from resolution, so the
+history is read and planned again before anything else runs. Under
+`apply: OnApproval` the next run needs an approval of its own, because this
+one consumed its approval.
+
+The message names counts, stages and reason codes, never Ptah's own sentences:
+those can quote what the shadow database's driver said, or a default
+expression from the schema. The Pod log holds Ptah's sentence, as it does for
+[a statement the database refused](#a-statement-the-database-refused), and the
+message ends with the command to read it. For a drifted schema that sentence
+names the first difference:
+
+```text
+ptah-runner: ptah reported: the database schema differs from the schema its 2 applied migrations produce, in 1 place, so no pending migration was run; first: extra column orders.nickname
+```
+
+To see every difference, run the same check from a workstation against the
+same two databases. `--dry-run` changes nothing on the target, and Ptah empties
+the shadow again when the check ends:
+
+```sh
+ptah migrations up --dry-run --check-drift \
+  --db-url "$DATABASE_URL" \
+  --shadow-db "$SHADOW_DATABASE_URL" \
+  --migrations-dir ./migrations
+```
+
+[Check the schema against its history](../../use/migrations/#drift-check)
+says what the shadow database needs.
 
 ## A run whose log entries the database refused
 

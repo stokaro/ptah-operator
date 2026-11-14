@@ -212,6 +212,9 @@ func (h *MigrationApprovalHandler) validateMigrationBinding(
 	if migration.Status.History.TargetIdentityDigest != plan.Spec.TargetIdentityDigest {
 		return fmt.Errorf("the database identity changed after the plan was generated")
 	}
+	if migration.Status.History.ShadowIdentityDigest != plan.Spec.ShadowIdentityDigest {
+		return fmt.Errorf("the drift check's shadow database changed after the plan was generated")
+	}
 	statusArtifact, statusSource := sourcebinding.MigrationPlanSource(migration.Status.Artifact, migration.Status.ConfigMap, migration.Status.SourcePolicy)
 	if migration.Status.Artifact == nil ||
 		!sourcebinding.SamePlanSource(plan.Spec.ArtifactDigest, plan.Spec.Source, statusArtifact, statusSource) {

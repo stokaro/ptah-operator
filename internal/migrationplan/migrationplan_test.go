@@ -47,6 +47,7 @@ var alternatives = map[string]any{
 	"ArtifactDigest":           digest('7'),
 	"CoordinationDigest":       digest('6'),
 	"TargetIdentityDigest":     digest('5'),
+	"ShadowIdentityDigest":     digest('2'),
 	"PolicyFingerprint":        digest('4'),
 	"VerificationPolicyUID":    types.UID("another-verification-policy-uid"),
 	"VerificationPolicyDigest": digest('3'),
@@ -115,10 +116,16 @@ func TestEveryInputOfAMigrationPlanIsInsideItsFingerprint(t *testing.T) {
 func TestAMigrationPlanRefusesAnIncompleteBinding(t *testing.T) {
 	t.Parallel()
 
-	// Each contract leaves out the fields the other one binds.
+	// Each contract leaves out the fields the other one binds. Neither needs
+	// a shadow: a plan whose policy asks for no drift check binds none, and
+	// TestAPlanWithoutAShadowHashesTheDocumentItDidBefore holds what that
+	// leaves.
 	for version, absent := range map[string]map[string]bool{
-		"artifact": {"Source": true},
-		"source":   {"ArtifactDigest": true, "VerificationPolicyUID": true, "VerificationPolicyDigest": true},
+		"artifact": {"Source": true, "ShadowIdentityDigest": true},
+		"source": {
+			"ArtifactDigest": true, "VerificationPolicyUID": true, "VerificationPolicyDigest": true,
+			"ShadowIdentityDigest": true,
+		},
 	} {
 		bindingType := reflect.TypeOf(migrationplan.Binding{})
 		for index := range bindingType.NumField() {

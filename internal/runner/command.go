@@ -33,6 +33,12 @@ const (
 	// reads that prove a schema Apply carry the digest of that Apply's plan.
 	// It is optional on a read, and a read without it reads any target.
 	EnvExpectedTargetIdentityDigest = "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST"
+	// EnvExpectedShadowIdentityDigest binds a migration Apply to the
+	// credential-free identity of the shadow database its plan was computed
+	// with, and asks for the drift check: an Apply that carries it runs
+	// `migrations up --check-drift` against that shadow and no other. An Apply
+	// without it checks nothing, as one built before the input existed did.
+	EnvExpectedShadowIdentityDigest = "PTAH_EXPECTED_SHADOW_IDENTITY_DIGEST"
 	// EnvCoordinationDigest binds every database operation to a user-declared
 	// physical database realm without exposing its plaintext coordination key.
 	EnvCoordinationDigest = "PTAH_COORDINATION_DIGEST"
@@ -65,6 +71,10 @@ const (
 	EnvDatabaseURL = "PTAH_DB_URL"
 	// EnvDevelopmentDatabaseURL carries an optional development database credential.
 	EnvDevelopmentDatabaseURL = "PTAH_DEV_URL"
+	// EnvShadowDatabaseURL carries the shadow database a migration drift
+	// check replays into. Ptah reads it as --shadow-db, so it reaches a child
+	// only on an Apply the runner passes --check-drift to.
+	EnvShadowDatabaseURL = "PTAH_SHADOW_DB"
 	// EnvOCIPassword carries a registry password to the child only.
 	EnvOCIPassword = "PTAH_OCI_PASSWORD"
 	// EnvOCIToken carries a registry identity token to the child only.
@@ -111,6 +121,7 @@ const (
 	envPlanDir                = EnvPlanDir
 	envExpectedPlanDigest     = EnvExpectedPlanContentDigest
 	envExpectedTargetDigest   = EnvExpectedTargetIdentityDigest
+	envExpectedShadowDigest   = EnvExpectedShadowIdentityDigest
 	envCoordinationDigest     = EnvCoordinationDigest
 	envExpectedCoordination   = EnvExpectedCoordinationDigest
 	envExpectedSequence       = EnvExpectedMigrationSequence
@@ -139,6 +150,7 @@ type Inputs struct {
 	PlanDir                    string
 	ExpectedPlanContentDigest  string
 	ExpectedTargetDigest       string
+	ExpectedShadowDigest       string
 	CoordinationDigest         string
 	ExpectedCoordinationDigest string
 	ExpectedSequence           string
@@ -177,6 +189,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		PlanDir:                    values[envPlanDir],
 		ExpectedPlanContentDigest:  values[envExpectedPlanDigest],
 		ExpectedTargetDigest:       values[envExpectedTargetDigest],
+		ExpectedShadowDigest:       values[envExpectedShadowDigest],
 		CoordinationDigest:         values[envCoordinationDigest],
 		ExpectedCoordinationDigest: values[envExpectedCoordination],
 		ExpectedSequence:           values[envExpectedSequence],
@@ -280,12 +293,24 @@ func withRunReference(spec CommandSpec, operationID string) (CommandSpec, error)
 	return spec, nil
 }
 
+// Ptah v0.28.0 binds PTAH_CHECK_DRIFT and PTAH_DRIFT_EXCLUDE to the drift
+// check of `migrations up`. The check is asked for only by the argument the
+// runner builds from the Job's expected shadow identity, so both are removed
+// from every child, and PTAH_SHADOW_DB from every child but that Apply's.
+const (
+	ptahCheckDriftEnvironment   = "PTAH_CHECK_DRIFT"
+	ptahDriftExcludeEnvironment = "PTAH_DRIFT_EXCLUDE"
+)
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(environmentWithout(environment, credentialFileVariables()...),
 		ptahJSONEnvironment,
 		ptahExcludeEnvironment,
 		ptahIncludeEnvironment,
 		ptahRunReferenceEnvironment,
+		ptahCheckDriftEnvironment,
+		ptahDriftExcludeEnvironment,
+		EnvShadowDatabaseURL,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,
@@ -294,6 +319,7 @@ func childEnvironment(environment []string) []string {
 		EnvPlanDir,
 		EnvExpectedPlanContentDigest,
 		EnvExpectedTargetIdentityDigest,
+		EnvExpectedShadowIdentityDigest,
 		EnvCoordinationDigest,
 		EnvExpectedCoordinationDigest,
 		EnvExpectedMigrationSequence,
@@ -412,6 +438,12 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 				return CommandSpec{}, errors.New("migration apply needs the absolute path of its approved sequence")
 			}
 			spec.Args = append(spec.Args, "--expect-sequence", inputs.ExpectedSequencePath)
+		}
+		// The check runs only where the plan bound a shadow database. The
+		// shadow's URL reaches Ptah as PTAH_SHADOW_DB in the child's
+		// environment, never as an argument.
+		if operation == OperationMigrationApply && inputs.ExpectedShadowDigest != "" {
+			spec.Args = append(spec.Args, "--check-drift")
 		}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)

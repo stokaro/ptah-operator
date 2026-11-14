@@ -356,6 +356,28 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// A drift check mounts its shadow on the history read, which
+			// reports its identity, and on the Apply, which is bound to it.
+			name: "migration-history-drift-check",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
+			},
+			unreleased: true,
+		},
+		{
+			name: "migration-apply-drift-check",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				plan := migrationPlanFixture()
+				plan.Spec.ShadowIdentityDigest = "sha256:" + strings.Repeat("5", 64)
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), plan)
+			},
+			unreleased: true,
+		},
+		{
 			name: "schema-resolve-git-https",
 			build: func() (*batchv1.Job, error) {
 				return builder.Build(gitSchemaFixture(gitHTTPSSpec("db/schema.hcl")), operationFixture(operatorv1alpha1.OperationResolve), nil)
@@ -536,4 +558,11 @@ func firstDifferentLine(want, got []byte) (int, string, string) {
 		}
 	}
 	return 0, "", ""
+}
+
+// goldenDriftCheck is a drift check whose shadow is a Secret of its own.
+func goldenDriftCheck() *operatorv1alpha1.MigrationDriftCheck {
+	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
+	}}}
 }

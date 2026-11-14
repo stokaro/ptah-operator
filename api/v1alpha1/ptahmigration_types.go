@@ -1035,6 +1035,18 @@ const (
 	// to schema_migrations_log, so its record of the run is incomplete. The
 	// run's outcome is unchanged: the migrations it applied are applied.
 	ReasonLogEntriesLost ConditionReason = "LogEntriesLost"
+	// ReasonSchemaDrifted means policy.driftCheck found the target's live
+	// schema differing from what its applied history replays to, so the Apply
+	// ran nothing. Something changed the schema outside the migrations.
+	ReasonSchemaDrifted ConditionReason = "SchemaDrifted"
+	// ReasonDriftCheckUnsupported means Ptah could not decide the check: the
+	// applied history cannot be replayed, or the comparison covers an object
+	// it cannot describe. The Apply ran nothing.
+	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
+	// ReasonShadowDatabaseUnavailable means the shadow database could not be
+	// used: it was unreachable, held something, was the target under another
+	// name, or the replay into it failed. The Apply ran nothing.
+	ReasonShadowDatabaseUnavailable ConditionReason = "ShadowDatabaseUnavailable"
 )
 
 // ConditionMigrationArtifactVerified reports that the resolved artifact

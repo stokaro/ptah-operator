@@ -901,7 +901,7 @@ func TestAFailedRunsDirtyRevisionStopsTheResource(t *testing.T) {
 	migration, plan := awaitingApprovalFixture(t)
 	migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
 	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
-	if err := reconciler.recordMigrationHistory(migration, report, migration.Status.History.TargetIdentityDigest); err != nil {
+	if err := reconciler.recordMigrationHistory(migration, report, migration.Status.History.TargetIdentityDigest, ""); err != nil {
 		t.Fatalf("recordMigrationHistory() error = %v", err)
 	}
 	if migration.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {

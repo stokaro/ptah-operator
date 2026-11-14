@@ -279,6 +279,11 @@ func TestGitResolveJobNeedsTheRepositoryAndNoDatabase(t *testing.T) {
 			append(repository, corev1.EnvVar{Name: "PTAH_OPERATOR_DB_URL_FILE", Value: "/credentials/database/url"}), nil),
 		"a database URL mount": gitJobFixture([]string{"install-runner"}, repository,
 			[]corev1.VolumeMount{{Name: "database-url", MountPath: "/credentials/database", ReadOnly: true}}),
+		"a shadow database URL": gitJobFixture([]string{"install-runner"}, append(repository, corev1.EnvVar{Name: "PTAH_SHADOW_DB"}), nil),
+		"a shadow database URL file": gitJobFixture([]string{"install-runner"},
+			append(repository, corev1.EnvVar{Name: "PTAH_OPERATOR_SHADOW_DB_URL_FILE", Value: "/credentials/shadow-database/url"}), nil),
+		"a shadow database URL mount": gitJobFixture([]string{"install-runner"}, repository,
+			[]corev1.VolumeMount{{Name: "shadow-database-url", MountPath: "/credentials/shadow-database", ReadOnly: true}}),
 	} {
 		if gitResolveJob(job) == nil {
 			t.Errorf("gitResolveJob accepted %s", name)

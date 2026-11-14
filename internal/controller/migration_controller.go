@@ -1566,7 +1566,13 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if !sha256DigestPattern.MatchString(result.TargetIdentityDigest) {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no target identity"))
 		}
-		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
+		// The read names the shadow exactly when the policy asks for a check:
+		// a plan computed from a read that named none would run unchecked.
+		if checked := migration.Spec.Policy.DriftCheck != nil; checked != sha256DigestPattern.MatchString(result.ShadowIdentityDigest) {
+			return r.retryMigrationOperation(ctx, migration, job,
+				errors.New("the history result does not name the shadow database the drift check policy asks for"))
+		}
+		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest, result.ShadowIdentityDigest); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
 		recordMigrationRunVerification(migration)
@@ -1856,7 +1862,7 @@ func migrationsPending(count int) string {
 func (r *MigrationReconciler) recordMigrationHistory(
 	migration *operatorv1alpha1.PtahMigration,
 	report dataplane.MigrationStatusReport,
-	targetIdentityDigest string,
+	targetIdentityDigest, shadowIdentityDigest string,
 ) error {
 	historyFingerprint, err := migrationplan.HistoryFingerprint(report)
 	if err != nil {
@@ -1878,6 +1884,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		CheckpointVersion:    report.CheckpointVersion,
 		Fingerprint:          historyFingerprint,
 		TargetIdentityDigest: targetIdentityDigest,
+		ShadowIdentityDigest: shadowIdentityDigest,
 		PendingCount:         int32(len(pending)),
 		Dirty:                report.DirtyRevision != nil,
 	}
@@ -2072,6 +2079,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		Source:                   sourcebinding.Fingerprint(source),
 		CoordinationDigest:       coordinationDigest,
 		TargetIdentityDigest:     history.TargetIdentityDigest,
+		ShadowIdentityDigest:     history.ShadowIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
@@ -2096,6 +2104,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		Source:                   source,
 		CoordinationDigest:       planBinding.CoordinationDigest,
 		TargetIdentityDigest:     planBinding.TargetIdentityDigest,
+		ShadowIdentityDigest:     planBinding.ShadowIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
@@ -2170,7 +2179,7 @@ func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alp
 // policy that changed after the plan was made invalidates it rather than
 // executing under terms nobody approved.
 func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (string, error) {
-	return fingerprint.DigestCanonicalJSON(map[string]string{
+	policy := map[string]string{
 		"apply":        string(migration.Spec.Policy.Apply),
 		"lock_timeout": migration.Spec.Policy.LockTimeout.Duration.String(),
 		// The mode decides how the run is wrapped, so a sequence approved under
@@ -2179,7 +2188,15 @@ func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (stri
 		// no mode and Ptah chooses, which is a different run from one that
 		// asked for "file" even where Ptah would have picked it.
 		"transaction_mode": migration.Spec.Policy.TransactionMode,
-	})
+	}
+	// A drift check is a guard in front of the run, so turning it on, off or
+	// to another shadow is another execution. A policy without one hashes
+	// the map it hashed before the check existed, and keeps its plans.
+	if check := migration.Spec.Policy.DriftCheck; check != nil {
+		policy["drift_check_shadow_secret"] = check.Shadow.URLFrom.Name
+		policy["drift_check_shadow_key"] = check.Shadow.URLFrom.Key
+	}
+	return fingerprint.DigestCanonicalJSON(policy)
 }
 
 // migrationInputFingerprint is what the operation was decided from. An input
@@ -2218,6 +2235,13 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		// bumps it on every spec edit, so an edited mode already retired an
 		// undispatched claim before this entry existed.
 		"transaction_mode": migration.Spec.Policy.TransactionMode,
+	}
+	// The history read and the Apply mount the shadow, so it is an input of
+	// both, the way the target's Secret is. A resource without a check adds
+	// nothing, and its claims keep the fingerprints they had.
+	if check := migration.Spec.Policy.DriftCheck; check != nil {
+		inputs["shadow_secret"] = check.Shadow.URLFrom.Name
+		inputs["shadow_key"] = check.Shadow.URLFrom.Key
 	}
 	if operationType != operatorv1alpha1.MigrationOperationResolve {
 		if migration.Status.Artifact == nil {

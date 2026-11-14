@@ -101,6 +101,9 @@ func (r *MigrationReconciler) currentMigrationPlan(
 	if plan.Spec.HistoryFingerprint != history.Fingerprint {
 		return nil, errors.New("the database's history moved after the plan was published")
 	}
+	if plan.Spec.ShadowIdentityDigest != history.ShadowIdentityDigest {
+		return nil, errors.New("the drift check's shadow database changed after the plan was published")
+	}
 	if plan.Spec.TargetIdentityDigest != history.TargetIdentityDigest {
 		return nil, errors.New("the database identity changed after the plan was published")
 	}
@@ -482,6 +485,10 @@ type migrationRunAccount struct {
 	// termination summary cannot show that, so a run read from one leaves
 	// DatabaseReachable to the history read that follows.
 	openedTarget bool
+	// driftRefusal is the reason a drift check that did not come back clean
+	// gives the resource, and empty for every other run. Such a run applied
+	// nothing. Only a frame's report can say so.
+	driftRefusal operatorv1alpha1.ConditionReason
 }
 
 // frameMigrationApply is what a result frame says about a migration Apply.
@@ -591,7 +598,55 @@ func (r *MigrationReconciler) reportedMigrationRun(
 	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
 		run.message = refusal
 	}
+	if summary := report.DriftSummary; summary.Refused() {
+		run.driftRefusal, run.message = driftRefusal(*summary)
+	}
 	return run
+}
+
+// driftRefusal is the reason and the message a drift check that stopped a run
+// gives the resource. Ptah's own words stay out of the frame: an unable
+// check's message can carry what the driver said about the shadow database,
+// and a finding's message can quote a default expression, so the runner keeps
+// the outcome, the counts and the codes alone, and the message is made from
+// them. The Pod log keeps the first line of Ptah's error, which names the first
+// difference, and the message points at it as it does for any failed run.
+//
+// An unable check is grouped by the stage Ptah names. The history and the
+// comparison are what the check itself could not cover; every other stage is
+// the shadow database being unreachable, holding something, being the target
+// under another name or refusing the replay. Ptah treats its stages as an open
+// set, so a stage this build does not know reads as the shadow's.
+func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.ConditionReason, string) {
+	switch {
+	case summary.Outcome == dataplane.MigrationDriftDrifted:
+		return operatorv1alpha1.ReasonSchemaDrifted, fmt.Sprintf(
+			"The drift check found %s between the database's schema and the one its applied migrations produce, "+
+				"so the run applied nothing: something changed the schema outside the migrations",
+			countOf(summary.Findings, "difference", "differences"))
+	case summary.Stage == driftStageHistory || summary.Stage == driftStageSchemaMatch:
+		return operatorv1alpha1.ReasonDriftCheckUnsupported, fmt.Sprintf(
+			"The drift check could not decide (stage %s, reason %s), so the run applied nothing", summary.Stage, summary.Reason)
+	default:
+		return operatorv1alpha1.ReasonShadowDatabaseUnavailable, fmt.Sprintf(
+			"The drift check could not use its shadow database (stage %s, reason %s), so the run applied nothing",
+			summary.Stage, summary.Reason)
+	}
+}
+
+// The stages of an unable drift check that are about the check rather than
+// the shadow database, as Ptah v0.28.0 names them: the applied history could
+// not be replayed, or the comparison could not describe an object.
+const (
+	driftStageHistory     = "history"
+	driftStageSchemaMatch = "schema-match"
+)
+
+func countOf(count int, singular, plural string) string {
+	if count == 1 {
+		return "1 " + singular
+	}
+	return strconv.Itoa(count) + " " + plural
 }
 
 // recordMigrationRun writes a finished run into status and retires its claim. The
@@ -661,6 +716,21 @@ func (r *MigrationReconciler) recordMigrationRun(
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The run stopped and may not be retried")
 		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 		migration.Status.NextReconciliationTime = &next
+	case run.driftRefusal != "":
+		// The check stood between the history and the migrations and refused
+		// the run, so nothing ran and the history is as the plan read it.
+		// Reading it back would find the same plan and, under the Always
+		// policy, start the same refusal at once, so the resource waits the
+		// failure interval as a run that stopped before selecting does. What
+		// changed the schema is a person's to find; the check runs again on
+		// the next Apply and passes once the schema matches its history.
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseFailed
+		next := metav1.NewTime(r.now().Add(migrationFailureRetry(migration)))
+		migration.Status.NextReconciliationTime = &next
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			run.driftRefusal, bounded(message, 1024))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			run.driftRefusal, bounded(message, 1024))
 	case run.stoppedBeforeSelecting:
 		// A run that stopped before it selected anything ran nothing and left
 		// the history as the plan read it, so reading it back now would find

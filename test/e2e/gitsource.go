@@ -250,12 +250,10 @@ func gitResolveJob(job *batchv1.Job) error {
 	repository, database := false, false
 	for _, variable := range spec.Containers[0].Env {
 		repository = repository || variable.Name == "PTAH_OPERATOR_GIT_URL"
-		database = database || slices.Contains([]string{
-			"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE",
-		}, variable.Name)
+		database = database || slices.Contains(databaseURLVariables, variable.Name)
 	}
 	for _, mount := range spec.Containers[0].VolumeMounts {
-		database = database || mount.Name == "database-url" || mount.Name == "development-database-url"
+		database = database || slices.Contains(databaseURLVolumes, mount.Name)
 	}
 	if !repository || database {
 		return fmt.Errorf("the Resolve Job names the repository=%v and a database=%v", repository, database)

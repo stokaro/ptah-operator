@@ -416,6 +416,22 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 			message: "no valid target identity digest",
 		},
 		{
+			name: "apply under a drift check whose plan binds no shadow",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
+				migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
+					URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
+				}}
+			},
+			message: "binds no shadow database",
+		},
+		{
+			name: "apply whose plan binds a shadow the policy no longer names",
+			mutate: func(_ *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				plan.Spec.ShadowIdentityDigest = digest('5')
+			},
+			message: "the policy no longer names",
+		},
+		{
 			name: "apply without a target",
 			mutate: func(_ *operatorv1alpha1.PtahMigration, operation *operatorv1alpha1.MigrationOperationStatus, _ *operatorv1alpha1.PtahMigrationPlan) {
 				operation.Target = nil

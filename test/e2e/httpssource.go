@@ -244,12 +244,10 @@ func httpsResolveJob(job *batchv1.Job) error {
 	download, database := false, false
 	for _, variable := range spec.Containers[0].Env {
 		download = download || variable.Name == "PTAH_OPERATOR_HTTPS_URL"
-		database = database || slices.Contains([]string{
-			"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE",
-		}, variable.Name)
+		database = database || slices.Contains(databaseURLVariables, variable.Name)
 	}
 	for _, mount := range spec.Containers[0].VolumeMounts {
-		database = database || mount.Name == "database-url" || mount.Name == "development-database-url"
+		database = database || slices.Contains(databaseURLVolumes, mount.Name)
 	}
 	if !download || database {
 		return fmt.Errorf("the Resolve Job names the download=%v and a database=%v", download, database)
