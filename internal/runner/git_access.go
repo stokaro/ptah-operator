@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 // The environment a Git source reaches a runner through. The manager sets the
@@ -97,6 +98,9 @@ func (s GitSource) validate() error {
 	if _, hasPassword := parsed.User.Password(); hasPassword {
 		return errors.New("the Git source URL carries a credential")
 	}
+	if err := sourcehost.CheckASCII(parsed.Host); err != nil {
+		return fmt.Errorf("the Git source URL: %w", err)
+	}
 	if s.Branch != "" && s.Tag != "" {
 		return errors.New("a Git source names a branch and a tag")
 	}
@@ -123,13 +127,14 @@ func (s GitSource) reference() string {
 	return "git+" + s.URL
 }
 
-// authority is the host[:port] a credential has to be granted for.
+// authority is the host[:port] a credential has to be granted for, or ""
+// when the URL names none validate admits.
 func (s GitSource) authority() string {
-	parsed, err := url.Parse(s.URL)
+	authority, err := sourcehost.Authority(s.URL)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(parsed.Host)
+	return authority
 }
 
 // gitTrust is the verified private copies of the trust a fetch runs under.
@@ -140,7 +145,8 @@ type gitTrust struct {
 // PrepareGitSourceAccess holds a Git source to the credential owner's grants
 // and copies the trust it selects to private files, then returns them with a
 // cleanup to call. A credential present needs a host grant equal to the
-// URL's authority, and a digest grant for each trust file, equal to its bytes:
+// URL's authority, as printable ASCII without case, and a digest grant for
+// each trust file, equal to its bytes:
 // the Secret's owner, not the resource's author, decides where the
 // credential goes.
 func PrepareGitSourceAccess(source GitSource, environment []string, tempDir string) (gitTrust, func(), error) {
@@ -150,7 +156,11 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 	values := environmentMap(environment)
 	credentialed := values[EnvGitUsername] != "" || values[EnvGitPassword] != "" || values[EnvGitSSHKeyFile] != ""
 	if credentialed {
-		if grant := strings.ToLower(values[EnvGitHostGrant]); grant == "" || grant != source.authority() {
+		grant := values[EnvGitHostGrant]
+		if grant != "" && sourcehost.CheckASCII(grant) != nil {
+			return gitTrust{}, nil, fmt.Errorf("the Git credential's host grant is not printable ASCII: %w", sourcehost.ErrNotASCII)
+		}
+		if !sourcehost.Equal(grant, source.authority()) {
 			return gitTrust{}, nil, errors.New("the Git credential is not granted for the source's host")
 		}
 	} else if values[EnvGitHostGrant] != "" || values[EnvGitCASHA256Grant] != "" || values[EnvGitKnownHostsSHA256Grant] != "" {

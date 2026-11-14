@@ -97,6 +97,22 @@ func TestPrepareHTTPSSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 			refusal: "not granted for the source's host"},
 		{name: "a grant without the URL's port", source: file, environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=files.example.com"},
 			refusal: "not granted for the source's host"},
+		// strings.ToLower reads "f\u0130les" as "files", while Go's transport
+		// dials xn--files-8fd.example.com and would send the credential there.
+		{name: "a URL host with U+0130 under a grant for the ASCII name",
+			source:      with(archive, func(s *HTTPSSource) { s.URL = "https://f\u0130les.example.com/app/1.4.0/app.tar.gz" }),
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=files.example.com"}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 escaped under a grant for the ASCII name",
+			source:      with(archive, func(s *HTTPSSource) { s.URL = "https://f%C4%B0les.example.com/app/1.4.0/app.tar.gz" }),
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=files.example.com"}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 and no credential",
+			source:  with(archive, func(s *HTTPSSource) { s.URL = "https://f%C4%B0les.example.com/app/1.4.0/app.tar.gz" }),
+			refusal: "in its xn-- form"},
+		{name: "a host grant with U+0130 for the ASCII name", source: archive,
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=f\u0130les.example.com"}, refusal: "host grant is not printable ASCII"},
+		{name: "an xn-- host granted as written",
+			source:      with(archive, func(s *HTTPSSource) { s.URL = "https://xn--files-8fd.example.com/app/1.4.0/app.tar.gz" }),
+			environment: []string{EnvHTTPSToken + "=token", EnvHTTPSHostGrant + "=XN--FILES-8FD.example.com"}},
 		{name: "a host grant without a credential", source: archive, environment: []string{EnvHTTPSHostGrant + "=files.example.com"},
 			refusal: "without a credential"},
 		{name: "a CA grant without a credential", source: archive, environment: []string{

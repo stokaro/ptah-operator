@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 // The environment an HTTPS source reaches a runner through. The manager sets
@@ -96,6 +97,9 @@ func (s HTTPSSource) validate() error {
 	case parsed.Path == "" || parsed.Path == "/":
 		return errors.New("the HTTPS source URL names no path")
 	}
+	if err := sourcehost.CheckASCII(parsed.Host); err != nil {
+		return fmt.Errorf("the HTTPS source URL: %w", err)
+	}
 	if !validProtocolDigest(s.Digest) {
 		return errors.New("the HTTPS source digest is not a lowercase SHA-256 digest")
 	}
@@ -122,13 +126,14 @@ func (s HTTPSSource) validate() error {
 	return nil
 }
 
-// authority is the host[:port] a credential has to be granted for.
+// authority is the host[:port] a credential has to be granted for, or ""
+// when the URL names none validate admits.
 func (s HTTPSSource) authority() string {
-	parsed, err := url.Parse(s.URL)
+	authority, err := sourcehost.Authority(s.URL)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(parsed.Host)
+	return authority
 }
 
 // httpsTrust is the verified private copy of the CA a pull runs under.
@@ -139,8 +144,9 @@ type httpsTrust struct {
 // PrepareHTTPSSourceAccess holds an HTTPS source to the credential owner's
 // grants and copies the CA it selects to a private file, then returns it with
 // a cleanup to call. A credential is Basic or Bearer, never both and never
-// half of Basic, and needs a host grant equal to the URL's authority; a CA
-// beside a credential needs a digest grant equal to its bytes. The Secret's
+// half of Basic, and needs a host grant equal to the URL's authority, as
+// printable ASCII without case; a CA beside a credential needs a digest grant
+// equal to its bytes. The Secret's
 // owner, not the resource's author, decides where the credential goes, and a
 // grant with no credential is refused rather than ignored.
 func PrepareHTTPSSourceAccess(source HTTPSSource, environment []string, tempDir string) (httpsTrust, func(), error) {
@@ -159,7 +165,11 @@ func PrepareHTTPSSourceAccess(source HTTPSSource, environment []string, tempDir 
 	}
 	credentialed := username != "" || token != ""
 	if credentialed {
-		if grant := strings.ToLower(values[EnvHTTPSHostGrant]); grant == "" || grant != source.authority() {
+		grant := values[EnvHTTPSHostGrant]
+		if grant != "" && sourcehost.CheckASCII(grant) != nil {
+			return httpsTrust{}, nil, fmt.Errorf("the HTTPS credential's host grant is not printable ASCII: %w", sourcehost.ErrNotASCII)
+		}
+		if !sourcehost.Equal(grant, source.authority()) {
 			return httpsTrust{}, nil, errors.New("the HTTPS credential is not granted for the source's host")
 		}
 	} else if values[EnvHTTPSHostGrant] != "" || values[EnvHTTPSCASHA256Grant] != "" {

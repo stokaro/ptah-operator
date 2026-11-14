@@ -98,6 +98,27 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		}, refusal: "not granted for the source's host"},
 		{name: "grant without a credential", source: https, environment: []string{EnvGitHostGrant + "=git.example.com"},
 			refusal: "without a credential"},
+		// strings.ToLower reads "g\u0130t" as "git", while Go's transport
+		// dials xn--git-9dc.example.com and would send the credential there.
+		{name: "a URL host with U+0130 under a grant for the ASCII name",
+			source:      GitSource{URL: "https://g\u0130t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com"}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 escaped under a grant for the ASCII name",
+			source:      GitSource{URL: "https://g%C4%B0t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com"}, refusal: "in its xn-- form"},
+		{name: "an ssh URL host with U+0130 under a grant for the ASCII name",
+			source: GitSource{URL: "ssh://git@g\u0130t.example.com:2222/acme/app.git", Tag: "v1", Path: "db/migrations"},
+			environment: []string{
+				EnvGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com:2222",
+				EnvGitKnownHostsSourceFile + "=" + knownHostsFile, EnvGitKnownHostsSHA256Grant + "=" + gitTestDigest(knownHosts),
+			}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 and no credential",
+			source: GitSource{URL: "https://g%C4%B0t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"}, refusal: "in its xn-- form"},
+		{name: "a host grant with U+0130 for the ASCII name", source: https,
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=g\u0130t.example.com"}, refusal: "host grant is not printable ASCII"},
+		{name: "an xn-- host granted as written",
+			source:      GitSource{URL: "https://xn--git-9dc.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=xn--git-9dc.EXAMPLE.com"}},
 		{name: "credential with an ungranted CA", source: https, environment: []string{
 			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASourceFile + "=" + caFile,
 		}, refusal: "not the one the credential's owner granted"},
