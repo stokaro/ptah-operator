@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-14T08:01:21.558260+00:00",
+  "frozenAt": "2026-11-14T12:12:18.372060+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "3208a910df229695d1344887a47d607fd33aec006a34f0ea9a9d71974d90d907"
+      "sha256": "b6d4b5b07bbaa03ed0b97c1d79fded878e02de5202946a8e92d12753bbc9a2e0"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.11 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 97,
+  "revision": 98,
   "supersedes": {
-    "freezeCommit": "5378c957148d945af9176ea969ce818e9b466d16",
-    "sha256": "b6f885c99df4f42739ebd970519b89cead0db88eba19c8118fb50181ecfc6d43"
+    "freezeCommit": "190b4380e7256f496f3d1203c6a9fbbb670310f4",
+    "sha256": "49c20b1df617b53300e75530445001355143a169f66ffbc408d931f91681a0b3"
   },
-  "revisionReason": "Add the phase https-sources to the sources suite: a schema and a migration sequence read from HTTPS downloads pinned by digest, with no registry. The suite's summary in support/e2e-suites.json and its row in support/qualification/0.2.0-coverage.md name the HTTPS source beside the ConfigMap and Git ones. Suites, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Name Added database lines run 43574056611, at the Ptah v0.26.0 release image, as the PostgreSQL 18.x and 16.x evidence in support/databases.json and in the edge row of support/ptah.json. Phases, suites, cells, platforms, minors, the profile and its targets are unchanged."
 }
