@@ -98,7 +98,7 @@ documentation and the run did not exercise it.
 | `apply: Always` | No approval, so no `ApprovalAccepted` before the `ApplyFinished` | The manager | The journal's bounds | Read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
 | Anything, in the target database | Nothing at Ptah v0.23.0, which keeps no table for a declared schema | | | Measured |
-| An Apply, in the target database, since Ptah v0.28.0 | `ptah_schema_apply_log`: a row before the first statement and one when the Apply ends, with the plan's name and digest, the outcome and the statement it stopped at. No approver and no operation ID. Under [the documented MySQL grant](../../support/databases/#mysql-authority) both rows are lost | Ptah in the Apply Pod, as the login in the schema's Secret | The database until someone deletes the rows | Read |
+| An Apply, in the target database, since Ptah v0.28.0 | `ptah_schema_apply_log`: a row before the first statement and one when the Apply ends, with the plan's name and digest, the outcome and the statement it stopped at. No approver and no operation ID. Under [the documented MySQL grant](../../support/databases/#mysql-authority) the first Apply loses both rows, and later ones keep theirs once the login holds `INSERT` on the table | Ptah in the Apply Pod, as the login in the schema's Secret | The database until someone deletes the rows | Read |
 
 Both failed Applies ended `Unknown`, and at 0.2.10 the journal said no more
 than that. What failed is in the Pod log for 24 hours. On MySQL that line read
