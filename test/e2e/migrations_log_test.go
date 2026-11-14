@@ -9,6 +9,15 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
+// migrationReadingReference is the run reference every migration log reading
+// that was given one was taken with: the shape of the operation ID the
+// operator passes.
+const migrationReadingReference = "sha256:0ec6a440c2633fe95ed0d9b16a34c3c65509dfeb2d81031a40e8202918171748"
+
+// approvedReadingRun is what the approved readings were given, and what the
+// acceptance row asks of a run a person approved.
+var approvedReadingRun = loggedRun{actor: loggedPersonInTheLog, origin: actorOriginAdmission, reference: migrationReadingReference}
+
 // readMigrationLog parses a reading Ptah wrote. See
 // testdata/e2e/readings/migration-log.md for how each was taken.
 func readMigrationLog(t *testing.T, engine, kind string) []migrationLogRow {
@@ -35,7 +44,7 @@ func TestRunLogNamesAcceptsTheRunPtahWrote(t *testing.T) {
 	for _, engine := range []string{"postgresql", "mysql"} {
 		t.Run(engine, func(t *testing.T) {
 			t.Parallel()
-			if err := runLogNames(readMigrationLog(t, engine, "approved"), loggedPersonInTheLog, 1, 2, 3); err != nil {
+			if err := runLogNames(readMigrationLog(t, engine, "approved"), approvedReadingRun, 1, 2, 3); err != nil {
 				t.Fatalf("the row refused the run Ptah wrote: %v", err)
 			}
 		})
@@ -47,67 +56,96 @@ func TestRunLogNamesRefusesALogThatDoesNotNameTheApprover(t *testing.T) {
 
 	for _, engine := range []string{"postgresql", "mysql"} {
 		approved := func(t *testing.T) []migrationLogRow { return readMigrationLog(t, engine, "approved") }
+		with := func(change func(*loggedRun)) loggedRun {
+			run := approvedReadingRun
+			change(&run)
+			return run
+		}
+		all := []int64{1, 2, 3}
 		for _, row := range []struct {
 			name     string
 			rows     func(*testing.T) []migrationLogRow
-			actor    string
+			run      loggedRun
 			versions []int64
 			says     string
 		}{
 			{
-				// What every operator run wrote before this row existed.
+				// What every operator run wrote before 0.2.12.
 				name: "a run given no name", rows: func(t *testing.T) []migrationLogRow { return readMigrationLog(t, engine, "no-actor") },
-				actor: loggedPersonInTheLog, versions: []int64{1, 2, 3}, says: `names nobody, with source "unknown"`,
+				run: approvedReadingRun, versions: all, says: `names nobody, with source "unknown"`,
+			},
+			{
+				// What a 0.2.12 Job wrote: the approver's name, with neither
+				// where it came from nor the operation it ran for.
+				name: "a run given a name alone", rows: func(t *testing.T) []migrationLogRow { return readMigrationLog(t, engine, "no-reference") },
+				run: approvedReadingRun, versions: all, says: `records origin "", want "admission"`,
 			},
 			{
 				// A name, and not an approver's: the user the process ran as.
 				name: "a run that fell back to the process user", rows: func(t *testing.T) []migrationLogRow { return readMigrationLog(t, engine, "process-user") },
-				actor: "ptah", versions: []int64{1, 2, 3}, says: `has source "process-user"`,
+				run: with(func(r *loggedRun) { r.actor = "ptah" }), versions: all, says: `has source "process-user"`,
 			},
 			{
 				// A name that was not encoded, which a database in a narrower
 				// character set would have refused, losing every row.
 				name: "a name outside printable ASCII", rows: func(t *testing.T) []migrationLogRow { return readMigrationLog(t, engine, "unencoded") },
-				actor: loggedPerson, versions: []int64{1, 2, 3}, says: "not printable ASCII",
+				run: with(func(r *loggedRun) { r.actor = loggedPerson }), versions: all, says: "not printable ASCII",
 			},
 			{
 				name: "someone else's name", rows: approved,
-				actor: "someone-else", versions: []int64{1, 2, 3}, says: `want "someone-else"`,
+				run: with(func(r *loggedRun) { r.actor = "someone-else" }), versions: all, says: `want "someone-else"`,
 			},
 			{
 				// The approver, but not as the log writes one.
 				name: "the name before it was encoded", rows: approved,
-				actor: loggedPerson, versions: []int64{1, 2, 3}, says: `want "oidc:José García $(HOME)"`,
+				run: with(func(r *loggedRun) { r.actor = loggedPerson }), versions: all, says: `want "oidc:José García $(HOME)"`,
 			},
 			{
 				name: "a policy's name where a person approved", rows: approved,
-				actor: alwaysPolicyActor("team-a", "orders"), versions: []int64{1, 2, 3}, says: "system:ptah-operator:apply-always",
+				run: with(func(r *loggedRun) { r.actor = alwaysPolicyActor("team-a", "orders") }), versions: all, says: "system:ptah-operator:apply-always",
+			},
+			{
+				name: "the policy's origin where a person approved", rows: approved,
+				run: with(func(r *loggedRun) { r.origin = actorOriginPolicy }), versions: all, says: `records origin "admission", want "policy"`,
+			},
+			{
+				// The journal's operation ID of another run, here the schema's.
+				name: "another operation's reference", rows: approved,
+				run: with(func(r *loggedRun) { r.reference = schemaReadingReferenceV1 }), versions: all, says: "carries run reference",
 			},
 			{
 				name: "an empty log", rows: func(*testing.T) []migrationLogRow { return nil },
-				actor: loggedPersonInTheLog, versions: []int64{1, 2, 3}, says: "holds 0 rows",
+				run: approvedReadingRun, versions: all, says: "holds 0 rows",
 			},
 			{
 				// Ptah drops a row the database refuses and carries on.
 				name: "a run that lost a row", rows: func(t *testing.T) []migrationLogRow { return approved(t)[:5] },
-				actor: loggedPersonInTheLog, versions: []int64{1, 2, 3}, says: "holds 5 rows",
+				run: approvedReadingRun, versions: all, says: "holds 5 rows",
 			},
 			{
 				name: "a run of other versions", rows: approved,
-				actor: loggedPersonInTheLog, versions: []int64{1, 2, 4}, says: "want version 4",
+				run: approvedReadingRun, versions: []int64{1, 2, 4}, says: "want version 4",
 			},
 			{
 				name: "no name to look for", rows: approved,
-				actor: "", versions: []int64{1, 2, 3}, says: "no name to look for",
+				run: with(func(r *loggedRun) { r.actor = "" }), versions: all, says: "no name to look for",
+			},
+			{
+				name: "no origin to look for", rows: approved,
+				run: with(func(r *loggedRun) { r.origin = "" }), versions: all, says: "no origin to look for",
+			},
+			{
+				name: "no run reference to look for", rows: approved,
+				run: with(func(r *loggedRun) { r.reference = "" }), versions: all, says: "no run reference to look for",
 			},
 			{
 				name: "no version to look for", rows: approved,
-				actor: loggedPersonInTheLog, says: "no version to look for",
+				run: approvedReadingRun, says: "no version to look for",
 			},
 		} {
 			t.Run(engine+"/"+row.name, func(t *testing.T) {
 				t.Parallel()
-				err := runLogNames(row.rows(t), row.actor, row.versions...)
+				err := runLogNames(row.rows(t), row.run, row.versions...)
 				if err == nil {
 					t.Fatal("the row accepted it")
 				}
@@ -136,12 +174,17 @@ func TestRunLogNamesRefusesEachFieldOfARow(t *testing.T) {
 		{"a row of another run under the same name", func(r *migrationLogRow) { r.RunID = "9-another" }, `belongs to run "9-another"`},
 		{"a row of no run", func(r *migrationLogRow) { r.RunID = "" }, `belongs to run ""`},
 		{"another version", func(r *migrationLogRow) { r.Version = 9 }, "row 1 is version 9"},
+		{"no origin", func(r *migrationLogRow) { r.ActorOrigin = "" }, `row 1 (version 1 applied) records origin ""`},
+		{"the policy's origin", func(r *migrationLogRow) { r.ActorOrigin = actorOriginPolicy }, `records origin "policy"`},
+		{"no run reference", func(r *migrationLogRow) { r.RunReference = "" }, `row 1 (version 1 applied) carries run reference ""`},
+		{"another run reference", func(r *migrationLogRow) { r.RunReference = "sha256:another" }, `carries run reference "sha256:another"`},
+		{"the reference with a byte dropped", func(r *migrationLogRow) { r.RunReference = r.RunReference[:len(r.RunReference)-1] }, "carries run reference"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			rows := readMigrationLog(t, "postgresql", "approved")
 			row.change(&rows[1])
-			err := runLogNames(rows, loggedPersonInTheLog, 1, 2, 3)
+			err := runLogNames(rows, approvedReadingRun, 1, 2, 3)
 			if err == nil {
 				t.Fatal("the row accepted it")
 			}
@@ -161,7 +204,7 @@ func TestRunLogNamesRefusesALogThatNamesNoRun(t *testing.T) {
 	for index := range rows {
 		rows[index].RunID = ""
 	}
-	err := runLogNames(rows, loggedPersonInTheLog, 1, 2, 3)
+	err := runLogNames(rows, approvedReadingRun, 1, 2, 3)
 	if err == nil {
 		t.Fatal("the row accepted a log with no run on any row")
 	}
@@ -178,9 +221,13 @@ func TestParseMigrationLogRefusesWhatTheQueryDoesNotPrint(t *testing.T) {
 		output string
 		says   string
 	}{
-		{"a line with no fields", "ERROR: relation \"schema_migrations_log\" does not exist\n", "is not run:version:state:source:name"},
-		{"a name that is not hex", "7-abc:1:started:provided:oidc\n", "carries no hex name"},
-		{"a version that is not a number", "7-abc:one:started:provided:6f\n", "names no version"},
+		{"a line with no fields", "ERROR: relation \"schema_migrations_log\" does not exist\n", "is not run:version:state:source:name:origin:reference"},
+		// What the query of 0.2.12 printed: no origin and no reference.
+		{"a line of the earlier query", "7-abc:1:started:provided:6f\n", "is not run:version:state:source:name:origin:reference"},
+		{"a name that is not hex", "7-abc:1:started:provided:oidc:61:62\n", "carries a field that is not hex"},
+		{"an origin that is not hex", "7-abc:1:started:provided:6f:admission:62\n", "carries a field that is not hex"},
+		{"a reference that is not hex", "7-abc:1:started:provided:6f:61:sha256\n", "carries a field that is not hex"},
+		{"a version that is not a number", "7-abc:one:started:provided:6f:61:62\n", "names no version"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -203,17 +250,19 @@ func TestParseMigrationLogRefusesWhatTheQueryDoesNotPrint(t *testing.T) {
 func TestMigrationLogQueryIsTheOneTheReadingsWereTakenWith(t *testing.T) {
 	t.Parallel()
 
-	for engine, want := range map[string]string{
-		"postgresql": "encode(convert_to(coalesce(actor, ''), 'UTF8'), 'hex')",
-		"mysql":      "hex(coalesce(actor, ''))",
+	for engine, hexOf := range map[string]func(string) string{
+		"postgresql": func(column string) string { return "encode(convert_to(coalesce(" + column + ", ''), 'UTF8'), 'hex')" },
+		"mysql":      func(column string) string { return "hex(coalesce(" + column + ", ''))" },
 	} {
 		selected, err := migrationEngineFor(engine)
 		if err != nil {
 			t.Fatal(err)
 		}
 		query := selected.migrationLogQuery()
-		if !strings.Contains(query, want) || !strings.Contains(query, "FROM schema_migrations_log ORDER BY seq") {
-			t.Errorf("%s query = %q, want it to read the name as %s", engine, query, want)
+		for _, want := range []string{hexOf("actor"), hexOf("actor_origin"), hexOf("run_reference"), "FROM schema_migrations_log ORDER BY seq"} {
+			if !strings.Contains(query, want) {
+				t.Errorf("%s query = %q, want it to hold %s", engine, query, want)
+			}
 		}
 	}
 	body, err := os.ReadFile("../../testdata/e2e/readings/migration-log.md")

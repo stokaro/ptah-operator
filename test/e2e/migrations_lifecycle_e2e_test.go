@@ -402,7 +402,9 @@ func (m *migrationRun) approveAsAPerson(name, migration, plan, planUID, fingerpr
 // reads who admission recorded, removes the approval that says so, and reads the
 // same person out of the database, where nothing in the cluster can be the source
 // of the answer: the log holds the name percent-encoded, and it decodes back to
-// the stamp.
+// the stamp. Every row also says the name came through admission, and carries
+// the operation ID the journal records for the run, which is what joins the
+// database's record to the cluster's.
 func (m *migrationRun) assertLogOutlivesTheApproval(name string) {
 	m.t.Helper()
 	approval := &ptahv1alpha1.PtahMigrationApproval{}
@@ -412,28 +414,34 @@ func (m *migrationRun) assertLogOutlivesTheApproval(name string) {
 		m.fatalf("admission stamped approval %s with %q, and the row approved it as %q", name, stamped, loggedPerson)
 	}
 	// The decision the run consumed, by the identity no later approval can take.
-	if err := approvalJournaledOnce(m.migration(m.migrationName()).Status.Journal, name, string(approval.UID), approval.Spec.PlanRef.Name); err != nil {
+	journal := m.migration(m.migrationName()).Status.Journal
+	if err := approvalJournaledOnce(journal, name, string(approval.UID), approval.Spec.PlanRef.Name); err != nil {
 		m.fatalf("%s: %v", m.migrationName(), err)
 	}
+	run, err := finishedRunOf(journal, ptahv1alpha1.JournalRunFinished, approval.UID)
+	if err != nil {
+		m.fatalf("%s: the run approval %s authorized: %v", m.migrationName(), name, err)
+	}
 	m.deleteAndWait(approval, "the consumed approval "+name)
-	m.assertRunLogNames(m.migrationDatabase(), loggedPersonInTheLog, 1, 2, 3)
+	m.assertRunLogNames(m.migrationDatabase(),
+		loggedRun{actor: loggedPersonInTheLog, origin: actorOriginAdmission, reference: run.OperationID}, 1, 2, 3)
 	if err := loggedNameDecodesTo(loggedPersonInTheLog, stamped); err != nil {
 		m.fatalf("the name the log holds is not the approver's: %v", err)
 	}
-	m.logf("PASS %s names %q, stamped %q, in the database's own log after its approval was deleted",
-		m.engine.kind, loggedPersonInTheLog, stamped)
+	m.logf("PASS %s names %q, stamped %q, under operation %s in the database's own log after its approval was deleted",
+		m.engine.kind, loggedPersonInTheLog, stamped, run.OperationID)
 }
 
 // assertRunLogNames reads the database's log and holds it to one run of the
-// versions given, with the name given on every row.
-func (m *migrationRun) assertRunLogNames(database, actor string, versions ...int64) {
+// versions given, recorded as the run given on every row.
+func (m *migrationRun) assertRunLogNames(database string, run loggedRun, versions ...int64) {
 	m.t.Helper()
 	output, err := m.sqlStatement(database, m.engine.migrationLogQuery())
 	m.check(err, "read schema_migrations_log in %s", database)
 	rows, err := parseMigrationLog(output)
 	m.check(err, "parse schema_migrations_log in %s", database)
-	if err := runLogNames(rows, actor, versions...); err != nil {
-		m.fatalf("schema_migrations_log in %s does not name %q for versions %v: %v; it holds %+v", database, actor, versions, err, rows)
+	if err := runLogNames(rows, run, versions...); err != nil {
+		m.fatalf("schema_migrations_log in %s does not record %+v for versions %v: %v; it holds %+v", database, run, versions, err, rows)
 	}
 }
 

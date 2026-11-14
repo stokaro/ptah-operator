@@ -12,11 +12,34 @@ import (
 // migrationLogRow is one row of Ptah's schema_migrations_log, the record a
 // database keeps of what ran against it, which outlives the cluster.
 type migrationLogRow struct {
-	RunID       string
-	Version     int64
-	State       string
-	ActorSource string
-	Actor       string
+	RunID        string
+	Version      int64
+	State        string
+	ActorSource  string
+	Actor        string
+	ActorOrigin  string
+	RunReference string
+}
+
+// loggedRun is what the operator hands a run to record about itself: the name
+// as the log writes it, the word for where that name came from, and the
+// operation ID of the claim, which the journal names the run by.
+type loggedRun struct {
+	actor, origin, reference string
+}
+
+// check refuses a run to look for that leaves out any of the three, since a
+// row that matched on less would pass a run that recorded less.
+func (r loggedRun) check() error {
+	switch {
+	case r.actor == "":
+		return errors.New("the row has no name to look for")
+	case r.origin == "":
+		return errors.New("the row has no origin to look for")
+	case r.reference == "":
+		return errors.New("the row has no run reference to look for")
+	}
+	return nil
 }
 
 const (
@@ -38,17 +61,33 @@ const (
 // the process runs as, and neither says who approved anything.
 const actorSourceProvided = "provided"
 
+// The words the operator records beside a name: admission for the username
+// admission stamped on the approval a run consumed, policy for the fixed name
+// of a run apply: Always allowed. They are written out here rather than taken
+// from the code under test, because a person grouping log rows reads them.
+const (
+	actorOriginAdmission = "admission"
+	actorOriginPolicy    = "policy"
+)
+
 // migrationLogQuery prints the database's log rows in the order the run wrote
-// them, one per line. The name crosses as hex, so the row reads the bytes the
-// table holds, and neither client's encoding nor the way it pads a value can
-// change what it compares.
+// them, one per line. The name, its origin and the run reference cross as hex,
+// so the row reads the bytes the table holds, neither client's encoding nor the
+// way it pads a value can change what it compares, and a colon in any of them
+// cannot move a field.
 func (e migrationEngine) migrationLogQuery() string {
-	actor := "encode(convert_to(coalesce(actor, ''), 'UTF8'), 'hex')"
-	if e.name == "mysql" {
-		actor = "hex(coalesce(actor, ''))"
+	return "SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', " +
+		hexText(e.name, "actor") + ", ':', " + hexText(e.name, "actor_origin") + ", ':', " +
+		hexText(e.name, "run_reference") + ") FROM schema_migrations_log ORDER BY seq"
+}
+
+// hexText is the SQL that prints a nullable text column as the hex of its
+// bytes, and NULL as nothing, on the engine named.
+func hexText(engine, column string) string {
+	if engine == "mysql" {
+		return "hex(coalesce(" + column + ", ''))"
 	}
-	return "SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', " + actor +
-		") FROM schema_migrations_log ORDER BY seq"
+	return "encode(convert_to(coalesce(" + column + ", ''), 'UTF8'), 'hex')"
 }
 
 // parseMigrationLog reads what migrationLogQuery printed.
@@ -60,31 +99,48 @@ func parseMigrationLog(output string) ([]migrationLogRow, error) {
 			continue
 		}
 		fields := strings.Split(line, ":")
-		if len(fields) != 5 {
-			return nil, fmt.Errorf("the log row %q is not run:version:state:source:name", line)
+		if len(fields) != 7 {
+			return nil, fmt.Errorf("the log row %q is not run:version:state:source:name:origin:reference", line)
 		}
 		version, err := strconv.ParseInt(fields[1], 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("the log row %q names no version: %w", line, err)
 		}
-		actor, err := hex.DecodeString(fields[4])
+		texts, err := hexFields(fields[4:])
 		if err != nil {
-			return nil, fmt.Errorf("the log row %q carries no hex name: %w", line, err)
+			return nil, fmt.Errorf("the log row %q carries a field that is not hex: %w", line, err)
 		}
-		rows = append(rows, migrationLogRow{RunID: fields[0], Version: version, State: fields[2], ActorSource: fields[3], Actor: string(actor)})
+		rows = append(rows, migrationLogRow{
+			RunID: fields[0], Version: version, State: fields[2], ActorSource: fields[3],
+			Actor: texts[0], ActorOrigin: texts[1], RunReference: texts[2],
+		})
 	}
 	return rows, nil
 }
 
+// hexFields decodes each field hexText printed.
+func hexFields(fields []string) ([]string, error) {
+	texts := make([]string, len(fields))
+	for index, field := range fields {
+		text, err := hex.DecodeString(field)
+		if err != nil {
+			return nil, err
+		}
+		texts[index] = string(text)
+	}
+	return texts, nil
+}
+
 // runLogNames is a log that holds one successful run of the versions given, in
-// order, and names actor, as the log writes it, on every row of it. Each version
-// writes two rows, so the count is declared: a run that lost a row, as Ptah does
-// when the database refuses one and carries on, does not pass by naming the
-// person on the rest. A name outside printable ASCII is what a database in a
-// narrower character set refuses, so a row that holds one is refused here.
-func runLogNames(rows []migrationLogRow, actor string, versions ...int64) error {
-	if actor == "" {
-		return errors.New("the row has no name to look for")
+// order, and names the run's actor, as the log writes it, its origin and its
+// run reference on every row of it. Each version writes two rows, so the count
+// is declared: a run that lost a row, as Ptah does when the database refuses
+// one and carries on, does not pass by naming the person on the rest. A name
+// outside printable ASCII is what a database in a narrower character set
+// refuses, so a row that holds one is refused here.
+func runLogNames(rows []migrationLogRow, run loggedRun, versions ...int64) error {
+	if err := run.check(); err != nil {
+		return err
 	}
 	if len(versions) == 0 {
 		return errors.New("the row names no version to look for")
@@ -108,8 +164,12 @@ func runLogNames(rows []migrationLogRow, actor string, versions ...int64) error 
 			return fmt.Errorf("row %d (version %d %s) has source %q, want %q", index, row.Version, row.State, row.ActorSource, actorSourceProvided)
 		case !printableASCII(row.Actor):
 			return fmt.Errorf("row %d (version %d %s) names %q, which is not printable ASCII", index, row.Version, row.State, row.Actor)
-		case row.Actor != actor:
-			return fmt.Errorf("row %d (version %d %s) names %q, want %q", index, row.Version, row.State, row.Actor, actor)
+		case row.Actor != run.actor:
+			return fmt.Errorf("row %d (version %d %s) names %q, want %q", index, row.Version, row.State, row.Actor, run.actor)
+		case row.ActorOrigin != run.origin:
+			return fmt.Errorf("row %d (version %d %s) records origin %q, want %q", index, row.Version, row.State, row.ActorOrigin, run.origin)
+		case row.RunReference != run.reference:
+			return fmt.Errorf("row %d (version %d %s) carries run reference %q, want %q", index, row.Version, row.State, row.RunReference, run.reference)
 		}
 	}
 	return nil
