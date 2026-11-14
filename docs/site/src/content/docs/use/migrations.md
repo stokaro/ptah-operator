@@ -595,21 +595,26 @@ reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
 ## Who the database's log names
 
 Ptah keeps its own record of each run in the target database,
-`schema_migrations_log`, and the operator tells it who to name. After an approved
-run, every row holds the approver's username in `actor`:
+`schema_migrations_log`, and the operator tells it who to name, where the name
+came from and which run it was. After an approved run, every row holds the
+approver's username in `actor`, `admission` in `actor_origin`, and the run's
+`operationID` from the journal in `run_reference`:
 
 ```text
- version |  state  |      actor       | actor_source
----------+---------+------------------+--------------
-       1 | started | kubernetes-admin | provided
-       1 | applied | kubernetes-admin | provided
+ version |  state  |      actor       | actor_source | actor_origin |  run_reference
+---------+---------+------------------+--------------+--------------+-----------------
+       1 | started | kubernetes-admin | provided     | admission    | sha256:9798b1a5...
+       1 | applied | kubernetes-admin | provided     | admission    | sha256:9798b1a5...
 ```
 
 The record survives losing the cluster, and deleting the approval changes nothing
 about it. The name comes from the approval the run consumes, and the claim keeps
 its own copy from the moment it is written, so what the run records is settled
 before its Job exists. Under `apply: Always` nobody approved, and the rows read
-`system:ptah-operator:apply-always:<namespace>/<name>`.
+`system:ptah-operator:apply-always:<namespace>/<name>` with `policy` in
+`actor_origin`. The runner hands Ptah the reference and refuses a result whose
+rows Ptah reports under another, so a journal entry's `operationID` finds the
+rows of its run with `WHERE run_reference = '<operationID>'`.
 
 A name outside printable ASCII is percent-encoded, so every character set can
 store it, and so are `%` and `$`. An ordinary username or email reads unchanged,
@@ -629,9 +634,10 @@ The outcome stays what the revision table says.
 [A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
 says what to check.
 
-Since Ptah v0.28.0 the log has two more columns, `run_reference` and
-`actor_origin`, and the operator fills neither yet. Before a run writes its
-first row, it adds whichever of the two a log an earlier build created lacks,
+Ptah v0.28.0 added the `run_reference` and `actor_origin` columns, which the
+operator fills from 0.2.13; rows an earlier release wrote hold neither. Before
+a run writes its first row, Ptah adds whichever of the two a log an earlier
+build created lacks,
 as nullable columns, and the rows already there keep their values. On
 PostgreSQL Ptah writes the log only as the table's owner, who may alter it. On
 MySQL the `ALTER` this takes is part of

@@ -35,7 +35,9 @@ created it. A MySQL or MariaDB migration login without `ALTER` on
 and `RunLogged` goes `False` with `LogEntriesLost`; add the two columns
 [Who the database's log names](../../use/migrations/#who-the-databases-log-names)
 shows before the upgrade. A database audit that lists what the executor sends
-has to expect the statements the executor bullet names.
+has to expect the statements the executor bullet names. A schema Apply now
+writes its approver's username to `ptah_schema_apply_log`, so a privacy review
+that covers `schema_migrations_log` has a second table to cover.
 An installation that renders the chart's rules needs
 Prometheus 2.42 or later, and a `PrometheusRule` CRD from Prometheus Operator
 0.66 or later: an older CRD does not declare `keep_firing_for`, so the API
@@ -50,17 +52,28 @@ resolution waits that much longer. Nothing else.
   ([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)): a `started`
   row before the first statement, and one when the Apply ends with its outcome
   and the statement it stopped at, both naming the plan and its digest. A write
-  the database refuses changes neither the outcome nor the exit status, and the
-  operator does not read what Ptah reports about those writes, so a lost row
-  shows nowhere in the resource. Nothing is written for a dry run, a stale plan
-  Ptah refuses, or a plan with no changes. The rows name no approver and no
-  operation yet, since the operator passes Ptah neither; the API audit log is
-  still the record of who approved a schema change.
+  the database refuses changes neither the outcome nor the exit status, and of
+  what Ptah reports about those writes the operator reads only the run
+  reference, so a lost row shows nowhere in the resource. Nothing is written for
+  a dry run, a stale plan Ptah refuses, or a plan with no changes.
   [What the operator records](../../use/audit/#coverage) lists the table.
 - **The migration log gains two columns.** Ptah v0.28.0 adds `run_reference`
   and `actor_origin` to `schema_migrations_log`, nullable, and adds them to a
-  log an earlier build created on the first run that writes to it. The
-  operator fills neither yet.
+  log an earlier build created on the first run that writes to it.
+- **Both logs name the approver and the run**
+  ([#1062](https://github.com/stokaro/ptah-operator/issues/1062)). A schema
+  Apply now passes Ptah the username admission stamped on the approval it
+  consumed, percent-encoded as a migration's is, or
+  `system:ptah-operator:apply-always:<namespace>/<name>` under `apply: Always`.
+  An Apply of either family also passes where that name came from, `admission`
+  or `policy`, which Ptah stores in `actor_origin`, and the claim's
+  `operationID` as the run reference, which Ptah stores in `run_reference` on
+  every row, so a journal entry finds the rows of its run. The runner refuses a
+  result whose rows Ptah reports under another reference, or under none, and
+  the operation ends uncertain, as for a result it cannot read. Rows an
+  earlier release wrote keep both columns empty.
+  [Joining one change across the record](../../use/audit/#joins) says how to
+  read them.
 - **Executor.** The verified executor is now Ptah v0.28.0. Each schema read of
   both engines leaves `ptah_schema_apply_log` out of its catalog queries, beside
   the migration tables it already left out, and sends nothing else new. The

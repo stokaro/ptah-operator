@@ -744,10 +744,17 @@ Ptah: neither reads this table to decide anything, and `ptah migrations status`
 stays the answer to where the database stands. Choose the claim your
 authenticator uses as the username with this in mind.
 
+From 0.2.13 a `PtahSchema` Apply writes the same encoded name, read from the
+approval it consumed, to `ptah_schema_apply_log.actor` in its target database,
+where the login may insert into it. Both logs also store the word for where
+the name came from in `actor_origin`, and the claim's operation ID in
+`run_reference`. Neither of those is personal data.
+
 Inside the cluster the same encoded value sits in
-`status.activeOperation.actor` while the run is claimed, and in the `PTAH_ACTOR`
-variable of the Apply Job's executor container, so whoever may read Jobs or Pods
-in the namespace reads it until the Job is removed. It reaches the executor
+`status.activeOperation.actor` while a migration run is claimed, and in the
+`PTAH_ACTOR` variable of the Apply Job's executor container, beside
+`PTAH_ACTOR_ORIGIN`, so whoever may read Jobs or Pods in the namespace reads it
+until the Job is removed. It reaches the executor
 through that variable alone and is never on a command line. Ptah prints it on
 neither stdout nor stderr on a run measured with v0.18.0, and the operator puts
 it in no condition, Event or metric.
@@ -767,7 +774,10 @@ is where each approval's creation and who made it would be.
 Admission refuses a migration approval from a username under
 `system:ptah-operator:`, so `system:ptah-operator:apply-always:` is how a reader
 tells such a run from an approved one, since the source reads `provided` for
-both. Match that whole prefix. A ServiceAccount that approves reads
+both. Match that whole prefix. From 0.2.13 `actor_origin` says it in a word,
+`policy` for such a run and `admission` for an approved one, on either log. A
+schema approval from a username under that prefix is admitted, and only
+`actor_origin` tells its rows from a policy's. A ServiceAccount that approves reads
 `system:serviceaccount:...`, so `LIKE 'system:%'` would count approved runs as
 unapproved.
 
