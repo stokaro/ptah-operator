@@ -422,6 +422,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:4822f27f032db454ee32ddf85e1132fdc497074a03aca4f7fc1281a27595f72a",
       "reason": "Refuse a registry CA pin with no CA (#1083). Over HTTPS the builder now projects a registry Secret's caSHA256 as an optional grant whenever registryAuthFrom is set, so a Secret that pins a CA reaches the runner under a source that selects none. The runner already refused a CA grant with no CA, a pairing no Job could carry before; its message now names transport.caFrom. It fails closed before any child, as the invalid_oci_access every protocol-1 manager reads at a Resolve or a Verify and as the authority guard's exit 2 before a fetch. Plain HTTP carries no pin, and a Job without the grant runs as before, so what the runner accepts only narrows. Commands, arguments, frames, delivery identity and SQL authority are the same. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f016e1e60d0049b6cfdd64aa9907a970da5ac88b1a6f05954d1e562ebad732e0",
+      "reason": "Refuse a database host outside printable ASCII in the target identity (#1084). strings.ToLower folded Unicode case, so a URL whose host held U+0130 or the Kelvin sign, written directly or percent-escaped, gave the identity of its ASCII look-alike. A host in the URL, the PostgreSQL host parameter or a MySQL tcp() address that holds a byte outside printable ASCII is now refused, named escaped, and the rest folds only ASCII case. Every other URL gives the digest it gave before, as internal/runner/testdata/target-identities.json pins, so what a plan, approval or proof bound under protocol 1 names the same target. The refusal only narrows what was accepted and fails closed as invalid_target before the child starts, a code every protocol-1 manager reads. The redactor reads a MySQL network DSN's password before its endpoint is judged, so it redacts more and never less. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }
