@@ -604,9 +604,10 @@ digest of the CA it may be sent under. A credential is `username` and
 `password`, or `token`, never both. A resource that names the Secret with
 another URL or another CA, a resource that selects no CA under a Secret that
 pins one, or a Secret whose credential is incomplete or mixed, is refused in
-the Pod before Ptah starts. The API refuses a URL that carries user information, so a
-credential can only be in the Secret. With a credential set, Ptah refuses a redirect to
-another origin, and it refuses any redirect to `http://`.
+the Pod before Ptah starts. The API refuses a URL that carries user
+information, so a credential can only be in the Secret. With a credential set,
+Ptah refuses a redirect to another origin, and it refuses any redirect to
+`http://`.
 
 Only the `fetch-https-source` init container, and the Resolve container, mount
 the Secret and the CA; the container that holds the database URL reads the
@@ -631,16 +632,16 @@ maxContentBytes: 1048576  # the most the selected files may hold together
 ```
 
 A rule that is absent refuses nothing, and a list that is present and empty
-allows nothing of its kind. A field the document does not define is refused,
-so a misspelled rule is not read as one kept. Hosts compare as ASCII without
-case: a source whose host holds any other character is refused by name, and an
-entry that holds one allows nothing, since the fetch would dial such a name by
-its IDNA form. Write an internationalized name in its `xn--` form. The manager reads the policy,
-never the source's credential: a Git or HTTPS host it does not allow gets no
-Resolve Job, so the credential is never sent there; a ConfigMap it does not
-allow, or files that hold too much, leave no snapshot; a Git commit or an HTTPS
-download whose selected files hold too much is not recorded. The refusal names
-the rule.
+allows nothing of its kind. A field the document does not define is refused, so
+a misspelled rule is not read as one kept. Hosts compare as ASCII without case:
+a source whose host holds any other character is refused by name, and an entry
+that holds one allows nothing, since the fetch would dial such a name by its
+IDNA form. Write an internationalized name in its `xn--` form. The manager
+reads the policy, never the source's credential: a Git or HTTPS host it does
+not allow gets no Resolve Job, so the credential is never sent there; a
+ConfigMap it does not allow, or files that hold too much, leave no snapshot; a
+Git commit or an HTTPS download whose selected files hold too much is not
+recorded. The refusal names the rule.
 
 A plan binds the policy's object and bytes beside the source. Another policy,
 the same bytes in another ConfigMap included, retires the plan, and so does
