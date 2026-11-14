@@ -127,6 +127,14 @@ func TestRangeRulesAdmitTheirBounds(t *testing.T) {
 			mutate: both(asHTTPSSource("artifact"), setting("https://[2001:db8::1]/orders.tar.gz", "spec", "artifact", "https", "url")),
 		},
 		{
+			// An IPv6 literal may end in dotted IPv4, so the bracket class
+			// keeps dots on both sides of its colon.
+			name: "PtahSchema from an HTTPS IPv4-mapped IPv6 host and port",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"),
+				setting("https://[::ffff:192.0.2.10]:8443/orders.tar.gz", "spec", "desired", "https", "url")),
+		},
+		{
 			name:   "PtahSchema from an HTTPS xn-- host",
 			base:   schemaBase(namespace),
 			mutate: both(asHTTPSSource("desired"), setting("https://xn--files-8fd.example.com/orders.tar.gz", "spec", "desired", "https", "url")),
