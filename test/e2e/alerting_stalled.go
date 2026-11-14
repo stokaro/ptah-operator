@@ -14,8 +14,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-// The frozen profile allows 105 seconds after the operation leaves flight.
-// This includes controller observation; it is distinct from delivery slack.
+// The profile allows 135 seconds after the operation leaves flight: this
+// allowance, which includes controller observation and is distinct from
+// delivery slack, and the rule's alStateReadGapHold.
 const alStalledResolution = 105 * time.Second
 
 type alStalledClaim struct {
