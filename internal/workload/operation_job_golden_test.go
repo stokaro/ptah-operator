@@ -53,8 +53,9 @@ type goldenJobCase struct {
 // admission snapshot, every scheduling knob spec.execution offers, set and
 // left unset, a Git source by https:// and by ssh://, and an HTTPS source as
 // a file and as an archive, each resolved in the operation container and
-// fetched before it, and a Git and an HTTPS source fetched with a credential
-// on the system roots.
+// fetched before it, a Git and an HTTPS source fetched with a credential on
+// the system roots, and a registry credential on the system roots, resolved,
+// verified and fetched behind the authority guard.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -273,10 +274,16 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// A registry credential on the system roots. A released builder
+			// wrote no CA grant here; this release carries the owner's pin to
+			// the runner whether or not a CA is selected, so do the Verify and
+			// History cases below. The upgrade from 0.2.11 moves the executor,
+			// which retires such a claim anyway.
 			name: "migration-resolve",
 			build: func() (*batchv1.Job, error) {
 				return builder.BuildMigration(migrationFixture(), migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
 			},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-resolve-docker-config-ca",
@@ -296,12 +303,14 @@ func goldenJobCases() []goldenJobCase {
 				operation.AdmissionSnapshot = goldenAdmissionSnapshot()
 				return builder.BuildMigration(migrationFixture(), operation, nil)
 			},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-history",
 			build: func() (*batchv1.Job, error) {
 				return builder.BuildMigration(migrationFixture(), migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-history-pod-metadata",
@@ -310,6 +319,7 @@ func goldenJobCases() []goldenJobCase {
 				migration.Spec.Execution.PodMetadata = declaredMetadataFixture()
 				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-history-anonymous-ca-unset-execution",

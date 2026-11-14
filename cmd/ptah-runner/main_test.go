@@ -161,6 +161,21 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 			},
 			wantExit: 2,
 		},
+		// The Secret pins a CA and the source selects none: the guard of an
+		// Observe, a Plan, a History or an Apply refuses the system roots
+		// before the fetch that holds the credential starts.
+		"matching grant under a CA pin with no CA": {
+			reference: "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
+			environment: []string{
+				runner.EnvOCIAuthMode + "=Environment",
+				"PTAH_OCI_REGISTRY=registry.example",
+				runner.EnvOCIAuthRegistryGrant + "=registry.example",
+				runner.EnvOCICASHA256Grant + "=sha256:" + strings.Repeat("a", 64),
+				runnerProtocol,
+			},
+			wantExit:   2,
+			wantStderr: "OCI source access is not authorized",
+		},
 	} {
 		test := test
 		t.Run(name, func(t *testing.T) {

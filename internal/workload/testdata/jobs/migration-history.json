@@ -190,6 +190,16 @@
                 }
               },
               {
+                "name": "PTAH_OPERATOR_OCI_CA_SHA256_GRANT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "registry",
+                    "key": "caSHA256",
+                    "optional": true
+                  }
+                }
+              },
+              {
                 "name": "PTAH_PLAIN_HTTP",
                 "value": "false"
               },

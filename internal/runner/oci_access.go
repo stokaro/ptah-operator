@@ -29,7 +29,9 @@ const (
 	// projection. Ptah receives only a verified immutable snapshot path.
 	EnvOCICASourceFile = "PTAH_OPERATOR_OCI_CA_SOURCE_FILE"
 	// EnvOCICASHA256Grant carries the fixed caSHA256 key from the same Secret
-	// that owns registry credentials. It is never passed to Ptah.
+	// that owns registry credentials. It is never passed to Ptah. Over HTTPS
+	// it reaches the runner whether or not a CA is selected, and a grant with
+	// no CA is refused: the owner's pin binds the system roots out as well.
 	EnvOCICASHA256Grant = "PTAH_OPERATOR_OCI_CA_SHA256_GRANT"
 
 	envOCIRegistry          = "PTAH_OCI_REGISTRY"
@@ -181,7 +183,8 @@ func validateOCISourceAccess(reference string, environment []string) ([]byte, er
 	caGrant := values[EnvOCICASHA256Grant]
 	if !hasCA {
 		if caGrant != "" {
-			return nil, errors.New("registry certificate authority digest grant was supplied without a custom CA")
+			return nil, errors.New("registry certificate authority digest grant was supplied without a custom CA: " +
+				"the registry credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom")
 		}
 		return nil, nil
 	}
