@@ -84,3 +84,24 @@ func TestADriftSummaryRefusesOnlyWhenTheCheckWasNotClean(t *testing.T) {
 		}
 	}
 }
+
+// A summary counts findings from zero up to a bound no schema reaches, 1<<20,
+// for every outcome that may carry one.
+func TestADriftSummaryCountsFindingsWithinItsBound(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		summary dataplane.MigrationDriftSummary
+		valid   bool
+	}{
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftDrifted, Findings: 1 << 20}, valid: true},
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftDrifted, Findings: 1<<20 + 1}},
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftDrifted, Findings: -1}},
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftUnable, Stage: "schema-match", Reason: "incomplete_coverage", Findings: 1 << 20}, valid: true},
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftUnable, Stage: "schema-match", Reason: "incomplete_coverage", Findings: 1<<20 + 1}},
+		{summary: dataplane.MigrationDriftSummary{Outcome: dataplane.MigrationDriftUnable, Stage: "claim", Reason: "not_clean", Findings: -1}},
+	} {
+		if err := row.summary.Validate(); (err == nil) != row.valid {
+			t.Errorf("%+v Validate() = %v, want valid %t", row.summary, err, row.valid)
+		}
+	}
+}

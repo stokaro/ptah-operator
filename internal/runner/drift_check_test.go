@@ -326,6 +326,8 @@ func TestAFrameHoldsItsDriftCheckToTheRunAroundIt(t *testing.T) {
 			r.MigrationRun.Outcome, r.MigrationRun.Applied = dataplane.MigrationOutcomePartial, []int64{3}
 		}},
 		{name: "a drifted summary with no finding", edit: func(r *Result) { r.MigrationRun.DriftSummary.Findings = 0 }},
+		{name: "a negative finding count", edit: func(r *Result) { r.MigrationRun.DriftSummary.Findings = -1 }},
+		{name: "more findings than a schema has objects", edit: func(r *Result) { r.MigrationRun.DriftSummary.Findings = 1<<20 + 1 }},
 		{name: "a shadow identity that is not a digest", edit: func(r *Result) { r.ShadowIdentityDigest = "sha256:short" }},
 		{name: "a shadow identity on a Resolve", edit: func(r *Result) {
 			r.Operation, r.MigrationRun, r.MutationStarted, r.CoordinationDigest, r.TargetIdentityDigest = OperationResolve, nil, false, "", ""

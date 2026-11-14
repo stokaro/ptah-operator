@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -22,10 +24,14 @@ import (
 var testShadowDigest = "sha256:" + strings.Repeat("5", 64)
 
 func withDriftCheck(migration *operatorv1alpha1.PtahMigration) {
-	migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
+	migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+	migration.Status.History.ShadowIdentityDigest = testShadowDigest
+}
+
+func driftCheckPolicy() *operatorv1alpha1.MigrationDriftCheck {
+	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
 		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-shadow"}, Key: "url"},
 	}}
-	migration.Status.History.ShadowIdentityDigest = testShadowDigest
 }
 
 // driftRefusedApply is an Apply under a drift check whose runner reported the
@@ -229,7 +235,122 @@ func TestTheDriftCheckIsInsideThePolicyFingerprintOnlyWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checked == before || moved == checked {
-		t.Fatalf("fingerprints without, with and with another shadow key: %s %s %s", before, checked, moved)
+	migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+	migration.Spec.Policy.DriftCheck.Shadow.URLFrom.Name = "other-shadow"
+	renamed, err := migrationPolicyFingerprint(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == before || moved == checked || renamed == checked {
+		t.Fatalf("fingerprints without, with, with another shadow key and with another shadow Secret: %s %s %s %s",
+			before, checked, moved, renamed)
+	}
+}
+
+// The history read and the Apply mount the shadow, so its Secret and key are
+// inputs of the claim beside the target's, even at one generation; a resource
+// without a check adds nothing to them.
+func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
+	t.Parallel()
+	migration, _ := awaitingApprovalFixture(t)
+	reconciler := &MigrationReconciler{Jobs: fakeJobs{}, APIReader: migrationPolicyReader(t)}
+	inputs := func(edit func(*operatorv1alpha1.MigrationDriftCheck)) string {
+		t.Helper()
+		migration.Spec.Policy.DriftCheck = nil
+		if edit != nil {
+			migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+			edit(migration.Spec.Policy.DriftCheck)
+		}
+		value, err := reconciler.migrationInputFingerprint(
+			context.Background(), migration, operatorv1alpha1.MigrationOperationApply)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	unchecked := inputs(nil)
+	checked := inputs(func(*operatorv1alpha1.MigrationDriftCheck) {})
+	renamed := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) { check.Shadow.URLFrom.Name = "other-shadow" })
+	rekeyed := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) { check.Shadow.URLFrom.Key = "other" })
+	if again := inputs(nil); again != unchecked {
+		t.Fatalf("a resource without a check moved its inputs from %s to %s", unchecked, again)
+	}
+	for name, value := range map[string]string{"no check": unchecked, "another Secret": renamed, "another key": rekeyed} {
+		if value == checked {
+			t.Errorf("the claim's inputs with %s are the ones with the check: %s", name, value)
+		}
+	}
+}
+
+// A history read names the shadow exactly when the policy asks for a check.
+// The read that names it records the shadow beside the history, and the plan
+// published from that history binds it; a read that names none under a check,
+// or one under no check, is retried rather than planned from, since a plan from
+// it would run with another check than the one asked for.
+func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name    string
+		checked bool
+		shadow  string
+		planned bool
+	}{
+		{name: "a check and its shadow", checked: true, shadow: testShadowDigest, planned: true},
+		{name: "a check and no shadow", checked: true},
+		{name: "a shadow and no check", shadow: testShadowDigest},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			if row.checked {
+				migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+			}
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			report := pendingMigrationHistory()
+			frame := migrationFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+				OperationID: operation.ID, ChildExitCode: 0,
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: testDigest,
+				ShadowIdentityDigest: row.shadow,
+				MigrationHistory:     &report,
+			})
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+			)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			plans := &operatorv1alpha1.PtahMigrationPlanList{}
+			if err := api.List(context.Background(), plans); err != nil {
+				t.Fatal(err)
+			}
+			if !row.planned {
+				if actual.Status.History != nil || len(plans.Items) != 0 {
+					t.Fatalf("the read was recorded: history %#v, %d plans", actual.Status.History, len(plans.Items))
+				}
+				if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != operation.Attempt+1 {
+					t.Fatalf("the read was not retried: %#v", actual.Status.ActiveOperation)
+				}
+				if !slices.ContainsFunc(actual.Status.Conditions, func(condition metav1.Condition) bool {
+					return strings.Contains(condition.Message, "does not name the shadow database the drift check policy asks for")
+				}) {
+					t.Fatalf("no condition says why the read was retried: %#v", actual.Status.Conditions)
+				}
+				return
+			}
+			if actual.Status.History == nil || actual.Status.History.ShadowIdentityDigest != testShadowDigest {
+				t.Fatalf("the history records shadow %#v, want %s", actual.Status.History, testShadowDigest)
+			}
+			if len(plans.Items) != 1 || plans.Items[0].Spec.ShadowIdentityDigest != testShadowDigest {
+				t.Fatalf("published plans %#v, want one binding shadow %s", plans.Items, testShadowDigest)
+			}
+		})
 	}
 }
