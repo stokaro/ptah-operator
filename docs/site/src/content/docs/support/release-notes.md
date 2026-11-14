@@ -66,7 +66,10 @@ pulled under the system roots, and has the same two ways out. A Resolve or a
 Verify fails with `invalid_oci_access`, and in an Observe, a Plan, or a
 migration's History or Apply the `validate-source-authority` step exits with
 status 2 before the fetch starts. A source over plain HTTP does not read the
-pin. Nothing else.
+pin. A database URL whose host holds a character outside printable ASCII,
+written directly or percent-escaped, now stops every operation that reads the
+database with `invalid_target` before the runner connects: write an
+internationalized name in its `xn--` form. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,
@@ -101,6 +104,15 @@ pin. Nothing else.
   transport dialed its IDNA form, another host. The runner and the source
   policy now refuse a host with any byte outside printable ASCII, written
   directly or percent-escaped, and compare the rest without ASCII case.
+- **A database host compares as ASCII.** The target identity that binds a
+  plan, an approval and a proof to a database lowercased the URL's host with
+  Unicode case folding, so `db.İnternal` gave the identity of `db.internal`
+  (the Kelvin sign read as `k` the same way), and an approval for one name
+  held for the other. The runner now refuses such a host in the URL, the
+  PostgreSQL `host` parameter or a MySQL `tcp(...)` address as
+  `invalid_target`, and folds only ASCII case. Every other host, socket path
+  and port gives the identity it gave before, so a stored plan or approval
+  still names its database.
 - **Executor.** The verified executor is now Ptah v0.26.0. Each PostgreSQL
   schema read now also reads the inherit and set options of a role membership,
   whether the role it runs as is a superuser, the foreign tables that keep an

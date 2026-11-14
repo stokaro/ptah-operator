@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,12 +137,17 @@ func reconcileUntilJobNamed(
 
 // builtProofFixture is a schema whose proof is about to dispatch its read, and
 // a reconciler with the real Job builder: the claim is there and no Job is.
+// Each edit changes the schema before its claim is bound.
 func builtProofFixture(
 	t *testing.T,
 	operation operatorv1alpha1.OperationType,
+	edits ...func(*operatorv1alpha1.PtahSchema),
 ) (*operatorv1alpha1.PtahSchema, *SchemaReconciler, client.Client) {
 	t.Helper()
 	schema := safetyPostApplyObserveSchema(t)
+	for _, edit := range edits {
+		edit(schema)
+	}
 	schema.Spec.Execution.FailureRetryInterval = metav1.Duration{Duration: time.Minute}
 	policyDigest := fingerprint.DigestBytes([]byte("policy"))
 	schema.Status.Source.VerificationPolicyDigest = policyDigest
@@ -228,6 +234,59 @@ func TestARefusedProofReadStopsAndIsSettledAsAReadOfAnotherTargetWas(t *testing.
 			_, frame = runBuiltRead(t, next, operation, movedProofURL)
 			finishBuiltJob(t, reconciler, api, next, frame)
 			assertSettled(t, reconcileSchema(t, reconciler, api, schema))
+		})
+	}
+}
+
+// stokaro/ptah-operator#1084. The plan was computed against db.internal, and
+// the Secret now names db.\u0130nternal. strings.ToLower used to read that
+// host as the plan's, so the proof's read passed its target binding, logged in
+// to another name and settled the Apply by what it held. The runner now
+// refuses the host before the child starts and names no target, so the read
+// fails as any read that names none does: the proof, its Lease and the read
+// stay, the resource does not stop as for another target, and the condition
+// says what to write instead.
+func TestAProofReadOfAHostOutsidePrintableASCIIKeepsTheProof(t *testing.T) {
+	t.Parallel()
+	plannedTarget, err := runner.TargetIdentityDigest("postgres://app:secret@db.internal/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []operatorv1alpha1.OperationType{operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan} {
+		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
+			schema, reconciler, api := builtProofFixture(t, operation, func(schema *operatorv1alpha1.PtahSchema) {
+				schema.Status.PendingObservation.Plan.TargetIdentityDigest = plannedTarget
+			})
+			job := reconcileUntilJobNamed(t, reconciler, api, schema, schema.Status.ActiveOperation.JobName)
+			if bound := executorEnv(t, job)[runner.EnvExpectedTargetIdentityDigest]; bound.Value != plannedTarget {
+				t.Fatalf("the proof read Job binds %#v, want the plan's target %q", bound, plannedTarget)
+			}
+			result, frame := runBuiltRead(t, job, operation, "postgres://app:secret@db.\u0130nternal/app")
+			if result.Error == nil || result.Error.Code != "invalid_target" || result.TargetIdentityDigest != "" {
+				t.Fatalf("the runner returned error %#v naming %q, want invalid_target naming no target",
+					result.Error, result.TargetIdentityDigest)
+			}
+			finishBuiltJob(t, reconciler, api, job, frame)
+			actual := reconcileSchema(t, reconciler, api, schema)
+
+			pending := actual.Status.PendingObservation
+			if pending == nil || pending.ApplyOperationID != schema.Status.PendingObservation.ApplyOperationID ||
+				pending.Plan.TargetIdentityDigest != plannedTarget {
+				t.Fatalf("the refused read ended the proof: %#v", pending)
+			}
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operation ||
+				actual.Status.ActiveOperation.Attempt != schema.Status.ActiveOperation.Attempt+1 {
+				t.Fatalf("the read does not go on: %#v", actual.Status.ActiveOperation)
+			}
+			if proofLeaseHolder(t, reconciler, api) == "" {
+				t.Fatal("the refused read released the proof's Lease")
+			}
+			failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+			if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
+				!strings.Contains(failed.Message, "invalid_target: ") || !strings.Contains(failed.Message, "xn-- form") {
+				t.Fatalf("ReconciliationFailed = %#v, want OperationFailed naming invalid_target and the xn-- form", failed)
+			}
 		})
 	}
 }

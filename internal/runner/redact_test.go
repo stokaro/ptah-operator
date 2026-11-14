@@ -97,21 +97,37 @@ func TestRedactorRemovesMySQLNetworkDSNCredentials(t *testing.T) {
 			databaseURL: "app:p?%@/)ss@tcp(db.example:3306)/app?parseTime=true",
 			secrets:     []string{"p?%@/)ss", "p%3F%25%40%2F%29ss"},
 		},
+		// The target identity refuses this host (#1084). The password is
+		// read before the endpoint is judged, so it is redacted all the same,
+		// and a development URL, which nothing refuses, keeps its password
+		// out of what Ptah prints.
+		{
+			name:        "a host the target identity refuses",
+			databaseURL: "mysql://app:host%40secret@tcp(db.\u0130nternal:3306)/app?password=query%40secret",
+			secrets:     []string{"host@secret", "host%40secret", "query@secret", "query%40secret"},
+		},
+		{
+			name:        "an endpoint the target identity refuses",
+			databaseURL: "app:port%40secret@tcp(db.example:99999)/app",
+			secrets:     []string{"port@secret", "port%40secret"},
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			redactor := NewRedactor([]string{EnvDatabaseURL + "=" + test.databaseURL})
-			input := strings.Join(append([]string{test.databaseURL}, test.secrets...), " ")
-			got := redactor.Redact(input)
-			for _, secret := range append(test.secrets, test.databaseURL) {
-				if strings.Contains(got, secret) {
-					t.Fatalf("Redact() retained MySQL credential representation %q in %q", secret, got)
+			for _, variable := range []string{EnvDatabaseURL, EnvDevelopmentDatabaseURL} {
+				redactor := NewRedactor([]string{variable + "=" + test.databaseURL})
+				input := strings.Join(append([]string{test.databaseURL}, test.secrets...), " ")
+				got := redactor.Redact(input)
+				for _, secret := range append(test.secrets, test.databaseURL) {
+					if strings.Contains(got, secret) {
+						t.Fatalf("Redact() retained MySQL credential representation %q of %s in %q", secret, variable, got)
+					}
 				}
-			}
-			if !strings.Contains(got, RedactionMarker) {
-				t.Fatalf("Redact() = %q, want redaction marker", got)
+				if !strings.Contains(got, RedactionMarker) {
+					t.Fatalf("Redact() = %q, want redaction marker", got)
+				}
 			}
 		})
 	}

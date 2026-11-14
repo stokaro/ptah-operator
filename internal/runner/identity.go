@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 var defaultDatabasePorts = map[string]string{
@@ -284,8 +286,8 @@ func singleQueryValue(query map[string][]string, key string) (string, bool, erro
 	return values[0], true, nil
 }
 
-func canonicalDatabaseRoute(host, port, defaultPort string) (string, error) {
-	host = strings.TrimSpace(host)
+func canonicalDatabaseRoute(rawHost, port, defaultPort string) (string, error) {
+	host := strings.TrimSpace(rawHost)
 	if strings.Contains(host, ",") || strings.Contains(port, ",") {
 		return "", errors.New("database URL names multiple endpoints; a single lock target is required")
 	}
@@ -309,7 +311,11 @@ func canonicalDatabaseRoute(host, port, defaultPort string) (string, error) {
 		// distinct servers cannot share a target identity.
 		return "unix:path=" + url.QueryEscape(host) + "&port=" + effectivePort, nil
 	}
-	host, err := canonicalDatabaseHost(host)
+	// A network host is trimmed of ASCII spaces only. strings.TrimSpace also
+	// removes a Unicode space, such as U+00A0, which would leave the host the
+	// driver dials holding a byte the check below never sees. On a host of
+	// ASCII bytes the two trims are the same.
+	host, err := canonicalDatabaseHost(strings.Trim(rawHost, asciiSpace))
 	if err != nil {
 		return "", err
 	}
@@ -326,9 +332,21 @@ func canonicalDatabaseRoute(host, port, defaultPort string) (string, error) {
 	return host, nil
 }
 
+// asciiSpace is what strings.TrimSpace removes from a string of ASCII bytes.
+const asciiSpace = " \t\n\v\f\r"
+
+// canonicalDatabaseHost is a network host as the target identity binds it.
+//
+// The host is held to printable ASCII first, by the rule source hosts are
+// held to. url.Parse accepts UTF-8 in a host and decodes a percent-escaped
+// one, and strings.ToLower folds Unicode case: it reads U+0130 as "i" and the
+// Kelvin sign as "k", so db.\u0130nternal and db.internal would share one
+// identity while the driver dials two names, and an approval for one would
+// apply to the other. After the check the host is printable ASCII, so ToLower
+// folds the case of ASCII letters and nothing else.
 func canonicalDatabaseHost(host string) (string, error) {
-	if strings.TrimSpace(host) != host {
-		return "", errors.New("database URL has an invalid host")
+	if err := sourcehost.CheckASCII(host); err != nil {
+		return "", fmt.Errorf("the database URL: %w", err)
 	}
 	host = strings.ToLower(host)
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
@@ -361,12 +379,31 @@ func looksLikeMySQLNetworkDSN(raw string) bool {
 		strings.Contains(lower, "@tcp(") || strings.Contains(lower, "@unix(")
 }
 
+// mysqlNetworkDSN is a MySQL network DSN split into its parts. The endpoint
+// is judged separately, by endpoint, so the redactor reads the password and
+// the query of a DSN whose endpoint the target identity refuses.
 type mysqlNetworkDSN struct {
-	endpoint  string
+	network   string
+	address   string
 	database  string
 	username  string
 	password  string
 	queryText string
+}
+
+// endpoint is the route the DSN names, as the target identity binds it.
+func (d mysqlNetworkDSN) endpoint() (string, error) {
+	switch d.network {
+	case "tcp":
+		return canonicalTCPAddress(d.address, "3306")
+	case "unix":
+		if !strings.HasPrefix(d.address, "/") || strings.ContainsRune(d.address, '\x00') {
+			return "", errors.New("MySQL unix DSN has an invalid socket path")
+		}
+		return "unix:" + d.address, nil
+	default:
+		return "", errors.New("MySQL network DSN uses an unsupported network")
+	}
 }
 
 // mysqlNetworkTargetIdentityDigest handles the network(address) syntax used
@@ -379,6 +416,10 @@ func mysqlNetworkTargetIdentityDigest(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	endpoint, err := parsed.endpoint()
+	if err != nil {
+		return "", err
+	}
 	query, err := normalizedQuery(parsed.queryText)
 	if err != nil {
 		return "", errors.New("MySQL network DSN has an invalid query")
@@ -387,7 +428,7 @@ func mysqlNetworkTargetIdentityDigest(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	identity := "mysql\x00" + parsed.endpoint + "\x00" + parsed.database + "\x00" + executionContext
+	identity := "mysql\x00" + endpoint + "\x00" + parsed.database + "\x00" + executionContext
 	return sha256Digest([]byte(identity)), nil
 }
 
@@ -432,24 +473,8 @@ func parseMySQLNetworkDSN(raw string) (mysqlNetworkDSN, error) {
 	if err != nil || database == "" || strings.ContainsRune(database, '\x00') {
 		return mysqlNetworkDSN{}, errors.New("MySQL network DSN has an invalid database name")
 	}
-
-	endpoint := ""
-	switch network {
-	case "tcp":
-		endpoint, err = canonicalTCPAddress(address, "3306")
-	case "unix":
-		if !strings.HasPrefix(address, "/") || strings.ContainsRune(address, '\x00') {
-			return mysqlNetworkDSN{}, errors.New("MySQL unix DSN has an invalid socket path")
-		}
-		endpoint = "unix:" + address
-	default:
-		return mysqlNetworkDSN{}, errors.New("MySQL network DSN uses an unsupported network")
-	}
-	if err != nil {
-		return mysqlNetworkDSN{}, err
-	}
 	return mysqlNetworkDSN{
-		endpoint: endpoint, database: database, username: username,
+		network: network, address: address, database: database, username: username,
 		password: password, queryText: queryText,
 	}, nil
 }
@@ -480,6 +505,9 @@ func canonicalTCPAddress(address, defaultPort string) (string, error) {
 		}
 	}
 	hostname, err := canonicalDatabaseHost(hostname)
+	if errors.Is(err, sourcehost.ErrNotASCII) {
+		return "", err
+	}
 	if err != nil {
 		return "", errors.New("MySQL TCP DSN has an invalid host")
 	}
