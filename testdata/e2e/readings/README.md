@@ -291,3 +291,27 @@ carried the run's record, with the metadata that identifies it.
 it and to refusing copies with the one field each mistake would change. It
 names the lab namespace, the Job and the plan, and holds no credentials or SQL:
 the only credential words are the key names of the registry Secret.
+
+`drift-refused-postgresql.json`, `drift-decision-postgresql.json` and
+`drift-checked-postgresql.json` are what the `migration-faults-postgresql`
+phase's `postgresql-migration-drift-check` row printed on a local kind run on
+November 14, 2026, with Kubernetes 1.36.4, operator `03d8dcbc` (a local build
+of this change that left the phase's fault rows out), the Ptah v0.28.0 release
+image
+`ghcr.io/stokaro/ptah@sha256:34356290733b9c7ce526312b8ce89f753c85a04c9c187d71b4cbd63af0080977`
+and `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`.
+The migration names a shadow database under `policy.driftCheck` and applied
+versions 1 and 2. Version 3 was approved, and while its Apply was held a column
+was added to the target by hand. The refused reading is the status the row's
+wait matched once the Apply finished: the run `Failed` with no applied version
+and no failed statement, and its message counts the difference, says the run
+applied nothing and points at the Pod log; `Ready` and `Progressing` read
+`False` with reason `SchemaDrifted`. The decision reading is the plan asking
+for an approval again after the run, with the column dropped, and the checked
+reading is the run under the same check that applied version 3 and returned
+the resource to `InSync`. `TestDriftCheckRefusedRunRefusesEachClause`,
+`TestDecisionAfterRunRefusesEachClause` and
+`TestDriftCheckedRunAppliedRefusesEachClause` hold the row's predicates to
+accepting them and to refusing copies with the one field each mistake would
+change. They name the test namespace, the Job, the plan, and Secrets by name
+and key, and hold no credentials or SQL.
