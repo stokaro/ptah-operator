@@ -64,7 +64,7 @@ itself, run by the operator in a Job.
 
 | Stage | You | Kubernetes resources | Operator | Ptah executor |
 | --- | --- | --- | --- | --- |
-| [1 Source](../../use/sources/) | `kubectl apply`, or `kubectl ptah set-source` for another OCI artifact | `PtahSchema` or `PtahMigration`, and the source it names | Pins the content: a [ConfigMap snapshot](#a-configmap-source), a [Git commit](#a-git-source), or an OCI digest its verification policy accepts | Runs a Resolve Job for Git and OCI, and a Verify Job for OCI. A ConfigMap needs neither |
+| [1 Source](../../use/sources/) | `kubectl apply`, or `kubectl ptah set-source` for another OCI artifact | `PtahSchema` or `PtahMigration`, and the source it names | Pins the content: a [ConfigMap snapshot](#a-configmap-source), a [Git commit](#a-git-source), an [HTTPS download](#an-https-source) held to its digest, or an OCI digest its verification policy accepts | Runs a Resolve Job for Git, HTTPS and OCI, and a Verify Job for OCI. A ConfigMap needs neither |
 | [2 Plan](../../use/read-a-plan/) | `kubectl ptah plan`, `schema` or `migration` shows the plan's identity, contents and findings | `PtahSchemaPlan` and its chunks, or `PtahMigrationPlan` | Publishes a plan bound to what was read | Observes the database and plans, or reads the revision table |
 | [3 Decision](../../use/approvals/) | `kubectl ptah approve`, when the policy asks | `PtahSchemaApproval` or `PtahMigrationApproval`, stamped by admission | Applies `spec.policy`: refuses, waits for an approval of this exact plan, or proceeds | Runs nothing |
 | [4 Execution](../../use/operations/#wait) | `kubectl ptah wait`, or `approve --wait`; `schema --details` or `migration --details` shows the operation claimed and its Job | An Apply Job and the database-realm Lease | Creates the Job once every gate holds | Runs the plan or the approved sequence |
@@ -415,12 +415,51 @@ binds the SHA-256 of the repository URL and the path, with the content digest,
 in place of an artifact digest, under plan contract version 2, so another
 repository or path retires it even when the files match.
 
+### An HTTPS source
+
+A schema or a migration whose `https` names a URL, the SHA-256 of the bytes it
+serves, a format and a path reaches the server only from Jobs, through Ptah's
+pull. Resolve is a Job that downloads the URL, refuses bytes that do not give
+the pinned digest, and reports the download digest and the content digest of
+the selected files, computed as for a ConfigMap source. The status records the
+URL, format, path and both digests. Observation follows Resolve directly, with
+no verification policy to check; `ArtifactResolved` says `DownloadVerified` and
+names both digests.
+
+Every later operation that reads the files downloads the URL again, in an init
+container named `fetch-https-source` that alone holds the credential and the
+CA, and refuses any bytes other than the pinned download and any files other
+than the recorded content: Ptah's pull is held to both digests, and the runner
+reads back what Ptah wrote and checks the content again before it copies the
+files where the operation container reads them. Nothing is cached or stored in
+the cluster.
+
+The pull follows a redirect on the same origin. With a credential set it
+refuses a redirect to another origin, and it refuses any redirect to
+`http://`. Before Ptah runs, the runner refuses a credential whose `host` is
+not the URL's, a CA that does not give the `caSHA256` the credential's owner
+granted, a `caSHA256` with no CA selected, and a credential that mixes a token
+with a user name or a password.
+For a download Ptah refuses, `ReconciliationFailed` carries the last line it
+wrote: a digest that differs names the digest the server served and the one
+the spec pins, and an archive entry outside the archive or a symbolic link in
+the selection names the entry.
+
+The source is read again at every interval, by downloading it again. A
+download that changed or disappeared fails the Resolve, keeps what was resolved
+and applied, and plans nothing until its bytes are back or the spec pins new
+ones. A plan binds the SHA-256 of the URL and the path, with the content
+digest, under plan contract version 2, and does not bind the download digest:
+new bytes whose selected files are the same keep the plan once the spec names
+them, and another URL or path retires it.
+
 ### A source policy
 
-A ConfigMap or Git source may name a source policy with `sourcePolicyFrom`.
-Resolve checks the source against it: a ConfigMap's name and size before a
-snapshot is written, a Git host before the Resolve Job is made, and the size
-of a commit's selected files before the commit is recorded. A refused source
+A ConfigMap, Git or HTTPS source may name a source policy with
+`sourcePolicyFrom`. Resolve checks the source against it: a ConfigMap's name
+and size before a snapshot is written, a Git or HTTPS host before the Resolve
+Job is made, and the size of the selected files before the commit or the
+download is recorded. A refused source
 fails with the rule named and plans nothing. The policy is recorded beside the
 resolution and bound into every plan computed from it, and a policy replaced
 in the cluster is read at once: the source is resolved again under it, and

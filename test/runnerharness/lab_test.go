@@ -33,6 +33,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/test/e2e/gitfixture"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
+	"github.com/stokaro/ptah-operator/test/e2e/httpsfixture"
 	"github.com/stokaro/ptah-operator/test/runnerharness"
 	"github.com/stokaro/ptah-operator/test/runnerharness/recording"
 	"github.com/stokaro/ptah-operator/test/runnerharness/volumes"
@@ -42,6 +43,10 @@ const (
 	repositoryRoot = "../.."
 
 	gitHost = "e2e-git.ptah-test.svc"
+	// httpsHost serves the downloads, and otherHTTPSHost is the same server
+	// under another origin, the one a redirect must not carry a credential to.
+	httpsHost      = "e2e-https.ptah-test.svc"
+	otherHTTPSHost = "e2e-https-other.ptah-test.svc"
 
 	postgresHost = "harness-postgres"
 	mysqlHost    = "harness-mysql"
@@ -237,7 +242,7 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	// Random even under a chosen prefix: the janitor of an earlier run with the
 	// same prefix may still be clearing it.
 	prefix += "-" + randomHex(t, 4)
-	keys, err := gitfixture.NewKeys(gitHost, gitHost, gitHost+".cluster.local")
+	keys, err := gitfixture.NewKeys(gitHost, gitHost, gitHost+".cluster.local", httpsHost, otherHTTPSHost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,6 +313,7 @@ func startLab(t *testing.T, gate runnerharness.Gate) *lab {
 	l.startDatabases(t)
 	l.startRegistry(t)
 	l.serveGit(t, "main.json")
+	l.serveHTTPS(t)
 	t.Logf("lab ready after %s", time.Since(start).Round(time.Millisecond))
 	return l
 }
@@ -459,6 +465,7 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 	t.Helper()
 	for binary, source := range map[string]string{
 		"recorder": "./recorder", "runner/ptah-runner": "./recorder", "e2e-git-server": "../e2e/gitserver",
+		"e2e-https-server":  "../e2e/httpsserver",
 		"unparsable-schema": "../../hack/unparsableschemafixture",
 	} {
 		output := filepath.Join(work, binary)
@@ -502,8 +509,16 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 		"credentials/git-ca/ca.pem":                     l.keys.CAPEM,
 		"credentials/git-known-hosts/known_hosts":       l.keys.KnownHosts,
 		"credentials/git-known-hosts-other/known_hosts": l.keys.OtherKnownHosts,
+		"credentials/https-ca/ca.pem":                   l.keys.CAPEM,
 	} {
 		writeTree(t, filepath.Join(work, name), content, 0o444)
+	}
+	downloads, err := httpsfixture.Files()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range downloads {
+		writeTree(t, filepath.Join(work, "https-files", name), content, 0o444)
 	}
 	for name, spec := range map[string]func() (string, error){
 		"spec/main.json":      func() (string, error) { return gitfixture.SpecDocument(gitfixture.RepositorySpec(2)) },
@@ -523,6 +538,8 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 COPY recorder /recorder
 COPY runner/ /runner/
 COPY e2e-git-server /e2e-git-server
+COPY e2e-https-server /e2e-https-server
+COPY https-files/ /https-files/
 COPY unparsable-schema /unparsable-schema
 COPY fixtures/ /fixtures/
 COPY spec/ /spec/
@@ -1097,6 +1114,34 @@ func (l *lab) serveGit(t *testing.T, spec string) {
 	}
 	logs, _, _, _ := l.docker.run(context.Background(), nil, nil, "logs", server)
 	t.Fatalf("the Git server did not become ready: %s", logs)
+}
+
+// serveHTTPS runs the download server on 443 under both of its names, with
+// the run's token as the Basic password and as the Bearer token. It returns
+// when a public pull succeeds.
+func (l *lab) serveHTTPS(t *testing.T) {
+	t.Helper()
+	server := l.name("https")
+	l.docker.quiet(t, "rm", "--force", server)
+	l.docker.must(t, nil, "run", "--detach", "--pull", "never", "--name", server,
+		"--network", l.network, "--network-alias", httpsHost, "--network-alias", otherHTTPSHost,
+		"--read-only", "--user", "65532:65532", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+		"--entrypoint", "/e2e-https-server", l.images.tools,
+		"-root", "/https-files", "-listen", ":443", "-tls-certificate", "/keys/tls.crt", "-tls-key", "/keys/tls.key",
+		"-basic-user", httpsUser, "-basic-password-file", "/keys/token", "-token-file", "/keys/token",
+		"-other-origin", "https://"+otherHTTPSHost)
+	probe := httpsPullRow{name: "probe", family: "schema", access: "public", file: httpsfixture.SchemaFile,
+		format: "file", selected: httpsfixture.SchemaFile}
+	for range 30 {
+		_, stderr, exit := l.pull(t, probe.args(t), nil)
+		if exit == 0 {
+			return
+		}
+		t.Logf("the HTTPS server is not ready yet: %s", stderr)
+		time.Sleep(time.Second)
+	}
+	logs, _, _, _ := l.docker.run(context.Background(), nil, nil, "logs", server)
+	t.Fatalf("the HTTPS server did not become ready: %s", logs)
 }
 
 // pull runs Ptah's pull directly with the arguments a row wrote out.

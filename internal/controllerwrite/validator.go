@@ -686,7 +686,7 @@ func validatePlanShape(plan *operatorv1alpha1.PtahSchemaPlan, schema *operatorv1
 	}
 	if source := plan.Spec.Source; source != nil {
 		knownKind := (source.Kind == operatorv1alpha1.SourceKindConfigMap && source.Revision != "") ||
-			(source.Kind == operatorv1alpha1.SourceKindGit && isSHA256Digest(source.Revision))
+			((source.Kind == operatorv1alpha1.SourceKindGit || source.Kind == operatorv1alpha1.SourceKindHTTPS) && isSHA256Digest(source.Revision))
 		if !knownKind || !isSHA256Digest(source.ContentDigest) {
 			return errors.New("plan contains an invalid source binding")
 		}

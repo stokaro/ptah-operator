@@ -45,7 +45,8 @@ func gitResolutionChanged(previous *operatorv1alpha1.GitSourceRevision, next ope
 
 // proofReadsTheCurrentSource reports whether the proof after an Apply reads
 // the source the resource resolves to now: the same snapshot of a ConfigMap
-// source, or the same repository, path and content of a Git source.
+// source, the same repository, path and content of a Git source, or the same
+// URL, path and content of an HTTPS source.
 func proofReadsTheCurrentSource(status operatorv1alpha1.SchemaSourceStatus, pending operatorv1alpha1.SourceAccessBinding) bool {
 	switch {
 	case pending.Snapshot != nil:
@@ -53,6 +54,9 @@ func proofReadsTheCurrentSource(status operatorv1alpha1.SchemaSourceStatus, pend
 	case pending.Git != nil:
 		return status.Git != nil && status.Git.URL == pending.Git.URL && status.Git.Path == pending.Git.Path &&
 			status.Git.ContentDigest == pending.Git.ContentDigest
+	case pending.HTTPS != nil:
+		return status.HTTPS != nil && status.HTTPS.URL == pending.HTTPS.URL && status.HTTPS.Path == pending.HTTPS.Path &&
+			status.HTTPS.ContentDigest == pending.HTTPS.ContentDigest
 	default:
 		return false
 	}

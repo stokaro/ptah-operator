@@ -1,0 +1,1 @@
+error: redirect refused: https://e2e-https.ptah-test.svc/away/basic/schema.sql redirected to https://e2e-https-other.ptah-test.svc, another origin, with a credential set

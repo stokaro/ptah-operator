@@ -20,10 +20,11 @@ out of silence.
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
 on the upgrade. The CRD schemas gain the record of a migration run's
-`schema_migrations_log` writes, so the CRD schema version moves from 18 to 19.
-Once this release's hook has updated the CRDs, 0.2.11's CRD hook refuses
-[a rollback](../../use/operations/#rollback) to 0.2.11: a release's hook refuses
-CRD schemas newer than the release reads, and 0.2.11 does not read that record.
+`schema_migrations_log` writes and the HTTPS source, so the CRD schema version
+moves from 18 to 20. Once this release's hook has updated the CRDs, 0.2.11's
+CRD hook refuses [a rollback](../../use/operations/#rollback) to 0.2.11: a
+release's hook refuses CRD schemas newer than the release reads, and 0.2.11
+reads neither field.
 An installation that renders
 the chart's rules gains `PtahOperatorJournalLinesDropped`. Set
 `monitoring.prometheusRule.journalLinesDroppedWithin` to `""` to leave it out.
@@ -48,7 +49,17 @@ match `desired_schema_invalid`, and an index on a column its table does not
 declare now stops the Observe and the Plan with that reason rather than
 reaching the database at Apply. A database audit that lists what the executor
 sends has to expect the reads the executor bullet names. A consumer that reads
-every condition of a `PtahMigration` has to expect `RunLogged`. Nothing else.
+every condition of a `PtahMigration` has to expect `RunLogged`. A Git source
+whose URL host, or whose credential Secret's `host`, holds a character outside
+printable ASCII now stops before Ptah runs, and `allowedGitHosts` no longer
+admits such a host: write an internationalized name in its `xn--` form in all
+three places. A Git source over `https://` that selects no `transport.caFrom`
+under a credential Secret holding `caSHA256` now stops before Ptah runs too,
+where it sent the credential under the system roots: select the CA the Secret
+pins, or remove `caSHA256` from the Secret if the system roots are what its
+owner grants. Either refusal fails a Resolve with `invalid_git_access`; an
+Observe, a Plan or an Apply that meets it in its fetch step stops with
+`git_source_refused` in that step's termination message. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,
@@ -66,6 +77,23 @@ every condition of a `PtahMigration` has to expect `RunLogged`. Nothing else.
   optional field of the run it already reports, so the runner protocol stays 1.
   [A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
   says what to check.
+- **A source can be an HTTPS download pinned by its digest.**
+  `spec.desired.https` and `spec.artifact.https` name a URL, the SHA-256 of
+  the bytes it serves, a format (`File`, `TarGzip` or `Zip`) and the path the
+  resource reads, with an optional Basic or Bearer credential and a private CA.
+  Every operation downloads the URL again and refuses other bytes, and nothing
+  is stored in the cluster. A plan binds the URL, the path and the selected
+  files, not the download digest, so an archive published again with the same
+  files keeps its plan once the spec names the new digest.
+  `ArtifactResolved` says `DownloadVerified`, and a source policy gains
+  `allowedHTTPSHosts`. [From HTTPS](../../use/sources/#from-https) has the
+  fields and what each interval costs in downloads.
+- **Source hosts compare as ASCII.** The credential grant and a source policy
+  compared a Git host with Unicode case folding, so a URL whose host held
+  U+0130, which folds to `i`, matched a grant for the ASCII name while the
+  transport dialed its IDNA form, another host. The runner and the source
+  policy now refuse a host with any byte outside printable ASCII, written
+  directly or percent-escaped, and compare the rest without ASCII case.
 - **Executor.** The verified executor is now Ptah v0.26.0. Each PostgreSQL
   schema read now also reads the inherit and set options of a role membership,
   whether the role it runs as is a superuser, the foreign tables that keep an

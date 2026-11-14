@@ -106,6 +106,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.git) || self.desired.git.path != '.'",message="desired.git.path selects one file for a schema"
+// +kubebuilder:validation:XValidation:rule="!has(self.desired.https) || self.desired.https.path != '.'",message="desired.https.path selects one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
@@ -113,8 +114,8 @@ type PtahSchemaSpec struct {
 	// itself has no permission to read.
 	Target DatabaseTargetSpec `json:"target"`
 	// Desired is the source that declares the schema, and the rows a
-	// declaration names, to converge it to: an OCI artifact, a ConfigMap or
-	// a Git repository.
+	// declaration names, to converge it to: an OCI artifact, a ConfigMap, a
+	// Git repository or an HTTPS download.
 	Desired SourceSpec `json:"desired"`
 	// Dev is a scratch database Ptah may use where a comparison needs one. It
 	// is never the target, and nothing it holds is kept.
@@ -223,14 +224,14 @@ type DatabaseTargetRef struct {
 }
 
 // SourceSpec names where the desired files come from: an OCI artifact, a
-// ConfigMap in the resource's own namespace, or one commit of a Git
-// repository. The schema and the migration APIs share it, and keep their
-// reconciliation lifecycles separate.
-// +kubebuilder:validation:XValidation:rule="[has(self.ociRef), has(self.configMap), has(self.git)].filter(set, set).size() == 1",message="set exactly one of ociRef, configMap and git"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap and git"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap and git"
-// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap and git"
-// +kubebuilder:validation:XValidation:rule="!has(self.sourcePolicyFrom) || !has(self.ociRef)",message="sourcePolicyFrom is for configMap and git sources"
+// ConfigMap in the resource's own namespace, one commit of a Git repository,
+// or one HTTPS download pinned by its digest. The schema and the migration
+// APIs share it, and keep their reconciliation lifecycles separate.
+// +kubebuilder:validation:XValidation:rule="[has(self.ociRef), has(self.configMap), has(self.git), has(self.https)].filter(set, set).size() == 1",message="set exactly one of ociRef, configMap, git and https"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) == has(self.verificationPolicyFrom)",message="verificationPolicyFrom is required with ociRef and refused with configMap, git and https"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.registryAuthFrom)",message="registryAuthFrom is refused with configMap, git and https"
+// +kubebuilder:validation:XValidation:rule="has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom) && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))",message="transport is refused with configMap, git and https"
+// +kubebuilder:validation:XValidation:rule="!has(self.sourcePolicyFrom) || !has(self.ociRef)",message="sourcePolicyFrom is for configMap, git and https sources"
 // +kubebuilder:validation:XValidation:rule="!has(self.sourcePolicyFrom) || (self.sourcePolicyFrom.name.size() > 0 && self.sourcePolicyFrom.key.size() > 0 && (!has(self.sourcePolicyFrom.optional) || !self.sourcePolicyFrom.optional))",message="sourcePolicyFrom must name a required ConfigMap key"
 type SourceSpec struct {
 	// OCIRef is a desired-schema artifact reference. It may name a tag or a
@@ -256,6 +257,14 @@ type SourceSpec struct {
 	// +optional
 	Git *GitSourceSpec `json:"git,omitempty"`
 
+	// HTTPS selects a file or a directory of one download, pinned by the
+	// SHA-256 of the bytes the URL serves. The manager never reads the
+	// download or its credential: a Job's fetch container downloads it
+	// through Ptah, and every later operation downloads it again and refuses
+	// other bytes or other content. Nothing is stored in the cluster.
+	// +optional
+	HTTPS *HTTPSSourceSpec `json:"https,omitempty"`
+
 	// RegistryAuthFrom names the Secret an operation Pod reads the registry
 	// credential from. The process that runs SQL never receives it.
 	RegistryAuthFrom *RegistryAuthSource `json:"registryAuthFrom,omitempty"`
@@ -263,15 +272,17 @@ type SourceSpec struct {
 	// VerificationPolicyFrom names the immutable ConfigMap holding the policy
 	// the artifact must satisfy. Editing it retires the plans computed under
 	// the previous version rather than letting them apply. It is required
-	// with ociRef and refused with configMap and git: its rules are about OCI
-	// artifacts, and a policy nothing evaluates would read as a gate.
+	// with ociRef and refused with configMap, git and https: its rules are
+	// about OCI artifacts, and a policy nothing evaluates would read as a
+	// gate.
 	// +optional
 	VerificationPolicyFrom *corev1.ConfigMapKeySelector `json:"verificationPolicyFrom,omitempty"`
 
 	// SourcePolicyFrom names the immutable ConfigMap holding what a team
-	// refuses for a ConfigMap or Git source: the hosts a Git source may
-	// name, the ConfigMaps a ConfigMap source may name, and the most the
-	// selected files may hold. A plan binds the policy's object and bytes,
+	// refuses for a ConfigMap, Git or HTTPS source: the hosts a Git or an
+	// HTTPS source may name, the ConfigMaps a ConfigMap source may name, and
+	// the most the selected files may hold. A plan binds the policy's object
+	// and bytes,
 	// so another policy retires it. An OCI source has its verification
 	// policy instead, and the API refuses this beside ociRef.
 	// +optional
@@ -400,7 +411,8 @@ type GitAuthSource struct {
 type GitTransportSpec struct {
 	// CAFrom selects the only roots an https:// server's certificate may
 	// chain to. With authFrom, its Secret must hold caSHA256 with the
-	// selected bytes' digest.
+	// selected bytes' digest, and an https:// source whose Secret holds
+	// caSHA256 is refused without it.
 	// +optional
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
 	// KnownHostsFrom selects the host keys an ssh:// server may present; a
@@ -416,7 +428,7 @@ type GitTransportSpec struct {
 // was copied into. It is persisted across post-Apply proof so a newer
 // generation cannot send newly selected credentials to the old artifact's
 // registry, or read files the plan was not computed from.
-// +kubebuilder:validation:XValidation:rule="[has(self.resolvedReference), has(self.snapshot), has(self.git)].filter(set, set).size() == 1",message="set exactly one of resolvedReference, snapshot and git"
+// +kubebuilder:validation:XValidation:rule="[has(self.resolvedReference), has(self.snapshot), has(self.git), has(self.https)].filter(set, set).size() == 1",message="set exactly one of resolvedReference, snapshot, git and https"
 type SourceAccessBinding struct {
 	// ResolvedReference is the artifact with its tag replaced by a digest.
 	// +optional
@@ -437,6 +449,10 @@ type SourceAccessBinding struct {
 	// and the content it must give.
 	// +optional
 	Git *GitSourceBinding `json:"git,omitempty"`
+	// HTTPS is the download an HTTPS source resolved, where to fetch it
+	// from, and the content it must give.
+	// +optional
+	HTTPS *HTTPSSourceBinding `json:"https,omitempty"`
 }
 
 // GitSourceBinding is what an operation fetches a Git source by: the
@@ -523,7 +539,7 @@ type ConfigMapSourceRevision struct {
 
 // SourceKind names a kind of source a plan can be bound to besides an OCI
 // artifact, which plans bind through artifactDigest.
-// +kubebuilder:validation:Enum=ConfigMap;Git
+// +kubebuilder:validation:Enum=ConfigMap;Git;HTTPS
 type SourceKind string
 
 const (
@@ -531,6 +547,8 @@ const (
 	SourceKindConfigMap SourceKind = "ConfigMap"
 	// SourceKindGit is one commit of a Git repository.
 	SourceKindGit SourceKind = "Git"
+	// SourceKindHTTPS is one download pinned by its digest.
+	SourceKindHTTPS SourceKind = "HTTPS"
 )
 
 // PlanSourceBinding is what a plan computed from a source other than an OCI
@@ -546,7 +564,10 @@ type PlanSourceBinding struct {
 	// joined by a newline: another repository or another path retires the
 	// plan even when the files match, while a commit that leaves the
 	// selected files as they were keeps it, as an edit to an unselected key
-	// keeps a ConfigMap's.
+	// keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the
+	// URL and the selected path, joined by a newline, and never the download
+	// digest: an archive published again as other bytes keeps the plan once
+	// the spec names its digest, if the selected files did not change.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Revision string `json:"revision"`
@@ -1199,6 +1220,11 @@ type SchemaSourceStatus struct {
 	// policy, so verified stays false.
 	// +optional
 	Git *GitSourceRevision `json:"git,omitempty"`
+	// HTTPS is the download an HTTPS source last resolved, and the content
+	// digest of the selected files in it. An HTTPS source has no verification
+	// policy, so verified stays false.
+	// +optional
+	HTTPS *HTTPSSourceRevision `json:"https,omitempty"`
 	// SourcePolicy is the source policy the last resolution was checked
 	// against, when the spec names one.
 	// +optional
@@ -1722,6 +1748,7 @@ const (
 	ReasonDestructiveChangesDisabled   ConditionReason = "DestructiveChangesDisabled"
 	ReasonDigestPinned                 ConditionReason = "DigestPinned"
 	ReasonDispatchCommitted            ConditionReason = "DispatchCommitted"
+	ReasonDownloadVerified             ConditionReason = "DownloadVerified"
 	ReasonExecutionBindingChanged      ConditionReason = "ExecutionBindingChanged"
 	ReasonInputsChanged                ConditionReason = "InputsChanged"
 	ReasonInSync                       ConditionReason = "InSync"

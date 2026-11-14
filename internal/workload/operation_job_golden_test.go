@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 var updateGoldenJobs = flag.Bool("update", false, "rewrite testdata/jobs from what the builders produce now")
@@ -26,6 +27,17 @@ const goldenJobDirectory = "testdata/jobs"
 type goldenJobCase struct {
 	name  string
 	build func() (*batchv1.Job, error)
+	// unreleased is a case no release before file delivery could build: its
+	// source did not exist then, so no Job of it can be running when the
+	// manager is upgraded, and testdata/jobs-v0.2.10 holds none.
+	unreleased bool
+	// rebuildAdds names the variables this release adds to the Job a
+	// released builder wrote for the same inputs. The rebuild of such a Job
+	// never matches it, so a manager upgraded under one cannot confirm it:
+	// a dispatched Apply settles as outcome unknown and a read-only Job runs
+	// again. TestCarryCredentialDeliveryRebuildsEveryReleasedJob holds the
+	// difference to exactly these variables.
+	rebuildAdds []string
 }
 
 // The operation Job is read by more than the kubelet. The controller-write
@@ -39,8 +51,10 @@ type goldenJobCase struct {
 // the CA snapshot with and without credentials, plain HTTP, the development
 // database and the plan fence, the Apply window and termination grace, the
 // admission snapshot, every scheduling knob spec.execution offers, set and
-// left unset, and a Git source by https:// and by ssh://, resolved in the
-// operation container and fetched before it.
+// left unset, a Git source by https:// and by ssh://, and an HTTPS source as
+// a file and as an archive, each resolved in the operation container and
+// fetched before it, and a Git and an HTTPS source fetched with a credential
+// on the system roots.
 //
 // After an intended change, rewrite the files and review their diff:
 //
@@ -341,6 +355,21 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// A credential on the system roots. A released builder wrote no CA
+			// grant here; this release carries the owner's pin to the runner
+			// whether or not a CA is selected. The upgrade from 0.2.11 moves
+			// the executor, which retires such a claim anyway.
+			name: "schema-plan-git-https-token",
+			build: func() (*batchv1.Job, error) {
+				spec := gitHTTPSSpec("db/schema.hcl")
+				spec.Transport = operatorv1alpha1.GitTransportSpec{}
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				return builder.Build(gitSchemaFixture(spec), operation, nil)
+			},
+			rebuildAdds: []string{runner.EnvGitCASHA256Grant},
+		},
+		{
 			name: "migration-resolve-git-ssh",
 			build: func() (*batchv1.Job, error) {
 				migration := migrationFixture()
@@ -357,6 +386,61 @@ func goldenJobCases() []goldenJobCase {
 				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
 				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
 				operation.Source = &operatorv1alpha1.SourceAccessBinding{Git: gitBindingOf(spec)}
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
+		{
+			name:       "schema-resolve-https-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				return builder.Build(httpsSchemaFixture(httpsFileSpec()), operationFixture(operatorv1alpha1.OperationResolve), nil)
+			},
+		},
+		{
+			name:       "schema-plan-https-file",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsFileSpec()
+				operation := operationFixture(operatorv1alpha1.OperationPlan)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				return builder.Build(httpsSchemaFixture(spec), operation, nil)
+			},
+		},
+		{
+			name:       "migration-resolve-https-archive",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: httpsArchiveSpec()}
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationResolve), nil)
+			},
+		},
+		{
+			// A credential on the system roots: the owner's CA pin, if the
+			// Secret holds one, still reaches the fetch.
+			name:       "migration-apply-https-archive-token",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsArchiveSpec()
+				spec.AuthFrom = &operatorv1alpha1.HTTPSAuthSource{Name: "files-token"}
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				return builder.BuildMigration(migration, operation, migrationPlanFixture())
+			},
+		},
+		{
+			name:       "migration-apply-https-archive",
+			unreleased: true,
+			build: func() (*batchv1.Job, error) {
+				spec := httpsArchiveSpec()
+				migration := migrationFixture()
+				migration.Spec.Artifact = operatorv1alpha1.SourceSpec{HTTPS: spec}
+				migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
+				operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+				operation.Source = &operatorv1alpha1.SourceAccessBinding{HTTPS: httpsBindingOf(spec)}
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
 		},

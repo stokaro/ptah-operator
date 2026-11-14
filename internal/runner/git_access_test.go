@@ -98,6 +98,32 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		}, refusal: "not granted for the source's host"},
 		{name: "grant without a credential", source: https, environment: []string{EnvGitHostGrant + "=git.example.com"},
 			refusal: "without a credential"},
+		// strings.ToLower reads "g\u0130t" as "git", while Go's transport
+		// dials xn--git-9dc.example.com and would send the credential there.
+		{name: "a URL host with U+0130 under a grant for the ASCII name",
+			source:      GitSource{URL: "https://g\u0130t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com"}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 escaped under a grant for the ASCII name",
+			source:      GitSource{URL: "https://g%C4%B0t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com"}, refusal: "in its xn-- form"},
+		{name: "an ssh URL host with U+0130 under a grant for the ASCII name",
+			source: GitSource{URL: "ssh://git@g\u0130t.example.com:2222/acme/app.git", Tag: "v1", Path: "db/migrations"},
+			environment: []string{
+				EnvGitSSHKeyFile + "=/credentials/git/ssh", EnvGitHostGrant + "=git.example.com:2222",
+				EnvGitKnownHostsSourceFile + "=" + knownHostsFile, EnvGitKnownHostsSHA256Grant + "=" + gitTestDigest(knownHosts),
+			}, refusal: "in its xn-- form"},
+		{name: "a URL host with U+0130 and no credential",
+			source: GitSource{URL: "https://g%C4%B0t.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"}, refusal: "in its xn-- form"},
+		{name: "a host grant with U+0130 for the ASCII name", source: https,
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=g\u0130t.example.com"},
+			refusal:     `host grant is refused: the host "g\u0130t.example.com" is not printable ASCII`},
+		// kubectl create secret --from-file keeps the file's last newline.
+		{name: "a host grant with a trailing newline", source: https,
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com\n"},
+			refusal:     `host grant is refused: the host "git.example.com\n" is not printable ASCII`},
+		{name: "an xn-- host granted as written",
+			source:      GitSource{URL: "https://xn--git-9dc.example.com/acme/app.git", Branch: "main", Path: "db/schema.hcl"},
+			environment: []string{EnvGitPassword + "=token", EnvGitHostGrant + "=xn--git-9dc.EXAMPLE.com"}},
 		{name: "credential with an ungranted CA", source: https, environment: []string{
 			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASourceFile + "=" + caFile,
 		}, refusal: "not the one the credential's owner granted"},
@@ -107,7 +133,7 @@ func TestPrepareGitSourceAccessHoldsTheCredentialToItsGrants(t *testing.T) {
 		}, refusal: "not the one the credential's owner granted"},
 		{name: "CA grant without the CA", source: https, environment: []string{
 			EnvGitPassword + "=token", EnvGitHostGrant + "=git.example.com", EnvGitCASHA256Grant + "=" + gitTestDigest(ca),
-		}, refusal: "without the certificate authority"},
+		}, refusal: "without the certificate authority: the credential's Secret pins caSHA256, so the source has to select it in transport.caFrom"},
 		{name: "ssh without known hosts", source: ssh, refusal: "needs known hosts"},
 		{name: "unreadable CA", source: https, environment: []string{EnvGitCASourceFile + "=" + filepath.Join(directory, "missing")},
 			refusal: "read the Git certificate authority"},
@@ -406,8 +432,8 @@ func TestRunnerNamesWhyAGitPullFailed(t *testing.T) {
 			}
 		})
 	}
-	long := strings.Repeat("x", 4*maxGitRefusalBytes)
-	if message := gitPullExit(2, []byte("Error: "+long+"\n"), NewRedactor(nil)).Error(); len(message) > len("ptah exited with code 2: ")+maxGitRefusalBytes {
+	long := strings.Repeat("x", 4*maxPullRefusalBytes)
+	if message := pullExit(2, []byte("Error: "+long+"\n"), NewRedactor(nil)).Error(); len(message) > len("ptah exited with code 2: ")+maxPullRefusalBytes {
 		t.Fatalf("a long reason was kept whole: %d bytes", len(message))
 	}
 }

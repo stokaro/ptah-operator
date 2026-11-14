@@ -208,9 +208,9 @@ A stage can go another way:
   [What the run reports](#what-the-run-reports) says what follows each outcome.
 
 An artifact source, as in [the minimal resource](#the-minimal-resource), adds a
-Resolve and a Verify Job at stage 1 and changes nothing after it. A Git source
-adds a Resolve Job, and
-[Deliver from a ConfigMap or Git](../sources/) has the fields.
+Resolve and a Verify Job at stage 1 and changes nothing after it. A Git or
+HTTPS source adds a Resolve Job, and
+[Deliver from a ConfigMap, Git or HTTPS](../sources/) has the fields.
 
 ## Choosing a transaction mode
 

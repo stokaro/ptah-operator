@@ -168,16 +168,16 @@ func TestPtahsWordsLeaveTheRunnerClean(t *testing.T) {
 	t.Run("a failed Git pull", func(t *testing.T) {
 		t.Parallel()
 		stderr := "an earlier line\nError: refused \x1b]0;pwn\x07 HUNTER2HUNTER2\n"
-		got, want := gitPullExit(2, []byte(stderr), redactor).Error(), "ptah exited with code 2: refused ]0;pwn "+RedactionMarker
+		got, want := pullExit(2, []byte(stderr), redactor).Error(), "ptah exited with code 2: refused ]0;pwn "+RedactionMarker
 		if got != want {
-			t.Fatalf("gitPullExit() = %q, want %q", got, want)
+			t.Fatalf("pullExit() = %q, want %q", got, want)
 		}
 	})
 	t.Run("a failed Git pull whose last line is nothing readable", func(t *testing.T) {
 		t.Parallel()
-		got, want := gitPullExit(2, []byte("error: the reason\n\x1b\x07\n"), redactor).Error(), "ptah exited with code 2: the reason"
+		got, want := pullExit(2, []byte("error: the reason\n\x1b\x07\n"), redactor).Error(), "ptah exited with code 2: the reason"
 		if got != want {
-			t.Fatalf("gitPullExit() = %q, want %q", got, want)
+			t.Fatalf("pullExit() = %q, want %q", got, want)
 		}
 	})
 	t.Run("a failed Git fetch writes one line to the Pod log", func(t *testing.T) {

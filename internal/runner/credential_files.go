@@ -37,6 +37,11 @@ const (
 	// credential is projected into.
 	EnvGitUsernameFile = "PTAH_OPERATOR_GIT_USERNAME_FILE"
 	EnvGitPasswordFile = "PTAH_OPERATOR_GIT_PASSWORD_FILE" // #nosec G101 -- the name of a variable, not a credential
+	// EnvHTTPSUsernameFile, EnvHTTPSPasswordFile and EnvHTTPSTokenFile name
+	// the files an HTTPS source's credential is projected into.
+	EnvHTTPSUsernameFile = "PTAH_OPERATOR_HTTPS_USERNAME_FILE"
+	EnvHTTPSPasswordFile = "PTAH_OPERATOR_HTTPS_PASSWORD_FILE" // #nosec G101 -- the name of a variable, not a credential
+	EnvHTTPSTokenFile    = "PTAH_OPERATOR_HTTPS_TOKEN_FILE"    // #nosec G101 -- the name of a variable, not a credential
 
 	// envOCIUsername is the variable Ptah reads a registry username from.
 	envOCIUsername = "PTAH_OCI_USERNAME"
@@ -69,6 +74,9 @@ func CredentialFiles() []CredentialFile {
 		{File: EnvOCITokenFile, Value: EnvOCIToken},
 		{File: EnvGitUsernameFile, Value: EnvGitUsername},
 		{File: EnvGitPasswordFile, Value: EnvGitPassword},
+		{File: EnvHTTPSUsernameFile, Value: EnvHTTPSUsername},
+		{File: EnvHTTPSPasswordFile, Value: EnvHTTPSPassword},
+		{File: EnvHTTPSTokenFile, Value: EnvHTTPSToken},
 	}
 }
 

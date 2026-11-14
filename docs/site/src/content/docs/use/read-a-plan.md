@@ -316,8 +316,8 @@ The last lines name the commands for what this one does not print: the plan's
 SQL, and the schema's Events, which `kubectl events` reads and follows with
 `--watch`.
 
-A schema read from a ConfigMap or a Git repository prints its source in
-place of the `Artifact` line:
+A schema read from a ConfigMap, a Git repository or an HTTPS download prints
+its source in place of the `Artifact` line:
 
 ```text
 Source:               Git https://git.example.com/acme/storefront.git
@@ -330,7 +330,9 @@ Source policy:        sha256:...
 
 `Content` is the digest of the selected files, the content a plan computed
 from them is bound to. A ConfigMap source prints `Source: ConfigMap` with the
-ConfigMap's name, and `Snapshot`, the copy every operation reads.
+ConfigMap's name, and `Snapshot`, the copy every operation reads. An HTTPS
+source prints `Source: HTTPS` with the URL, then `Format`, `Path` and
+`Download`, the digest the bytes were held to.
 `Source policy` appears only when the resource names one.
 
 `Observed: not yet` and `Drift: none` are different answers. The first is a
@@ -546,7 +548,7 @@ and whether it matches that plan is the migration's own `ApprovalRequired`.
 with the operation it names, marked when that is the unresolved run, and its
 `Consumed` or `Stale` condition.
 
-A ConfigMap or Git source prints the same lines as
+A ConfigMap, Git or HTTPS source prints the same lines as
 [`kubectl ptah schema`](#schema) in place of `Artifact`.
 
 `-o json` prints the same view as a document, for a script that wants the

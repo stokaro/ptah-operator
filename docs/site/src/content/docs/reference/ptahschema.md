@@ -125,6 +125,51 @@ spec:
   interval: 5m
 ```
 
+### From a file served over HTTPS
+
+The desired schema is one file an artifact server serves, pinned by the
+SHA-256 of its exact bytes. With `format: File` the download is the schema
+itself, and `path` is the name it is given: its extension tells Ptah the
+schema's format. A Resolve Job downloads it through Ptah, refuses other bytes,
+and records the content digest of the file; every later operation downloads it
+again and is held to both digests. Nothing is stored in the cluster.
+
+The credential Secret `inventory-artifacts` holds `username` and `password`
+for Basic authentication (or `token` for Bearer), `host:
+artifacts.example.com`, the only host the fetch sends it to, and `caSHA256`,
+the digest of the CA bundle it may be sent under. The manager never reads the
+Secret or the download. Publishing the next version means writing its digest
+here; a URL that serves other bytes fails the next operation and keeps what
+was applied.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    https:
+      url: https://artifacts.example.com/inventory/1.4.0/schema.hcl
+      digest: sha256:5f3c8b2e1d0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706
+      format: File
+      path: schema.hcl
+      authFrom:
+        name: inventory-artifacts
+      transport:
+        caFrom:
+          name: artifacts-ca
+          key: ca.pem
+  interval: 30m
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use
@@ -296,7 +341,7 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.desired` | `object`, required | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key; where `desired.configMap` is set, desired.configMap selects exactly one file for a schema; where `desired.git` is set, desired.git.path selects one file for a schema; where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Desired is the source that declares the schema, and the rows a declaration names, to converge it to: an OCI artifact, a ConfigMap or a Git repository. |
+| `spec.desired` | `object`, required | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key; where `desired.configMap` is set, desired.configMap selects exactly one file for a schema; where `desired.git` is set, desired.git.path selects one file for a schema; where `desired.https` is set, desired.https.path selects one file for a schema; where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Desired is the source that declares the schema, and the rows a declaration names, to converge it to: an OCI artifact, a ConfigMap, a Git repository or an HTTPS download. |
 | `spec.desired.configMap` | `object` | This resource requires: where `desired.configMap` is set, desired.configMap selects exactly one file for a schema. ConfigMap selects files from a ConfigMap in this resource's namespace. Whoever may write that ConfigMap may change the desired state, exactly as whoever may write this resource can: Kubernetes RBAC on the namespace is what this source is trusted by. The manager copies the selected files into an immutable snapshot, and every operation reads the snapshot. |
 | `spec.desired.configMap.items` | `[]object`, required | This resource requires: where `desired.configMap` is set, desired.configMap selects exactly one file for a schema. Items are the keys that become files, and the file each one becomes. A key cannot hold "/", so a nested directory is spelled out here. A key the list does not name is not part of the source, and editing it changes nothing. A schema selects exactly one file, whose extension tells Ptah its format; a migration directory selects up to 1,000. |
 | `spec.desired.configMap.items[].key` | `string`, required | Key in the ConfigMap's data or binaryData. |
@@ -311,7 +356,7 @@ spec:
 | `spec.desired.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `spec.desired.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `spec.desired.git.transport` | `object` | Transport pins whom the fetch talks to: the CA an https:// server's certificate chains to, or the host keys an ssh:// server presents. |
-| `spec.desired.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `spec.desired.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `spec.desired.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.desired.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -320,6 +365,18 @@ spec:
 | `spec.desired.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.desired.git.url` | `string`, required | URL of the repository: https:// or ssh://, with no credential, query or fragment. |
+| `spec.desired.https` | `object` | This resource requires: where `desired.https` is set, desired.https.path selects one file for a schema. HTTPS selects a file or a directory of one download, pinned by the SHA-256 of the bytes the URL serves. The manager never reads the download or its credential: a Job's fetch container downloads it through Ptah, and every later operation downloads it again and refuses other bytes or other content. Nothing is stored in the cluster. |
+| `spec.desired.https.authFrom` | `object` | AuthFrom names the Secret the fetch container reads the credential from. The manager never reads it. |
+| `spec.desired.https.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `spec.desired.https.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the exact bytes the URL serves, the number sha256sum prints for the file. Nothing in the download is read before it matches. It is not the content digest: an archive packed again with the same selected files has another digest and the same content. |
+| `spec.desired.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files: File, the schema file itself; TarGzip or Zip, an archive. |
+| `spec.desired.https.path` | `string`, required | This resource requires: where `desired.https` is set, desired.https.path selects one file for a schema. Path is what the download selects. With File it is the one name the download is given, whose extension tells a schema's format. In an archive it is the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
+| `spec.desired.https.transport` | `object` | Transport pins the server: the CA its certificate chains to. |
+| `spec.desired.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `spec.desired.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.desired.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.desired.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `spec.desired.https.url` | `string`, required | URL of the download: https://, with no credential, query or fragment. The host is ASCII letters, digits, dots and hyphens, or an IPv6 address in brackets, with an optional port: write an internationalized name in its xn-- form. |
 | `spec.desired.ociRef` | `string` | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.desired.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
 | `spec.desired.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
@@ -328,7 +385,7 @@ spec:
 | `spec.desired.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `spec.desired.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `spec.desired.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `spec.desired.sourcePolicyFrom` | `object` | SourcePolicyFrom names the immutable ConfigMap holding what a team refuses for a ConfigMap or Git source: the hosts a Git source may name, the ConfigMaps a ConfigMap source may name, and the most the selected files may hold. A plan binds the policy's object and bytes, so another policy retires it. An OCI source has its verification policy instead, and the API refuses this beside ociRef. |
+| `spec.desired.sourcePolicyFrom` | `object` | SourcePolicyFrom names the immutable ConfigMap holding what a team refuses for a ConfigMap, Git or HTTPS source: the hosts a Git or an HTTPS source may name, the ConfigMaps a ConfigMap source may name, and the most the selected files may hold. A plan binds the policy's object and bytes, so another policy retires it. An OCI source has its verification policy instead, and the API refuses this beside ociRef. |
 | `spec.desired.sourcePolicyFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.desired.sourcePolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.sourcePolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -338,7 +395,7 @@ spec:
 | `spec.desired.transport.caFrom.name` | `string`, default `` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.transport.caFrom.optional` | `boolean` | This resource requires: where `desired.transport` and `desired.transport.caFrom` are set, desired.transport.caFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.desired.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.desired.verificationPolicyFrom` | `object` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap and git: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
+| `spec.desired.verificationPolicyFrom` | `object` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap, git and https: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
 | `spec.desired.verificationPolicyFrom.key` | `string`, required | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.desired.verificationPolicyFrom.name` | `string`, default `` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.verificationPolicyFrom.optional` | `boolean` | This resource requires: where `desired.verificationPolicyFrom` is set, desired.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
@@ -579,7 +636,7 @@ spec:
 | `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.activeOperation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.activeOperation.source.git.transport` | `object` | Transport pins the server. |
-| `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `status.activeOperation.source.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.activeOperation.source.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -588,6 +645,19 @@ spec:
 | `status.activeOperation.source.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.activeOperation.source.git.url` | `string`, required | URL of the repository. |
+| `status.activeOperation.source.https` | `object` | HTTPS is the download an HTTPS source resolved, where to fetch it from, and the content it must give. |
+| `status.activeOperation.source.https.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.activeOperation.source.https.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.activeOperation.source.https.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.activeOperation.source.https.digest` | `string`, required | Digest is the SHA-256 of the bytes the URL served. |
+| `status.activeOperation.source.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files. |
+| `status.activeOperation.source.https.path` | `string`, required | Path is what the download selects. |
+| `status.activeOperation.source.https.transport` | `object` | Transport pins the server. |
+| `status.activeOperation.source.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `status.activeOperation.source.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.activeOperation.source.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.activeOperation.source.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.activeOperation.source.https.url` | `string`, required | URL of the download. |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -641,11 +711,11 @@ spec:
 | `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the apply ran under. |
 | `status.applied.source` | `object` | Source is the source that was applied, for a plan computed from a ConfigMap or a Git commit. |
 | `status.applied.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
-| `status.applied.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.applied.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS` | Kind of source the plan was computed from. |
 | `status.applied.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
 | `status.applied.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
 | `status.applied.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
-| `status.applied.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
+| `status.applied.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. |
 | `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
@@ -833,11 +903,11 @@ spec:
 | `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
 | `status.pendingObservation.plan.source` | `object` | Source is the source a plan computed from a ConfigMap or a Git commit binds in place of artifactDigest. |
 | `status.pendingObservation.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
-| `status.pendingObservation.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.pendingObservation.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS` | Kind of source the plan was computed from. |
 | `status.pendingObservation.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
 | `status.pendingObservation.plan.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
 | `status.pendingObservation.plan.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
-| `status.pendingObservation.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
+| `status.pendingObservation.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. |
 | `status.pendingObservation.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.pendingObservation.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.pendingObservation.plan.uid` | `string`, required | UID it had when this record was written. |
@@ -858,7 +928,7 @@ spec:
 | `status.pendingObservation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.pendingObservation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.pendingObservation.source.git.transport` | `object` | Transport pins the server. |
-| `status.pendingObservation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.pendingObservation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `status.pendingObservation.source.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.pendingObservation.source.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.source.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -867,6 +937,19 @@ spec:
 | `status.pendingObservation.source.git.transport.knownHostsFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.source.git.transport.knownHostsFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.pendingObservation.source.git.url` | `string`, required | URL of the repository. |
+| `status.pendingObservation.source.https` | `object` | HTTPS is the download an HTTPS source resolved, where to fetch it from, and the content it must give. |
+| `status.pendingObservation.source.https.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.pendingObservation.source.https.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.pendingObservation.source.https.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.pendingObservation.source.https.digest` | `string`, required | Digest is the SHA-256 of the bytes the URL served. |
+| `status.pendingObservation.source.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files. |
+| `status.pendingObservation.source.https.path` | `string`, required | Path is what the download selects. |
+| `status.pendingObservation.source.https.transport` | `object` | Transport pins the server. |
+| `status.pendingObservation.source.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `status.pendingObservation.source.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.pendingObservation.source.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.pendingObservation.source.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.pendingObservation.source.https.url` | `string`, required | URL of the download. |
 | `status.pendingObservation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
 | `status.pendingObservation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
 | `status.pendingObservation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
@@ -923,11 +1006,11 @@ spec:
 | `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds. |
 | `status.plan.source` | `object` | Source is the source a plan computed from a ConfigMap or a Git commit binds in place of artifactDigest. |
 | `status.plan.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
-| `status.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git` | Kind of source the plan was computed from. |
+| `status.plan.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS` | Kind of source the plan was computed from. |
 | `status.plan.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
 | `status.plan.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
 | `status.plan.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
-| `status.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. |
+| `status.plan.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. |
 | `status.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
 | `status.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
 | `status.plan.uid` | `string`, required | UID it had when this record was written. |
@@ -949,6 +1032,12 @@ spec:
 | `status.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.source.git.url` | `string`, required | URL of the repository. |
+| `status.source.https` | `object` | HTTPS is the download an HTTPS source last resolved, and the content digest of the selected files in it. An HTTPS source has no verification policy, so verified stays false. |
+| `status.source.https.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.source.https.digest` | `string`, required | Digest is the SHA-256 of the bytes the URL served. |
+| `status.source.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files. |
+| `status.source.https.path` | `string`, required | Path is what the download selects. |
+| `status.source.https.url` | `string`, required | URL of the download. |
 | `status.source.mediaType` | `string` | MediaType is the manifest's media type. |
 | `status.source.requestedReference` | `string` | RequestedReference is what spec.desired asked for, tag and all. |
 | `status.source.resolvedAt` | `string` | ResolvedAt is when the tag was last resolved. |

@@ -1,13 +1,13 @@
 ---
-title: Deliver from a ConfigMap or Git
-description: Keep a schema or a migration sequence in a ConfigMap or a Git repository, render it with Kustomize or Helm, reach a private repository, and bound what a source may name.
+title: Deliver from a ConfigMap, Git or HTTPS
+description: Keep a schema or a migration sequence in a ConfigMap, a Git repository or a download pinned by digest, render it with Kustomize or Helm, reach a private server, and bound what a source may name.
 ---
 
 A `PtahSchema` reads its desired schema, and a `PtahMigration` its migration
-directory, from one of three sources: an OCI artifact, a ConfigMap in the
-resource's namespace, or a Git repository. This page covers the last two.
-Neither needs a registry or a verification policy, and both work for both
-resources.
+directory, from one of four sources: an OCI artifact, a ConfigMap in the
+resource's namespace, a Git repository, or an HTTPS download pinned by its
+digest. This page covers the last three. None needs a registry or a
+verification policy, and each works for both resources.
 
 Choose by what the files are trusted by. A ConfigMap is trusted by Kubernetes
 RBAC: whoever may write it may change the desired state, exactly as whoever
@@ -15,7 +15,10 @@ may write the resource can. It fits a team whose manifests already carry the
 files, through Kustomize, Helm or a GitOps tool. A Git source is trusted by the
 repository: whoever may push to the branch or move the tag decides what the
 operator plans next. It fits a team that wants the operator to follow a
-branch or a tag itself.
+branch or a tag itself. An HTTPS source is trusted by the digest in the spec:
+whoever may write the resource decides which bytes are read, and the server
+can only serve them or fail. It fits a team that already publishes release
+archives to an artifact server and wants no registry.
 
 Whatever the source, the operator plans first and applies only what was
 approved or what `spec.policy` lets it apply, and every operation reads the
@@ -25,9 +28,9 @@ each source is resolved and what each operation checks.
 
 Moving a resource from one kind of source to another is an edit of its spec,
 in its manifest or with `kubectl edit`. `kubectl ptah set-source` changes the
-reference of an OCI source and refuses a ConfigMap or Git one: an artifact
-also takes a verification policy, which those two sources refuse, and only
-the person making the edit can name it.
+reference of an OCI source and refuses a ConfigMap, Git or HTTPS one: an
+artifact also takes a verification policy, which those sources refuse, and
+only the person making the edit can name it.
 [Moving to a new artifact](../operations/#set-source) has the OCI case.
 
 ## From a ConfigMap
@@ -233,6 +236,12 @@ the credential's owner decides where it may be sent.
 host is not that one, so a resource's author cannot point the credential at
 another server.
 
+Hosts compare as ASCII, without case. The fetch refuses a URL whose host, or a
+Secret whose `host`, holds any other character, before Ptah runs: the
+transport would dial such a name by another, its IDNA form, so write an
+internationalized name in its `xn--` form in the URL, in the Secret and in a
+[source policy](../security/#source-policies).
+
 ```sh
 kubectl -n application create secret generic orders-git \
   --from-literal=host=git.example.com \
@@ -242,7 +251,12 @@ kubectl -n application create secret generic orders-git \
 A server whose certificate chains to a private CA names the CA bundle in
 `transport.caFrom`, a ConfigMap key. With a credential, the Secret must also
 hold `caSHA256`, the SHA-256 of those exact bytes, so the credential is sent
-only under the trust its owner granted:
+only under the trust its owner granted. The pin holds the other way too: a
+resource that names a Secret holding `caSHA256` and selects no CA is refused
+before Ptah runs, rather than sending the credential under the system roots: a
+Resolve fails with `invalid_git_access`, and a fetch step with
+`git_source_refused` in its termination message. Over `ssh://`, where no TLS
+is spoken, the pin is not read:
 
 ```sh
 kubectl -n application create configmap git-example-ca --from-file=ca.pem
@@ -303,12 +317,159 @@ spec:
 A deploy key with read access to the one repository is the narrowest
 credential that works.
 
+## From HTTPS
+
+`https` names a download and the SHA-256 of the exact bytes it serves:
+
+```yaml
+spec:
+  desired:
+    https:
+      url: https://artifacts.example.com/inventory/schema-1.4.0.hcl
+      digest: sha256:<SHA-256 of the bytes the URL serves>
+      format: File
+      path: schema.hcl
+```
+
+The digest is the whole trust decision. A Resolve Job downloads the URL and
+refuses bytes that do not give it, then records the content digest of the
+selected files; every later operation downloads the URL again, held to both
+digests, and nothing is stored in the cluster. A new version of the files is a
+new digest in the spec, so a source that moves is an edit of the resource,
+never something the server decides.
+
+`url` takes `https://` only, with no user name, password, query or fragment,
+in at most 2,048 bytes. Its host is ASCII letters, digits, dots and hyphens,
+or an IPv6 address in brackets, with an optional port, so an internationalized
+name is written in its `xn--` form; the host compares as it does for Git.
+`format` says what the download is:
+
+- `File`: one file, which `path` names. Its extension tells a schema's format,
+  as a ConfigMap item's does. A migration directory cannot be one file.
+- `TarGzip`: a gzip-compressed tar archive. `path` selects the schema file, or
+  the migration directory, inside it.
+- `Zip`: a zip archive, selected the same way.
+
+An archive entry outside the archive, such as one named `../x`, or a symbolic
+link inside the selection is refused at Resolve with Ptah's reason, rather
+than read as SQL. A migration sequence in an archive:
+
+```yaml
+spec:
+  artifact:
+    https:
+      url: https://artifacts.example.com/orders/orders-1.4.0.tar.gz
+      digest: sha256:<SHA-256 of the archive>
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+```
+
+A plan is bound to the URL, the path and the content of the selected files,
+not to the download digest. An archive built again holds new bytes even when
+its files are the same, since tar and zip record times; once the spec names
+its digest, Resolve records the same content digest and the plan stands.
+Another URL or another path retires the plan.
+
+### Publish from CI
+
+Publish the file or the archive under a name that carries its version, take
+the digest of the bytes you uploaded, and write that digest into the manifest
+in the same change:
+
+```sh
+tar -czf orders-1.4.0.tar.gz orders-1.4.0/db/migrations
+digest="sha256:$(shasum -a 256 orders-1.4.0.tar.gz | cut -d' ' -f1)"
+curl --fail --upload-file orders-1.4.0.tar.gz \
+  https://artifacts.example.com/orders/orders-1.4.0.tar.gz
+yq -i ".spec.artifact.https.digest = \"$digest\"" deploy/orders-migrations.yaml
+```
+
+Take the digest of the file you uploaded, not of a copy built again: a rebuilt
+archive has another digest. Keep every published version on the server for as
+long as a resource names it.
+
+### When the download changes or disappears
+
+The server keeps no promise the operator can hold it to. When the bytes at a
+URL are replaced, the next Resolve refuses them, naming the digest it was
+served and the one the spec pins, and when they are deleted the download
+fails. Either way nothing is planned or applied, and what was resolved and
+applied before stays in the status. Recover in one of two ways:
+
+- Put the original bytes back at the URL. The digest in the spec holds again
+  and the next attempt reads them.
+- Pin the new bytes: write their digest into the spec. When the selected files
+  are the same the plan stands, and when they differ the operator plans
+  again.
+
+### The cost of the interval
+
+A resource reads its source again at every interval, and an HTTPS source has
+no cache: each Resolve downloads the whole file or archive, and so does every
+operation that reads the files, including the read that follows each Resolve.
+A resource that is in sync downloads the source at least twice per interval.
+With a large archive and a short `spec.interval`, that is real bandwidth, on
+both the cluster's egress and the server, for a source whose pinned digest
+means nothing new can arrive. Keep archives small, select only what the
+resource reads, and choose an interval measured in hours rather than minutes.
+
+### A private download
+
+`authFrom` names a Secret in the resource's namespace with fixed keys:
+`username` and `password` for Basic authentication, or `token` for a Bearer
+token, never both, and `host`, the only `host[:port]` the credential is sent
+to. The fetch refuses a URL whose host is not that one, and Ptah refuses a
+redirect to another origin while a credential is set, so a resource's author
+cannot point the credential at another server. The host compares as ASCII
+without case, as for Git, and a Secret whose `host` holds any other character
+is refused.
+
+```sh
+kubectl -n application create secret generic orders-artifacts \
+  --from-literal=host=artifacts.example.com \
+  --from-literal=token="$ARTIFACTS_TOKEN"
+```
+
+For a private CA, `transport.caFrom` names the ConfigMap key that holds the
+bundle, and a credentialed source's Secret holds `caSHA256`, the SHA-256 of
+those exact bytes, as for Git. A resource that selects no CA under a Secret
+that holds `caSHA256` is refused with `invalid_https_access`:
+
+```sh
+kubectl -n application create configmap artifacts-ca --from-file=ca.pem
+kubectl -n application create secret generic orders-artifacts \
+  --from-literal=host=artifacts.example.com \
+  --from-literal=username=deploy \
+  --from-literal=password="$ARTIFACTS_PASSWORD" \
+  --from-literal=caSHA256="sha256:$(shasum -a 256 ca.pem | cut -d' ' -f1)"
+```
+
+```yaml
+spec:
+  artifact:
+    https:
+      url: https://artifacts.example.com/orders/orders-1.4.0.tar.gz
+      digest: sha256:<SHA-256 of the archive>
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+      authFrom:
+        name: orders-artifacts
+      transport:
+        caFrom:
+          name: artifacts-ca
+          key: ca.pem
+```
+
+The Job mounts the Secret into the container that downloads and into no
+other; the manager never reads it.
+
 ## What resolved
 
-`ArtifactResolved` says `SnapshotTaken` for a ConfigMap source and
-`CommitResolved` for a Git one. `kubectl ptah schema` and
-`kubectl ptah migration` print the source, the commit or snapshot, and the
-content digest; the status records the same:
+`ArtifactResolved` says `SnapshotTaken` for a ConfigMap source,
+`CommitResolved` for a Git one and `DownloadVerified` for an HTTPS one, whose
+message names the download digest and the content digest. `kubectl ptah schema`
+and `kubectl ptah migration` print the source, the commit, snapshot or
+download, and the content digest; the status records the same:
 
 ```sh
 kubectl -n application get ptahschema inventory \
@@ -317,7 +478,7 @@ kubectl -n application get ptahmigration orders \
   -o jsonpath='{.status.artifact.git.commit} {.status.artifact.git.contentDigest}{"\n"}'
 ```
 
-A plan computed from either source is bound to that content and to the
-source's identity, the ConfigMap's UID or the repository URL and path, in
-place of an artifact digest. [Plans and approvals](../../reference/plans-and-approvals/)
+A plan computed from any of these sources is bound to that content and to
+the source's identity, the ConfigMap's UID, or the URL and path of a
+repository or a download, in place of an artifact digest. [Plans and approvals](../../reference/plans-and-approvals/)
 says what an approval binds.

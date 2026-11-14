@@ -1,11 +1,13 @@
 // Package sourcepolicy reads and applies a source policy: what a team refuses
-// for every ConfigMap and Git source, held in an immutable ConfigMap a
+// for every ConfigMap, Git and HTTPS source, held in an immutable ConfigMap a
 // resource selects with sourcePolicyFrom.
 //
-// The document is YAML with three optional rules:
+// The document is YAML with four optional rules:
 //
 //	allowedGitHosts:      # the only host[:port] a Git source may name
 //	  - git.example.com
+//	allowedHTTPSHosts:    # the only host[:port] an HTTPS source may name
+//	  - artifacts.example.com
 //	allowedConfigMaps:    # the only ConfigMaps a ConfigMap source may name
 //	  - inventory-schema
 //	maxContentBytes: 1048576   # the most the selected files may hold together
@@ -29,6 +31,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 // MaxDocumentBytes bounds the policy document.
@@ -41,6 +44,7 @@ var ErrRefused = errors.New("the source policy refuses this source")
 // Policy is a parsed source policy.
 type Policy struct {
 	AllowedGitHosts   *[]string `json:"allowedGitHosts,omitempty"`
+	AllowedHTTPSHosts *[]string `json:"allowedHTTPSHosts,omitempty"`
 	AllowedConfigMaps *[]string `json:"allowedConfigMaps,omitempty"`
 	MaxContentBytes   *int64    `json:"maxContentBytes,omitempty"`
 }
@@ -64,7 +68,9 @@ func Parse(document []byte) (Policy, error) {
 	if policy.MaxContentBytes != nil && *policy.MaxContentBytes < 1 {
 		return Policy{}, errors.New("the source policy's maxContentBytes is not positive")
 	}
-	for name, list := range map[string]*[]string{"allowedGitHosts": policy.AllowedGitHosts, "allowedConfigMaps": policy.AllowedConfigMaps} {
+	for name, list := range map[string]*[]string{
+		"allowedGitHosts": policy.AllowedGitHosts, "allowedHTTPSHosts": policy.AllowedHTTPSHosts, "allowedConfigMaps": policy.AllowedConfigMaps,
+	} {
 		if list == nil {
 			continue
 		}
@@ -109,15 +115,37 @@ func Read(ctx context.Context, reader client.Reader, namespace string, selector 
 }
 
 // CheckGitHost refuses a Git source whose authority, host[:port], the policy
-// does not allow. Hosts compare without case.
+// does not allow. Hosts compare as printable ASCII without case, as
+// internal/sourcehost says.
 func (p Policy) CheckGitHost(authority string) error {
 	if p.AllowedGitHosts == nil {
 		return nil
 	}
-	if slices.ContainsFunc(*p.AllowedGitHosts, func(allowed string) bool { return strings.EqualFold(allowed, authority) }) {
+	return checkHost("allowedGitHosts", *p.AllowedGitHosts, authority)
+}
+
+// CheckHTTPSHost refuses an HTTPS source whose authority, host[:port], the
+// policy does not allow. Hosts compare as printable ASCII without case.
+// allowedGitHosts says nothing about an HTTPS source: a host a team clones
+// from is not one it downloads from.
+func (p Policy) CheckHTTPSHost(authority string) error {
+	if p.AllowedHTTPSHosts == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: allowedGitHosts does not name %s", ErrRefused, authority)
+	return checkHost("allowedHTTPSHosts", *p.AllowedHTTPSHosts, authority)
+}
+
+// checkHost refuses an authority that rule's list does not name. An
+// authority that is not printable ASCII is refused by name, since no entry
+// can name it: an entry that is not printable ASCII names nothing.
+func checkHost(rule string, allowed []string, authority string) error {
+	if err := sourcehost.CheckASCII(authority); err != nil {
+		return fmt.Errorf("%w: %s compares hosts as ASCII: %w", ErrRefused, rule, err)
+	}
+	if slices.ContainsFunc(allowed, func(entry string) bool { return sourcehost.Equal(entry, authority) }) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s does not name %s", ErrRefused, rule, authority)
 }
 
 // CheckConfigMap refuses a ConfigMap source the policy does not allow.

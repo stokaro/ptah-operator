@@ -412,6 +412,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a75666f89ae42598f67d092dcd3def3b6601ddf029487c2e4f1d24d2e87dc33c",
       "reason": "Hold a view made again after a drop that records nothing for it (#1080). After a CASCADE, DROP OWNED or a DROP VIEW whose effect or names the operator cannot read, a later CREATE VIEW of a view it may have taken, or a CREATE OR REPLACE VIEW whose effect records no value before or that has no effect, raises SecurityDefiner whatever option it states. Only the privilege reading in internal/dataplane changes. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is the same, and protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:75124c5054c6759e4adee20ac20bba5bbac81ded4b6b316f20ab6caa60e13ca4",
+      "reason": "Pull an HTTPS source (#1041). A Resolve may run ptah schema or migrations pull on an https:// URL held to the pinned download digest; its frame carries resolvedDownloadDigest beside the content digest and bytes. A new fetch mode, --fetch-https-source, pulls the bound download before an operation, held to both digests. Before Ptah runs, the runner refuses as invalid_https_access a credential for another host, a grant with no credential, a mixed or incomplete credential, a CA that does not give its granted digest and a CA pin with no CA selected. HTTPS and Git refuse a URL host or host grant outside printable ASCII, naming it escaped, and compare hosts without ASCII case; Git refuses a CA pin with no CA. For Git that only narrows what was accepted and fails closed, as invalid_git_access at a Resolve and git_source_refused in a fetch step; an older manager meets none of it, since its Jobs run its own runner and it harvests only Jobs its binding rebuilds. OCI Jobs are unchanged. Protocol 1 stays."
     }
   ]
 }

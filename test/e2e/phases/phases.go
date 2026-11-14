@@ -858,6 +858,48 @@ var GitSources = define[GitSourceInputs](Phase{
 	},
 })
 
+// HTTPSSourceInputs is what the driver hands the HTTPS source phase. It runs
+// in the namespace the data plane stood up, on its PostgreSQL server, and
+// serves its downloads from the fixture image.
+type HTTPSSourceInputs struct {
+	// Kubeconfig names the cluster the driver stood up.
+	Kubeconfig string `env:"E2E_KUBECONFIG"`
+	// TestNamespace is the namespace the data plane stood up in preparation,
+	// with its PostgreSQL server, the Secret that holds its password and the
+	// registry pull Secret.
+	TestNamespace string `env:"E2E_TEST_NAMESPACE"`
+	// FixtureImage carries the download server.
+	FixtureImage string `env:"E2E_FIXTURE_IMAGE"`
+}
+
+// HTTPSSources proves a schema and a migration sequence whose source is an
+// HTTPS download pinned by its digest, with no registry: a schema file behind
+// Basic and a private CA, reached through a same-origin redirect, applied
+// through the plan its Resolve bound; a migration directory in a gzip tar
+// behind a Bearer token, applied in full; a schema file selected from a
+// public zip, applied; that zip republished as other bytes holding the same
+// file, refused naming both digests until the spec names the new one, and
+// then kept without a new plan; a redirect to another origin, refused with
+// the credential set and with nothing sent there; a credential granted for
+// another host, refused before Ptah runs; a symbolic link and a ".." entry,
+// each refused at its Resolve; and a source policy whose host list and
+// content bound each refuse the source.
+var HTTPSSources = define[HTTPSSourceInputs](Phase{
+	Name:    "https-sources",
+	Test:    "TestHTTPSSources",
+	Timeout: 60 * time.Minute,
+	Scenarios: []string{
+		"https-schema",
+		"https-migration",
+		"https-schema-zip",
+		"https-republished",
+		"https-redirect-refused",
+		"https-credential-refused",
+		"https-source-refused",
+		"https-source-policy",
+	},
+})
+
 // all is every phase the harness carries, in the order the driver runs them.
 var all = []Phase{
 	Upgrade.Phase,
@@ -878,6 +920,7 @@ var all = []Phase{
 	ReferenceDataMySQL.Phase,
 	ConfigMapSources.Phase,
 	GitSources.Phase,
+	HTTPSSources.Phase,
 	AlertingCertificates.Phase,
 	AlertingOperations.Phase,
 	Alerting.Phase,

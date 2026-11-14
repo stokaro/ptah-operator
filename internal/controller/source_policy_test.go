@@ -38,7 +38,7 @@ func requireRefused(t *testing.T, schema *operatorv1alpha1.PtahSchema, want stri
 	if schema.Status.Phase != operatorv1alpha1.PhaseFailed || failed == nil || !strings.Contains(failed.Message, want) {
 		t.Fatalf("phase %s, failure %#v; want Failed naming %q", schema.Status.Phase, failed, want)
 	}
-	if schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil || schema.Status.Plan != nil {
+	if schema.Status.Source.Snapshot != nil || schema.Status.Source.Git != nil || schema.Status.Source.HTTPS != nil || schema.Status.Plan != nil {
 		t.Fatalf("a refused source left status %#v and plan %#v", schema.Status.Source, schema.Status.Plan)
 	}
 }
@@ -183,6 +183,52 @@ func TestASourcePolicyRefusesAGitHostBeforeAnyJob(t *testing.T) {
 	jobs := &batchv1.JobList{}
 	if err := api.List(context.Background(), jobs); err != nil || len(jobs.Items) != 0 {
 		t.Fatalf("a refused host got %d Jobs: %v", len(jobs.Items), err)
+	}
+}
+
+// A URL whose host is not printable ASCII gets no Resolve Job under a policy
+// that allows the ASCII name strings.ToLower would read it as: the
+// transport dials the IDNA form, another host than the one allowed.
+func TestASourcePolicyRefusesAHostThatIsNotASCIIBeforeAnyJob(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name, policy string
+		source       func() operatorv1alpha1.SourceSpec
+	}{
+		{name: "a Git host with U+0130", policy: "allowedGitHosts:\n  - git.example.com\n", source: func() operatorv1alpha1.SourceSpec {
+			git := gitSourceSpec()
+			git.URL = "https://g\u0130t.example.com/acme/app.git"
+			return operatorv1alpha1.SourceSpec{Git: git}
+		}},
+		{name: "a Git host with U+0130 escaped", policy: "allowedGitHosts:\n  - git.example.com\n", source: func() operatorv1alpha1.SourceSpec {
+			git := gitSourceSpec()
+			git.URL = "https://g%C4%B0t.example.com/acme/app.git"
+			return operatorv1alpha1.SourceSpec{Git: git}
+		}},
+		{name: "a download host with U+0130", policy: "allowedHTTPSHosts:\n  - artifacts.example.com\n", source: func() operatorv1alpha1.SourceSpec {
+			https := httpsSourceSpec()
+			https.URL = "https://art\u0130facts.example.com/acme/app-1.4.0.zip"
+			return operatorv1alpha1.SourceSpec{HTTPS: https}
+		}},
+		{name: "a download host with U+0130 escaped", policy: "allowedHTTPSHosts:\n  - artifacts.example.com\n", source: func() operatorv1alpha1.SourceSpec {
+			https := httpsSourceSpec()
+			https.URL = "https://art%C4%B0facts.example.com/acme/app-1.4.0.zip"
+			return operatorv1alpha1.SourceSpec{HTTPS: https}
+		}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired = row.source()
+			withSourcePolicy(&schema.Spec.Desired, "source-policy")
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, sourcePolicyConfigMap("source-policy", "policy-uid", row.policy))
+			actual := reconcileSchema(t, reconciler, api, schema)
+			requireRefused(t, actual, "in its xn-- form")
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs); err != nil || len(jobs.Items) != 0 || actual.Status.ActiveOperation != nil {
+				t.Fatalf("a host that is not ASCII was claimed %#v and got %d Jobs: %v", actual.Status.ActiveOperation, len(jobs.Items), err)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,19 @@
+{
+  "source": "https",
+  "reference": "https://e2e-https.ptah-test.svc/basic/schema.sql",
+  "format": "file",
+  "download_digest": "sha256:74c65b2a7497ceacb00e7fb087c38062e92c3f6399ce980247de0a826f7efad4",
+  "download_size": 89,
+  "path": "schema.sql",
+  "content_digest": "sha256:479db95d1e119641e67a5592f9e977a1c600ebbf7cf1a3121b7ef4063d1ac221",
+  "files": [
+    {
+      "path": "schema.sql",
+      "size": 89,
+      "sha256": "74c65b2a7497ceacb00e7fb087c38062e92c3f6399ce980247de0a826f7efad4"
+    }
+  ],
+  "written": [
+    "/fetch-work/ptah-https-fetch-capture/schema.sql"
+  ]
+}

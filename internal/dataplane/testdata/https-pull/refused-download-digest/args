@@ -1,0 +1,14 @@
+schema
+pull
+https://e2e-https.ptah-test.svc/public/schema.zip
+--format
+zip
+--path
+app-1.0/db/schema.sql
+--expect-download-digest
+sha256:f987c83d1fd23edbdc66e145a3c53387787ee8acdbb548c55db03f4e794e0363
+--ca-file
+/credentials/https-ca/ca.pem
+--out
+/fetch-work/ptah-https-fetch-capture/schema.sql
+--json

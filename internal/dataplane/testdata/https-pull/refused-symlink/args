@@ -1,0 +1,14 @@
+migrations
+pull
+https://e2e-https.ptah-test.svc/bearer/symlink.tar.gz
+--format
+tar.gz
+--path
+orders-1.0/db/migrations
+--expect-download-digest
+sha256:579e147bee98a4cadf100f31e4cc558fe61e83127d71bc6d29dd56aaf86aeb81
+--ca-file
+/credentials/https-ca/ca.pem
+--out
+/fetch-work/ptah-https-fetch-capture/migrations
+--json

@@ -243,7 +243,7 @@ kubectl ptah approve schema/application -n application --wait
 
 The operator reads an edit to a selected key at once, and the plan is the
 difference between the new file and the database as it is now.
-[Deliver from a ConfigMap or Git](../../use/sources/#from-a-configmap) covers
+[Deliver from a ConfigMap, Git or HTTPS](../../use/sources/#from-a-configmap) covers
 generated names, Kustomize and Helm.
 
 ## Next: read the schema from a registry {#from-a-registry}
@@ -254,7 +254,7 @@ whose manifests already carry the files. An OCI artifact adds what a production
 installation usually wants: content that cannot change under a digest, a tag
 resolved once and never again, and a verification policy that decides which
 artifacts the operator reads at all.
-[Deliver from a ConfigMap or Git](../../use/sources/) says how to choose.
+[Deliver from a ConfigMap, Git or HTTPS](../../use/sources/) says how to choose.
 
 This step needs a registry the cluster can read and the Ptah CLI. Which Ptah
 build to use is [Ptah compatibility](../../support/ptah/). The `examples/` files

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,13 +38,16 @@ func sourcePolicyFor(
 	return &policy, &operatorv1alpha1.SourcePolicyBinding{UID: binding.UID, Digest: binding.Digest}, nil
 }
 
-// gitAuthority is the host[:port] a Git source's URL names, lowercased.
-func gitAuthority(repository string) string {
-	parsed, err := url.Parse(repository)
+// sourceAuthority is the host[:port] a Git or HTTPS source's URL names, as
+// url.Parse reads it, or "" for a URL it refuses. It is not folded: the
+// source policy compares it as printable ASCII and refuses any other host by
+// name, where strings.ToLower would read "g\u0130thub.com" as github.com.
+func sourceAuthority(source string) string {
+	parsed, err := url.Parse(source)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(parsed.Host)
+	return parsed.Host
 }
 
 // checkGitSource refuses a Git source its policy does not allow: its host
@@ -54,7 +56,7 @@ func checkGitSource(policy *sourcepolicy.Policy, spec *operatorv1alpha1.GitSourc
 	if policy == nil {
 		return nil
 	}
-	if err := policy.CheckGitHost(gitAuthority(spec.URL)); err != nil {
+	if err := policy.CheckGitHost(sourceAuthority(spec.URL)); err != nil {
 		return fmt.Errorf("%w: %w", errSourceRefused, err)
 	}
 	if err := policy.CheckContentBytes(contentBytes); err != nil {
@@ -75,7 +77,7 @@ func sourcePolicyMoved(
 	recorded *operatorv1alpha1.SourcePolicyBinding,
 	resolved bool,
 ) (bool, error) {
-	if !resolved || (spec.ConfigMap == nil && spec.Git == nil) {
+	if !resolved || (spec.ConfigMap == nil && spec.Git == nil && spec.HTTPS == nil) {
 		return false, nil
 	}
 	_, live, err := sourcePolicyFor(ctx, reader, namespace, spec)

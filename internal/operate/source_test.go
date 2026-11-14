@@ -242,17 +242,17 @@ func TestSetSourceSendsNothingWhenTheSpecAlreadyAsksForIt(t *testing.T) {
 	}
 }
 
-func TestSetSourceRefusesAConfigMapOrGitSource(t *testing.T) {
+func TestSetSourceRefusesAConfigMapGitOrHTTPSSource(t *testing.T) {
 	t.Parallel()
 
 	for _, family := range families {
-		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit, operate.SourceOther} {
+		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit, operate.SourceHTTPS, operate.SourceOther} {
 			t.Run(string(family)+"/"+string(kind), func(t *testing.T) {
 				t.Parallel()
 
 				object := sourced(family, uidA, "")
 				source := operatorv1alpha1.SourceSpec{}
-				// Other is a spec that names none of the three, as one a newer
+				// Other is a spec that names none of the four, as one a newer
 				// API's kind of source would read here: there is no ociRef to
 				// replace.
 				switch kind {
@@ -262,6 +262,12 @@ func TestSetSourceRefusesAConfigMapOrGitSource(t *testing.T) {
 				case operate.SourceGit:
 					source.Git = &operatorv1alpha1.GitSourceSpec{URL: "https://git.example/shop/schema",
 						Ref: operatorv1alpha1.GitRef{Branch: "main"}, Path: "schema.sql"}
+				case operate.SourceHTTPS:
+					// The kind is named, so the refusal says "the HTTPS
+					// source" rather than reading it as a kind it does not
+					// know.
+					source.HTTPS = &operatorv1alpha1.HTTPSSourceSpec{URL: "https://artifacts.example/shop/schema.sql",
+						Digest: "sha256:" + strings.Repeat("a", 64), Format: operatorv1alpha1.HTTPSFormatFile, Path: "schema.sql"}
 				}
 				field := "spec.desired"
 				switch typed := object.(type) {

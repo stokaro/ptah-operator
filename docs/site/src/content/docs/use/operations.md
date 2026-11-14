@@ -1335,7 +1335,7 @@ resource is pointed somewhere else meanwhile stops with exit status 8, as
 
 set-source changes nothing, and exits 4, for:
 
-- A ConfigMap or Git source. Moving to an artifact replaces that source and
+- A ConfigMap, Git or HTTPS source. Moving to an artifact replaces that source and
   its settings and names the verification policy the artifact is held to,
   which is an edit of the resource.
 - A resource with an Apply whose Job may already exist. The change would move

@@ -22,6 +22,7 @@ func (c *catalog) mutation(mutation policyenv.Mutation) { c.mutations = append(c
 var groups = []func(*testing.T, *catalog){
 	controllerRows,
 	credentialDeliveryRows,
+	httpsSourceRows,
 	cleanupRows,
 	resultJobRows,
 	applyPolicyRows,

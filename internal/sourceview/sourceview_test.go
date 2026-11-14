@@ -13,6 +13,7 @@ const (
 	contentDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	policyDigest  = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 	ociDigest     = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	download      = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 )
 
 var policy = &operatorv1alpha1.SourcePolicyBinding{UID: "policy-uid", Digest: policyDigest}
@@ -39,6 +40,24 @@ func TestFromSchemaNamesTheKindItResolvedAndWhatItResolvedTo(t *testing.T) {
 				{"Ref", "branch main"},
 				{"Path", "db/schema.sql"},
 				{"Commit", commit},
+				{"Content", contentDigest},
+				{"Source policy", policyDigest},
+			},
+		},
+		{
+			name: "an HTTPS file under a source policy",
+			status: operatorv1alpha1.SchemaSourceStatus{
+				HTTPS: &operatorv1alpha1.HTTPSSourceRevision{
+					URL: "https://artifacts.example.com/acme/schema.sql", Format: operatorv1alpha1.HTTPSFormatFile,
+					Path: "schema.sql", Digest: download, ContentDigest: contentDigest,
+				},
+				SourcePolicy: policy,
+			},
+			want: []sourceview.Field{
+				{"Source", "HTTPS https://artifacts.example.com/acme/schema.sql"},
+				{"Format", "File"},
+				{"Path", "schema.sql"},
+				{"Download", download},
 				{"Content", contentDigest},
 				{"Source policy", policyDigest},
 			},
@@ -123,6 +142,22 @@ func TestFromMigrationReadsTheArtifactBindingAndTheConfigMapBesideIt(t *testing.
 			want: &sourceview.View{
 				Kind: sourceview.KindGit, Repository: "https://git.example.com/acme/orders.git",
 				Ref: &operatorv1alpha1.GitRef{Commit: commit}, Path: "db/migrations", Commit: commit,
+				ContentDigest: contentDigest, SourcePolicyDigest: policyDigest,
+			},
+		},
+		{
+			// The binding names no OCI digest, so a view that fell through
+			// to OCI would print an empty artifact.
+			name: "an HTTPS archive",
+			artifact: &operatorv1alpha1.SourceAccessBinding{HTTPS: &operatorv1alpha1.HTTPSSourceBinding{
+				URL: "https://artifacts.example.com/acme/orders-1.4.0.tar.gz", Digest: download,
+				Format: operatorv1alpha1.HTTPSFormatTarGzip, Path: "orders-1.4.0/db/migrations", ContentDigest: contentDigest,
+				AuthFrom: &operatorv1alpha1.HTTPSAuthSource{Name: "orders-artifacts"},
+			}},
+			policy: policy,
+			want: &sourceview.View{
+				Kind: sourceview.KindHTTPS, URL: "https://artifacts.example.com/acme/orders-1.4.0.tar.gz",
+				Format: "TarGzip", Path: "orders-1.4.0/db/migrations", DownloadDigest: download,
 				ContentDigest: contentDigest, SourcePolicyDigest: policyDigest,
 			},
 		},

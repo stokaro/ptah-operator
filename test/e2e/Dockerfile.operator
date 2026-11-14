@@ -20,6 +20,8 @@ RUN CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w" -o /out/e2e-delay-proxy ./test/e2e/delayproxy
 RUN CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w" -o /out/e2e-git-server ./test/e2e/gitserver
+RUN CGO_ENABLED=0 \
+    go build -trimpath -ldflags="-s -w" -o /out/e2e-https-server ./test/e2e/httpsserver
 
 RUN CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w" -o /out/e2e-upgrade-observer ./hack/upgradealert
@@ -42,6 +44,7 @@ COPY --from=builder /out/e2e-handcraft-oci /e2e-handcraft-oci
 COPY --from=builder /out/e2e-alert-sink /e2e-alert-sink
 COPY --from=builder /out/e2e-delay-proxy /e2e-delay-proxy
 COPY --from=builder /out/e2e-git-server /e2e-git-server
+COPY --from=builder /out/e2e-https-server /e2e-https-server
 COPY --from=builder /out/e2e-upgrade-observer /e2e-upgrade-observer
 COPY --from=protocol-fixture /out/e2e-protocol-runner /e2e-protocol-runner
 COPY --from=protocol-fixture /tmp/incompatible-runner/provenance.json /e2e-protocol-runner.json

@@ -5,13 +5,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/sourcehost"
 )
 
 // The environment a Git source reaches a runner through. The manager sets the
@@ -56,8 +58,6 @@ const (
 	EnvGitUsername   = "PTAH_GIT_USERNAME"
 	EnvGitPassword   = "PTAH_GIT_PASSWORD" // #nosec G101 -- the name of a variable, not a credential
 	EnvGitSSHKeyFile = "PTAH_GIT_SSH_KEY_FILE"
-
-	maxGitTrustBytes int64 = 1 << 20
 )
 
 var gitCommitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -98,6 +98,9 @@ func (s GitSource) validate() error {
 	if _, hasPassword := parsed.User.Password(); hasPassword {
 		return errors.New("the Git source URL carries a credential")
 	}
+	if err := sourcehost.CheckASCII(parsed.Host); err != nil {
+		return fmt.Errorf("the Git source URL: %w", err)
+	}
 	if s.Branch != "" && s.Tag != "" {
 		return errors.New("a Git source names a branch and a tag")
 	}
@@ -124,13 +127,14 @@ func (s GitSource) reference() string {
 	return "git+" + s.URL
 }
 
-// authority is the host[:port] a credential has to be granted for.
+// authority is the host[:port] a credential has to be granted for, or ""
+// when the URL names none validate admits.
 func (s GitSource) authority() string {
-	parsed, err := url.Parse(s.URL)
+	authority, err := sourcehost.Authority(s.URL)
 	if err != nil {
 		return ""
 	}
-	return strings.ToLower(parsed.Host)
+	return authority
 }
 
 // gitTrust is the verified private copies of the trust a fetch runs under.
@@ -141,7 +145,8 @@ type gitTrust struct {
 // PrepareGitSourceAccess holds a Git source to the credential owner's grants
 // and copies the trust it selects to private files, then returns them with a
 // cleanup to call. A credential present needs a host grant equal to the
-// URL's authority, and a digest grant for each trust file, equal to its bytes:
+// URL's authority, as printable ASCII without case, and a digest grant for
+// each trust file, equal to its bytes:
 // the Secret's owner, not the resource's author, decides where the
 // credential goes.
 func PrepareGitSourceAccess(source GitSource, environment []string, tempDir string) (gitTrust, func(), error) {
@@ -151,7 +156,16 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 	values := environmentMap(environment)
 	credentialed := values[EnvGitUsername] != "" || values[EnvGitPassword] != "" || values[EnvGitSSHKeyFile] != ""
 	if credentialed {
-		if grant := strings.ToLower(values[EnvGitHostGrant]); grant == "" || grant != source.authority() {
+		grant := values[EnvGitHostGrant]
+		// A grant is not a credential, so the refusal names it, escaped: a
+		// Secret written by kubectl create secret --from-file ends in a
+		// newline, and only the escaped value shows it.
+		if grant != "" {
+			if err := sourcehost.CheckASCII(grant); err != nil {
+				return gitTrust{}, nil, fmt.Errorf("the Git credential's host grant is refused: %w", err)
+			}
+		}
+		if !sourcehost.Equal(grant, source.authority()) {
 			return gitTrust{}, nil, errors.New("the Git credential is not granted for the source's host")
 		}
 	} else if values[EnvGitHostGrant] != "" || values[EnvGitCASHA256Grant] != "" || values[EnvGitKnownHostsSHA256Grant] != "" {
@@ -165,19 +179,20 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 		}
 	}
 	for _, item := range []struct {
-		source, grant, name string
-		into                *string
+		source, grant, name, key, field string
+		into                            *string
 	}{
-		{values[EnvGitCASourceFile], values[EnvGitCASHA256Grant], "certificate authority", &trust.caFile},
-		{values[EnvGitKnownHostsSourceFile], values[EnvGitKnownHostsSHA256Grant], "known hosts", &trust.knownHostsFile},
+		{values[EnvGitCASourceFile], values[EnvGitCASHA256Grant], "certificate authority", "caSHA256", "transport.caFrom", &trust.caFile},
+		{values[EnvGitKnownHostsSourceFile], values[EnvGitKnownHostsSHA256Grant], "known hosts", "knownHostsSHA256", "transport.knownHostsFrom", &trust.knownHostsFile},
 	} {
 		if item.source == "" {
 			if item.grant != "" {
-				return gitTrust{}, nil, fmt.Errorf("a Git %s digest grant was supplied without the %s", item.name, item.name)
+				return gitTrust{}, nil, fmt.Errorf("a Git %s digest grant was supplied without the %s: the credential's Secret pins %s, so the source has to select it in %s",
+					item.name, item.name, item.key, item.field)
 			}
 			continue
 		}
-		bytes, err := readGitTrust(item.source, item.name)
+		bytes, err := readTrustFile(item.source, "Git", item.name)
 		if err != nil {
 			cleanup()
 			return gitTrust{}, nil, err
@@ -189,7 +204,7 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 				return gitTrust{}, nil, fmt.Errorf("the Git %s is not the one the credential's owner granted", item.name)
 			}
 		}
-		snapshot, err := writeGitTrust(tempDir, bytes, item.name)
+		snapshot, err := writeTrustFile(tempDir, bytes, "Git", item.name)
 		if err != nil {
 			cleanup()
 			return gitTrust{}, nil, err
@@ -202,33 +217,6 @@ func PrepareGitSourceAccess(source GitSource, environment []string, tempDir stri
 		return gitTrust{}, nil, errors.New("an ssh:// Git source needs known hosts")
 	}
 	return trust, cleanup, nil
-}
-
-func readGitTrust(file, name string) ([]byte, error) {
-	opened, err := os.Open(file) // #nosec G304 -- the Job's own projection path
-	if err != nil {
-		return nil, fmt.Errorf("read the Git %s", name)
-	}
-	defer func() { _ = opened.Close() }()
-	bytes, err := io.ReadAll(io.LimitReader(opened, maxGitTrustBytes+1))
-	if err != nil || int64(len(bytes)) > maxGitTrustBytes || len(bytes) == 0 {
-		return nil, fmt.Errorf("the Git %s is empty, unreadable or larger than %d bytes", name, maxGitTrustBytes)
-	}
-	return bytes, nil
-}
-
-func writeGitTrust(tempDir string, bytes []byte, name string) (string, error) {
-	file, err := os.CreateTemp(tempDir, "ptah-git-trust-*")
-	if err != nil {
-		return "", fmt.Errorf("create the Git %s snapshot", name)
-	}
-	_, writeErr := file.Write(bytes)
-	closeErr := file.Close()
-	if writeErr != nil || closeErr != nil || os.Chmod(file.Name(), 0o400) != nil {
-		_ = os.Remove(file.Name())
-		return "", fmt.Errorf("write the Git %s snapshot", name)
-	}
-	return filepath.Clean(file.Name()), nil
 }
 
 // GitPull is the Ptah command that fetches a Git source: a schema file to
@@ -258,4 +246,54 @@ func GitPull(ptahBinary string, source GitSource, out string, trust gitTrust) (C
 	}
 	args = append(args, "--out", out, "--json")
 	return CommandSpec{Path: ptahBinary, Args: args}, nil
+}
+
+// The Git part of a remote source.
+
+func (s GitSource) kind() string          { return "Git" }
+func (s GitSource) selectsFile() bool     { return s.Schema }
+func (s GitSource) selectsKnown() bool    { return s.selects != "" }
+func (s GitSource) selected() string      { return s.Path }
+func (s GitSource) contentDigest() string { return s.ExpectedContentDigest }
+func (s GitSource) accessCode() string    { return "invalid_git_access" }
+func (s GitSource) refusedCode() string   { return CodeGitSourceRefused }
+
+func (s GitSource) fetchable() error {
+	if s.Commit == "" || s.ExpectedContentDigest == "" {
+		return errors.New("a fetch needs the resolved commit and its content digest")
+	}
+	return nil
+}
+
+func (s GitSource) prepare(environment []string, tempDir string) (func(string, string) (CommandSpec, error), func(), error) {
+	trust, cleanup, err := PrepareGitSourceAccess(s, environment, tempDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return func(ptahBinary, out string) (CommandSpec, error) { return GitPull(ptahBinary, s, out, trust) }, cleanup, nil
+}
+
+func (s GitSource) request() dataplane.PullRequest {
+	return dataplane.PullRequest{Source: dataplane.PullSourceGit, Reference: s.reference(), Path: s.Path}
+}
+
+// holdsResolve refuses a Resolve that read another commit than the one the
+// source pins.
+func (s GitSource) holdsResolve(report dataplane.SourcePullReport) error {
+	if s.Commit != "" && report.Commit != s.Commit {
+		return errors.New("the pull read another commit than the one asked for")
+	}
+	return nil
+}
+
+func (s GitSource) holdsFetch(report dataplane.SourcePullReport) error {
+	if report.Commit != s.Commit || report.ContentDigest != s.ExpectedContentDigest {
+		return fmt.Errorf("the pull read %s at %s, not %s at %s",
+			report.ContentDigest, report.Commit, s.ExpectedContentDigest, s.Commit)
+	}
+	return nil
+}
+
+func (s GitSource) record(result *Result, report dataplane.SourcePullReport) {
+	result.ResolvedCommit = report.Commit
 }

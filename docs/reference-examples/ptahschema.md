@@ -116,6 +116,51 @@ spec:
   interval: 5m
 ```
 
+### From a file served over HTTPS
+
+The desired schema is one file an artifact server serves, pinned by the
+SHA-256 of its exact bytes. With `format: File` the download is the schema
+itself, and `path` is the name it is given: its extension tells Ptah the
+schema's format. A Resolve Job downloads it through Ptah, refuses other bytes,
+and records the content digest of the file; every later operation downloads it
+again and is held to both digests. Nothing is stored in the cluster.
+
+The credential Secret `inventory-artifacts` holds `username` and `password`
+for Basic authentication (or `token` for Bearer), `host:
+artifacts.example.com`, the only host the fetch sends it to, and `caSHA256`,
+the digest of the CA bundle it may be sent under. The manager never reads the
+Secret or the download. Publishing the next version means writing its digest
+here; a URL that serves other bytes fails the next operation and keeps what
+was applied.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: inventory
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/inventory-primary
+    urlFrom:
+      name: inventory-database
+      key: url
+  desired:
+    https:
+      url: https://artifacts.example.com/inventory/1.4.0/schema.hcl
+      digest: sha256:5f3c8b2e1d0a9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706
+      format: File
+      path: schema.hcl
+      authFrom:
+        name: inventory-artifacts
+      transport:
+        caFrom:
+          name: artifacts-ca
+          key: ca.pem
+  interval: 30m
+```
+
 ### An approved change on MySQL
 
 Publish the desired schema with `ptah schema push --dialect mysql` and use

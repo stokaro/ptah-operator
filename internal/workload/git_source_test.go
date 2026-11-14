@@ -140,6 +140,40 @@ func TestBuildResolvesAGitSourceInTheOperationContainer(t *testing.T) {
 		}
 		assertGitMountsReadOnly(t, job.Spec.Template.Spec.Containers[0])
 	})
+	// The owner's CA pin reaches the runner even when the resource selects
+	// no CA, so a resource cannot send the credential under the system roots
+	// the owner did not grant; the kubelet leaves the variable out when the
+	// Secret pins nothing.
+	t.Run("https with a token on the system roots", func(t *testing.T) {
+		t.Parallel()
+		spec := gitHTTPSSpec("db/schema.hcl")
+		spec.Transport = operatorv1alpha1.GitTransportSpec{}
+		job, err := builderFixture().Build(gitSchemaFixture(spec), operationFixture(operatorv1alpha1.OperationResolve), nil)
+		if err != nil {
+			t.Fatalf("Build() = %v", err)
+		}
+		env := envMap(job)
+		for name, want := range map[string]struct {
+			key      string
+			optional bool
+		}{
+			runner.EnvGitHostGrant:     {operatorv1alpha1.GitHostSecretKey, false},
+			runner.EnvGitCASHA256Grant: {operatorv1alpha1.GitCASHA256SecretKey, true},
+		} {
+			secret, key, optional := secretKeyOf(env[name])
+			if secret != "git-token" || key != want.key || optional != want.optional {
+				t.Errorf("%s reads %s/%s optional=%v, want git-token/%s optional=%v", name, secret, key, optional, want.key, want.optional)
+			}
+		}
+		for _, name := range []string{runner.EnvGitCASourceFile, runner.EnvGitKnownHostsSHA256Grant, runner.EnvGitKnownHostsSourceFile} {
+			if _, present := env[name]; present {
+				t.Errorf("a source with no trust selected carries %s", name)
+			}
+		}
+		if volumeNamed(job, gitCAVolumeName) != nil {
+			t.Fatal("a source with no CA selected mounts one")
+		}
+	})
 	t.Run("a commit by its id", func(t *testing.T) {
 		t.Parallel()
 		spec := gitHTTPSSpec("db/schema.hcl")
@@ -174,8 +208,13 @@ func TestBuildResolvesAGitSourceInTheOperationContainer(t *testing.T) {
 			env[runner.EnvGitSSHKeyFile].Value != gitSSHKeyPath || env[runner.EnvGitKnownHostsSourceFile].Value != gitKnownHostsPath {
 			t.Fatalf("environment = %#v", env)
 		}
-		if secret, key, _ := secretKeyOf(env[runner.EnvGitKnownHostsSHA256Grant]); secret != "git-deploy-key" || key != operatorv1alpha1.GitKnownHostsSHA256SecretKey {
-			t.Fatalf("the known-hosts grant reads %s/%s", secret, key)
+		if secret, key, optional := secretKeyOf(env[runner.EnvGitKnownHostsSHA256Grant]); secret != "git-deploy-key" ||
+			key != operatorv1alpha1.GitKnownHostsSHA256SecretKey || optional {
+			t.Fatalf("the known-hosts grant reads %s/%s optional=%v, want it required", secret, key, optional)
+		}
+		// ssh makes no TLS connection, so a CA pin binds nothing here.
+		if _, present := env[runner.EnvGitCASHA256Grant]; present {
+			t.Fatalf("an ssh:// source carries %s", runner.EnvGitCASHA256Grant)
 		}
 		if _, present := env[runner.EnvGitPassword]; present {
 			t.Fatal("an ssh:// source reads a password")

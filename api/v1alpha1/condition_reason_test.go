@@ -31,6 +31,7 @@ func TestConditionReasonWireContract(t *testing.T) {
 		{"destructive changes disabled", operatorv1alpha1.ReasonDestructiveChangesDisabled, "DestructiveChangesDisabled"},
 		{"digest pinned", operatorv1alpha1.ReasonDigestPinned, "DigestPinned"},
 		{"dispatch committed", operatorv1alpha1.ReasonDispatchCommitted, "DispatchCommitted"},
+		{"download verified", operatorv1alpha1.ReasonDownloadVerified, "DownloadVerified"},
 		{"execution binding changed", operatorv1alpha1.ReasonExecutionBindingChanged, "ExecutionBindingChanged"},
 		{"inputs changed", operatorv1alpha1.ReasonInputsChanged, "InputsChanged"},
 		{"in sync", operatorv1alpha1.ReasonInSync, "InSync"},

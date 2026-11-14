@@ -2556,6 +2556,8 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-upgrade-observer$' ||
 	fail "the isolated fixture image does not contain /e2e-upgrade-observer"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-git-server$' ||
 	fail "the isolated fixture image does not contain /e2e-git-server"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-https-server$' ||
+	fail "the isolated fixture image does not contain /e2e-https-server"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner$' ||
 	fail "the isolated fixture image does not contain the unsupported runner"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-protocol-runner\.json$' ||
@@ -3469,6 +3471,14 @@ E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
 	run_recorded_phase git-sources run_go_phase git-sources
+
+# A schema and a migration sequence whose source is an HTTPS download pinned
+# by digest, served from the fixture image inside the test namespace, on the
+# prepared PostgreSQL server. No registry is named.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+	run_recorded_phase https-sources run_go_phase https-sources
 
 # Alerting creates its own native producers from the prepared databases and
 # registry. Operation incidents have their own suite; infrastructure faults run

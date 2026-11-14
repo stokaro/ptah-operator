@@ -35,6 +35,7 @@ decision.
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
+| `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -354,7 +355,7 @@ desired_source_unreadable: schema.hcl: managed data file "../../proc/self/enviro
 desired_source_unreadable: schema.hcl: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"
 ```
 
-A schema from a ConfigMap or Git source is one file under `/source`, outside
+A schema from a ConfigMap, Git or HTTPS source is one file under `/source`, outside
 that root, and no row file arrives beside it, so its row files are refused
 wherever the declaration puts them, as the first line shows. Publish a schema
 with rows with `ptah schema push`: its artifact carries the rows in the

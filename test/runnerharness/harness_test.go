@@ -99,6 +99,12 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 					runPull(t, l, row)
 				})
 			}
+			for _, row := range httpsPullRows(t) {
+				t.Run("https-"+row.name, func(t *testing.T) {
+					t.Parallel()
+					runHTTPSPull(t, l, row)
+				})
+			}
 		})
 	})
 

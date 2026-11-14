@@ -296,6 +296,8 @@ func (b Builder) Build(
 			jobInput.schemaFile = schemaSnapshotPath + "/" + source.Snapshot.SchemaFile
 		case source.Git != nil:
 			jobInput.schemaFile = gitSchemaFile(schemaSnapshotPath, *source.Git)
+		case source.HTTPS != nil:
+			jobInput.schemaFile = httpsSchemaFile(schemaSnapshotPath, *source.HTTPS)
 		}
 	}
 	if operation.Type == operatorv1alpha1.OperationApply &&
@@ -377,12 +379,15 @@ func (i buildInput) validate() error {
 	if i.schema.Spec.Desired.Git != nil && i.operation.Type == operatorv1alpha1.OperationVerify {
 		return errors.New("a Git source has no verification policy and no Verify Job")
 	}
+	if i.schema.Spec.Desired.HTTPS != nil && i.operation.Type == operatorv1alpha1.OperationVerify {
+		return errors.New("an HTTPS source has no verification policy and no Verify Job")
+	}
 	switch i.operation.Type {
 	case operatorv1alpha1.OperationResolve:
 		if i.plan != nil {
 			return errors.New("resolve operation cannot carry a plan")
 		}
-		if i.schema.Spec.Desired.Git != nil {
+		if i.schema.Spec.Desired.Git != nil || i.schema.Spec.Desired.HTTPS != nil {
 			return nil
 		}
 		return validateRequestedReference(i.schema.Spec.Desired.OCIRef)
@@ -475,7 +480,7 @@ func (i buildInput) dataPlane() (
 	annotations := map[string]string{}
 
 	mainUsesRegistry := (i.operation.Type == operatorv1alpha1.OperationResolve ||
-		i.operation.Type == operatorv1alpha1.OperationVerify) && i.schema.Spec.Desired.Git == nil
+		i.operation.Type == operatorv1alpha1.OperationVerify) && i.schema.Spec.Desired.Git == nil && i.schema.Spec.Desired.HTTPS == nil
 	if mainUsesRegistry {
 		environment = append(environment, literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(i.schema.Spec.Desired.Transport.PlainHTTP)))
 		var err error
@@ -499,6 +504,16 @@ func (i buildInput) dataPlane() (
 			// container, which holds no database credential.
 			var err error
 			environment, volumes, mounts, err = addGitAccess(gitResolveRequest(*git, true), environment, volumes, mounts)
+			if err != nil {
+				return nil, nil, nil, nil, err
+			}
+			break
+		}
+		if https := i.schema.Spec.Desired.HTTPS; https != nil {
+			// Ptah's pull reaches the server from the operation container,
+			// which holds no database credential.
+			var err error
+			environment, volumes, mounts, err = addHTTPSAccess(httpsResolveRequest(*https, true), environment, volumes, mounts)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -1052,12 +1067,18 @@ func validatedSnapshotSource(schema *operatorv1alpha1.PtahSchema) error {
 
 // validatedReadySource accepts a schema whose source later operations may
 // read: a verified OCI artifact, a ConfigMap source in a snapshot, or a Git
-// commit resolved for the source the spec names. A Git source has no
-// verification policy, so it is never Verified.
+// commit or HTTPS download resolved for the source the spec names. Neither of
+// the last two has a verification policy, so neither is ever Verified.
 func validatedReadySource(schema *operatorv1alpha1.PtahSchema) error {
 	if schema.Status.Source.Git != nil {
 		if !sourcebinding.GitResolved(schema.Spec.Desired.Git, schema.Status.Source.Git) {
 			return errors.New("the Git commit was resolved for another source")
+		}
+		return nil
+	}
+	if schema.Status.Source.HTTPS != nil {
+		if !sourcebinding.HTTPSResolved(schema.Spec.Desired.HTTPS, schema.Status.Source.HTTPS) {
+			return errors.New("the HTTPS download was resolved for another source")
 		}
 		return nil
 	}
@@ -1223,6 +1244,28 @@ func requiredSecretEnv(name, secret, key string) corev1.EnvVar {
 			Key:                  key,
 		}},
 	}
+}
+
+// optionalSecretEnv is a variable the kubelet leaves out when the Secret
+// holds no such key.
+func optionalSecretEnv(name, secret, key string) corev1.EnvVar {
+	variable := requiredSecretEnv(name, secret, key)
+	optional := true
+	variable.ValueFrom.SecretKeyRef.Optional = &optional
+	return variable
+}
+
+// caGrantEnv carries a credential Secret's CA digest to the runner. With a
+// CA selected the Secret has to hold one, so the Pod does not start without
+// it. With none selected it still reaches the runner when the Secret holds
+// one, because an owner who pinned the CA a credential may be sent under has
+// not agreed to the system roots either, and the runner refuses that
+// pairing before the executor runs.
+func caGrantEnv(name, secret, key string, caSelected bool) corev1.EnvVar {
+	if caSelected {
+		return requiredSecretEnv(name, secret, key)
+	}
+	return optionalSecretEnv(name, secret, key)
 }
 
 func selectEnvironment(environment []corev1.EnvVar, names ...string) []corev1.EnvVar {

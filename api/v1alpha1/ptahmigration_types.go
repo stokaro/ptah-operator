@@ -280,15 +280,16 @@ type MigrationPolicy struct {
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
+// +kubebuilder:validation:XValidation:rule="!has(self.artifact.https) || self.artifact.https.format != 'File'",message="artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"
 type PtahMigrationSpec struct {
 	// Target is the database this sequence runs against, named through a Secret
 	// the manager never reads.
 	Target DatabaseTargetSpec `json:"target"`
 
 	// Artifact is the migration directory this history is matched against:
-	// an OCI artifact, a ConfigMap or a Git repository. It reuses the schema
-	// path's source contract: fetching it never hands a registry or Git
-	// credential to the process that runs SQL.
+	// an OCI artifact, a ConfigMap, a Git repository or an HTTPS archive. It
+	// reuses the schema path's source contract: fetching it never hands a
+	// registry, Git or HTTPS credential to the process that runs SQL.
 	Artifact SourceSpec `json:"artifact"`
 
 	// Policy decides what may run without a person: the apply mode, the
@@ -487,8 +488,8 @@ type MigrationRunStatus struct {
 	// ArtifactDigest is the OCI artifact the run read its files from.
 	// +optional
 	ArtifactDigest string `json:"artifactDigest,omitempty"`
-	// Source is the source the run read its files from, for a ConfigMap or a Git
-	// commit.
+	// Source is the source the run read its files from, for a ConfigMap, a Git
+	// commit or an HTTPS download.
 	// +optional
 	Source *PlanSourceBinding `json:"source,omitempty"`
 	// TargetIdentityDigest is the credential-free identity of the database the

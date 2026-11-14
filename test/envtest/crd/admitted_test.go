@@ -2,6 +2,7 @@ package crd_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -64,6 +65,79 @@ func TestRangeRulesAdmitTheirBounds(t *testing.T) {
 			name:   "PtahMigration named at 63 bytes",
 			base:   migrationBase(namespace),
 			mutate: func(_ *testing.T, object *unstructured.Unstructured) { object.SetName(longName[:63]) },
+		},
+		{
+			// The source policy is the one rule HTTPS shares with ConfigMap
+			// and Git rather than with OCI.
+			name: "PtahSchema from an HTTPS File with a source policy, a credential and a CA",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), both(
+				setting(map[string]any{
+					"url": "https://artifacts.example.com/inventory/1.4.0/schema", "digest": httpsDigest,
+					"format": "File", "path": "schema.hcl",
+					"authFrom":  map[string]any{"name": "inventory-artifacts"},
+					"transport": map[string]any{"caFrom": map[string]any{"name": "artifacts-ca", "key": "ca.pem"}},
+				}, "spec", "desired", "https"),
+				setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", "desired", "sourcePolicyFrom"))),
+		},
+		{
+			name:   "PtahSchema from a Zip member",
+			base:   schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), setting("Zip", "spec", "desired", "https", "format")),
+		},
+		{
+			name: "PtahMigration from the root of a Zip with a source policy",
+			base: migrationBase(namespace),
+			mutate: both(asHTTPSSource("artifact"), both(
+				both(setting("Zip", "spec", "artifact", "https", "format"), setting(".", "spec", "artifact", "https", "path")),
+				setting(map[string]any{"name": "source-policy", "key": "policy.yaml"}, "spec", "artifact", "sourcePolicyFrom"))),
+		},
+		{
+			name:   "PtahSchema from an HTTPS URL of 2048 bytes",
+			base:   schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), setting(httpsURLOfLength(2048), "spec", "desired", "https", "url")),
+		},
+		{
+			name:   "PtahMigration from an HTTPS path of 1024 bytes",
+			base:   migrationBase(namespace),
+			mutate: both(asHTTPSSource("artifact"), setting(strings.Repeat("p", 1024), "spec", "artifact", "https", "path")),
+		},
+		{
+			name: "PtahSchema from an HTTPS credential Secret named at 253 bytes",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"),
+				setting(map[string]any{"name": strings.Repeat("a", 253)}, "spec", "desired", "https", "authFrom")),
+		},
+		{
+			// A host in capitals on the highest port, and an "@" in the path,
+			// which the authority alone refuses.
+			name: "PtahSchema from an HTTPS host in capitals on port 65535",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"),
+				setting("https://Artifacts.Example.COM:65535/a/b@c.tar.gz", "spec", "desired", "https", "url")),
+		},
+		{
+			name:   "PtahMigration from an HTTPS IPv4 host and port",
+			base:   migrationBase(namespace),
+			mutate: both(asHTTPSSource("artifact"), setting("https://192.0.2.10:8443/orders.tar.gz", "spec", "artifact", "https", "url")),
+		},
+		{
+			name:   "PtahMigration from an HTTPS IPv6 host",
+			base:   migrationBase(namespace),
+			mutate: both(asHTTPSSource("artifact"), setting("https://[2001:db8::1]/orders.tar.gz", "spec", "artifact", "https", "url")),
+		},
+		{
+			// An IPv6 literal may end in dotted IPv4, so the bracket class
+			// keeps dots on both sides of its colon.
+			name: "PtahSchema from an HTTPS IPv4-mapped IPv6 host and port",
+			base: schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"),
+				setting("https://[::ffff:192.0.2.10]:8443/orders.tar.gz", "spec", "desired", "https", "url")),
+		},
+		{
+			name:   "PtahSchema from an HTTPS xn-- host",
+			base:   schemaBase(namespace),
+			mutate: both(asHTTPSSource("desired"), setting("https://xn--files-8fd.example.com/orders.tar.gz", "spec", "desired", "https", "url")),
 		},
 		{
 			name:   "PtahSchema with 128 protected tables",
