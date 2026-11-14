@@ -8,5 +8,8 @@
     {
       "sql": "CREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

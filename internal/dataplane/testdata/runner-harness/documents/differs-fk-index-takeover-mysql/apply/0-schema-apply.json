@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

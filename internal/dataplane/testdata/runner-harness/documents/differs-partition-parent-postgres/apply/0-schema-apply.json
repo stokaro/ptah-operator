@@ -11,5 +11,8 @@
     {
       "sql": "ALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

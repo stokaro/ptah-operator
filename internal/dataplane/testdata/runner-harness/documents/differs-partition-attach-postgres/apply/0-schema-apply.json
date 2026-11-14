@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

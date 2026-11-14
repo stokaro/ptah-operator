@@ -11,5 +11,8 @@
     {
       "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\""
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

@@ -16,5 +16,8 @@
     "statement": 1,
     "statements": 1,
     "sqlstate": "2BP01"
+  },
+  "apply_log": {
+    "written": 2
   }
 }

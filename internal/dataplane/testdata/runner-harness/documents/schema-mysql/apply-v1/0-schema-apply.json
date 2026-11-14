@@ -20,5 +20,8 @@
     {
       "sql": "ALTER TABLE `e2e_order_child` ADD CONSTRAINT `b` FOREIGN KEY (`a`) REFERENCES `e2e_order_parent`(`id`)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }
