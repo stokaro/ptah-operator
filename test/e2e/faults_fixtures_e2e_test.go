@@ -283,7 +283,13 @@ func (f *faultRun) pgFingerprint(database string) string {
 	return f.query("postgresql", database, postgresSchemaFingerprintSQL)
 }
 
-// mysqlFingerprint is an MD5 of every column and index of the database.
+// mysqlFingerprint is an MD5 of every column and index of the database but
+// Ptah's schema apply log. Since v0.28.0 an Apply creates that table and writes
+// its started entry before its first statement, so an Apply held at the barrier
+// and then stopped has created it: measured on MySQL 8.4 with the v0.28.0
+// image, killed while its ALTER waited for the metadata lock. Ptah's own reads
+// leave the table out, and it holds no part of the declared schema these
+// proofs compare.
 func (f *faultRun) mysqlFingerprint(database string) string {
 	f.t.Helper()
 	return f.query("mysql", database, `
@@ -294,14 +300,14 @@ func (f *faultRun) mysqlFingerprint(database string) string {
         column_type, ':', is_nullable, ':', COALESCE(column_default, '<NULL>'), ':',
         extra, ':', COALESCE(collation_name, '<NULL>'), ':', COALESCE(generation_expression, '<NULL>')) AS entry
       FROM information_schema.columns
-      WHERE table_schema = DATABASE()
+      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
       UNION ALL
       SELECT CONCAT(
         'index:', table_name, ':', index_name, ':', LPAD(seq_in_index, 6, '0'), ':',
         non_unique, ':', COALESCE(column_name, '<NULL>'), ':', COALESCE(sub_part, 0), ':',
         index_type, ':', COALESCE(collation, '<NULL>'), ':', COALESCE(expression, '<NULL>')) AS entry
       FROM information_schema.statistics
-      WHERE table_schema = DATABASE()
+      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
     ) AS managed_schema`)
 }
 
