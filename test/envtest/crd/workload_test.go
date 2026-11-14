@@ -575,6 +575,13 @@ func httpsSource(path string) map[string]any {
 	}
 }
 
+// httpsURLOfLength is a download URL of exactly length bytes that matches the
+// URL's pattern.
+func httpsURLOfLength(length int) string {
+	const prefix = "https://artifacts.example.com/"
+	return prefix + strings.Repeat("u", length-len(prefix))
+}
+
 // asHTTPSSource replaces the base resource's OCI source with an HTTPS
 // download.
 func asHTTPSSource(source string) func(*testing.T, *unstructured.Unstructured) {
@@ -667,11 +674,35 @@ func httpsRefusals(source string) []refusal {
 			mutate: both(asHTTPSSource(source), setting(map[string]any{"name": ""}, "spec", source, "https", "authFrom")),
 			want:   []cause{{https + ".authFrom.name", "should be at least 1 chars long"}},
 		},
+		{
+			name:   source + ".https.authFrom.name past 253 bytes",
+			mutate: both(asHTTPSSource(source), setting(map[string]any{"name": strings.Repeat("a", 254)}, "spec", source, "https", "authFrom")),
+			want:   []cause{{https + ".authFrom.name", "Too long"}},
+		},
+		{
+			// The URL matches its pattern, so the length is the one rule it breaks.
+			name:   source + ".https.url past 2048 bytes",
+			mutate: both(asHTTPSSource(source), setting(httpsURLOfLength(2049), "spec", source, "https", "url")),
+			want:   []cause{{https + ".url", "Too long"}},
+		},
+		{
+			name:   source + ".https.path past 1024 bytes",
+			mutate: both(asHTTPSSource(source), setting(strings.Repeat("p", 1025), "spec", source, "https", "path")),
+			want:   []cause{{https + ".path", "Too long"}},
+		},
 	}
+	// A host that is not ASCII is refused: strings.ToLower reads U+0130 as
+	// "i", and Go's transport dials the IDNA form, another name. So are a
+	// percent escape, which url.Parse decodes in a host, an underscore and a
+	// user, none of which the pattern's authority admits.
 	for _, url := range []string{
 		"http://artifacts.example.com/orders.tar.gz", "https://bot:token@artifacts.example.com/orders.tar.gz",
 		"https://artifacts.example.com/orders.tar.gz?sig=abc", "https://artifacts.example.com/orders.tar.gz#v1",
 		"https://artifacts.example.com", "https://artifacts.example.com/", "git+https://artifacts.example.com/orders.tar.gz",
+		"https://art\u0130facts.example.com/orders.tar.gz", "https://art%C4%B0facts.example.com/orders.tar.gz",
+		"https://artifacts_example.com/orders.tar.gz", "https://bot@artifacts.example.com/orders.tar.gz",
+		"https://artifacts.example.com:/orders.tar.gz", "https://artifacts.example.com:123456/orders.tar.gz",
+		"https://[fe80::1%25eth0]/orders.tar.gz",
 	} {
 		rows = append(rows, refusal{
 			name:   fmt.Sprintf("%s.https.url %q", source, url),
@@ -679,7 +710,7 @@ func httpsRefusals(source string) []refusal {
 			want:   []cause{{https + ".url", "should match"}},
 		})
 	}
-	for _, path := range []string{"../schema.hcl", "/schema.hcl", "db//schema.hcl", "db/./schema.hcl", "db\\schema.hcl", "db/"} {
+	for _, path := range []string{"../schema.hcl", "/schema.hcl", "db//schema.hcl", "db/./schema.hcl", "db\\schema.hcl", "db/", "db/sch\x01ema.hcl"} {
 		rows = append(rows, refusal{
 			name:   fmt.Sprintf("%s.https.path %q", source, path),
 			mutate: both(asHTTPSSource(source), setting(path, "spec", source, "https", "path")),

@@ -330,7 +330,7 @@ spec:
 | `spec.artifact.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.artifact.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
-| `spec.artifact.https.url` | `string`, required | URL of the download: https://, with no credential, query or fragment. |
+| `spec.artifact.https.url` | `string`, required | URL of the download: https://, with no credential, query or fragment. The host is ASCII letters, digits, dots and hyphens, or an IP address in brackets, with an optional port: write an internationalized name in its xn-- form. |
 | `spec.artifact.ociRef` | `string` | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
 | `spec.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |

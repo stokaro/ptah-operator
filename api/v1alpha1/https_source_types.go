@@ -37,9 +37,12 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.format != 'File' || (self.path != '.' && !self.path.contains('/'))",message="with format File, path is the one name the download is given"
 type HTTPSSourceSpec struct {
 	// URL of the download: https://, with no credential, query or fragment.
+	// The host is ASCII letters, digits, dots and hyphens, or an IP address
+	// in brackets, with an optional port: write an internationalized name in
+	// its xn-- form.
 	// +kubebuilder:validation:MinLength=11
 	// +kubebuilder:validation:MaxLength=2048
-	// +kubebuilder:validation:Pattern=`^https://[^@/[:space:]?#]+/[^[:space:]?#]+$`
+	// +kubebuilder:validation:Pattern=`^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?/[^[:space:]?#]+$`
 	URL string `json:"url"`
 
 	// Digest is "sha256:" and the SHA-256 of the exact bytes the URL serves,
