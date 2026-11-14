@@ -384,8 +384,7 @@ func TestDecodePlanReadsARebuiltViewAgainstTheViewItDropped(t *testing.T) {
 		},
 		{
 			// Ptah writes no effect for the drop of a view it could not follow,
-			// and the create is held when either its effect or its SQL holds
-			// it: here the SQL, which states the owner's rights.
+			// and the view made again is held whatever it states.
 			name:   "a drop with no effect",
 			before: []map[string]any{{"sql": `DROP VIEW IF EXISTS "differs_notes_view"`, "severity": "safe"}},
 			option: withOff, after: false, want: []string{"SecurityDefiner"},
@@ -433,20 +432,7 @@ func TestDecodePlanReadsARebuiltViewAgainstTheViewItDropped(t *testing.T) {
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			plan := editStatement(t, loadCapture(t, "differing/plan-view-invoker-new.json"), func(statement map[string]any) {
-				verb := "CREATE VIEW"
-				if row.replace {
-					verb = "CREATE OR REPLACE VIEW"
-					statement["effects"].([]any)[0].(map[string]any)["action"] = "replace"
-				}
-				statement["sql"] = verb + ` "differs_notes_view"` + row.option + " AS\nSELECT id, owner_name FROM differs_notes"
-				for _, property := range statement["effects"].([]any)[0].(map[string]any)["properties"].([]any) {
-					if property := property.(map[string]any); property["name"] == "security_invoker" {
-						property["after"] = row.after
-					}
-				}
-			})
-			plan = withStatementsBefore(t, plan, row.before...)
+			plan := withStatementsBefore(t, madeAgain(t, row.replace, row.option, row.after), row.before...)
 			decoded, err := dataplane.DecodePlan(plan, "PostgreSQL")
 			if err != nil {
 				t.Fatalf("DecodePlan() error = %v", err)
@@ -456,6 +442,134 @@ func TestDecodePlanReadsARebuiltViewAgainstTheViewItDropped(t *testing.T) {
 			}
 		})
 	}
+}
+
+// After a statement that may have dropped a view without an effect that says
+// what the view held, a view the plan makes again is held whatever it states:
+// the view it replaces may have read with its readers' rights, and one made
+// again with no option reads with its owner's (#1080). Until Ptah records what
+// such a statement drops (stokaro/ptah#6023), the hold covers every view the
+// statement may have taken. A CASCADE, DROP OWNED and a DROP VIEW whose names
+// are not read may take any view; a DROP VIEW with no effect takes the view it
+// names. Each plan is the new-view capture made again as the row says, after
+// the statements the row puts before it; bare takes the statement's effect
+// out, as Ptah writes a CREATE OR REPLACE VIEW of a view a CASCADE left
+// uncertain.
+func TestDecodePlanHoldsAViewMadeAgainAfterAnUnreadDrop(t *testing.T) {
+	t.Parallel()
+
+	const withOn = ` WITH (security_invoker=true)`
+	var (
+		cascade     = map[string]any{"sql": `DROP TABLE "differs_notes_archive" CASCADE`, "severity": "destructive"}
+		dropOwned   = map[string]any{"sql": `DROP OWNED BY "differs_app"`, "severity": "destructive"}
+		unreadDrop  = map[string]any{"sql": `DROP VIEW IF EXISTS "differs_notes_view"`, "severity": "safe"}
+		twoViews    = map[string]any{"sql": `DROP VIEW "other_view", "differs_notes_view"`, "severity": "safe"}
+		onDelete    = map[string]any{"sql": `ALTER TABLE "differs_notes" DROP CONSTRAINT "differs_notes_owner_fkey", ADD CONSTRAINT "differs_notes_owner_fkey" FOREIGN KEY (owner_id) REFERENCES "differs_owners" (id) ON DELETE CASCADE`, "severity": "safe"}
+		truncate    = map[string]any{"sql": `TRUNCATE "differs_notes_archive" CASCADE`, "severity": "destructive"}
+		otherUnread = map[string]any{"sql": `DROP VIEW IF EXISTS "other_view"`, "severity": "safe"}
+		otherSchema = map[string]any{"sql": `DROP VIEW IF EXISTS app.differs_notes_view`, "severity": "safe"}
+	)
+	rows := []struct {
+		name    string
+		before  []map[string]any
+		replace bool
+		bare    bool
+		option  string
+		after   bool
+		want    []string
+	}{
+		{name: "a CASCADE, then the view with no option", before: []map[string]any{cascade}, want: []string{"SecurityDefiner"}},
+		{name: "a CASCADE, then the view with invoker rights", before: []map[string]any{cascade}, option: withOn, after: true, want: []string{"SecurityDefiner"}},
+		{name: "DROP OWNED, then the view with no option", before: []map[string]any{dropOwned}, want: []string{"Revoke", "SecurityDefiner"}},
+		{name: "a DROP VIEW with no effect, then the view with no option", before: []map[string]any{unreadDrop}, want: []string{"SecurityDefiner"}},
+		{name: "a DROP VIEW of two views, then the view with no option", before: []map[string]any{twoViews}, want: []string{"SecurityDefiner"}},
+		{
+			name:   "a CASCADE, then CREATE OR REPLACE VIEW with nothing before and no option",
+			before: []map[string]any{cascade}, replace: true, want: []string{"SecurityDefiner"},
+		},
+		{
+			name:   "a CASCADE, then CREATE OR REPLACE VIEW with no effect and no option",
+			before: []map[string]any{cascade}, replace: true, bare: true, want: []string{"SecurityDefiner"},
+		},
+		{
+			name:   "a CASCADE, then CREATE VIEW with no effect and no option",
+			before: []map[string]any{cascade}, bare: true, want: []string{"SecurityDefiner"},
+		},
+		{
+			name:   "a DROP VIEW with no effect of the view in another schema, then CREATE VIEW with no effect",
+			before: []map[string]any{otherSchema}, bare: true, want: []string{"SecurityDefiner"},
+		},
+		// The controls: what the change does not hold.
+		{name: "no statement before it", want: nil},
+		{name: "no statement before it, with no effect", bare: true, want: nil},
+		{name: "a foreign key's ON DELETE CASCADE", before: []map[string]any{onDelete}, want: nil},
+		// TRUNCATE ... CASCADE empties the tables that refer to the one it
+		// empties, and drops nothing.
+		{name: "a TRUNCATE with CASCADE", before: []map[string]any{truncate}, want: nil},
+		{name: "a DROP VIEW with no effect of another view", before: []map[string]any{otherUnread}, want: nil},
+		{
+			// The effect names public.differs_notes_view, which a drop of
+			// app.differs_notes_view did not take.
+			name: "a DROP VIEW with no effect of the view in another schema", before: []map[string]any{otherSchema}, want: nil,
+		},
+		{
+			// A drop after the CASCADE that Ptah records says what the view
+			// held, so the rebuild reads against it.
+			name:   "a CASCADE, then a rebuild whose drop says what the view held",
+			before: []map[string]any{cascade, dropStatement(`DROP VIEW "differs_notes_view"`, "differs_notes_view", true)},
+			option: withOn, after: true, want: nil,
+		},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			plan := madeAgain(t, row.replace, row.option, row.after)
+			if row.bare {
+				plan = editStatement(t, plan, func(statement map[string]any) { delete(statement, "effects") })
+			}
+			decoded, err := dataplane.DecodePlan(withStatementsBefore(t, plan, row.before...), "PostgreSQL")
+			if err != nil {
+				t.Fatalf("DecodePlan() error = %v", err)
+			}
+			if !slices.Equal(decoded.PrivilegeChanges, row.want) {
+				t.Fatalf("PrivilegeChanges = %q, want %q", decoded.PrivilegeChanges, row.want)
+			}
+		})
+	}
+
+	// An ALTER VIEW changes a view that exists, so it is not held for a view
+	// a CASCADE may have taken: the ALTER would fail on one that is gone.
+	altered := editStatement(t, loadCapture(t, "differing/plan-view-invoker-on.json"), func(statement map[string]any) {
+		statement["sql"] = `ALTER VIEW "differs_notes_view" SET (security_barrier=true)`
+		delete(statement, "effects")
+	})
+	decoded, err := dataplane.DecodePlan(withStatementsBefore(t, altered, cascade), "PostgreSQL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.PrivilegeChanges) != 0 {
+		t.Fatalf("an ALTER VIEW after a CASCADE reads %q, want none", decoded.PrivilegeChanges)
+	}
+}
+
+// madeAgain is the new-view capture with its statement made as CREATE VIEW, or
+// CREATE OR REPLACE VIEW with a replace effect, stating option, and its
+// effect's security_invoker after the statement set to after.
+func madeAgain(t *testing.T, replace bool, option string, after bool) []byte {
+	t.Helper()
+	return editStatement(t, loadCapture(t, "differing/plan-view-invoker-new.json"), func(statement map[string]any) {
+		verb := "CREATE VIEW"
+		if replace {
+			verb = "CREATE OR REPLACE VIEW"
+			statement["effects"].([]any)[0].(map[string]any)["action"] = "replace"
+		}
+		statement["sql"] = verb + ` "differs_notes_view"` + option + " AS\nSELECT id, owner_name FROM differs_notes"
+		for _, property := range statement["effects"].([]any)[0].(map[string]any)["properties"].([]any) {
+			if property := property.(map[string]any); property["name"] == "security_invoker" {
+				property["after"] = after
+			}
+		}
+	})
 }
 
 // dropStatement is a DROP VIEW of the view name, with the effect Ptah records

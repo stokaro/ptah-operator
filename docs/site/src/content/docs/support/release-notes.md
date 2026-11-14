@@ -115,9 +115,11 @@ from the Secret if the system roots are what its owner grants. Nothing else.
   cannot change in place, is read the same way against the value its drop
   recorded. A new view is raised when it reads with its readers' rights. One
   that states `security_invoker=false` is no longer raised, as one that states
-  nothing is not, unless the plan may have dropped a view of its name without a
-  record of what that view held. A statement Ptah records nothing for is read
-  from its SQL as before.
+  nothing is not. A view the plan makes after a drop that may have taken it
+  without a record of what it held, through a `CASCADE`, `DROP OWNED` or a
+  `DROP VIEW` Ptah records nothing for, is raised whatever it states: before,
+  one made again with no option took its owner's rights unapproved. A
+  statement Ptah records nothing for is otherwise read from its SQL as before.
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
   has the rule.
 - **Every MySQL view a plan replaces waits under `apply: Always`.** A MySQL or

@@ -166,7 +166,7 @@ waived it would be the same `Always` again.
 | `Role` | `CREATE`, `ALTER` or `DROP` of a `ROLE`, `USER` or `GROUP`: attributes such as `SUPERUSER`, and per-role settings; `SET ROLE` and `SET SESSION AUTHORIZATION`, which change who the rest of the Apply runs as |
 | `Ownership` | `OWNER TO`, `REASSIGN OWNED`, `CREATE SCHEMA ... AUTHORIZATION` |
 | `RowSecurityPolicy` | `CREATE`, `ALTER` or `DROP POLICY`, and `DISABLE` or `NO FORCE ROW LEVEL SECURITY` |
-| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`, and every MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW`; a PostgreSQL view's `security_invoker`, read from the effect Ptah records for the statement: changed on a view that existed or that the plan dropped and makes again, or on for a new one. A statement with no effect is read from its SQL: the option named by `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, whatever its value, or reset, and set to `false` or `off` by `CREATE VIEW` |
+| `SecurityDefiner` | `SECURITY DEFINER` on a function or procedure; MySQL `SQL SECURITY DEFINER`, a MySQL or MariaDB `CREATE FUNCTION` or `PROCEDURE` that does not say `SQL SECURITY INVOKER`, and every MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW`; a PostgreSQL view's `security_invoker`, read from the effect Ptah records for the statement: changed on a view that existed or that the plan dropped and makes again, or on for a new one; and any view the plan makes after a drop that may have taken it and recorded nothing for it. A statement with no effect is read from its SQL: the option named by `ALTER VIEW`, `ALTER TABLE` or `CREATE OR REPLACE VIEW`, whatever its value, or reset, and set to `false` or `off` by `CREATE VIEW` |
 | `Definer` | a MySQL `DEFINER =` clause on a view, routine, trigger or event |
 | `FunctionReplacement` | `CREATE OR REPLACE FUNCTION` or `PROCEDURE` |
 
@@ -229,10 +229,21 @@ and not from the SQL:
   Ptah rebuilds a view it cannot change in place with `DROP VIEW` and then
   `CREATE VIEW`, and the create's effect records the option as absent before,
   as it does for a view that never existed.
-- A view the plan may have dropped without such an effect is raised when
-  either its effect or its SQL would raise it. That is a view a `DROP VIEW`
+- A view the plan makes after a statement that may have dropped it without
+  such an effect is raised whatever it states. That is a view a `DROP VIEW`
   with no effect named, and any view the plan makes after a drop with
-  `CASCADE` or a `DROP OWNED`, which can take views they do not name.
+  `CASCADE`, a `DROP OWNED`, or a `DROP VIEW` whose names the operator cannot
+  read, which can take views they do not name. The plan does not say whose
+  rights the dropped view read with, and one made again with no option reads
+  with its owner's, so a person decides. This covers `CREATE VIEW`, a
+  `CREATE OR REPLACE VIEW` whose effect records no value before, and either
+  statement with no effect, which is how Ptah writes a `CREATE OR REPLACE VIEW`
+  of a view a `CASCADE` may have taken. Until Ptah records what such a
+  statement drops
+  ([stokaro/ptah#6023](https://github.com/stokaro/ptah/issues/6023)), the hold
+  cannot tell a view the statement took from one it left or one that never
+  existed, so it covers them all. A `CREATE VIEW` with no such statement before
+  it is read as below.
 - Any other view the statement creates is raised when it reads with invoker
   rights. One with its owner's rights is raised no more than a view that
   states no option.
