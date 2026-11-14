@@ -266,6 +266,29 @@ type MigrationPolicy struct {
 	// reference says what the operator does with the answer.
 	// +kubebuilder:validation:Enum=file;none
 	TransactionMode string `json:"transactionMode,omitempty"`
+
+	// DriftCheck asks Ptah to compare the target's live schema with the schema
+	// its applied history replays to, under the migration lock and before any
+	// pending migration runs. An Apply whose check does not come back clean
+	// runs nothing and leaves the history as it was.
+	//
+	// Unset checks nothing, which is how every resource without it runs.
+	// +optional
+	DriftCheck *MigrationDriftCheck `json:"driftCheck,omitempty"`
+}
+
+// MigrationDriftCheck names the database Ptah replays the applied history into.
+type MigrationDriftCheck struct {
+	// Shadow is a Secret key in this namespace holding the URL of an empty
+	// database of the target's engine. Ptah replays the applied migrations
+	// into it, compares the result with the target, and empties it again. It
+	// refuses a shadow that holds anything, and one that is the target under
+	// another name. Only the executor Pod reads the Secret, the way it reads
+	// the target's.
+	//
+	// Give each resource its own shadow: two checks that share one at the same
+	// time find each other's tables in it.
+	Shadow DatabaseTargetRef `json:"shadow"`
 }
 
 // PtahMigrationSpec declares a database, a migration artifact, and the terms
@@ -278,6 +301,8 @@ type MigrationPolicy struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional) || !self.policy.driftCheck.shadow.urlFrom.optional))",message="policy.driftCheck.shadow.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || self.policy.driftCheck.shadow.urlFrom.name != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key != self.target.urlFrom.key",message="policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.https) || self.artifact.https.format != 'File'",message="artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"
@@ -362,6 +387,14 @@ type MigrationHistoryStatus struct {
 	// against one database is never executed against another.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
+
+	// ShadowIdentityDigest is the credential-free identity of the shadow
+	// database policy.driftCheck named when this history was read, as the
+	// executor derived it. It is empty when the policy asks for no check. A
+	// plan binds it, so an approval does not carry over to another shadow.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ShadowIdentityDigest string `json:"shadowIdentityDigest,omitempty"`
 
 	// Dirty reports a revision row a failed or interrupted run left behind.
 	// Nothing applies while one exists.

@@ -107,6 +107,12 @@ type PtahMigrationPlanSpec struct {
 	// TargetIdentityDigest identifies the database it was computed against
 	// without carrying anything that could reach it.
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
+	// ShadowIdentityDigest identifies the shadow database the drift check
+	// replays into, when the policy asks for one. The Apply refuses to run
+	// against another.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ShadowIdentityDigest string `json:"shadowIdentityDigest,omitempty"`
 	// PolicyFingerprint is the spec.policy the plan was computed under, so an
 	// edited policy retires a plan waiting for a person.
 	PolicyFingerprint string `json:"policyFingerprint"`

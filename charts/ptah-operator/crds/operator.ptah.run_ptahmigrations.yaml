@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "20"
-    operator.ptah.run/crd-schema-digest: "sha256:45cb5d2bd56f0df368fa6b3c0ff4b4c63f5c41fc6c90566f71013279655f99ce"
+    operator.ptah.run/crd-schema-version: "21"
+    operator.ptah.run/crd-schema-digest: "sha256:0667d228302ce7750ee359a8ab9cfd93e3dc898f693253f9def30972282f00a5"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -930,6 +930,29 @@ spec:
                     - OnApproval
                     - Always
                     type: string
+                  driftCheck:
+                    properties:
+                      shadow:
+                        properties:
+                          urlFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        required:
+                        - urlFrom
+                        type: object
+                    required:
+                    - shadow
+                    type: object
                   lockTimeout:
                     default: 5m
                     maxLength: 32
@@ -1008,6 +1031,16 @@ spec:
             - message: target.urlFrom must name a required Secret key
               rule: self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size()
                 > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
+            - message: policy.driftCheck.shadow.urlFrom must name a required Secret
+                key
+              rule: '!has(self.policy) || !has(self.policy.driftCheck) || (self.policy.driftCheck.shadow.urlFrom.name.size()
+                > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional)
+                || !self.policy.driftCheck.shadow.urlFrom.optional))'
+            - message: policy.driftCheck.shadow.urlFrom must name another Secret key
+                than target.urlFrom
+              rule: '!has(self.policy) || !has(self.policy.driftCheck) || self.policy.driftCheck.shadow.urlFrom.name
+                != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key
+                != self.target.urlFrom.key'
             - message: artifact.verificationPolicyFrom must name a required ConfigMap
                 key
               rule: '!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size()
@@ -1964,6 +1997,9 @@ spec:
                     x-kubernetes-list-map-keys:
                     - version
                     x-kubernetes-list-type: map
+                  shadowIdentityDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
                   targetIdentityDigest:
                     pattern: ^sha256:[0-9a-f]{64}$
                     type: string

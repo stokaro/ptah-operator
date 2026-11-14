@@ -217,6 +217,46 @@ spec:
   suspend: false
 ```
 
+### Checked against its own history before each run
+
+Checksums prove the files are the ones the database ran, and say nothing about
+a column added by hand. `policy.driftCheck` has every Apply ask Ptah first:
+under the migration lock, before any pending migration, Ptah replays the
+applied ones into the shadow database and compares the result with the target.
+A target that differs stops the run with reason `SchemaDrifted`, and nothing
+pending runs.
+
+The shadow is a database of its own that Ptah empties after each check, and
+must be empty before one: never the target, and never a shadow another
+resource checks with. Its URL is read in the Job's Pod alone, as the target's
+is, from a Secret key other than `target.urlFrom`.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  artifact:
+    ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+```
+
 ### A database another namespace manages too
 
 A key reaches no further than its namespace, so a database that resources in

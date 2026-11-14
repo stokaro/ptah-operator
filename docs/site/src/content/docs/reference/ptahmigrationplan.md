@@ -219,6 +219,7 @@ spec:
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the sequence. |
 | `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan, recorded and not bound. |
 | `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. |
+| `spec.shadowIdentityDigest` | `string` | ShadowIdentityDigest identifies the shadow database the drift check replays into, when the policy asks for one. The Apply refuses to run against another. |
 | `spec.source` | `object` | This resource requires: contract version 1 binds artifactDigest and a verification policy; contract version 2 binds source. Source is the ConfigMap source this plan reads its files from: the ConfigMap's UID and the content digest of the selected files. |
 | `spec.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
 | `spec.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS` | Kind of source the plan was computed from. |
