@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-11-13.
+**Last measured:** 2026-11-14.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.26.0` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.28.0` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.12` | No range | `v0.26.0` | [v0.2.12](https://operator.ptah.run/v0.2.12/) |
 | `v0.2.11` | No range | `v0.23.0` | [v0.2.11](https://operator.ptah.run/v0.2.11/) |
 | `v0.2.10` | No range | `v0.23.0` | [v0.2.10](https://operator.ptah.run/v0.2.10/) |
@@ -48,7 +48,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.28.0`. Commit [`2ee460a688d63f34e853b1eee4228a2463a6baa8`](https://github.com/stokaro/ptah/commit/2ee460a688d63f34e853b1eee4228a2463a6baa8), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
@@ -58,6 +58,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - The verified build contains stokaro/ptah#5545: a MySQL read that cannot see every trigger, routine or view definition in the database fails with permission_denied and names what it could not see, where an executor without #5545, v0.22.0 included, reported those objects as absent. The login the databases page documents holds TRIGGER, EXECUTE and SHOW VIEW on the database for that reason, and the narrower login it documented before fails every Observe and Plan at this build.
 - The verified build contains stokaro/ptah#5954 and #5981: each PostgreSQL view statement of a saved plan records its effect, the view's security_invoker and security_barrier before the statement and after it, and the operator decides the security_invoker hold from it. An executor without them, v0.23.0 included, records none, and the operator reads the option from the SQL, so under apply: Always a plan that changes the body of a view that states security_invoker waits for an approval even when the option keeps its value. An operator that does not declare the field, 0.2.11 included, refuses every plan this build writes with a PostgreSQL view statement as invalid_plan_output.
 - The verified build contains stokaro/ptah#5902: a MySQL plan replaces a view the database holds as SQL SECURITY INVOKER and the declaration leaves without a mode as a DEFINER view. The operator holds every MySQL and MariaDB CREATE OR REPLACE VIEW and ALTER VIEW for an approval under apply: Always for that reason.
+- The verified build contains stokaro/ptah#6014: a schema Apply that sends a statement writes a started and an outcome entry to ptah_schema_apply_log in the target database, as the login in the schema's Secret, and creates the table on the first such Apply. Ptah's own reads leave the table out. A write the database refuses changes neither the outcome nor the exit status, and the operator does not read the apply_log the apply document reports. The MySQL privileges the databases page documents hold no INSERT, so there the table is created and every entry is lost. The operator passes no --actor or --run-reference yet, so an entry names neither the approver nor the operation. A migration log an earlier build created gains the nullable run_reference and actor_origin columns on the first run that writes to it. An executor without #6014, v0.26.0 included, keeps no apply log.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, the release lines on that version's databases page. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - PostgreSQL 18.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 42440618274 passed on every supported Kubernetes minor at Ptah v0.23.0.
@@ -71,9 +72,11 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.12/](https:/
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:**
 
-**Limitations:** the same as [`edge`](#edge).
+- Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
+
+**Limitations:** the same as [`edge`](#edge) without its seventh limitation.
 
 ### v0.2.11
 
@@ -85,7 +88,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.11/](https:/
 
 - Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth and eleventh limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh and twelfth limitations.
 
 ### v0.2.10
 
@@ -95,7 +98,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.10/](https:/
 
 **Verified:** the same as [`v0.2.11`](#v0211).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, tenth and eleventh limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eleventh and twelfth limitations.
 
 ### v0.2.9
 
@@ -107,7 +110,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, ninth, tenth and eleventh limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, tenth, eleventh and twelfth limitations.
 
 ### v0.2.8
 
