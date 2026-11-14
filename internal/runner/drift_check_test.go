@@ -33,13 +33,13 @@ func shadowDigest(t *testing.T, url string) string {
 }
 
 // driftApplyEnvironment is a migration Apply whose plan bound the shadow at
-// expected, with the Secret's URL resolved into the environment as the
-// runner reads it.
+// expected, with the Secret's URL in the file the Job names, as the builder
+// mounts it.
 func driftApplyEnvironment(t *testing.T, operationID, shadowURL, expected string) []string {
 	t.Helper()
 	environment := migrationApplyEnvironment(t, operationID)
 	if shadowURL != "" {
-		environment = append(environment, EnvShadowDatabaseURL+"="+shadowURL)
+		environment = append(environment, EnvShadowDatabaseURLFile+"="+writeCredential(t, shadowURL))
 	}
 	if expected != "" {
 		environment = append(environment, envExpectedShadowDigest+"="+expected)
@@ -199,9 +199,10 @@ func TestAMigrationHistoryReportsTheShadowIdentityAndHidesTheShadow(t *testing.T
 	t.Parallel()
 	document := `{"contract_version":2,"command":"migrations status","current_version":2,"total_migrations":4,"has_pending_changes":true,"pending_migrations":[3,4]}`
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}}
+	environment := append(migrationEnvironment("drift-history"), EnvShadowDatabaseURLFile+"="+writeCredential(t, testShadowURL))
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationHistory,
-		Environment: withRunnerProtocol(append(migrationEnvironment("drift-history"), EnvShadowDatabaseURL+"="+testShadowURL)),
+		Environment: withRunnerProtocol(environment),
 		Executor:    executor,
 	})
 	if result.Error != nil || result.MigrationHistory == nil {
