@@ -573,11 +573,14 @@ names its own scope in fixed keys a resource's author cannot choose: `host`,
 the only `host[:port]` the credential is sent to, and `caSHA256` or
 `knownHostsSHA256`, the digests of the trust it may be sent under. A resource
 that names the Secret with another URL, CA or known-hosts file is refused in
-the Pod before Ptah starts. Hosts compare as ASCII without case, and a URL or a
-`host` that holds any other character is refused, so a name that folds to the
-granted one cannot reach the server its IDNA form names. A credential goes in the Secret, never in the URL,
+the Pod before Ptah starts, and so is an `https://` resource that selects no CA
+under a Secret that pins one: the pin binds the system roots out as well. Hosts
+compare as ASCII without case, and a URL or a `host` that holds any other
+character is refused, so a name that folds to the granted one cannot reach the
+server its IDNA form names. A credential goes in the Secret, never in the URL,
 which the API refuses with one. Over `ssh://` the known hosts are required:
-the fetch never trusts a host key on first use.
+the fetch never trusts a host key on first use, and `caSHA256` has nothing to
+bind.
 
 What a fetch reads is bounded: one commit, fetched shallowly; the selected path
 only, at most 1,000 files and 64 MiB; no submodule, symbolic link or LFS
@@ -597,10 +600,11 @@ verification policy beside it.
 The manager never reads the server or the credential Secret. As for Git, the
 Secret's fixed keys name its scope, and a resource's author cannot choose them:
 `host`, the only `host[:port]` the credential is sent to, and `caSHA256`, the
-digest of the CA it may be sent under. A credential is `username` and `password`, or `token`,
-never both. A resource that names the Secret with another URL or another CA,
-or a Secret whose credential is incomplete or mixed, is refused in the Pod
-before Ptah starts. The API refuses a URL that carries user information, so a
+digest of the CA it may be sent under. A credential is `username` and
+`password`, or `token`, never both. A resource that names the Secret with
+another URL or another CA, a resource that selects no CA under a Secret that
+pins one, or a Secret whose credential is incomplete or mixed, is refused in
+the Pod before Ptah starts. The API refuses a URL that carries user information, so a
 credential can only be in the Secret. With a credential set, Ptah refuses a redirect to
 another origin, and it refuses any redirect to `http://`.
 

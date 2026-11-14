@@ -251,7 +251,11 @@ kubectl -n application create secret generic orders-git \
 A server whose certificate chains to a private CA names the CA bundle in
 `transport.caFrom`, a ConfigMap key. With a credential, the Secret must also
 hold `caSHA256`, the SHA-256 of those exact bytes, so the credential is sent
-only under the trust its owner granted:
+only under the trust its owner granted. The pin holds the other way too: a
+resource that names a Secret holding `caSHA256` and selects no CA is refused
+with `invalid_git_access` before Ptah runs, rather than sending the credential
+under the system roots. Over `ssh://`, where no TLS is spoken, the pin is not
+read:
 
 ```sh
 kubectl -n application create configmap git-example-ca --from-file=ca.pem
@@ -427,7 +431,8 @@ kubectl -n application create secret generic orders-artifacts \
 
 For a private CA, `transport.caFrom` names the ConfigMap key that holds the
 bundle, and a credentialed source's Secret holds `caSHA256`, the SHA-256 of
-those exact bytes, as for Git:
+those exact bytes, as for Git. A resource that selects no CA under a Secret
+that holds `caSHA256` is refused with `invalid_https_access`:
 
 ```sh
 kubectl -n application create configmap artifacts-ca --from-file=ca.pem

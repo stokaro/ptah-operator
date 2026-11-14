@@ -411,7 +411,8 @@ type GitAuthSource struct {
 type GitTransportSpec struct {
 	// CAFrom selects the only roots an https:// server's certificate may
 	// chain to. With authFrom, its Secret must hold caSHA256 with the
-	// selected bytes' digest.
+	// selected bytes' digest, and an https:// source whose Secret holds
+	// caSHA256 is refused without it.
 	// +optional
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
 	// KnownHostsFrom selects the host keys an ssh:// server may present; a

@@ -438,7 +438,8 @@ The pull follows a redirect on the same origin. With a credential set it
 refuses a redirect to another origin, and it refuses any redirect to
 `http://`. Before Ptah runs, the runner refuses a credential whose `host` is
 not the URL's, a CA that does not give the `caSHA256` the credential's owner
-granted, and a credential that mixes a token with a user name or a password.
+granted, a `caSHA256` with no CA selected, and a credential that mixes a token
+with a user name or a password.
 For a download Ptah refuses, `ReconciliationFailed` carries the last line it
 wrote: a digest that differs names the digest the server served and the one
 the spec pins, and an archive entry outside the archive or a symbolic link in

@@ -53,7 +53,11 @@ every condition of a `PtahMigration` has to expect `RunLogged`. A Git source
 whose URL host, or whose credential Secret's `host`, holds a character outside
 printable ASCII now stops before Ptah runs with `invalid_git_access`, and
 `allowedGitHosts` no longer admits such a host: write an internationalized name
-in its `xn--` form in all three places. Nothing else.
+in its `xn--` form in all three places. A Git source over `https://` that
+selects no `transport.caFrom` under a credential Secret holding `caSHA256` now
+stops before Ptah runs with `invalid_git_access`, where it sent the credential
+under the system roots: select the CA the Secret pins, or remove `caSHA256`
+from the Secret if the system roots are what its owner grants. Nothing else.
 
 - **A migration run says when the database lost its log entries.** Ptah
   writes an entry to `schema_migrations_log` before and after each migration,

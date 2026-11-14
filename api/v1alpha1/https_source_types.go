@@ -80,9 +80,9 @@ type HTTPSSourceSpec struct {
 // HTTPSAuthSource names the Secret an HTTPS fetch authenticates with. Its keys
 // are fixed: username and password for Basic, or token for Bearer, and host,
 // the authority host[:port] the credential is for, which the fetch holds the
-// URL to. caSHA256, with transport.caFrom, is the SHA-256 of the CA the
-// credential may be sent under: the Secret's owner, not the resource's
-// author, decides whom the credential is sent to.
+// URL to. caSHA256 is the SHA-256 of the CA the credential may be sent
+// under, which transport.caFrom has to select: the Secret's owner, not the
+// resource's author, decides whom the credential is sent to.
 type HTTPSAuthSource struct {
 	// Name of the Secret, in this resource's namespace.
 	// +kubebuilder:validation:MinLength=1
@@ -95,7 +95,8 @@ type HTTPSAuthSource struct {
 type HTTPSTransportSpec struct {
 	// CAFrom selects the only roots the server's certificate may chain to.
 	// With authFrom, its Secret must hold caSHA256 with the selected bytes'
-	// digest.
+	// digest, and a source whose Secret holds caSHA256 is refused without
+	// it.
 	// +optional
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
 }

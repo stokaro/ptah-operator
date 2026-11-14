@@ -310,7 +310,7 @@ spec:
 | `spec.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `spec.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `spec.artifact.git.transport` | `object` | Transport pins whom the fetch talks to: the CA an https:// server's certificate chains to, or the host keys an ssh:// server presents. |
-| `spec.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `spec.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `spec.artifact.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.artifact.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -326,7 +326,7 @@ spec:
 | `spec.artifact.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | This resource requires: where `artifact.https` is set, artifact.https.format is TarGzip or Zip: a migration directory comes in an archive. Format says how the download carries the files: File, the schema file itself; TarGzip or Zip, an archive. |
 | `spec.artifact.https.path` | `string`, required | Path is what the download selects. With File it is the one name the download is given, whose extension tells a schema's format. In an archive it is the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
 | `spec.artifact.https.transport` | `object` | Transport pins the server: the CA its certificate chains to. |
-| `spec.artifact.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `spec.artifact.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
 | `spec.artifact.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.artifact.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -584,7 +584,7 @@ spec:
 | `status.activeOperation.source.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.activeOperation.source.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.activeOperation.source.git.transport` | `object` | Transport pins the server. |
-| `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.activeOperation.source.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `status.activeOperation.source.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.activeOperation.source.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -601,7 +601,7 @@ spec:
 | `status.activeOperation.source.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files. |
 | `status.activeOperation.source.https.path` | `string`, required | Path is what the download selects. |
 | `status.activeOperation.source.https.transport` | `object` | Transport pins the server. |
-| `status.activeOperation.source.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.activeOperation.source.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
 | `status.activeOperation.source.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.activeOperation.source.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -646,7 +646,7 @@ spec:
 | `status.artifact.git.ref.commit` | `string` | Commit is one commit, by its full 40-character id, which Ptah asks the server for by that id. Unless a branch or tag points at it, Ptah asks only a server that says it gives commits by id; on any other, Resolve refuses the commit once its branch moves past it. A tag holds one commit on every server. |
 | `status.artifact.git.ref.tag` | `string` | Tag is read at the commit it names, again at every interval. |
 | `status.artifact.git.transport` | `object` | Transport pins the server. |
-| `status.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.artifact.git.transport.caFrom` | `object` | CAFrom selects the only roots an https:// server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and an https:// source whose Secret holds caSHA256 is refused without it. |
 | `status.artifact.git.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.artifact.git.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.artifact.git.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -663,7 +663,7 @@ spec:
 | `status.artifact.https.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the download carries the files. |
 | `status.artifact.https.path` | `string`, required | Path is what the download selects. |
 | `status.artifact.https.transport` | `object` | Transport pins the server. |
-| `status.artifact.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest. |
+| `status.artifact.https.transport.caFrom` | `object` | CAFrom selects the only roots the server's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
 | `status.artifact.https.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `status.artifact.https.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.artifact.https.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |

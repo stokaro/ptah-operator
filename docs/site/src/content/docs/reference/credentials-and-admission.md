@@ -83,7 +83,11 @@ The registry, Git and HTTPS grants stay in the environment: the `registry`,
 `allowPlainHTTP`, `caSHA256`, `host` and `knownHostsSHA256` keys of a credential
 Secret reach the runner through a `secretKeyRef`. They say where a credential may
 be sent and hold none, and a grant the Secret lacks stops the container with
-`CreateContainerConfigError`, as before.
+`CreateContainerConfigError`, as before. The one optional grant is the
+`caSHA256` of an `https://` Git or HTTPS credential under a resource that
+selects no CA: it reaches the runner only when the Secret holds it, and the
+runner then refuses the source rather than send the credential under the
+system roots.
 
 A volume with a key the Secret may lack is optional, as the selector was: a
 registry credential's three keys, a Git credential's two, an HTTPS credential's
