@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

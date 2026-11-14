@@ -8,5 +8,8 @@
     {
       "sql": "CREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

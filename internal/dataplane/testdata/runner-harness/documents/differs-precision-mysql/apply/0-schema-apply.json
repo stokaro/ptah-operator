@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

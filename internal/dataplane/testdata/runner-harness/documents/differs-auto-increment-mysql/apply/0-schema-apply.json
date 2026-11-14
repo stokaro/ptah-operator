@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

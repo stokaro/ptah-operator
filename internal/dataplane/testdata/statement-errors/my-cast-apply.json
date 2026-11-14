@@ -17,5 +17,8 @@
     "statements": 1,
     "sqlstate": "HY000",
     "error_number": 1366
+  },
+  "apply_log": {
+    "written": 2
   }
 }

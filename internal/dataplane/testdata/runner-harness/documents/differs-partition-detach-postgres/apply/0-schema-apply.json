@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

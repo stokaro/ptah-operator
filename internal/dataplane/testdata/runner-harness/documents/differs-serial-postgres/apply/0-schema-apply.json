@@ -11,5 +11,8 @@
     {
       "sql": "DROP SEQUENCE \"differs_items_id_seq\""
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

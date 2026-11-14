@@ -8,5 +8,8 @@
     {
       "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

@@ -8,5 +8,8 @@
     {
       "sql": "DROP TABLE `differs_parent`"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

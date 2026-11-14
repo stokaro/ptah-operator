@@ -11,5 +11,8 @@
     {
       "sql": "CREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }

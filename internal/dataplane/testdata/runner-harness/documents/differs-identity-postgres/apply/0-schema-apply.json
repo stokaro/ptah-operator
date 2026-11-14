@@ -8,5 +8,8 @@
     {
       "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2
+  }
 }
