@@ -629,6 +629,20 @@ The outcome stays what the revision table says.
 [A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
 says what to check.
 
+Since Ptah v0.28.0 the log has two more columns, `run_reference` and
+`actor_origin`, and the operator fills neither yet. Before a run writes its
+first row, it adds whichever of the two a log an earlier build created lacks,
+as nullable columns, and the rows already there keep their values. On
+PostgreSQL Ptah writes the log only as the table's owner, who may alter it. On
+MySQL the `ALTER` this takes is part of
+[the documented grant](../../support/databases/#mysql-authority), and a login
+without it on the table loses every row of every run, reported as above, until
+the columns are there. A login that may alter the table can add them first:
+
+```sql
+ALTER TABLE schema_migrations_log ADD COLUMN run_reference VARCHAR(255) NULL, ADD COLUMN actor_origin VARCHAR(64) NULL;
+```
+
 The value is personal data, and `provided` means Ptah took the name on trust.
 [The approver's name in the target
 database](../security/#approver-in-the-database) says what that means and when a
