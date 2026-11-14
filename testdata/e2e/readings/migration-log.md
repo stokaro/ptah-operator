@@ -4,14 +4,16 @@
 for `schema_migrations_log` after one `ptah migrations up --migrations-dir
 <fixtures> --json` against an empty database, with the repository's own
 `testdata/e2e/migrations/<engine>` fixtures. Ptah wrote every row. Captured on
-2026-11-12 with the clients the phase reads through, `psql -Atqc` and
+2026-11-14 with the clients the phase reads through, `psql -Atqc` and
 `mysql -Nse`. Each run was its own container, so every run id starts with the
 process ID 1.
 
-- Executor: the Ptah v0.23.0 release image,
-  `ghcr.io/stokaro/ptah@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489`,
-  source `f47b2bfa`. The v0.18.0 (`6e1d430e`) and v0.22.0 (`0dd9190b`) release
-  images wrote the same rows in all eight runs, apart from the run id
+- Executor: the Ptah v0.28.0 release image,
+  `ghcr.io/stokaro/ptah@sha256:34356290733b9c7ce526312b8ce89f753c85a04c9c187d71b4cbd63af0080977`,
+  source `2ee460a6`, for arm64. The v0.18.0 (`6e1d430e`), v0.22.0 (`0dd9190b`)
+  and v0.23.0 (`f47b2bfa`) release images wrote the same rows in all eight runs,
+  apart from the run id. v0.28.0 adds the `run_reference` and `actor_origin`
+  columns, which these queries do not read
 - PostgreSQL: `17.11`, `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - MySQL: `8.4.11`, `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
 
