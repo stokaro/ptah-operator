@@ -4,16 +4,16 @@
 for `schema_migrations_log` after one `ptah migrations up --migrations-dir
 <fixtures> --json` against an empty database, with the repository's own
 `testdata/e2e/migrations/<engine>` fixtures. Ptah wrote every row. Captured on
-2026-11-14 on the `vcluster-mac` Docker host with the clients the phase reads
+2026-11-15 on the `vcluster-mac` Docker host with the clients the phase reads
 through, `psql -Atqc` and `mysql -Nse`. Each run was its own container, with
 Ptah as its first process, so every run id starts with the process ID 1. The
 PostgreSQL runs connected as the server's own user, the MySQL runs as the
 application user `ptah_e2e`, which holds every privilege on its database, as
 the lifecycle's login does.
 
-- Executor: the Ptah v0.28.0 release image,
-  `ghcr.io/stokaro/ptah@sha256:34356290733b9c7ce526312b8ce89f753c85a04c9c187d71b4cbd63af0080977`,
-  source `2ee460a6`, for arm64
+- Executor: the Ptah v0.29.0 release image,
+  `ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8`,
+  source `75fa9991`, for arm64
 - PostgreSQL: `17.11`, `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - MySQL: `8.4.11`, `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
 

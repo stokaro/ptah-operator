@@ -271,7 +271,8 @@ for `testdata/e2e/postgresql-external-v4-view.sql`, `-v5-view-invoker.sql` and
 wrote them, and hold no credentials. On November 14, 2026 the v0.28.0 release
 image (commit `2ee460a6`), run the same way against PostgreSQL 17.11, saved the
 same three files byte for byte, and each Apply wrote its two schema apply log
-entries. The external lifecycle's security_invoker
+entries. On November 15, 2026 the v0.29.0 release image (commit `75fa9991`)
+did the same again. The external lifecycle's security_invoker
 row plans the same artifacts on kind; `TestViewInvokerPlannedReadsEachStepOfTheRow`
 holds `viewInvokerPlanned` to accepting each for its own step and to refusing it
 for the other two, the runner harness's plans of the same shapes over another

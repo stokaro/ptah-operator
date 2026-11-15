@@ -5,7 +5,7 @@ printed for `ptah_schema_apply_log` after `ptah schema plan --schema-file
 <file> --output plan.json` and `ptah schema apply --plan plan.json
 --auto-approve --json` against an empty database, with the repository's own
 `testdata/e2e/<engine>-v1.sql` and `-v2.sql`. Ptah wrote every entry. Captured
-on 2026-11-14 on the `vcluster-mac` Docker host with the clients the phase reads
+on 2026-11-15 on the `vcluster-mac` Docker host with the clients the phase reads
 through, `psql -Atqc` and `mysql -Nse`, in the same session as the
 [migration log readings](migration-log.md), from the same images. Each apply
 was its own container, with Ptah as its first process, so every run id starts
