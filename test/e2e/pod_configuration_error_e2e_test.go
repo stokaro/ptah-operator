@@ -58,15 +58,9 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 	if !readyConditionNamesJob(stopped, job) {
 		d.fatalf("%s does not name Job %s in its Ready condition", name, job)
 	}
-	warnings := func() *corev1.EventList {
-		d.t.Helper()
-		events := &corev1.EventList{}
-		d.mustList(events, client.MatchingFields{"involvedObject.name": name, "reason": "PodConfigurationError"})
-		return events
-	}
-	if !podConfigurationEventRecorded(warnings().Items, stopped, missingSecret) {
-		d.fatalf("%s carries no PodConfigurationError Warning saying %s", name, missingSecret)
-	}
+	d.waitForSchemaEvent(name, "PodConfigurationError", missingSecret, func(events []corev1.Event) bool {
+		return podConfigurationEventRecorded(events, stopped, missingSecret)
+	})
 
 	// The URL and its password, under a key the Job does not ask for.
 	d.mustCreate(map[string]any{
@@ -89,10 +83,9 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 	if !kubeletReportedMountFailure(mounts.Items, pods.Items, job, kubeletWords) {
 		d.fatalf("the kubelet recorded no FailedMount Event against a Pod of Job %s in the words the resource carries", job)
 	}
-	events := warnings()
-	if !podConfigurationEventRecorded(events.Items, keyless, missingKey) {
-		d.fatalf("%s carries no PodConfigurationError Warning saying %s", name, missingKey)
-	}
+	events := d.waitForSchemaEvent(name, "PodConfigurationError", missingKey, func(events []corev1.Event) bool {
+		return podConfigurationEventRecorded(events, keyless, missingKey)
+	})
 	document := append(append(append(d.jsonBytes(keyless), d.jsonBytes(events)...), d.jsonBytes(pods)...), d.jsonBytes(mounts)...)
 	d.check(holdsNoSecretValue(document, target, password),
 		"read the resource, its Warnings, Job %s's Pods and the kubelet's mount Events for what the Secret holds", job)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -205,6 +206,27 @@ func removeWhitespace(value string) string {
 // removeLineBreaks is tr -d '\r\n'.
 func removeLineBreaks(value string) string {
 	return strings.NewReplacer("\r", "", "\n", "").Replace(value)
+}
+
+// waitForSchemaEvent waits for an Event with reason against the schema named
+// name that recorded accepts, and returns the Events with that reason. The
+// manager records such an Event after the status patch that carries the same
+// words, through a recorder that writes it asynchronously, so a reading of the
+// condition does not yet promise the Event.
+func (d *dataPlane) waitForSchemaEvent(name, reason, saying string, recorded func([]corev1.Event) bool) *corev1.EventList {
+	d.t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		events := &corev1.EventList{}
+		d.mustList(events, client.MatchingFields{"involvedObject.name": name, "reason": reason})
+		if recorded(events.Items) {
+			return events
+		}
+		if time.Now().After(deadline) {
+			d.fatalf("%s carries no %s Event saying %s after %s; %d carry that reason", name, reason, saying, waitTimeout, len(events.Items))
+		}
+		d.sleep(2 * time.Second)
+	}
 }
 
 // waitForSchema reads the schema every two seconds until match holds, and
