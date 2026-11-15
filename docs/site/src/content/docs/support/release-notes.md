@@ -24,8 +24,8 @@ schema version moves from 20 to 21. Once this release's hook has updated the
 CRDs, 0.2.12's CRD hook refuses [a rollback](../../use/operations/#rollback)
 to 0.2.12: a release's hook refuses CRD schemas newer than the release reads,
 and 0.2.12 reads none of the new fields. The executor moves to Ptah
-v0.28.0, which retires the execution binding: approve again whatever was
-waiting, after the resource has read its database with v0.28.0 and planned.
+v0.29.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.29.0 and planned.
 A schema Apply that sends a statement now creates the table
 `ptah_schema_apply_log` in the target database, as the login in the schema's
 Secret, and writes a row to it before its first statement and one when it ends. A tool that lists the tables a
@@ -35,7 +35,7 @@ that table. Under the MySQL and MariaDB grant
 the table and not insert into it, so both rows are lost while the Apply ends as
 before. Where you want the rows, grant `INSERT` on the table once an Apply has
 created it. A MySQL or MariaDB migration login without `ALTER` on
-`schema_migrations_log` loses that log's rows from its first run under v0.28.0,
+`schema_migrations_log` loses that log's rows from its first run under v0.29.0,
 and `RunLogged` goes `False` with `LogEntriesLost`; add the two columns
 [Who the database's log names](../../use/migrations/#who-the-databases-log-names)
 shows before the upgrade. A database audit that lists what the executor sends
@@ -67,8 +67,8 @@ resolution waits that much longer. Nothing else.
   before.
   [Check the schema against its history](../../use/migrations/#drift-check)
   says what the shadow needs.
-- **A schema Apply leaves a record in the database.** Ptah v0.28.0 keeps a log
-  of each schema Apply that sends a statement
+- **A schema Apply leaves a record in the database.** Since v0.28.0 Ptah keeps
+  a log of each schema Apply that sends a statement
   ([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)): a `started`
   row before the first statement, and one when the Apply ends with its outcome
   and the statement it stopped at, both naming the plan and its digest. A write
@@ -77,8 +77,8 @@ resolution waits that much longer. Nothing else.
   reference, so a lost row shows nowhere in the resource. Nothing is written for
   a dry run, a stale plan Ptah refuses, or a plan with no changes.
   [What the operator records](../../use/audit/#coverage) lists the table.
-- **The migration log gains two columns.** Ptah v0.28.0 adds `run_reference`
-  and `actor_origin` to `schema_migrations_log`, nullable, and adds them to a
+- **The migration log gains two columns.** Since v0.28.0 Ptah adds
+  `run_reference` and `actor_origin` to `schema_migrations_log`, nullable, and adds them to a
   log an earlier build created on the first run that writes to it.
 - **Both logs name the approver and the run**
   ([#1062](https://github.com/stokaro/ptah-operator/issues/1062)). A schema
@@ -102,7 +102,7 @@ resolution waits that much longer. Nothing else.
   variable's value in its place. A Git source's address, path, branch and tag,
   and an HTTPS source's address and path, were read the same way. The Job now
   doubles each `$`, so the process reads the value the resource holds.
-- **Executor.** The verified executor is now Ptah v0.28.0. Each schema read of
+- **Executor.** The verified executor is now Ptah v0.29.0. Each schema read of
   both engines leaves `ptah_schema_apply_log` out of its catalog queries, beside
   the migration tables it already left out, and sends nothing else new. The
   Apply adds `CREATE TABLE IF NOT EXISTS ptah_schema_apply_log` and an `INSERT`
@@ -111,7 +111,20 @@ resolution waits that much longer. Nothing else.
   `schema_migrations_log` once, where the log lacks the new columns.
   `migrations up` can now check drift against the applied history
   ([stokaro/ptah#5994](https://github.com/stokaro/ptah/pull/5994)), and the
-  operator asks it to for a migration whose policy names a drift check.
+  operator asks it to for a migration whose policy names a drift check. A
+  migration run now asks every file it selected what the file's transaction or
+  its own text refuses before the first one runs
+  ([stokaro/ptah#6052](https://github.com/stokaro/ptah/pull/6052),
+  [#6055](https://github.com/stokaro/ptah/pull/6055)), such as a
+  `CREATE INDEX CONCURRENTLY` inside the transaction the file runs in, and a
+  refusal there applies none of them and writes no revision row. Under v0.26.0
+  the files ahead of the refused one ran first.
+- **A run refused before its first file names a migration only when it
+  selected one.** Such a run's document does not say which file Ptah refused,
+  so the `lastRun` message of a run of several files names none, and the Pod
+  log holds Ptah's sentence, which names the file.
+  [A migration that failed and committed nothing](../../troubleshoot/condition-reasons/#a-migration-that-failed-and-committed-nothing)
+  shows both messages.
 - **The state alerts hold through a failed read.** A scrape whose state read
   fails publishes none of the gauges these four alerts read, so a firing alert
   resolved on that scrape and fired again on the next one that read, and a

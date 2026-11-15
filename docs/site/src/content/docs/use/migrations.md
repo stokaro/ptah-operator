@@ -688,8 +688,9 @@ leaves what it matches out of the target and out of the replayed history alike.
 On a PostgreSQL URL that sets no `search_path`, Ptah reads every schema and a
 selector starts with the schema's name, as above. On one that sets it, and on a
 MySQL URL that names its database, a selector starts with the table's name. A
-selector that matches nothing leaves nothing out and says nothing, so read it
-against that scope. Ptah judges the grammar when the check runs, and a selector
+selector that matches nothing leaves nothing out and does not stop the run: the
+check still compares everything else, so read each selector against that scope.
+Ptah judges the grammar when the check runs, and a selector
 it refuses stops the run with `DriftCheckUnsupported` at stage `scope`. The API
 takes what a `PtahSchema`'s `spec.policy.exclude` takes: at most 128 entries,
 none of them empty, none with whitespace at either end or a control character.
