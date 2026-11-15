@@ -1076,6 +1076,15 @@ in for, or a grant the default roles keep for the control plane.
   names that already exist.
 - Use separate database credentials for production and optional dev rehearsal
   targets.
+- Keep a migration's drift-check shadow out of reach of the target. Every
+  History and Apply Job of a `PtahMigration` with `spec.policy.driftCheck`
+  mounts the shadow's login beside the target's. On MySQL and MariaDB that
+  login holds global privileges, `DROP` and `ALTER` among them, so a shadow on
+  the target's server hands those Pods a credential that can drop the target:
+  put the shadow on a server of its own. A PostgreSQL shadow can share the
+  target's server under a login that owns the shadow database alone.
+  [Check the schema against its history](../migrations/#drift-check) says what
+  each engine needs.
 
 ## Reporting a way across one of these boundaries
 

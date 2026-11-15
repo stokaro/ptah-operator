@@ -625,11 +625,28 @@ happen applies nothing.
 The shadow is a database of its own, of the target's engine, empty before each
 check. Ptah refuses a shadow that holds anything and one that is the target
 under another URL, and the API refuses a shadow named by the target's own
-Secret key. A database of its own on the target's server is enough. On MySQL
-and MariaDB its user needs the global privileges
-[the baseline's shadow](#what-the-history-says) needs, because Ptah empties it
-the same way. Give every resource a shadow of its own: two checks that use one
+Secret key. Give every resource a shadow of its own: two checks that use one
 at the same time find each other's tables in it, and refuse.
+
+Where the shadow can live depends on the engine, because every History and
+Apply Job of the resource mounts the shadow's login beside the target's. On
+MySQL and MariaDB that login holds the global privileges
+[the baseline's shadow](#what-the-history-says) needs, `DROP` and `ALTER` among
+them, since Ptah empties the shadow the same way, and a global privilege
+reaches every database on its server. Put the shadow on a server of its own,
+never the target's, where its login could drop the target. Give its database a
+name the target's does not have: Ptah tells two MySQL databases apart by name
+alone, and refuses a shadow named like the target as the target, at stage
+`realm-check`.
+
+A PostgreSQL shadow can share the target's server. Everything Ptah empties is
+in the shadow's database, so its login needs privileges there alone, and a
+grant in one database reaches no other. Give it a login that owns the shadow
+database and holds nothing in the target's, is not a superuser and cannot
+create roles. Roles belong to the whole server, and on a server Ptah did not
+start it drops none a replay created, so a history whose migrations create or
+alter roles would leave them, or the change, on the target's server. Such a
+history needs the shadow on a server of its own.
 
 The URL is read like the target's: the History and the Apply Job mount the
 Secret key, the runner reads it, and the manager never does. A History reading
@@ -639,16 +656,19 @@ binds that identity beside the target's. A URL that names the target's server
 and database is the target under any user or `search_path`, and the reading
 refuses it with `ShadowDatabaseUnavailable` and publishes no plan, so nobody
 approves a run that cannot start. It does the same when the Secret key holds
-no URL. Pointing the Secret at another
-database, or the policy at another key, publishes a new plan, and an approval
-of the old one does not carry over. The Apply refuses a shadow its plan did not
-bind before Ptah starts; as with a target that moved, the run is recorded
-`Unknown` and the next History reading settles it.
+no URL. Pointing the Secret at another database, or the policy at another key,
+publishes a new plan, and an approval of the old one does not carry over. The
+Apply refuses a shadow its plan did not bind before Ptah starts; as with a
+target that moved, the run is recorded `Unknown` and the next History reading
+settles it.
 
-Ptah compares the whole schema the target's URL reaches, less the revision
-table and its log. A database that also holds objects no migration declares,
-such as the tables a `PtahSchema` manages in the same database or a queue table
-another tool creates, reads as drifted until `exclude` names them:
+Ptah compares the whole schema the target's URL reaches, less its own
+bookkeeping: the revision table and its log, `ptah_migration_tags`,
+`schema_seeds` and the `ptah_schema_apply_log` a `PtahSchema` Apply records in,
+which its reads leave out by name. A database that also holds objects no
+migration declares, such as the tables a `PtahSchema` manages in the same
+database or a queue table another tool creates, reads as drifted until
+`exclude` names them:
 
 ```yaml
 spec:
