@@ -5,7 +5,16 @@ v0.28.0 release image
 the v0.29.0 release image
 `ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8`
 (commit `75fa9991177e9049b66fe2e37abec0db40f47568`), run the same way, wrote
-both documents byte for byte, so they stay. It ran
+both documents byte for byte, so they stay. Later that day the v0.29.2 release
+image
+`ghcr.io/stokaro/ptah@sha256:f3272308b3d28008f9d574690fe1543637c3f4c09f60028437ae27780d719d2a`
+(commit `ba500e11b2536ad7dad1720e5cbd9bf7292dba8b`) ran the same command through
+the lab of `support/qualification/probes/schema_sql_readings.py` rather than the
+setup these were written in. It wrote the PostgreSQL document
+byte for byte, and the MySQL one with only the plan name and the
+`from_fingerprint` changed, which identify the database the plan read. The
+v0.29.0 image, run through the same lab, wrote both documents byte for byte as
+v0.29.2 did. Each run was
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what
@@ -45,7 +54,7 @@ a MySQL TEXT default. All native plans are non-destructive CREATE TABLE
 statements, with no padding or edited plan bytes in the CLI probes.
 
 Adding one `<` byte increases the saved native JSON by six bytes; adding one
-`x` increases it by one. With v0.22.0, v0.23.0, v0.28.0 and v0.29.0 the PostgreSQL envelope is
+`x` increases it by one. With v0.22.0, v0.23.0, v0.28.0, v0.29.0 and v0.29.2 the PostgreSQL envelope is
 587 bytes and the MySQL envelope is 23,181 bytes; with v0.17.0 they were 549 and
 23,117, and before it 592 and 27,517. At v0.23.0 the cluster scenario, which
 calibrates from real plans, passed its exact 8 MiB and 8 MiB + 1 byte rows on
