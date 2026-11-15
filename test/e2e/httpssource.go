@@ -68,6 +68,16 @@ const (
 	// to the other origin with no credential set, which Ptah follows. It
 	// takes the refused sources' realm, and is removed once it resolved.
 	httpsRedirectControl = "e2e-https-redirect-public"
+
+	// The CA pin row's schema, its credential and its database. The
+	// credential is granted for the server under its cluster domain name, a
+	// host no other row names, so the server's log shows whether a request
+	// for the row's URL arrived. The schema plans into a database of its own
+	// once its source selects the CA, so nothing else holds its realm.
+	httpsCAPinSchema     = "e2e-https-ca-pin"
+	httpsCAPinCredential = "e2e-https-ca-pin"
+	httpsCAPinDatabase   = "ptah_e2e_https_ca_pin"
+	httpsCAPinSecret     = "e2e-https-ca-pin-database"
 )
 
 // What the refused sources' rows match in a condition message: Ptah's words
@@ -79,6 +89,13 @@ const (
 	httpsDotDotRefusal    = "archive entry name refused"
 	httpsSymlinkRefusal   = "is a symbolic link"
 	httpsElsewhereRefusal = "the HTTPS credential is not granted for the source's host"
+	// httpsCAPinRefusal is the runner's words for a credential whose Secret
+	// pins caSHA256 under a source that selects no CA.
+	httpsCAPinRefusal = "the credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom"
+	// httpsAccessRefused opens the message of a refusal the runner made while
+	// it checked the source's access, before it started Ptah: the runner
+	// protocol refuses that code on a result whose child ran.
+	httpsAccessRefused = "invalid_https_access: "
 )
 
 // httpsCredentialVariables are the variables Ptah reads an HTTPS credential
@@ -365,6 +382,58 @@ func httpsNoRequestFor(requests []httpsServed, host, path string) error {
 	for _, request := range requests {
 		if request.host == host && request.path == path {
 			return fmt.Errorf("the server received %s %s from %s", request.credential, request.path, request.host)
+		}
+	}
+	return nil
+}
+
+// httpsReceived holds the server's requests to one for path on host that
+// carried the scheme and was answered: the URL a row reads was reached with
+// its credential. It is what shows that an earlier httpsNoRequestFor on the
+// same host and path read a URL the log does name.
+func httpsReceived(requests []httpsServed, host, path, scheme string) error {
+	for _, request := range requests {
+		if request.host == host && request.path == path && request.credential == scheme && request.status == 200 {
+			return nil
+		}
+	}
+	return fmt.Errorf("the server answered no %s request for %s on %s, in %d requests", scheme, path, host, len(requests))
+}
+
+// httpsCAPinRefused holds a schema's conditions at generation to the runner's
+// refusal of a credential whose Secret pins caSHA256 under a source that
+// selects no CA: ReconciliationFailed True with OperationFailed, observed at
+// that generation, and the runner's words under the code it refuses an access
+// with before Ptah starts.
+func httpsCAPinRefused(conditions []metav1.Condition, generation int64) error {
+	failed := meta.FindStatusCondition(conditions, ptahv1alpha1.ConditionReconciliationFailed)
+	switch {
+	case failed == nil || failed.Status != metav1.ConditionTrue:
+		return fmt.Errorf("ReconciliationFailed is %+v", failed)
+	case failed.ObservedGeneration != generation:
+		return fmt.Errorf("ReconciliationFailed is of generation %d, not %d: %s", failed.ObservedGeneration, generation, failed.Message)
+	case failed.Reason != string(ptahv1alpha1.ReasonOperationFailed):
+		return fmt.Errorf("ReconciliationFailed has the reason %s, want OperationFailed: %s", failed.Reason, failed.Message)
+	case !strings.HasPrefix(failed.Message, httpsAccessRefused) || !strings.Contains(failed.Message, httpsCAPinRefusal):
+		return fmt.Errorf("ReconciliationFailed says %q, not %q after %q", failed.Message, httpsCAPinRefusal, httpsAccessRefused)
+	}
+	return nil
+}
+
+// httpsCAPinCleared holds a schema's conditions at generation to a source the
+// CA pin no longer refuses: ReconciliationFailed False with Succeeded,
+// observed at that generation, and no condition still giving the refusal.
+func httpsCAPinCleared(conditions []metav1.Condition, generation int64) error {
+	failed := meta.FindStatusCondition(conditions, ptahv1alpha1.ConditionReconciliationFailed)
+	switch {
+	case failed == nil || failed.Status != metav1.ConditionFalse || failed.Reason != string(ptahv1alpha1.ReasonSucceeded):
+		return fmt.Errorf("ReconciliationFailed is %+v", failed)
+	case failed.ObservedGeneration != generation:
+		return fmt.Errorf("ReconciliationFailed is of generation %d, not %d", failed.ObservedGeneration, generation)
+	}
+	for _, condition := range conditions {
+		if strings.Contains(condition.Message, httpsCAPinRefusal) {
+			return fmt.Errorf("%s still says %q", condition.Type, condition.Message)
 		}
 	}
 	return nil
