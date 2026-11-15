@@ -641,12 +641,41 @@ of the old one does not carry over. The Apply refuses a shadow its plan did not
 bind before Ptah starts; as with a target that moved, the run is recorded
 `Unknown` and the next History reading settles it.
 
-Ptah compares the whole schema it reads, less the revision table and its log,
-and the operator passes it nothing to leave out. A database another resource or
-tool also writes to, such as one a `PtahSchema` shares, reads as drifted. The
-lock holds off any cooperating runner between the check and the Apply; DDL from
-a session that takes no lock can still land after the check. The check repairs
+Ptah compares the whole schema the target's URL reaches, less the revision
+table and its log. A database that also holds objects no migration declares,
+such as the tables a `PtahSchema` manages in the same database or a queue table
+another tool creates, reads as drifted until `exclude` names them:
+
+```yaml
+spec:
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+      exclude:
+        - reporting.*
+        - public.job_queue
+```
+
+Each entry is a selector as `ptah schema diff --exclude` reads it, and the check
+leaves what it matches out of the target and out of the replayed history alike.
+On a PostgreSQL URL that sets no `search_path`, Ptah reads every schema and a
+selector starts with the schema's name, as above. On one that sets it, and on a
+MySQL URL that names its database, a selector starts with the table's name. A
+selector that matches nothing leaves nothing out and says nothing, so read it
+against that scope. Ptah judges the grammar when the check runs, and a selector
+it refuses stops the run with `DriftCheckUnsupported` at stage `scope`. The API
+takes what a `PtahSchema`'s `spec.policy.exclude` takes: at most 128 entries,
+none of them empty, none with whitespace at either end or a control character.
+The list is part of the policy the plan binds, so changing it publishes a new
+plan and an approval of the old one does not carry over; reordering it changes
 nothing.
+
+The lock holds off any cooperating runner between the check and the Apply; DDL
+from a session that takes no lock can still land after the check. The check
+repairs nothing.
 
 Leaving the field out checks nothing, which is how every resource without it
 runs.

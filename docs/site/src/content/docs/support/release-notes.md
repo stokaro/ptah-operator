@@ -59,8 +59,12 @@ resolution waits that much longer. Nothing else.
   that differs stops the run with reason `SchemaDrifted`, a check that cannot
   decide stops it with `DriftCheckUnsupported`, and a shadow it cannot use
   with `ShadowDatabaseUnavailable`; nothing pending runs, and the revision
-  table is as it was. The plan binds the shadow's identity, so an approval does not
-  carry over to another shadow. A resource without the field runs as before.
+  table is as it was. The plan binds the shadow's identity, so an approval
+  does not carry over to another shadow. `exclude` names objects the
+  comparison leaves out, such as the tables a `PtahSchema` manages in the same
+  database ([#1093](https://github.com/stokaro/ptah-operator/issues/1093)),
+  and the plan binds the list too. A resource without the field runs as
+  before.
   [Check the schema against its history](../../use/migrations/#drift-check)
   says what the shadow needs.
 - **A schema Apply leaves a record in the database.** Ptah v0.28.0 keeps a log
