@@ -688,6 +688,10 @@ leaves what it matches out of the target and out of the replayed history alike.
 On a PostgreSQL URL that sets no `search_path`, Ptah reads every schema and a
 selector starts with the schema's name, as above. On one that sets it, and on a
 MySQL URL that names its database, a selector starts with the table's name. A
+PostgreSQL row-level security policy is named through its table even on a URL
+that sets no `search_path`: `orders.orders_owner[type=policy]` leaves out the
+policy `orders_owner` on the table `orders`, and
+`public.orders_owner[type=policy]` names nothing since Ptah v0.29.2. A
 selector that matches nothing leaves nothing out and does not stop the run: the
 check still compares everything else, so read each selector against that scope.
 Since v0.29.2 Ptah warns about such a selector on standard error, which the
