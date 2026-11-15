@@ -612,11 +612,13 @@ func (r *MigrationReconciler) reportedMigrationRun(
 // them. The Pod log keeps the first line of Ptah's error, which names the first
 // difference, and the message points at it as it does for any failed run.
 //
-// An unable check is grouped by the stage Ptah names. The history and the
-// comparison are what the check itself could not cover; every other stage is
-// the shadow database being unreachable, holding something, being the target
-// under another name or refusing the replay. Ptah treats its stages as an open
-// set, so a stage this build does not know reads as the shadow's.
+// An unable check is grouped by the stage Ptah names. Reading the history,
+// replaying it and comparing the result are what the check itself could not
+// do: a migration that does not replay on an empty database fails the same way
+// on any shadow, so a fresh shadow would not help. Every other stage is the
+// shadow database being unreachable, holding something or being the target
+// under another name. Ptah treats its stages as an open set, so a stage this
+// build does not know reads as the shadow's.
 func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.ConditionReason, string) {
 	switch {
 	case summary.Outcome == dataplane.MigrationDriftDrifted:
@@ -624,7 +626,8 @@ func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.Con
 			"The drift check found %s between the database's schema and the one its applied migrations produce, "+
 				"so the run applied nothing: something changed the schema outside the migrations",
 			countOf(summary.Findings, "difference", "differences"))
-	case summary.Stage == driftStageHistory || summary.Stage == driftStageSchemaMatch:
+	case summary.Stage == driftStageHistory || summary.Stage == driftStageReplay ||
+		summary.Stage == driftStageSchemaMatch:
 		return operatorv1alpha1.ReasonDriftCheckUnsupported, fmt.Sprintf(
 			"The drift check could not decide (stage %s, reason %s), so the run applied nothing", summary.Stage, summary.Reason)
 	default:
@@ -635,10 +638,13 @@ func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.Con
 }
 
 // The stages of an unable drift check that are about the check rather than
-// the shadow database, as Ptah v0.28.0 names them: the applied history could
-// not be replayed, or the comparison could not describe an object.
+// the shadow database, as Ptah v0.28.0 names them: the target's applied
+// history could not be read or cannot be replayed in the order it ran, the
+// applied migrations failed on the shadow, or the comparison could not
+// describe an object.
 const (
 	driftStageHistory     = "history"
+	driftStageReplay      = "replay"
 	driftStageSchemaMatch = "schema-match"
 )
 

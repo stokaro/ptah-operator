@@ -614,8 +614,9 @@ table records as applied into the shadow database, compares the schema they
 produce with the target's, and empties the shadow again. What a pending
 migration is about to create is not drift, since the baseline is the applied
 history. A clean target lets the run go on. A target that differs stops it with
-reason `SchemaDrifted`, and a check that cannot decide stops it with
-`DriftCheckUnsupported` or `ShadowDatabaseUnavailable`; nothing pending runs,
+reason `SchemaDrifted`, a check that cannot decide stops it with
+`DriftCheckUnsupported`, and a shadow it cannot use with
+`ShadowDatabaseUnavailable`; nothing pending runs,
 and [A migration whose drift check refused the run](../../troubleshoot/condition-reasons/#a-migration-whose-drift-check-refused-the-run)
 says what each one means and how to list the differences. A check that was
 asked for never turns into a run without one: an Apply whose check did not

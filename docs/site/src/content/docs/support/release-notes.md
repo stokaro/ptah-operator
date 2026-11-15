@@ -56,10 +56,10 @@ resolution waits that much longer. Nothing else.
   Apply then asks Ptah to replay the applied migrations into it and compare the
   result with the target before any pending migration runs
   ([#1054](https://github.com/stokaro/ptah-operator/issues/1054)). A target
-  that differs stops the run with reason `SchemaDrifted`, and a check that
-  cannot decide stops it with `DriftCheckUnsupported` or
-  `ShadowDatabaseUnavailable`; nothing pending runs, and the revision table is
-  as it was. The plan binds the shadow's identity, so an approval does not
+  that differs stops the run with reason `SchemaDrifted`, a check that cannot
+  decide stops it with `DriftCheckUnsupported`, and a shadow it cannot use
+  with `ShadowDatabaseUnavailable`; nothing pending runs, and the revision
+  table is as it was. The plan binds the shadow's identity, so an approval does not
   carry over to another shadow. A resource without the field runs as before.
   [Check the schema against its history](../../use/migrations/#drift-check)
   says what the shadow needs.

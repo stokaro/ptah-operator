@@ -36,7 +36,7 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
-| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, the applied migrations fail on the shadow, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -87,7 +87,7 @@ decision.
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
-| `ShadowDatabaseUnavailable` | A migration Apply ran nothing because the shadow database `spec.policy.driftCheck` names could not be used: unreachable, not empty, the target under another name, or the replay into it failed. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `ShadowDatabaseUnavailable` | A migration Apply ran nothing because the shadow database `spec.policy.driftCheck` names could not be used: unreachable, not empty, or the target under another name. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `SnapshotTaken` | A ConfigMap source was read and the files it selects were copied into the snapshot every later operation reads. |
 | `SourceFreshnessUnknown` | Currentness cannot be proven because source refresh did not complete. |
 | `SourceRefreshPending` | Dependent currentness is unknown during source refresh. |
@@ -181,17 +181,17 @@ Ready=False SchemaDrifted
   record the change in a migration, and the next Apply runs.
 - `DriftCheckUnsupported`: the check could not decide. At stage `history` the
   applied history cannot be replayed, as when an applied revision's file is
-  gone or a lower version was applied after a higher one. At stage
-  `schema-match` the read of the target could not describe an object the
-  applied migrations create. The check cannot run on this database as it
-  stands: remove `spec.policy.driftCheck` to run without it, or fix the history
-  first.
+  gone or a lower version was applied after a higher one. At stage `replay`
+  an applied migration failed on the empty shadow, as one that depends on
+  something no migration creates does; the Pod log says which migration. At
+  stage `schema-match` the read of the target could not describe an object the
+  applied migrations create. Another shadow would fail the same way: remove
+  `spec.policy.driftCheck` to run without the check, or fix the history first.
 - `ShadowDatabaseUnavailable`: the shadow database could not be used. It did
   not answer, it already holds something (stage `claim`, reason `not_clean`),
-  it is the target under another name (stage `realm-check`), its user lacks
-  what Ptah needs to empty it, or the replay of the applied migrations failed
-  on it. Check the URL the shadow Secret holds, and that the database is empty
-  and belongs to this resource alone.
+  it is the target under another name (stage `realm-check`), or its user lacks
+  what Ptah needs to empty it. Check the URL the shadow Secret holds, and that
+  the database is empty and belongs to this resource alone.
 
 In every case the run applied nothing and the revision table is as the plan
 read it. `Ready` and `Progressing` carry the reason, `status.lastRun` records
