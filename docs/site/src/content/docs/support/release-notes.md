@@ -16,6 +16,43 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.14
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.2,
+which retires the execution binding: approve again whatever was waiting, after
+the resource has read its database with v0.29.2 and planned. An `exclude`
+entry that names a PostgreSQL row-level security policy by its schema and its
+own name, such as `public.notes_owner[type=policy]`, names nothing under
+v0.29.2, and `notes.notes_owner[type=policy]`, which names it through its
+table, names nothing under v0.29.0
+([stokaro/ptah#6070](https://github.com/stokaro/ptah/pull/6070)). Change such
+an entry in a `PtahSchema`'s `spec.policy.exclude` or a `PtahMigration`'s
+`spec.policy.driftCheck.exclude` once the operator runs v0.29.2. Between the
+upgrade and that change, a schema plans a `DROP POLICY` for a policy it does
+not declare: a destructive
+plan, which no apply policy runs without an approval, so do not approve it. A
+drift check reads the policy as drift unless the migrations create it as the
+target holds it. Nothing else.
+
+- **Executor.** The verified executor is now Ptah v0.29.2. The runner harness,
+  the schema SQL readings, both History readings and the capacity calibration
+  were taken again with it: the SQL each read sends, the plans and the frames
+  the runner returns are the ones v0.29.0 gave. A plan of a PostgreSQL schema
+  file `pg_dump` wrote no longer renames each primary key whose name it quotes,
+  such as `"Order_pkey"`, to itself, so such a schema can converge where every
+  plan used to carry the renames, and `CREATE SEQUENCE ... OWNED BY
+  public.t.id` in a schema file now names the column `id` of `public.t`
+  ([stokaro/ptah#6066](https://github.com/stokaro/ptah/pull/6066)).
+- **A selector that matches nothing is still silent.** Since v0.29.2 a drift
+  check warns on standard error about an `exclude` selector that matched no
+  object ([stokaro/ptah#6069](https://github.com/stokaro/ptah/pull/6069)), as
+  a schema plan already did. The runner reads no standard error of either
+  command, so neither warning reaches the resource or the Pod log. Read each
+  selector against the scope
+  [Check the schema against its history](../../use/migrations/#drift-check)
+  describes.
+
 ## 0.2.13
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
