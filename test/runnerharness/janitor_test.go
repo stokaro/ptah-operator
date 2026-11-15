@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -374,6 +376,14 @@ func awaitReport(t *testing.T, file string) string {
 	}
 }
 
+// groupHasNoLiveMember reports whether a signal to a process group failed only
+// because nothing in the group was alive to receive it. Linux says ESRCH once
+// the group is gone and delivers to a group of unreaped zombies. Darwin says
+// EPERM for a group whose members have all exited, until the last is reaped.
+func groupHasNoLiveMember(err error) bool {
+	return errors.Is(err, syscall.ESRCH) || runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM)
+}
+
 // killTree kills a process and everything below it, as a supervisor that stops
 // a job does.
 func killTree(t *testing.T, root int) {
@@ -479,7 +489,9 @@ func TestJanitorClearsARunThatWasKilled(t *testing.T) {
 		t.Fatalf("the run said %q, %v, want it to have started a child", spawned, err)
 	}
 	killTree(t, run.Process.Pid)
-	if err := syscall.Kill(-run.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+	// The group signal reaches whatever the tree walk missed. By now the run is
+	// usually dead and not yet reaped.
+	if err := syscall.Kill(-run.Process.Pid, syscall.SIGKILL); err != nil && !groupHasNoLiveMember(err) {
 		t.Fatal(err)
 	}
 	if err := run.Wait(); err == nil {
@@ -507,6 +519,47 @@ func TestJanitorClearsARunThatWasKilled(t *testing.T) {
 	}
 	if _, err := os.Stat(work); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the run's build context is still there: %v", err)
+	}
+}
+
+// The killed run's group signal lands after the tree walk, when the run may be
+// a zombie its parent has not reaped yet. This holds the leader in that state
+// rather than racing for it.
+func TestSignalToAGroupOfZombiesIsNotAFailure(t *testing.T) {
+	leader := exec.Command("sleep", "60")
+	leader.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := leader.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := leader.Process.Pid
+	t.Cleanup(func() { _ = leader.Wait() })
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		state, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			t.Fatalf("process %d left the process table before it was reaped: %v", pid, err)
+		}
+		if strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("process %d is %q, not a zombie, 10s after SIGKILL", pid, state)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !groupHasNoLiveMember(err) {
+		t.Fatalf("signaling a group with no live member: %v", err)
+	}
+	for _, err := range []error{syscall.EINVAL, syscall.EACCES, fmt.Errorf("signal: %w", syscall.EINTR)} {
+		if groupHasNoLiveMember(err) {
+			t.Errorf("groupHasNoLiveMember(%v) = true, want a real failure", err)
+		}
+	}
+	if runtime.GOOS != "darwin" && groupHasNoLiveMember(syscall.EPERM) {
+		t.Errorf("groupHasNoLiveMember(EPERM) = true on %s, where EPERM is a permission failure", runtime.GOOS)
 	}
 }
 
