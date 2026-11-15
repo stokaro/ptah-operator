@@ -661,11 +661,9 @@ func (d *dataPlane) podMetadataAdmission() {
 	if !failedCreateNamesPolicy(failures.Items, refusedJob, podMetadataPolicyName) {
 		d.fatalf("the Job controller recorded no FailedCreate naming %s against %s", podMetadataPolicyName, refusedJob)
 	}
-	refusals := &corev1.EventList{}
-	d.mustList(refusals, client.MatchingFields{"involvedObject.name": refusedSchema, "reason": "PodAdmissionRefused"})
-	if len(refusals.Items) == 0 {
-		d.fatalf("%s carries no PodAdmissionRefused Event", refusedSchema)
-	}
+	refusals := d.waitForSchemaEvent(refusedSchema, "PodAdmissionRefused", "the refusal", func(events []corev1.Event) bool {
+		return len(events) != 0
+	})
 	// This Job never becomes terminal because admission created no Pod. Audit
 	// its exact identity and refusal while the policy still prevents execution.
 	d.mustList(pods)
