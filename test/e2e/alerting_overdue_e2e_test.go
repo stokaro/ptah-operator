@@ -65,7 +65,7 @@ func (a *alertingRun) overdueFamily(family string) {
 		before = alOverdueReading(object)
 		return before.scheduled() && before.next.After(time.Now().Add(30*time.Second)), "waiting for the original realm refusal's next reconciliation deadline", nil
 	}), "record the eligible %s deadline", family)
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open the overdue resource watch")
 	var history func() []client.Object
 	var finish func(client.Object)

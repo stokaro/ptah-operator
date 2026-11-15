@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -19,6 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,11 +40,11 @@ type recorder interface {
 // fault injection. The API server ends each watch request after
 // watchSegmentSeconds, and the recorder continues from the last
 // resourceVersion it read, so the history has no gap. An API server whose
-// watch cache restarted no longer holds history that old, and the recorder
-// resumes where the cache's history starts only once bridge has proven that
-// nothing in the collection changed in between. A segment that records
-// nothing while the heartbeat writes to every watched kind is a stopped
-// watch, and ends the recorder with a failure. A quiet collection resumes
+// watch cache no longer holds history that old, because it restarted or
+// evicted it, refuses the resume, and the recorder replays the gap from exact
+// lists before it resumes where the cache's history starts. A segment that
+// records nothing while the heartbeat writes to every watched kind is a
+// stopped watch, and ends the recorder with a failure. A quiet collection resumes
 // from the same version and owes explicit barriers. Every other error event,
 // and every event that is not an object of the kind watched, fails either
 // mode.
@@ -57,12 +60,6 @@ type watchRecorder[T client.Object] struct {
 	// to be observed before any assertion or successful closure.
 	quiet bool
 
-	// live is what the collection holds at the resourceVersion the recorder
-	// resumes from: the list the recorder started from with every event
-	// recorded since applied to it. Only the goroutine running the watch
-	// reads or writes it.
-	live map[types.UID]recordedObject
-
 	mu           sync.Mutex
 	events       []watchEvent[T]
 	recordedGaps []watchGap
@@ -77,41 +74,68 @@ type watchRecorder[T client.Object] struct {
 	// segmentStarted is when the current watch request was sent, in Unix
 	// nanoseconds, and zero between requests.
 	segmentStarted atomic.Int64
+	// replayStarted is when the replay of the current gap started, in Unix
+	// nanoseconds, and zero while no gap is replayed.
+	replayStarted atomic.Int64
 }
 
-// newWatchRecorder is the recorder of a collection that initial, read straight
-// from the API server, lists. The objects it lists are where the history
-// starts, so a gap bridge proves empty is held to them as well as to every
-// event recorded after them.
+// newWatchRecorder is the recorder of one namespace's collection. watcher is
+// what it watches and lists with, and newRecorderClient builds the one every
+// recorder in the suite uses.
 func newWatchRecorder[T client.Object](name, namespace string, quiet bool, watcher client.WithWatch,
-	newList func() client.ObjectList, initial client.ObjectList,
-) (*watchRecorder[T], error) {
-	live, err := listedObjects(initial)
-	if err != nil {
-		return nil, fmt.Errorf("read the %s list the watch starts from: %w", name, err)
-	}
+	newList func() client.ObjectList,
+) *watchRecorder[T] {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &watchRecorder[T]{
-		name: name, namespace: namespace, newList: newList, watcher: watcher, quiet: quiet, live: live,
+		name: name, namespace: namespace, newList: newList, watcher: watcher, quiet: quiet,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
-	}, nil
+	}
+}
+
+// newRecorderClient is the client a watch recorder runs on: config without
+// its client-side rate limit. A replay lists the namespace once for every
+// revision of a gap, back to back, and the 50 requests a second the harness
+// allows would make a gap of watchGapRevisionLimit revisions take about 20
+// seconds, past the bound a replay is given. client-go uses the limiter a
+// config carries in place of building one from QPS (rest/config.go).
+func newRecorderClient(config *rest.Config, scheme *runtime.Scheme) (client.WithWatch, error) {
+	config = rest.CopyConfig(config)
+	config.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+	return client.NewWithWatch(config, client.Options{Scheme: scheme})
 }
 
 func (r *watchRecorder[T]) stem() string { return r.name }
 
-func (r *watchRecorder[T]) run(resourceVersion string) {
+// run records the collection from initial, a list read straight from the
+// API server: its objects are what the collection held at its
+// resourceVersion, and the watch starts there.
+func (r *watchRecorder[T]) run(initial client.ObjectList) {
 	defer close(r.done)
 	defer r.cancel()
+	resourceVersion := initial.GetResourceVersion()
+	// live is what the collection holds at resourceVersion: the list the
+	// recorder started from with every event recorded since applied to it.
+	// Only this goroutine has it.
+	live, err := listedObjects[T](initial)
+	switch {
+	case err != nil:
+		r.fail(fmt.Errorf("read the %s list the watch starts from: %w", r.name, err))
+		return
+	case resourceVersion == "":
+		r.fail(fmt.Errorf("the %s list the watch starts from carries no resourceVersion", r.name))
+		return
+	}
 	for !r.stopping.Load() {
-		count, last, err := r.segment(resourceVersion)
+		count, last, err := r.segment(resourceVersion, live)
 		if last != "" {
 			resourceVersion = last
 		}
 		var expired *expiredHistoryError
-		bridged := false
+		replayed := false
 		if errors.As(err, &expired) {
-			if err = r.bridge(resourceVersion, expired.start); err == nil {
-				resourceVersion, bridged = expired.start, true
+			var state map[types.UID]T
+			if state, err = r.replay(resourceVersion, expired.start, live); err == nil {
+				resourceVersion, live, replayed = expired.start, state, true
 			}
 		}
 		if err == nil {
@@ -121,10 +145,10 @@ func (r *watchRecorder[T]) run(resourceVersion string) {
 		case err != nil:
 			r.fail(err)
 			return
-		case bridged:
-			// The gap is proven empty, and the next segment starts where the
-			// API server's history does. A refused start is not a stopped
-			// watch.
+		case replayed:
+			// The gap is in the history, and the next segment starts where
+			// the API server's history does. A refused start is not a
+			// stopped watch.
 		case count == 0 && !r.stopping.Load() && !r.quiet:
 			r.fail(errors.New("watch segment made no progress while its heartbeat was required"))
 			return
@@ -145,10 +169,12 @@ func (r *watchRecorder[T]) run(resourceVersion string) {
 // yields a partial event, and a drop before any event is a segment that made
 // no progress. A watch cache that restarts ends every watch it serves the
 // same way, and its history then starts at the list it restarted from: a
-// request older than that is refused with a 410, which segment returns as an
-// expiredHistoryError for run to bridge. A bookmark is recorded like any
-// event, and the next segment starts from its resourceVersion.
-func (r *watchRecorder[T]) segment(resourceVersion string) (count int, last string, err error) {
+// request older than that, or older than what a cache that evicted events
+// still holds, is refused with a 410, which segment returns as an
+// expiredHistoryError for run to replay. A bookmark is recorded like any
+// event, and the next segment starts from its resourceVersion. segment
+// applies every object event to live.
+func (r *watchRecorder[T]) segment(resourceVersion string, live map[types.UID]T) (count int, last string, err error) {
 	r.segmentStarted.Store(time.Now().UnixNano())
 	defer r.segmentStarted.Store(0)
 	timeout := int64(watchSegmentSeconds)
@@ -180,9 +206,9 @@ func (r *watchRecorder[T]) segment(resourceVersion string) (count int, last stri
 		r.mu.Unlock()
 		switch event.Type {
 		case watch.Added, watch.Modified:
-			r.live[object.GetUID()] = recordedObjectOf(object)
+			live[object.GetUID()] = object
 		case watch.Deleted:
-			delete(r.live, object.GetUID())
+			delete(live, object.GetUID())
 		}
 		last = object.GetResourceVersion()
 		count++
@@ -218,14 +244,14 @@ func (e *withheldWriteError) Error() string { return e.message }
 // watchCacheWindow is the API server's answer to a watch that asks for
 // history its watch cache does not hold: the resourceVersion asked for, and
 // the one the cache's history starts after: the list the cache last restarted
-// from, or, once it has dropped an event since, the revision before its oldest
+// from, or, once it has evicted an event since, the revision before its oldest
 // one. k8s.io/apiserver writes it in pkg/storage/cacher, watch_cache.go in
 // 1.35 and watch_cache_history.go in 1.37.
 var watchCacheWindow = regexp.MustCompile(`^too old resource version: ([0-9]+) \(([0-9]+)\)$`)
 
 // historyStart is where the API server's history starts when refusal is its
 // watch cache refusing to resume at requested. Any other refusal, or one that
-// names another resourceVersion, is not a window the recorder can bridge.
+// names another resourceVersion, is not a window the recorder can replay.
 func historyStart(refusal error, requested string) (string, bool) {
 	var status apierrors.APIStatus
 	if !apierrors.IsResourceExpired(refusal) || !errors.As(refusal, &status) {
@@ -249,93 +275,185 @@ func (e *expiredHistoryError) Error() string { return e.err.Error() }
 
 func (e *expiredHistoryError) Unwrap() error { return e.err }
 
-// watchGap is a stretch of history the watch never delivered, proven to hold
-// no event for the collection: the resourceVersion the recorder had reached,
-// the one the API server's history started after, how many revisions were
-// listed in between, and how many objects each of them held.
+// watchGap is a stretch of history the watch never delivered and the
+// recorder replayed: the resourceVersion the history had reached, the one the
+// API server's history started after, how many revisions were listed in
+// between, how many events their lists replayed, and how long that took.
 type watchGap struct {
 	From, To  string
 	Revisions int
-	Objects   int
+	Events    int
+	Took      time.Duration
 }
 
-// gaps is every gap the recorder resumed across.
+// describeWatchGap is the log line for a gap the watch named crossed.
+func describeWatchGap(name string, gap watchGap) string {
+	return fmt.Sprintf("the %s watch replayed %d events from exact lists of the %d revisions between resourceVersion %s, where its history stopped, and %s, where the API server's history starts, in %s",
+		name, gap.Events, gap.Revisions, gap.From, gap.To, gap.Took.Round(time.Millisecond))
+}
+
+// gaps is every gap the recorder replayed.
 func (r *watchRecorder[T]) gaps() []watchGap {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Clone(r.recordedGaps)
 }
 
-// bridge proves that no object in the collection changed between from, the
-// resourceVersion the history reached, and to, the one the API server's
-// history starts after, and records the gap. A list at the end alone would
-// miss an object created and deleted in between, so the collection is listed
-// at every revision of the gap, each read exactly at that revision, and every
-// list has to hold exactly the objects the history holds at the
-// resourceVersions it recorded: one created, changed or deleted in between
-// shows in the list of the revision that wrote it. This reads
-// resourceVersions as the etcd revisions every API server backed by etcd
-// gives them, which the window refusal itself compares as numbers.
-func (r *watchRecorder[T]) bridge(from, to string) error {
+// replay records the events the watch never delivered between from, the
+// resourceVersion the history reached and live describes, and to, the one the
+// API server's history starts after, and is what the collection holds at to.
+//
+// The collection is listed at every revision from from to to, each list read
+// exactly at its revision. The list at from has to hold what live does, which
+// proves the history the replay continues. Every revision after it is one
+// write the API server made to one key, so the list at it differs from the
+// one before in at most one object, and that difference is the event the
+// watch would have delivered: the listed object, added or modified, which
+// the revision wrote and so carries its resourceVersion; or the object the
+// previous list held, deleted, carrying the revision as its resourceVersion,
+// as k8s.io/apiserver's cacher sends a delete (cache_watcher.go,
+// convertToWatchEvent). A revision that changed no object of the collection
+// wrote something else. This reads resourceVersions as the etcd revisions
+// every API server backed by etcd gives them, which the window refusal itself
+// compares as numbers.
+func (r *watchRecorder[T]) replay(from, to string, live map[types.UID]T) (map[types.UID]T, error) {
 	gap := fmt.Sprintf("the %s watch cannot resume at resourceVersion %s, since the API server's history starts after %s", r.name, from, to)
 	low, lowErr := strconv.ParseUint(from, 10, 64)
 	high, highErr := strconv.ParseUint(to, 10, 64)
 	switch {
 	case lowErr != nil || highErr != nil:
-		return fmt.Errorf("%s, and the two cannot be read as revisions: %w", gap, errors.Join(lowErr, highErr))
+		return nil, fmt.Errorf("%s, and the two cannot be read as revisions: %w", gap, errors.Join(lowErr, highErr))
 	case high <= low:
-		return fmt.Errorf("%s, which leaves no gap to bridge", gap)
+		return nil, fmt.Errorf("%s, which leaves no gap to replay", gap)
 	case high-low > watchGapRevisionLimit:
-		return fmt.Errorf("%s, and the %d revisions in between are more than the %d the recorder lists to prove a gap empty",
+		return nil, fmt.Errorf("%s, and the %d revisions in between are more than the %d the recorder lists to replay a gap",
 			gap, high-low, watchGapRevisionLimit)
 	}
-	for revision := low + 1; revision <= high; revision++ {
+	started := time.Now()
+	r.replayStarted.Store(started.UnixNano())
+	defer r.replayStarted.Store(0)
+	ctx, cancel := context.WithTimeout(r.ctx, watchGapReplayBound)
+	defer cancel()
+	state := maps.Clone(live)
+	var events []watchEvent[T]
+	for revision := low; revision <= high; revision++ {
 		exact := strconv.FormatUint(revision, 10)
-		list := r.newList()
-		if err := r.watcher.List(r.ctx, list, &client.ListOptions{Namespace: r.namespace, Raw: &metav1.ListOptions{
-			ResourceVersion: exact, ResourceVersionMatch: metav1.ResourceVersionMatchExact,
-		}}); err != nil {
-			return fmt.Errorf("%s, and the %s collection could not be listed at resourceVersion %s: %w", gap, r.name, exact, err)
-		}
-		if answered := list.GetResourceVersion(); answered != exact {
-			return fmt.Errorf("%s, and the list asked for at resourceVersion %s answered at %q", gap, exact, answered)
-		}
-		listed, err := listedObjects(list)
+		listed, err := r.listExactly(ctx, exact)
 		if err != nil {
-			return fmt.Errorf("%s, and the %s list at resourceVersion %s cannot be read: %w", gap, r.name, exact, err)
+			return nil, fmt.Errorf("%s, and %w", gap, err)
 		}
-		if differences := historyDifferences(r.live, listed); len(differences) > 0 {
-			return fmt.Errorf("%s, and at resourceVersion %s the collection holds what the watch never delivered: %s",
-				gap, exact, strings.Join(differences, "; "))
+		if revision == low {
+			if differences := historyDifferences(state, listed); len(differences) > 0 {
+				return nil, fmt.Errorf("%s, and at resourceVersion %s, where the history stopped, the collection is not what the history holds: %s",
+					gap, exact, strings.Join(differences, "; "))
+			}
+			continue
+		}
+		event, changed, err := replayRevision(state, listed, exact)
+		if err != nil {
+			return nil, fmt.Errorf("%s, and at resourceVersion %s %w", gap, exact, err)
+		}
+		if !changed {
+			continue
+		}
+		events = append(events, event)
+		if event.Type == watch.Deleted {
+			delete(state, event.Object.GetUID())
+		} else {
+			state[event.Object.GetUID()] = event.Object
 		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.recordedGaps = append(r.recordedGaps, watchGap{From: from, To: to, Revisions: int(high - low), Objects: len(r.live)})
-	return nil
+	r.events = append(r.events, events...)
+	r.recordedGaps = append(r.recordedGaps, watchGap{
+		From: from, To: to, Revisions: int(high - low), Events: len(events), Took: time.Since(started),
+	})
+	return state, nil
 }
 
-// recordedObject is one object of the collection as a list or the history
-// holds it.
-type recordedObject struct {
-	namespace, name, resourceVersion string
+// listExactly is the collection at revision, read exactly there.
+func (r *watchRecorder[T]) listExactly(ctx context.Context, revision string) (map[types.UID]T, error) {
+	ctx, cancel := context.WithTimeout(ctx, watchGapListTimeout)
+	defer cancel()
+	list := r.newList()
+	if err := r.watcher.List(ctx, list, &client.ListOptions{Namespace: r.namespace, Raw: &metav1.ListOptions{
+		ResourceVersion: revision, ResourceVersionMatch: metav1.ResourceVersionMatchExact,
+	}}); err != nil {
+		return nil, fmt.Errorf("the %s collection could not be listed at resourceVersion %s: %w", r.name, revision, err)
+	}
+	if answered := list.GetResourceVersion(); answered != revision {
+		return nil, fmt.Errorf("the list asked for at resourceVersion %s answered at %q", revision, answered)
+	}
+	listed, err := listedObjects[T](list)
+	if err != nil {
+		return nil, fmt.Errorf("the %s list at resourceVersion %s cannot be read: %w", r.name, revision, err)
+	}
+	return listed, nil
 }
 
-func recordedObjectOf(object metav1.Object) recordedObject {
-	return recordedObject{namespace: object.GetNamespace(), name: object.GetName(), resourceVersion: object.GetResourceVersion()}
+// replayRevision is the event revision wrote, from held, what the collection
+// held before it, and listed, what it holds at it, and whether it wrote one.
+// A revision writes one key, so a second change, or an added or modified
+// object at another resourceVersion, is a list that is not this revision's.
+func replayRevision[T client.Object](held, listed map[types.UID]T, revision string) (watchEvent[T], bool, error) {
+	var changes []watchEvent[T]
+	for uid, object := range listed {
+		previous, ok := held[uid]
+		switch {
+		case !ok:
+			changes = append(changes, watchEvent[T]{Type: watch.Added, Object: object})
+		case previous.GetResourceVersion() != object.GetResourceVersion():
+			changes = append(changes, watchEvent[T]{Type: watch.Modified, Object: object})
+		}
+	}
+	for uid, previous := range held {
+		if _, ok := listed[uid]; !ok {
+			deleted, ok := previous.DeepCopyObject().(T)
+			if !ok {
+				return watchEvent[T]{}, false, fmt.Errorf("the copy of %s is a %T", describeObject(previous), previous.DeepCopyObject())
+			}
+			deleted.SetResourceVersion(revision)
+			changes = append(changes, watchEvent[T]{Type: watch.Deleted, Object: deleted})
+		}
+	}
+	switch len(changes) {
+	case 0:
+		return watchEvent[T]{}, false, nil
+	case 1:
+	default:
+		described := make([]string, 0, len(changes))
+		for _, change := range changes {
+			described = append(described, fmt.Sprintf("%s %s", change.Type, describeObject(change.Object)))
+		}
+		slices.Sort(described)
+		return watchEvent[T]{}, false, fmt.Errorf("the collection changed %d objects, which one revision cannot write: %s",
+			len(changes), strings.Join(described, "; "))
+	}
+	change := changes[0]
+	if change.Type != watch.Deleted && change.Object.GetResourceVersion() != revision {
+		return watchEvent[T]{}, false, fmt.Errorf("the collection holds %s, %s at another revision than the one that wrote it",
+			describeObject(change.Object), strings.ToLower(string(change.Type)))
+	}
+	return change, true, nil
 }
 
-func (o recordedObject) String() string { return o.namespace + "/" + o.name }
+// describeObject names an object of the collection and the resourceVersion it
+// is at.
+func describeObject(object client.Object) string {
+	return fmt.Sprintf("%s/%s (uid %s) at resourceVersion %s",
+		object.GetNamespace(), object.GetName(), object.GetUID(), object.GetResourceVersion())
+}
 
 // listedObjects is every object list holds, by UID.
-func listedObjects(list client.ObjectList) (map[types.UID]recordedObject, error) {
-	objects := map[types.UID]recordedObject{}
+func listedObjects[T client.Object](list client.ObjectList) (map[types.UID]T, error) {
+	objects := map[types.UID]T{}
 	err := meta.EachListItem(list, func(item runtime.Object) error {
-		object, err := meta.Accessor(item)
-		if err != nil {
-			return err
+		object, ok := item.(T)
+		if !ok {
+			return fmt.Errorf("the list holds a %T, which is not the kind watched", item)
 		}
-		objects[object.GetUID()] = recordedObjectOf(object)
+		objects[object.GetUID()] = object
 		return nil
 	})
 	return objects, err
@@ -344,21 +462,20 @@ func listedObjects(list client.ObjectList) (map[types.UID]recordedObject, error)
 // historyDifferences is every way listed is not what the history recorded:
 // an object it never recorded, one at another resourceVersion, and one it
 // recorded that is gone.
-func historyDifferences(recorded, listed map[types.UID]recordedObject) []string {
+func historyDifferences[T client.Object](recorded, listed map[types.UID]T) []string {
 	var differences []string
 	for uid, object := range listed {
 		was, ok := recorded[uid]
 		switch {
 		case !ok:
-			differences = append(differences, fmt.Sprintf("%s (uid %s) at resourceVersion %s was never recorded", object, uid, object.resourceVersion))
-		case was.resourceVersion != object.resourceVersion:
-			differences = append(differences, fmt.Sprintf("%s (uid %s) is at resourceVersion %s, recorded at %s",
-				object, uid, object.resourceVersion, was.resourceVersion))
+			differences = append(differences, describeObject(object)+" was never recorded")
+		case was.GetResourceVersion() != object.GetResourceVersion():
+			differences = append(differences, fmt.Sprintf("%s, recorded at %s", describeObject(object), was.GetResourceVersion()))
 		}
 	}
 	for uid, was := range recorded {
 		if _, ok := listed[uid]; !ok {
-			differences = append(differences, fmt.Sprintf("%s (uid %s), recorded at resourceVersion %s, is gone", was, uid, was.resourceVersion))
+			differences = append(differences, describeObject(was)+", recorded there, is gone")
 		}
 	}
 	slices.Sort(differences)
@@ -405,6 +522,12 @@ func (r *watchRecorder[T]) alive() error {
 		if running := time.Since(time.Unix(0, started)); running > watchSegmentOverrun {
 			return fmt.Errorf("the %s watch request has run %s, past the %ds the API server was asked to end it at",
 				r.name, running.Round(time.Second), watchSegmentSeconds)
+		}
+	}
+	if started := r.replayStarted.Load(); started != 0 {
+		if running := time.Since(time.Unix(0, started)); running > watchGapReplayOverrun {
+			return fmt.Errorf("the %s watch has replayed a gap from exact lists for %s, past the %s a replay is bounded to",
+				r.name, running.Round(time.Second), watchGapReplayBound)
 		}
 	}
 	return nil

@@ -49,7 +49,7 @@ func (a *alertingRun) unresolvedSchemaCase(m *migrationRun) {
 	resource.Spec.Execution.ActiveDeadlineSeconds = 300
 	resource.Spec.Execution.NodeSelector = nil
 	resource.Spec.Policy.LockTimeout.Duration = 4 * time.Minute
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open schema incident histories before creation")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, name+"-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 	jobs := newStoredStateRecorder[*batchv1.Job](a.t, a.ctx, watcher, name+"-jobs", a.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })

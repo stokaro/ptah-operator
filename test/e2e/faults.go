@@ -66,16 +66,32 @@ const (
 	// watchSegmentSeconds, and a stream that outlives that by a delivery
 	// bound is no longer being served.
 	watchSegmentOverrun = watchSegmentSeconds*time.Second + watchDeliveryBound
-	// watchGapRevisionLimit is the widest gap, in revisions, a watch resumes
-	// across, since each revision costs a list of the watched namespace. A
-	// gap holds every revision the cluster wrote between the watch's last
-	// event and the list its restarted watch cache started from, which
-	// k8s.io/apiserver restarts a second after the cache's own watch failed:
-	// the gap that failed database-lines run 43752226543 was 30 revisions,
-	// about five seconds of that cluster's writes. Listing 2000 revisions of
-	// one namespace took under half a second against a local kube-apiserver
-	// 1.35. A wider gap is refused before anything is listed.
-	watchGapRevisionLimit = 2000
+	// watchGapRevisionLimit is the widest gap, in revisions, a watch replays,
+	// since each revision costs a list of the watched namespace. A gap holds
+	// every revision the cluster wrote between the watch's last event and the
+	// list its restarted watch cache started from, which k8s.io/apiserver
+	// restarts a second after the cache's own watch failed: the gap that
+	// failed database-lines run 43752226543 was 30 revisions, about five
+	// seconds of that cluster's writes. A wider gap is refused before
+	// anything is listed. On the client newRecorderClient builds from the
+	// harness's configuration, about 950 revisions of a namespace holding 20
+	// Jobs replayed in 330 to 415 ms against a local kube-apiserver 1.35 and
+	// 1.37, under half a millisecond a list, and watchGapReplayBound allows 15
+	// ms a list at the limit. On the harness's own client, throttled to 50
+	// requests a second, the same replay ran into that bound after about 850
+	// lists.
+	watchGapRevisionLimit = 1000
+	// watchGapListTimeout bounds one exact list of a replay.
+	watchGapListTimeout = 5 * time.Second
+	// watchGapReplayBound bounds a whole replay. A recorder asked to stop
+	// ends after the segment or the replay it is in, whichever runs, so the
+	// 35 seconds a closing recorder is given cover a replay as they cover a
+	// segment.
+	watchGapReplayBound = 15 * time.Second
+	// watchGapReplayOverrun is how long a replay may run before alive reports
+	// it hung: past its own bound by the one list that may still be in
+	// flight.
+	watchGapReplayOverrun = watchGapReplayBound + watchGapListTimeout
 )
 
 // The objects and keys the fault injection reads and writes.

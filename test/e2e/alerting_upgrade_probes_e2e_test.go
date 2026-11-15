@@ -31,7 +31,7 @@ func (a *alertingRun) upgradeProbes(evidence string) ([]client.Object, func(), f
 	if registry.Scheme != "oci" || registry.Host == "" || migration.Status.ExecutionBinding == nil {
 		a.fatalf("upgrade probes have no native producer")
 	}
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open pre-creation probe histories")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "upgrade-probe-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 	migrations := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "upgrade-probe-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })

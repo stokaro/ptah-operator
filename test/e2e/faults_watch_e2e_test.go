@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -27,8 +28,8 @@ import (
 // from, and starts the watch there. Starting from an empty resourceVersion
 // would replay every existing object as ADDED, as if the phase had created
 // it. The Jobs listed enter the observed ledger, since the list and the watch
-// after it are one boundary with no gap, and every object listed is part of
-// the history a gap is held to.
+// after it are one boundary with no gap, and every object listed is where the
+// history a gap is replayed onto starts.
 func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet bool, newList func() client.ObjectList) *watchRecorder[T] {
 	f.t.Helper()
 	list := newList()
@@ -42,11 +43,20 @@ func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet b
 		f.check(err, "validate the initial fault Job list before updating the observed ledger")
 		f.observed.add(records)
 	}
-	r, err := newWatchRecorder[T](name, namespace, quiet, f.watcher, newList, list)
-	f.check(err, "start the %s watch", name)
-	go r.run(resourceVersion)
+	r := newWatchRecorder[T](name, namespace, quiet, f.watcher, newList)
+	go r.run(list)
 	f.recorders = append(f.recorders, r)
 	return r
+}
+
+// logWatchGaps logs every gap r replayed. A recorder outside the fault run
+// calls it as its test closes the recorder, so a gap crossed there is in the
+// log as one crossed in the fault run is.
+func logWatchGaps(t testing.TB, r recorder) {
+	t.Helper()
+	for _, gap := range r.gaps() {
+		t.Log(describeWatchGap(r.stem(), gap))
+	}
 }
 
 // startWatches starts the five watches every fault proof reads its history
@@ -358,13 +368,12 @@ func (f *faultRun) databasePod() string {
 }
 
 // validateAndScanWatches holds every watch to having recorded something and
-// to carrying no credential, and logs every gap a watch resumed across.
+// to carrying no credential, and logs every gap a watch replayed.
 func (f *faultRun) validateAndScanWatches() {
 	f.t.Helper()
 	for _, r := range f.recorders {
 		for _, gap := range r.gaps() {
-			f.logf("the %s watch resumed at resourceVersion %s after an API server's watch cache dropped its history from %s; the %d revisions between held the %d objects the history records, unchanged",
-				r.stem(), gap.To, gap.From, gap.Revisions, gap.Objects)
+			f.logf("%s", describeWatchGap(r.stem(), gap))
 		}
 		content, count, err := r.history()
 		f.check(err, "encode the %s watch history", r.stem())

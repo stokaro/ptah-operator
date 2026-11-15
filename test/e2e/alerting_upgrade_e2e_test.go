@@ -241,7 +241,7 @@ func (a *alertingRun) upgradeAlertCase(intent alUpgradeIntent, hookAccount, char
 		check()
 		return a.upgradeGauge("up", 1) && a.upgradeGauge("ptah_operator_upgrade_observer_ready", 1) && a.upgradeGauge("ptah_operator_upgrade_pending", 1) && a.upgradeGauge("ptah_operator_upgrade_deadline_seconds", float64(initial.Deadline.UnixNano())/1e9), "waiting for native observer scrape", nil
 	}), "scrape the observer before fault injection")
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open independent upgrade hook history")
 	jobs := newStoredStateRecorder[*batchv1.Job](a.t, a.ctx, watcher, "upgrade-"+mode+"-hooks", intent.Namespace, func() client.ObjectList { return &batchv1.JobList{} })
 	checkHistory := func() { check(); a.check(jobs.alive(), "retain every transient hook event") }
