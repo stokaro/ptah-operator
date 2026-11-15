@@ -132,6 +132,7 @@ func TestCompareDocumentsIgnoresOnlyTheVolatileValues(t *testing.T) {
 		`"message":"dial tcp 172.20.0.2:5432: refused at 2026-11-04T15:42:49.5Z","path":"/work/ptah-plan-output-123456/first.plan.json",` +
 		`"digest":"` + aDigest + `","reference":"oci://registry/a@` + aDigest + `","plan_digest":"` + aDigest + `",` +
 		`"from_fingerprint":"` + aDigest + `","content_digest":"` + aDigest + `","log":"correlation_id=0a1b2c level=INFO",` +
+		`"warning":"planned\\n2026/11/14 12:17:40 WARN could not append",` +
 		`"refusal":"\"/proc/14/environ\" is outside allowed root"}`
 	for _, row := range []struct {
 		name, document string
@@ -147,6 +148,8 @@ func TestCompareDocumentsIgnoresOnlyTheVolatileValues(t *testing.T) {
 		{"another artifact in a reference", strings.Replace(base, "registry/a@"+aDigest, "registry/a@"+anotherDigest, 1), true},
 		{"another correlation id", strings.Replace(base, "correlation_id=0a1b2c", "correlation_id=99ff", 1), true},
 		{"another process id", strings.Replace(base, "/proc/14/environ", "/proc/15/environ", 1), true},
+		{"another time starting a log line", strings.Replace(base, "2026/11/14 12:17:40", "2026/11/15 08:00:01", 1), true},
+		{"a log line's words", strings.Replace(base, "WARN could", "WARN would", 1), false},
 		{"another file of the process", strings.Replace(base, "/proc/14/environ", "/proc/14/cmdline", 1), false},
 		{"a process named where its id was", strings.Replace(base, "/proc/14/environ", "/proc/self/environ", 1), false},
 		{"another repository in a reference", strings.Replace(base, "registry/a@", "registry/b@", 1), false},
@@ -192,6 +195,37 @@ func TestDecodeDocumentReadsAVerificationItsOwnWay(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			err := runnerharness.DecodeDocument(args, test.exit, []byte(test.stdout))
+			if (err == nil) != test.want {
+				t.Fatalf("DecodeDocument() = %v, want accepted %t", err, test.want)
+			}
+		})
+	}
+}
+
+// A run asked to check for drift reports the check it ran, and a run nobody
+// asked to check reports none: the runner refuses either the other way round.
+func TestDecodeDocumentHoldsADriftCheckToTheRequest(t *testing.T) {
+	t.Parallel()
+	status := `"status":{"contract_version":2,"current_version":2,"total_migrations":3,"has_pending_changes":true}`
+	refused := `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[3],` +
+		`"drift_check":{"outcome":"unable","stage":"claim","reason":"not_clean"},` + status + `}`
+	unchecked := `{"contract_version":2,"command":"migrations up","direction":"up","outcome":"failed","planned":[3],` + status + `}`
+	plain := []string{"migrations", "up", "--migrations-dir", "/m", "--json"}
+	checked := append(slices.Clone(plain), "--check-drift")
+	for _, test := range []struct {
+		name   string
+		args   []string
+		stdout string
+		want   bool
+	}{
+		{"a checked run's check", checked, refused, true},
+		{"a checked run with no check", checked, unchecked, false},
+		{"an unchecked run", plain, unchecked, true},
+		{"an unchecked run with a check", plain, refused, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := runnerharness.DecodeDocument(test.args, 2, []byte(test.stdout))
 			if (err == nil) != test.want {
 				t.Fatalf("DecodeDocument() = %v, want accepted %t", err, test.want)
 			}

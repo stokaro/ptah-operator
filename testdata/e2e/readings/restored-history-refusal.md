@@ -11,7 +11,10 @@ both record for record, on 2026-11-06 so did the v0.22.0 release image
 reading record for record. On MySQL it creates the revision table with
 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
 ([stokaro/ptah#5874](https://github.com/stokaro/ptah/pull/5874)), so the MySQL
-reading here is v0.26.0's; every other record matched. They exercise the
+reading here is v0.26.0's; every other record matched. On 2026-11-14 the v0.28.0
+release image (`2ee460a6`) reproduced both readings record for record, and on
+2026-11-15 so did the v0.29.0 release image (`75fa9991`). They
+exercise the
 migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed

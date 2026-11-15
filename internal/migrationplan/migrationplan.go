@@ -44,6 +44,7 @@ const (
 var (
 	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
+	shadowIdentityPattern     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 
 // Binding is everything a migration plan is decided from. A changed input
@@ -60,9 +61,12 @@ type Binding struct {
 	ArtifactDigest     string
 	// Source is the ConfigMap source a version 2 plan binds in place of the
 	// artifact digest and the verification policy.
-	Source                   *fingerprint.PlanSource
-	CoordinationDigest       string
-	TargetIdentityDigest     string
+	Source               *fingerprint.PlanSource
+	CoordinationDigest   string
+	TargetIdentityDigest string
+	// ShadowIdentityDigest is the shadow database a drift check replays
+	// into, and empty for a plan whose policy asks for no check.
+	ShadowIdentityDigest     string
 	PolicyFingerprint        string
 	VerificationPolicyUID    types.UID
 	VerificationPolicyDigest string
@@ -104,6 +108,9 @@ func (b Binding) Fingerprint() (string, error) {
 	if b.RunnerProtocolVersion < 1 {
 		return "", errors.New("runner protocol version must be positive")
 	}
+	if b.ShadowIdentityDigest != "" && !shadowIdentityPattern.MatchString(b.ShadowIdentityDigest) {
+		return "", errors.New("the shadow identity digest is not a SHA-256 digest")
+	}
 	document := map[string]any{
 		"contract_version":         version,
 		"migration_uid":            string(b.MigrationUID),
@@ -127,6 +134,12 @@ func (b Binding) Fingerprint() (string, error) {
 		document["verification_policy_digest"] = b.VerificationPolicyDigest
 	} else {
 		document["source"] = *b.Source
+	}
+	// Only a plan that binds a shadow names one, so a plan whose policy asks
+	// for no drift check hashes the document it hashed before the check
+	// existed, and keeps its name and its approvals.
+	if b.ShadowIdentityDigest != "" {
+		document["shadow_identity_digest"] = b.ShadowIdentityDigest
 	}
 	return fingerprint.DigestCanonicalJSON(document)
 }

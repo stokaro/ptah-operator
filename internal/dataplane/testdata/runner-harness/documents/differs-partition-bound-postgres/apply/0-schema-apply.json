@@ -11,5 +11,9 @@
     {
       "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:4b90096ca709df97f10feb498da8ce82d9c8d384e65f2f7d782fbf5e5b74eb20"
+  }
 }

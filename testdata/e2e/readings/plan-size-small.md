@@ -1,7 +1,11 @@
-The two small plan documents were generated on 2026-11-12 by the Ptah
-v0.23.0 release image
-`ghcr.io/stokaro/ptah@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489`
-(commit `f47b2bfa3b696c93730e7d25397987ed0a4a2562`). It ran
+The two small plan documents were generated on 2026-11-14 by the Ptah
+v0.28.0 release image
+`ghcr.io/stokaro/ptah@sha256:34356290733b9c7ce526312b8ce89f753c85a04c9c187d71b4cbd63af0080977`
+(commit `2ee460a688d63f34e853b1eee4228a2463a6baa8`), for arm64. On 2026-11-15
+the v0.29.0 release image
+`ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8`
+(commit `75fa9991177e9049b66fe2e37abec0db40f47568`), run the same way, wrote
+both documents byte for byte, so they stay. It ran
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what
@@ -30,7 +34,9 @@ databases names of one length (`planSizeDatabase`); a name one byte shorter than
 the first measured a repeated byte at 5 bytes instead of 6, and stopped the row.
 The v0.23.0 image reproduces both documents' statements and byte sizes exactly.
 The MySQL document is byte-identical to the v0.22.0 one; the PostgreSQL one
-differs only in the plan name and the fingerprints.
+differs only in the plan name and the fingerprints. The v0.28.0 image does the
+same again: its MySQL document is byte-identical to the v0.23.0 one, and its
+PostgreSQL one differs only in the plan name and the fingerprints.
 
 The SQL source contains 32 `<` bytes in defaults. PostgreSQL uses one TEXT
 column. MySQL distributes the total over 100 VARCHAR(16000) columns in a fixed
@@ -39,7 +45,7 @@ a MySQL TEXT default. All native plans are non-destructive CREATE TABLE
 statements, with no padding or edited plan bytes in the CLI probes.
 
 Adding one `<` byte increases the saved native JSON by six bytes; adding one
-`x` increases it by one. With v0.22.0 and v0.23.0 the PostgreSQL envelope is
+`x` increases it by one. With v0.22.0, v0.23.0, v0.28.0 and v0.29.0 the PostgreSQL envelope is
 587 bytes and the MySQL envelope is 23,181 bytes; with v0.17.0 they were 549 and
 23,117, and before it 592 and 27,517. At v0.23.0 the cluster scenario, which
 calibrates from real plans, passed its exact 8 MiB and 8 MiB + 1 byte rows on

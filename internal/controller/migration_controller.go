@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -41,6 +42,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -1109,6 +1111,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if operation.Type == operatorv1alpha1.MigrationOperationVerify && result.Error.Code == verificationRefusedCode {
 			return r.refuseMigrationArtifact(ctx, migration, job, result)
 		}
+		if operation.Type == operatorv1alpha1.MigrationOperationHistory && migration.Spec.Policy.DriftCheck != nil &&
+			slices.Contains(historyShadowRefusalCodes, result.Error.Code) {
+			return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+				shadowReadFailure(migration, fmt.Sprintf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))))
+		}
 		return r.retryMigrationOperation(ctx, migration, job,
 			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
 	}
@@ -1566,7 +1573,19 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if !sha256DigestPattern.MatchString(result.TargetIdentityDigest) {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no target identity"))
 		}
-		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
+		// The read names the shadow exactly when the policy asks for a check:
+		// a plan computed from a read that named none would run unchecked. A
+		// runner names none when the Secret key holds no URL, the optional key
+		// of a Secret that lacks it included.
+		if checked := migration.Spec.Policy.DriftCheck != nil; checked != sha256DigestPattern.MatchString(result.ShadowIdentityDigest) {
+			if checked && result.ShadowIdentityDigest == "" {
+				return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+					shadowReadFailure(migration, "missing_shadow: the shadow database Secret key holds no URL"))
+			}
+			return r.retryMigrationOperation(ctx, migration, job,
+				errors.New("the history result does not name the shadow database the drift check policy asks for"))
+		}
+		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest, result.ShadowIdentityDigest); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
 		recordMigrationRunVerification(migration)
@@ -1856,7 +1875,7 @@ func migrationsPending(count int) string {
 func (r *MigrationReconciler) recordMigrationHistory(
 	migration *operatorv1alpha1.PtahMigration,
 	report dataplane.MigrationStatusReport,
-	targetIdentityDigest string,
+	targetIdentityDigest, shadowIdentityDigest string,
 ) error {
 	historyFingerprint, err := migrationplan.HistoryFingerprint(report)
 	if err != nil {
@@ -1878,6 +1897,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		CheckpointVersion:    report.CheckpointVersion,
 		Fingerprint:          historyFingerprint,
 		TargetIdentityDigest: targetIdentityDigest,
+		ShadowIdentityDigest: shadowIdentityDigest,
 		PendingCount:         int32(len(pending)),
 		Dirty:                report.DirtyRevision != nil,
 	}
@@ -2072,6 +2092,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		Source:                   sourcebinding.Fingerprint(source),
 		CoordinationDigest:       coordinationDigest,
 		TargetIdentityDigest:     history.TargetIdentityDigest,
+		ShadowIdentityDigest:     history.ShadowIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
@@ -2096,6 +2117,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		Source:                   source,
 		CoordinationDigest:       planBinding.CoordinationDigest,
 		TargetIdentityDigest:     planBinding.TargetIdentityDigest,
+		ShadowIdentityDigest:     planBinding.ShadowIdentityDigest,
 		PolicyFingerprint:        policyFingerprint,
 		VerificationPolicyUID:    policyBinding.UID,
 		VerificationPolicyDigest: policyBinding.Digest,
@@ -2170,7 +2192,7 @@ func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alp
 // policy that changed after the plan was made invalidates it rather than
 // executing under terms nobody approved.
 func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (string, error) {
-	return fingerprint.DigestCanonicalJSON(map[string]string{
+	policy := map[string]string{
 		"apply":        string(migration.Spec.Policy.Apply),
 		"lock_timeout": migration.Spec.Policy.LockTimeout.Duration.String(),
 		// The mode decides how the run is wrapped, so a sequence approved under
@@ -2179,7 +2201,40 @@ func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (stri
 		// no mode and Ptah chooses, which is a different run from one that
 		// asked for "file" even where Ptah would have picked it.
 		"transaction_mode": migration.Spec.Policy.TransactionMode,
-	})
+	}
+	// A drift check is a guard in front of the run, so turning it on, off or
+	// to another shadow is another execution. A policy without one hashes
+	// the map it hashed before the check existed, and keeps its plans.
+	if check := migration.Spec.Policy.DriftCheck; check != nil {
+		policy["drift_check_shadow_secret"] = check.Shadow.URLFrom.Name
+		policy["drift_check_shadow_key"] = check.Shadow.URLFrom.Key
+		// What the check leaves out decides what it can refuse, so another
+		// list is another policy. The list is a set, so its order is not; a
+		// check that leaves nothing out hashes what it hashed before the list
+		// existed.
+		exclude, err := driftExcludeInput(check)
+		if err != nil {
+			return "", err
+		}
+		if exclude != "" {
+			policy["drift_check_exclude"] = exclude
+		}
+	}
+	return fingerprint.DigestCanonicalJSON(policy)
+}
+
+// driftExcludeInput is a drift check's exclude list as one fingerprint value:
+// the selectors as a set, encoded as a JSON array, or the empty string for a
+// check that leaves nothing out.
+func driftExcludeInput(check *operatorv1alpha1.MigrationDriftCheck) (string, error) {
+	if len(check.Exclude) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(schemaselector.Normalize(check.Exclude))
+	if err != nil {
+		return "", fmt.Errorf("encode the drift check's exclude list: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // migrationInputFingerprint is what the operation was decided from. An input
@@ -2218,6 +2273,22 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		// bumps it on every spec edit, so an edited mode already retired an
 		// undispatched claim before this entry existed.
 		"transaction_mode": migration.Spec.Policy.TransactionMode,
+	}
+	// The history read and the Apply mount the shadow, so it is an input of
+	// both, the way the target's Secret is. A resource without a check adds
+	// nothing, and its claims keep the fingerprints they had.
+	if check := migration.Spec.Policy.DriftCheck; check != nil {
+		inputs["shadow_secret"] = check.Shadow.URLFrom.Name
+		inputs["shadow_key"] = check.Shadow.URLFrom.Key
+		// The Apply's Pod carries the list, so it is an input too, and absent
+		// where the check leaves nothing out.
+		exclude, err := driftExcludeInput(check)
+		if err != nil {
+			return "", err
+		}
+		if exclude != "" {
+			inputs["drift_check_exclude"] = exclude
+		}
 	}
 	if operationType != operatorv1alpha1.MigrationOperationResolve {
 		if migration.Status.Artifact == nil {
@@ -2332,6 +2403,21 @@ func initBoundaryOf(pods []*corev1.Pod) string {
 // retryMigrationOperation advances to a fresh attempt with a fresh
 // deterministic name. A Job that already exists is never reused: the claim it
 // answered is the one that failed.
+// historyShadowRefusalCodes are the runner's refusals of a history read whose
+// shadow database it cannot name for a plan: a URL it cannot identify, and one
+// that leads to the target's server and database.
+var historyShadowRefusalCodes = []string{"invalid_shadow", "shadow_is_target"}
+
+// shadowReadFailure is a history read that could not name the shadow database
+// its drift check uses, with the Secret key a person fixes. It publishes no
+// plan, so no approval is spent on a shadow that cannot be used.
+func shadowReadFailure(migration *operatorv1alpha1.PtahMigration, refusal string) error {
+	shadow := migration.Spec.Policy.DriftCheck.Shadow.URLFrom
+	return fmt.Errorf("%s. Check the URL that Secret %q holds under key %q: the drift check's shadow database "+
+		"has to be a database of its own, and no plan is published until the history read can name it",
+		refusal, shadow.Name, shadow.Key)
+}
+
 func (r *MigrationReconciler) retryMigrationOperation(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,

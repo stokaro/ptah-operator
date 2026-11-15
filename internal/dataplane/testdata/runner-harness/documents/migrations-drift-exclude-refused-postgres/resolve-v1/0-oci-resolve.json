@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@sha256:e0e89f9536e04540fffa5994d3d0ae03dc7587cc9044335895cdf3bf12161f9f",
+  "digest": "sha256:e0e89f9536e04540fffa5994d3d0ae03dc7587cc9044335895cdf3bf12161f9f",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1580
+}

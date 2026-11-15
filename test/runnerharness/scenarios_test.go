@@ -297,6 +297,23 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-failed-postgres.json"), wantCode("child_exit"))
 		run.history("history-dirty")
 	})
+	// Since v0.29.0 Ptah asks every selected file what its transaction or its
+	// text refuses before the first of them runs (stokaro/ptah#6052 and
+	// #6055). The second file builds an index CONCURRENTLY, which PostgreSQL
+	// refuses inside the transaction the file runs in, so the run applies
+	// neither file and leaves no revision row, and nothing in the document
+	// says which file it refused.
+	t.Run("refused-postgres", func(t *testing.T) {
+		t.Parallel()
+		family, database := "migrations-refused-postgres", "harness_refused_postgres"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-refused-postgresql")
+		run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		before := run.history("history-pending")
+		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-refused-postgres.json"), wantCode("child_exit"))
+		run.history("history-still-pending")
+	})
 	// A checkpoint is the floor a fresh database starts from, and the history
 	// reports it. No other row reads checkpoint_version.
 	t.Run("checkpoint-postgres", func(t *testing.T) {
@@ -370,6 +387,98 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-log-lost-mysql.json"))
 		run.history("history-applied")
 	})
+}
+
+// driftChecks run an Apply that asks Ptah to compare the target with its
+// applied history first, on PostgreSQL. Each row reads a history whose first
+// two versions an unchecked run applied, then plans the third: a clean target
+// lets it run, a column added outside the migrations stops it with nothing
+// applied, and a shadow that already holds a table stops it before any
+// replay. A table no migration declares stops the run, as two differences,
+// the table and its key; excluded, it lets the run go on, and a column
+// outside the list still stops it with one difference rather than three. A
+// selector deeper than the URL's scope is one Ptah refuses at stage scope.
+func driftChecks(t *testing.T, l *lab) {
+	t.Helper()
+	// The lab's URL names no search_path, so Ptah reads every schema and a
+	// selector starts with the schema's name. The selector with a dash is
+	// one Ptah reads as a pattern that matches nothing, which is what the
+	// --drift-exclude= form makes of it.
+	unmigrated := func(t *testing.T, target string) {
+		l.sql(t, enginePostgres, target, "CREATE TABLE harness_job_queue (id INTEGER PRIMARY KEY)")
+	}
+	excluded := []string{"public.harness_job_queue", "-not-a-flag"}
+	for _, row := range []struct {
+		name, stored string
+		// change is what happens to the two databases after the unchecked
+		// run and before the checked one.
+		change  func(t *testing.T, target, shadow string)
+		exclude []string
+		code    string
+	}{
+		{name: "drift-clean-postgres", change: func(*testing.T, string, string) {}},
+		{
+			name: "drift-unmigrated-table-postgres", code: "child_exit",
+			change: func(t *testing.T, target, _ string) { unmigrated(t, target) },
+		},
+		{
+			name: "drift-excluded-postgres", exclude: excluded,
+			change: func(t *testing.T, target, _ string) { unmigrated(t, target) },
+		},
+		{
+			name: "drift-excluded-drifted-postgres", exclude: excluded, code: "child_exit",
+			change: func(t *testing.T, target, _ string) {
+				unmigrated(t, target)
+				l.sql(t, enginePostgres, target, "ALTER TABLE e2e_migration_widgets ADD COLUMN nickname TEXT")
+			},
+		},
+		{
+			name: "drift-exclude-refused-postgres", stored: "migrations-up-drift-exclude-refused-postgres.json",
+			exclude: []string{"public.e2e_migration_widgets.nickname.extra"}, code: "child_exit",
+			change: func(*testing.T, string, string) {},
+		},
+		{
+			name: "drift-drifted-postgres", stored: "migrations-up-drifted-postgres.json", code: "child_exit",
+			change: func(t *testing.T, target, _ string) {
+				l.sql(t, enginePostgres, target, "ALTER TABLE e2e_migration_widgets ADD COLUMN nickname TEXT")
+			},
+		},
+		{
+			name: "drift-shadow-not-empty-postgres", stored: "migrations-up-drift-shadow-not-empty-postgres.json", code: "child_exit",
+			change: func(t *testing.T, _, shadow string) {
+				l.sql(t, enginePostgres, shadow, "CREATE TABLE left_behind (id INTEGER PRIMARY KEY)")
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			family := "migrations-" + row.name
+			database := "harness_" + strings.ReplaceAll(row.name, "-", "_")
+			l.createDatabase(t, enginePostgres, database)
+			l.createDatabase(t, enginePostgres, database+"_shadow")
+			older := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-older-postgresql")
+			run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(older))
+			run.resolve("resolve-v1")
+			run.applyPlanned("apply-v1", pending(t, family, run.history("history-v1")))
+
+			current := l.publish(t, "migrations", "migrations/"+family, "v2", "--migrations-dir", "/fixtures/migrations-postgresql")
+			run.migration.Spec.Artifact = ociSource(current)
+			run.checkDrift(l.databaseURL(enginePostgres, database+"_shadow"))
+			run.migration.Spec.Policy.DriftCheck.Exclude = row.exclude
+			row.change(t, database, database+"_shadow")
+			run.resolve("resolve-v2")
+			before := run.history("history-pending")
+			var adjust []func(*rowSpec)
+			if row.stored != "" {
+				adjust = append(adjust, storedAs("migrations up --check-drift", row.stored))
+			}
+			if row.code != "" {
+				adjust = append(adjust, wantCode(row.code))
+			}
+			run.applyPlanned("apply", pending(t, family, before), adjust...)
+			run.history("history-after")
+		})
+	}
 }
 
 // narrowMigrationLog is Ptah's schema_migrations_log for MySQL with the actor

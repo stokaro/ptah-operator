@@ -75,7 +75,11 @@ func renamedJob(job *batchv1.Job, prefix, word string) *batchv1.Job {
 // migrationHistoryJob is the migration family's history read, which the guard
 // holds to the same containers an Apply carries: the fetch, and the database URL.
 func migrationHistoryJob() (*batchv1.Job, error) {
-	migration := tenantMigration.DeepCopy()
+	return migrationHistoryJobFor(tenantMigration.DeepCopy())
+}
+
+// migrationHistoryJobFor is the history read the manager builds for migration.
+func migrationHistoryJobFor(migration *operatorv1alpha1.PtahMigration) (*batchv1.Job, error) {
 	operation := operatorv1alpha1.MigrationOperationStatus{
 		Type:               operatorv1alpha1.MigrationOperationHistory,
 		ID:                 digest("8"),

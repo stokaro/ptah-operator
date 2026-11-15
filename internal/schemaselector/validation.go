@@ -4,6 +4,7 @@ package schemaselector
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -33,6 +34,15 @@ func Validate(values []string) error {
 		seen[value] = struct{}{}
 	}
 	return nil
+}
+
+// Normalize returns values as the set Ptah reads them as: sorted, each once.
+// Two orders of one list select the same objects, so a digest or a command line
+// built from the result is the same for both.
+func Normalize(values []string) []string {
+	normalized := slices.Clone(values)
+	slices.Sort(normalized)
+	return slices.Compact(normalized)
 }
 
 func hasControlCharacter(value string) bool {

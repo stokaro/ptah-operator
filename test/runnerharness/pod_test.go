@@ -283,3 +283,37 @@ func TestTranslateProjectsWhatTheKubeletWould(t *testing.T) {
 		}
 	}
 }
+
+// The kubelet expands a literal value against the variables before it and
+// takes a Secret's value as it is, and docker expands nothing, so the
+// container the harness runs reads what the Pod's process would.
+func TestTranslateExpandsLiteralsAsTheKubeletDoes(t *testing.T) {
+	t.Parallel()
+	job := goldenJob(t, "schema-apply-admitted-scheduling")
+	container := &job.Spec.Template.Spec.Containers[0]
+	container.Env = append(container.Env,
+		corev1.EnvVar{Name: "E2E_EARLIER", Value: "earlier"},
+		corev1.EnvVar{Name: "E2E_SECRET", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "e2e-literal"}, Key: "value",
+		}}},
+		corev1.EnvVar{Name: "E2E_LITERAL", Value: "a$$b $(E2E_EARLIER) $(E2E_LATER) $(E2E_SECRET) x$"},
+		corev1.EnvVar{Name: "E2E_LATER", Value: "later"},
+	)
+	cluster := everyReference(job)
+	cluster.Secrets["e2e-literal"] = map[string][]byte{"value": []byte("$(E2E_EARLIER)$$")}
+	pod, err := runnerharness.Translate(job, cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := pod.Containers[len(pod.Containers)-1]
+	read := map[string]runnerharness.EnvVar{}
+	for _, variable := range operation.Env {
+		read[variable.Name] = variable
+	}
+	if got := read["E2E_LITERAL"]; got.Value != "a$b earlier $(E2E_LATER) $(E2E_EARLIER)$$ x$" || got.Secret {
+		t.Errorf("the literal reads %+v", got)
+	}
+	if got := read["E2E_SECRET"]; got.Value != "$(E2E_EARLIER)$$" || !got.Secret {
+		t.Errorf("the Secret's value reads %+v, want it as the Secret holds it", got)
+	}
+}

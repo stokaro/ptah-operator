@@ -156,6 +156,13 @@ func TestMigrationApprovalRefusesWhatTheEvidenceNoLongerSupports(t *testing.T) {
 			message: "database identity changed",
 		},
 		{
+			name: "the drift check's shadow database changed",
+			mutate: func(migration *operatorv1alpha1.PtahMigration) {
+				migration.Status.History.ShadowIdentityDigest = "sha256:" + strings.Repeat("8", 64)
+			},
+			message: "shadow database changed",
+		},
+		{
 			name: "the artifact was re-resolved",
 			mutate: func(migration *operatorv1alpha1.PtahMigration) {
 				migration.Status.Artifact.Digest = "sha256:" + strings.Repeat("9", 64)

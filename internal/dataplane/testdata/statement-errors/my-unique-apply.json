@@ -17,5 +17,9 @@
     "statements": 1,
     "sqlstate": "23000",
     "error_number": 1062
+  },
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:1b7778cf61c2787555361dcfeb2e7025ada658f6b2f7c80703432049685fce3c"
   }
 }

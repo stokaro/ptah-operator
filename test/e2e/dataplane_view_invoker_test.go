@@ -17,8 +17,9 @@ import (
 )
 
 // viewInvokerReading reads a plan the security_invoker row's filters are held
-// to. The three view-invoker-*-plan.json readings are what Ptah v0.26.0 planned
-// for the row's own artifacts, in order, against one PostgreSQL 17 database;
+// to. The three view-invoker-*-plan.json readings are what Ptah v0.26.0,
+// v0.28.0 and v0.29.0 planned, byte for byte, for the row's own artifacts, in order, against
+// one PostgreSQL 17 database;
 // the differing/plan-view-invoker-*.json captures are the runner harness's.
 func viewInvokerReading(t *testing.T, path ...string) []byte {
 	t.Helper()

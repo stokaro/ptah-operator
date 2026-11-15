@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres:v2",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@sha256:cd14e5ef55399251c19a9a82b16f158e682fdef093ac551aa74b792a3091f3f2",
+  "digest": "sha256:cd14e5ef55399251c19a9a82b16f158e682fdef093ac551aa74b792a3091f3f2",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}

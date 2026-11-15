@@ -20,5 +20,9 @@
     {
       "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378"
+  }
 }

@@ -1,0 +1,89 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    3
+  ],
+  "planned_keys": [
+    "3"
+  ],
+  "error": {
+    "message": "the database schema differs from the schema its 2 applied migrations produce, in 1 place, so no pending migration was run; first: extra column e2e_migration_widgets.nickname"
+  },
+  "migration_log": {
+    "written": 0
+  },
+  "status": {
+    "current_version": 2,
+    "applied_migrations": [
+      1,
+      2
+    ],
+    "applied_migration_keys": [
+      "1",
+      "2"
+    ],
+    "pending_migrations": [
+      3
+    ],
+    "pending_migration_keys": [
+      "3"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 3,
+    "has_pending_changes": true,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Widgets",
+        "checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+        "applied_checksum": "2b419c169de3fadfeee8e0d89d565aa716e54c3a11acde99050c40f580f512b6",
+        "applied_at": "2026-11-15T00:32:38.269183Z",
+        "execution_time_ms": 4,
+        "state": "applied"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Add Widget Color",
+        "checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+        "applied_checksum": "7dfd4c547143d1118f4cd8946e0e7aea3d40b23c48b9ead1ecc710b2cff65afc",
+        "applied_at": "2026-11-15T00:32:38.27342Z",
+        "execution_time_ms": 3,
+        "state": "applied"
+      },
+      {
+        "version": 3,
+        "version_key": "3",
+        "description": "Recolor First Widget",
+        "checksum": "c50d9a9d36bb9ae45af4c5793bcc05013c75dbd9b48b1ef76ad7f6c8dca1cd41",
+        "state": "pending"
+      }
+    ],
+    "current_version_key": "2"
+  },
+  "drift_check": {
+    "outcome": "drifted",
+    "replayed": [
+      1,
+      2
+    ],
+    "replayed_keys": [
+      "1",
+      "2"
+    ],
+    "findings": [
+      {
+        "kind": "extra_column",
+        "object": "e2e_migration_widgets.nickname",
+        "table": "e2e_migration_widgets",
+        "column": "nickname",
+        "message": "extra column e2e_migration_widgets.nickname"
+      }
+    ]
+  }
+}

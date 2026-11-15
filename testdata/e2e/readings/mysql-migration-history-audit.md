@@ -15,8 +15,9 @@ whether the table exists.
   2026-10-21 the same probe run with the v0.14.0 release image (`e046527f`) produced this reading
   record for record, on 2026-11-03 so did the v0.17.0 release image, on 2026-11-04 the v0.18.0
   release image (`6e1d430e`), on 2026-11-06 the v0.22.0 release image (`0dd9190b`), on 2026-11-07
-  the v0.23.0 release image (`f47b2bfa`), and on 2026-11-13 the v0.26.0 release image (`1cf0563c`),
-  so it stands for those executors unchanged
+  the v0.23.0 release image (`f47b2bfa`), on 2026-11-13 the v0.26.0 release image (`1cf0563c`),
+  on 2026-11-14 the v0.28.0 release image (`2ee460a6`), and on 2026-11-15 the v0.29.0 release
+  image (`75fa9991`), so it stands for those executors unchanged
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

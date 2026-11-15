@@ -605,6 +605,12 @@ func (i buildInput) dataPlane() (
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.schema.Spec.Policy.LockTimeout.Duration, 30*time.Second)),
 			literalEnv("PTAH_TX_MODE", stringOrDefault(i.schema.Spec.Policy.TransactionMode, "file")),
 		)
+		// Who the run records in ptah_schema_apply_log, and why that name. The
+		// run reference beside them is the runner's to pass: it is the claim's
+		// operation ID, which the runner already holds.
+		if actor, origin := SchemaApplyActor(i.schema); actor != "" {
+			environment = append(environment, literalEnv(EnvActor, actor), literalEnv(EnvActorOrigin, origin))
+		}
 		annotations[AnnotationPlanFingerprint] = i.plan.Spec.Fingerprint
 		annotations[AnnotationPlanContentDigest] = i.plan.Spec.ContentDigest
 	}
@@ -1300,7 +1306,15 @@ func omitEnvironment(environment []corev1.EnvVar, names ...string) []corev1.EnvV
 	return result
 }
 
-func literalEnv(name, value string) corev1.EnvVar { return corev1.EnvVar{Name: name, Value: value} }
+// literalEnv is a variable whose process reads value exactly as given. The
+// kubelet expands $(VAR) and reduces $$ to $ in every literal EnvVar.Value
+// before the process starts, and a person's input may hold either: $ is legal
+// in a PostgreSQL or MySQL identifier, in a URL and in a path. Doubling every $
+// is what makes that expansion give the value back; no variable here asks the
+// kubelet to expand anything.
+func literalEnv(name, value string) corev1.EnvVar {
+	return corev1.EnvVar{Name: name, Value: strings.ReplaceAll(value, "$", "$$")}
+}
 
 func durationOrDefault(value, fallback time.Duration) string {
 	if value <= 0 {

@@ -17,5 +17,9 @@
     "statements": 1,
     "sqlstate": "HY000",
     "error_number": 1366
+  },
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:93d6129860652681dc5e646e3abf3a1c07970bf372ffebe316538875275c0f02"
   }
 }

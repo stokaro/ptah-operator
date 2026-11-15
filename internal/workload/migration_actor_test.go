@@ -238,7 +238,7 @@ func TestBuildMigrationApplyCarriesTheActorToTheExecutorAlone(t *testing.T) {
 		t.Fatalf("BuildMigration() error = %v", err)
 	}
 
-	carried := requireEnv(t, job, EnvMigrationActor)
+	carried := requireEnv(t, job, EnvActor)
 	if carried.Value != actor || carried.ValueFrom != nil {
 		t.Fatalf("the executor's actor = %#v, want the literal %q", carried, actor)
 	}
@@ -251,7 +251,7 @@ func TestBuildMigrationApplyCarriesTheActorToTheExecutorAlone(t *testing.T) {
 			continue
 		}
 		for _, variable := range container.Env {
-			if variable.Name == EnvMigrationActor || strings.Contains(variable.Value, actor) {
+			if variable.Name == EnvActor || strings.Contains(variable.Value, actor) {
 				t.Errorf("container %s carries the actor in %s", container.Name, variable.Name)
 			}
 		}
@@ -288,15 +288,15 @@ func TestBuildMigrationGivesAReadingNoActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildMigration() error = %v", err)
 	}
-	if _, found := envMap(job)[EnvMigrationActor]; found {
+	if _, found := envMap(job)[EnvActor]; found {
 		t.Fatal("a History Job carries an actor")
 	}
 }
 
 // A claim written by a release without the field carries no name. Its Job must
 // build as that release built it, or an upgrade under a running Apply records
-// the run as outcome unknown: the name adds one variable and moves nothing else
-// a claim, a plan or an approval is bound to.
+// the run as outcome unknown: the name adds two variables, itself and where it
+// came from, and moves nothing else a claim, a plan or an approval is bound to.
 func TestBuildMigrationApplyWithoutAnActorSetsNoVariable(t *testing.T) {
 	t.Parallel()
 
@@ -306,8 +306,10 @@ func TestBuildMigrationApplyWithoutAnActorSetsNoVariable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildMigration() error = %v", err)
 	}
-	if _, found := envMap(predecessor)[EnvMigrationActor]; found {
-		t.Fatal("a claim without a name built a Job with one")
+	for _, name := range []string{EnvActor, EnvActorOrigin} {
+		if _, found := envMap(predecessor)[name]; found {
+			t.Fatalf("a claim without a name built a Job with %s", name)
+		}
 	}
 
 	claim.Actor = "someone"
@@ -318,9 +320,14 @@ func TestBuildMigrationApplyWithoutAnActorSetsNoVariable(t *testing.T) {
 	if named.Name != predecessor.Name {
 		t.Fatalf("the name moved the Job's identity: %q, want %q", named.Name, predecessor.Name)
 	}
-	stripped := withoutExecutorVariable(named, EnvMigrationActor)
+	stripped := withoutExecutorVariable(named, EnvActor)
 	if reflect.DeepEqual(stripped, named) {
 		t.Fatal("the Job carries no actor to remove, so the comparison below proves nothing")
+	}
+	if origin := withoutExecutorVariable(stripped, EnvActorOrigin); reflect.DeepEqual(origin, stripped) {
+		t.Fatal("the Job carries the actor without its origin")
+	} else {
+		stripped = origin
 	}
 	if !reflect.DeepEqual(stripped, predecessor) {
 		t.Fatalf("the name changed more than one variable:\n%#v\nwant\n%#v", stripped.Spec.Template, predecessor.Spec.Template)

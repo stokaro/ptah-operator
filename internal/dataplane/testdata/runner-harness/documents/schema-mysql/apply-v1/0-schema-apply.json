@@ -20,5 +20,9 @@
     {
       "sql": "ALTER TABLE `e2e_order_child` ADD CONSTRAINT `b` FOREIGN KEY (`a`) REFERENCES `e2e_order_parent`(`id`)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:de7a9b166a12e8ae9efaa7bf4ab4b7689eb6b34945aaf24f07fedb29e24567c8"
+  }
 }

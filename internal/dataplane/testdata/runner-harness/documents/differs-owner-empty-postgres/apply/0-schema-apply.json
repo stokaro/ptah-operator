@@ -11,5 +11,9 @@
     {
       "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\""
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:368671549b5f1b28d62716c59014cf2fce8358160c1aa6cf9747ada5a9ded2d5"
+  }
 }

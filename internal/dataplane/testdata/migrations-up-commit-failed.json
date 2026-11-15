@@ -21,7 +21,8 @@
     "sqlstate": "23503"
   },
   "migration_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:d32825f1a2401962ca251f5e719f0ff832407ee1ce16315013eaa30b237bff07"
   },
   "status": {
     "current_version": 0,
@@ -43,9 +44,9 @@
       "applied": 0,
       "total": 3,
       "error": "ERROR: insert or update on table \"child\" violates foreign key constraint \"child_parent_id_fkey\" (SQLSTATE 23503)",
-      "execution_time": 13000000,
+      "execution_time": 6000000,
       "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
-      "applied_at": "2026-11-07T17:03:02.469875Z",
+      "applied_at": "2026-11-14T16:45:43.411343Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -55,8 +56,8 @@
         "version_key": "1",
         "description": "Create",
         "checksum": "33f25c7e11fe8d4443ebe136d82a21689a0f6a70045e5bf5bd50e5c53aa4a4bc",
-        "applied_at": "2026-11-07T17:03:02.469875Z",
-        "execution_time_ms": 13,
+        "applied_at": "2026-11-14T16:45:43.411343Z",
+        "execution_time_ms": 6,
         "state": "dirty"
       }
     ],

@@ -412,6 +412,7 @@ var MigrationFaultsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"fault-artifact",
 		"postgresql-migration-faults",
+		"postgresql-migration-drift-check",
 	},
 	// fault-artifact publishes both, to the phase's own repository, before
 	// the fault rows create their resources from them.

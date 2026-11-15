@@ -8,5 +8,9 @@
     {
       "sql": "ALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:54681378d310017adfd378422c57a39e4f734c70915c8b2c152e77a2e3149992"
+  }
 }

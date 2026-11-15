@@ -74,6 +74,15 @@ var (
 			replacement: "$1<pid>/",
 		},
 		{
+			// The time Go's standard logger writes before a line, as Ptah
+			// v0.28.0 does for a schema Apply's log entry the database refused.
+			// It has no leading word boundary: in a document's text the line
+			// follows the n of a \n escape.
+			name:        "log time",
+			pattern:     regexp.MustCompile(`\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?\b`),
+			replacement: "<time>",
+		},
+		{
 			// What Ptah's log lines on standard error are tagged with per run.
 			name:        "correlation id",
 			pattern:     regexp.MustCompile(`\bcorrelation_id=[0-9a-f]+\b`),

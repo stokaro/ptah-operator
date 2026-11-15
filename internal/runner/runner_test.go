@@ -1334,7 +1334,7 @@ func TestApplyReconstructsChunksInLexicalOrderAndRemovesTempPlan(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 		stdout: applyReport(t, dataplane.SchemaApplyOutcomeApplied, string(content)),
 		inspect: func(spec CommandSpec) {
-			want := []string{"schema", "apply", "--plan", spec.Args[3], "--auto-approve", "--json"}
+			want := []string{"schema", "apply", "--plan", spec.Args[3], "--auto-approve", "--json", "--run-reference=apply-1"}
 			if !reflect.DeepEqual(spec.Args, want) {
 				t.Fatalf("apply args = %v, want %v", spec.Args, want)
 			}
@@ -3787,7 +3787,8 @@ func TestMigrationRunRedactsTheDatabasesFreeTextError(t *testing.T) {
 func TestMigrationRunCarriesTheFailedStatementThroughTheFrame(t *testing.T) {
 	t.Parallel()
 
-	// Ptah v0.14.0's account of a MySQL run stopped by a duplicate key; see
+	// The pinned Ptah's account of a MySQL run stopped by a duplicate key, as
+	// the runner harness captured it under its row's operation ID; see
 	// internal/dataplane/testdata.
 	document, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "migrations-up-partial-mysql.json"))
 	if err != nil {
@@ -3800,7 +3801,7 @@ func TestMigrationRunCarriesTheFailedStatementThroughTheFrame(t *testing.T) {
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(document), exitCode: 2}}}
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationApply,
-		Environment: withRunnerProtocol(migrationApplyEnvironment(t, "migration-failed-statement")),
+		Environment: withRunnerProtocol(migrationApplyEnvironment(t, capturedOperationID(t, string(document)))),
 		Executor:    executor,
 	})
 	frame, err := MarshalFrame(result)

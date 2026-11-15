@@ -97,6 +97,30 @@ func TestARunMessageNamesTheMigrationItStoppedIn(t *testing.T) {
 			want: "A migration failed and committed nothing; 1 migration before it is recorded applied",
 		},
 		{
+			// Since v0.29.0 Ptah refuses a file its transaction or its text
+			// refuses before the run applies any, with no revision row, so
+			// the first selected version may be a file that was fine.
+			name: "nothing applied and no dirty row, with more than one selected",
+			report: dataplane.MigrationRunReport{
+				Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{1, 2, 3},
+				Status: described(nil,
+					dataplane.MigrationRecord{Version: 1, Description: "Create Journal", State: dataplane.MigrationStatePending},
+					dataplane.MigrationRecord{Version: 2, Description: "Read Ledger", State: dataplane.MigrationStatePending},
+					dataplane.MigrationRecord{Version: 3, Description: "Index Journal", State: dataplane.MigrationStatePending}),
+			},
+			want: "A migration failed and committed nothing; 0 migrations before it are recorded applied",
+		},
+		{
+			name: "nothing applied and no dirty row, with one selected",
+			report: dataplane.MigrationRunReport{
+				Outcome: dataplane.MigrationOutcomeFailed, Planned: []int64{2},
+				Status: described(nil,
+					dataplane.MigrationRecord{Version: 1, Description: "Create Journal", State: dataplane.MigrationStateApplied},
+					dataplane.MigrationRecord{Version: 2, Description: "Read Ledger", State: dataplane.MigrationStatePending}),
+			},
+			want: "Migration 2 (Read Ledger) failed and committed nothing; 0 migrations before it are recorded applied",
+		},
+		{
 			name:   "the statement that failed and the SQLSTATE the database gave",
 			report: failing(failed(described(nil, ledger...)), missingTable),
 			want: "Migration 2 (Read Ledger) failed at statement 2 of 3 with SQLSTATE 42P01 and committed nothing; " +
@@ -358,5 +382,36 @@ func TestARunMessageFromPtahsOwnDocuments(t *testing.T) {
 				t.Errorf("migrationRunMessage() = %q\nwant %q", got, row.want)
 			}
 		})
+	}
+}
+
+// TestARunRefusedBeforeItsFirstFileNamesNoMigration writes the message for the
+// document Ptah v0.29.0 printed for a run it refused before applying either of
+// its two files (stokaro/ptah#6052), as the runner harness captured it. The
+// refused file is the second, and nothing in the report says so: no revision
+// row, no failure position, both migrations pending. Naming the first selected
+// version would name a file that was fine, so the message names none.
+func TestARunRefusedBeforeItsFirstFileNamesNoMigration(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "dataplane", "testdata", "migrations-up-refused-postgres.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := dataplane.DecodeMigrationRun(data)
+	if err != nil {
+		t.Fatalf("DecodeMigrationRun() error = %v", err)
+	}
+	if len(report.Planned) != 2 || len(report.Applied) != 0 || report.Failure != nil ||
+		report.Status == nil || report.Status.DirtyRevision != nil {
+		t.Fatalf("the capture is not a refusal of two selected files before either ran: %+v", report)
+	}
+	report.Error = nil
+	const want = "A migration failed and committed nothing; 0 migrations before it are recorded applied"
+	if got := migrationRunMessage(report); got != want {
+		t.Fatalf("migrationRunMessage() = %q, want %q", got, want)
+	}
+	if failure := migrationRunFailure(report.Failure); failure != nil {
+		t.Fatalf("migrationRunFailure() = %+v, want none", failure)
 	}
 }

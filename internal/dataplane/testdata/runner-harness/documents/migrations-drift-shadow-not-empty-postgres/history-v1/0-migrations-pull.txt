@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@sha256:8fbd6065400e263a6b01ba34e596f2430de71952b15ab6c752d8502dacea02c8 to /source/migrations
+Digest: sha256:8fbd6065400e263a6b01ba34e596f2430de71952b15ab6c752d8502dacea02c8
+Format: auto

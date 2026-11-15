@@ -55,6 +55,13 @@ func TestValidationHandlerRefusesMigrationPlansItCannotReproduce(t *testing.T) {
 			message: "target identity does not match",
 		},
 		{
+			name: "the plan names another shadow database",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
+				migration.Status.History.ShadowIdentityDigest = digest('8')
+			},
+			message: "plan shadow identity does not match",
+		},
+		{
 			name: "the plan names another artifact",
 			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.PtahMigrationPlan) {
 				migration.Status.Artifact.Digest = digest('9')

@@ -258,11 +258,16 @@ func goldenJobCases() []goldenJobCase {
 			},
 		},
 		{
+			// A released builder named nobody to Ptah; this release names the
+			// approver status.plan copied from the approval, and the origin of
+			// that name. The upgrade from 0.2.12 moves the executor, which
+			// retires such a claim anyway.
 			name: "schema-apply-admitted-scheduling",
 			build: func() (*batchv1.Job, error) {
 				schema := schemaFixture()
 				setGoldenScheduling(&schema.Spec.Execution)
 				plan := planFixture(schema, builder)
+				schema.Status.Plan.Approval.Approver = operatorv1alpha1.ApprovalIdentity{Username: "oidc:José García"}
 				operation := operationFixture(operatorv1alpha1.OperationApply)
 				operation.AdmissionSnapshot = goldenAdmissionSnapshot()
 				dispatchNotAfter := metav1.NewTime(operation.StartedAt.Add(300 * time.Second))
@@ -272,6 +277,7 @@ func goldenJobCases() []goldenJobCase {
 				operation.TerminationGracePeriodSeconds = 45
 				return builder.Build(schema, operation, plan)
 			},
+			rebuildAdds: []string{EnvActor, EnvActorOrigin},
 		},
 		{
 			// A registry credential on the system roots. A released builder
@@ -348,6 +354,41 @@ func goldenJobCases() []goldenJobCase {
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
+		},
+		{
+			// A drift check mounts its shadow on the history read, which
+			// reports its identity, and on the Apply, which is bound to it.
+			name: "migration-history-drift-check",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
+			},
+			unreleased: true,
+		},
+		{
+			name: "migration-apply-drift-check",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				plan := migrationPlanFixture()
+				plan.Spec.ShadowIdentityDigest = "sha256:" + strings.Repeat("5", 64)
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), plan)
+			},
+			unreleased: true,
+		},
+		{
+			// What the check leaves out reaches the Apply alone, as a set.
+			name: "migration-apply-drift-check-exclude",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				migration.Spec.Policy.DriftCheck.Exclude = []string{"reporting.*", "legacy,archive", "public.job_queue"}
+				plan := migrationPlanFixture()
+				plan.Spec.ShadowIdentityDigest = "sha256:" + strings.Repeat("5", 64)
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), plan)
+			},
+			unreleased: true,
 		},
 		{
 			name: "schema-resolve-git-https",
@@ -530,4 +571,11 @@ func firstDifferentLine(want, got []byte) (int, string, string) {
 		}
 	}
 	return 0, "", ""
+}
+
+// goldenDriftCheck is a drift check whose shadow is a Secret of its own.
+func goldenDriftCheck() *operatorv1alpha1.MigrationDriftCheck {
+	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
+	}}}
 }

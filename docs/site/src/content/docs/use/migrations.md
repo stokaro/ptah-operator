@@ -557,7 +557,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it ran one, as on a database it could not open, under a [drift check](#drift-check) that refused it, or on a selected file Ptah refuses before the run applies any, such as a `CREATE INDEX CONCURRENTLY` the file's transaction cannot hold. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 
@@ -592,24 +592,142 @@ reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
 `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
 `HistoryMatched`.
 
+## Check the schema against its history {#drift-check}
+
+The revision table proves which files ran, and checksums prove they are the
+files the database ran. Neither notices a column somebody added by hand or an
+index dropped during an incident. `spec.policy.driftCheck` has Ptah look:
+
+```yaml
+spec:
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+```
+
+Every Apply then runs `ptah migrations up --check-drift`. Under the migration
+lock, before any pending migration, Ptah replays the migrations the revision
+table records as applied into the shadow database, compares the schema they
+produce with the target's, and empties the shadow again. What a pending
+migration is about to create is not drift, since the baseline is the applied
+history. A clean target lets the run go on. A target that differs stops it with
+reason `SchemaDrifted`, a check that cannot decide stops it with
+`DriftCheckUnsupported`, and a shadow it cannot use with
+`ShadowDatabaseUnavailable`; nothing pending runs,
+and [A migration whose drift check refused the run](../../troubleshoot/condition-reasons/#a-migration-whose-drift-check-refused-the-run)
+says what each one means and how to list the differences. A check that was
+asked for never turns into a run without one: an Apply whose check did not
+happen applies nothing.
+
+The shadow is a database of its own, of the target's engine, empty before each
+check. Ptah refuses a shadow that holds anything and one that is the target
+under another URL, and the API refuses a shadow named by the target's own
+Secret key. Give every resource a shadow of its own: two checks that use one
+at the same time find each other's tables in it, and refuse.
+
+Where the shadow can live depends on the engine, because every History and
+Apply Job of the resource mounts the shadow's login beside the target's. On
+MySQL and MariaDB that login holds the global privileges
+[the baseline's shadow](#what-the-history-says) needs, `DROP` and `ALTER` among
+them, since Ptah empties the shadow the same way, and a global privilege
+reaches every database on its server. Put the shadow on a server of its own,
+never the target's, where its login could drop the target. Give its database a
+name the target's does not have: Ptah tells two MySQL databases apart by name
+alone, and refuses a shadow named like the target as the target, at stage
+`realm-check`.
+
+A PostgreSQL shadow can share the target's server. Everything Ptah empties is
+in the shadow's database, so its login needs privileges there alone, and a
+grant in one database reaches no other. Give it a login that owns the shadow
+database and holds nothing in the target's, is not a superuser and cannot
+create roles. Roles belong to the whole server, and on a server Ptah did not
+start it drops none a replay created, so a history whose migrations create or
+alter roles would leave them, or the change, on the target's server. Such a
+history needs the shadow on a server of its own.
+
+The URL is read like the target's: the History and the Apply Job mount the
+Secret key, the runner reads it, and the manager never does. A History reading
+records the shadow's identity in `status.history.shadowIdentityDigest`, a
+digest of where its URL points with no credential in it, and the plan
+binds that identity beside the target's. A URL that names the target's server
+and database is the target under any user or `search_path`, and the reading
+refuses it with `ShadowDatabaseUnavailable` and publishes no plan, so nobody
+approves a run that cannot start. It does the same when the Secret key holds
+no URL. Pointing the Secret at another database, or the policy at another key,
+publishes a new plan, and an approval of the old one does not carry over. The
+Apply refuses a shadow its plan did not bind before Ptah starts; as with a
+target that moved, the run is recorded `Unknown` and the next History reading
+settles it.
+
+Ptah compares the whole schema the target's URL reaches, less its own
+bookkeeping: the revision table and its log, `ptah_migration_tags`,
+`schema_seeds` and the `ptah_schema_apply_log` a `PtahSchema` Apply records in,
+which its reads leave out by name. A database that also holds objects no
+migration declares, such as the tables a `PtahSchema` manages in the same
+database or a queue table another tool creates, reads as drifted until
+`exclude` names them:
+
+```yaml
+spec:
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+      exclude:
+        - reporting.*
+        - public.job_queue
+```
+
+Each entry is a selector as `ptah schema diff --exclude` reads it, and the check
+leaves what it matches out of the target and out of the replayed history alike.
+On a PostgreSQL URL that sets no `search_path`, Ptah reads every schema and a
+selector starts with the schema's name, as above. On one that sets it, and on a
+MySQL URL that names its database, a selector starts with the table's name. A
+selector that matches nothing leaves nothing out and does not stop the run: the
+check still compares everything else, so read each selector against that scope.
+Ptah judges the grammar when the check runs, and a selector
+it refuses stops the run with `DriftCheckUnsupported` at stage `scope`. The API
+takes what a `PtahSchema`'s `spec.policy.exclude` takes: at most 128 entries,
+none of them empty, none with whitespace at either end or a control character.
+The list is part of the policy the plan binds, so changing it publishes a new
+plan and an approval of the old one does not carry over; reordering it changes
+nothing.
+
+The lock holds off any cooperating runner between the check and the Apply; DDL
+from a session that takes no lock can still land after the check. The check
+repairs nothing.
+
+Leaving the field out checks nothing, which is how every resource without it
+runs.
+
 ## Who the database's log names
 
 Ptah keeps its own record of each run in the target database,
-`schema_migrations_log`, and the operator tells it who to name. After an approved
-run, every row holds the approver's username in `actor`:
+`schema_migrations_log`, and the operator tells it who to name, where the name
+came from and which run it was. After an approved run, every row holds the
+approver's username in `actor`, `admission` in `actor_origin`, and the run's
+`operationID` from the journal in `run_reference`:
 
 ```text
- version |  state  |      actor       | actor_source
----------+---------+------------------+--------------
-       1 | started | kubernetes-admin | provided
-       1 | applied | kubernetes-admin | provided
+ version |  state  |      actor       | actor_source | actor_origin |  run_reference
+---------+---------+------------------+--------------+--------------+-----------------
+       1 | started | kubernetes-admin | provided     | admission    | sha256:9798b1a5...
+       1 | applied | kubernetes-admin | provided     | admission    | sha256:9798b1a5...
 ```
 
 The record survives losing the cluster, and deleting the approval changes nothing
 about it. The name comes from the approval the run consumes, and the claim keeps
 its own copy from the moment it is written, so what the run records is settled
 before its Job exists. Under `apply: Always` nobody approved, and the rows read
-`system:ptah-operator:apply-always:<namespace>/<name>`.
+`system:ptah-operator:apply-always:<namespace>/<name>` with `policy` in
+`actor_origin`. The runner hands Ptah the reference and refuses a result whose
+rows Ptah reports under another, so a journal entry's `operationID` finds the
+rows of its run with `WHERE run_reference = '<operationID>'`.
 
 A name outside printable ASCII is percent-encoded, so every character set can
 store it, and so are `%` and `$`. An ordinary username or email reads unchanged,
@@ -629,6 +747,21 @@ The outcome stays what the revision table says.
 [A run whose log entries the database refused](../../troubleshoot/condition-reasons/#a-run-whose-log-entries-the-database-refused)
 says what to check.
 
+Ptah v0.28.0 added the `run_reference` and `actor_origin` columns, which the
+operator fills from 0.2.13; rows an earlier release wrote hold neither. Before
+a run writes its first row, Ptah adds whichever of the two a log an earlier
+build created lacks,
+as nullable columns, and the rows already there keep their values. On
+PostgreSQL Ptah writes the log only as the table's owner, who may alter it. On
+MySQL the `ALTER` this takes is part of
+[the documented grant](../../support/databases/#mysql-authority), and a login
+without it on the table loses every row of every run, reported as above, until
+the columns are there. A login that may alter the table can add them first:
+
+```sql
+ALTER TABLE schema_migrations_log ADD COLUMN run_reference VARCHAR(255) NULL, ADD COLUMN actor_origin VARCHAR(64) NULL;
+```
+
 The value is personal data, and `provided` means Ptah took the name on trust.
 [The approver's name in the target
 database](../security/#approver-in-the-database) says what that means and when a
@@ -639,4 +772,7 @@ cluster](../recovery/#what-survives-a-lost-cluster) says what else is left.
 
 No row of any table reaches the status, an Event, or `kubectl ptah migration`.
 No SQL does either: a published plan records versions, descriptions and
-checksums, and the statements stay in the artifact you built.
+checksums, and the statements stay in the artifact you built. A drift check
+reports counts and codes there, never what Ptah or a driver said; the first
+line of Ptah's report stays in the Apply's Pod log. The shadow database's URL
+appears nowhere but in the Pod that reads it.

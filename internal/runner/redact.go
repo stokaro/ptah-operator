@@ -16,6 +16,7 @@ var urlPattern = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s"'<>]+`)
 var protectedEnvironmentKeys = []string{
 	EnvDatabaseURL,
 	EnvDevelopmentDatabaseURL,
+	EnvShadowDatabaseURL,
 	EnvOCIPassword,
 	EnvOCIToken,
 	EnvGitPassword,
@@ -51,7 +52,7 @@ func NewRedactor(environment []string) Redactor {
 	for _, key := range protectedEnvironmentKeys {
 		value := values[key]
 		addSecret(value)
-		if key == EnvDatabaseURL || key == EnvDevelopmentDatabaseURL {
+		if key == EnvDatabaseURL || key == EnvDevelopmentDatabaseURL || key == EnvShadowDatabaseURL {
 			for _, credential := range databaseURLCredentials(value) {
 				addSecret(credential)
 			}

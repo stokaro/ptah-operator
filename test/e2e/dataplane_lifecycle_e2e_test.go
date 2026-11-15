@@ -91,10 +91,14 @@ func (d *dataPlane) runEngineLifecycle(slug, engine, dialect, secret string) {
 	v1PostObserve := d.checkpointJobs(schema, "observe")
 	v1PostPlan := d.checkpointJobs(schema, "plan")
 	assertV1SQL := d.approvedSchemaSQLControl(schema, slug, planV1, v1Apply)
+	// The plan is retired once the proof after the Apply settles, and its
+	// digest is what the database's log names the apply by.
+	v1ContentDigest := d.schemaPlan(planV1.name).Spec.ContentDigest
 	d.createExactApproval(schema, planV1.name, schema+"-v1", key, realm)
 	d.waitForOneNewJob(schema, "apply", v1Apply)
 	d.waitForInSync(schema, digestV1, v1PostObserve, v1PostPlan)
 	d.assertApprovalConsumed(schema+"-v1", planV1.uid)
+	d.assertApplyLogNames(schema, slug, database, schema+"-v1", v1ContentDigest)
 	assertV1SQL()
 	assertAppliedSQLReadAuthorization()
 	d.assertOneNewJob(schema, "apply", v1Apply)

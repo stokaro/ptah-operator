@@ -3,6 +3,7 @@ package admissionpolicy_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -81,6 +82,38 @@ func planJob(edit func(*batchv1.Job)) func() (client.Object, error) {
 	}
 }
 
+// shadowVolume is the volume a drift check's shadow database URL is mounted
+// from.
+const shadowVolume = "shadow-database-url"
+
+// driftCheckedJob is the migration history read the manager dispatches when
+// the policy asks for a drift check, as an Apply when asApply is set: both
+// mount the shadow database URL from a Secret of its own. It refuses to
+// return a Job without that mount, since every row built on it measures the
+// mount.
+func driftCheckedJob(asApply bool, edit func(*batchv1.Job)) func() (client.Object, error) {
+	return func() (client.Object, error) {
+		migration := tenantMigration.DeepCopy()
+		migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
+			URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url"},
+		}}
+		job, err := migrationHistoryJobFor(migration)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.ContainsFunc(job.Spec.Template.Spec.Volumes, func(volume corev1.Volume) bool { return volume.Name == shadowVolume }) {
+			return nil, fmt.Errorf("the drift-checked history Job mounts no %s volume", shadowVolume)
+		}
+		if asApply {
+			job = asApplyJob(job, "ptah-m-", "history", "drift")
+		}
+		if edit != nil {
+			edit(job)
+		}
+		return job, nil
+	}
+}
+
 // operationContainer is the Job's one operation container.
 func operationContainer(job *batchv1.Job) *corev1.Container {
 	return &job.Spec.Template.Spec.Containers[0]
@@ -106,6 +139,13 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 		observeDevelopmentRow = "manager dispatches an Observe Job mounting a development database URL"
 		databaseAsConfigRow   = "manager dispatches an Observe Job mounting its database URL from a ConfigMap"
 		releasedCleanupRow    = "manager gives a finished Job a release before file delivery created the short cleanup TTL"
+
+		shadowHistoryRow       = "manager dispatches a migration History Job mounting its drift check's shadow database"
+		shadowApplyRow         = "manager dispatches a migration Apply Job mounting its drift check's shadow database"
+		shadowResolveRow       = "manager dispatches a migration Resolve Job mounting a shadow database URL"
+		shadowSchemaRow        = "manager dispatches a schema Apply Job mounting a shadow database URL"
+		shadowAsConfigRow      = "manager dispatches a migration History Job mounting its shadow database URL from a ConfigMap"
+		shadowInEnvironmentRow = "manager dispatches a migration History Job carrying its shadow database URL in its environment"
 	)
 	databaseSecret := tenantSchema.Spec.Target.URLFrom
 	c.row(policyenv.Row{Name: fullPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
@@ -191,6 +231,54 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 			}
 		}))),
 	})
+	shadowSecretVolume := corev1.Volume{Name: shadowVolume, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName: "ledger-shadow", Items: []corev1.KeyToPath{{Key: "url", Path: "url"}},
+	}}}
+	c.row(policyenv.Row{Name: shadowHistoryRow, Do: as(manager, dryRunCreate(driftCheckedJob(false, nil)))})
+	c.row(policyenv.Row{Name: shadowApplyRow, Do: as(manager, dryRunCreate(driftCheckedJob(true, nil)))})
+	c.row(policyenv.Row{
+		Name: shadowResolveRow, Deny: []string{jobGuard}, Message: workloadShapeMessage,
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			job, err := migrationResolveJob()
+			if err == nil {
+				job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, shadowSecretVolume)
+			}
+			return job, err
+		})),
+	})
+	// An Apply, so the operation alone does not refuse it: the component does.
+	c.row(policyenv.Row{
+		Name: shadowSchemaRow, Deny: []string{jobGuard}, Message: workloadShapeMessage,
+		Do: as(manager, dryRunCreate(func() (client.Object, error) {
+			job, err := resolveJob()
+			if err != nil {
+				return nil, err
+			}
+			job = asApplyJob(job, "ptah-", "resolve", "shadow")
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, shadowSecretVolume)
+			return job, nil
+		})),
+	})
+	c.row(policyenv.Row{
+		Name: shadowAsConfigRow, Deny: []string{jobGuard}, Message: workloadShapeMessage,
+		Do: as(manager, dryRunCreate(driftCheckedJob(false, func(job *batchv1.Job) {
+			for index := range job.Spec.Template.Spec.Volumes {
+				if volume := &job.Spec.Template.Spec.Volumes[index]; volume.Name == shadowVolume {
+					volume.VolumeSource = corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"},
+					}}
+				}
+			}
+		}))),
+	})
+	// A literal value, so the names clause alone refuses it.
+	c.row(policyenv.Row{
+		Name: shadowInEnvironmentRow, Deny: []string{jobGuard}, Message: credentialEnvironmentMessage,
+		Do: as(manager, dryRunCreate(driftCheckedJob(false, func(job *batchv1.Job) {
+			container := operationContainer(job)
+			container.Env = append(container.Env, corev1.EnvVar{Name: runner.EnvShadowDatabaseURL, Value: "postgres://shadow.example/ledger"})
+		}))),
+	})
 	c.row(policyenv.Row{Name: releasedCleanupRow, Do: func(ctx context.Context, env *policyenv.Env) error {
 		return as(manager, patchStored(cleanupFixtures.released, func(stored *batchv1.Job) {
 			stored.Spec.TTLSecondsAfterFinished = ptr.To(int32(300))
@@ -242,11 +330,51 @@ func credentialDeliveryRows(t *testing.T, c *catalog) {
 			`volume.name == "database-url" && has(volume.secret)`, `volume.name == "database-url"`),
 		Breaks: []string{databaseAsConfigRow}, Admits: true,
 	})
+	const (
+		shadowClause    = `(volume.name == "shadow-database-url" && has(volume.secret) && `
+		shadowComponent = `object.metadata.labels["app.kubernetes.io/component"] == "migration-operation" && `
+		shadowOperation = `object.metadata.labels["operator.ptah.run/operation"] in ["history", "apply"])`
+	)
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts no shadow database", Policies: []string{jobGuard},
+		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
+			shadowClause, `(volume.name == "shadow-database-url-retired" && has(volume.secret) && `),
+		Breaks: []string{shadowHistoryRow, shadowApplyRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts a shadow database only on a history read", Policies: []string{jobGuard},
+		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
+			shadowComponent+shadowOperation, shadowComponent+`object.metadata.labels["operator.ptah.run/operation"] == "history")`),
+		Breaks: []string{shadowApplyRow},
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts a shadow database on any migration operation", Policies: []string{jobGuard},
+		Apply: policyenv.RewriteValidations(jobGuard, workloadShapeMessage,
+			shadowComponent+shadowOperation, shadowComponent+"true)"),
+		Breaks: []string{shadowResolveRow}, Admits: true,
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts a shadow database on a schema Job", Policies: []string{jobGuard},
+		Apply:  policyenv.RewriteValidations(jobGuard, workloadShapeMessage, shadowClause+shadowComponent, shadowClause),
+		Breaks: []string{shadowSchemaRow}, Admits: true,
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard mounts a shadow database from any source", Policies: []string{jobGuard},
+		Apply:  policyenv.RewriteValidations(jobGuard, workloadShapeMessage, shadowClause, `(volume.name == "shadow-database-url" && `),
+		Breaks: []string{shadowAsConfigRow}, Admits: true,
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "Job write guard forgets the shadow database among the credentials", Policies: []string{jobGuard},
+		Apply: policyenv.RewriteValidations(jobGuard, credentialEnvironmentMessage,
+			`"PTAH_SHADOW_DB"`, `"PTAH_SHADOW_DB_FORGOTTEN"`),
+		Breaks: []string{shadowInEnvironmentRow}, Admits: true,
+	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard binding dropped, for where a Job keeps its credentials", Policies: []string{jobGuard},
 		Apply: policyenv.DropBinding(jobGuard),
 		Breaks: []string{
 			overBoundRow, urlInEnvironmentRow, ungrantedSecretRow, httpsTokenRow, resolveDatabaseRow, observeDevelopmentRow, databaseAsConfigRow,
+			shadowResolveRow, shadowSchemaRow, shadowAsConfigRow, shadowInEnvironmentRow,
 		},
 	})
 }

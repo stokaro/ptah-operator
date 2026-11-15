@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 )
 
 const (
@@ -32,6 +35,12 @@ const (
 	// reads that prove a schema Apply carry the digest of that Apply's plan.
 	// It is optional on a read, and a read without it reads any target.
 	EnvExpectedTargetIdentityDigest = "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST"
+	// EnvExpectedShadowIdentityDigest binds a migration Apply to the
+	// credential-free identity of the shadow database its plan was computed
+	// with, and asks for the drift check: an Apply that carries it runs
+	// `migrations up --check-drift` against that shadow and no other. An Apply
+	// without it checks nothing, as one built before the input existed did.
+	EnvExpectedShadowIdentityDigest = "PTAH_EXPECTED_SHADOW_IDENTITY_DIGEST"
 	// EnvCoordinationDigest binds every database operation to a user-declared
 	// physical database realm without exposing its plaintext coordination key.
 	EnvCoordinationDigest = "PTAH_COORDINATION_DIGEST"
@@ -64,6 +73,10 @@ const (
 	EnvDatabaseURL = "PTAH_DB_URL"
 	// EnvDevelopmentDatabaseURL carries an optional development database credential.
 	EnvDevelopmentDatabaseURL = "PTAH_DEV_URL"
+	// EnvShadowDatabaseURL carries the shadow database a migration drift
+	// check replays into. Ptah reads it as --shadow-db, so it reaches a child
+	// only on an Apply the runner passes --check-drift to.
+	EnvShadowDatabaseURL = "PTAH_SHADOW_DB"
 	// EnvOCIPassword carries a registry password to the child only.
 	EnvOCIPassword = "PTAH_OCI_PASSWORD"
 	// EnvOCIToken carries a registry identity token to the child only.
@@ -88,6 +101,11 @@ const (
 	// in. Empty means the resource asked for nothing and the flag is left off,
 	// so Ptah chooses.
 	EnvTransactionMode = "PTAH_TRANSACTION_MODE"
+	// EnvDriftExclude is the selectors a migration Apply's drift check leaves
+	// out, as one CSV record. The runner passes each as --drift-exclude= and
+	// strips the variable from every child, since Ptah v0.28.0 would read it
+	// as that flag on its own.
+	EnvDriftExclude = "PTAH_DRIFT_EXCLUDE"
 
 	// EnvPlanSealPublicKey is the manager's ephemeral public key a Plan Job
 	// seals its plan payload to, base64-encoded (see internal/planseal). Only
@@ -110,6 +128,7 @@ const (
 	envPlanDir                = EnvPlanDir
 	envExpectedPlanDigest     = EnvExpectedPlanContentDigest
 	envExpectedTargetDigest   = EnvExpectedTargetIdentityDigest
+	envExpectedShadowDigest   = EnvExpectedShadowIdentityDigest
 	envCoordinationDigest     = EnvCoordinationDigest
 	envExpectedCoordination   = EnvExpectedCoordinationDigest
 	envExpectedSequence       = EnvExpectedMigrationSequence
@@ -123,6 +142,7 @@ const (
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
 	envMigrationsDir          = EnvMigrationsDir
 	envTransactionMode        = EnvTransactionMode
+	envDriftExclude           = EnvDriftExclude
 	envPlanSealPublicKey      = EnvPlanSealPublicKey
 	envSealedPlanJobName      = EnvSealedPlanJobName
 )
@@ -138,6 +158,7 @@ type Inputs struct {
 	PlanDir                    string
 	ExpectedPlanContentDigest  string
 	ExpectedTargetDigest       string
+	ExpectedShadowDigest       string
 	CoordinationDigest         string
 	ExpectedCoordinationDigest string
 	ExpectedSequence           string
@@ -149,6 +170,9 @@ type Inputs struct {
 	PlanPath                   string
 	MigrationsDir              string
 	TransactionMode            string
+	// DriftExclude is the CSV record EnvDriftExclude carries, decoded and
+	// checked where the command is built.
+	DriftExclude string
 	// PlanSealPublicKey is the base64-encoded manager public key a Plan
 	// operation seals its plan payload to before writing the frame.
 	PlanSealPublicKey string
@@ -176,6 +200,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		PlanDir:                    values[envPlanDir],
 		ExpectedPlanContentDigest:  values[envExpectedPlanDigest],
 		ExpectedTargetDigest:       values[envExpectedTargetDigest],
+		ExpectedShadowDigest:       values[envExpectedShadowDigest],
 		CoordinationDigest:         values[envCoordinationDigest],
 		ExpectedCoordinationDigest: values[envExpectedCoordination],
 		ExpectedSequence:           values[envExpectedSequence],
@@ -186,6 +211,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
 		MigrationsDir:              values[envMigrationsDir],
 		TransactionMode:            values[envTransactionMode],
+		DriftExclude:               values[envDriftExclude],
 		PlanSealPublicKey:          values[envPlanSealPublicKey],
 		SealedPlanJobName:          values[envSealedPlanJobName],
 	}
@@ -239,11 +265,62 @@ const (
 	ptahIncludeEnvironment = "PTAH_INCLUDE"
 )
 
+// ptahRunReferenceEnvironment fills --run-reference on schema apply and
+// migrations up, Ptah v0.28.0's binding for the caller's identifier of a run.
+// The reference an Apply records is the claim's operation ID, and the runner
+// passes it as an argument it builds (withRunReference), so the variable is
+// removed from every child: no other value can reach the logs through it, and
+// a reference never reaches a command that writes no log entry.
+const ptahRunReferenceEnvironment = "PTAH_RUN_REFERENCE"
+
+// maxRunReferenceBytes is the widest run reference Ptah's logs store: the
+// width of their run_reference column, and the bound Ptah v0.28.0 holds the
+// flag to before it connects (ValidateRunReference in migration/migrator).
+const maxRunReferenceBytes = 255
+
+// withRunReference hands an Apply's child its claim's operation ID as Ptah's
+// run reference, so every entry the run writes to the database's own log names
+// the operation the journal and the resource's status name. The result
+// document reports the reference the entries carry, and the runner holds it to
+// this one (dataplane.RunLogReference.CheckRunReference).
+//
+// The ID is held to the form Ptah stores as given -- 1 to 255 visible ASCII
+// characters -- before the child is started. Ptah refuses any other form
+// itself, but only once the child is running, and a mutating child that ran
+// is a run whose outcome has to be observed before anything is retried. The
+// manager's IDs are SHA-256 digests, which always pass. One argument carries
+// the flag and its value, so a value that starts with a dash is not read as
+// a flag.
+func withRunReference(spec CommandSpec, operationID string) (CommandSpec, error) {
+	if operationID == "" || len(operationID) > maxRunReferenceBytes {
+		return CommandSpec{}, fmt.Errorf("the operation ID is %d bytes, and a run reference is 1 to %d",
+			len(operationID), maxRunReferenceBytes)
+	}
+	for index := range len(operationID) {
+		if character := operationID[index]; character < '!' || character > '~' {
+			return CommandSpec{}, errors.New("the operation ID holds a character a run reference cannot")
+		}
+	}
+	spec.Args = append(slices.Clone(spec.Args), "--run-reference="+operationID)
+	return spec, nil
+}
+
+// Ptah v0.28.0 binds PTAH_CHECK_DRIFT and PTAH_DRIFT_EXCLUDE to the drift
+// check of `migrations up`. The check is asked for only by the arguments the
+// runner builds from the Job's expected shadow identity and EnvDriftExclude,
+// so both are removed from every child, and PTAH_SHADOW_DB from every child but
+// that Apply's.
+const ptahCheckDriftEnvironment = "PTAH_CHECK_DRIFT"
+
 func childEnvironment(environment []string) []string {
 	return environmentWithout(environmentWithout(environment, credentialFileVariables()...),
 		ptahJSONEnvironment,
 		ptahExcludeEnvironment,
 		ptahIncludeEnvironment,
+		ptahRunReferenceEnvironment,
+		ptahCheckDriftEnvironment,
+		EnvDriftExclude,
+		EnvShadowDatabaseURL,
 		EnvOperationID,
 		EnvRequestedReference,
 		EnvResolvedReference,
@@ -252,6 +329,7 @@ func childEnvironment(environment []string) []string {
 		EnvPlanDir,
 		EnvExpectedPlanContentDigest,
 		EnvExpectedTargetIdentityDigest,
+		EnvExpectedShadowIdentityDigest,
 		EnvCoordinationDigest,
 		EnvExpectedCoordinationDigest,
 		EnvExpectedMigrationSequence,
@@ -371,10 +449,47 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 			}
 			spec.Args = append(spec.Args, "--expect-sequence", inputs.ExpectedSequencePath)
 		}
+		// The check runs only where the plan bound a shadow database. The
+		// shadow's URL reaches Ptah as PTAH_SHADOW_DB in the child's
+		// environment, never as an argument.
+		checked := operation == OperationMigrationApply && inputs.ExpectedShadowDigest != ""
+		if checked {
+			spec.Args = append(spec.Args, "--check-drift")
+		}
+		exclude, err := driftExcludeSelectors(inputs.DriftExclude, checked)
+		if err != nil {
+			return CommandSpec{}, err
+		}
+		for _, selector := range exclude {
+			spec.Args = append(spec.Args, "--drift-exclude="+selector)
+		}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
+}
+
+// driftExcludeSelectors decodes what a drift check leaves out, refusing a list
+// on a command that runs no check, where Ptah would refuse the flag, and a
+// selector the API would not have admitted. Each selector is passed in the
+// --drift-exclude= form, so one that starts with a dash is a value and never a
+// flag. The list is a set, sorted and each selector once, so one scope builds
+// one command line.
+func driftExcludeSelectors(encoded string, checked bool) ([]string, error) {
+	if encoded == "" {
+		return nil, nil
+	}
+	if !checked {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE names selectors for a command that runs no drift check")
+	}
+	selectors, err := decodeEnvironmentList(encoded)
+	if err != nil {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE is not a valid encoded selector list")
+	}
+	if err := schemaselector.Validate(selectors); err != nil {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE contains an invalid selector list")
+	}
+	return schemaselector.Normalize(selectors), nil
 }
 
 // validateTransactionMode refuses a mode this build does not know.

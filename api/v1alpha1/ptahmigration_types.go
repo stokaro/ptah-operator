@@ -266,6 +266,48 @@ type MigrationPolicy struct {
 	// reference says what the operator does with the answer.
 	// +kubebuilder:validation:Enum=file;none
 	TransactionMode string `json:"transactionMode,omitempty"`
+
+	// DriftCheck asks Ptah to compare the target's live schema with the schema
+	// its applied history replays to, under the migration lock and before any
+	// pending migration runs. An Apply whose check does not come back clean
+	// runs nothing and leaves the history as it was.
+	//
+	// Unset checks nothing, which is how every resource without it runs.
+	// +optional
+	DriftCheck *MigrationDriftCheck `json:"driftCheck,omitempty"`
+}
+
+// MigrationDriftCheck names the database Ptah replays the applied history into.
+type MigrationDriftCheck struct {
+	// Shadow is a Secret key in this namespace holding the URL of an empty
+	// database of the target's engine. Ptah replays the applied migrations
+	// into it, compares the result with the target, and empties it again. It
+	// refuses a shadow that holds anything, and one that is the target under
+	// another name. Only the executor Pod reads the Secret, the way it reads
+	// the target's.
+	//
+	// Give each resource its own shadow: two checks that share one at the same
+	// time find each other's tables in it.
+	Shadow DatabaseTargetRef `json:"shadow"`
+
+	// Exclude names schema objects the comparison leaves out on both sides,
+	// as `ptah schema diff --exclude` selects them: tables a PtahSchema or
+	// another tool keeps in the same database, for example. Each entry
+	// reaches Ptah as one --drift-exclude, and Ptah judges the selector
+	// grammar when the check runs, refusing a selector it cannot honor. The
+	// API holds each entry to the bounds a PtahSchema's exclude has: not
+	// empty, no whitespace at either end, which Ptah would trim, and no
+	// control character.
+	//
+	// The list is part of the policy a plan binds, so changing it publishes
+	// a new plan; its order is not. Unset leaves nothing out.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:items:Pattern=`^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // PtahMigrationSpec declares a database, a migration artifact, and the terms
@@ -278,6 +320,8 @@ type MigrationPolicy struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.execution) || !has(self.execution.connectTimeout) || !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="execution.connectTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)",message="target.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && self.policy.driftCheck.shadow.urlFrom.key.size() > 0 && (!has(self.policy.driftCheck.shadow.urlFrom.optional) || !self.policy.driftCheck.shadow.urlFrom.optional))",message="policy.driftCheck.shadow.urlFrom must name a required Secret key"
+// +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.driftCheck) || self.policy.driftCheck.shadow.urlFrom.name != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key != self.target.urlFrom.key",message="policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.verificationPolicyFrom) || (self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional))",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.https) || self.artifact.https.format != 'File'",message="artifact.https.format is TarGzip or Zip: a migration directory comes in an archive"
@@ -362,6 +406,14 @@ type MigrationHistoryStatus struct {
 	// against one database is never executed against another.
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
+
+	// ShadowIdentityDigest is the credential-free identity of the shadow
+	// database policy.driftCheck named when this history was read, as the
+	// executor derived it. It is empty when the policy asks for no check. A
+	// plan binds it, so an approval does not carry over to another shadow.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ShadowIdentityDigest string `json:"shadowIdentityDigest,omitempty"`
 
 	// Dirty reports a revision row a failed or interrupted run left behind.
 	// Nothing applies while one exists.
@@ -1002,6 +1054,23 @@ const (
 	// to schema_migrations_log, so its record of the run is incomplete. The
 	// run's outcome is unchanged: the migrations it applied are applied.
 	ReasonLogEntriesLost ConditionReason = "LogEntriesLost"
+	// ReasonSchemaDrifted means policy.driftCheck found the target's live
+	// schema differing from what its applied history replays to, so the Apply
+	// ran nothing. Something changed the schema outside the migrations.
+	ReasonSchemaDrifted ConditionReason = "SchemaDrifted"
+	// ReasonDriftCheckUnsupported means Ptah could not decide the check: the
+	// target's schema cannot be read, the applied history cannot be read or
+	// replayed in order, the applied migrations failed when replayed on the
+	// shadow, a selector in policy.driftCheck.exclude was refused, or the
+	// comparison covers an object it cannot describe. The Apply ran nothing.
+	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
+	// ReasonShadowDatabaseUnavailable means the shadow database could not be
+	// used. A history read that cannot name it, because its Secret key holds
+	// no URL, a URL the runner cannot identify, or the target's server and
+	// database, publishes no plan and is read again. An Apply ran nothing: the
+	// shadow was unreachable, held something, or was the target under another
+	// name.
+	ReasonShadowDatabaseUnavailable ConditionReason = "ShadowDatabaseUnavailable"
 )
 
 // ConditionMigrationArtifactVerified reports that the resolved artifact

@@ -8,5 +8,9 @@
     {
       "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:b6c70edb1a0bbe4a77bea8703e9cdc31ab9ab811a2b7647db0d9d25b605321ea"
+  }
 }

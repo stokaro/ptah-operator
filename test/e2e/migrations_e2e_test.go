@@ -117,6 +117,11 @@ func runMigrationFaultsPhase(t *testing.T, phase phases.Of[phases.MigrationsInpu
 	if engine == "mysql" {
 		scenarios = append(scenarios, scenario{"mysql-refused-migration-log", m.refusedLogProof})
 	}
+	// The drift check is Ptah's on either engine, and the operator carries
+	// its answer the same way from both, so one engine carries the row.
+	if engine == "postgresql" {
+		scenarios = append(scenarios, scenario{"postgresql-migration-drift-check", m.driftCheckProof})
+	}
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {
 			return

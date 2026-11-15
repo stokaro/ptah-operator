@@ -192,7 +192,9 @@ func TestCommandWordsNamesTheValidationApart(t *testing.T) {
 		"schema apply --plan /p --auto-approve --json":           "schema apply",
 		"schema apply --plan /p --auto-approve --json --dry-run": "schema apply --dry-run",
 		"oci resolve oci://r/a:v1 --format json":                 "oci resolve",
-		"version":                                                "version",
+		"migrations up --migrations-dir /m --json --check-drift": "migrations up --check-drift",
+		"migrations up --migrations-dir /m --json":               "migrations up",
+		"version": "version",
 	} {
 		if got := runnerharness.CommandWords(strings.Fields(args)); got != want {
 			t.Errorf("CommandWords(%q) = %q, want %q", args, got, want)

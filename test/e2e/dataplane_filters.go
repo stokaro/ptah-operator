@@ -237,8 +237,33 @@ func registryCredentialFiles(secret string, keys [3]string) []credentialFile {
 // operator's Jobs carry none of them: the runner reads each from a file into
 // its child's environment.
 var credentialVariables = []string{
-	"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
+	"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SHADOW_DB", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
 	"PTAH_GIT_USERNAME", "PTAH_GIT_PASSWORD",
+}
+
+// databaseURLVariables are the variables a container names a database URL by:
+// the target's, the development database's and a drift check's shadow, each
+// as the variable Ptah reads and as the one naming the file the runner reads.
+var databaseURLVariables = []string{
+	"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SHADOW_DB",
+	"PTAH_OPERATOR_DB_URL_FILE", "PTAH_OPERATOR_DEV_URL_FILE", "PTAH_OPERATOR_SHADOW_DB_URL_FILE",
+}
+
+// databaseURLVolumes are the volumes a Job mounts a database URL from.
+var databaseURLVolumes = []string{"database-url", "development-database-url", "shadow-database-url"}
+
+// namesDatabaseURL is a container that names a database URL by a variable or
+// mounts one.
+func namesDatabaseURL(c containerView) bool {
+	if c.envNameWith(func(name string) bool { return slices.Contains(databaseURLVariables, name) }) {
+		return true
+	}
+	for _, volume := range databaseURLVolumes {
+		if len(c.mountsNamed(volume)) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // noCredentialVariable is a container whose environment holds no variable
@@ -501,10 +526,7 @@ func noAuthorityGuardInputs(c containerView) bool {
 // variable Ptah reads one from, no variable naming a file of one, no mount of
 // a database URL volume, and no read of the database Secret.
 func noDatabaseAccess(c containerView, databaseSecret string) bool {
-	return !c.hasEnvName("PTAH_DB_URL") && !c.hasEnvName("PTAH_DEV_URL") &&
-		!c.hasEnvName("PTAH_OPERATOR_DB_URL_FILE") && !c.hasEnvName("PTAH_OPERATOR_DEV_URL_FILE") &&
-		len(c.mountsNamed("database-url")) == 0 && len(c.mountsNamed("development-database-url")) == 0 &&
-		!c.readsSecret(databaseSecret)
+	return !namesDatabaseURL(c) && !c.readsSecret(databaseSecret)
 }
 
 func (s controllerIsolation) noDatabase(c containerView) bool {
@@ -1065,7 +1087,7 @@ func publisherJobIsolation(job *batchv1.Job, image, registrySecret string) bool 
 	container := viewContainers(spec.Containers)[0]
 	if spec.Containers[0].Name != "publisher" || spec.Containers[0].Image != image ||
 		len(spec.Containers) != 1 || len(spec.InitContainers) != 0 ||
-		container.hasEnvName("PTAH_DB_URL") || container.hasEnvName("PTAH_DEV_URL") {
+		namesDatabaseURL(container) {
 		return false
 	}
 	for _, name := range container.secretNames() {

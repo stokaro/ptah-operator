@@ -4,37 +4,45 @@
 for `schema_migrations_log` after one `ptah migrations up --migrations-dir
 <fixtures> --json` against an empty database, with the repository's own
 `testdata/e2e/migrations/<engine>` fixtures. Ptah wrote every row. Captured on
-2026-11-12 with the clients the phase reads through, `psql -Atqc` and
-`mysql -Nse`. Each run was its own container, so every run id starts with the
-process ID 1.
+2026-11-15 on the `vcluster-mac` Docker host with the clients the phase reads
+through, `psql -Atqc` and `mysql -Nse`. Each run was its own container, with
+Ptah as its first process, so every run id starts with the process ID 1. The
+PostgreSQL runs connected as the server's own user, the MySQL runs as the
+application user `ptah_e2e`, which holds every privilege on its database, as
+the lifecycle's login does.
 
-- Executor: the Ptah v0.23.0 release image,
-  `ghcr.io/stokaro/ptah@sha256:653100970980ff77edadbf6fa0cbf0fa26b0f179a6e2130a50ed2259f3c33489`,
-  source `f47b2bfa`. The v0.18.0 (`6e1d430e`) and v0.22.0 (`0dd9190b`) release
-  images wrote the same rows in all eight runs, apart from the run id
+- Executor: the Ptah v0.29.0 release image,
+  `ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8`,
+  source `75fa9991`, for arm64
 - PostgreSQL: `17.11`, `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - MySQL: `8.4.11`, `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
 
 PostgreSQL query:
 
 ```sql
-SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', encode(convert_to(coalesce(actor, ''), 'UTF8'), 'hex')) FROM schema_migrations_log ORDER BY seq
+SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', encode(convert_to(coalesce(actor, ''), 'UTF8'), 'hex'), ':', encode(convert_to(coalesce(actor_origin, ''), 'UTF8'), 'hex'), ':', encode(convert_to(coalesce(run_reference, ''), 'UTF8'), 'hex')) FROM schema_migrations_log ORDER BY seq
 ```
 
 MySQL query:
 
 ```sql
-SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', hex(coalesce(actor, ''))) FROM schema_migrations_log ORDER BY seq
+SELECT concat(run_id, ':', version, ':', state, ':', actor_source, ':', hex(coalesce(actor, '')), ':', hex(coalesce(actor_origin, '')), ':', hex(coalesce(run_reference, ''))) FROM schema_migrations_log ORDER BY seq
 ```
+
+The run reference is `sha256:0ec6a440c2633fe95ed0d9b16a34c3c65509dfeb2d81031a40e8202918171748`
+wherever a run was given one: a value of the form the operator's operation IDs
+take.
 
 | Kind | What the run was given | What it wrote |
 | --- | --- | --- |
-| `approved` | `PTAH_ACTOR=oidc:Jos%C3%A9 Garc%C3%ADa %24(HOME)`, the operator's encoding of `oidc:José García $(HOME)` | that value, source `provided` |
-| `unencoded` | `PTAH_ACTOR=oidc:José García $(HOME)`, which the operator does not send | that name in UTF-8, source `provided`, on a database that can store it |
-| `no-actor` | nothing, as every operator run before this row | no name, source `unknown` |
+| `approved` | `PTAH_ACTOR=oidc:Jos%C3%A9 Garc%C3%ADa %24(HOME)`, the operator's encoding of `oidc:José García $(HOME)`, `PTAH_ACTOR_ORIGIN=admission` and `--run-reference` | that value, source `provided`, origin `admission`, and the reference |
+| `unencoded` | `PTAH_ACTOR=oidc:José García $(HOME)`, which the operator does not send, with the same origin and reference | that name in UTF-8, on a database that can store it, with the origin and the reference |
+| `no-reference` | the encoded `PTAH_ACTOR` alone, as a 0.2.12 Job gives it | that value, source `provided`, no origin and no reference |
+| `no-actor` | nothing, as every operator run before 0.2.12 | no name, source `unknown` |
 | `process-user` | `USER=ptah` and no actor | `ptah`, source `process-user` |
 
-The Job the operator builds sets `PTAH_ACTOR`; these runs set it by hand, because
-what they record is what Ptah does with the value and no cluster was involved.
-The acceptance row in `test/e2e/migrations_lifecycle_e2e_test.go` proves the
-operator's half.
+The Job the operator builds sets `PTAH_ACTOR` and `PTAH_ACTOR_ORIGIN`, and the
+runner passes `--run-reference`; these runs set them by hand, because what they
+record is what Ptah does with the values and no cluster was involved. The
+acceptance rows in `test/e2e/migrations_lifecycle_e2e_test.go` and
+`test/e2e/migrations_isolation_e2e_test.go` prove the operator's half.

@@ -18,7 +18,31 @@ out of silence.
 
 ## 0.2.13
 
-**Before you upgrade.** An installation that renders the chart's rules needs
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRD schemas gain a migration's drift check, so the CRD
+schema version moves from 20 to 21. Once this release's hook has updated the
+CRDs, 0.2.12's CRD hook refuses [a rollback](../../use/operations/#rollback)
+to 0.2.12: a release's hook refuses CRD schemas newer than the release reads,
+and 0.2.12 reads none of the new fields. The executor moves to Ptah
+v0.29.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.29.0 and planned.
+A schema Apply that sends a statement now creates the table
+`ptah_schema_apply_log` in the target database, as the login in the schema's
+Secret, and writes a row to it before its first statement and one when it ends. A tool that lists the tables a
+database should hold, or an audit that alerts on `CREATE TABLE`, has to expect
+that table. Under the MySQL and MariaDB grant
+[MySQL authority](../databases/#mysql-authority) documents, the login can create
+the table and not insert into it, so both rows are lost while the Apply ends as
+before. Where you want the rows, grant `INSERT` on the table once an Apply has
+created it. A MySQL or MariaDB migration login without `ALTER` on
+`schema_migrations_log` loses that log's rows from its first run under v0.29.0,
+and `RunLogged` goes `False` with `LogEntriesLost`; add the two columns
+[Who the database's log names](../../use/migrations/#who-the-databases-log-names)
+shows before the upgrade. A database audit that lists what the executor sends
+has to expect the statements the executor bullet names. A schema Apply now
+writes its approver's username to `ptah_schema_apply_log`, so a privacy review
+that covers `schema_migrations_log` has a second table to cover.
+An installation that renders the chart's rules needs
 Prometheus 2.42 or later, and a `PrometheusRule` CRD from Prometheus Operator
 0.66 or later: an older CRD does not declare `keep_firing_for`, so the API
 server drops it with a warning, or refuses the object under strict field
@@ -27,6 +51,80 @@ validation. `PtahOperatorUnresolvedApply`, `PtahOperatorResourceOverdue`,
 seconds after the reading that clears them, so anything that waits for their
 resolution waits that much longer. Nothing else.
 
+- **A migration can check its schema against its history.**
+  `spec.policy.driftCheck` names a shadow database by a Secret key, and every
+  Apply then asks Ptah to replay the applied migrations into it and compare the
+  result with the target before any pending migration runs
+  ([#1054](https://github.com/stokaro/ptah-operator/issues/1054)). A target
+  that differs stops the run with reason `SchemaDrifted`, a check that cannot
+  decide stops it with `DriftCheckUnsupported`, and a shadow it cannot use
+  with `ShadowDatabaseUnavailable`; nothing pending runs, and the revision
+  table is as it was. The plan binds the shadow's identity, so an approval
+  does not carry over to another shadow. `exclude` names objects the
+  comparison leaves out, such as the tables a `PtahSchema` manages in the same
+  database ([#1093](https://github.com/stokaro/ptah-operator/issues/1093)),
+  and the plan binds the list too. A resource without the field runs as
+  before.
+  [Check the schema against its history](../../use/migrations/#drift-check)
+  says what the shadow needs.
+- **A schema Apply leaves a record in the database.** Since v0.28.0 Ptah keeps
+  a log of each schema Apply that sends a statement
+  ([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)): a `started`
+  row before the first statement, and one when the Apply ends with its outcome
+  and the statement it stopped at, both naming the plan and its digest. A write
+  the database refuses changes neither the outcome nor the exit status, and of
+  what Ptah reports about those writes the operator reads only the run
+  reference, so a lost row shows nowhere in the resource. Nothing is written for
+  a dry run, a stale plan Ptah refuses, or a plan with no changes.
+  [What the operator records](../../use/audit/#coverage) lists the table.
+- **The migration log gains two columns.** Since v0.28.0 Ptah adds
+  `run_reference` and `actor_origin` to `schema_migrations_log`, nullable, and adds them to a
+  log an earlier build created on the first run that writes to it.
+- **Both logs name the approver and the run**
+  ([#1062](https://github.com/stokaro/ptah-operator/issues/1062)). A schema
+  Apply now passes Ptah the username admission stamped on the approval it
+  consumed, percent-encoded as a migration's is, or
+  `system:ptah-operator:apply-always:<namespace>/<name>` under `apply: Always`.
+  An Apply of either family also passes where that name came from, `admission`
+  or `policy`, which Ptah stores in `actor_origin`, and the claim's
+  `operationID` as the run reference, which Ptah stores in `run_reference` on
+  every row, so a journal entry finds the rows of its run. The runner refuses a
+  result whose rows Ptah reports under another reference, or under none, and
+  the operation ends uncertain, as for a result it cannot read. Rows an
+  earlier release wrote keep both columns empty.
+  [Joining one change across the record](../../use/audit/#joins) says how to
+  read them.
+- **A `$` in a resource reaches the runner as written.** The kubelet expands
+  `$(VAR)` and reduces `$$` to `$` in each literal value of a container's
+  environment, and the operator passed what a resource names to the runner in
+  such values, so a schema's `exclude` or `protectedTables` entry `public.a$$b`
+  reached Ptah as `public.a$b`, and one naming `$(HOME)` reached it with that
+  variable's value in its place. A Git source's address, path, branch and tag,
+  and an HTTPS source's address and path, were read the same way. The Job now
+  doubles each `$`, so the process reads the value the resource holds.
+- **Executor.** The verified executor is now Ptah v0.29.0. Each schema read of
+  both engines leaves `ptah_schema_apply_log` out of its catalog queries, beside
+  the migration tables it already left out, and sends nothing else new. The
+  Apply adds `CREATE TABLE IF NOT EXISTS ptah_schema_apply_log` and an `INSERT`
+  for each row, and on PostgreSQL a read of the table's owner before and after
+  the `CREATE`. A migration run adds an `ALTER TABLE` of
+  `schema_migrations_log` once, where the log lacks the new columns.
+  `migrations up` can now check drift against the applied history
+  ([stokaro/ptah#5994](https://github.com/stokaro/ptah/pull/5994)), and the
+  operator asks it to for a migration whose policy names a drift check. A
+  migration run now asks every file it selected what the file's transaction or
+  its own text refuses before the first one runs
+  ([stokaro/ptah#6052](https://github.com/stokaro/ptah/pull/6052),
+  [#6055](https://github.com/stokaro/ptah/pull/6055)), such as a
+  `CREATE INDEX CONCURRENTLY` inside the transaction the file runs in, and a
+  refusal there applies none of them and writes no revision row. Under v0.26.0
+  the files ahead of the refused one ran first.
+- **A run refused before its first file names a migration only when it
+  selected one.** Such a run's document does not say which file Ptah refused,
+  so the `lastRun` message of a run of several files names none, and the Pod
+  log holds Ptah's sentence, which names the file.
+  [A migration that failed and committed nothing](../../troubleshoot/condition-reasons/#a-migration-that-failed-and-committed-nothing)
+  shows both messages.
 - **The state alerts hold through a failed read.** A scrape whose state read
   fails publishes none of the gauges these four alerts read, so a firing alert
   resolved on that scrape and fired again on the next one that read, and a

@@ -6,6 +6,46 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
 
+// assertApplyLogNames reads the database's own record of an approved Apply
+// and holds it to the approval the Apply consumed and to the journal: one
+// apply of the plan with the digest given, every entry naming the username
+// admission stamped on the approval, saying admission is where that name came
+// from, and carrying the operation ID the journal records for the Apply. The
+// approval is read back after the Apply consumed it, so the name the row looks
+// for is the one the API server holds and not one the row chose. On MySQL the
+// lifecycle's audit account, which holds every privilege on the database,
+// writes the log, and the application user reads it.
+func (d *dataPlane) assertApplyLogNames(schema, engine, database, approvalName, planDigest string) {
+	d.t.Helper()
+	approval := &ptahv1alpha1.PtahSchemaApproval{}
+	d.check(d.get(approvalName, approval), "read approval %s", approvalName)
+	stamped := approval.Spec.Approver.Username
+	if !unencodedInTheLog(stamped) {
+		d.fatalf("admission stamped approval %s with %q, which the log holds encoded, and this row compares the stamp as it is",
+			approvalName, stamped)
+	}
+	applied, err := finishedRunOf(d.schema(schema).Status.Journal, ptahv1alpha1.JournalApplyFinished, approval.UID)
+	if err != nil {
+		d.fatalf("%s: the Apply approval %s authorized: %v", schema, approvalName, err)
+	}
+	query := schemaApplyLogQuery(engine)
+	var output string
+	if engine == "mysql" {
+		output, err = d.mysql(query)
+	} else {
+		output, err = d.psql(database, query)
+	}
+	d.check(err, "read ptah_schema_apply_log in %s", database)
+	rows, err := parseSchemaApplyLog(output)
+	d.check(err, "parse ptah_schema_apply_log in %s", database)
+	run := loggedRun{actor: stamped, origin: actorOriginAdmission, reference: applied.OperationID}
+	if err := applyLoggedAs(rows, run, planDigest); err != nil {
+		d.fatalf("ptah_schema_apply_log in %s does not record %+v for plan digest %s: %v; it holds %+v", database, run, planDigest, err, rows)
+	}
+	d.logf("PASS %s records the Apply of %s as %q from admission under operation %s in the database's own log",
+		schema, planDigest, stamped, applied.OperationID)
+}
+
 // approvedSchemaSQLControl starts before approval and returns the check to run
 // after convergence. The existing lifecycle assertions verify database effects;
 // this binds the received SQL and successful runner result to that exact plan.

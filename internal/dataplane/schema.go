@@ -136,6 +136,10 @@ type SchemaApplyReport struct {
 	// database answered with. It carries no text, so it is what may leave the
 	// Pod. A build before stokaro/ptah#5562 writes none.
 	Failure *SchemaApplyFailure `json:"failure,omitempty"`
+	// ApplyLog is what the run's writes to ptah_schema_apply_log came to, read
+	// for the run reference the entries carry. Its lost entries are not read:
+	// a lost entry changes nothing about the outcome.
+	ApplyLog *RunLogReference `json:"apply_log,omitempty"`
 }
 
 // SchemaApplyFailure is the unit or the commit a schema apply stopped at, as

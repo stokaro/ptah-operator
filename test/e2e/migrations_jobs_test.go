@@ -88,7 +88,13 @@ func mtMigration() *ptahv1alpha1.PtahMigration {
 // back through JSON as the API server would return them.
 func mtBuiltJobs(t *testing.T) []batchv1.Job {
 	t.Helper()
-	migration := mtMigration()
+	return mtBuiltJobsOf(t, mtMigration(), "")
+}
+
+// mtBuiltJobsOf are the four Jobs the builder writes for a migration whose
+// plan binds the shadow identity given.
+func mtBuiltJobsOf(t *testing.T, migration *ptahv1alpha1.PtahMigration, shadowIdentityDigest string) []batchv1.Job {
+	t.Helper()
 	coordination, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", migration.Namespace, migration.Spec.Target.CoordinationKey)
 	if err != nil {
 		t.Fatal(err)
@@ -99,8 +105,8 @@ func mtBuiltJobs(t *testing.T) []batchv1.Job {
 			ContractVersion: migrationplan.ContractVersion, MigrationRef: ptahv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
 			Fingerprint: builderDigest('4'), HistoryFingerprint: builderDigest('5'),
 			ArtifactDigest: migration.Status.Artifact.Digest, CoordinationDigest: coordination,
-			TargetIdentityDigest: builderDigest('6'),
-			Migrations:           []ptahv1alpha1.PlannedMigration{{Version: 1, Checksum: "h1:0001"}},
+			TargetIdentityDigest: builderDigest('6'), ShadowIdentityDigest: shadowIdentityDigest,
+			Migrations: []ptahv1alpha1.PlannedMigration{{Version: 1, Checksum: "h1:0001"}},
 		},
 	}
 	started := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
@@ -396,6 +402,9 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 		{"a source Job naming a dev database", "verify", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_DEV_URL", Value: "postgres://dev"})
 		}},
+		{"a source Job naming a shadow database URL file", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "ptah"), corev1.EnvVar{Name: "PTAH_OPERATOR_SHADOW_DB_URL_FILE", Value: "/credentials/shadow-database/url"})
+		}},
 		{"a source runner installer reading the database Secret", "resolve", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "install-runner"), mtSecretVar("ANYTHING", mtDatabaseSecret, "password"))
 		}},
@@ -549,6 +558,17 @@ func TestMigrationJobIsolationRefusesEveryBreach(t *testing.T) {
 		}},
 		{"an authority guard naming a dev database", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			mtSetEnv(mtContainer(job, "validate-source-authority"), corev1.EnvVar{Name: "PTAH_DEV_URL", Value: "postgres://dev"})
+		}},
+		{"an authority guard naming a shadow database", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
+			mtSetEnv(mtContainer(job, "validate-source-authority"), corev1.EnvVar{Name: "PTAH_SHADOW_DB", Value: "postgres://shadow"})
+		}},
+		{"a fetch mounting a shadow database URL", "history", func(_ []batchv1.Job, job *batchv1.Job) {
+			job.Spec.Template.Spec.Volumes = append(job.Spec.Template.Spec.Volumes, corev1.Volume{
+				Name: "shadow-database-url", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "ledger-shadow"}},
+			})
+			container := mtContainer(job, "fetch-migrations")
+			container.VolumeMounts = append(container.VolumeMounts,
+				corev1.VolumeMount{Name: "shadow-database-url", MountPath: "/credentials/shadow-database", ReadOnly: true})
 		}},
 		{"the artifact mounted writable", "apply", func(_ []batchv1.Job, job *batchv1.Job) {
 			container := mtContainer(job, "ptah")

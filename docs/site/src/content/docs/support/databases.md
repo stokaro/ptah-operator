@@ -71,6 +71,13 @@ GRANT USAGE, CREATE ON SCHEMA public TO ptah;
 Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
+Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
+[schema apply log](https://github.com/stokaro/ptah/blob/75fa9991177e9049b66fe2e37abec0db40f47568/docs/site/src/content/docs/direct/apply-log.md),
+the table `ptah_schema_apply_log`: one row before its first statement and one
+after it. The first such Apply creates the table in `public`, and the `CREATE`
+above is all it needs, so the login owns the table. Ptah refuses a table of that
+name another role owns, and the Apply then goes on without its rows.
+
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the
 database or a schema is more: PostgreSQL lets the owner drop what is in it, whoever
@@ -130,6 +137,23 @@ GRANT SHOW_ROUTINE ON *.* TO 'ptah'@'%';
 `SHOW_ROUTINE` reads routine definitions in every database on the server and
 writes nothing.
 
+An Apply writes the schema apply log on MySQL too, as
+[PostgreSQL authority](#postgresql-authority) describes. The grant on
+`` `app`.* `` lets the first Apply that sends a statement create
+`ptah_schema_apply_log` and holds no `INSERT`, so both rows are lost, each with
+error 1142. The Apply goes on and ends as it would have, and the operator does
+not report the loss. To keep the rows, grant `INSERT` on that one table once an
+Apply has created it. MySQL refuses the grant while the table does not exist:
+
+```sql
+GRANT INSERT ON `app`.`ptah_schema_apply_log` TO 'ptah'@'%';
+```
+
+A table grant reads the database name as written, so leave each `_` and `%`
+unescaped here. `` `my\_app`.`ptah_schema_apply_log` `` names a database that
+does not exist, and MySQL refuses it with the same error 1146 it gives before
+the table exists.
+
 The operator rejects credential-bearing principal DDL and MySQL connection
 parameters that can inject session SQL. `multiStatements` is always rejected.
 Conventional IPv6 MySQL URLs must include an explicit port; the network DSN form
@@ -145,12 +169,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.26.0, the executor this operator build pins
+This section describes Ptah v0.29.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0. The acceptance rows that
+v0.26.0, v0.28.0 and v0.29.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only

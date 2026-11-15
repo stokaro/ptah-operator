@@ -27,13 +27,19 @@ func statementErrorDocument(t *testing.T, name string) string {
 }
 
 // runRefusedStatement runs one Apply on a captured document and returns the
-// result, the Pod log it wrote, and what crosses to the manager.
+// result, the Pod log it wrote, and what crosses to the manager. A document
+// that reports the run reference its log entries carry runs under that
+// operation ID, the one the runner harness gave the run it captured.
 func runRefusedStatement(t *testing.T, run targetFailureRun, stdout string) (Result, string, EncodedResult) {
 	t.Helper()
+	environment := run.environment(t)
+	if reference := reportedRunReference(stdout); reference != "" {
+		environment = withOperationID(t, environment, reference)
+	}
 	diagnostics := &bytes.Buffer{}
 	result := Run(context.Background(), Config{
 		Operation:   run.operation,
-		Environment: withRunnerProtocol(run.environment(t)),
+		Environment: withRunnerProtocol(environment),
 		Executor:    &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: stdout, exitCode: 2}}},
 		Diagnostics: diagnostics,
 		TempDir:     t.TempDir(),

@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-refused-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-refused-postgres@sha256:cfb59ecfedbf10813b2da2097f0ace4d39bbd99d7352e60ee5ab0d3a7a8a983f",
+  "digest": "sha256:cfb59ecfedbf10813b2da2097f0ace4d39bbd99d7352e60ee5ab0d3a7a8a983f",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1564
+}

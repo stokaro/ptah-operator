@@ -33,5 +33,9 @@
         }
       ]
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d"
+  }
 }

@@ -8,36 +8,53 @@ import (
 )
 
 const (
-	// EnvMigrationActor is how a migration Apply tells Ptah who it records in
-	// schema_migrations_log. It fills `migrations up --actor` through Ptah's own
-	// environment binding, so the name never reaches a command line: it is not
-	// an argument the runner assembles, nothing can read it as a flag, and no
-	// shell is involved.
-	EnvMigrationActor = "PTAH_ACTOR"
+	// EnvActor is how an Apply tells Ptah who it records: in
+	// schema_migrations_log for a migration, and in ptah_schema_apply_log for
+	// a schema. It fills `migrations up --actor` and `schema apply --actor`
+	// through Ptah's own environment binding, so the name never reaches a
+	// command line: it is not an argument the runner assembles, nothing can
+	// read it as a flag, and no shell is involved.
+	EnvActor = "PTAH_ACTOR"
 
-	// MaxMigrationActorBytes bounds the name a run records, after encoding.
+	// EnvActorOrigin fills --actor-origin the same way. Ptah stores the word
+	// in the actor_origin column beside the name, and refuses it without a
+	// name, so a Job sets both or neither.
+	EnvActorOrigin = "PTAH_ACTOR_ORIGIN"
+
+	// ActorOriginAdmission says the name is the username admission stamped on
+	// the approval the run consumed.
+	ActorOriginAdmission = "admission"
+
+	// ActorOriginPolicy says no person approved the run: apply: Always allowed
+	// it, and the name is the fixed one under ReservedActorPrefix.
+	ActorOriginPolicy = "policy"
+
+	// MaxActorBytes bounds the name a run records, after encoding.
 	//
-	// Ptah's column is VARCHAR(256), and a value it refuses costs more than the
-	// value: measured on Ptah v0.18.0, PostgreSQL 17 and MySQL 8.4, the run still
-	// applies and exits 0 and every one of its log rows is lost, with only a
-	// warning on the executor's stderr. An encoded name is ASCII, so its bytes
-	// and its characters are the same number under every character set, and it
-	// holds no $, so the kubelet cannot lengthen it on the way to the process.
-	MaxMigrationActorBytes = 256
+	// Both of Ptah's actor columns are VARCHAR(256), and a value it refuses
+	// costs more than the value: measured on Ptah v0.18.0, PostgreSQL 17 and
+	// MySQL 8.4, the migration still applies and exits 0 and every one of its
+	// log rows is lost, with only a warning on the executor's stderr. An
+	// encoded name is ASCII, so its bytes and its characters are the same
+	// number under every character set, and it holds no $, so the kubelet
+	// cannot lengthen it on the way to the process.
+	MaxActorBytes = 256
 
-	// migrationActorMarker ends a name that did not fit, so a reader can tell it
+	// actorMarker ends a name that did not fit, so a reader can tell it
 	// from a whole one.
-	migrationActorMarker = "..."
+	actorMarker = "..."
 
 	// ReservedActorPrefix starts every name the operator records on its own
-	// account. Admission refuses an approval from a username under it, so the log
-	// cannot read a person's decision as a run nobody approved, or the reverse.
+	// account. Admission refuses a migration approval from a username under it,
+	// so the log cannot read a person's decision as a run nobody approved, or
+	// the reverse. A schema approval is not refused, and the origin beside the
+	// name is what tells the two apart there.
 	ReservedActorPrefix = "system:ptah-operator:"
 
-	// alwaysMigrationActorPrefix starts the name a run under apply: Always
-	// records. The resource follows: a namespace and a name of 63 bytes each
-	// leave it well inside the bound.
-	alwaysMigrationActorPrefix = ReservedActorPrefix + "apply-always:"
+	// alwaysActorPrefix starts the name a run under apply: Always records. The
+	// resource follows: a namespace and a name of 63 bytes each leave it well
+	// inside the bound. The log it is written to says which kind it is.
+	alwaysActorPrefix = ReservedActorPrefix + "apply-always:"
 
 	upperHexDigits = "0123456789ABCDEF"
 )
@@ -46,7 +63,7 @@ const (
 // log: the username admission stamped on the approval it consumes, which is a
 // field only the webhook writes, or, when no approval authorized the run
 // because the policy is apply: Always, a fixed name that says so and names the
-// resource. Either way it is encoded by encodedMigrationActor.
+// resource. Either way it is encoded by encodedActor.
 //
 // The claim persists the result, so this runs once per claim. Reading the
 // approval again at build time would make a deleted approval unbuildable, and
@@ -56,12 +73,45 @@ func MigrationActor(
 	approval *operatorv1alpha1.PtahMigrationApproval,
 ) string {
 	if approval != nil {
-		return encodedMigrationActor(approval.Spec.Approver.Username)
+		return encodedActor(approval.Spec.Approver.Username)
 	}
-	return encodedMigrationActor(alwaysMigrationActorPrefix + migration.Namespace + "/" + migration.Name)
+	return encodedActor(alwaysActorPrefix + migration.Namespace + "/" + migration.Name)
 }
 
-// encodedMigrationActor percent-encodes a name for the log: every byte outside
+// MigrationActorOrigin is the word a migration Apply records beside its
+// actor: admission when the claim names the approval it consumed, policy when
+// it names none. The claim records both, so the Job a claim builds does not
+// move with anything that happens to the approval afterwards.
+func MigrationActorOrigin(operation operatorv1alpha1.MigrationOperationStatus) string {
+	if operation.ApprovalRef != nil {
+		return ActorOriginAdmission
+	}
+	return ActorOriginPolicy
+}
+
+// SchemaApplyActor is the name and the origin a schema Apply records in
+// ptah_schema_apply_log, chosen as MigrationActor chooses: the username
+// admission stamped on the approval the run consumed, which status.plan copies
+// when the approval is consumed, or the fixed name under apply: Always when no
+// approval was. An empty name means none is known, and the Job then sets
+// neither variable.
+//
+// It reads status.plan at build time, unlike a migration, whose claim keeps its
+// own copy. The builder refuses an Apply of anything but status.plan, and a
+// plan that needs an approval without one, so every Job an Apply claim can
+// build reads the same approval.
+func SchemaApplyActor(schema *operatorv1alpha1.PtahSchema) (string, string) {
+	if plan := schema.Status.Plan; plan != nil && plan.Approval != nil {
+		name := encodedActor(plan.Approval.Approver.Username)
+		if name == "" {
+			return "", ""
+		}
+		return name, ActorOriginAdmission
+	}
+	return encodedActor(alwaysActorPrefix + schema.Namespace + "/" + schema.Name), ActorOriginPolicy
+}
+
+// encodedActor percent-encodes a name for the log: every byte outside
 // 0x20-0x7E, and % and $, become %XX. Spaces, colons and the rest of printable
 // ASCII stay, so an ordinary username or email reads unchanged, and
 // `oidc:José García` reads `oidc:Jos%C3%A9 Garc%C3%ADa`.
@@ -84,7 +134,7 @@ func MigrationActor(
 // A name over the bound is cut between two characters of the original, so no
 // escape is cut in half and what remains decodes to valid text, and it ends in
 // the marker.
-func encodedMigrationActor(name string) string {
+func encodedActor(name string) string {
 	name = strings.TrimSpace(name)
 	var encoded strings.Builder
 	fitsWithMarker := 0
@@ -100,12 +150,12 @@ func encodedMigrationActor(name string) string {
 			encoded.WriteByte(value)
 		}
 		rest = rest[width:]
-		if encoded.Len() <= MaxMigrationActorBytes-len(migrationActorMarker) {
+		if encoded.Len() <= MaxActorBytes-len(actorMarker) {
 			fitsWithMarker = encoded.Len()
 		}
 	}
-	if encoded.Len() <= MaxMigrationActorBytes {
+	if encoded.Len() <= MaxActorBytes {
 		return encoded.String()
 	}
-	return encoded.String()[:fitsWithMarker] + migrationActorMarker
+	return encoded.String()[:fitsWithMarker] + actorMarker
 }

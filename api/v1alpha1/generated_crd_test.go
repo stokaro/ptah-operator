@@ -366,8 +366,8 @@ func TestGeneratedPtahMigrationCRDHoldsTheActorToTheEncoder(t *testing.T) {
 		"config", "crd", "bases", "operator.ptah.run_ptahmigrations.yaml",
 	))
 	actor := storageVersionSchema(t, crd).Properties["status"].Properties["activeOperation"].Properties["actor"]
-	if actor.MaxLength == nil || *actor.MaxLength != int64(workload.MaxMigrationActorBytes) {
-		t.Fatalf("the actor holds at most %v characters, and the encoder writes %d bytes", actor.MaxLength, workload.MaxMigrationActorBytes)
+	if actor.MaxLength == nil || *actor.MaxLength != int64(workload.MaxActorBytes) {
+		t.Fatalf("the actor holds at most %v characters, and the encoder writes %d bytes", actor.MaxLength, workload.MaxActorBytes)
 	}
 	pattern, err := regexp.Compile(actor.Pattern)
 	if err != nil {

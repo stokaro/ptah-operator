@@ -173,24 +173,28 @@ whatever is present, and a partial restore is a different resource.
 ## What survives a lost cluster {#what-survives-a-lost-cluster}
 
 With no backup, what is left is what Ptah wrote into the database. The database
-answers for a migration and says almost nothing about a schema.
+answers for a migration. For a schema it holds Ptah's apply log, wherever the
+login could write it.
 
 | Resource | What the database still holds | What is gone unless you exported it |
 | --- | --- | --- |
-| `PtahMigration` | Every version applied, in the revision table, and in `schema_migrations_log` every attempt whose log write succeeded: the run, the version, the outcome, the checksum, the time and the actor | The resource and its status, `status.lastRun` and `status.unresolvedRun` among them |
+| `PtahMigration` | Every version applied, in the revision table, and in `schema_migrations_log` every attempt whose log write succeeded: the run, the version, the outcome, the checksum, the time and the actor, and from 0.2.13 where the actor came from and the run's operation ID | The resource and its status, `status.lastRun` and `status.unresolvedRun` among them |
 | `PtahMigrationPlan` | Nothing of the plan. The versions that ran and their checksums are in the two tables above | The plan and its fingerprint |
 | `PtahMigrationApproval` | The approver's username, on the log rows the run it authorized wrote, percent-encoded where it leaves printable ASCII | The object: the approver's UID and groups, when they approved, which plan fingerprint they approved, and any approval no run consumed |
 | `PtahMigrationRunAcknowledgment` | Nothing | Who accounted for a run, and what they said |
-| `PtahSchema` | The schema itself and nothing about how it got there. Ptah keeps no table for a declared schema | The resource and its status |
+| `PtahSchema` | The schema itself and, since Ptah v0.28.0, `ptah_schema_apply_log`: each Apply that sent a statement, the plan's name and digest, and how it ended, where the login may insert into the table | The resource and its status |
 | `PtahSchemaPlan` and `PtahSchemaPlanChunk` | Nothing | The plan and its SQL |
-| `PtahSchemaApproval` | Nothing | Who approved, when, and what |
+| `PtahSchemaApproval` | From 0.2.13, the approver's username on the apply log rows the Apply it authorized wrote, encoded as a migration's is | The object: the approver's UID and groups, when they approved, which plan they approved, and any approval no Apply consumed |
 | `PtahRealm` | Nothing | The grant |
 | `PtahResultRecord` | Nothing | The result it delivered |
 
 A schema's plans and approvals are lost with the cluster unless you export them.
-`ptah schema apply` writes no log and takes no actor, so afterwards the database
-cannot say who approved a schema change, or that anyone did. Recovery does not
-need that: a rebuilt `PtahSchema` observes the live schema and plans the
+From 0.2.13 the apply log names who approved each Apply, or
+`system:ptah-operator:apply-always:<namespace>/<name>` with the origin `policy`
+where nobody did, wherever the login may insert into it, which the MySQL grant
+[MySQL authority](../../support/databases/#mysql-authority) documents does not
+allow. Before 0.2.13, or without that grant, the database cannot say who
+approved a schema change, or that anyone did. Recovery does not need that: a rebuilt `PtahSchema` observes the live schema and plans the
 difference. An audit may. The operator exports nothing, so keep what an audit
 needs outside the cluster: a [backup](#what-to-preserve) that includes the
 approvals and plans, or the API server's audit log, if its audit policy records
@@ -200,9 +204,17 @@ would be.
 For a migration, read the record with SQL or with Ptah:
 
 ```sql
-SELECT logged_at, version, state, actor, actor_source
+SELECT logged_at, version, state, actor, actor_source, actor_origin, run_reference
 FROM schema_migrations_log
 ORDER BY logged_at, seq;
+```
+
+For a schema, where the apply log was written:
+
+```sql
+SELECT logged_at, run_id, seq, state, plan_name, plan_digest, actor, actor_source, actor_origin, run_reference
+FROM ptah_schema_apply_log
+ORDER BY logged_at, run_id, seq;
 ```
 
 ```sh
@@ -224,8 +236,8 @@ python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.argv[1]))' 
 ```
 
 Rows written before
-operator 0.2.10 hold no actor and the source `unknown`, and nothing fills them in
-afterwards. [The approver's name in the target
+operator 0.2.10 hold no actor and the source `unknown`, and rows written before
+0.2.13 hold no origin and no run reference. Nothing fills them in afterwards. [The approver's name in the target
 database](../security/#approver-in-the-database) says what the value is worth,
 and when a row is lost.
 

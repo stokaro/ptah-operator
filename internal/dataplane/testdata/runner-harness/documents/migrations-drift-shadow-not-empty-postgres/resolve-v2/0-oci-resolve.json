@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres:v2",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@sha256:6e171907cde9256f0756bb5acf7462812a5e3fa04c2acde09448bcf525828be0",
+  "digest": "sha256:6e171907cde9256f0756bb5acf7462812a5e3fa04c2acde09448bcf525828be0",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}

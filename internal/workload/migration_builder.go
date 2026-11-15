@@ -19,6 +19,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 )
 
 const (
@@ -234,6 +235,15 @@ func migrationDataPlane(
 			return nil, nil, nil, nil, errors.New("migration operation reaching the database carries no target binding")
 		}
 		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
+		// The shadow a drift check replays into is read by the history read,
+		// which reports its identity for the plan to bind, and by the Apply,
+		// which checks against it. A resource that asks for no check mounts
+		// nothing, so its Jobs are the ones it ran before the field existed.
+		if check := migration.Spec.Policy.DriftCheck; check != nil {
+			variable, volume, mount := databaseCredential(runner.EnvShadowDatabaseURLFile,
+				shadowDatabaseURLVolumeName, shadowDatabaseURLDirectory, check.Shadow.URLFrom)
+			environment, volumes, mounts = append(environment, variable), append(volumes, volume), append(mounts, mount)
+		}
 		environment = append(environment,
 			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
 			literalEnv(runner.EnvCoordinationDigest, operation.CoordinationDigest),
@@ -289,11 +299,32 @@ func migrationDataPlane(
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
 				literalEnv(runner.EnvExecutionNotAfter, operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			)
+			if plan.Spec.ShadowIdentityDigest != "" {
+				environment = append(environment, literalEnv(runner.EnvExpectedShadowIdentityDigest, plan.Spec.ShadowIdentityDigest))
+				// What the check leaves out reaches the Apply alone, since the
+				// history read runs no check, and as a set, so two orders of
+				// one list build one Job. A check that leaves nothing out
+				// builds the Job it built before the list existed.
+				if check := migration.Spec.Policy.DriftCheck; check != nil && len(check.Exclude) > 0 {
+					if err := schemaselector.Validate(check.Exclude); err != nil {
+						return nil, nil, nil, nil, fmt.Errorf("the drift check's exclude list: %w", err)
+					}
+					environment = append(environment,
+						literalEnv(runner.EnvDriftExclude, encodeStringArray(schemaselector.Normalize(check.Exclude))))
+				}
+			}
 			// Only from the claim, and only when the claim carries a name. A
 			// claim a release without the field wrote has none, so this builds
 			// the Job that release dispatched and a later manager adopts it.
+			// The origin goes beside the name and never alone, because Ptah
+			// refuses an origin with no name. No release that wrote a name set
+			// the origin, and none ran the executor this one pins, so the Job
+			// such a claim dispatched differs from this rebuild already.
 			if operation.Actor != "" {
-				environment = append(environment, literalEnv(EnvMigrationActor, operation.Actor))
+				environment = append(environment,
+					literalEnv(EnvActor, operation.Actor),
+					literalEnv(EnvActorOrigin, MigrationActorOrigin(operation)),
+				)
 			}
 		}
 	}
@@ -394,6 +425,15 @@ func validateMigrationApplyPlan(
 	}
 	if !sha256Pattern.MatchString(plan.Spec.HistoryFingerprint) {
 		return errors.New("migration apply plan carries no valid history fingerprint")
+	}
+	// The check the policy asks for is the check the plan bound. A plan
+	// without a shadow under a policy that names one would run unchecked, and
+	// one with a shadow under a policy that names none has no Secret to read.
+	switch checked := migration.Spec.Policy.DriftCheck != nil; {
+	case checked && !sha256Pattern.MatchString(plan.Spec.ShadowIdentityDigest):
+		return errors.New("the policy asks for a drift check and the migration apply plan binds no shadow database")
+	case !checked && plan.Spec.ShadowIdentityDigest != "":
+		return errors.New("the migration apply plan binds a shadow database the policy no longer names")
 	}
 	return nil
 }

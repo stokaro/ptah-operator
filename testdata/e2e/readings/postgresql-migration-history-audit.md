@@ -15,7 +15,9 @@ after asking whether the table exists.
   v0.16.0 images reproduced it record for record. The v0.17.0 image adds one record, the search-path
   read below, and changes no other. On 2026-11-04 the v0.18.0 release image (`6e1d430e`) reproduced it
   record for record, on 2026-11-06 so did the v0.22.0 release image (`0dd9190b`), on 2026-11-07
-  the v0.23.0 release image (`f47b2bfa`), and on 2026-11-13 the v0.26.0 release image (`1cf0563c`)
+  the v0.23.0 release image (`f47b2bfa`), on 2026-11-13 the v0.26.0 release image (`1cf0563c`),
+  on 2026-11-14 the v0.28.0 release image (`2ee460a6`), and on 2026-11-15 the v0.29.0 release
+  image (`75fa9991`)
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - Client address: `10.244.3.97`
 - Isolated database: `ptah_e2e_retarget`

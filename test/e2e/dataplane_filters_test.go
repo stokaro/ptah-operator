@@ -997,6 +997,14 @@ func TestPublisherJobIsolationFilter(t *testing.T) {
 			f.push(secretEnvFixture("PTAH_DEV_URL", "database-url", "url"),
 				"spec", "template", "spec", "containers", 0, "env")
 		}},
+		{"a shadow database credential", func(f fixture) {
+			f.push(secretEnvFixture("PTAH_SHADOW_DB", "database-url", "url"),
+				"spec", "template", "spec", "containers", 0, "env")
+		}},
+		{"a shadow database URL file", func(f fixture) {
+			f.push(literalEnvFixture("PTAH_OPERATOR_SHADOW_DB_URL_FILE", "/credentials/shadow-database/url"),
+				"spec", "template", "spec", "containers", 0, "env")
+		}},
 	})
 }
 

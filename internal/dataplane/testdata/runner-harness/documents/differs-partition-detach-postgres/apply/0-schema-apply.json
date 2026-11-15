@@ -8,5 +8,9 @@
     {
       "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:f4d1a4422caf8b5130bb932195944ac70f8bc2f7e126c97ac4aa686db32e64d9"
+  }
 }

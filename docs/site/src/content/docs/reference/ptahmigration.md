@@ -226,6 +226,56 @@ spec:
   suspend: false
 ```
 
+### Checked against its own history before each run
+
+Checksums prove the files are the ones the database ran, and say nothing about
+a column added by hand. `policy.driftCheck` has every Apply ask Ptah first:
+under the migration lock, before any pending migration, Ptah replays the
+applied ones into the shadow database and compares the result with the target.
+A target that differs stops the run with reason `SchemaDrifted`, and nothing
+pending runs.
+
+The shadow is a database of its own that Ptah empties after each check, and
+must be empty before one: never the target, and never a shadow another
+resource checks with. Its URL is read in the Job's Pod alone, as the target's
+is, from a Secret key other than `target.urlFrom`.
+
+The comparison covers the whole schema the target's URL reaches. Here the same
+database also holds the tables a `PtahSchema` manages under `reporting` and a
+queue table another tool creates, which no migration declares: `exclude` leaves
+them out of both sides, as `ptah schema diff --exclude` selects them. The URL
+sets no `search_path`, so Ptah reads every schema and a selector starts with
+the schema's name.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  artifact:
+    ociRef: oci://ghcr.io/example/orders-migrations:1.4.0
+    verificationPolicyFrom:
+      name: ptah-migration-verification-policy
+      key: policy.yaml
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+      exclude:
+        - reporting.*
+        - public.job_queue
+```
+
 ### A database another namespace manages too
 
 A key reaches no further than its namespace, so a database that resources in
@@ -476,20 +526,27 @@ spec:
 | `spec.execution.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `spec.execution.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
 | `spec.interval` | `string`, default `10m` | Interval is the cadence for resolving a mutable tag and re-reading the history. |
-| `spec.policy` | `object`, default `{}` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. Policy decides what may run without a person: the apply mode, the approval requirement, and the locks a run takes. |
+| `spec.policy` | `object`, default `{}` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Policy decides what may run without a person: the apply mode, the approval requirement, and the locks a run takes. |
 | `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply defaults to OnApproval. A migration artifact carries arbitrary SQL, and no analyzer classifies arbitrary SQL as safe, so the conservative setting is the default one rather than the one an operator opts into. |
+| `spec.policy.driftCheck` | `object` | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. DriftCheck asks Ptah to compare the target's live schema with the schema its applied history replays to, under the migration lock and before any pending migration runs. An Apply whose check does not come back clean runs nothing and leaves the history as it was. Unset checks nothing, which is how every resource without it runs. |
+| `spec.policy.driftCheck.exclude` | `[]string` | Exclude names schema objects the comparison leaves out on both sides, as `ptah schema diff --exclude` selects them: tables a PtahSchema or another tool keeps in the same database, for example. Each entry reaches Ptah as one --drift-exclude, and Ptah judges the selector grammar when the check runs, refusing a selector it cannot honor. The API holds each entry to the bounds a PtahSchema's exclude has: not empty, no whitespace at either end, which Ptah would trim, and no control character. The list is part of the policy a plan binds, so changing it publishes a new plan; its order is not. Unset leaves nothing out. |
+| `spec.policy.driftCheck.shadow` | `object`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Shadow is a Secret key in this namespace holding the URL of an empty database of the target's engine. Ptah replays the applied migrations into it, compares the result with the target, and empties it again. It refuses a shadow that holds anything, and one that is the target under another name. Only the executor Pod reads the Secret, the way it reads the target's. Give each resource its own shadow: two checks that share one at the same time find each other's tables in it. |
+| `spec.policy.driftCheck.shadow.urlFrom` | `object`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. URLFrom names the Secret key holding this database's connection URL. |
+| `spec.policy.driftCheck.shadow.urlFrom.key` | `string`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. The key of the secret to select from. Must be a valid secret key. |
+| `spec.policy.driftCheck.shadow.urlFrom.name` | `string`, default `` | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.policy.driftCheck.shadow.urlFrom.optional` | `boolean` | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key. Specify whether the Secret or its key must be defined |
 | `spec.policy.lockTimeout` | `string`, default `5m` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds. LockTimeout bounds the wait for the database's own migration lock. It is the lock the engine takes, not the Kubernetes Lease: two controllers that never run at the same time still need the database to serialize them. |
 | `spec.policy.transactionMode` | `string`, one of `file`, `none` | TransactionMode is how Ptah is asked to wrap the run: "file" for one transaction per migration file, "none" to wrap nothing. The spellings are Ptah's own. Unset passes no mode and Ptah chooses. There is no default here on purpose: one would change how every stored resource already runs, and would pin this API to a value Ptah is free to move. A MySQL-family database refuses "file" whenever an interceptor is installed, so this is a requirement to check against the target rather than a preference. The migration lifecycle section of the architecture reference says what the operator does with the answer. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result: a migration that is running is never abandoned, because the database would be left in a state nothing recorded. |
-| `spec.target` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. Target is the database this sequence runs against, named through a Secret the manager never reads. |
+| `spec.target` | `object`, required | This resource requires: target.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Target is the database this sequence runs against, named through a Secret the manager never reads. |
 | `spec.target.coordinationKey` | `string` | CoordinationKey is a non-secret, stable identifier for the physical database, scoped to this resource's namespace. Every resource in the namespace that can reach the same database through an alias, proxy, or different credential must use exactly the same key. The same key in another namespace is another realm: a resource elsewhere can neither block this one nor take turns with it by choosing the same string. A database more than one namespace manages is named with realmRef instead, which an administrator has to grant. Exactly one of coordinationKey and realmRef is set. |
 | `spec.target.engine` | `string`, required | Engine is the database this target speaks. An engine outside the supported set is refused with a condition rather than attempted. |
 | `spec.target.realmRef` | `object` | RealmRef names the cluster-scoped PtahRealm this database belongs to. The realm, not this resource, decides whether the claim is allowed: a resource whose namespace the realm does not list, or whose engine it does not name, is refused with reason RealmNotAuthorized and runs nothing, and it is not counted against the resources the realm does admit. Exactly one of coordinationKey and realmRef is set. |
 | `spec.target.realmRef.name` | `string`, required | Name is the PtahRealm's name. |
 | `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its realm names, and that every other resource managing that database has declared the same. It defaults to false. A realm more than one resource claims is refused while any claimant leaves it false -- including the resource that did declare it. A PtahRealm with sharing Exclusive refuses a second claimant whatever this says. Deleting a resource leaves the realm, and so does suspending it; resuming puts it back, and the conflict is refused then, before any Job. What is verified is the declaration, never the disjointness: nothing can tell whether two sets of arbitrary SQL touch the same rows. The concurrency section of the architecture reference says why taking turns is not enough. |
-| `spec.target.urlFrom` | `object`, required | This resource requires: target.urlFrom must name a required Secret key. URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
-| `spec.target.urlFrom.key` | `string`, required | This resource requires: target.urlFrom must name a required Secret key. The key of the secret to select from. Must be a valid secret key. |
-| `spec.target.urlFrom.name` | `string`, default `` | This resource requires: target.urlFrom must name a required Secret key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.target.urlFrom` | `object`, required | This resource requires: target.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
+| `spec.target.urlFrom.key` | `string`, required | This resource requires: target.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. The key of the secret to select from. Must be a valid secret key. |
+| `spec.target.urlFrom.name` | `string`, default `` | This resource requires: target.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.target.urlFrom.optional` | `boolean` | This resource requires: target.urlFrom must name a required Secret key. Specify whether the Secret or its key must be defined |
 
 ## status
@@ -722,6 +779,7 @@ spec:
 | `status.history.revisions[].executionMillis` | `integer` | ExecutionMillis is how long the migration ran, in whole milliseconds. A revision table too old to record a duration leaves it absent rather than zero. |
 | `status.history.revisions[].state` | `string`, required, one of `applied`, `modified`, `dirty` | State is applied, modified when the file no longer accounts for the row, or dirty when a run left it unfinished. |
 | `status.history.revisions[].version` | `integer`, required | Version is the migration the row records. |
+| `status.history.shadowIdentityDigest` | `string` | ShadowIdentityDigest is the credential-free identity of the shadow database policy.driftCheck named when this history was read, as the executor derived it. It is empty when the policy asks for no check. A plan binds it, so an approval does not carry over to another shadow. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
 | `status.journal` | `object` | Journal is the bounded record of this migration's significant lifecycle events. |
 | `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before, though the entries of a plan nothing has carried out yet can be older. |

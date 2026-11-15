@@ -8,5 +8,9 @@
     {
       "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:1b195cc0974829dffb26fc53c0ac3e135b908569dbe4754ca8026fb98d92ac79"
+  }
 }

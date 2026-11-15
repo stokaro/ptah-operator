@@ -11,5 +11,9 @@
     {
       "sql": "CREATE TABLE \"differs_app\".\"differs_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL\n)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:b78f359fb5861baad68f3534bbbb9b5bfd2b594e24f36aed7959519e780ab054"
+  }
 }

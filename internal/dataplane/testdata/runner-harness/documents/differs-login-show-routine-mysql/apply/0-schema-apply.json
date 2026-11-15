@@ -23,5 +23,22 @@
     "statements": 3,
     "sqlstate": "42000",
     "error_number": 1370
+  },
+  "apply_log": {
+    "written": 0,
+    "lost": [
+      {
+        "state": "started",
+        "sqlstate": "42000",
+        "error_number": 1142,
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'192.168.107.6' for table 'ptah_schema_apply_log'"
+      },
+      {
+        "state": "unknown",
+        "sqlstate": "42000",
+        "error_number": 1142,
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'192.168.107.6' for table 'ptah_schema_apply_log'"
+      }
+    ]
   }
 }

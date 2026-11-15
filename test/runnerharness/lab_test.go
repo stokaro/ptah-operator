@@ -493,6 +493,7 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 	}
 	copyTree(t, filepath.Join(e2eFixtures, "reference", "v1"), filepath.Join(fixtures, "reference"))
 	copyTree(t, filepath.Join(e2eFixtures, "migrations", "postgresql"), filepath.Join(fixtures, "migrations-postgresql"))
+	copyTree(t, filepath.Join(e2eFixtures, "migrations", "postgresql-older"), filepath.Join(fixtures, "migrations-older-postgresql"))
 	copyTree(t, filepath.Join(e2eFixtures, "migrations", "mysql"), filepath.Join(fixtures, "migrations-mysql"))
 	copyTree(t, filepath.Join(e2eFixtures, "migrations", "postgresql-checkpoint"), filepath.Join(fixtures, "migrations-checkpoint-postgresql"))
 	copyTree(t, filepath.Join(e2eFixtures, "migrations", "postgresql-stopped"), filepath.Join(fixtures, "migrations-stopped-postgresql"))

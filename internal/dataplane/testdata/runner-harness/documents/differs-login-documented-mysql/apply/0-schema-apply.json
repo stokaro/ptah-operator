@@ -8,5 +8,22 @@
     {
       "sql": "ALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 0,
+    "lost": [
+      {
+        "state": "started",
+        "sqlstate": "42000",
+        "error_number": 1142,
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'192.168.107.7' for table 'ptah_schema_apply_log'"
+      },
+      {
+        "state": "applied",
+        "sqlstate": "42000",
+        "error_number": 1142,
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_documented'@'192.168.107.7' for table 'ptah_schema_apply_log'"
+      }
+    ]
+  }
 }

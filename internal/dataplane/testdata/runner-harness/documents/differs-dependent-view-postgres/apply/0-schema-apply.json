@@ -16,5 +16,9 @@
     "statement": 1,
     "statements": 1,
     "sqlstate": "2BP01"
+  },
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:f96b70515237d14e1f4d8dd2abb64ea498b662de4e01a6c131b6dd5bbd297e34"
   }
 }

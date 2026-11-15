@@ -8,5 +8,9 @@
     {
       "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5"
+  }
 }

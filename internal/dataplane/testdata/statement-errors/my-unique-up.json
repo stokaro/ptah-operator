@@ -21,7 +21,8 @@
     "error_number": 1062
   },
   "migration_log": {
-    "written": 2
+    "written": 2,
+    "run_reference": "sha256:d67ea4e79b217d1626a05d678cffb2b823a0b2e365029078a89e2ef43a2213a9"
   },
   "status": {
     "current_version": 0,
@@ -44,9 +45,9 @@
       "total": 1,
       "error": "failed to execute migration SQL: SQL execution failed: Error 1062 (23000): Duplicate entry 'row-value@example.com' for key 'orders.orders_one_per_customer'\nSQL: CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
       "error_stmt": "CREATE UNIQUE INDEX orders_one_per_customer ON orders (customer_email)",
-      "execution_time": 5000000,
+      "execution_time": 6000000,
       "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-      "applied_at": "2026-11-13T16:31:27Z",
+      "applied_at": "2026-11-14T16:40:56Z",
       "dirty": true
     },
     "contract_version": 2,
@@ -56,8 +57,8 @@
         "version_key": "1",
         "description": "Change",
         "checksum": "a4b1d996525f9948a5da288631d84a28b38b16bbc2c0e90f4f3b2043063d92cf",
-        "applied_at": "2026-11-13T16:31:27Z",
-        "execution_time_ms": 5,
+        "applied_at": "2026-11-14T16:40:56Z",
+        "execution_time_ms": 6,
         "state": "dirty"
       }
     ],

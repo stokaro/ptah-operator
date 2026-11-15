@@ -8,5 +8,9 @@
     {
       "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)"
     }
-  ]
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:42b052257b139be7c61e0775aef03a95da9a10cd3cea51b666fa45403981d24b"
+  }
 }

@@ -6,9 +6,10 @@ description: What the operator records about a change to a database, how long ea
 An auditor asks who asked for a change, who approved it, what ran, how it
 ended, and whether the record could have been changed since. The operator
 answers most of that inside the cluster, in objects that live as long as the
-resource or its namespace. Only a migration leaves an answer in the database it
-changed. Whatever has to outlast the cluster is kept by the installation: the
-API server's audit log, collected logs and backups.
+resource or its namespace. A migration leaves an answer in the database it
+changed, and since Ptah v0.28.0 a schema Apply does too where its login may
+write the log. Whatever else has to outlast the cluster is kept by the
+installation: the API server's audit log, collected logs and backups.
 
 Every finding below comes from [one measured run](#the-measured-run) and says
 whether it was measured or only read from the code.
@@ -22,12 +23,12 @@ them.
 | Question | Where the answer is | After the cluster is lost |
 | --- | --- | --- |
 | Who asked for the change? | The API server's audit log, at the write that changed the spec | Only if the log was kept outside the cluster |
-| What was approved, by whom, and when? | The approval object, the journal's `ApprovalAccepted` entry, the audit log | A migration's approver, by username, on its rows in `schema_migrations_log`. For either family, the [journal lines](#journal-lines) a collector kept |
-| Was it approved before it ran? | The journal's order and the approval's `Consumed` condition | A migration's `actor` names its approver, or the `apply-always` prefix for a run no one approved |
+| What was approved, by whom, and when? | The approval object, the journal's `ApprovalAccepted` entry, the audit log | A migration's approver, by username, on its rows in `schema_migrations_log`. From 0.2.13 a schema's too, in `ptah_schema_apply_log` where the login may insert into it. For either family, the [journal lines](#journal-lines) a collector kept |
+| Was it approved before it ran? | The journal's order and the approval's `Consumed` condition | The log's `actor` names the approver, or the `apply-always` prefix for a run no one approved; from 0.2.13 `actor_origin` says which, for either family |
 | Did a second person approve it? | [`approvals.requireDistinctApprover`](../approvals/#refusing-a-self-approval), when the installation turned it on | No |
 | What ran, exactly? | A schema plan's chunks hold its SQL. A migration plan holds versions and checksums, and the statements are in the artifact | A migration's versions and checksums, in the database |
-| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration, in the database. For either family, the journal lines a collector kept |
-| An approval or a policy? | A migration run's `authorization` in the journal. For a schema, whether an `ApprovalAccepted` comes before the `ApplyFinished` | A migration's `actor` |
+| How did each attempt end, and when? | The journal, `status.lastRun`, and for a migration the database | For a migration, in the database. For a schema, since Ptah v0.28.0, in `ptah_schema_apply_log` where the login may insert into it. For either family, the journal lines a collector kept |
+| An approval or a policy? | A migration run's `authorization` in the journal. For a schema, whether an `ApprovalAccepted` comes before the `ApplyFinished` | From 0.2.13, `actor_origin` on either log's rows: `admission` or `policy`. Before it, a migration's `actor` |
 | Was the database changed outside this process? | Drift readings and the plans they publish | No |
 | Could the record have been changed, and would anyone notice? | [Who can change the record](#integrity) | |
 | How long is it kept? | [What survives](#survival). PCI DSS asks for a year, with three months at hand | |
@@ -97,7 +98,8 @@ documentation and the run did not exercise it.
 | Verification after Apply | The journal's `Verified`: `InSync` or `DriftRemains` | The manager | The journal's bounds | Measured |
 | `apply: Always` | No approval, so no `ApprovalAccepted` before the `ApplyFinished` | The manager | The journal's bounds | Read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
-| Anything, in the target database | Nothing. Ptah keeps no table for a declared schema | | | Measured |
+| Anything, in the target database | Nothing at Ptah v0.23.0, which keeps no table for a declared schema | | | Measured |
+| An Apply, in the target database, since Ptah v0.28.0 | `ptah_schema_apply_log`: a row before the first statement and one when the Apply ends, with the plan's name and digest, the outcome and the statement it stopped at. From 0.2.13 each row also names the approver admission stamped on the approval the Apply consumed, or `system:ptah-operator:apply-always:<namespace>/<name>` under `apply: Always`, in `actor` with `actor_source` `provided` and `actor_origin` `admission` or `policy`, and the Apply's `operationID` in `run_reference`. Under [the documented MySQL grant](../../support/databases/#mysql-authority) the first Apply loses both rows, and later ones keep theirs once the login holds `INSERT` on the table | Ptah in the Apply Pod, as the login in the schema's Secret | The database until someone deletes the rows | Read |
 
 Both failed Applies ended `Unknown`, and at 0.2.10 the journal said no more
 than that. What failed is in the Pod log for 24 hours. On MySQL that line read
@@ -115,11 +117,11 @@ a value from a table row.
 | An approval | `PtahMigrationApproval`; the journal's `ApprovalAccepted` with the plan's name, UID and fingerprint | The approver, stamped by admission | As for a schema | Measured |
 | Apply dispatched | The Job and Pod, and a `migration operation claimed` line in the manager's log | The manager | As for a schema | Measured |
 | How each statement ended | `schema_migrations` and `schema_migrations_log` in the target database: the run, the version, `started`, `applied` or `failed`, the error and the failed statement. The journal's `RunFinished` with the version, statement number and SQLSTATE where it stopped | Ptah in the Apply Pod, and the manager | The database until someone deletes the rows; the journal for its bounds | Measured |
-| Who approved, in the database | `actor` on each log row: the approver's username, with `actor_source` `provided` | Ptah, from what the operator passes | Until someone deletes the rows | Measured |
+| Who approved, in the database | `actor` on each log row: the approver's username, with `actor_source` `provided`. From 0.2.13 `actor_origin` `admission` beside it, and the run's `operationID` in `run_reference` | Ptah, from what the operator passes | Until someone deletes the rows | Measured; the origin and the reference read |
 | A log row the database refused | The journal's `RunFinished` and `status.lastRun` with `migrationLog`: how many rows were written and lost, and the version, state, SQLSTATE and MySQL error number of each lost one; `RunLogged` False with `LogEntriesLost` | The manager, from Ptah's report | The journal's bounds; the condition until a run writes all of its rows | Measured |
 | Verification after the run | The journal's `Verified`: `InSync`, `Pending` or `Blocked`, with the run's `operationID` | The manager | The journal's bounds | Measured |
 | A run nobody accounted for, settled | `PtahMigrationRunAcknowledgment`; the journal's `RunAcknowledged` with who acknowledged it | The person, stamped by admission | As for an approval | Measured |
-| `apply: Always` | The journal's `RunFinished` with `authorization: Policy` and no approval; `actor` reads `system:ptah-operator:apply-always:<namespace>/<name>` | The manager and Ptah | As above | Measured |
+| `apply: Always` | The journal's `RunFinished` with `authorization: Policy` and no approval; `actor` reads `system:ptah-operator:apply-always:<namespace>/<name>`, and from 0.2.13 `actor_origin` reads `policy` | The manager and Ptah | As above | Measured; the origin read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
 
 `kubectl ptah history migration/<name>` printed every one of these journal
@@ -157,14 +159,18 @@ Every cell is measured.
 | Manager logs | Kept | Kept | Gone with the replaced Pods | Not applicable | Gone |
 | The API audit log, on the control-plane nodes | Kept | Kept | Kept | Kept | Gone with the nodes |
 | `schema_migrations` and `schema_migrations_log` | Unchanged | Unchanged | Unchanged | Unchanged; the restored migrations read the dirty revision and stopped | Unchanged |
-| A schema's record in the database | None | None | None | None | None |
+| A schema's record in the database, at Ptah v0.23.0 | None | None | None | None | None |
+
+The run predates `ptah_schema_apply_log`. It is a table in the target database,
+as `schema_migrations_log` is, so nothing done to the cluster reaches it; that
+is read, not measured.
 
 A restore through the API, as a backup tool that writes objects does it, brings
 back the specs and none of the record. The restored resources read the
 databases again, and the migrations stopped on the revision the failed runs left
 dirty, with nothing in the cluster to say who ran it or that a person had
 accounted for the MySQL run. The database log still named the approver of each
-run. Only a restore of etcd itself keeps UIDs and status. That was not measured;
+migration run. Only a restore of etcd itself keeps UIDs and status. That was not measured;
 [Recover operator state](../recovery/#restore-a-consistent-control-plane) says
 what it takes.
 
@@ -178,9 +184,18 @@ From 0.2.11 a schema's `ApplyFinished` carries the same identifiers, and the
 `Verified` entry after it the same `operationID`. That is read from the code;
 the measured run predates it.
 
-The database log joins nothing by identifier. Its `run_id` is Ptah's own, such
-as `28-dmth8umhdwq7`, and the operator does not pass the operation ID. A row
-meets its run by the version, the actor and the time.
+From 0.2.13 the database's logs join the journal by the `operationID`. The
+operator passes an Apply's `operationID` to Ptah as its run reference, and Ptah
+writes it in `run_reference` on every row the run writes, in
+`schema_migrations_log` and in `ptah_schema_apply_log`. Ptah reports the
+reference the rows carry in its result, and the runner refuses a result that
+names another, or none for rows it wrote, so an Apply's outcome is never read
+from another run's account. The acceptance rows read the reference back out of
+both logs on both engines; the measured run predates it.
+
+`run_id` is still Ptah's own, such as `28-dmth8umhdwq7`. A row an older release
+wrote carries no reference, and meets its run by the version, the actor and the
+time.
 
 `mutationRequestUID` is the UID of the admission review the mutating webhook
 answered, and the API server makes a new one for each webhook call. The audit
@@ -235,6 +250,7 @@ does join the audit log. That is read from its code, not measured here.
 | A shared credential | One identity for everyone who holds it, as [Refusing a self-approval](../approvals/#refusing-a-self-approval) says | Read |
 | A console user | The console's audit stream maps its account to the Kubernetes identity it acted as | Read |
 | `actor` in the database | What the operator passed, under `actor_source` `provided`. The login that runs migrations rewrote it on every row, and `ptah migrations up --actor` writes the same source | Measured; the `--actor` case from [#800](https://github.com/stokaro/ptah-operator/issues/800) |
+| `actor_origin` in the database | From 0.2.13, where the operator took the name from: `admission` for the username stamped on the approval the run consumed, `policy` for the `apply-always` name. It is as easy to rewrite as `actor`. Admission refuses a migration approval by a username under `system:ptah-operator:`, the prefix of every name the operator records on its own account, and admits a schema approval by one; its rows read `admission` | Read |
 
 An audit policy matches a request against the user who authenticated, not the
 one impersonated: the API server's audit filter runs before its impersonation
@@ -454,8 +470,11 @@ covers the SQL of a schema plan.
 `schema_migrations_log` is an ordinary table that the login running migrations
 can write. A database's own audit facility, writing somewhere that login cannot
 reach, is what shows a row was changed afterwards, and a copy of the rows kept
-outside the database is what keeps them. A schema change leaves nothing in the
-database to protect, so for a `PtahSchema` the API audit log is the record.
+outside the database is what keeps them. Since Ptah v0.28.0
+`ptah_schema_apply_log` is the same for a `PtahSchema`: a table the login in its
+Secret can write. From 0.2.13 its rows name the approver and the operation as a
+migration's do, and that login can rewrite them as easily, so for who approved a
+schema change the API audit log is still the record it cannot change.
 
 ## Privacy {#privacy}
 
@@ -487,10 +506,17 @@ kubectl -n <namespace> get ptahschemaapprovals,ptahmigrationapprovals -o yaml
 ```
 
 ```sql
-SELECT logged_at, run_id, version, state, actor, actor_source, error
+SELECT logged_at, run_id, version, state, actor, actor_source, actor_origin, run_reference, error
 FROM schema_migrations_log
 ORDER BY logged_at, seq;
+
+SELECT logged_at, run_id, seq, state, plan_name, plan_digest, actor, actor_source, actor_origin, run_reference
+FROM ptah_schema_apply_log
+ORDER BY logged_at, run_id, seq;
 ```
+
+A journal entry's `operationID` finds the rows of its run with
+`WHERE run_reference = '<operationID>'` in either query.
 
 To find the API write behind an approval in an audit log of JSON lines:
 
