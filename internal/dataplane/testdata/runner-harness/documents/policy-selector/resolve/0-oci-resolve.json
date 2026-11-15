@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/policy-selector:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/policy-selector@sha256:e68c5ea812f5fa3b1efa34dbf5b4bbb7818fc56147e1e369d790068a80ba3c92",
+  "digest": "sha256:e68c5ea812f5fa3b1efa34dbf5b4bbb7818fc56147e1e369d790068a80ba3c92",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

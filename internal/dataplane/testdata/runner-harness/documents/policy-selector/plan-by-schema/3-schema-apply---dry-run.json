@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_bb2fbe78f1e3",
+  "plan_digest": "sha256:7cc9d9e281c0d8f722348af7eb95da277db81d40bcf21766454e4e42cafab529",
+  "units": [
+    {
+      "sql": "DROP POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\""
+    }
+  ]
+}

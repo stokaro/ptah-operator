@@ -1,6 +1,7 @@
 package runnerharness_test
 
 import (
+	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
@@ -181,6 +182,35 @@ func requireRequirements(t *testing.T, outcome rowOutcome, want ...string) {
 	}
 }
 
+// requireHeldPolicyDrop holds a Plan to a DROP POLICY of the named policy, in a
+// plan the controller publishes as destructive and as a row-security privilege
+// change. Those are the two fields planRequiresApproval reads beside the apply
+// policy, and either one keeps the plan from applying without an approval.
+func requireHeldPolicyDrop(t *testing.T, planned rowOutcome, policy string) {
+	t.Helper()
+	if planned.result.PlanOutcome != runner.PlanOutcomeChanges || planned.plan == nil {
+		t.Fatalf("the plan reports %q, want one that drops the policy %s", planned.result.PlanOutcome, policy)
+	}
+	decoded, err := dataplane.DecodePlan(planned.plan, engineName(enginePostgres))
+	if err != nil {
+		t.Fatalf("the plan does not decode: %v", err)
+	}
+	dropped := false
+	for _, statement := range decoded.Statements {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statement.SQL)), "DROP POLICY") &&
+			strings.Contains(statement.SQL, `"`+policy+`"`) {
+			dropped = true
+		}
+	}
+	if !dropped {
+		t.Errorf("no statement of the plan drops the policy %s:\n%s", policy, planned.plan)
+	}
+	if !decoded.Destructive || !slices.Contains(decoded.PrivilegeChanges, dataplane.PrivilegeRowSecurityPolicy) {
+		t.Errorf("the plan reads destructive %t with privilege changes %q, want destructive and %s",
+			decoded.Destructive, decoded.PrivilegeChanges, dataplane.PrivilegeRowSecurityPolicy)
+	}
+}
+
 // featureLifecycle is what earlier repins missed: statements a feature owner
 // renders and the drift it reports.
 func featureLifecycle(t *testing.T, l *lab) {
@@ -234,6 +264,36 @@ func featureLifecycle(t *testing.T, l *lab) {
 		planned := run.plan("plan", nil, savedAs("plan-owned-policy-widens.json"))
 		run.publishPlan("plan", planned.plan)
 		run.apply("apply")
+	})
+
+	// A policy the database holds and the schema file does not declare, which
+	// spec.policy.exclude is meant to leave alone. Since stokaro/ptah#6070 a
+	// selector names a policy through its table. One that names it by its
+	// schema and its own name names nothing, so the plan drops the policy, and
+	// the decoded plan is one no apply policy runs without an approval. The
+	// Observe reads without exclusions, so only the Plan can say what a
+	// selector left out.
+	t.Run("policy-selector", func(t *testing.T) {
+		t.Parallel()
+		family, database := "policy-selector", "harness_policy_selector"
+		l.createDatabase(t, enginePostgres, database)
+		l.sql(t, enginePostgres, database,
+			"CREATE TABLE e2e_policy_notes (id bigint NOT NULL PRIMARY KEY, owner_name text NOT NULL)",
+			"ALTER TABLE e2e_policy_notes ENABLE ROW LEVEL SECURITY",
+			"CREATE POLICY e2e_policy_notes_owner ON e2e_policy_notes USING (owner_name = current_user)")
+		reference := l.publish(t, "schema", "schemas/"+family, "v1", "--schema-file", "/fixtures/policy-undeclared-postgresql.sql", "--dialect", "postgresql")
+		run := l.newSchema(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		ready(run)
+
+		run.schema.Spec.Policy.Exclude = []string{"e2e_policy_notes.e2e_policy_notes_owner[type=policy]"}
+		if planned := run.plan("plan-through-table", nil); planned.result.PlanOutcome != runner.PlanOutcomeNoChanges {
+			t.Errorf("the plan excluding %v reports %q, want %q", run.schema.Spec.Policy.Exclude,
+				planned.result.PlanOutcome, runner.PlanOutcomeNoChanges)
+		}
+
+		run.schema.Spec.Policy.Exclude = []string{"public.e2e_policy_notes_owner[type=policy]"}
+		planned := run.plan("plan-by-schema", nil, savedAs("plan-policy-selector-by-schema.json"))
+		requireHeldPolicyDrop(t, planned, "e2e_policy_notes_owner")
 	})
 
 	for _, engine := range []string{enginePostgres, engineMySQL} {
@@ -397,7 +457,9 @@ func migrationFailures(t *testing.T, l *lab) {
 // replay. A table no migration declares stops the run, as two differences,
 // the table and its key; excluded, it lets the run go on, and a column
 // outside the list still stops it with one difference rather than three. A
-// selector deeper than the URL's scope is one Ptah refuses at stage scope.
+// selector deeper than the URL's scope is one Ptah refuses at stage scope. A
+// policy no migration creates is left out by a selector that names it through
+// its table, and stops the run as drift under one that names it by its schema.
 func driftChecks(t *testing.T, l *lab) {
 	t.Helper()
 	// The lab's URL names no search_path, so Ptah reads every schema and a
@@ -408,6 +470,12 @@ func driftChecks(t *testing.T, l *lab) {
 		l.sql(t, enginePostgres, target, "CREATE TABLE harness_job_queue (id INTEGER PRIMARY KEY)")
 	}
 	excluded := []string{"public.harness_job_queue", "-not-a-flag"}
+	// A policy no migration creates. Since stokaro/ptah#6070 a selector names
+	// it through its table, and one that names it by its schema and its own
+	// name names nothing.
+	strayPolicy := func(t *testing.T, target string) {
+		l.sql(t, enginePostgres, target, "CREATE POLICY harness_widgets_reader ON e2e_migration_widgets USING (true)")
+	}
 	for _, row := range []struct {
 		name, stored string
 		// change is what happens to the two databases after the unchecked
@@ -415,6 +483,8 @@ func driftChecks(t *testing.T, l *lab) {
 		change  func(t *testing.T, target, shadow string)
 		exclude []string
 		code    string
+		// check holds the checked run to the row's claim beyond its code.
+		check func(t *testing.T, outcome rowOutcome)
 	}{
 		{name: "drift-clean-postgres", change: func(*testing.T, string, string) {}},
 		{
@@ -436,6 +506,15 @@ func driftChecks(t *testing.T, l *lab) {
 			name: "drift-exclude-refused-postgres", stored: "migrations-up-drift-exclude-refused-postgres.json",
 			exclude: []string{"public.e2e_migration_widgets.nickname.extra"}, code: "child_exit",
 			change: func(*testing.T, string, string) {},
+		},
+		{
+			name: "drift-policy-through-table-postgres", exclude: []string{"e2e_migration_widgets.harness_widgets_reader[type=policy]"},
+			change: func(t *testing.T, target, _ string) { strayPolicy(t, target) },
+		},
+		{
+			name: "drift-policy-by-schema-postgres", exclude: []string{"public.harness_widgets_reader[type=policy]"}, code: "child_exit",
+			change: func(t *testing.T, target, _ string) { strayPolicy(t, target) },
+			check:  func(t *testing.T, outcome rowOutcome) { requireDriftNames(t, outcome, "harness_widgets_reader") },
 		},
 		{
 			name: "drift-drifted-postgres", stored: "migrations-up-drifted-postgres.json", code: "child_exit",
@@ -475,9 +554,51 @@ func driftChecks(t *testing.T, l *lab) {
 			if row.code != "" {
 				adjust = append(adjust, wantCode(row.code))
 			}
-			run.applyPlanned("apply", pending(t, family, before), adjust...)
+			applied := run.applyPlanned("apply", pending(t, family, before), adjust...)
+			if row.check != nil {
+				row.check(t, applied)
+			}
 			run.history("history-after")
 		})
+	}
+}
+
+// requireDriftNames holds a checked run to a drifted check with a finding that
+// names the object. The frame keeps a count and no names, so the finding is
+// read from the document Ptah printed.
+func requireDriftNames(t *testing.T, outcome rowOutcome, object string) {
+	t.Helper()
+	if run := outcome.result.MigrationRun; run == nil || run.DriftSummary == nil ||
+		run.DriftSummary.Outcome != dataplane.MigrationDriftDrifted {
+		t.Fatalf("the frame carries the run %+v, want a drifted check", outcome.result.MigrationRun)
+	}
+	documents := 0
+	for _, child := range outcome.children {
+		if runnerharness.CommandWords(child.Args) != "migrations up --check-drift" {
+			continue
+		}
+		documents++
+		var document struct {
+			DriftCheck struct {
+				Findings []struct {
+					Kind   string `json:"kind"`
+					Object string `json:"object"`
+				} `json:"findings"`
+			} `json:"drift_check"`
+		}
+		if err := json.Unmarshal(child.Stdout, &document); err != nil {
+			t.Fatalf("the checked run printed a document that does not decode: %v\n%s", err, child.Stdout)
+		}
+		named := false
+		for _, finding := range document.DriftCheck.Findings {
+			named = named || strings.Contains(finding.Object, object)
+		}
+		if !named {
+			t.Errorf("no finding of the check names %s: %+v", object, document.DriftCheck.Findings)
+		}
+	}
+	if documents != 1 {
+		t.Errorf("the row ran `ptah migrations up --check-drift` %d times, want once", documents)
 	}
 }
 

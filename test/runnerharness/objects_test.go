@@ -294,6 +294,9 @@ func (s *schemaRun) reads(row string, kind operatorv1alpha1.OperationType) opera
 	operation.CoordinationDigest = s.schema.Status.Target.CoordinationDigest
 	operation.TargetIdentityDigest = s.schema.Status.Target.IdentityDigest
 	operation.ObservationSeverity = "all"
+	// The controller copies spec.policy.exclude onto every Observe and Plan it
+	// starts with no observation pending. The builder hands it to a Plan only.
+	operation.ObservationExclude = append([]string(nil), s.schema.Spec.Policy.Exclude...)
 	operation.ObservationConnectTimeout = metav1.Duration{Duration: 10 * time.Second}
 	operation.ObservationLockTimeout = metav1.Duration{Duration: 30 * time.Second}
 	return operation

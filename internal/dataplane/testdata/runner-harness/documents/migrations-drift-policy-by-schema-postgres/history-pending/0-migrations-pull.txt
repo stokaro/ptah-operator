@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@sha256:431f36df34057aebc7e9cf1f3a269092e8ea85e0ba014a2ecf7fb343c62b909e to /source/migrations
+Digest: sha256:431f36df34057aebc7e9cf1f3a269092e8ea85e0ba014a2ecf7fb343c62b909e
+Format: auto
