@@ -334,15 +334,11 @@ func (c *gitRun) waitForSchema(what string, done func(*ptahv1alpha1.PtahSchema) 
 	return c.waitForSchemaNamed(gitSchema, what, done)
 }
 
+// waitForSchemaNamed reads the schema until done holds and returns the document
+// that satisfied it. It ends the scenario on a failure for the spec the schema
+// holds, as the data plane's wait does: a schema whose earlier generation failed
+// reads Failed until the edit that repairs it is observed.
 func (c *gitRun) waitForSchemaNamed(name, what string, done func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
-	c.t.Helper()
-	return c.waitForSchemaFrom(name, 0, what, done)
-}
-
-// waitForSchemaFrom waits as waitForSchemaNamed does, and ends the scenario
-// only on a failure observed at generation or later: a schema whose earlier
-// generation failed reads Failed until the edit that repairs it is observed.
-func (c *gitRun) waitForSchemaFrom(name string, generation int64, what string, done func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
 	c.t.Helper()
 	var matched *ptahv1alpha1.PtahSchema
 	c.wait(what, func() (bool, string) {
@@ -350,7 +346,7 @@ func (c *gitRun) waitForSchemaFrom(name string, generation int64, what string, d
 		if err := c.get(name, schema); err != nil {
 			return false, err.Error()
 		}
-		if schema.Status.Phase == ptahv1alpha1.PhaseFailed && schema.Status.ObservedGeneration >= generation {
+		if failedForCurrentSpec(schema) {
 			c.fatalf("%s failed while waiting for %s; %s", name, what, failedConditions(c.scanner, schema.Status.Conditions))
 		}
 		if done(schema) {
@@ -913,7 +909,7 @@ func (c *gitRun) caPinWithoutTheCA() {
 	content, err := gitSchemaContent(2)
 	c.check(err, "digest the schema")
 	generation := c.selectCA(gitCAPinSchema)
-	recovered := c.waitForSchemaFrom(gitCAPinSchema, generation, "the first plan of "+gitCAPinSchema+" once it selects the CA",
+	recovered := c.waitForSchemaNamed(gitCAPinSchema, "the first plan of "+gitCAPinSchema+" once it selects the CA",
 		func(schema *ptahv1alpha1.PtahSchema) bool {
 			return schema.Status.ObservedGeneration == generation && awaitingGitPlan("")(schema)
 		})
