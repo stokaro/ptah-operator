@@ -254,7 +254,13 @@ resource version it read. Final shutdown waits for the open segment to end on
 its own, so no event in flight is lost from the evidence. Inert annotations
 advance every watched kind at least once per segment; the suite never advances
 a watch position through an unobserved list response, and any heartbeat
-failure is fatal.
+failure is fatal. The one gap a watch may cross is the one an API server's
+restarted watch cache leaves when it refuses a resume with `too old resource
+version`: the watch moves to the revision the refusal names only after an
+exact list of the namespace at every revision in between holds what the
+history already recorded, and the run logs each gap it crossed. A gap wider
+than `watchGapRevisionLimit`, a list the API server cannot answer at its
+revision, or an object the history never saw fails the run and names it.
 Database metadata barriers hold two real PostgreSQL Apply operations and one
 MySQL Apply operation after their database-local advisory locks are acquired.
 Each assertion binds the database advisory-lock owner to the exact backend
