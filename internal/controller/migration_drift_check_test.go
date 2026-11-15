@@ -99,6 +99,8 @@ func TestARunTheDriftCheckStoppedSaysWhichRefusal(t *testing.T) {
 			reason: operatorv1alpha1.ReasonDriftCheckUnsupported, says: "(stage history, reason out_of_order)"},
 		{name: "migrations that do not replay on the shadow", summary: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "replay", Reason: "replay_error"},
 			reason: operatorv1alpha1.ReasonDriftCheckUnsupported, says: "(stage replay, reason replay_error)"},
+		{name: "an exclude selector Ptah refuses", summary: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "scope", Reason: "scope_error"},
+			reason: operatorv1alpha1.ReasonDriftCheckUnsupported, says: "(stage scope, reason scope_error)"},
 		{name: "a comparison that cannot describe an object", summary: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "schema-match", Reason: "incomplete_coverage", Findings: 1},
 			reason: operatorv1alpha1.ReasonDriftCheckUnsupported, says: "(stage schema-match, reason incomplete_coverage)"},
 		{name: "a shadow that holds something", summary: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean"},
@@ -249,6 +251,73 @@ func TestTheDriftCheckIsInsideThePolicyFingerprintOnlyWhenSet(t *testing.T) {
 	}
 }
 
+// A check that leaves nothing out hashes the policy a check hashed before the
+// exclude list existed, so its plans stay current; another list is another
+// policy, and another order of the same list is not.
+func TestTheExcludeListIsInsideThePolicyFingerprintOnlyWhenSet(t *testing.T) {
+	t.Parallel()
+	migration := migrationFixture()
+	migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+	digest := func(exclude []string) string {
+		t.Helper()
+		migration.Spec.Policy.DriftCheck.Exclude = exclude
+		value, err := migrationPolicyFingerprint(migration)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	recomputed, err := fingerprint.DigestCanonicalJSON(map[string]string{
+		"apply":                     string(migration.Spec.Policy.Apply),
+		"lock_timeout":              migration.Spec.Policy.LockTimeout.Duration.String(),
+		"transaction_mode":          migration.Spec.Policy.TransactionMode,
+		"drift_check_shadow_secret": "orders-shadow",
+		"drift_check_shadow_key":    "url",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, exclude := range map[string][]string{"no list": nil, "an empty list": {}} {
+		if value := digest(exclude); value != recomputed {
+			t.Errorf("a check with %s hashes %s, and the map a check hashed before the list existed gives %s", name, value, recomputed)
+		}
+	}
+	excluded := digest([]string{"public.job_queue", "reporting.*"})
+	if excluded == recomputed {
+		t.Fatalf("a check that leaves two selectors out hashes what one that leaves nothing out does: %s", excluded)
+	}
+	if reordered := digest([]string{"reporting.*", "public.job_queue"}); reordered != excluded {
+		t.Errorf("another order of the same selectors hashes %s, want %s", reordered, excluded)
+	}
+	for name, exclude := range map[string][]string{
+		"one selector fewer": {"public.job_queue"},
+		"another selector":   {"public.job_queue", "reporting.daily"},
+	} {
+		if value := digest(exclude); value == excluded || value == recomputed {
+			t.Errorf("a check with %s hashes %s, the digest of another list", name, value)
+		}
+	}
+}
+
+// A plan binds the policy it was planned under, so a plan made before the
+// exclude list changed is no longer current, and its approval runs nothing.
+func TestAPlanIsNotCurrentAfterTheExcludeListChanged(t *testing.T) {
+	t.Parallel()
+	migration, plan := awaitingApprovalFixture(t)
+	withDriftCheck(migration)
+	migration.Spec.Policy.DriftCheck.Exclude = []string{"public.job_queue"}
+	repolicyPlan(t, migration, plan)
+	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+	if _, err := reconciler.currentMigrationPlan(context.Background(), migration); err != nil {
+		t.Fatalf("the plan for the list it was planned under is not current: %v", err)
+	}
+	migration.Spec.Policy.DriftCheck.Exclude = []string{"public.job_queue", "reporting.*"}
+	if _, err := reconciler.currentMigrationPlan(context.Background(), migration); err == nil ||
+		!strings.Contains(err.Error(), "apply policy changed") {
+		t.Fatalf("currentMigrationPlan() = %v, want the policy named as what moved", err)
+	}
+}
+
 // The history read and the Apply mount the shadow, so its Secret and key are
 // inputs of the claim beside the target's, even at one generation; a resource
 // without a check adds nothing to them.
@@ -274,10 +343,23 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	checked := inputs(func(*operatorv1alpha1.MigrationDriftCheck) {})
 	renamed := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) { check.Shadow.URLFrom.Name = "other-shadow" })
 	rekeyed := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) { check.Shadow.URLFrom.Key = "other" })
+	excluded := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) {
+		check.Exclude = []string{"public.job_queue", "reporting.*"}
+	})
 	if again := inputs(nil); again != unchecked {
 		t.Fatalf("a resource without a check moved its inputs from %s to %s", unchecked, again)
 	}
-	for name, value := range map[string]string{"no check": unchecked, "another Secret": renamed, "another key": rekeyed} {
+	if empty := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) { check.Exclude = []string{} }); empty != checked {
+		t.Errorf("a check with an empty exclude list has inputs %s, and one without the list %s", empty, checked)
+	}
+	if reordered := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) {
+		check.Exclude = []string{"reporting.*", "public.job_queue"}
+	}); reordered != excluded {
+		t.Errorf("another order of the same exclude list has inputs %s, want %s", reordered, excluded)
+	}
+	for name, value := range map[string]string{
+		"no check": unchecked, "another Secret": renamed, "another key": rekeyed, "an exclude list": excluded,
+	} {
 		if value == checked {
 			t.Errorf("the claim's inputs with %s are the ones with the check: %s", name, value)
 		}

@@ -462,3 +462,115 @@ func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
 		})
 	}
 }
+
+// What a drift check leaves out reaches the checked Apply as one
+// --drift-exclude= argument per selector, right after --check-drift and as a
+// set, sorted, so two orders of one list run one command line. A selector
+// that starts with a dash is the flag's value and never a flag of its own, and
+// the variable that carried the list reaches no child.
+func TestADriftCheckPassesItsExcludeListAsArguments(t *testing.T) {
+	t.Parallel()
+	expected := shadowDigest(t, testShadowURL)
+	want := []string{"--check-drift", "--drift-exclude=-leading-dash", "--drift-exclude=legacy,archive", "--drift-exclude=public.job_queue"}
+	for _, encoded := range []string{
+		`public.job_queue,"legacy,archive",-leading-dash`,
+		`-leading-dash,"legacy,archive",public.job_queue`,
+	} {
+		executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: appliedCheckedDocument(cleanCheck)}}}
+		result := Run(context.Background(), Config{
+			Operation:   OperationMigrationApply,
+			Environment: append(driftApplyEnvironment(t, "drift-exclude", testShadowURL, expected), EnvDriftExclude+"="+encoded),
+			Executor:    executor,
+		})
+		if result.Error != nil || len(executor.calls) != 1 {
+			t.Fatalf("Run() with %s = %#v after %d calls, want one checked Apply", encoded, result.Error, len(executor.calls))
+		}
+		call := executor.calls[0]
+		start := slices.Index(call.Args, "--check-drift")
+		if start < 0 || len(call.Args) < start+len(want) || !slices.Equal(call.Args[start:start+len(want)], want) {
+			t.Fatalf("the Apply with %s ran %q, want %q in a row", encoded, call.Args, want)
+		}
+		var passed int
+		for _, argument := range call.Args {
+			if strings.HasPrefix(argument, "--drift-exclude") {
+				passed++
+			}
+		}
+		if passed != len(want)-1 {
+			t.Fatalf("the Apply with %s passed %d --drift-exclude arguments, want %d: %q", encoded, passed, len(want)-1, call.Args)
+		}
+		for _, variable := range call.Env {
+			if strings.HasPrefix(variable, EnvDriftExclude+"=") {
+				t.Fatalf("the child holds the exclude list as %q", variable)
+			}
+		}
+	}
+}
+
+// An exclude list is refused before any child where Ptah could not use it, or
+// would read it otherwise than the API admitted: on a command that runs no
+// check, in an encoding that is not one record, with a selector the API would
+// have refused, and with one that would put a credential on the command line.
+func TestAnExcludeListIsRefusedBeforeItsChild(t *testing.T) {
+	t.Parallel()
+	expected := shadowDigest(t, testShadowURL)
+	for _, row := range []struct {
+		name        string
+		operation   Operation
+		environment func(t *testing.T, operationID string) []string
+		exclude     string
+		code        string
+	}{
+		{name: "on a history read", operation: OperationMigrationHistory, exclude: "public.job_queue", code: "invalid_input",
+			environment: func(t *testing.T, operationID string) []string {
+				return withRunnerProtocol(append(migrationEnvironment(operationID),
+					EnvShadowDatabaseURLFile+"="+writeCredential(t, testShadowURL)))
+			}},
+		{name: "on an Apply its plan bound no shadow for", operation: OperationMigrationApply, exclude: "public.job_queue",
+			code: "invalid_input", environment: func(t *testing.T, operationID string) []string {
+				return driftApplyEnvironment(t, operationID, "", "")
+			}},
+		{name: "in two records", exclude: "public.job_queue\naudit", code: "invalid_input"},
+		{name: "in an unterminated quote", exclude: `"public.job_queue`, code: "invalid_input"},
+		{name: "with a control character", exclude: "\"public.job\tqueue\"", code: "invalid_input"},
+		{name: "with whitespace Ptah would trim", exclude: `" public.job_queue"`, code: "invalid_input"},
+		{name: "with a repeated selector", exclude: "public.job_queue,public.job_queue", code: "invalid_input"},
+		{name: "with the shadow's URL", exclude: testShadowURL, code: "credential_in_arguments"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			operation, environment := row.operation, row.environment
+			if operation == "" {
+				operation = OperationMigrationApply
+			}
+			if environment == nil {
+				environment = func(t *testing.T, operationID string) []string {
+					return driftApplyEnvironment(t, operationID, testShadowURL, expected)
+				}
+			}
+			executor := &scriptedExecutor{t: t}
+			operationID := "drift-exclude-refused-" + strings.ReplaceAll(row.name, " ", "-")
+			result := Run(context.Background(), Config{
+				Operation:   operation,
+				Environment: append(environment(t, operationID), EnvDriftExclude+"="+row.exclude),
+				Executor:    executor,
+			})
+			if result.Error == nil || result.Error.Code != row.code {
+				t.Fatalf("error = %#v, want %s", result.Error, row.code)
+			}
+			if len(executor.calls) != 0 || result.MutationStarted || result.Uncertain {
+				t.Fatalf("the child ran or the refusal claims a mutation: calls=%d %#v", len(executor.calls), result)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			if bytes.Contains(frame, []byte(testShadowPassword)) {
+				t.Fatalf("the refusal carries the shadow's password: %s", frame)
+			}
+			if _, err := ParseResultFor(frame, operation, operationID); err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+		})
+	}
+}

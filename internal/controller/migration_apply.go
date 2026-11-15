@@ -613,9 +613,10 @@ func (r *MigrationReconciler) reportedMigrationRun(
 // difference, and the message points at it as it does for any failed run.
 //
 // An unable check is grouped by the stage Ptah names. Reading the history,
-// replaying it and comparing the result are what the check itself could not
-// do: a migration that does not replay on an empty database fails the same way
-// on any shadow, so a fresh shadow would not help. Every other stage is the
+// replaying it, selecting what to compare and comparing the result are what
+// the check itself could not do: a migration that does not replay on an empty
+// database, or an exclude selector Ptah refuses, fails the same way on any
+// shadow, so a fresh shadow would not help. Every other stage is the
 // shadow database being unreachable, holding something or being the target
 // under another name. Ptah treats its stages as an open set, so a stage this
 // build does not know reads as the shadow's.
@@ -627,7 +628,7 @@ func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.Con
 				"so the run applied nothing: something changed the schema outside the migrations",
 			countOf(summary.Findings, "difference", "differences"))
 	case summary.Stage == driftStageHistory || summary.Stage == driftStageReplay ||
-		summary.Stage == driftStageSchemaMatch:
+		summary.Stage == driftStageScope || summary.Stage == driftStageSchemaMatch:
 		return operatorv1alpha1.ReasonDriftCheckUnsupported, fmt.Sprintf(
 			"The drift check could not decide (stage %s, reason %s), so the run applied nothing", summary.Stage, summary.Reason)
 	default:
@@ -640,11 +641,12 @@ func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.Con
 // The stages of an unable drift check that are about the check rather than
 // the shadow database, as Ptah v0.28.0 names them: the target's applied
 // history could not be read or cannot be replayed in the order it ran, the
-// applied migrations failed on the shadow, or the comparison could not
-// describe an object.
+// applied migrations failed on the shadow, policy.driftCheck.exclude holds a
+// selector Ptah refused, or the comparison could not describe an object.
 const (
 	driftStageHistory     = "history"
 	driftStageReplay      = "replay"
+	driftStageScope       = "scope"
 	driftStageSchemaMatch = "schema-match"
 )
 

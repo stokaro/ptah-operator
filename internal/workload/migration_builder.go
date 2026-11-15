@@ -19,6 +19,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 )
 
 const (
@@ -300,6 +301,17 @@ func migrationDataPlane(
 			)
 			if plan.Spec.ShadowIdentityDigest != "" {
 				environment = append(environment, literalEnv(runner.EnvExpectedShadowIdentityDigest, plan.Spec.ShadowIdentityDigest))
+				// What the check leaves out reaches the Apply alone, since the
+				// history read runs no check, and as a set, so two orders of
+				// one list build one Job. A check that leaves nothing out
+				// builds the Job it built before the list existed.
+				if check := migration.Spec.Policy.DriftCheck; check != nil && len(check.Exclude) > 0 {
+					if err := schemaselector.Validate(check.Exclude); err != nil {
+						return nil, nil, nil, nil, fmt.Errorf("the drift check's exclude list: %w", err)
+					}
+					environment = append(environment,
+						literalEnv(runner.EnvDriftExclude, encodeStringArray(schemaselector.Normalize(check.Exclude))))
+				}
 			}
 			// Only from the claim, and only when the claim carries a name. A
 			// claim a release without the field wrote has none, so this builds

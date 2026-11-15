@@ -36,7 +36,7 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
-| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, the applied migrations fail on the shadow, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, the applied migrations fail on the shadow, Ptah refused a selector in its `exclude`, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -184,9 +184,12 @@ Ready=False SchemaDrifted
   gone or a lower version was applied after a higher one. At stage `replay`
   an applied migration failed on the empty shadow, as one that depends on
   something no migration creates does; the Pod log says which migration. At
-  stage `schema-match` the read of the target could not describe an object the
-  applied migrations create. Another shadow would fail the same way: remove
-  `spec.policy.driftCheck` to run without the check, or fix the history first.
+  stage `scope` Ptah refused a selector in `spec.policy.driftCheck.exclude`,
+  such as one with more parts than the URL's scope can address; the Pod log
+  quotes it. At stage `schema-match` the read of the target could not describe
+  an object the applied migrations create. Another shadow would fail the same
+  way: fix the selector or the history, or remove `spec.policy.driftCheck` to
+  run without the check.
 - `ShadowDatabaseUnavailable`: the shadow database could not be used. It did
   not answer, it already holds something (stage `claim`, reason `not_clean`),
   it is the target under another name (stage `realm-check`), or its user lacks

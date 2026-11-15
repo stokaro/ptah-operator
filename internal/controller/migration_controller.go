@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -41,6 +42,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/resultconsumer"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
@@ -2195,8 +2197,33 @@ func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (stri
 	if check := migration.Spec.Policy.DriftCheck; check != nil {
 		policy["drift_check_shadow_secret"] = check.Shadow.URLFrom.Name
 		policy["drift_check_shadow_key"] = check.Shadow.URLFrom.Key
+		// What the check leaves out decides what it can refuse, so another
+		// list is another policy. The list is a set, so its order is not; a
+		// check that leaves nothing out hashes what it hashed before the list
+		// existed.
+		exclude, err := driftExcludeInput(check)
+		if err != nil {
+			return "", err
+		}
+		if exclude != "" {
+			policy["drift_check_exclude"] = exclude
+		}
 	}
 	return fingerprint.DigestCanonicalJSON(policy)
+}
+
+// driftExcludeInput is a drift check's exclude list as one fingerprint value:
+// the selectors as a set, encoded as a JSON array, or the empty string for a
+// check that leaves nothing out.
+func driftExcludeInput(check *operatorv1alpha1.MigrationDriftCheck) (string, error) {
+	if len(check.Exclude) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(schemaselector.Normalize(check.Exclude))
+	if err != nil {
+		return "", fmt.Errorf("encode the drift check's exclude list: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // migrationInputFingerprint is what the operation was decided from. An input
@@ -2242,6 +2269,15 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 	if check := migration.Spec.Policy.DriftCheck; check != nil {
 		inputs["shadow_secret"] = check.Shadow.URLFrom.Name
 		inputs["shadow_key"] = check.Shadow.URLFrom.Key
+		// The Apply's Pod carries the list, so it is an input too, and absent
+		// where the check leaves nothing out.
+		exclude, err := driftExcludeInput(check)
+		if err != nil {
+			return "", err
+		}
+		if exclude != "" {
+			inputs["drift_check_exclude"] = exclude
+		}
 	}
 	if operationType != operatorv1alpha1.MigrationOperationResolve {
 		if migration.Status.Artifact == nil {

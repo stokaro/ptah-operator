@@ -1060,8 +1060,9 @@ const (
 	ReasonSchemaDrifted ConditionReason = "SchemaDrifted"
 	// ReasonDriftCheckUnsupported means Ptah could not decide the check: the
 	// applied history cannot be read or replayed in order, the applied
-	// migrations failed when replayed on the shadow, or the comparison covers
-	// an object it cannot describe. The Apply ran nothing.
+	// migrations failed when replayed on the shadow, a selector in
+	// policy.driftCheck.exclude was refused, or the comparison covers an object
+	// it cannot describe. The Apply ran nothing.
 	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
 	// ReasonShadowDatabaseUnavailable means the shadow database could not be
 	// used: it was unreachable, held something, or was the target under

@@ -378,6 +378,19 @@ func goldenJobCases() []goldenJobCase {
 			unreleased: true,
 		},
 		{
+			// What the check leaves out reaches the Apply alone, as a set.
+			name: "migration-apply-drift-check-exclude",
+			build: func() (*batchv1.Job, error) {
+				migration := migrationFixture()
+				migration.Spec.Policy.DriftCheck = goldenDriftCheck()
+				migration.Spec.Policy.DriftCheck.Exclude = []string{"reporting.*", "legacy,archive", "public.job_queue"}
+				plan := migrationPlanFixture()
+				plan.Spec.ShadowIdentityDigest = "sha256:" + strings.Repeat("5", 64)
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), plan)
+			},
+			unreleased: true,
+		},
+		{
 			name: "schema-resolve-git-https",
 			build: func() (*batchv1.Job, error) {
 				return builder.Build(gitSchemaFixture(gitHTTPSSpec("db/schema.hcl")), operationFixture(operatorv1alpha1.OperationResolve), nil)

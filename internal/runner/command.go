@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/schemaselector"
 )
 
 const (
@@ -99,6 +101,11 @@ const (
 	// in. Empty means the resource asked for nothing and the flag is left off,
 	// so Ptah chooses.
 	EnvTransactionMode = "PTAH_TRANSACTION_MODE"
+	// EnvDriftExclude is the selectors a migration Apply's drift check leaves
+	// out, as one CSV record. The runner passes each as --drift-exclude= and
+	// strips the variable from every child, since Ptah v0.28.0 would read it
+	// as that flag on its own.
+	EnvDriftExclude = "PTAH_DRIFT_EXCLUDE"
 
 	// EnvPlanSealPublicKey is the manager's ephemeral public key a Plan Job
 	// seals its plan payload to, base64-encoded (see internal/planseal). Only
@@ -135,6 +142,7 @@ const (
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
 	envMigrationsDir          = EnvMigrationsDir
 	envTransactionMode        = EnvTransactionMode
+	envDriftExclude           = EnvDriftExclude
 	envPlanSealPublicKey      = EnvPlanSealPublicKey
 	envSealedPlanJobName      = EnvSealedPlanJobName
 )
@@ -162,6 +170,9 @@ type Inputs struct {
 	PlanPath                   string
 	MigrationsDir              string
 	TransactionMode            string
+	// DriftExclude is the CSV record EnvDriftExclude carries, decoded and
+	// checked where the command is built.
+	DriftExclude string
 	// PlanSealPublicKey is the base64-encoded manager public key a Plan
 	// operation seals its plan payload to before writing the frame.
 	PlanSealPublicKey string
@@ -200,6 +211,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
 		MigrationsDir:              values[envMigrationsDir],
 		TransactionMode:            values[envTransactionMode],
+		DriftExclude:               values[envDriftExclude],
 		PlanSealPublicKey:          values[envPlanSealPublicKey],
 		SealedPlanJobName:          values[envSealedPlanJobName],
 	}
@@ -294,13 +306,11 @@ func withRunReference(spec CommandSpec, operationID string) (CommandSpec, error)
 }
 
 // Ptah v0.28.0 binds PTAH_CHECK_DRIFT and PTAH_DRIFT_EXCLUDE to the drift
-// check of `migrations up`. The check is asked for only by the argument the
-// runner builds from the Job's expected shadow identity, so both are removed
-// from every child, and PTAH_SHADOW_DB from every child but that Apply's.
-const (
-	ptahCheckDriftEnvironment   = "PTAH_CHECK_DRIFT"
-	ptahDriftExcludeEnvironment = "PTAH_DRIFT_EXCLUDE"
-)
+// check of `migrations up`. The check is asked for only by the arguments the
+// runner builds from the Job's expected shadow identity and EnvDriftExclude,
+// so both are removed from every child, and PTAH_SHADOW_DB from every child but
+// that Apply's.
+const ptahCheckDriftEnvironment = "PTAH_CHECK_DRIFT"
 
 func childEnvironment(environment []string) []string {
 	return environmentWithout(environmentWithout(environment, credentialFileVariables()...),
@@ -309,7 +319,7 @@ func childEnvironment(environment []string) []string {
 		ptahIncludeEnvironment,
 		ptahRunReferenceEnvironment,
 		ptahCheckDriftEnvironment,
-		ptahDriftExcludeEnvironment,
+		EnvDriftExclude,
 		EnvShadowDatabaseURL,
 		EnvOperationID,
 		EnvRequestedReference,
@@ -442,13 +452,44 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		// The check runs only where the plan bound a shadow database. The
 		// shadow's URL reaches Ptah as PTAH_SHADOW_DB in the child's
 		// environment, never as an argument.
-		if operation == OperationMigrationApply && inputs.ExpectedShadowDigest != "" {
+		checked := operation == OperationMigrationApply && inputs.ExpectedShadowDigest != ""
+		if checked {
 			spec.Args = append(spec.Args, "--check-drift")
+		}
+		exclude, err := driftExcludeSelectors(inputs.DriftExclude, checked)
+		if err != nil {
+			return CommandSpec{}, err
+		}
+		for _, selector := range exclude {
+			spec.Args = append(spec.Args, "--drift-exclude="+selector)
 		}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
+}
+
+// driftExcludeSelectors decodes what a drift check leaves out, refusing a list
+// on a command that runs no check, where Ptah would refuse the flag, and a
+// selector the API would not have admitted. Each selector is passed in the
+// --drift-exclude= form, so one that starts with a dash is a value and never a
+// flag. The list is a set, sorted and each selector once, so one scope builds
+// one command line.
+func driftExcludeSelectors(encoded string, checked bool) ([]string, error) {
+	if encoded == "" {
+		return nil, nil
+	}
+	if !checked {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE names selectors for a command that runs no drift check")
+	}
+	selectors, err := decodeEnvironmentList(encoded)
+	if err != nil {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE is not a valid encoded selector list")
+	}
+	if err := schemaselector.Validate(selectors); err != nil {
+		return nil, errors.New("PTAH_DRIFT_EXCLUDE contains an invalid selector list")
+	}
+	return schemaselector.Normalize(selectors), nil
 }
 
 // validateTransactionMode refuses a mode this build does not know.

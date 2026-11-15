@@ -288,6 +288,55 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	}
 }
 
+// What a drift check leaves out reaches the Apply that runs the check, and no
+// other Job: the history read mounts the shadow and checks nothing. The list
+// travels as a set, so two orders of it build one Job, and a check that leaves
+// nothing out builds the Job it built before the list existed.
+func TestBuildMigrationCarriesTheExcludeListToTheCheckedApplyAlone(t *testing.T) {
+	t.Parallel()
+	builder := builderFixture()
+	checked := func(exclude []string) *operatorv1alpha1.PtahMigration {
+		migration := migrationFixture()
+		migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{
+			Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
+			}},
+			Exclude: exclude,
+		}
+		return migration
+	}
+	plan := migrationPlanFixture()
+	plan.Spec.ShadowIdentityDigest = digest('5')
+	apply := func(exclude []string) *batchv1.Job {
+		t.Helper()
+		job, err := builder.BuildMigration(checked(exclude), migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	job := apply([]string{"reporting.*", "public.job_queue"})
+	if got := requireEnv(t, job, runner.EnvDriftExclude).Value; got != "public.job_queue,reporting.*" {
+		t.Fatalf("%s = %q, want the selectors sorted", runner.EnvDriftExclude, got)
+	}
+	if reordered := apply([]string{"public.job_queue", "reporting.*"}); !reflect.DeepEqual(reordered.Spec, job.Spec) {
+		t.Fatal("two orders of one exclude list built two Apply Jobs")
+	}
+	for name, exclude := range map[string][]string{"no list": nil, "an empty list": {}} {
+		if _, carried := envMap(apply(exclude))[runner.EnvDriftExclude]; carried {
+			t.Errorf("an Apply whose check has %s carries %s", name, runner.EnvDriftExclude)
+		}
+	}
+	history, err := builder.BuildMigration(checked([]string{"public.job_queue"}),
+		migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, carried := envMap(history)[runner.EnvDriftExclude]; carried {
+		t.Fatalf("the history read carries %s, and it runs no check", runner.EnvDriftExclude)
+	}
+}
+
 // TestBuildMigrationAcceptsAManagerOnlyChange is the migration builder's half of
 // a manager release that shares the execution binding: the status was written
 // under one manager, a manager with another image, revision and runner image
@@ -423,6 +472,19 @@ func TestBuildMigrationRefusesClaimsItCannotCarryOut(t *testing.T) {
 				}}
 			},
 			message: "binds no shadow database",
+		},
+		{
+			name: "apply whose drift check repeats an exclude selector",
+			mutate: func(migration *operatorv1alpha1.PtahMigration, _ *operatorv1alpha1.MigrationOperationStatus, plan *operatorv1alpha1.PtahMigrationPlan) {
+				migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{
+					Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
+					}},
+					Exclude: []string{"public.job_queue", "public.job_queue"},
+				}
+				plan.Spec.ShadowIdentityDigest = digest('5')
+			},
+			message: "the drift check's exclude list",
 		},
 		{
 			name: "apply whose plan binds a shadow the policy no longer names",
