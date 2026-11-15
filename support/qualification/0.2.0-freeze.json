@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-14T15:46:29.179801+00:00",
+  "frozenAt": "2026-11-14T23:35:33.760440+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "7b4bdc6a02b9d46b8bcf5f3239701a85002dd3622d5d5357a648ce401420da06"
+      "sha256": "097968534b9059513b973ced8e9421338d5059b82cc657aeccbb1bd07a51ea71"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.12 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 99,
+  "revision": 100,
   "supersedes": {
-    "freezeCommit": "d41e093851c0600a1773f006cedf37854e984ff3",
-    "sha256": "fa8f61ac42fba3d1446864739ceadce181cae7da1461ebbc2219772bf13ae68f"
+    "freezeCommit": "a0600e79970bcd93832a58eb6c97a71ec100aa6b",
+    "sha256": "66066c1de2759a363e315987a01cf5bc088eb82096c3093f15fafe2121d2018f"
   },
-  "revisionReason": "Declare the published v0.2.12 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.12 as the published predecessor of the next candidate. The edge row now names Ptah v0.26.0 as the build run 43574056611 passed at. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Move four resolution deadlines in the alert targets by 30 seconds (#1090): unresolved Apply, resource overdue and lock release owed to 75 seconds after recovery, and operation stalled to 135 seconds after the operation leaves flight. The chart's keep_firing_for holds those rules 30 seconds through a failed state read, so none resolves sooner after the reading that clears it, and failed reads the leader declared before the unresolved Apply record was first read extend its receiver deadline by the time they withheld it. Results measured under earlier revisions are preserved with the deadlines they were measured against. Thresholds, every other target, phases, cells, platforms and every other input are unchanged."
 }

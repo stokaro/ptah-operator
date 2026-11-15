@@ -168,7 +168,7 @@ func (a *alertingRun) stalledFamily(family string) {
 		a.fatalf("the held Resolve Pod changed while its result was read")
 	}
 	resolved, _ := a.waitForDelivery(alMatch{status: "resolved", alertName: alOperationStall, labels: labels},
-		"the original "+family+" stalled incident resolution", time.Until(finished.Add(alStalledResolution)), index+1)
+		"the original "+family+" stalled incident resolution", time.Until(finished.Add(alStalledResolution+alStateReadGapHold)), index+1)
 	if !alStalledCleared(firing, resolved, finished) || !a.noActiveAlerts(query) {
 		a.fatalf("the %s resolution did not match the incident or the original Pod's terminal bound", family)
 	}

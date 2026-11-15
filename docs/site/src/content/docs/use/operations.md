@@ -2808,9 +2808,28 @@ With the Prometheus Operator, `monitoring.prometheusRule.enabled` renders a
 | `PtahOperatorUnresolvedViewReadFailures` | A scrape failed to read the state within the last `viewUnsyncedFor` | warning |
 
 The first has no threshold and no pending period. There is no count or age of
-unaccounted work that is fine to ignore, and the records are durable, so the
-alert does not flap while one is being closed. The other two exist because
-the first cannot fire while the view is unsynchronized or unreadable.
+unaccounted work that is fine to ignore. The other two exist because the first
+cannot fire while the view is unsynchronized or unreadable.
+
+The records are durable, but every scrape reads them again, and a scrape whose
+read fails publishes no count. Without a hold the first alert would resolve on
+that scrape and fire again on the next one that reads, telling a receiver that
+an incident nobody touched ended and began again. So it carries
+`keep_firing_for: 30s`: a firing alert stays firing, with the instant it
+began, through failed reads that end within 30 seconds. The cost is the same
+30 seconds on every resolution: the alert clears 30 seconds after the reading
+that cleared the record.
+
+The hold is fixed in the chart. A failed read costs one scrape, because the
+manager stops reading after three seconds, inside the scrape timeout. At a
+five-second scrape interval 30 seconds covers five failed reads in a row, and
+at fifteen seconds one. At an interval of 30 seconds or more one failed read
+already outlasts it, and the alert resolves and fires again as it would
+without the hold. `PtahOperatorUnresolvedViewReadFailures` reports the failed
+reads either way. `keep_firing_for` needs Prometheus 2.42 or later, and a
+`PrometheusRule` CRD from Prometheus Operator 0.66 or later: an older CRD does
+not declare the field, so the API server drops it with a warning, or refuses
+the object under strict field validation.
 
 Only the elected leader starts the view; every other replica reports it
 unsynchronized and publishes no counts. The rules take the `max` across
@@ -2835,7 +2854,8 @@ that long after it happened.
 The rules are tested with `promtool test rules` against the scenarios in
 `hack/testdata/prometheusrule/`: one unresolved migration beside a follower,
 a healthy fleet at zero, a view that stays unsynchronized past the window, a
-leader change shorter than it, a lost scrape target, and a failed read.
+leader change shorter than it, a lost scrape target, a failed read, failed
+reads the alerts hold through, and a longer run of them that resolves them.
 
 #### The state gauges {#resource-state}
 
@@ -2876,6 +2896,13 @@ sets none:
 Once `PtahOperatorPlanStoreLarge` fires, a missing state reading keeps the
 existing incident open. A fresh reading at or below the configured budget
 clears it; loss of API access alone cannot establish that plans were pruned.
+
+`PtahOperatorResourceOverdue`, `PtahOperatorOperationStalled` and
+`PtahOperatorLockReleaseOwed` read the same view as
+`PtahOperatorUnresolvedApply` and carry [the same 30-second
+hold](#unresolved-rules), so each clears 30 seconds after the reading that
+clears it. The hold keeps a firing alert only: a failed read during the lock
+alert's pending period starts that period again.
 
 Read them off the installation they are for, over a period that includes a
 rollout and a busy day, and set each comfortably above what normal work
@@ -2927,12 +2954,16 @@ the receiver logged:
 | Condition the phase creates | Alert at the receiver | Asserted |
 | --- | --- | --- |
 | An Apply Job removed while its run was going, from the migration rows | `PtahOperatorUnresolvedApply{family="migration"}` | Fires; the count in its summary equals what the drill-down above lists; its runbook link resolves to this page |
-| A schema whose Resolve Pod no node will schedule | `PtahOperatorOperationStalled{family="schema",operation="Resolve"}` | Fires no earlier than the threshold and within the detection target; clears within the slack once the Pod runs |
+| A schema whose Resolve Pod no node will schedule | `PtahOperatorOperationStalled{family="schema",operation="Resolve"}` | Fires no earlier than the threshold and within the detection target; clears within the rule's 30-second hold plus the slack once the Pod runs |
 | Every manager Pod deleted with every node cordoned | `PtahOperatorUnresolvedViewNotSynced` | Fires within `viewUnsyncedFor` plus the slack; clears once the managers are back |
 
 With a five-second scrape and evaluation interval and a five-second
 Alertmanager group wait, the phase declares a detection target of the rule's
-own threshold plus 45 seconds, and a delivery later than that fails it. Those
+own threshold plus 45 seconds, and a delivery later than that fails it. A rule
+that holds a firing alert resolves no earlier than its 30-second hold after the
+reading that cleared it, and its resolution target is larger by that hold.
+Failed reads the leader declared before an unresolved record was first read
+move that alert's firing target by the time they withheld the record. Those
 intervals are the phase's, not a recommendation: a deployment that scrapes
 every 30 seconds has a target larger by the same amount.
 

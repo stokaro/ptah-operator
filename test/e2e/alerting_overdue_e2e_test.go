@@ -201,7 +201,7 @@ func (a *alertingRun) overdueFamily(family string) {
 		_, _, found := a.heldWorkload(recovered, "")
 		return found, "the new Resolve has no Pod yet", nil
 	}), "verify actual %s progress after restoring writes", family)
-	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alOverdueAlert, labels: labels}, "the overdue "+family+" resolution", max(time.Until(recovered.started.Add(alDetectionSlack)), alDeliveryPoll), index+1, checkManagers)
+	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alOverdueAlert, labels: labels}, "the overdue "+family+" resolution", max(time.Until(recovered.started.Add(alStateReadGapHold+alDetectionSlack)), alDeliveryPoll), index+1, checkManagers)
 	if !alOverdueCleared(firing, resolved, recovered.started) || !a.noActiveAlerts(query) {
 		a.fatalf("the overdue %s incident did not clear within its native recovery bound", family)
 	}

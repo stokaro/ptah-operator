@@ -86,10 +86,13 @@ func alOverdueDelivered(delivery alDelivery, deadline time.Time) bool {
 		!delivery.ReceivedAt.Before(delivery.StartsAt) && !delivery.ReceivedAt.After(deadline.Add(alOverdueAfter+alDetectionSlack))
 }
 
+// The overdue and lock rules keep firing for alStateReadGapHold after the
+// reading that cleared them, so the receiver hears of the recovery within that
+// hold and the delivery target.
 func alOverdueCleared(firing, resolved alDelivery, recovered time.Time) bool {
 	return !recovered.IsZero() && !firing.StartsAt.IsZero() && firing.StartsAt.Equal(resolved.StartsAt) &&
 		!resolved.EndsAt.Before(recovered) && !resolved.ReceivedAt.Before(resolved.EndsAt) &&
-		!resolved.ReceivedAt.After(recovered.Add(alDetectionSlack))
+		!resolved.ReceivedAt.After(recovered.Add(alStateReadGapHold+alDetectionSlack))
 }
 
 func alOverdueDenied(err error, policy string) bool {

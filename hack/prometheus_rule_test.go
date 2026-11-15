@@ -196,6 +196,15 @@ func TestTheStateAlertsFireOnWhatTheyAreFor(t *testing.T) {
 	runPromtool(t, renderedPrometheusRuleWith(t, stateThresholds...), "state.test.yaml")
 }
 
+// A scrape whose state read failed publishes none of the gauges the unresolved
+// and state rules read. A firing alert holds through a short gap with the
+// instant it began, a longer gap resolves it, and a clearing reading resolves
+// it only after the hold.
+func TestTheStateAlertsHoldThroughAShortReadGap(t *testing.T) {
+	t.Parallel()
+	runPromtool(t, renderedPrometheusRuleWith(t, stateThresholds...), "read-gap.test.yaml")
+}
+
 // A missing census is not evidence that retained plans were pruned. The
 // incident must keep its original start time and clear on a fresh low reading.
 func TestThePlanStoreAlertWaitsForObservedRecovery(t *testing.T) {

@@ -14,8 +14,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
-// The frozen profile allows 105 seconds after the operation leaves flight.
-// This includes controller observation; it is distinct from delivery slack.
+// The profile allows 135 seconds after the operation leaves flight: this
+// allowance, which includes controller observation and is distinct from
+// delivery slack, and the rule's alStateReadGapHold.
 const alStalledResolution = 105 * time.Second
 
 type alStalledClaim struct {
@@ -78,10 +79,12 @@ func alStalledDelivered(delivery alDelivery, started time.Time) bool {
 		!delivery.ReceivedAt.After(threshold.Add(alDetectionSlack))
 }
 
+// The rule keeps firing for alStateReadGapHold after the first reading
+// without the operation, so the frozen target moves by that hold.
 func alStalledCleared(firing, resolved alDelivery, finished time.Time) bool {
 	return !finished.IsZero() && !firing.StartsAt.IsZero() && resolved.StartsAt.Equal(firing.StartsAt) &&
 		!resolved.EndsAt.Before(finished) && !resolved.ReceivedAt.Before(resolved.EndsAt) &&
-		!resolved.ReceivedAt.After(finished.Add(alStalledResolution))
+		!resolved.ReceivedAt.After(finished.Add(alStalledResolution+alStateReadGapHold))
 }
 
 func alStalledJobMatches(job *batchv1.Job, claim alStalledClaim) bool {

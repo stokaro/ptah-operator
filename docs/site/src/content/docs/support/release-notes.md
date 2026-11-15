@@ -16,6 +16,27 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.13
+
+**Before you upgrade.** An installation that renders the chart's rules needs
+Prometheus 2.42 or later, and a `PrometheusRule` CRD from Prometheus Operator
+0.66 or later: an older CRD does not declare `keep_firing_for`, so the API
+server drops it with a warning, or refuses the object under strict field
+validation. `PtahOperatorUnresolvedApply`, `PtahOperatorResourceOverdue`,
+`PtahOperatorOperationStalled` and `PtahOperatorLockReleaseOwed` now clear 30
+seconds after the reading that clears them, so anything that waits for their
+resolution waits that much longer. Nothing else.
+
+- **The state alerts hold through a failed read.** A scrape whose state read
+  fails publishes none of the gauges these four alerts read, so a firing alert
+  resolved on that scrape and fired again on the next one that read, and a
+  receiver was told an incident nobody touched had ended and begun again. Each
+  now carries `keep_firing_for: 30s`, which holds it, with the instant it
+  began, through five failed reads in a row at a five-second scrape interval
+  and one at fifteen seconds.
+  [The chart's rules](../../use/operations/#unresolved-rules) says where the
+  hold stops covering a gap.
+
 ## 0.2.12
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

@@ -97,6 +97,12 @@ const (
 	// how often the held schema is.
 	alDeliveryPoll = 3 * time.Second
 	alClaimPoll    = 2 * time.Second
+	// alStateReadGapHold is the chart's keep_firing_for on the rules over the
+	// state reading: how long a firing alert outlasts the first evaluation
+	// that no longer sees its incident. A resolution ends no earlier than that
+	// after the clearing scrape, so every resolution bound adds it, and a run
+	// of declared failed reads shorter than it cannot resolve an incident.
+	alStateReadGapHold = 30 * time.Second
 )
 
 // The alerts the phase needs from the rendered rules.
@@ -141,7 +147,7 @@ func alRuleFile(rendered string) (string, error) {
 		for _, rule := range group.Rules {
 			foundRules[rule.Alert]++
 			target, ok := expected[rule.Alert]
-			if !ok || !alProfileExpressionEqual(rule.Expr, target.Expr) || rule.For != target.For || rule.KeepFiringFor != "" {
+			if !ok || !alProfileExpressionEqual(rule.Expr, target.Expr) || rule.For != target.For || rule.KeepFiringFor != target.KeepFiringFor {
 				return "", fmt.Errorf("rule %s does not match the frozen alert threshold or timing", rule.Alert)
 			}
 		}
@@ -628,14 +634,17 @@ func alProfileExpressionEqual(actual, expected string) bool {
 // the profile loads it without naming it. No phase drives it (#1075).
 const alJournalLinesAlert = "PtahOperatorJournalLinesDropped"
 
+// alStateReadGapHoldText is alStateReadGapHold as the chart spells it.
+const alStateReadGapHoldText = "30s"
+
 func alProfileRuleTargets() map[string]alProfileRule {
 	return map[string]alProfileRule{
-		alUnresolvedApply:               {Expr: "max by (family) (ptah_operator_unresolved_attempts) > 0"},
+		alUnresolvedApply:               {Expr: "max by (family) (ptah_operator_unresolved_attempts) > 0", KeepFiringFor: alStateReadGapHoldText},
 		alViewNotSynced:                 {Expr: "max(ptah_operator_unresolved_view_synced) == 0 or absent(ptah_operator_unresolved_view_synced)", For: "60s"},
 		alViewReadAlert:                 {Expr: "max(increase(ptah_operator_unresolved_view_read_failures_total[60s])) > 0"},
-		alOverdueAlert:                  {Expr: "max by (family) (ptah_operator_overdue_seconds) > 60"},
-		alOperationStall:                {Expr: "max by (family, operation) (ptah_operator_active_operation_seconds) > 60"},
-		"PtahOperatorLockReleaseOwed":   {Expr: "max by (family) (ptah_operator_pending_lock_releases) > 0", For: "60s"},
+		alOverdueAlert:                  {Expr: "max by (family) (ptah_operator_overdue_seconds) > 60", KeepFiringFor: alStateReadGapHoldText},
+		alOperationStall:                {Expr: "max by (family, operation) (ptah_operator_active_operation_seconds) > 60", KeepFiringFor: alStateReadGapHoldText},
+		"PtahOperatorLockReleaseOwed":   {Expr: "max by (family) (ptah_operator_pending_lock_releases) > 0", For: "60s", KeepFiringFor: alStateReadGapHoldText},
 		alCertificateAlert:              {Expr: "min(ptah_operator_webhook_certificate_expiry_timestamp_seconds) - time() < 86400"},
 		"PtahOperatorPlanStoreLarge":    {Expr: `max(ptah_operator_stored_plan_bytes) > 134217728 or (max(ALERTS{alertname="PtahOperatorPlanStoreLarge", alertstate="firing"}) unless max(ptah_operator_stored_plan_bytes))`},
 		"PtahOperatorOperationsFailing": {Expr: "sum by (family, stage) (increase(ptah_operator_failures_total[5m])) > 3"},

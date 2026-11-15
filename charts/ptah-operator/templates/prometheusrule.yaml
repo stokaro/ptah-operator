@@ -1,13 +1,13 @@
 {{- if .Values.monitoring.prometheusRule.enabled }}
 {{- $unsyncedFor := required "monitoring.prometheusRule.viewUnsyncedFor is required when the rules are enabled: how long a manager takes to synchronize its view after a restart or a leader change depends on the cluster it runs in, so measure it there rather than taking a number from this chart" .Values.monitoring.prometheusRule.viewUnsyncedFor }}
 {{- $runbook := printf "%s#unresolved-gauges" .Values.monitoring.prometheusRule.runbookBaseURL }}
+{{- $readGapHold := "30s" }}
 # Alerting rules over the gauges the manager builds from durable state.
 #
 # The first rule has no threshold and no pending period, on purpose: a resource
 # carrying an unresolved record is a mutation nobody accounted for, and only a
 # person reading the database clears it. No count or age of that is fine to
-# ignore, and the records are durable, so the rule does not flap while one is
-# being closed.
+# ignore.
 #
 # The other two watch whether the first can fire at all. While the view has
 # not synchronized the counts are absent, and an absent count is not evidence
@@ -18,6 +18,24 @@
 # replicas: that reads the leader, never counts a record twice, and after a
 # leader change reads the new leader once it has synchronized. The
 # not-synchronized rule covers the gap in between.
+#
+# The records are durable, but each scrape reads them again, and a scrape whose
+# read fails publishes no counts either; the read-failure rule reports it.
+# Without a hold the first rule would resolve on that scrape and fire again on
+# the next one that reads, telling a receiver that an incident nobody touched
+# ended and began again. keep_firing_for holds a firing alert through the gap
+# instead, here and on the state rules below that read the same reading.
+#
+# The hold is {{ $readGapHold }}.
+# A failed read costs one scrape: the manager stops reading after three
+# seconds, inside the scrape timeout, so the scrape still succeeds and the next
+# one reads again. The rule sees no count from the failed scrape until the next
+# good one is stored, which is one scrape interval for each failed read plus up
+# to that three-second read. At a five-second scrape interval the hold covers
+# five failed reads in a row; at fifteen seconds, one. A slower scrape gets no
+# hold from it, because one failed read there already outlasts it. The cost is
+# the same hold on every resolution: an alert clears that long after the
+# reading that cleared it.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -34,6 +52,7 @@ spec:
       rules:
         - alert: PtahOperatorUnresolvedApply
           expr: max by (family) (ptah_operator_unresolved_attempts) > 0
+          keep_firing_for: {{ $readGapHold | quote }}
           labels:
             severity: critical
           annotations:
@@ -78,13 +97,20 @@ spec:
 {{- if or $rules.overdueAfterSeconds $rules.operationStalledAfterSeconds $rules.lockReleaseOwedFor $rules.certificateExpiresWithinSeconds $rules.planStoreBytesAbove $rules.failures.window $rules.admissionFailingFor }}
     # One alert per threshold a deployment set, and none for a threshold it left
     # empty: the chart has no number of its own for how late is too late on a
-    # given cluster. Every one reads gauges the view publishes only while it is
-    # synchronized, so the view alert above covers their silence too.
+    # given cluster. The overdue, stalled, lock and plan-store rules read gauges
+    # the view publishes only while it is synchronized, so the view alert above
+    # covers their silence too. The first three hold a firing alert through a
+    # failed read as the unresolved rule does. The hold keeps a firing alert
+    # only: a gap during the lock rule's pending period starts that period
+    # again. The plan-store rule holds its incident through any number of failed
+    # reads by itself and carries no hold, which would only delay the clearing
+    # its fresh reading establishes.
     - name: ptah-operator-state
       rules:
         {{- with $rules.overdueAfterSeconds }}
         - alert: PtahOperatorResourceOverdue
           expr: max by (family) (ptah_operator_overdue_seconds) > {{ . }}
+          keep_firing_for: {{ $readGapHold | quote }}
           labels:
             severity: warning
           annotations:
@@ -95,6 +121,7 @@ spec:
         {{- with $rules.operationStalledAfterSeconds }}
         - alert: PtahOperatorOperationStalled
           expr: max by (family, operation) (ptah_operator_active_operation_seconds) > {{ . }}
+          keep_firing_for: {{ $readGapHold | quote }}
           labels:
             severity: warning
           annotations:
@@ -106,6 +133,7 @@ spec:
         - alert: PtahOperatorLockReleaseOwed
           expr: max by (family) (ptah_operator_pending_lock_releases) > 0
           for: {{ . | quote }}
+          keep_firing_for: {{ $readGapHold | quote }}
           labels:
             severity: warning
           annotations:

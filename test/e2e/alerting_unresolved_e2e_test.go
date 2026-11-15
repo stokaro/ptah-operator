@@ -270,7 +270,10 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		a.fatalf("unresolved timestamp predates this fault")
 	}
 	labels := map[string]string{"family": "migration", "operator_namespace": a.in.OperatorNamespace, "operator_metrics_service": a.metricsService}
-	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alUnresolvedApply, labels: labels}, "the exact unresolved incident", alDetectionSlack, from, check)
+	// Failed reads the leader declared can withhold the incident from the
+	// rule, never for as long as the hold; alUnresolvedDelivered grants
+	// exactly the time they withheld it.
+	firing, index := a.waitForDeliveryWithCheck(alMatch{status: "firing", alertName: alUnresolvedApply, labels: labels}, "the exact unresolved incident", alDetectionSlack+alStateReadGapHold, from, check)
 	h := a.unresolvedHistory(names, leader, "migration", started, "firing")
 	count, _ := alAlertedCount(firing.Annotations["summary"])
 	if !alUnresolvedDelivered(firing, h, recorded) || count != "1" || firing.Labels["severity"] != "critical" || firing.Annotations["runbook_url"] != a.runbookBase+"#unresolved-gauges" || !alRunbookAnchor(a.operationsPage(), "unresolved-gauges") {
@@ -337,8 +340,10 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 	if versions := drillPlanVersions(m.planOf(recovered.Status.Plan.Name)); versions != "3" {
 		a.fatalf("recovery tried to replay already committed migrations")
 	}
-	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUnresolvedApply, labels: labels}, "the accounted unresolved notification", alDetectionSlack, index+1, check)
-	a.check(harness.Wait(a.ctx, "the native resolved scrape history", 2*alScrapeInterval+alScrapeTimeout, time.Second, func(context.Context) (bool, string, error) {
+	// The rule keeps firing for alStateReadGapHold after the reading that
+	// cleared the incident.
+	resolved, _ := a.waitForDeliveryWithCheck(alMatch{status: "resolved", alertName: alUnresolvedApply, labels: labels}, "the accounted unresolved notification", alStateReadGapHold+alDetectionSlack, index+1, check)
+	a.check(harness.Wait(a.ctx, "the native resolved scrape history", 2*alScrapeInterval+alScrapeTimeout+alStateReadGapHold, time.Second, func(context.Context) (bool, string, error) {
 		check()
 		h = a.unresolvedHistory(names, leader, "migration", started, "")
 		return !h.through.Before(resolved.ReceivedAt), "waiting for native recovery samples", nil
@@ -472,10 +477,10 @@ func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, st
 	at := time.Now().UTC()
 	// Scrape health has no family label; the empty alternative retains it.
 	matchers := fmt.Sprintf(`,family=~%q`, family+"|")
-	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, matchers, alUnresolvedMetric, "up", "scrape_duration_seconds")
-	h, err := alReadUnresolvedHistory(groups[alUnresolvedMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, started, at)
+	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, matchers, alUnresolvedHistoryMetrics...)
+	h, err := alReadUnresolvedHistory(groups[alUnresolvedMetric], groups[alViewSyncedMetric], groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, started, at)
 	if label != "" || err != nil {
-		a.logf("unresolved native history %s/%s: queriedAt=%s snapshot=%s", family, label, at.Format(time.RFC3339Nano), body)
+		a.logf("unresolved native history %s/%s: queriedAt=%s declaredFailedReads=%d snapshot=%s", family, label, at.Format(time.RFC3339Nano), h.declared, body)
 	}
 	a.check(err, "require a complete native unresolved history")
 	return h
