@@ -310,14 +310,18 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 
 // The fixtures are plan files the image support/ptah.json pins saved with
 // `schema plan --output` against PostgreSQL 17, stored as written by `make
-// runner-harness-write`; the v0.14.0 release image saved the same shapes. They
-// are pg_trgm and a
-// table on an empty database; a table with a row-security policy on an empty
-// database; and the policy alone on a database that already held the table
-// with row security on. Ptah marks each statement its extension or policy
-// owner rendered, and the operator refused all three plans until the fields
-// were declared. Ptah's verdict reaches the plan through the severity alone:
-// the operator still reads the policy from the SQL when Ptah calls it safe.
+// runner-harness-write`. They are pg_trgm and a table on an empty database; a
+// table with a row-security policy on an empty database; the policy alone on a
+// database that already held the table with row security on; and the drop of
+// a policy the database holds and the schema file does not declare, under an
+// exclude entry that names it by its schema and its own name, which names
+// nothing since stokaro/ptah#6070. The v0.14.0 release image saved the first
+// three in the same shapes. Ptah marks each statement its extension or policy
+// owner rendered, and the operator refused those plans until the fields were
+// declared. Ptah's verdict reaches the plan through the severity alone: the
+// operator still reads the policy from the SQL when Ptah calls it safe, and
+// reads the drop as a privilege change as well as destructive, so no apply
+// policy runs it without an approval.
 func TestDecodePlanCarriesTheStatementsAFeatureOwnerRendered(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -331,6 +335,7 @@ func TestDecodePlanCarriesTheStatementsAFeatureOwnerRendered(t *testing.T) {
 		{"plan-owned-extension.json", 0, "safe", "", false, nil},
 		{"plan-owned-policy-new-table.json", 2, "safe", "unchanged", false, []string{dataplane.PrivilegeRowSecurityPolicy}},
 		{"plan-owned-policy-widens.json", 0, "destructive", "widens", true, []string{dataplane.PrivilegeRowSecurityPolicy}},
+		{"plan-policy-selector-by-schema.json", 0, "destructive", "narrows", true, []string{dataplane.PrivilegeRowSecurityPolicy}},
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			t.Parallel()

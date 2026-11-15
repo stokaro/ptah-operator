@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@sha256:db30b224970be24c06a0a4e245a814f2abeeba2f5299ef8ef9cf499907fd1e55",
+  "digest": "sha256:db30b224970be24c06a0a4e245a814f2abeeba2f5299ef8ef9cf499907fd1e55",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1580
+}

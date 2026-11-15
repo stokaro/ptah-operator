@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/schemas/policy-selector@sha256:e68c5ea812f5fa3b1efa34dbf5b4bbb7818fc56147e1e369d790068a80ba3c92 to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:e68c5ea812f5fa3b1efa34dbf5b4bbb7818fc56147e1e369d790068a80ba3c92
+Not parsed: the next command that reads the file reports what it cannot read.
