@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-15T12:03:13.541082+00:00",
+  "frozenAt": "2026-11-15T13:37:55.101863+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
   "sourceFiles": [
     {
       "path": "support/qualification/0.2.0.md",
-      "sha256": "0f3f337d9e371a1789d374643bd69639b0ca8f25d96a3d1d63474f0df0074f1f"
+      "sha256": "704f79472ac9977f92644e3e1c68da6ad9b3d899b611e88b027e643f7ed0c199"
     },
     {
       "path": "support/qualification/0.2.0-coverage.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.12 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 103,
+  "revision": 104,
   "supersedes": {
-    "freezeCommit": "274c82234270f6ded449004221a9ee9f858d4a9a",
-    "sha256": "f6765fddb3f2e6cbc610d89b72188867e9f82294998293ee4b7cce0e58a08caf"
+    "freezeCommit": "4c1caf47eb16d3be02bccf50acc176f6eacdacc7",
+    "sha256": "5af33349225d1db52d8a2cd482dbfd202d71086549cf9563e8b7d29d34f26461"
   },
-  "revisionReason": "Allow a failed state read the leader declares in the ten-minute negative-control window: approval waits and policy refusals must produce no unexpected alert, and a declared run shorter than the rules' 30-second hold, with every manager scrape continuous and the next reading synchronized and unchanged, is not unexpected. Its unresolved view read failures alert is the only one that may fire or notify in the window, within that alert's resolution deadline of the read. Kubernetes 1.37 in run 43704948556 failed the negative control on one such read. Thresholds, every target, phases, cells, platforms and every other input are unchanged."
+  "revisionReason": "Narrow the negative-control wording to what the row checks. The rules' hold keeps every firing alert firing through a failed state read the leader declares, and the unresolved view read failures alert is the only alert that may fire in the window, with its notifications the only new ones beside an exact repeat of the preceding incident's resolution. The cause of the Kubernetes 1.37 failure in run 43704948556 is the most likely one, not a measured one. Thresholds, every target, phases, cells, platforms and every other input are unchanged."
 }

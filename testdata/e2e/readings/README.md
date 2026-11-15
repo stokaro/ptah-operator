@@ -49,18 +49,20 @@ when it did.
 `ordinary-policy-waits` row, which failed in the alerting-operations job for
 Kubernetes 1.37 of CI run 43704948556 (job 132786396786) with
 `PtahOperatorUnresolvedViewReadFailures` firing and nothing new at the receiver.
-That row printed no native history, so the reading is built from the two the
-same job's `unresolved-apply` row printed at 11:06:36 and 11:06:56, for its
-MySQL migration and schema lanes, from the same manager and monitoring
-processes the quiet window ran against. Both are cropped to the samples a range query at
-11:06:27 returns, which end before the migration census reads 1 again at
-11:06:29.670. The series
-the two share agree sample for sample, and the merge keeps each family's
-census. Labels and number text are unchanged, and both families read zero from
-11:03:14.670 on. The leader's scrape at 11:05:14.670 is then made a declared
-failed read: it carries no census, its view reads 0, its read-failure counter
-reads 1 from that scrape on, and it took 3.005 seconds. The quiet-window tests
-in `test/e2e/alerting_negative_reads_test.go` rebuild every variant they refuse
+That row printed no native history, so the reading is a reconstruction, built
+from the two the same job's `unresolved-apply` row printed at 11:06:36 and
+11:06:56, for its MySQL migration and schema lanes, from the same manager and
+monitoring processes the quiet window ran against. Both are cropped to the
+samples a range query at 11:06:27 returns, which end before the migration census
+reads 1 again at 11:06:29.670. The series the two share agree sample for sample,
+and the merge keeps each family's census. Labels and number text are unchanged,
+and both families read zero from 11:03:14.670 on. Before that they count the
+incidents of that row's PostgreSQL lanes, which the tests' longer lookbacks
+reach the way a lookback can reach the preceding row's incident. The leader's
+scrape at 11:05:14.670 is then made a declared failed read: it carries no
+census, its view reads 0, its read-failure counter reads 1 from that scrape on,
+and it took 3.005 seconds. The quiet-window tests in
+`test/e2e/alerting_negative_reads_test.go` rebuild every variant they refuse
 from this reading's scrapes, and
 `TestAlQuietWindowAcceptsTheCIReadFailureOnlyWhenDeclared` requires the window
 to accept the alert only where the leader declared the read.
