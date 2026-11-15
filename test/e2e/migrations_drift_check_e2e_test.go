@@ -32,8 +32,12 @@ func (m *migrationRun) driftCheckProof() {
 	m.isolatedDatabase(shadow, shadowSecret)
 	// The URL names no search_path, so Ptah reads every schema and the
 	// selector starts with the schema's name. The table belongs to the
-	// migration user, as a table its own tool created would.
-	const unmigrated, excluded = "e2e_unmigrated_queue", "public.e2e_unmigrated_queue"
+	// migration user, as a table its own tool created would. Its name holds
+	// $$, which PostgreSQL admits in an identifier and the kubelet reduces to
+	// $ in a literal variable: a selector that reached Ptah reduced would
+	// match no table, and the table and its primary key would count as two
+	// more differences.
+	const unmigrated, excluded = "e2e_unmigrated$$queue", "public.e2e_unmigrated$$queue"
 	for _, statement := range []string{
 		"CREATE TABLE " + unmigrated + " (id INTEGER PRIMARY KEY)",
 		"ALTER TABLE " + unmigrated + " OWNER TO " + migrationDatabaseUser,

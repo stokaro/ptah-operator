@@ -314,10 +314,12 @@ func TestDriftSentenceLoggedRefusesEachClause(t *testing.T) {
 }
 
 // carriesDriftExclude reads the list the builder writes into the Apply Job,
-// and refuses one that names other selectors, fewer of them, or none.
+// as the kubelet hands it to the runner, and refuses one that names other
+// selectors, fewer of them, or none. The queue's name holds $$, which the
+// Job's value carries doubled and the runner reads as written.
 func TestCarriesDriftExcludeReadsTheBuildersJobs(t *testing.T) {
 	t.Parallel()
-	const queue = "public.e2e_unmigrated_queue"
+	const queue = "public.e2e_unmigrated$$queue"
 	migration := mtMigration()
 	migration.Spec.Policy.DriftCheck = &ptahv1alpha1.MigrationDriftCheck{
 		Shadow: ptahv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
@@ -338,14 +340,27 @@ func TestCarriesDriftExcludeReadsTheBuildersJobs(t *testing.T) {
 		t.Fatal("the builder's Apply Job was read as carrying another exclude list")
 	}
 	for name, selectors := range map[string][]string{
-		"one of the selectors": {queue},
-		"another selector":     {"legacy,archive", "public.other"},
-		"another order":        {queue, "legacy,archive"},
-		"no selector":          nil,
+		"one of the selectors":          {queue},
+		"another selector":              {"legacy,archive", "public.other"},
+		"another order":                 {queue, "legacy,archive"},
+		"no selector":                   nil,
+		"the value the Job stores":      {"legacy,archive", strings.ReplaceAll(queue, "$", "$$")},
+		"the selector the kubelet made": {"legacy,archive", strings.ReplaceAll(queue, "$$", "$")},
 	} {
 		if carriesDriftExclude(&apply, selectors...) {
 			t.Errorf("the Apply Job was read as carrying %s: %q", name, selectors)
 		}
+	}
+	// A builder that wrote the list as it is hands the runner a selector the
+	// kubelet reduced, which names another table.
+	unescaped := *apply.DeepCopy()
+	for index, variable := range unescaped.Spec.Template.Spec.Containers[0].Env {
+		if variable.Name == driftExcludeVariable {
+			unescaped.Spec.Template.Spec.Containers[0].Env[index].Value = strings.ReplaceAll(variable.Value, "$$", "$")
+		}
+	}
+	if carriesDriftExclude(&unescaped, "legacy,archive", queue) {
+		t.Error("a Job whose list the kubelet reduces was read as handing the runner the queue's selector")
 	}
 	// A list a second container also holds is not the one the runner reads.
 	twice := *apply.DeepCopy()

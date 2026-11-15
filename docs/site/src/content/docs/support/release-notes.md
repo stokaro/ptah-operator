@@ -94,6 +94,14 @@ resolution waits that much longer. Nothing else.
   earlier release wrote keep both columns empty.
   [Joining one change across the record](../../use/audit/#joins) says how to
   read them.
+- **A `$` in a resource reaches the runner as written.** The kubelet expands
+  `$(VAR)` and reduces `$$` to `$` in each literal value of a container's
+  environment, and the operator passed what a resource names to the runner in
+  such values, so a schema's `exclude` or `protectedTables` entry `public.a$$b`
+  reached Ptah as `public.a$b`, and one naming `$(HOME)` reached it with that
+  variable's value in its place. A Git source's address, path, branch and tag,
+  and an HTTPS source's address and path, were read the same way. The Job now
+  doubles each `$`, so the process reads the value the resource holds.
 - **Executor.** The verified executor is now Ptah v0.28.0. Each schema read of
   both engines leaves `ptah_schema_apply_log` out of its catalog queries, beside
   the migration tables it already left out, and sends nothing else new. The

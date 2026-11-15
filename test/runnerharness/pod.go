@@ -12,6 +12,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/stokaro/ptah-operator/test/kubeletenv"
 	"github.com/stokaro/ptah-operator/test/runnerharness/volumes"
 )
 
@@ -171,14 +172,16 @@ func translateContainer(container corev1.Container, cluster Cluster, podContext 
 	if err := applySecurity(&translated, container.SecurityContext, podContext); err != nil {
 		return Container{}, err
 	}
-	for _, variable := range container.Env {
-		value, present, err := resolveEnv(variable, cluster)
-		if err != nil {
-			return Container{}, err
-		}
-		if present {
-			translated.Env = append(translated.Env, EnvVar{Name: variable.Name, Value: value, Secret: variable.ValueFrom != nil})
-		}
+	// The kubelet expands each literal value against the variables before it,
+	// and docker expands nothing, so the expansion happens here.
+	environment, err := kubeletenv.Resolve(container.Env, func(variable corev1.EnvVar) (string, bool, error) {
+		return resolveEnv(variable, cluster)
+	})
+	if err != nil {
+		return Container{}, err
+	}
+	for _, variable := range environment {
+		translated.Env = append(translated.Env, EnvVar{Name: variable.Name, Value: variable.Value, Secret: variable.ValueFrom != nil})
 	}
 	for _, mount := range container.VolumeMounts {
 		if mount.SubPath != "" || mount.SubPathExpr != "" || mount.MountPropagation != nil {
@@ -226,10 +229,8 @@ func applySecurity(out *Container, context *corev1.SecurityContext, pod *corev1.
 	return nil
 }
 
+// resolveEnv is the value a ValueFrom variable reads from the row's Secrets.
 func resolveEnv(variable corev1.EnvVar, cluster Cluster) (string, bool, error) {
-	if variable.ValueFrom == nil {
-		return variable.Value, true, nil
-	}
 	selector := variable.ValueFrom.SecretKeyRef
 	if selector == nil {
 		return "", false, fmt.Errorf("%s reads a source other than a Secret", variable.Name)

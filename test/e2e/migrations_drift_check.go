@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/kubeletenv"
 )
 
 // driftFoundMessage opens the message of a run a drift check refused because
@@ -117,11 +118,17 @@ const driftExcludeVariable = "PTAH_DRIFT_EXCLUDE"
 
 // carriesDriftExclude says whether a Job hands exactly one container exactly
 // the selectors given, in that order, which is how the runner is asked to pass
-// them to the check.
+// them to the check. It reads the list the runner's process reads, which is
+// the Job's value after the kubelet expanded it. A Secret's value is taken as
+// empty, since the list must name no variable at all.
 func carriesDriftExclude(job *batchv1.Job, selectors ...string) bool {
 	var carried [][]string
 	for _, container := range job.Spec.Template.Spec.Containers {
-		for _, variable := range container.Env {
+		environment, err := kubeletenv.Resolve(container.Env, func(corev1.EnvVar) (string, bool, error) { return "", true, nil })
+		if err != nil {
+			return false
+		}
+		for _, variable := range environment {
 			if variable.Name != driftExcludeVariable {
 				continue
 			}
