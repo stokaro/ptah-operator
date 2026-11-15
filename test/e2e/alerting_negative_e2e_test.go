@@ -158,8 +158,9 @@ func (a *alertingRun) negativeControls() {
 	schemaStart, migrationStart := len(schemas.snapshot()), len(migrations.snapshot())
 	// A transient pending condition has not crossed the rule's paging
 	// threshold. The state-read alert may fire, for a failed read the leader
-	// declared; the native history judges that once the window has closed, and
-	// starts far enough before this first look to hold the read that explains it.
+	// declared; the native history judges that once the window has closed,
+	// from far enough before the earliest instant the window saw to hold the
+	// read that explains it.
 	var seen alQuietSeen
 	firstLook, firing, err := a.quietFiring()
 	if err != nil {
@@ -168,7 +169,6 @@ func (a *alertingRun) negativeControls() {
 	if firing {
 		seen.firing = append(seen.firing, firstLook)
 	}
-	lookback := firstLook.Add(-alViewReadResolution)
 	baselineLog, err := a.deploymentLog(a.ctx, "alert-sink")
 	a.check(err, "read the original receiver journal")
 	baselineDeliveries, err := alDeliveries(baselineLog)
@@ -288,7 +288,7 @@ func (a *alertingRun) negativeControls() {
 		a.sleep(min(alDeliveryPoll, time.Until(end)))
 	}
 	closed := time.Now().UTC()
-	reads := a.quietWindowHistory(names, leader, lookback, closed, seen)
+	reads := a.quietWindowHistory(names, leader, alQuietLookback(firstLook, seen), firstLook, closed, seen)
 	for _, f := range fixtures {
 		if !alNegativeReading(f.object).readAt.After(started) {
 			a.fatalf("%s has no fresh database observation inside the ten-minute window", f.object.GetName())
@@ -332,7 +332,8 @@ func (a *alertingRun) negativeControls() {
 
 // quietFiring asks Prometheus which alerts fire at one instant, and returns
 // that instant and whether the one alert the quiet window allows was among
-// them. Any other firing alert is an error.
+// them. Any other firing alert is an errAlQuietIncident error; an answer that
+// says nothing about the alerts fails the row here.
 func (a *alertingRun) quietFiring() (time.Time, bool, error) {
 	a.t.Helper()
 	at := time.Now().UTC()
@@ -341,15 +342,18 @@ func (a *alertingRun) quietFiring() (time.Time, bool, error) {
 		a.fatalf("Prometheus did not answer for its alerts: %v", err)
 	}
 	firing, err := alQuietFiring(body)
+	if err != nil && !errors.Is(err, errAlQuietIncident) {
+		a.fatalf("Prometheus did not answer for its alerts: %v", err)
+	}
 	return at, firing, err
 }
 
-// quietWindowHistory reads the native history from the lookback before the
-// window's first look until it has read the state past the window's close,
-// and holds what the window saw of the state-read alert to the failed reads
-// the leader declared in it. The history is printed either way: it is the
-// reading a predicate test stores when this row fails.
-func (a *alertingRun) quietWindowHistory(pods []string, leader string, lookback, closed time.Time, seen alQuietSeen) alQuietWindowHistory {
+// quietWindowHistory reads the native history from the lookback until it has
+// read the state past the window's close, judging the census from the first
+// look, and holds what the window saw of the state-read alert to the failed
+// reads the leader declared in it. The history is printed either way: it is
+// the reading a predicate test stores when this row fails.
+func (a *alertingRun) quietWindowHistory(pods []string, leader string, lookback, firstLook, closed time.Time, seen alQuietSeen) alQuietWindowHistory {
 	a.t.Helper()
 	var h alQuietWindowHistory
 	var body []byte
@@ -360,7 +364,7 @@ func (a *alertingRun) quietWindowHistory(pods []string, leader string, lookback,
 			var groups map[string][]byte
 			groups, body = a.historySnapshot(a.ctx, at, alScrapeJob, "", alUnresolvedHistoryMetrics...)
 			var err error
-			h, err = alReadQuietWindowHistory(groups, pods, leader, lookback, at)
+			h, err = alReadQuietWindowHistory(groups, pods, leader, lookback, firstLook, at)
 			if errors.Is(err, errAlHistoryNotFresh) {
 				return false, "the newest scrape has not committed", nil
 			}
@@ -372,8 +376,8 @@ func (a *alertingRun) quietWindowHistory(pods []string, leader string, lookback,
 			}
 			return err == nil, "", err
 		})
-	a.logf("negative-control native history: lookback=%s closed=%s queriedAt=%s declaredFailedReads=%d snapshot=%s",
-		lookback.Format(time.RFC3339Nano), closed.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), len(h.declared), body)
+	a.logf("negative-control native history: lookback=%s firstLook=%s closed=%s queriedAt=%s declaredFailedReads=%d snapshot=%s",
+		lookback.Format(time.RFC3339Nano), firstLook.Format(time.RFC3339Nano), closed.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), len(h.declared), body)
 	a.check(err, "hold the quiet window's state-read alerts to the failed reads the leader declared")
 	return h
 }
