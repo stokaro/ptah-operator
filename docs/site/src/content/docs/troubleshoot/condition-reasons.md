@@ -36,7 +36,7 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
-| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the applied history cannot be replayed, the applied migrations fail on the shadow, Ptah refused a selector in its `exclude`, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the target's schema cannot be read, the applied history cannot be replayed, the applied migrations fail on the shadow, Ptah refused a selector in its `exclude`, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -187,14 +187,20 @@ Ready=False SchemaDrifted
   stage `scope` Ptah refused a selector in `spec.policy.driftCheck.exclude`,
   such as one with more parts than the URL's scope can address; the Pod log
   quotes it. At stage `schema-match` the read of the target could not describe
-  an object the applied migrations create. Another shadow would fail the same
-  way: fix the selector or the history, or remove `spec.policy.driftCheck` to
-  run without the check.
+  an object the applied migrations create. At stage `target-introspect` Ptah
+  could not read the target's schema: the target's user cannot see a kind of
+  object, or the target holds one Ptah cannot describe. At stage
+  `configuration` the executor has no check for the target's engine. Another
+  shadow would fail the same way: fix the selector, the history or the target
+  user's privileges, or remove `spec.policy.driftCheck` to run without the
+  check.
 - `ShadowDatabaseUnavailable`: the shadow database could not be used. It did
   not answer, it already holds something (stage `claim`, reason `not_clean`),
   it is the target under another name (stage `realm-check`), or its user lacks
-  what Ptah needs to empty it. Check the URL the shadow Secret holds, and that
-  the database is empty and belongs to this resource alone.
+  what Ptah needs to empty it or to read the replayed schema back (stage
+  `re-introspect`). Check the URL the shadow Secret holds, the shadow user's
+  privileges, and that the database is empty and belongs to this resource
+  alone.
 
 In every case the run applied nothing and the revision table is as the plan
 read it. `Ready` and `Progressing` carry the reason, `status.lastRun` records
