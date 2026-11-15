@@ -10,9 +10,10 @@ Kubernetes acceptance or a production qualification result.
 Captured on October 23, 2026 with the Ptah v0.15.0 release image, taken again
 on October 25, 2026 with v0.16.0, on November 2, 2026 with v0.17.0, on
 November 4, 2026 with v0.18.0, on November 6, 2026 with v0.22.0, on November 7,
-2026 with v0.23.0, on November 13, 2026 with v0.26.0, and on November 14, 2026
-with the Ptah v0.28.0 release image, commit
-`2ee460a688d63f34e853b1eee4228a2463a6baa8`.
+2026 with v0.23.0, on November 13, 2026 with v0.26.0, on November 14, 2026 with
+v0.28.0, and on November 15, 2026 with the Ptah v0.29.0 release image, commit
+`75fa9991177e9049b66fe2e37abec0db40f47568`, which reproduced every reading, so no
+file changed.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -36,22 +37,34 @@ runs in its own container, and every container, anonymous volume and network the
 run created is removed. The `documented-` readings use the login the databases
 page documents instead, as [the documented login](#the-documented-login) says.
 
-Before the v0.28.0 capture, the same procedure ran with the executor of the
-previous pin, the Ptah v0.26.0 release image, as it ran with v0.23.0 before the
+Before the v0.29.0 capture, the same procedure ran with the executor of the
+previous pin, the Ptah v0.28.0 release image, and before the v0.28.0 capture
+with v0.26.0, as it ran with v0.23.0 before the
 v0.26.0 capture, with v0.22.0 before the v0.23.0 one, with v0.18.0 before the v0.22.0 one, with v0.17.0 before the
 v0.18.0 one, with v0.16.0 before the v0.17.0 one, with v0.15.0 before the
 v0.16.0 one and with v0.14.0 before the v0.15.0 one. Each time it reproduced
 every earlier checked-in reading record for record, PostgreSQL parameters
 included, and all four saved exclusion plans byte for byte. The v0.22.0 run
 reproduced the three PostgreSQL 18 witnesses as well, and the v0.23.0 and
-v0.26.0 runs the witnesses of PostgreSQL 18 and 16. That is what makes the new readings a statement about the executor rather
+v0.26.0 runs the witnesses of PostgreSQL 18 and 16. Since v0.28.0 the allowed
+Apply writes two schema apply log entries, and each carries the run's id and the
+time it was written, which every run draws anew; the comparison leaves those two
+values out and compares everything else, so the v0.28.0 control of the v0.29.0
+capture reproduced every reading that way, its PostgreSQL 18 and 16 witnesses
+included. That is what makes the new readings a statement about the executor rather
 than about a different procedure.
 
 `--contract` writes the contract from a directory of readings. Run on the
 v0.14.0 readings, and again on the v0.16.0 readings, it reproduced the contract
 then checked in byte for byte, and the probe's unit test holds the checked-in
 contract to the checked-in readings. The v0.28.0 contract is the one it wrote
-from the v0.28.0 readings.
+from the v0.28.0 readings, and the v0.29.0 contract differs from it only in the
+Ptah commit it names.
+
+Against v0.28.0, v0.29.0 changed no reading on either engine, the PostgreSQL 18
+and 16 witnesses included: every schema and migration journal matched record for
+record, apart from the two apply log values every run draws anew, and all four
+saved exclusion plans byte for byte.
 
 Against v0.26.0, v0.28.0 changed every schema reading on both engines and no
 migration reading: both migration History readings and both restored-history

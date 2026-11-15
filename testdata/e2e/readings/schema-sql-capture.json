@@ -1,10 +1,10 @@
 {
   "scope": "Isolated CLI readings of the SQL the executor sends for schema diagnostics, plan validation, the refused stale Apply, the allowed Apply, migration History and the refused restored-history Apply; not Kubernetes acceptance.",
-  "capturedOn": "2026-11-14",
+  "capturedOn": "2026-11-15",
   "procedure": "python3 support/qualification/probes/schema_sql_readings.py --context <context> --executor-image <image> --out <dir>",
-  "ptahRelease": "v0.28.0",
-  "ptahCommit": "2ee460a688d63f34e853b1eee4228a2463a6baa8",
-  "executorImage": "ghcr.io/stokaro/ptah@sha256:34356290733b9c7ce526312b8ce89f753c85a04c9c187d71b4cbd63af0080977",
+  "ptahRelease": "v0.29.0",
+  "ptahCommit": "75fa9991177e9049b66fe2e37abec0db40f47568",
+  "executorImage": "ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8",
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
@@ -12,7 +12,7 @@
     "postgresql-16": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28"
   },
   "clientAddress": "172.19.0.3",
-  "control": "The same procedure run with the executor of the previous pin, the Ptah v0.26.0 release image, reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte. The v0.28.0 image reproduced both migration History readings, both restored-history refusals and all four saved exclusion plans, and changed every schema reading. Each schema command of both engines leaves Ptah's schema apply log, ptah_schema_apply_log, out of its catalog reads beside the migration tables it already left out (stokaro/ptah#6014), and sends nothing else that is new: 25 of the contract's 97 statements gain that one predicate. The allowed Apply also creates the table and writes a started entry before its first statement and an applied one after it; on PostgreSQL it reads the table's owner before and after the CREATE.",
+  "control": "The same procedure run with the executor of the previous pin, the Ptah v0.28.0 release image, reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, apart from the run id and the entry time of the allowed Apply's two ptah_schema_apply_log entries, which every run draws anew and the comparison leaves out. The v0.29.0 image reproduced every reading the same way, and all four saved exclusion plans byte for byte, so no reading or plan here changed, and each exit status and record count is the one v0.29.0 gave.",
   "readings": {
     "mysql-migration-history-audit.jsonl": {
       "exitCode": 0,
