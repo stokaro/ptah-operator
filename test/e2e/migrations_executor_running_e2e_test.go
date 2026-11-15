@@ -32,9 +32,8 @@ func migrationExecutorRecorder[T client.Object](m *migrationRun, watcher client.
 	if list.GetResourceVersion() == "" {
 		m.fatalf("the migration executor %s list has no resourceVersion", name)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	r := &watchRecorder[T]{name: "migration-executor-" + name, namespace: namespace, newList: newList,
-		watcher: watcher, ctx: ctx, cancel: cancel, quiet: true, done: make(chan struct{})}
+	r, err := newWatchRecorder[T]("migration-executor-"+name, namespace, true, watcher, newList, list)
+	m.check(err, "start the migration executor %s watch", name)
 	go r.run(list.GetResourceVersion())
 	m.t.Cleanup(r.abort)
 	return r

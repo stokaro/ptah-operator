@@ -43,9 +43,8 @@ func newStoredStateRecorder[T client.Object](t *testing.T, ctx context.Context, 
 	if list.GetResourceVersion() == "" {
 		t.Fatal("the stored-state watch list has no resourceVersion")
 	}
-	watchCtx, cancel := context.WithCancel(context.Background())
-	r := &watchRecorder[T]{name: name, namespace: namespace, newList: newList,
-		watcher: watcher, ctx: watchCtx, cancel: cancel, quiet: true, done: make(chan struct{})}
+	r, err := newWatchRecorder[T](name, namespace, true, watcher, newList, list)
+	storedStateCheck(t, err, "start the "+name+" watch")
 	go r.run(list.GetResourceVersion())
 	t.Cleanup(r.abort)
 	return r

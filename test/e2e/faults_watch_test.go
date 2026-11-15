@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -324,5 +328,106 @@ func TestWatchRecorderBridgesOnlyAGapItsListsProveEmpty(t *testing.T) {
 					len(events), events[len(events)-1].Object.GetResourceVersion(), len(history))
 			}
 		})
+	}
+}
+
+// watchRecorderConstructions names, as file:function, every place source
+// builds a watchRecorder value: a composite literal, new, or a declared
+// variable of the type itself. A pointer to one is not a construction.
+func watchRecorderConstructions(filename string, source []byte) ([]string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), filename, source, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	isRecorder := func(expr ast.Expr) bool {
+		switch typed := expr.(type) {
+		case *ast.IndexExpr:
+			expr = typed.X
+		case *ast.IndexListExpr:
+			expr = typed.X
+		}
+		ident, ok := expr.(*ast.Ident)
+		return ok && ident.Name == "watchRecorder"
+	}
+	var sites []string
+	scan := func(node ast.Node, function string) {
+		ast.Inspect(node, func(node ast.Node) bool {
+			built := false
+			switch typed := node.(type) {
+			case *ast.CompositeLit:
+				built = isRecorder(typed.Type)
+			case *ast.CallExpr:
+				ident, ok := typed.Fun.(*ast.Ident)
+				built = ok && ident.Name == "new" && len(typed.Args) == 1 && isRecorder(typed.Args[0])
+			case *ast.ValueSpec:
+				built = typed.Type != nil && isRecorder(typed.Type)
+			}
+			if built {
+				sites = append(sites, filename+":"+function)
+			}
+			return true
+		})
+	}
+	for _, declaration := range file.Decls {
+		function := ""
+		if decl, ok := declaration.(*ast.FuncDecl); ok {
+			function = decl.Name.Name
+		}
+		scan(declaration, function)
+	}
+	return sites, nil
+}
+
+// TestWatchRecorderIsBuiltOnlyByItsConstructor holds every file of the
+// package, whatever its build tag, to building a watchRecorder through
+// newWatchRecorder. A recorder built any other way has no list to start its
+// history from, so the first event it records panics the test binary, and
+// the files that would do it compile only under the e2e tag.
+func TestWatchRecorderIsBuiltOnlyByItsConstructor(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sites []string
+	read := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		source, err := os.ReadFile(entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		found, err := watchRecorderConstructions(entry.Name(), source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sites = append(sites, found...)
+		read++
+	}
+	if want := []string{"faults_watch.go:newWatchRecorder"}; !slices.Equal(sites, want) {
+		t.Fatalf("watchRecorder is built at %v across %d files; only %v may build it", sites, read, want)
+	}
+
+	// The scan refuses what it exists to refuse, in a file the e2e tag
+	// hides from this build, and leaves a pointer alone.
+	for _, row := range []struct {
+		source string
+		sites  int
+	}{
+		{"//go:build e2e\n\npackage e2e\nfunc f[T any]() { _ = &watchRecorder[T]{name: \"jobs\", quiet: true} }\n", 1},
+		{"package e2e\nfunc f[T any]() { _ = new(watchRecorder[T]) }\n", 1},
+		{"package e2e\nfunc f[T any]() { var r watchRecorder[T]; _ = r }\n", 1},
+		{"package e2e\nvar r = watchRecorder[int]{}\n", 1},
+		{"package e2e\nfunc f[T any](r *watchRecorder[T]) { var s *watchRecorder[T] = r; _ = s }\n", 0},
+	} {
+		found, err := watchRecorderConstructions("sample.go", []byte(row.source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(found) != row.sites {
+			t.Errorf("the scan found %v in:\n%s\nwant %d sites", found, row.source, row.sites)
+		}
 	}
 }
