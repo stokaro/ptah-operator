@@ -464,10 +464,10 @@ const (
 	gitCAPinRecoveredReading = "git-ca-pin-recovered-schema.json"
 )
 
-// gitCAPinMutantMessage is what ReconciliationFailed said on the same kind
-// run with the runner's CA pin check removed: Ptah started with the credential
-// and failed its handshake under the system roots, before the server saw a
-// request.
+// gitCAPinMutantMessage is what ReconciliationFailed said on a kind run of
+// the same row with the runner's CA pin check removed: Ptah started with the
+// credential and failed its handshake under the system roots, before the
+// server saw a request.
 const gitCAPinMutantMessage = `child_exit: ptah exited with code 2: list the refs of git+https://e2e-git.ptah-test-a-1-36-4-local-e269ddc069-85945-1464fa9372.svc.cluster.local/acme/app.git: Get "https://e2e-git.ptah-test-a-1-36-4-local-e269ddc069-85945-1464fa9372.svc.cluster.local/acme/app.git/info/refs?service=git-upload-pack": tls: failed to verify certificate: x509: certificate signed by unknown authority`
 
 func TestGitCAPinRefusedNeedsTheRunnersRefusalAtTheGeneration(t *testing.T) {

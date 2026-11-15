@@ -878,11 +878,10 @@ func (c *gitRun) credentialForAnotherHost() {
 //
 // The server's certificate chains to the phase's CA alone, so a pull under
 // the system roots would fail its handshake before it sent anything. The
-// server logs no requests, and nothing the cluster records of the refused
-// generation but the message tells the runner's refusal from that: the
-// runner's sentence under invalid_git_access, a code the runner protocol
-// allows only on a result whose child never ran. The refusal wait holds to
-// both.
+// server logs no requests, only failed handshakes, which this row does not
+// read. What it holds to is the message: the runner's sentence under
+// invalid_git_access, a code the runner protocol allows only on a result
+// whose child never ran.
 func (c *gitRun) caPinWithoutTheCA() {
 	c.t.Helper()
 	c.createDatabase(gitCAPinDatabase, gitCAPinSecret)
@@ -919,13 +918,15 @@ func (c *gitRun) caPinWithoutTheCA() {
 			return schema.Status.ObservedGeneration == generation && awaitingGitPlan("")(schema)
 		})
 	c.printReading("recovered CA pin schema", recovered.Status)
-	c.check(gitCAPinCleared(recovered.Status.Conditions, generation), "%s", gitCAPinSchema)
+	if err := gitCAPinCleared(recovered.Status.Conditions, generation); err != nil {
+		c.fatalf("%s: %s", gitCAPinSchema, c.scanned(err.Error()))
+	}
 	c.check(gitResolvedTo(recovered.Status.Source.Git, source.url, gitSchemaPath, ptahv1alpha1.GitRef{Branch: "main"}, commit, content),
 		"the source of %s", gitCAPinSchema)
 	c.assertGitJobs(labelSchema, gitCAPinSchema, []string{commit}, "resolve", "observe", "plan")
 	c.deleteAndWait(recovered)
 	c.logf("PASS a credential whose Secret pins caSHA256 was refused before Ptah ran under a source that selects no CA, "+
-		"and planned commit %s once the source selected it: %s", commit, refusal)
+		"and planned commit %s once the source selected it: %s", commit, c.scanned(refusal))
 }
 
 // selectCA has a schema's source select the phase's CA, and returns the
