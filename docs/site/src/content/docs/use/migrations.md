@@ -690,6 +690,9 @@ selector starts with the schema's name, as above. On one that sets it, and on a
 MySQL URL that names its database, a selector starts with the table's name. A
 selector that matches nothing leaves nothing out and does not stop the run: the
 check still compares everything else, so read each selector against that scope.
+Since v0.29.2 Ptah warns about such a selector on standard error, which the
+runner does not read, so the warning reaches neither the resource nor the Pod
+log.
 Ptah judges the grammar when the check runs, and a selector
 it refuses stops the run with `DriftCheckUnsupported` at stage `scope`. The API
 takes what a `PtahSchema`'s `spec.policy.exclude` takes: at most 128 entries,

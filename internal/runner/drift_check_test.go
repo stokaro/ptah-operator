@@ -643,3 +643,157 @@ func TestAnExcludeListIsRefusedBeforeItsChild(t *testing.T) {
 		})
 	}
 }
+
+// capturedDriftApply is what the pinned Ptah did for one checked migration
+// Apply of the runner harness: the arguments of its `migrations up
+// --check-drift`, its document, what it wrote to standard error, its exit
+// status, the operation the run reference names and the error the harness
+// framed.
+type capturedDriftApply struct {
+	args           []string
+	stdout, stderr string
+	exit           int
+	operationID    string
+	errorCode      string
+}
+
+func readCapturedDriftApply(t *testing.T, row string) capturedDriftApply {
+	t.Helper()
+	testdata := filepath.Join("..", "dataplane", "testdata")
+	data, err := os.ReadFile(filepath.Join(testdata, "runner-harness", "transcript.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transcript []struct {
+		Name     string `json:"name"`
+		Children []struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+			Exit    int      `json:"exit"`
+			Stderr  string   `json:"stderr"`
+			Stdout  string   `json:"stdout"`
+		} `json:"children"`
+		Result struct {
+			OperationID string `json:"operationId"`
+			Error       *struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(data, &transcript); err != nil {
+		t.Fatal(err)
+	}
+	for _, each := range transcript {
+		if each.Name != row {
+			continue
+		}
+		var checked []int
+		for index, child := range each.Children {
+			if child.Command == "migrations up --check-drift" {
+				checked = append(checked, index)
+			}
+		}
+		if len(checked) != 1 {
+			t.Fatalf("%s ran %d checked Applies, want one", row, len(checked))
+		}
+		child := each.Children[checked[0]]
+		stdout, err := os.ReadFile(filepath.Join(testdata, child.Stdout))
+		if err != nil {
+			t.Fatal(err)
+		}
+		captured := capturedDriftApply{
+			args: child.Args, stdout: string(stdout), stderr: child.Stderr, exit: child.Exit,
+			operationID: each.Result.OperationID,
+		}
+		if each.Result.Error != nil {
+			captured.errorCode = each.Result.Error.Code
+		}
+		return captured
+	}
+	t.Fatalf("the transcript has no row %s", row)
+	return capturedDriftApply{}
+}
+
+// Since v0.29.2 Ptah warns on standard error when a --drift-exclude selector
+// matched no object (stokaro/ptah#6069), and leaves its exit status and its
+// document as they were. The runner reads no standard error of a migration
+// Apply, so the warning reaches neither the frame nor the Pod log: each
+// captured run replays to the same frame and the same log with the warning and
+// without it, on the Apply that ran and on the one the drift check stopped.
+func TestAnUnmatchedDriftExcludeWarningReachesNeitherTheFrameNorThePodLog(t *testing.T) {
+	t.Parallel()
+	const (
+		selector = "-not-a-flag"
+		warning  = `Warning: the --drift-exclude selection matched no objects: "` + selector + `".`
+	)
+	expected := shadowDigest(t, testShadowURL)
+	for _, row := range []struct {
+		name, errorCode string
+		summary         dataplane.MigrationDriftSummary
+	}{
+		{name: "migrations-drift-excluded-postgres/apply", summary: dataplane.MigrationDriftSummary{Outcome: "clean"}},
+		{name: "migrations-drift-excluded-drifted-postgres/apply", errorCode: "child_exit",
+			summary: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 1}},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			captured := readCapturedDriftApply(t, row.name)
+			if !slices.Contains(captured.args, "--drift-exclude="+selector) {
+				t.Fatalf("the captured Apply ran %q, want the unmatched selector %s", captured.args, selector)
+			}
+			if !strings.Contains(captured.stderr, warning+"\n") {
+				t.Fatalf("the captured standard error lacks Ptah's warning %q:\n%s", warning, captured.stderr)
+			}
+			if captured.errorCode != row.errorCode {
+				t.Fatalf("the harness framed error %q, want %q", captured.errorCode, row.errorCode)
+			}
+			replay := func(stderr string) ([]byte, string) {
+				t.Helper()
+				var log bytes.Buffer
+				executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
+					stdout: captured.stdout, stderr: stderr, exitCode: captured.exit,
+				}}}
+				result := Run(context.Background(), Config{
+					Operation: OperationMigrationApply,
+					Environment: append(driftApplyEnvironment(t, captured.operationID, testShadowURL, expected),
+						EnvDriftExclude+"="+selector+",public.harness_job_queue"),
+					Executor:    executor,
+					Diagnostics: &log,
+				})
+				if len(executor.calls) != 1 || !slices.Contains(executor.calls[0].Args, "--drift-exclude="+selector) {
+					t.Fatalf("the replay ran %d children, want the checked Apply with %s", len(executor.calls), selector)
+				}
+				var code string
+				if result.Error != nil {
+					code = result.Error.Code
+				}
+				if code != row.errorCode {
+					t.Fatalf("the replay framed error %#v, want %q", result.Error, row.errorCode)
+				}
+				if result.MigrationRun == nil || result.MigrationRun.DriftSummary == nil ||
+					result.MigrationRun.DriftSummary.Outcome != row.summary.Outcome ||
+					result.MigrationRun.DriftSummary.Findings != row.summary.Findings {
+					t.Fatalf("the replay framed %#v, want summary %+v", result.MigrationRun, row.summary)
+				}
+				frame, err := MarshalFrame(result)
+				if err != nil {
+					t.Fatalf("MarshalFrame() error = %v", err)
+				}
+				return frame, log.String()
+			}
+			warnedFrame, warnedLog := replay(captured.stderr)
+			quietFrame, quietLog := replay(strings.Replace(captured.stderr, warning+"\n", "", 1))
+			if !bytes.Equal(warnedFrame, quietFrame) {
+				t.Fatalf("the warning changed the frame:\nwith    %s\nwithout %s", warnedFrame, quietFrame)
+			}
+			if warnedLog != quietLog {
+				t.Fatalf("the warning changed the Pod log:\nwith    %q\nwithout %q", warnedLog, quietLog)
+			}
+			for _, sentence := range []string{"matched no objects", "Warning:"} {
+				if bytes.Contains(warnedFrame, []byte(sentence)) || strings.Contains(warnedLog, sentence) {
+					t.Fatalf("%q reached the frame or the Pod log:\nframe %s\nlog %q", sentence, warnedFrame, warnedLog)
+				}
+			}
+		})
+	}
+}
