@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -47,6 +48,7 @@ func TestGitSources(t *testing.T) {
 		{"git-source-policy", c.sourcePolicy},
 		{"git-migration-ssh", c.migrationOverSSH},
 		{"git-credential-refused", c.credentialForAnotherHost},
+		{"git-ca-pin-refused", c.caPinWithoutTheCA},
 		{"git-source-refused", c.refusedSources},
 		{"git-source-unreadable", c.unreadableSources},
 	} {
@@ -73,10 +75,13 @@ type gitRun struct {
 	// prints.
 	scanner credentialScanner
 
-	host  string
-	keys  gitServerKeys
-	https string
-	ssh   string
+	host string
+	// qualified is the server under its cluster domain name, which only the
+	// CA pin row reads.
+	qualified string
+	keys      gitServerKeys
+	https     string
+	ssh       string
 }
 
 func newGitRun(t *testing.T, run *harness.Run, in phases.GitSourceInputs) *gitRun {
@@ -103,6 +108,7 @@ func newGitRun(t *testing.T, run *harness.Run, in phases.GitSourceInputs) *gitRu
 	c.host = gitServer + "." + in.TestNamespace + ".svc"
 	c.https = "https://" + c.host + "/" + gitRepository
 	c.ssh = "ssh://git@" + c.host + "/" + gitRepository
+	c.qualified = c.host + ".cluster.local"
 	c.standUp()
 	if c.scanner, err = newCredentialScanner(c.password, c.keys.Token); err != nil {
 		c.fatalf("build the credential scanner: %v", err)
@@ -175,7 +181,7 @@ func (c *gitRun) wait(what string, check func() (bool, string)) {
 func (c *gitRun) standUp() {
 	c.t.Helper()
 	var err error
-	c.keys, err = newGitServerKeys(c.host, c.host, c.host+".cluster.local")
+	c.keys, err = newGitServerKeys(c.host, c.host, c.qualified)
 	c.check(err, "generate the Git server's keys")
 	spec, err := gitSpecDocument(gitRepositorySpec(0))
 	c.check(err, "encode the repository")
@@ -190,7 +196,8 @@ func (c *gitRun) standUp() {
 	c.put(&corev1.ConfigMap{ObjectMeta: object(gitKnownHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.KnownHosts)}})
 	c.put(&corev1.ConfigMap{ObjectMeta: object(gitOtherHostsConfigMap), Data: map[string]string{"known_hosts": string(c.keys.OtherKnownHosts)}})
 	// The Secrets' owner grants each credential one host and the exact trust
-	// it may be sent under. The last grants the token for another host.
+	// it may be sent under. The fourth grants the token for another host, and
+	// the last grants it for the server under its cluster domain name.
 	c.put(&corev1.Secret{ObjectMeta: object(gitTokenCredential), Data: map[string][]byte{
 		"password": []byte(c.keys.Token), "host": []byte(c.host), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
 	}})
@@ -202,6 +209,9 @@ func (c *gitRun) standUp() {
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitElsewhereCredential), Data: map[string][]byte{
 		"password": []byte(c.keys.Token), "host": []byte("git.example.com"), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
+	}})
+	c.put(&corev1.Secret{ObjectMeta: object(gitCAPinCredential), Data: map[string][]byte{
+		"password": []byte(c.keys.Token), "host": []byte(c.qualified), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
 	}})
 
 	labels := map[string]string{"app.kubernetes.io/name": gitServer}
@@ -326,13 +336,21 @@ func (c *gitRun) waitForSchema(what string, done func(*ptahv1alpha1.PtahSchema) 
 
 func (c *gitRun) waitForSchemaNamed(name, what string, done func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
 	c.t.Helper()
+	return c.waitForSchemaFrom(name, 0, what, done)
+}
+
+// waitForSchemaFrom waits as waitForSchemaNamed does, and ends the scenario
+// only on a failure observed at generation or later: a schema whose earlier
+// generation failed reads Failed until the edit that repairs it is observed.
+func (c *gitRun) waitForSchemaFrom(name string, generation int64, what string, done func(*ptahv1alpha1.PtahSchema) bool) *ptahv1alpha1.PtahSchema {
+	c.t.Helper()
 	var matched *ptahv1alpha1.PtahSchema
 	c.wait(what, func() (bool, string) {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if err := c.get(name, schema); err != nil {
 			return false, err.Error()
 		}
-		if schema.Status.Phase == ptahv1alpha1.PhaseFailed {
+		if schema.Status.Phase == ptahv1alpha1.PhaseFailed && schema.Status.ObservedGeneration >= generation {
 			c.fatalf("%s failed while waiting for %s; %s", name, what, failedConditions(c.scanner, schema.Status.Conditions))
 		}
 		if done(schema) {
@@ -386,7 +404,9 @@ func (c *gitRun) reset() {
 		&ptahv1alpha1.PtahMigration{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitUnreadableMigration}},
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "e2e-git-migration-v1"}},
 	}
-	for _, schema := range []string{gitSchema, gitRefusedSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema, gitUnreadableSchema} {
+	for _, schema := range []string{
+		gitSchema, gitRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema, gitUnreadableSchema,
+	} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: schema}})
 	}
 	for _, approval := range []string{"e2e-git-schema-v1", "e2e-git-schema-v2", "e2e-git-schema-v3", "e2e-git-pinned-v1"} {
@@ -398,7 +418,9 @@ func (c *gitRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase, gitUnreadableDatabase, gitUnreadableMigrationDatabase} {
+	for _, database := range []string{
+		gitSchemaDatabase, gitMigrationDatabase, gitPinnedDatabase, gitCAPinDatabase, gitUnreadableDatabase, gitUnreadableMigrationDatabase,
+	} {
 		_, err := serverSQL(c.ctx, c.cluster, namespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -465,7 +487,7 @@ func (c *gitRun) assertGitJobs(label, name string, commits []string, want ...str
 }
 
 // gitSchemaSource is what a schema of the phase reads: a repository, a ref
-// and a path in it, the credential, and the transport's trust.
+// and a path in it, the credential, and the transport's trust, if any.
 type gitSchemaSource struct {
 	url, path, credential string
 	ref, transport        map[string]any
@@ -474,8 +496,7 @@ type gitSchemaSource struct {
 // httpsSource is a path of main over HTTPS, under the phase's CA.
 func (c *gitRun) httpsSource(path, credential string) gitSchemaSource {
 	return gitSchemaSource{
-		url: c.https, path: path, credential: credential, ref: map[string]any{"branch": "main"},
-		transport: map[string]any{"caFrom": map[string]any{"name": gitCAConfigMap, "key": "ca.pem"}},
+		url: c.https, path: path, credential: credential, ref: map[string]any{"branch": "main"}, transport: gitTrust(),
 	}
 }
 
@@ -492,16 +513,28 @@ func (c *gitRun) schemaDocumentFor(name, secret, database string, source gitSche
 				"engine": "PostgreSQL", "coordinationKey": "e2e/" + database,
 				"urlFrom": map[string]any{"name": secret, "key": "url"},
 			},
-			"desired": map[string]any{"git": map[string]any{
-				"url": source.url, "ref": source.ref, "path": source.path,
-				"authFrom":  map[string]any{"name": source.credential},
-				"transport": source.transport,
-			}},
+			"desired":   map[string]any{"git": source.spec()},
 			"interval":  gitInterval,
 			"policy":    map[string]any{"apply": "OnApproval"},
 			"execution": map[string]any{"activeDeadlineSeconds": int64(600)},
 		},
 	}
+}
+
+func (source gitSchemaSource) spec() map[string]any {
+	git := map[string]any{
+		"url": source.url, "ref": source.ref, "path": source.path,
+		"authFrom": map[string]any{"name": source.credential},
+	}
+	if source.transport != nil {
+		git["transport"] = source.transport
+	}
+	return git
+}
+
+// gitTrust is the transport that selects the phase's CA.
+func gitTrust() map[string]any {
+	return map[string]any{"caFrom": map[string]any{"name": gitCAConfigMap, "key": "ca.pem"}}
 }
 
 // approve approves the schema's current plan after holding it to the Git
@@ -834,6 +867,104 @@ func (c *gitRun) credentialForAnotherHost() {
 	c.logf("PASS a credential granted for another host was refused before Ptah ran: %s", refusal)
 }
 
+// caPinWithoutTheCA names a credential whose Secret pins caSHA256 from an
+// https:// source that selects no CA. The Resolve Job refuses it while it
+// checks the access, before Ptah runs, so the credential reaches no server.
+// Once the source selects that CA, the same schema resolves the commit main
+// names, fetches it with the credential and plans. The server answers nothing
+// without the token, so that resolution is the credentialed request for the
+// row's URL, and the refusal clearing is what shows the missing CA was its
+// cause.
+//
+// The server's certificate chains to the phase's CA alone, so a pull under
+// the system roots would fail its handshake before it sent anything. The
+// server logs no requests, and nothing the cluster records of the refused
+// generation but the message tells the runner's refusal from that: the
+// runner's sentence under invalid_git_access, a code the runner protocol
+// allows only on a result whose child never ran. The refusal wait holds to
+// both.
+func (c *gitRun) caPinWithoutTheCA() {
+	c.t.Helper()
+	c.createDatabase(gitCAPinDatabase, gitCAPinSecret)
+	source := c.httpsSource(gitSchemaPath, gitCAPinCredential)
+	source.url, source.transport = "https://"+c.qualified+"/"+gitRepository, nil
+	c.check(c.create(c.schemaDocumentFor(gitCAPinSchema, gitCAPinSecret, gitCAPinDatabase, source)), "create PtahSchema %s", gitCAPinSchema)
+
+	var refused *ptahv1alpha1.PtahSchema
+	c.wait(gitCAPinSchema+" to be refused for the CA its credential pins", func() (bool, string) {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if err := c.get(gitCAPinSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		if err := gitCAPinRefused(schema.Status.Conditions, schema.Generation); err != nil {
+			return false, c.scanned(err.Error())
+		}
+		refused = schema
+		return true, ""
+	})
+	c.printReading("refused CA pin schema", refused.Status)
+	if refused.Status.Source.Git != nil || refused.Status.Plan != nil {
+		c.fatalf("refused %s still resolved %+v or planned %+v", gitCAPinSchema, refused.Status.Source.Git, refused.Status.Plan)
+	}
+	refusal := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed).Message
+	c.onlyResolved(gitCAPinSchema)
+
+	// main is at the commit the force-push left.
+	commit := c.rewrittenCommit(2)
+	content, err := gitSchemaContent(2)
+	c.check(err, "digest the schema")
+	generation := c.selectCA(gitCAPinSchema)
+	recovered := c.waitForSchemaFrom(gitCAPinSchema, generation, "the first plan of "+gitCAPinSchema+" once it selects the CA",
+		func(schema *ptahv1alpha1.PtahSchema) bool {
+			return schema.Status.ObservedGeneration == generation && awaitingGitPlan("")(schema)
+		})
+	c.printReading("recovered CA pin schema", recovered.Status)
+	c.check(gitCAPinCleared(recovered.Status.Conditions, generation), "%s", gitCAPinSchema)
+	c.check(gitResolvedTo(recovered.Status.Source.Git, source.url, gitSchemaPath, ptahv1alpha1.GitRef{Branch: "main"}, commit, content),
+		"the source of %s", gitCAPinSchema)
+	c.assertGitJobs(labelSchema, gitCAPinSchema, []string{commit}, "resolve", "observe", "plan")
+	c.deleteAndWait(recovered)
+	c.logf("PASS a credential whose Secret pins caSHA256 was refused before Ptah ran under a source that selects no CA, "+
+		"and planned commit %s once the source selected it: %s", commit, refusal)
+}
+
+// selectCA has a schema's source select the phase's CA, and returns the
+// generation the edit made.
+func (c *gitRun) selectCA(name string) int64 {
+	c.t.Helper()
+	body, err := json.Marshal(map[string]any{"spec": map[string]any{"desired": map[string]any{"git": map[string]any{"transport": gitTrust()}}}})
+	c.check(err, "encode the trust")
+	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: c.in.TestNamespace, Name: name}}
+	c.check(c.cluster.Client.Patch(c.ctx, schema, client.RawPatch(types.MergePatchType, body), client.FieldOwner(harness.FieldOwner)),
+		"select the CA on %s", name)
+	return schema.Generation
+}
+
+// printReading prints a status a wait matched, so a run's log holds the
+// document a predicate test can read. It is scanned like every other document
+// the phase prints, and withheld on a match.
+func (c *gitRun) printReading(name string, status any) {
+	c.t.Helper()
+	reading, err := json.Marshal(map[string]any{"status": status})
+	if err != nil || !c.scanner.ready() {
+		return
+	}
+	if c.scanner.leaks(reading) {
+		_, _ = fmt.Fprintf(os.Stderr, "e2e Git sources: the %s reading is withheld: it matched a protected credential\n", name)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "e2e Git sources: the %s reading\n%s\n", name, reading)
+}
+
+// scanned is what a wait may report of text that came from a status: the text,
+// or a notice that it matched a protected credential.
+func (c *gitRun) scanned(text string) string {
+	if !c.scanner.ready() || c.scanner.leaks([]byte(text)) {
+		return "the reading is withheld: it could not be scanned or matched a protected credential"
+	}
+	return text
+}
+
 // refusedAtResolve waits until a schema reports that its reconciliation
 // failed with a message that names want, and returns the message.
 func (c *gitRun) refusedAtResolve(name, want string) string {
@@ -1069,7 +1200,7 @@ func (c *gitRun) cleanup() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	for _, name := range []string{gitSchema, gitRefusedSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema} {
+	for _, name := range []string{gitSchema, gitRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema} {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {
 			_, _ = fmt.Fprintf(os.Stderr, "e2e Git sources: %s status %+v\n", name, schema.Status)

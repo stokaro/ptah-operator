@@ -838,10 +838,13 @@ type GitSourceInputs struct {
 // schema pinned to a commit; a force-push that replaces that commit, which the
 // branch follows and the pinned schema's Resolve refuses; a migration
 // directory from a tag over SSH with a deploy key and pinned known hosts; a
-// credential granted for another host, refused before Ptah runs; and a
-// submodule, an LFS pointer and a host key the known hosts do not pin, each
-// refused at its Resolve; and a schema file and a migration directory Ptah
-// cannot read, each named in the condition and the Event.
+// credential granted for another host, refused before Ptah runs; a
+// credential whose Secret pins caSHA256 under an https:// source that selects
+// no CA, refused by the runner before Ptah runs, and planned once the source
+// selects that CA; and a submodule, an LFS pointer and a host key the known
+// hosts do not pin, each refused at its Resolve; and a schema file and a
+// migration directory Ptah cannot read, each named in the condition and the
+// Event.
 var GitSources = define[GitSourceInputs](Phase{
 	Name:    "git-sources",
 	Test:    "TestGitSources",
@@ -854,6 +857,7 @@ var GitSources = define[GitSourceInputs](Phase{
 		"git-source-policy",
 		"git-migration-ssh",
 		"git-credential-refused",
+		"git-ca-pin-refused",
 		"git-source-refused",
 		"git-source-unreadable",
 	},
