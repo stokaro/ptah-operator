@@ -27,6 +27,14 @@ Read the versions out of `go.mod` rather than out of prose here: a number
 written down here goes stale the next time a dependency moves, and nothing
 would catch it.
 
+## Pull request communication
+
+Write PR titles and descriptions for a reviewer who knows the project but not the investigation. Lead with the observable problem and its consequence, not an internal helper, test fixture, or metaphor. Prefer a title that says what is fixed or changed.
+
+In the description, explain in order: what failed (with evidence and uncertainty distinguished), why it failed, what changed, and how the fix was verified. Define uncommon terms before using them; include implementation details, hashes, and historical context only where they help review the change. Keep the summary short and put deeper technical detail below it when needed.
+
+A reviewer should understand the purpose and impact from the title and first paragraph without reading linked issues or reconstructing the incident.
+
 ## Skills
 
 `.agents/skills/` holds instructions to load when the task calls for them, and
