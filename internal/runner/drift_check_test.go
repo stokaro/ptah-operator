@@ -497,7 +497,7 @@ func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
 			document: "migrations-up-drift-exclude-refused-postgres.json", exitCode: 2,
 			logged: "ptah-runner: ptah reported: the drift check could not compare the database with its applied history, " +
 				"so no pending migration was run: applied history shadow check failed: select the objects to compare: " +
-				"apply --exclude to current schema: too many parts in pattern \"public.e2e_migration_widgets.nickname.extra\"",
+				"apply exclude selectors to current schema: too many parts in pattern \"public.e2e_migration_widgets.nickname.extra\"",
 			named: "nickname.extra", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "scope", Reason: "scope_error"},
 		},
 	} {
