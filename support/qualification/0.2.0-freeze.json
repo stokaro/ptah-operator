@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-15T05:16:35.286764+00:00",
+  "frozenAt": "2026-11-15T08:30:39.492644+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "1ee15eb6541fdb394a2fc7b406bab9242bde144203b78002789bc230df40290c"
+      "sha256": "db205f82b4eaa6e8c005d902610199fbb8fab5cc1446aab5279a3873db2a7877"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.12 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 101,
+  "revision": 102,
   "supersedes": {
-    "freezeCommit": "f5af4fba97c209eb5a695e29dbb39ffd125a7e99",
-    "sha256": "373f36444eba7d6430f883304018714c118cf82bebac8d57430a1eff8053c1b9"
+    "freezeCommit": "7306f8e140d17714d068a4d0f0ee07f66eb0caf8",
+    "sha256": "3c6582d0e03c548f257a395eac8c19e7d9c2174c0116229ff42d452fab92819b"
   },
-  "revisionReason": "Move the executor pin to the Ptah v0.29.0 release image in support/ptah.json and the line naming it in the functional matrix, describe on the databases page the build it covers, the schema apply log it writes and the table grant that keeps that log's rows, and say in support/ptah.json that every Apply names its approver, the name's origin and its operation to Ptah (#1062), that a migration whose policy names a drift check runs --check-drift with one --drift-exclude for each selector it lists (#1054), and that a migration run Ptah refuses before its first file applies nothing and is named only when it selected one file (stokaro/ptah#6052, #6055). The acceptance scenario postgresql-migration-drift-check joins the phase migration-faults-postgresql; the baseline lines, phases, suites, cells, platforms, the profile and its targets are unchanged."
+  "revisionReason": "Name Added database lines run 43687878804, at the Ptah v0.29.0 release image, as the PostgreSQL 18.x and 16.x evidence in support/databases.json and in the edge row of support/ptah.json. Phases, suites, cells, platforms, minors, the profile and its targets are unchanged."
 }
