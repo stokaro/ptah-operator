@@ -39,9 +39,14 @@ type alUnresolvedHistory struct {
 	// through is the last scrape that read the gauge.
 	through time.Time
 	latest  int
-	// declared counts the leader's declared failed reads since the baseline.
-	declared int
+	// declared are the leader's declared failed reads since the baseline.
+	declared []alDeclaredRead
 }
+
+// alDeclaredRead is a leader scrape that declared its failed state read, and
+// the leader's scrape before it. The read-failure counter rose between the
+// two, so a rule over it can have seen the failure no earlier than lower.
+type alDeclaredRead struct{ lower, scrape time.Time }
 
 // Both the healthy zero baseline and the incident must be native leader
 // samples. A missing gauge, unhealthy follower, or gap is not a zero.
@@ -50,8 +55,9 @@ type alUnresolvedHistory struct {
 // presents a partial census. Such a scrape is accepted only where the leader
 // declared it in that same scrape, with its view reported unsynchronized and
 // its read-failure counter risen from the scrape before; any other missing
-// gauge is a scrape this history lost. A declared gap establishes nothing
-// about the incident. The rule holds a firing alert through it for
+// gauge is a scrape this history lost. A scrape that carried the gauge
+// declared no failure, so a counter that rose in it is refused too. A
+// declared gap establishes nothing about the incident. The rule holds a firing alert through it for
 // alStateReadGapHold, so a gap that lasts as long as that, from its first
 // failed read to the completion of the scrape that reads again, may have
 // resolved the incident and fails the history rather than stretching what it
@@ -145,13 +151,20 @@ func alReadUnresolvedHistory(gaugeBody, syncedBody, failuresBody, upBody, durati
 			if !h.appeared.IsZero() && h.cleared.IsZero() && h.heldFrom.IsZero() {
 				h.heldFrom = scrape.at
 			}
-			h.declared++
+			h.declared = append(h.declared, alDeclaredRead{lower: times[i-1].at, scrape: scrape.at})
 			continue
 		}
 		v := values[next]
 		next++
 		if view, reported := synced[scrape.at.UnixNano()]; !reported || view != 1 {
 			return h, errors.New("unresolved gauge was read without a synchronized view")
+		}
+		if i > 0 {
+			now, counted := failures[scrape.at.UnixNano()]
+			before, wasCounted := failures[times[i-1].at.UnixNano()]
+			if counted && wasCounted && now > before {
+				return h, errors.New("the leader counted a failed read in a scrape that read the state")
+			}
 		}
 		if !gapFrom.IsZero() && completed.Sub(gapFrom) >= alStateReadGapHold {
 			return h, errAlReadGapOutlastedHold

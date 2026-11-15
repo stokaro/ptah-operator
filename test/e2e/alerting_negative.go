@@ -1,8 +1,11 @@
 package e2e
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,7 +21,19 @@ const (
 	// still owes the frozen stalled threshold, and its scheduled interval
 	// still owes the overdue threshold; this is only a liveness cross-check.
 	alNegativeFreshness = alNegativeInterval + 4*alStalledAfter
+	// alViewReadResolution is the profile's resolution deadline for the
+	// state-read alert, counted from the last failure: the rule's 60-second
+	// window and the delivery allowance. A failed read explains what the quiet
+	// window sees of that alert for this long after the scrape before it, so
+	// the window's native history starts this long before its first look.
+	alViewReadResolution = alViewReadWindow + alDetectionSlack
+	// alQuietCloseWait bounds the wait for a history that reads the state past
+	// the window's close: a declared run still open then ends within the hold,
+	// and the next scrape completes within an interval and its timeout.
+	alQuietCloseWait = alStateReadGapHold + 2*alScrapeInterval + alScrapeTimeout
 )
+
+var errAlQuietWindowOpen = errors.New("the native history has not read the state past the close of the quiet window")
 
 type alNegativeState struct {
 	claim                                    alStalledClaim
@@ -162,4 +177,146 @@ func alNegativeDatabaseUnchanged(family, tables, historyRows string) bool {
 	default:
 		return false
 	}
+}
+
+// alQuietInstallation names the notifications the quiet window allows: the
+// state-read alert's, from this installation, to its receiver.
+type alQuietInstallation struct {
+	receiver, namespace, metricsService string
+}
+
+// allows is a firing or resolved notification of the state-read alert from
+// this installation's Prometheus to its receiver, carrying the alert's own
+// labels and no other.
+func (q alQuietInstallation) allows(d alDelivery) bool {
+	labels := map[string]string{"alertname": alViewReadAlert, "severity": "warning", "operator_namespace": q.namespace, "operator_metrics_service": q.metricsService}
+	if d.AlertName != alViewReadAlert || d.Receiver != q.receiver || !maps.Equal(d.Labels, labels) || d.StartsAt.IsZero() || d.ReceivedAt.Before(d.StartsAt) {
+		return false
+	}
+	switch d.Status {
+	case "firing":
+		return true
+	case "resolved":
+		return !d.EndsAt.Before(d.StartsAt)
+	}
+	return false
+}
+
+// alQuietFiring reads an instant answer for ALERTS{alertstate="firing"}. The
+// state-read alert, with its own labels and no other, is the one alert the
+// quiet window allows; any other series is an incident. It reports whether
+// the allowed alert was firing. An answer that is not an explicit instant
+// vector is an error, so an empty result cannot stand in for one Prometheus
+// never gave.
+func alQuietFiring(body []byte) (bool, error) {
+	var answer struct {
+		Status string `json:"status"`
+		Data   struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]string `json:"metric"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		return false, fmt.Errorf("the alert answer is not JSON: %w", err)
+	}
+	if answer.Status != "success" || answer.Data.ResultType != "vector" || answer.Data.Result == nil {
+		return false, errors.New("the alert query did not return an explicit instant vector")
+	}
+	allowed := map[string]string{"__name__": "ALERTS", "alertname": alViewReadAlert, "alertstate": "firing", "severity": "warning"}
+	for _, series := range answer.Data.Result {
+		if !maps.Equal(series.Metric, allowed) {
+			return false, fmt.Errorf("%s is firing with labels %v", series.Metric["alertname"], series.Metric)
+		}
+	}
+	return len(answer.Data.Result) != 0, nil
+}
+
+// alQuietSeen is what the quiet window saw of the one alert it allows: the
+// instants Prometheus answered with it firing, and its notifications.
+type alQuietSeen struct {
+	firing        []time.Time
+	notifications []alDelivery
+}
+
+// alQuietWindowHistory is what one native snapshot says about the leader's
+// state reads from the window's lookback to the instant it was read.
+type alQuietWindowHistory struct {
+	// declared are the leader's declared failed reads, in scrape order.
+	declared []alDeclaredRead
+	// through is the last leader scrape that read the state, which every
+	// manager's scrapes also reach.
+	through time.Time
+}
+
+// alReadQuietWindowHistory judges the leader's state reads from from to
+// queriedAt. Each family's census is read as the unresolved row reads its
+// gauge: every manager scrapes without a gap, a scrape without the gauge counts
+// only where the leader declared it, with its view at 0 and its read-failure
+// counter risen, a run of declared reads ends within the rules' hold, and every
+// reading reports a synchronized view. Here the census must read zero
+// throughout, as it did before the window, and the counter, which the rule
+// reads on every manager, must not rise on a follower.
+func alReadQuietWindowHistory(groups map[string][]byte, pods []string, leader string, from, queriedAt time.Time) (alQuietWindowHistory, error) {
+	var q alQuietWindowHistory
+	census, err := alAdmissionNativeMatrix(groups[alUnresolvedMetric])
+	if err != nil {
+		return q, err
+	}
+	families := map[string][]alAdmissionSeries{}
+	for _, series := range census {
+		families[series.Metric["family"]] = append(families[series.Metric["family"]], series)
+	}
+	if len(families) != 2 {
+		return q, errors.New("the unresolved census must name the schema and migration families and no other")
+	}
+	for _, family := range []string{"schema", "migration"} {
+		gauge, err := alMatrixAnswer(families[family])
+		if err != nil {
+			return q, err
+		}
+		h, err := alReadUnresolvedHistory(gauge, groups[alViewSyncedMetric], groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, from, queriedAt)
+		if err != nil {
+			return q, fmt.Errorf("%s census: %w", family, err)
+		}
+		if !h.appeared.IsZero() {
+			return q, fmt.Errorf("the %s unresolved census changed during the quiet window", family)
+		}
+		q.declared, q.through = h.declared, h.through
+	}
+	if _, err := alReadViewHistory(groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, from, queriedAt); err != nil {
+		return q, err
+	}
+	return q, nil
+}
+
+// alQuietWindowVerdict holds what the quiet window saw of the state-read
+// alert to the failed reads the leader declared. The rule fires only on a
+// counter that rose within its 60-second window, and the profile resolves it
+// within alViewReadResolution of the last failure, so every instant the alert
+// was seen firing, and every start, receipt and end of its notifications,
+// must fall within that span after the scrape before a declared failed read.
+// A history that has not read the state past the window's close cannot judge
+// its end, and says so with errAlQuietWindowOpen.
+func alQuietWindowVerdict(h alQuietWindowHistory, seen alQuietSeen, closed time.Time) error {
+	if h.through.Before(closed) {
+		return errAlQuietWindowOpen
+	}
+	instants := slices.Clone(seen.firing)
+	for _, d := range seen.notifications {
+		instants = append(instants, d.StartsAt, d.ReceivedAt)
+		if d.Status == "resolved" {
+			instants = append(instants, d.EndsAt)
+		}
+	}
+	for _, at := range instants {
+		if !slices.ContainsFunc(h.declared, func(r alDeclaredRead) bool {
+			return r.lower.Before(at) && !at.After(r.lower.Add(alViewReadResolution))
+		}) {
+			return fmt.Errorf("%s was seen at %s with no failed read the leader declared in the %s before it",
+				alViewReadAlert, at.Format(time.RFC3339Nano), alViewReadResolution)
+		}
+	}
+	return nil
 }
