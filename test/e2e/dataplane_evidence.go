@@ -79,6 +79,24 @@ func jobTerminal(job *batchv1.Job) bool {
 		conditionTrue(job.Status.Conditions, batchv1.JobFailed)
 }
 
+// jobsLeftUnaudited names every Job that is still running or that finished
+// without a complete credential audit, leaving out the UIDs in standing, and
+// counts the Jobs it examined, standing ones included. Deleting a schema
+// deletes its Jobs, so a Job it names would be removed unaudited.
+func jobsLeftUnaudited(jobs []batchv1.Job, audited func(string) bool, standing []types.UID) (left []string, examined int) {
+	for index := range jobs {
+		job := &jobs[index]
+		examined++
+		if slices.Contains(standing, job.UID) {
+			continue
+		}
+		if !jobTerminal(job) || !audited(string(job.UID)) {
+			left = append(left, job.Name)
+		}
+	}
+	return left, examined
+}
+
 func isController(reference metav1.OwnerReference) bool {
 	return reference.Controller != nil && *reference.Controller
 }

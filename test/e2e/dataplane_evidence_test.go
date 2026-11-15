@@ -3,6 +3,7 @@ package e2e
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +216,43 @@ func TestManagedCompleteJobIsAnOperationThatCompleted(t *testing.T) {
 		if managedCompleteJob(job) {
 			t.Errorf("a Job with %s reads as a completed operation", name)
 		}
+	}
+}
+
+func TestJobsLeftUnauditedNamesWhatADeleteWouldTakeUnaudited(t *testing.T) {
+	t.Parallel()
+	job := func(name string, condition batchv1.JobConditionType, status corev1.ConditionStatus) batchv1.Job {
+		listed := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name + "-uid")}}
+		if condition != "" {
+			listed.Status.Conditions = []batchv1.JobCondition{{Type: condition, Status: status}}
+		}
+		return listed
+	}
+	audited := func(uid string) bool {
+		return uid == "complete-uid" || uid == "failed-uid" || uid == "audited-running-uid"
+	}
+	settled := []batchv1.Job{job("complete", batchv1.JobComplete, corev1.ConditionTrue), job("failed", batchv1.JobFailed, corev1.ConditionTrue)}
+	if left, examined := jobsLeftUnaudited(settled, audited, nil); len(left) != 0 || examined != 2 {
+		t.Fatalf("jobsLeftUnaudited() = %v after examining %d, want nothing left after examining 2", left, examined)
+	}
+	for name, extra := range map[string]batchv1.Job{
+		"a running Job":                      job("running", "", ""),
+		"a finished Job nobody audited":      job("unread", batchv1.JobComplete, corev1.ConditionTrue),
+		"a Complete condition that is False": job("unread", batchv1.JobComplete, corev1.ConditionFalse),
+		"an audited Job that is running":     job("audited-running", "", ""),
+	} {
+		left, examined := jobsLeftUnaudited(append(slices.Clone(settled), extra), audited, nil)
+		if !slices.Equal(left, []string{extra.Name}) || examined != 3 {
+			t.Errorf("with %s, jobsLeftUnaudited() = %v after examining %d, want [%s] after examining 3", name, left, examined, extra.Name)
+		}
+	}
+	standing := job("refused", "", "")
+	left, examined := jobsLeftUnaudited(append(slices.Clone(settled), standing), audited, []types.UID{standing.UID})
+	if len(left) != 0 || examined != 3 {
+		t.Errorf("with the running Job standing, jobsLeftUnaudited() = %v after examining %d, want nothing left after examining 3", left, examined)
+	}
+	if left, examined := jobsLeftUnaudited(nil, audited, nil); len(left) != 0 || examined != 0 {
+		t.Errorf("an empty list reads as %v after examining %d", left, examined)
 	}
 }
 

@@ -25,6 +25,8 @@ import (
 //
 // The Job's deadline is far off, so the row ends with a Job that completed, which
 // the Job audit can read: a Job the deadline stopped has no Pod left to audit.
+// The read is followed by a plan, and the row waits for it to be stored, so no
+// Job of the schema is running when the schema is deleted.
 func (d *dataPlane) podConfigurationNamedOnResource() {
 	d.t.Helper()
 	const name, coordinationKey = "e2e-pod-configuration", "e2e/pod-configuration/postgresql"
@@ -43,7 +45,7 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 	d.check(err, "create PostgreSQL database %s", podConfigurationPGDatabase)
 
 	reference := d.registryReference("pod-configuration-postgresql")
-	d.publishSchema("pod-configuration-postgresql", "v1", "postgres", reference, "")
+	digest := d.publishSchema("pod-configuration-postgresql", "v1", "postgres", reference, "")
 	d.createSchemaResource(schemaResource{
 		name: name, engine: "PostgreSQL", secret: secret, reference: reference,
 		coordinationKey: coordinationKey, activeDeadline: 900,
@@ -100,7 +102,8 @@ func (d *dataPlane) podConfigurationNamedOnResource() {
 	object.Namespace, object.Name = d.in.TestNamespace, secret
 	d.check(d.mergePatch(object, map[string]any{"data": secretData(map[string]string{"url": target})}), "add the key to Secret %s", secret)
 	resumed := d.waitForSchema(name, "the read to finish and plan with nothing touched but the Secret", func(schema *ptahv1alpha1.PtahSchema) bool {
-		return schema.Status.Target.LastObservedAt != nil && !podConfigurationReported(schema, "")
+		return schema.Status.Target.LastObservedAt != nil && !podConfigurationReported(schema, "") &&
+			awaitingApprovalOf(schema, digest)
 	})
 	finished := &batchv1.Job{}
 	d.mustGet(job, finished)
