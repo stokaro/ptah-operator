@@ -406,10 +406,11 @@ func TestTheShadowDatabaseIsRedacted(t *testing.T) {
 	}
 }
 
-// What Ptah v0.28.0 printed for a target holding a column nobody migrated, and
-// for a shadow holding a table (see internal/dataplane/testdata): the first
-// line of Ptah's error reaches the Pod log, where the manager's message points,
-// and nothing Ptah named reaches the frame.
+// What Ptah v0.28.0 printed for a target holding a column nobody migrated, for
+// a shadow holding a table, and for an exclude selector deeper than the URL's
+// scope (see internal/dataplane/testdata): the first line of Ptah's error
+// reaches the Pod log, where the manager's message points, and nothing Ptah
+// named reaches the frame.
 func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
 	t.Parallel()
 	expected := shadowDigest(t, testShadowURL)
@@ -430,6 +431,13 @@ func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
 				"so no pending migration was run: applied history shadow check failed: connected database is not clean: " +
 				"found table \"left_behind\" in schema \"public\"",
 			named: "left_behind", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean"},
+		},
+		{
+			document: "migrations-up-drift-exclude-refused-postgres.json", exitCode: 2,
+			logged: "ptah-runner: ptah reported: the drift check could not compare the database with its applied history, " +
+				"so no pending migration was run: applied history shadow check failed: select the objects to compare: " +
+				"apply --exclude to current schema: too many parts in pattern \"public.e2e_migration_widgets.nickname.extra\"",
+			named: "nickname.extra", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "scope", Reason: "scope_error"},
 		},
 	} {
 		t.Run(row.document, func(t *testing.T) {

@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres:v2",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@sha256:34b44cde18a62145ae112fcac24ba2cea82a472fd9df1dfcc20ea5d37cd40072",
+  "digest": "sha256:34b44cde18a62145ae112fcac24ba2cea82a472fd9df1dfcc20ea5d37cd40072",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 2074
+}
