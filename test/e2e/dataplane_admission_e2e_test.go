@@ -677,7 +677,7 @@ func (d *dataPlane) podMetadataAdmission() {
 	d.scan(append(append(d.jsonBytes(matched), d.jsonBytes(refusedWorkload)...),
 		append(d.jsonBytes(failures), d.jsonBytes(refusals)...)...), "the exact no-Pod admission-refusal evidence")
 	d.scan(d.jsonBytes(pods), "the complete Pod inventory before admission-refusal cleanup")
-	d.deleteAndWait(refusedSchema, deleteDeadline)
+	d.deleteAndWait(refusedSchema, deleteDeadline, refusedWorkload.UID)
 	deadline = time.Now().Add(deleteDeadline)
 	for {
 		remaining := &batchv1.Job{}
@@ -750,14 +750,16 @@ func (d *dataPlane) podMetadataAdmission() {
 	d.logf("PASS declared Pod metadata reaches every operation Pod under a namespace admission policy, and a Pod the policy refuses is reported as PodAdmissionRefused")
 }
 
-// deleteAndWait deletes a schema and waits, as kubectl delete --wait did, for
-// the object it deleted to be gone: absent, or replaced by another under the
-// same name.
-func (d *dataPlane) deleteAndWait(name string, bound time.Duration) {
+// deleteAndWait audits the schema's Jobs, deletes the schema and waits, as
+// kubectl delete --wait did, for the object it deleted to be gone: absent, or
+// replaced by another under the same name. standing is the Jobs the caller
+// audited by other means and leaves running.
+func (d *dataPlane) deleteAndWait(name string, bound time.Duration, standing ...types.UID) {
 	d.t.Helper()
+	d.auditJobsBeforeDelete(name, standing)
 	schema := d.schema(name)
 	if err := d.cluster.Client.Delete(d.ctx, schema); err != nil {
-		d.fatalf("could not delete %s with its refused Job standing: %v", name, err)
+		d.fatalf("could not delete %s: %v", name, err)
 	}
 	deadline := time.Now().Add(bound)
 	for time.Now().Before(deadline) {
@@ -768,7 +770,34 @@ func (d *dataPlane) deleteAndWait(name string, bound time.Duration) {
 		}
 		d.sleep(time.Second)
 	}
-	d.fatalf("could not delete %s with its refused Job standing: it was still there after %s", name, bound)
+	d.fatalf("could not delete %s: it was still there after %s", name, bound)
+}
+
+// auditJobsBeforeDelete waits until every Job of the schema, other than the
+// standing ones, has finished and been audited. Deleting the schema deletes
+// its Jobs: a Job still running at the delete, or one that finished after the
+// last audit pass, would be removed unaudited, and the garbage collector can
+// remove it between an audit's list and its read, which fails the scenario
+// that runs next.
+func (d *dataPlane) auditJobsBeforeDelete(name string, standing []types.UID) {
+	d.t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		d.auditCompletedJobs()
+		jobs := &batchv1.JobList{}
+		d.mustList(jobs, client.MatchingLabels{labelSchema: name})
+		left, examined := jobsLeftUnaudited(jobs.Items, d.fullyAudited.holds, standing)
+		if examined == 0 {
+			d.fatalf("%s has no Job to audit before its delete", name)
+		}
+		if len(left) == 0 {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			d.fatalf("%s still has Jobs running or unaudited after %s: %s", name, waitTimeout, strings.Join(left, ", "))
+		}
+		d.sleep(2 * time.Second)
+	}
 }
 
 // removePodMetadataPolicy removes the cluster-scoped policy and its binding,
