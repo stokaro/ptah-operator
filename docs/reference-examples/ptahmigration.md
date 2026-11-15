@@ -231,6 +231,13 @@ must be empty before one: never the target, and never a shadow another
 resource checks with. Its URL is read in the Job's Pod alone, as the target's
 is, from a Secret key other than `target.urlFrom`.
 
+The comparison covers the whole schema the target's URL reaches. Here the same
+database also holds the tables a `PtahSchema` manages under `reporting` and a
+queue table another tool creates, which no migration declares: `exclude` leaves
+them out of both sides, as `ptah schema diff --exclude` selects them. The URL
+sets no `search_path`, so Ptah reads every schema and a selector starts with
+the schema's name.
+
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigration
@@ -255,6 +262,9 @@ spec:
         urlFrom:
           name: orders-shadow-database
           key: url
+      exclude:
+        - reporting.*
+        - public.job_queue
 ```
 
 ### A database another namespace manages too

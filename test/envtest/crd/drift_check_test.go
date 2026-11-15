@@ -143,3 +143,91 @@ func TestAPlanBindsTheShadowIdentityAsADigest(t *testing.T) {
 		t.Error(mismatch)
 	}
 }
+
+// The exclude list a drift check passes Ptah is bounded the way a PtahSchema's
+// exclude is: each entry is one selector Ptah reads, so an empty one, one with
+// whitespace Ptah would trim or a control character, and a repeated one are
+// refused, and so are a list and an entry past their bounds.
+func TestADriftCheckExcludeListIsBounded(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	namespace := newNamespace(t, "drift-check-exclude-refusals")
+	path := []string{"spec", "policy", "driftCheck", "exclude"}
+	assertRefusals(t, driftCheckedMigrationBase(namespace), []refusal{
+		{
+			name:   "a repeated selector",
+			mutate: setting([]any{"audit_log", "audit_log"}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[1]", "Duplicate value"}},
+		},
+		{
+			name:   "an empty selector",
+			mutate: setting([]any{""}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "at least 1 chars long"}},
+		},
+		{
+			name:   "a selector past 256 characters",
+			mutate: setting([]any{strings.Repeat("t", 257)}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "Too long"}},
+		},
+		{
+			name:   "a selector with leading whitespace",
+			mutate: setting([]any{" audit_log"}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "should match"}},
+		},
+		{
+			name:   "a selector with trailing whitespace",
+			mutate: setting([]any{"audit_log "}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "should match"}},
+		},
+		{
+			name:   "a selector with a control character inside",
+			mutate: setting([]any{"audit\tlog"}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "should match"}},
+		},
+		{
+			name:   "a selector with a NUL inside",
+			mutate: setting([]any{"audit\x00log"}, path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude[0]", "should match"}},
+		},
+		{
+			name:   "past 128 selectors",
+			mutate: setting(numbered("table_", 129), path...),
+			want:   []cause{{"spec.policy.driftCheck.exclude", "Too many"}},
+		},
+	})
+}
+
+// The API judges no selector grammar: Ptah does, when the check runs. So what
+// Ptah reads as a selector is stored as written, including a glob, a type
+// selector, a comma-separated entry, a space inside a name, a name past ASCII
+// and one that starts with a dash, which reaches Ptah as the value of
+// --drift-exclude= and never as a flag. A list at both bounds is stored whole.
+func TestADriftCheckStoresTheSelectorsPtahReads(t *testing.T) {
+	plane.Require(t)
+	t.Parallel()
+
+	namespace := newNamespace(t, "drift-check-exclude-admitted")
+	path := []string{"spec", "policy", "driftCheck", "exclude"}
+	for _, test := range []struct {
+		name    string
+		exclude []any
+	}{
+		{name: "selectors Ptah reads", exclude: []any{
+			"audit_log", "public.audit_*", "*[type=view]", "legacy,archive", "app.my table", "naïve_table", "-leading-dash",
+		}},
+		{name: "both bounds", exclude: func() []any {
+			entries := numbered("table_", 128)
+			entries[0] = strings.Repeat("t", 256)
+			return entries
+		}()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration := driftCheckedMigrationBase(namespace)()
+			migration.SetName("drift-check-" + strings.ReplaceAll(strings.ToLower(test.name), " ", "-"))
+			set(t, migration, test.exclude, path...)
+			assertStoredBoundary(t, migration, path)
+		})
+	}
+}

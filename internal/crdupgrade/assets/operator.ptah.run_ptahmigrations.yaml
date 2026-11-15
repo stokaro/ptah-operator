@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "21"
-    operator.ptah.run/crd-schema-digest: "sha256:0667d228302ce7750ee359a8ab9cfd93e3dc898f693253f9def30972282f00a5"
+    operator.ptah.run/crd-schema-digest: "sha256:2d0ad8cf5aa7eb71cb08b5bcd28bef85dd65e4dd98ed311cc4574d2caedf4161"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -932,6 +932,15 @@ spec:
                     type: string
                   driftCheck:
                     properties:
+                      exclude:
+                        items:
+                          maxLength: 256
+                          minLength: 1
+                          pattern: ^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$
+                          type: string
+                        maxItems: 128
+                        type: array
+                        x-kubernetes-list-type: set
                       shadow:
                         properties:
                           urlFrom:

@@ -240,6 +240,13 @@ must be empty before one: never the target, and never a shadow another
 resource checks with. Its URL is read in the Job's Pod alone, as the target's
 is, from a Secret key other than `target.urlFrom`.
 
+The comparison covers the whole schema the target's URL reaches. Here the same
+database also holds the tables a `PtahSchema` manages under `reporting` and a
+queue table another tool creates, which no migration declares: `exclude` leaves
+them out of both sides, as `ptah schema diff --exclude` selects them. The URL
+sets no `search_path`, so Ptah reads every schema and a selector starts with
+the schema's name.
+
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigration
@@ -264,6 +271,9 @@ spec:
         urlFrom:
           name: orders-shadow-database
           key: url
+      exclude:
+        - reporting.*
+        - public.job_queue
 ```
 
 ### A database another namespace manages too
@@ -519,6 +529,7 @@ spec:
 | `spec.policy` | `object`, default `{}` | This resource requires: where `policy`, `policy.lockTimeout`, `execution` and `execution.activeDeadlineSeconds` are set, policy.lockTimeout must not exceed execution.activeDeadlineSeconds; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Policy decides what may run without a person: the apply mode, the approval requirement, and the locks a run takes. |
 | `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply defaults to OnApproval. A migration artifact carries arbitrary SQL, and no analyzer classifies arbitrary SQL as safe, so the conservative setting is the default one rather than the one an operator opts into. |
 | `spec.policy.driftCheck` | `object` | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. DriftCheck asks Ptah to compare the target's live schema with the schema its applied history replays to, under the migration lock and before any pending migration runs. An Apply whose check does not come back clean runs nothing and leaves the history as it was. Unset checks nothing, which is how every resource without it runs. |
+| `spec.policy.driftCheck.exclude` | `[]string` | Exclude names schema objects the comparison leaves out on both sides, as `ptah schema diff --exclude` selects them: tables a PtahSchema or another tool keeps in the same database, for example. Each entry reaches Ptah as one --drift-exclude, and Ptah judges the selector grammar when the check runs, refusing a selector it cannot honor. The API holds each entry to the bounds a PtahSchema's exclude has: not empty, no whitespace at either end, which Ptah would trim, and no control character. The list is part of the policy a plan binds, so changing it publishes a new plan; its order is not. Unset leaves nothing out. |
 | `spec.policy.driftCheck.shadow` | `object`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. Shadow is a Secret key in this namespace holding the URL of an empty database of the target's engine. Ptah replays the applied migrations into it, compares the result with the target, and empties it again. It refuses a shadow that holds anything, and one that is the target under another name. Only the executor Pod reads the Secret, the way it reads the target's. Give each resource its own shadow: two checks that share one at the same time find each other's tables in it. |
 | `spec.policy.driftCheck.shadow.urlFrom` | `object`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. URLFrom names the Secret key holding this database's connection URL. |
 | `spec.policy.driftCheck.shadow.urlFrom.key` | `string`, required | This resource requires: where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name a required Secret key; where `policy` and `policy.driftCheck` are set, policy.driftCheck.shadow.urlFrom must name another Secret key than target.urlFrom. The key of the secret to select from. Must be a valid secret key. |

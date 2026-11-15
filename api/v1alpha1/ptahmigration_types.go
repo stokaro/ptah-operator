@@ -289,6 +289,25 @@ type MigrationDriftCheck struct {
 	// Give each resource its own shadow: two checks that share one at the same
 	// time find each other's tables in it.
 	Shadow DatabaseTargetRef `json:"shadow"`
+
+	// Exclude names schema objects the comparison leaves out on both sides,
+	// as `ptah schema diff --exclude` selects them: tables a PtahSchema or
+	// another tool keeps in the same database, for example. Each entry
+	// reaches Ptah as one --drift-exclude, and Ptah judges the selector
+	// grammar when the check runs, refusing a selector it cannot honor. The
+	// API holds each entry to the bounds a PtahSchema's exclude has: not
+	// empty, no whitespace at either end, which Ptah would trim, and no
+	// control character.
+	//
+	// The list is part of the policy a plan binds, so changing it publishes
+	// a new plan; its order is not. Unset leaves nothing out.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:items:Pattern=`^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // PtahMigrationSpec declares a database, a migration artifact, and the terms
