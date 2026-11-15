@@ -66,6 +66,16 @@ const (
 	// watchSegmentSeconds, and a stream that outlives that by a delivery
 	// bound is no longer being served.
 	watchSegmentOverrun = watchSegmentSeconds*time.Second + watchDeliveryBound
+	// watchGapRevisionLimit is the widest gap, in revisions, a watch resumes
+	// across, since each revision costs a list of the watched namespace. A
+	// gap holds every revision the cluster wrote between the watch's last
+	// event and the list its restarted watch cache started from, which
+	// k8s.io/apiserver restarts a second after the cache's own watch failed:
+	// the gap that failed database-lines run 43752226543 was 30 revisions,
+	// about five seconds of that cluster's writes. Listing 2000 revisions of
+	// one namespace took under half a second against a local kube-apiserver
+	// 1.35. A wider gap is refused before anything is listed.
+	watchGapRevisionLimit = 2000
 )
 
 // The objects and keys the fault injection reads and writes.

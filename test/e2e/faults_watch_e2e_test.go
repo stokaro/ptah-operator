@@ -27,7 +27,8 @@ import (
 // from, and starts the watch there. Starting from an empty resourceVersion
 // would replay every existing object as ADDED, as if the phase had created
 // it. The Jobs listed enter the observed ledger, since the list and the watch
-// after it are one boundary with no gap.
+// after it are one boundary with no gap, and every object listed is part of
+// the history a gap is held to.
 func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet bool, newList func() client.ObjectList) *watchRecorder[T] {
 	f.t.Helper()
 	list := newList()
@@ -41,11 +42,8 @@ func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet b
 		f.check(err, "validate the initial fault Job list before updating the observed ledger")
 		f.observed.add(records)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	r := &watchRecorder[T]{
-		name: name, namespace: namespace, newList: newList, watcher: f.watcher, quiet: quiet,
-		ctx: ctx, cancel: cancel, done: make(chan struct{}),
-	}
+	r, err := newWatchRecorder[T](name, namespace, quiet, f.watcher, newList, list)
+	f.check(err, "start the %s watch", name)
 	go r.run(resourceVersion)
 	f.recorders = append(f.recorders, r)
 	return r
@@ -360,10 +358,14 @@ func (f *faultRun) databasePod() string {
 }
 
 // validateAndScanWatches holds every watch to having recorded something and
-// to carrying no credential.
+// to carrying no credential, and logs every gap a watch resumed across.
 func (f *faultRun) validateAndScanWatches() {
 	f.t.Helper()
 	for _, r := range f.recorders {
+		for _, gap := range r.gaps() {
+			f.logf("the %s watch resumed at resourceVersion %s after an API server's watch cache dropped its history from %s; the %d revisions between held the %d objects the history records, unchanged",
+				r.stem(), gap.To, gap.From, gap.Revisions, gap.Objects)
+		}
 		content, count, err := r.history()
 		f.check(err, "encode the %s watch history", r.stem())
 		if count == 0 {
