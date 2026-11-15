@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -135,10 +136,39 @@ func (a *alertingRun) negativeControls() {
 		}
 	}()
 	a.waitForTargets()
-	// A transient pending condition has not crossed the rule's paging threshold.
-	if !a.noActiveAlerts(`ALERTS{alertstate="firing"}`) {
-		a.fatalf("an unrelated incident is active before the negative-control window")
+	unresolved := a.negativeUnresolvedIdentity()
+	if len(unresolved) != 0 {
+		a.fatalf("the quiet window starts with unaccounted mutation work")
 	}
+	lease, managers := a.managerSnapshot()
+	leader := haLeaderPodName(haLeaseHolder(lease))
+	var names []string
+	for _, p := range managers {
+		names = append(names, p.Name)
+	}
+	monitor := a.negativeMonitorIdentity()
+	for _, f := range fixtures {
+		switch v := f.object.(type) {
+		case *ptahv1.PtahSchema:
+			storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, v)
+		case *ptahv1.PtahMigration:
+			storedStateWatchBarrier(a.t, a.ctx, a.cluster, migrations, v)
+		}
+	}
+	schemaStart, migrationStart := len(schemas.snapshot()), len(migrations.snapshot())
+	// A transient pending condition has not crossed the rule's paging
+	// threshold. The state-read alert may fire, for a failed read the leader
+	// declared; the native history judges that once the window has closed, and
+	// starts far enough before this first look to hold the read that explains it.
+	var seen alQuietSeen
+	firstLook, firing, err := a.quietFiring()
+	if err != nil {
+		a.fatalf("an unrelated incident is active before the negative-control window: %v", err)
+	}
+	if firing {
+		seen.firing = append(seen.firing, firstLook)
+	}
+	lookback := firstLook.Add(-alViewReadResolution)
 	baselineLog, err := a.deploymentLog(a.ctx, "alert-sink")
 	a.check(err, "read the original receiver journal")
 	baselineDeliveries, err := alDeliveries(baselineLog)
@@ -152,26 +182,14 @@ func (a *alertingRun) negativeControls() {
 	if len(baseline) == 0 {
 		a.fatalf("the preceding recovered incident has no receiver evidence")
 	}
+	installation := alQuietInstallation{namespace: a.in.OperatorNamespace, metricsService: a.metricsService}
 	for _, d := range baseline {
-		if d.Status != "resolved" || d.EndsAt.IsZero() || d.Labels["operator_namespace"] != a.in.OperatorNamespace || d.Labels["operator_metrics_service"] != a.metricsService {
+		if d.Status != "resolved" || d.EndsAt.IsZero() || d.Labels["operator_namespace"] != a.in.OperatorNamespace || d.Labels["operator_metrics_service"] != a.metricsService ||
+			installation.receiver != "" && installation.receiver != d.Receiver {
 			a.fatalf("unresolved baseline does not name this installation's resolved incident")
 		}
+		installation.receiver = d.Receiver
 	}
-	unresolved := a.negativeUnresolvedIdentity()
-	if len(unresolved) != 0 {
-		a.fatalf("the quiet window starts with unaccounted mutation work")
-	}
-	lease, managers := a.managerSnapshot()
-	monitor := a.negativeMonitorIdentity()
-	for _, f := range fixtures {
-		switch v := f.object.(type) {
-		case *ptahv1.PtahSchema:
-			storedStateWatchBarrier(a.t, a.ctx, a.cluster, schemas, v)
-		case *ptahv1.PtahMigration:
-			storedStateWatchBarrier(a.t, a.ctx, a.cluster, migrations, v)
-		}
-	}
-	schemaStart, migrationStart := len(schemas.snapshot()), len(migrations.snapshot())
 	a.logf("negative-control baseline receiver journal: %s", baselineLog)
 	started := time.Now()
 	end := started.Add(alNegativeWindow + alDetectionSlack)
@@ -237,8 +255,15 @@ func (a *alertingRun) negativeControls() {
 		if !alRulesLoaded(body) {
 			a.fatalf("a rule disappeared or stopped evaluating during the quiet window")
 		}
-		if !a.noActiveAlerts(`ALERTS{alertstate="firing"}`) || !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
-			a.fatalf("a new incident appeared during ordinary policy waiting")
+		at, firing, err := a.quietFiring()
+		if err != nil {
+			a.fatalf("a new incident appeared during ordinary policy waiting: %v", err)
+		}
+		if firing {
+			seen.firing = append(seen.firing, at)
+		}
+		if !maps.Equal(unresolved, a.negativeUnresolvedIdentity()) {
+			a.fatalf("a new unresolved record appeared during ordinary policy waiting")
 		}
 		log, err := a.deploymentLog(a.ctx, "alert-sink")
 		a.check(err, "retain the complete receiver journal")
@@ -247,9 +272,14 @@ func (a *alertingRun) negativeControls() {
 		}
 		deliveries, err := alDeliveries(log)
 		a.check(err, "decode the quiet-window receiver journal")
+		seen.notifications = seen.notifications[:0]
 		for _, d := range deliveries[len(baselineDeliveries):] {
-			if !alNegativeRepeat(d, baseline) {
-				a.fatalf("ordinary policy waiting produced a new %s notification", d.AlertName)
+			switch {
+			case alNegativeRepeat(d, baseline):
+			case installation.allows(d):
+				seen.notifications = append(seen.notifications, d)
+			default:
+				a.fatalf("ordinary policy waiting produced a new %s notification: %s", d.AlertName, d.raw)
 			}
 		}
 		if !time.Now().Before(end) {
@@ -257,6 +287,8 @@ func (a *alertingRun) negativeControls() {
 		}
 		a.sleep(min(alDeliveryPoll, time.Until(end)))
 	}
+	closed := time.Now().UTC()
+	reads := a.quietWindowHistory(names, leader, lookback, closed, seen)
 	for _, f := range fixtures {
 		if !alNegativeReading(f.object).readAt.After(started) {
 			a.fatalf("%s has no fresh database observation inside the ten-minute window", f.object.GetName())
@@ -294,7 +326,56 @@ func (a *alertingRun) negativeControls() {
 	storedStateWatchBarrier(a.t, a.ctx, a.cluster, jobs, sentinel)
 	closeRunnerWatches(a.t, []recorder{schemas, migrations, jobs}, scan)
 	checkHistory()
-	a.logf("PASS ordinary approval and Never policy controls: families=2 resources=%d started=%s ended=%s; normal refresh, no Apply, no new incident; pre-existing unresolved identities=%d", len(fixtures), started, time.Now(), len(unresolved))
+	a.logf("PASS ordinary approval and Never policy controls: families=2 resources=%d started=%s ended=%s; normal refresh, no Apply, no new incident; pre-existing unresolved identities=%d declaredFailedReads=%d stateReadAlertSeen=%d stateReadNotifications=%d",
+		len(fixtures), started, time.Now(), len(unresolved), len(reads.declared), len(seen.firing), len(seen.notifications))
+}
+
+// quietFiring asks Prometheus which alerts fire at one instant, and returns
+// that instant and whether the one alert the quiet window allows was among
+// them. Any other firing alert is an error.
+func (a *alertingRun) quietFiring() (time.Time, bool, error) {
+	a.t.Helper()
+	at := time.Now().UTC()
+	body, err := a.prometheus(a.ctx, "/api/v1/query", map[string]string{"query": `ALERTS{alertstate="firing"}`, "time": at.Format(time.RFC3339Nano)})
+	if err != nil {
+		a.fatalf("Prometheus did not answer for its alerts: %v", err)
+	}
+	firing, err := alQuietFiring(body)
+	return at, firing, err
+}
+
+// quietWindowHistory reads the native history from the lookback before the
+// window's first look until it has read the state past the window's close,
+// and holds what the window saw of the state-read alert to the failed reads
+// the leader declared in it. The history is printed either way: it is the
+// reading a predicate test stores when this row fails.
+func (a *alertingRun) quietWindowHistory(pods []string, leader string, lookback, closed time.Time, seen alQuietSeen) alQuietWindowHistory {
+	a.t.Helper()
+	var h alQuietWindowHistory
+	var body []byte
+	var at time.Time
+	err := harness.Wait(a.ctx, "a native state-read history past the close of the quiet window", alQuietCloseWait, time.Second,
+		func(context.Context) (bool, string, error) {
+			at = time.Now().UTC()
+			var groups map[string][]byte
+			groups, body = a.historySnapshot(a.ctx, at, alScrapeJob, "", alUnresolvedHistoryMetrics...)
+			var err error
+			h, err = alReadQuietWindowHistory(groups, pods, leader, lookback, at)
+			if errors.Is(err, errAlHistoryNotFresh) {
+				return false, "the newest scrape has not committed", nil
+			}
+			if err == nil {
+				err = alQuietWindowVerdict(h, seen, closed)
+			}
+			if errors.Is(err, errAlQuietWindowOpen) {
+				return false, err.Error(), nil
+			}
+			return err == nil, "", err
+		})
+	a.logf("negative-control native history: lookback=%s closed=%s queriedAt=%s declaredFailedReads=%d snapshot=%s",
+		lookback.Format(time.RFC3339Nano), closed.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano), len(h.declared), body)
+	a.check(err, "hold the quiet window's state-read alerts to the failed reads the leader declared")
+	return h
 }
 
 // Include the operation identity, not merely the number of old incidents.

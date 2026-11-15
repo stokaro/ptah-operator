@@ -65,7 +65,7 @@ func TestAlUnresolvedNativeHistoryRequiresOneIncidentAndHealthyReplicas(t *testi
 		return alReadUnresolvedHistory(body(f.gauge), body(f.synced), body(f.failures), body(f.up), body(f.duration), []string{"leader", "follower"}, "leader", "migration", start, at)
 	}
 	h, err := read(fixture())
-	if err != nil || h.latest != 0 || h.declared != 0 || !h.appeared.Equal(start.Add(5*time.Second+125*time.Millisecond)) || !h.appearedScrape.Equal(start.Add(5*time.Second)) ||
+	if err != nil || h.latest != 0 || len(h.declared) != 0 || !h.appeared.Equal(start.Add(5*time.Second+125*time.Millisecond)) || !h.appearedScrape.Equal(start.Add(5*time.Second)) ||
 		!h.withheldSince.IsZero() || !h.cleared.Equal(start.Add(20*time.Second+125*time.Millisecond)) || !h.heldFrom.Equal(start.Add(20*time.Second)) || !h.through.Equal(start.Add(45*time.Second)) {
 		t.Fatalf("native history=%+v, %v", h, err)
 	}
@@ -94,7 +94,7 @@ func TestAlUnresolvedNativeHistoryRequiresOneIncidentAndHealthyReplicas(t *testi
 	h, err = read(declared)
 	// The incident is first read at 10s, after the two reads that withheld
 	// it, and the history still reaches the last scrape.
-	if err != nil || h.declared != 2 || !h.withheldSince.Equal(start) || !h.appearedScrape.Equal(start.Add(10*time.Second)) || !h.heldFrom.Equal(start.Add(20*time.Second)) || !h.through.Equal(start.Add(45*time.Second)) {
+	if err != nil || len(h.declared) != 2 || !h.withheldSince.Equal(start) || !h.appearedScrape.Equal(start.Add(10*time.Second)) || !h.heldFrom.Equal(start.Add(20*time.Second)) || !h.through.Equal(start.Add(45*time.Second)) {
 		t.Fatalf("declared failed reads before the incident = %+v, %v", h, err)
 	}
 	inside := fixture()
@@ -102,11 +102,11 @@ func TestAlUnresolvedNativeHistoryRequiresOneIncidentAndHealthyReplicas(t *testi
 	h, err = read(inside)
 	// The incident was last read at 15s, so the rule's hold can have started
 	// at 20s, the first failed read.
-	if err != nil || h.declared != 2 || !h.heldFrom.Equal(start.Add(20*time.Second)) || !h.cleared.Equal(start.Add(30*time.Second+125*time.Millisecond)) {
+	if err != nil || len(h.declared) != 2 || !h.heldFrom.Equal(start.Add(20*time.Second)) || !h.cleared.Equal(start.Add(30*time.Second+125*time.Millisecond)) {
 		t.Fatalf("declared failed reads at the end of the incident = %+v, %v", h, err)
 	}
 	for _, name := range []string{"missing gauge", "wrong family", "follower gauge", "wrong instance", "missing follower", "unhealthy leader", "unhealthy follower", "missing sample", "different sample time", "missing baseline", "existing incident", "second incident", "recurred incident",
-		"no view", "view unsynchronized at a read", "view from the follower", "counter did not rise", "counter rose on the follower", "view synchronized at a failed read", "gap outlasted the hold", "trailing gap outlasted the hold"} {
+		"no view", "view unsynchronized at a read", "view from the follower", "counter did not rise", "counter rose on the follower", "counter rose at a read", "view synchronized at a failed read", "gap outlasted the hold", "trailing gap outlasted the hold"} {
 		t.Run(name, func(t *testing.T) {
 			f := fixture()
 			switch name {
@@ -151,6 +151,12 @@ func TestAlUnresolvedNativeHistoryRequiresOneIncidentAndHealthyReplicas(t *testi
 				declare(&f, 5)
 				f.failures[0], f.failures[1] = f.failures[1], f.failures[0]
 				f.failures[0].Metric, f.failures[1].Metric = f.failures[1].Metric, f.failures[0].Metric
+			case "counter rose at a read":
+				// The scrape at 15s carried the gauge, so it declared no
+				// failure for the counter to count.
+				for i := 6; i < len(f.failures[0].Values); i++ {
+					f.failures[0].Values[i] = alAdmissionHistorySampleForTest(start.Add(time.Duration(i*5-15)*time.Second), "1")
+				}
 			case "view synchronized at a failed read":
 				declare(&f, 5)
 				f.synced[0].Values[4] = alAdmissionHistorySampleForTest(start.Add(5*time.Second), "1")
@@ -169,7 +175,7 @@ func TestAlUnresolvedNativeHistoryRequiresOneIncidentAndHealthyReplicas(t *testi
 	// One failed read fewer is held.
 	held := fixture()
 	declare(&held, 5, 10, 15, 20, 25)
-	if h, err := read(held); err != nil || h.declared != 5 {
+	if h, err := read(held); err != nil || len(h.declared) != 5 {
 		t.Fatalf("a gap the hold covers was refused: %+v, %v", h, err)
 	}
 }
@@ -304,7 +310,7 @@ func TestAlUnresolvedHistoryAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T
 			appeared, cleared := scrape(family.appeared), scrape(family.cleared)
 			// The incident spans the failed reads, so the history holds it from
 			// its first reading to the reading that cleared it.
-			if err != nil || h.declared != 2 || h.latest != 0 || !h.appearedScrape.Equal(appeared) || !h.appeared.Equal(appeared.Add(duration[family.appeared])) || !h.withheldSince.IsZero() ||
+			if err != nil || len(h.declared) != 2 || h.latest != 0 || !h.appearedScrape.Equal(appeared) || !h.appeared.Equal(appeared.Add(duration[family.appeared])) || !h.withheldSince.IsZero() ||
 				!h.heldFrom.Equal(cleared) || !h.cleared.Equal(cleared.Add(duration[family.cleared])) || h.through.Before(at.Add(-alScrapeInterval)) {
 				t.Fatalf("history across the declared failed reads = %+v, %v", h, err)
 			}
@@ -352,7 +358,7 @@ func TestAlUnresolvedHistoryAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T
 				}
 				return r
 			}
-			if h, err := read(extend(3)); err != nil || h.declared != 5 {
+			if h, err := read(extend(3)); err != nil || len(h.declared) != 5 {
 				t.Fatalf("five declared failed reads were refused: %+v, %v", h, err)
 			}
 			if _, err := read(extend(4)); !errors.Is(err, errAlReadGapOutlastedHold) {

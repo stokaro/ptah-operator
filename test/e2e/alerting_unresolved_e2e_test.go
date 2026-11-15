@@ -480,7 +480,7 @@ func (a *alertingRun) unresolvedHistory(pods []string, leader, family string, st
 	groups, body := a.historySnapshot(a.ctx, at, alScrapeJob, matchers, alUnresolvedHistoryMetrics...)
 	h, err := alReadUnresolvedHistory(groups[alUnresolvedMetric], groups[alViewSyncedMetric], groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, started, at)
 	if label != "" || err != nil {
-		a.logf("unresolved native history %s/%s: queriedAt=%s declaredFailedReads=%d snapshot=%s", family, label, at.Format(time.RFC3339Nano), h.declared, body)
+		a.logf("unresolved native history %s/%s: queriedAt=%s declaredFailedReads=%d snapshot=%s", family, label, at.Format(time.RFC3339Nano), len(h.declared), body)
 	}
 	a.check(err, "require a complete native unresolved history")
 	return h

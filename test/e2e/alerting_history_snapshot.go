@@ -41,10 +41,15 @@ func alSplitHistorySnapshot(body []byte, job string, metrics []string) (map[stri
 	}
 	out := map[string][]byte{}
 	for name, rows := range groups {
-		out[name], err = json.Marshal(map[string]any{"status": "success", "data": map[string]any{"resultType": "matrix", "result": rows}})
+		out[name], err = alMatrixAnswer(rows)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// alMatrixAnswer is rows as Prometheus answers a range query for them.
+func alMatrixAnswer(rows []alAdmissionSeries) ([]byte, error) {
+	return json.Marshal(map[string]any{"status": "success", "data": map[string]any{"resultType": "matrix", "result": rows}})
 }
