@@ -904,12 +904,16 @@ func (c *httpsRun) selectCA(name string) int64 {
 }
 
 // printReading prints a status a wait matched, so a run's log holds the
-// document a predicate test can read. A status carries no credential by
-// contract, which this phase's failure output already relies on.
+// document a predicate test can read. It is scanned like every other document
+// the phase prints, and withheld on a match.
 func (c *httpsRun) printReading(name string, status any) {
 	c.t.Helper()
 	reading, err := json.Marshal(map[string]any{"status": status})
-	if err != nil {
+	if err != nil || !c.scanner.ready() {
+		return
+	}
+	if c.scanner.leaks(reading) {
+		_, _ = fmt.Fprintf(os.Stderr, "e2e HTTPS sources: the %s reading is withheld: it matched a protected credential\n", name)
 		return
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "e2e HTTPS sources: the %s reading\n%s\n", name, reading)

@@ -883,8 +883,8 @@ type HTTPSSourceInputs struct {
 // then kept without a new plan; a redirect to another origin, refused with
 // the credential set and with nothing sent there; a credential granted for
 // another host, refused before Ptah runs; a credential whose Secret pins
-// caSHA256 under a source that selects no CA, refused before Ptah runs with
-// nothing sent, and planned once the source selects that CA; a symbolic link
+// caSHA256 under a source that selects no CA, refused by the runner before
+// Ptah runs, and planned once the source selects that CA; a symbolic link
 // and a ".." entry, each refused at its Resolve; and a source policy whose
 // host list and content bound each refuse the source.
 var HTTPSSources = define[HTTPSSourceInputs](Phase{
