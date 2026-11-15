@@ -1,0 +1,52 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned": [
+    1,
+    2
+  ],
+  "planned_keys": [
+    "1",
+    "2"
+  ],
+  "error": {
+    "message": "0000000002_index_items.up.sql cannot run inside a transaction: line 1 CREATE or DROP INDEX CONCURRENTLY is refused inside a transaction block; mark the file `-- +ptah no_transaction`, or move the concurrent index into a migration of its own\nSQL: CREATE INDEX CONCURRENTLY items_name ON items (name)"
+  },
+  "migration_log": {
+    "written": 0
+  },
+  "status": {
+    "current_version": 0,
+    "applied_migrations": [],
+    "pending_migrations": [
+      1,
+      2
+    ],
+    "pending_migration_keys": [
+      "1",
+      "2"
+    ],
+    "out_of_order_migrations": [],
+    "total_migrations": 2,
+    "has_pending_changes": true,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Items",
+        "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "state": "pending"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Index Items",
+        "checksum": "e9d645b5ab237cb2910ed2dcde3ed67c4fc26328459bcbb8eca6cf2a2fccf266",
+        "state": "pending"
+      }
+    ]
+  }
+}

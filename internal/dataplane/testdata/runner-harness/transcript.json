@@ -20891,6 +20891,259 @@
     }
   },
   {
+    "name": "migrations-refused-postgres/apply",
+    "operation": "migration-apply",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/apply/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations up",
+        "args": [
+          "migrations",
+          "up",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json",
+          "--expect-sequence",
+          "/work/ptah-expected-sequence-<random>.json",
+          "--run-reference=sha256:9bdc51c1c67beba72fd5d742f7dc809fb0fa0844c40ced1bfa7d75a0e0abbfd2"
+        ],
+        "exit": 2,
+        "stderr": "error: error running migrations: 0000000002_index_items.up.sql cannot run inside a transaction: line 1 CREATE or DROP INDEX CONCURRENTLY is refused inside a transaction block; mark the file `-- +ptah no_transaction`, or move the concurrent index into a migration of its own\nSQL: CREATE INDEX CONCURRENTLY items_name ON items (name)\n",
+        "stdout": "migrations-up-refused-postgres.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "migrationRun": {
+        "contract_version": 2,
+        "direction": "up",
+        "migration_log": {
+          "written": 0
+        },
+        "outcome": "failed",
+        "planned": [
+          1,
+          2
+        ],
+        "status": {
+          "contract_version": 2,
+          "current_version": 0,
+          "has_pending_changes": true,
+          "migrations": [
+            {
+              "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+              "description": "Create Items",
+              "state": "pending",
+              "version": 1,
+              "version_key": "1"
+            },
+            {
+              "checksum": "e9d645b5ab237cb2910ed2dcde3ed67c4fc26328459bcbb8eca6cf2a2fccf266",
+              "description": "Index Items",
+              "state": "pending",
+              "version": 2,
+              "version_key": "2"
+            }
+          ],
+          "pending_migrations": [
+            1,
+            2
+          ],
+          "total_migrations": 2
+        }
+      },
+      "mutationStarted": true,
+      "operation": "migration-apply",
+      "operationId": "sha256:9bdc51c1c67beba72fd5d742f7dc809fb0fa0844c40ced1bfa7d75a0e0abbfd2",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:294dbc0f55742935e2ef5f4552b8534b6582eafa421907e796ac4e8a77261990"
+    }
+  },
+  {
+    "name": "migrations-refused-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/history-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+            "description": "Create Items",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "e9d645b5ab237cb2910ed2dcde3ed67c4fc26328459bcbb8eca6cf2a2fccf266",
+            "description": "Index Items",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:8ce562830c82d6e0c447ab4d493f022d1c730efa352e23b92a07953dee5026e3",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:294dbc0f55742935e2ef5f4552b8534b6582eafa421907e796ac4e8a77261990"
+    }
+  },
+  {
+    "name": "migrations-refused-postgres/history-still-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/history-still-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/history-still-pending/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+            "description": "Create Items",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          },
+          {
+            "checksum": "e9d645b5ab237cb2910ed2dcde3ed67c4fc26328459bcbb8eca6cf2a2fccf266",
+            "description": "Index Items",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
+          }
+        ],
+        "pending_migrations": [
+          1,
+          2
+        ],
+        "total_migrations": 2
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:d17b65597f65d2389c539bb72fd88dad0f1a8733d59f1bfaadbdb68706dae66e",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:294dbc0f55742935e2ef5f4552b8534b6582eafa421907e796ac4e8a77261990"
+    }
+  },
+  {
+    "name": "migrations-refused-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-refused-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-refused-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:05e19c159402ec5cdd94d17ebf40cb2f8944fb44f4858c404d38687c16b5dc53",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
+      "resolvedSize": 1564,
+      "stdout": ""
+    }
+  },
+  {
     "name": "policy-existing-table/apply",
     "operation": "apply",
     "source": "none",

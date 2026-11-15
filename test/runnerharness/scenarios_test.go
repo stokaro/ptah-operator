@@ -297,6 +297,23 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-failed-postgres.json"), wantCode("child_exit"))
 		run.history("history-dirty")
 	})
+	// Since v0.29.0 Ptah asks every selected file what its transaction or its
+	// text refuses before the first of them runs (stokaro/ptah#6052 and
+	// #6055). The second file builds an index CONCURRENTLY, which PostgreSQL
+	// refuses inside the transaction the file runs in, so the run applies
+	// neither file and leaves no revision row, and nothing in the document
+	// says which file it refused.
+	t.Run("refused-postgres", func(t *testing.T) {
+		t.Parallel()
+		family, database := "migrations-refused-postgres", "harness_refused_postgres"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-refused-postgresql")
+		run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		before := run.history("history-pending")
+		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-refused-postgres.json"), wantCode("child_exit"))
+		run.history("history-still-pending")
+	})
 	// A checkpoint is the floor a fresh database starts from, and the history
 	// reports it. No other row reads checkpoint_version.
 	t.Run("checkpoint-postgres", func(t *testing.T) {

@@ -132,13 +132,23 @@ rather than of a broken statement:
 
 ```
 lastRun: outcome Failed
-"Migration 1 (Create Widgets) failed and committed nothing; 0 migrations before it are recorded applied"
+"A migration failed and committed nothing; 0 migrations before it are recorded applied"
 ```
 
 The message names the migration the run stopped in, by its version and the
-description Ptah reads from its file name. It does not carry what Ptah or the
-database said, because that sentence can quote a row, and status and Events do not
-carry one. The sentence is in the Pod log, and the message says how to read it, as
+description Ptah reads from its file name, when the run's report says which one
+it was: the revision row the run left dirty, or the file after the ones it
+applied. A refusal can leave neither. Ptah asks every file the run selected what
+its transaction or its own text refuses before the first of them runs, such as a
+`CREATE INDEX CONCURRENTLY` inside the transaction the file runs in, and a run
+it refuses there applies none of them and writes no revision row. Such a run of
+one file names that file, as
+`Migration 1 (Create Widgets) failed and committed nothing; 0 migrations before it are recorded applied`;
+a run of several names none, as above.
+
+The message does not carry what Ptah or the database said, because that sentence
+can quote a row, and status and Events do not carry one. The sentence is in the
+Pod log, and it names the file Ptah refused. The message says how to read it, as
 [A statement the database refused](#a-statement-the-database-refused) explains.
 
 On MySQL or MariaDB the usual cause is the transaction mode. Those engines have

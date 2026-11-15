@@ -557,7 +557,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing, or the run stopped before it ran one, as on a database it could not open or under a [drift check](#drift-check) that refused it. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it ran one, as on a database it could not open, under a [drift check](#drift-check) that refused it, or on a selected file Ptah refuses before the run applies any, such as a `CREATE INDEX CONCURRENTLY` the file's transaction cannot hold. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 

@@ -2177,9 +2177,19 @@ const migrationRunEventBytes = 512
 // first version it selected and did not apply. The engine's message about why
 // stays out (#69); the version and the description the artifact gave it carry
 // no row, and they tell a reader which file to open (#678).
+//
+// A run that applied nothing and left no dirty row names a version only when
+// it selected one. Since v0.29.0 Ptah asks every selected file what its
+// transaction or its text refuses before the first of them runs
+// (stokaro/ptah#6052, #6055), and a refusal there leaves no revision row and
+// nothing in the report that says which file it was. The first selected
+// version would be a guess, and a wrong one whenever that file was fine.
 func stoppedMigration(report dataplane.MigrationRunReport) (int64, bool) {
 	if dirty := dirtyRevision(report); dirty != nil {
 		return dirty.Version, true
+	}
+	if len(report.Applied) == 0 && len(report.Planned) != 1 {
+		return 0, false
 	}
 	for _, version := range report.Planned {
 		if !slices.Contains(report.Applied, version) {
