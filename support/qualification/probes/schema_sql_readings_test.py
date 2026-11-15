@@ -15,8 +15,8 @@ import unittest
 from unittest import mock
 
 import schema_sql_readings
-from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_postgresql_lines, contract, contract_readings,
-                                 documented_statements, received)
+from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_postgresql_lines, comparable, contract,
+                                 contract_readings, documented_statements, received)
 
 READINGS = ROOT / 'testdata/e2e/readings'
 CONTRACT = ROOT / 'test/e2e/schema-sql-contract.json'
@@ -70,6 +70,62 @@ class SchemaSQLReadingsTest(unittest.TestCase):
             self.assertEqual(list(received('mysql', mysql)),
                              [('Prepare', 'SELECT ? FROM t WHERE s = ?', ''),
                               ('Execute', "SELECT 1 FROM t WHERE s = '{{database}}'", '')])
+
+
+class ComparableTest(unittest.TestCase):
+    """A rerun compares equal unless something other than the apply log's run id and entry time moved."""
+
+    PG_INSERT = ('execute stmtcache_1: INSERT INTO "ptah_schema_apply_log" (run_id, seq, run_reference, state, plan_digest, '
+                 'logged_at, error)\nVALUES ($1, $2, $3, $4, $5, $6, $7)')
+    MY_INSERT = ("INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `ptah_schema_apply_log` (run_id, seq, error, state, "
+                 "logged_at, plan_digest)\nVALUES ({run}, 1, 'it''s, \\'quoted\\', (here)', '{state}', {time}, 'sha256:{digest}')")
+
+    def pg(self, run='1-aaaaaaaaaaaa', time='2026-11-14 12:55:06.37185', state='started', digest='16fa', message=PG_INSERT):
+        return {'dbname': 'ptah_audit_schema', 'message': message,
+                'detail': f"Parameters: $1 = '{run}', $2 = '1', $3 = NULL, $4 = '{state}', $5 = 'sha256:{digest}', "
+                          f"$6 = '{time}', $7 = NULL"}
+
+    def my(self, run='1-aaaaaaaaaaaa', time='2026-11-14 12:50:44.724171962', state='started', digest='e8b1', kind='Execute'):
+        text = self.MY_INSERT.format(run=f"'{run}'", time=f"'{time}'", state=state, digest=digest)
+        return {'time': '2026-11-14T12:50:44.724555', 'type': kind, 'client': 'ptah_audit[ptah_audit] @  [172.19.0.3]',
+                'thread': 9, 'argumentHex': text.encode().hex().upper()}
+
+    def same(self, first, second):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / 'a.jsonl', Path(directory) / 'b.jsonl']
+            for path, row in zip(paths, (first, second)):
+                path.write_text(json.dumps(row) + '\n')
+            return comparable(paths[0]) == comparable(paths[1])
+
+    def test_a_rerun_of_the_checked_in_apply_compares_equal(self):
+        rerun = {'run': '1-bbbbbbbbbbbb', 'time': '2026-11-15 04:48:10.913378'}
+        self.assertTrue(self.same(self.pg(), self.pg(**rerun)))
+        self.assertTrue(self.same(self.my(), self.my(time='2026-11-15 04:43:09.155126001', run='1-bbbbbbbbbbbb')))
+
+    def test_any_other_value_of_an_entry_still_differs(self):
+        for change in ({'state': 'applied'}, {'digest': '16fb'}):
+            with self.subTest(engine='postgresql', change=change):
+                self.assertFalse(self.same(self.pg(), self.pg(**change)))
+            with self.subTest(engine='mysql', change=change):
+                self.assertFalse(self.same(self.my(), self.my(**change)))
+
+    def test_the_same_values_elsewhere_are_not_masked(self):
+        other = self.PG_INSERT.replace('ptah_schema_apply_log', 'app_log')
+        self.assertFalse(self.same(self.pg(message=other), self.pg(message=other, run='1-bbbbbbbbbbbb')))
+        select = {'time': 't', 'type': 'Execute', 'client': 'c', 'thread': 1,
+                  'argumentHex': "SELECT '1-aaaaaaaaaaaa'".encode().hex().upper()}
+        rerun = {**select, 'argumentHex': "SELECT '1-bbbbbbbbbbbb'".encode().hex().upper()}
+        self.assertFalse(self.same(select, rerun))
+        # A prepared statement carries no values, so it is compared as received.
+        self.assertTrue(self.same(self.my(kind='Prepare'), self.my(kind='Prepare')))
+
+    def test_the_checked_in_apply_readings_hold_entries_it_masks(self):
+        # The allowed Apply writes a started and an applied entry, and each
+        # loses exactly its run id and its time.
+        for name in ('postgresql-schema-drift-apply-current.jsonl', 'mysql-schema-drift-apply-current.jsonl'):
+            with self.subTest(name=name):
+                masked = [json.dumps(row) for row in comparable(READINGS / name) if '<changes on every run>' in json.dumps(row)]
+                self.assertEqual([row.count('<changes on every run>') for row in masked], [2, 2], name)
 
 
 class JournalFilterTest(unittest.TestCase):

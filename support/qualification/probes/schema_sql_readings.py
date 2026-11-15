@@ -453,12 +453,87 @@ def capture_migrations(context, image, engine, out, scratch):
     return results
 
 
+# A schema Apply writes its run's id and the time of each entry into
+# ptah_schema_apply_log (stokaro/ptah#6014), and every run draws both anew. A
+# rerun changes those two values of each entry and nothing else it sends.
+APPLY_LOG_COLUMNS = re.compile(r'INSERT\b.*?\bINTO [`"]ptah_schema_apply_log[`"] \(([^)]*)\)\s*VALUES \(', re.S)
+APPLY_LOG_RERUN_VALUES = ('run_id', 'logged_at')
+RERUN_VALUE = '<changes on every run>'
+
+
+def apply_log_positions(statement):
+    """The 0-based positions of the values a rerun changes and where the values begin.
+
+    Any statement other than an INSERT into the apply log gives no positions.
+    """
+    match = APPLY_LOG_COLUMNS.search(statement)
+    if not match:
+        return (), None
+    columns = [column.strip() for column in match.group(1).split(',')]
+    return tuple(columns.index(name) for name in APPLY_LOG_RERUN_VALUES if name in columns), match.end()
+
+
+def sql_values(text):
+    """Split a VALUES list into its values, keeping quoted commas, escapes and calls, and the rest after it."""
+    values, current, quote, depth, index = [], '', None, 0, 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            current += char
+            if char == '\\' and index + 1 < len(text):
+                current += text[index + 1]
+                index += 1
+            elif char == quote:
+                if text[index + 1:index + 2] == quote:
+                    current += quote
+                    index += 1
+                else:
+                    quote = None
+        elif char in "'\"":
+            quote = char
+            current += char
+        elif char == '(':
+            depth += 1
+            current += char
+        elif char == ')' and depth:
+            depth -= 1
+            current += char
+        elif char == ',' and not depth:
+            values.append(current.strip())
+            current = ''
+        elif char == ')':
+            values.append(current.strip())
+            return values, text[index:]
+        else:
+            current += char
+        index += 1
+    raise ValueError('a VALUES list that does not end')
+
+
+def without_rerun_values(row):
+    """A journal row with the apply log values a rerun changes replaced, and the rest as received."""
+    if 'message' in row:
+        positions, _ = apply_log_positions(row['message'])
+        detail = row.get('detail')
+        if not positions or not detail:
+            return row
+        for position in positions:
+            detail = re.sub(rf"\${position + 1} = '[^']*'", f'${position + 1} = {RERUN_VALUE}', detail)
+        return {**row, 'detail': detail}
+    statement = binascii.unhexlify(row['argumentHex']).decode('utf-8', errors='surrogateescape')
+    positions, start = apply_log_positions(statement)
+    if not positions or row['type'] == 'Prepare':
+        return (row['type'], row['client'], row['argumentHex'])
+    values, rest = sql_values(statement[start:])
+    for position in positions:
+        values[position] = RERUN_VALUE
+    return (row['type'], row['client'], statement[:start] + ', '.join(values) + rest)
+
+
 def comparable(path):
-    """What a reading says, without the timestamps and thread numbers a rerun changes."""
+    """What a reading says, without the timestamps, thread numbers and run values a rerun changes."""
     rows = [json.loads(line) for line in path.read_text().splitlines()]
-    if rows and 'message' in rows[0]:
-        return rows
-    return [(row['type'], row['client'], row['argumentHex']) for row in rows]
+    return [without_rerun_values(row) for row in rows]
 
 
 CONTRACT_VARIANTS = ('', 'destructive-', 'exclusion-wide-', 'exclusion-narrow-', 'initial-v1-', 'tag-v2-', 'tag-v3-', 'drift-',
