@@ -557,7 +557,7 @@ matters most:
 | --- | --- |
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
-| `Failed` | A migration failed and committed nothing, or the run stopped before it selected one, as on a database it could not open. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
+| `Failed` | A migration failed and committed nothing, or the run stopped before it ran one, as on a database it could not open or under a [drift check](#drift-check) that refused it. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
 | `Partial` | A migration committed some of its statements and not the rest |
 | `Unknown` | The evidence could not be read |
 
@@ -591,6 +591,64 @@ false wherever the resource has stopped or is waiting for a person, and its
 reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
 `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
 `HistoryMatched`.
+
+## Check the schema against its history {#drift-check}
+
+The revision table proves which files ran, and checksums prove they are the
+files the database ran. Neither notices a column somebody added by hand or an
+index dropped during an incident. `spec.policy.driftCheck` has Ptah look:
+
+```yaml
+spec:
+  policy:
+    driftCheck:
+      shadow:
+        urlFrom:
+          name: orders-shadow-database
+          key: url
+```
+
+Every Apply then runs `ptah migrations up --check-drift`. Under the migration
+lock, before any pending migration, Ptah replays the migrations the revision
+table records as applied into the shadow database, compares the schema they
+produce with the target's, and empties the shadow again. What a pending
+migration is about to create is not drift, since the baseline is the applied
+history. A clean target lets the run go on. A target that differs stops it with
+reason `SchemaDrifted`, and a check that cannot decide stops it with
+`DriftCheckUnsupported` or `ShadowDatabaseUnavailable`; nothing pending runs,
+and [A migration whose drift check refused the run](../../troubleshoot/condition-reasons/#a-migration-whose-drift-check-refused-the-run)
+says what each one means and how to list the differences. A check that was
+asked for never turns into a run without one: an Apply whose check did not
+happen applies nothing.
+
+The shadow is a database of its own, of the target's engine, empty before each
+check. Ptah refuses a shadow that holds anything and one that is the target
+under another URL, and the API refuses a shadow named by the target's own
+Secret key. A database of its own on the target's server is enough. On MySQL
+and MariaDB its user needs the global privileges
+[the baseline's shadow](#what-the-history-says) needs, because Ptah empties it
+the same way. Give every resource a shadow of its own: two checks that use one
+at the same time find each other's tables in it, and refuse.
+
+The URL is read like the target's: the History and the Apply Job mount the
+Secret key, the runner reads it, and the manager never does. A History reading
+records the shadow's identity in `status.history.shadowIdentityDigest`, a
+digest of where its URL points with no credential in it, and the plan
+binds that identity beside the target's. Pointing the Secret at another
+database, or the policy at another key, publishes a new plan, and an approval
+of the old one does not carry over. The Apply refuses a shadow its plan did not
+bind before Ptah starts; as with a target that moved, the run is recorded
+`Unknown` and the next History reading settles it.
+
+Ptah compares the whole schema it reads, less the revision table and its log,
+and the operator passes it nothing to leave out. A database another resource or
+tool also writes to, such as one a `PtahSchema` shares, reads as drifted. The
+lock holds off any cooperating runner between the check and the Apply; DDL from
+a session that takes no lock can still land after the check. The check repairs
+nothing.
+
+Leaving the field out checks nothing, which is how every resource without it
+runs.
 
 ## Who the database's log names
 
@@ -659,4 +717,7 @@ cluster](../recovery/#what-survives-a-lost-cluster) says what else is left.
 
 No row of any table reaches the status, an Event, or `kubectl ptah migration`.
 No SQL does either: a published plan records versions, descriptions and
-checksums, and the statements stay in the artifact you built.
+checksums, and the statements stay in the artifact you built. A drift check
+reports counts and codes there, never what Ptah or a driver said; the first
+line of Ptah's report stays in the Apply's Pod log. The shadow database's URL
+appears nowhere but in the Pod that reads it.

@@ -48,6 +48,7 @@ Secret volume, mounted in that container and no other:
 | --- | --- | --- |
 | Database URL | `/credentials/database/url` | `PTAH_OPERATOR_DB_URL_FILE` |
 | Development database URL, Plan only | `/credentials/development-database/url` | `PTAH_OPERATOR_DEV_URL_FILE` |
+| Shadow database URL, a migration's History and Apply under a [drift check](../../use/migrations/#drift-check) | `/credentials/shadow-database/url` | `PTAH_OPERATOR_SHADOW_DB_URL_FILE` |
 | Registry username, password and token, `Environment` mode | `/credentials/registry/username`, `password`, `token` | `PTAH_OPERATOR_OCI_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |
 | Git username and password, `https://` | `/credentials/git/username`, `password` | `PTAH_OPERATOR_GIT_USERNAME_FILE`, `_PASSWORD_FILE` |
 | HTTPS username and password, or token | `/credentials/https/username`, `password`, `token` | `PTAH_OPERATOR_HTTPS_USERNAME_FILE`, `_PASSWORD_FILE`, `_TOKEN_FILE` |

@@ -19,7 +19,11 @@ out of silence.
 ## 0.2.13
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRD schemas do not change. The executor moves to Ptah
+on the upgrade. The CRD schemas gain a migration's drift check, so the CRD
+schema version moves from 20 to 21. Once this release's hook has updated the
+CRDs, 0.2.12's CRD hook refuses [a rollback](../../use/operations/#rollback)
+to 0.2.12: a release's hook refuses CRD schemas newer than the release reads,
+and 0.2.12 reads none of the new fields. The executor moves to Ptah
 v0.28.0, which retires the execution binding: approve again whatever was
 waiting, after the resource has read its database with v0.28.0 and planned.
 A schema Apply that sends a statement now creates the table
@@ -47,6 +51,18 @@ validation. `PtahOperatorUnresolvedApply`, `PtahOperatorResourceOverdue`,
 seconds after the reading that clears them, so anything that waits for their
 resolution waits that much longer. Nothing else.
 
+- **A migration can check its schema against its history.**
+  `spec.policy.driftCheck` names a shadow database by a Secret key, and every
+  Apply then asks Ptah to replay the applied migrations into it and compare the
+  result with the target before any pending migration runs
+  ([#1054](https://github.com/stokaro/ptah-operator/issues/1054)). A target
+  that differs stops the run with reason `SchemaDrifted`, and a check that
+  cannot decide stops it with `DriftCheckUnsupported` or
+  `ShadowDatabaseUnavailable`; nothing pending runs, and the revision table is
+  as it was. The plan binds the shadow's identity, so an approval does not
+  carry over to another shadow. A resource without the field runs as before.
+  [Check the schema against its history](../../use/migrations/#drift-check)
+  says what the shadow needs.
 - **A schema Apply leaves a record in the database.** Ptah v0.28.0 keeps a log
   of each schema Apply that sends a statement
   ([stokaro/ptah#6014](https://github.com/stokaro/ptah/pull/6014)): a `started`
@@ -83,7 +99,7 @@ resolution waits that much longer. Nothing else.
   `schema_migrations_log` once, where the log lacks the new columns.
   `migrations up` can now check drift against the applied history
   ([stokaro/ptah#5994](https://github.com/stokaro/ptah/pull/5994)), and the
-  operator does not ask it to.
+  operator asks it to for a migration whose policy names a drift check.
 - **The state alerts hold through a failed read.** A scrape whose state read
   fails publishes none of the gauges these four alerts read, so a firing alert
   resolved on that scrape and fired again on the next one that read, and a
