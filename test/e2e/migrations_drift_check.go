@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"slices"
@@ -108,6 +109,30 @@ func driftSentenceLogged(log []byte) error {
 		return fmt.Errorf("the reported error is %q, want Ptah's drift sentence naming the added column", reported[0])
 	}
 	return nil
+}
+
+// driftExcludeVariable is the variable an Apply Job hands its runner the
+// selectors a drift check leaves out in, as one CSV record.
+const driftExcludeVariable = "PTAH_DRIFT_EXCLUDE"
+
+// carriesDriftExclude says whether a Job hands exactly one container exactly
+// the selectors given, in that order, which is how the runner is asked to pass
+// them to the check.
+func carriesDriftExclude(job *batchv1.Job, selectors ...string) bool {
+	var carried [][]string
+	for _, container := range job.Spec.Template.Spec.Containers {
+		for _, variable := range container.Env {
+			if variable.Name != driftExcludeVariable {
+				continue
+			}
+			record, err := csv.NewReader(strings.NewReader(variable.Value)).Read()
+			if err != nil {
+				return false
+			}
+			carried = append(carried, record)
+		}
+	}
+	return len(carried) == 1 && slices.Equal(carried[0], selectors)
 }
 
 // mountsShadow says whether a Job mounts the shadow database's URL from the

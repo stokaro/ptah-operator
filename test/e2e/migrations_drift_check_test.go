@@ -312,3 +312,59 @@ func TestDriftSentenceLoggedRefusesEachClause(t *testing.T) {
 		})
 	}
 }
+
+// carriesDriftExclude reads the list the builder writes into the Apply Job,
+// and refuses one that names other selectors, fewer of them, or none.
+func TestCarriesDriftExcludeReadsTheBuildersJobs(t *testing.T) {
+	t.Parallel()
+	const queue = "public.e2e_unmigrated_queue"
+	migration := mtMigration()
+	migration.Spec.Policy.DriftCheck = &ptahv1alpha1.MigrationDriftCheck{
+		Shadow: ptahv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "e2e-postgresql-drift-shadow-db"}, Key: "url",
+		}},
+		Exclude: []string{queue, "legacy,archive"},
+	}
+	var apply batchv1.Job
+	for _, job := range mtBuiltJobsOf(t, migration, builderDigest('7')) {
+		if job.Labels[labelOperation] == "apply" {
+			apply = job
+		}
+	}
+	if apply.Name == "" {
+		t.Fatal("the builder wrote no Apply Job")
+	}
+	if !carriesDriftExclude(&apply, "legacy,archive", queue) {
+		t.Fatal("the builder's Apply Job was read as carrying another exclude list")
+	}
+	for name, selectors := range map[string][]string{
+		"one of the selectors": {queue},
+		"another selector":     {"legacy,archive", "public.other"},
+		"another order":        {queue, "legacy,archive"},
+		"no selector":          nil,
+	} {
+		if carriesDriftExclude(&apply, selectors...) {
+			t.Errorf("the Apply Job was read as carrying %s: %q", name, selectors)
+		}
+	}
+	// A list a second container also holds is not the one the runner reads.
+	twice := *apply.DeepCopy()
+	containers := twice.Spec.Template.Spec.Containers
+	for _, container := range containers {
+		for _, variable := range container.Env {
+			if variable.Name == driftExcludeVariable {
+				containers = append(containers, corev1.Container{Name: "another", Env: []corev1.EnvVar{variable}})
+			}
+		}
+	}
+	twice.Spec.Template.Spec.Containers = containers
+	if carriesDriftExclude(&twice, "legacy,archive", queue) {
+		t.Error("a Job whose two containers carry the list was read as handing it to one runner")
+	}
+	migration.Spec.Policy.DriftCheck.Exclude = nil
+	for _, job := range mtBuiltJobsOf(t, migration, builderDigest('7')) {
+		if job.Labels[labelOperation] == "apply" && carriesDriftExclude(&job) {
+			t.Fatal("an Apply Job whose check leaves nothing out was read as carrying an empty list")
+		}
+	}
+}
