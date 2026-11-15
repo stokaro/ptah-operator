@@ -435,7 +435,7 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:7da9c7c5fbaf86d2533351bb9a62874400f9a600cdfb1f6f40934536f086a482",
+      "sourceDigest": "sha256:8096d70fbf620721786bce159abb7652dda87a9bde4ac6371e840a7697d0b487",
       "reason": "Check a migration's live schema against its history before an Apply (#1054). Under a drift check policy, a migration History or Apply Job mounts the shadow URL as a file. The runner reports the shadow's credential-free identity as shadowIdentityDigest, and before the child refuses a shadow on another operation, one that is the target, and at an Apply one its plan did not bind. A bound Apply runs ptah migrations up --check-drift with the shadow URL in the child's environment alone and one --drift-exclude= per selector PTAH_DRIFT_EXCLUDE names, sorted; a list elsewhere or one the API refuses is invalid_input. migrationRun carries driftSummary, outcome, stage, reason and a finding count, never Ptah's messages. A check not asked for, a requested one missing, and a refusing check beside an applied version are refused. A Job without the policy is built and framed as before. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]

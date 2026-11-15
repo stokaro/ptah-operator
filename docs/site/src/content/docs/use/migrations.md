@@ -635,7 +635,11 @@ The URL is read like the target's: the History and the Apply Job mount the
 Secret key, the runner reads it, and the manager never does. A History reading
 records the shadow's identity in `status.history.shadowIdentityDigest`, a
 digest of where its URL points with no credential in it, and the plan
-binds that identity beside the target's. Pointing the Secret at another
+binds that identity beside the target's. A URL that names the target's server
+and database is the target under any user or `search_path`, and the reading
+refuses it with `ShadowDatabaseUnavailable` and publishes no plan, so nobody
+approves a run that cannot start. It does the same when the Secret key holds
+no URL. Pointing the Secret at another
 database, or the policy at another key, publishes a new plan, and an approval
 of the old one does not carry over. The Apply refuses a shadow its plan did not
 bind before Ptah starts; as with a target that moved, the run is recorded

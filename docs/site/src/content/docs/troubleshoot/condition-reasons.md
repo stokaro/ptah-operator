@@ -87,7 +87,7 @@ decision.
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
-| `ShadowDatabaseUnavailable` | A migration Apply ran nothing because the shadow database `spec.policy.driftCheck` names could not be used: unreachable, not empty, or the target under another name. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `ShadowDatabaseUnavailable` | The shadow database `spec.policy.driftCheck` names could not be used. A history read that cannot name it publishes no plan and is read again; an Apply that cannot use it ran nothing: unreachable, not empty, or the target under another name. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `SnapshotTaken` | A ConfigMap source was read and the files it selects were copied into the snapshot every later operation reads. |
 | `SourceFreshnessUnknown` | Currentness cannot be proven because source refresh did not complete. |
 | `SourceRefreshPending` | Dependent currentness is unknown during source refresh. |
@@ -204,6 +204,16 @@ Warning Event carries it too. The resource waits
 history is read and planned again before anything else runs. Under
 `apply: OnApproval` the next run needs an approval of its own, because this
 one consumed its approval.
+
+A shadow the runner can tell is unusable never reaches an Apply: the history
+read that publishes the plan refuses it before anyone can approve a run
+against it, and says `ShadowDatabaseUnavailable` on `Progressing` with a
+reason code: `missing_shadow` when the Secret key holds no
+URL, `invalid_shadow` when the URL is not a PostgreSQL or MySQL URL with a host
+and a database, and `shadow_is_target` when it names the target's server and
+database, under any user or `search_path`. No plan is published, the read is
+tried again after `spec.execution.failureRetryInterval`, and the message names
+the Secret and key to fix.
 
 The message names counts, stages and reason codes, never Ptah's own sentences:
 those can quote what the shadow database's driver said, or a default

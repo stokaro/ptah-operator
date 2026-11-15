@@ -1065,8 +1065,11 @@ const (
 	// it cannot describe. The Apply ran nothing.
 	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
 	// ReasonShadowDatabaseUnavailable means the shadow database could not be
-	// used: it was unreachable, held something, or was the target under
-	// another name. The Apply ran nothing.
+	// used. A history read that cannot name it, because its Secret key holds
+	// no URL, a URL the runner cannot identify, or the target's server and
+	// database, publishes no plan and is read again. An Apply ran nothing: the
+	// shadow was unreachable, held something, or was the target under another
+	// name.
 	ReasonShadowDatabaseUnavailable ConditionReason = "ShadowDatabaseUnavailable"
 )
 

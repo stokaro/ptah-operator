@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +9,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -370,7 +368,10 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 // The read that names it records the shadow beside the history, and the plan
 // published from that history binds it; a read that names none under a check,
 // or one under no check, is retried rather than planned from, since a plan from
-// it would run with another check than the one asked for.
+// it would run with another check than the one asked for. A read under a check
+// names none when the Secret key holds no URL, which is the shadow being
+// unusable and is said so; a shadow under no check is a runner that answered
+// another question.
 func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
@@ -378,10 +379,18 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 		checked bool
 		shadow  string
 		planned bool
+		reason  operatorv1alpha1.ConditionReason
+		says    string
 	}{
 		{name: "a check and its shadow", checked: true, shadow: testShadowDigest, planned: true},
-		{name: "a check and no shadow", checked: true},
-		{name: "a shadow and no check", shadow: testShadowDigest},
+		{
+			name: "a check and no shadow", checked: true, reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+			says: `missing_shadow: the shadow database Secret key holds no URL. Check the URL that Secret "orders-shadow" holds under key "url"`,
+		},
+		{
+			name: "a shadow and no check", shadow: testShadowDigest, reason: operatorv1alpha1.ReasonOperationFailed,
+			says: "does not name the shadow database the drift check policy asks for",
+		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -422,10 +431,9 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 				if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != operation.Attempt+1 {
 					t.Fatalf("the read was not retried: %#v", actual.Status.ActiveOperation)
 				}
-				if !slices.ContainsFunc(actual.Status.Conditions, func(condition metav1.Condition) bool {
-					return strings.Contains(condition.Message, "does not name the shadow database the drift check policy asks for")
-				}) {
-					t.Fatalf("no condition says why the read was retried: %#v", actual.Status.Conditions)
+				progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+				if progressing == nil || progressing.Reason != string(row.reason) || !strings.Contains(progressing.Message, row.says) {
+					t.Fatalf("Progressing = %#v, want %s saying %q", progressing, row.reason, row.says)
 				}
 				return
 			}
@@ -434,6 +442,86 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 			}
 			if len(plans.Items) != 1 || plans.Items[0].Spec.ShadowIdentityDigest != testShadowDigest {
 				t.Fatalf("published plans %#v, want one binding shadow %s", plans.Items, testShadowDigest)
+			}
+		})
+	}
+}
+
+// A history read whose runner refused the shadow publishes no plan, so nobody
+// approves a run whose shadow cannot be used, and says the shadow is why: a
+// URL the runner cannot identify, or one that leads to the target's server and
+// database. The read is tried again, as one that could not open its target
+// is, since the Secret may be fixed by then. A refusal that is not about the
+// shadow, or a shadow refusal under no check, is a failed read as before.
+func TestAHistoryReadTheRunnerRefusedForItsShadowSaysTheShadow(t *testing.T) {
+	t.Parallel()
+	for _, row := range []struct {
+		name, code, message string
+		checked             bool
+		reason              operatorv1alpha1.ConditionReason
+	}{
+		{
+			name: "a URL with no identity", code: "invalid_shadow", checked: true,
+			message: "the shadow database URL is not a PostgreSQL or MySQL URL with a host and a database",
+			reason:  operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+		},
+		{
+			name: "the target's server and database", code: "shadow_is_target", checked: true,
+			message: "the shadow database URL names the target's server and database",
+			reason:  operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+		},
+		{
+			name: "a refusal about something else", code: "invalid_configuration", checked: true,
+			message: "something else", reason: operatorv1alpha1.ReasonOperationFailed,
+		},
+		{
+			name: "a shadow refusal under no check", code: "shadow_is_target",
+			message: "the shadow database URL names the target's server and database",
+			reason:  operatorv1alpha1.ReasonOperationFailed,
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			if row.checked {
+				migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+			}
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			frame := migrationFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+				OperationID: operation.ID, ChildExitCode: -1,
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: testDigest,
+				Error:                &runner.ResultError{Code: row.code, Message: row.message},
+			})
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+			)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			plans := &operatorv1alpha1.PtahMigrationPlanList{}
+			if err := api.List(context.Background(), plans); err != nil {
+				t.Fatal(err)
+			}
+			if actual.Status.History != nil || len(plans.Items) != 0 {
+				t.Fatalf("the refused read was recorded: history %#v, %d plans", actual.Status.History, len(plans.Items))
+			}
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != operation.Attempt+1 {
+				t.Fatalf("the read was not retried: %#v", actual.Status.ActiveOperation)
+			}
+			progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || progressing.Reason != string(row.reason) || !strings.Contains(progressing.Message, row.code+": "+row.message) {
+				t.Fatalf("Progressing = %#v, want %s naming %s", progressing, row.reason, row.code)
+			}
+			if names := strings.Contains(progressing.Message, `Secret "orders-shadow"`); names != (row.reason == operatorv1alpha1.ReasonShadowDatabaseUnavailable) {
+				t.Fatalf("Progressing says %q; naming the shadow's Secret is %v", progressing.Message, names)
 			}
 		})
 	}

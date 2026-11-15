@@ -1111,6 +1111,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if operation.Type == operatorv1alpha1.MigrationOperationVerify && result.Error.Code == verificationRefusedCode {
 			return r.refuseMigrationArtifact(ctx, migration, job, result)
 		}
+		if operation.Type == operatorv1alpha1.MigrationOperationHistory && migration.Spec.Policy.DriftCheck != nil &&
+			slices.Contains(historyShadowRefusalCodes, result.Error.Code) {
+			return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+				shadowReadFailure(migration, fmt.Sprintf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))))
+		}
 		return r.retryMigrationOperation(ctx, migration, job,
 			resultFailure(result.Error, operationURLSecret(operation.Target, migration.Spec.Target.URLFrom)))
 	}
@@ -1569,8 +1574,14 @@ func (r *MigrationReconciler) consumeMigrationResult(
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no target identity"))
 		}
 		// The read names the shadow exactly when the policy asks for a check:
-		// a plan computed from a read that named none would run unchecked.
+		// a plan computed from a read that named none would run unchecked. A
+		// runner names none when the Secret key holds no URL, the optional key
+		// of a Secret that lacks it included.
 		if checked := migration.Spec.Policy.DriftCheck != nil; checked != sha256DigestPattern.MatchString(result.ShadowIdentityDigest) {
+			if checked && result.ShadowIdentityDigest == "" {
+				return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+					shadowReadFailure(migration, "missing_shadow: the shadow database Secret key holds no URL"))
+			}
 			return r.retryMigrationOperation(ctx, migration, job,
 				errors.New("the history result does not name the shadow database the drift check policy asks for"))
 		}
@@ -2392,6 +2403,21 @@ func initBoundaryOf(pods []*corev1.Pod) string {
 // retryMigrationOperation advances to a fresh attempt with a fresh
 // deterministic name. A Job that already exists is never reused: the claim it
 // answered is the one that failed.
+// historyShadowRefusalCodes are the runner's refusals of a history read whose
+// shadow database it cannot name for a plan: a URL it cannot identify, and one
+// that leads to the target's server and database.
+var historyShadowRefusalCodes = []string{"invalid_shadow", "shadow_is_target"}
+
+// shadowReadFailure is a history read that could not name the shadow database
+// its drift check uses, with the Secret key a person fixes. It publishes no
+// plan, so no approval is spent on a shadow that cannot be used.
+func shadowReadFailure(migration *operatorv1alpha1.PtahMigration, refusal string) error {
+	shadow := migration.Spec.Policy.DriftCheck.Shadow.URLFrom
+	return fmt.Errorf("%s. Check the URL that Secret %q holds under key %q: the drift check's shadow database "+
+		"has to be a database of its own, and no plan is published until the history read can name it",
+		refusal, shadow.Name, shadow.Key)
+}
+
 func (r *MigrationReconciler) retryMigrationOperation(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,

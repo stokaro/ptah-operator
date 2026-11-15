@@ -29,25 +29,47 @@ var defaultDatabasePorts = map[string]string{
 // to reject target redirects between observation and Apply. Cross-resource
 // mutation serialization uses the separately declared coordination realm.
 func TargetIdentityDigest(rawDatabaseURL string) (string, error) {
-	if rawDatabaseURL == "" {
-		return "", errors.New("database URL is empty")
-	}
-	if looksLikeMySQLNetworkDSN(rawDatabaseURL) {
-		return mysqlNetworkTargetIdentityDigest(rawDatabaseURL)
-	}
-	parsed, err := url.Parse(rawDatabaseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Opaque != "" {
-		return "", errors.New("database URL is invalid")
-	}
-	scheme, route, database, executionContext, err := effectiveDatabaseTarget(parsed)
+	location, executionContext, err := databaseIdentity(rawDatabaseURL)
 	if err != nil {
 		return "", err
 	}
 	// The coordination realm intentionally unifies aliases and credentials for
 	// serialization. This per-plan guard is narrower: it also binds the
 	// credential-free session context that can change how exact SQL resolves.
-	identity := scheme + "\x00" + route + "\x00" + database + "\x00" + executionContext
-	return sha256Digest([]byte(identity)), nil
+	return sha256Digest([]byte(location + "\x00" + executionContext)), nil
+}
+
+// databaseLocation is the database a URL reaches, whoever logs in and
+// whatever session it asks for: the scheme, the canonical route and the
+// database's name, without the login and the parameters TargetIdentityDigest
+// also binds. Two URLs of one location name one database, so a drift check's
+// shadow that has the target's location is the target, under another user or
+// another search_path. It is compared, never stored, and an alias of the
+// route is not caught here: Ptah's own realm check refuses it before it
+// resets anything.
+func databaseLocation(rawDatabaseURL string) (string, error) {
+	location, _, err := databaseIdentity(rawDatabaseURL)
+	return location, err
+}
+
+// databaseIdentity splits a database URL into its location and the
+// execution context TargetIdentityDigest binds beside it.
+func databaseIdentity(rawDatabaseURL string) (location, executionContext string, err error) {
+	if rawDatabaseURL == "" {
+		return "", "", errors.New("database URL is empty")
+	}
+	if looksLikeMySQLNetworkDSN(rawDatabaseURL) {
+		return mysqlNetworkIdentity(rawDatabaseURL)
+	}
+	parsed, err := url.Parse(rawDatabaseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Opaque != "" {
+		return "", "", errors.New("database URL is invalid")
+	}
+	scheme, route, database, executionContext, err := effectiveDatabaseTarget(parsed)
+	if err != nil {
+		return "", "", err
+	}
+	return scheme + "\x00" + route + "\x00" + database, executionContext, nil
 }
 
 func effectiveDatabaseTarget(parsed *url.URL) (scheme, route, database, executionContext string, err error) {
@@ -406,30 +428,29 @@ func (d mysqlNetworkDSN) endpoint() (string, error) {
 	}
 }
 
-// mysqlNetworkTargetIdentityDigest handles the network(address) syntax used
-// by the Go MySQL driver and accepted by Ptah. It binds the physical route,
+// mysqlNetworkIdentity handles the network(address) syntax used by the Go
+// MySQL driver and accepted by Ptah. The identity binds the physical route,
 // database, user, and every execution-relevant driver or server parameter;
 // authentication secrets and connection-liveness tuning stay outside the
 // redirect guard.
-func mysqlNetworkTargetIdentityDigest(raw string) (string, error) {
+func mysqlNetworkIdentity(raw string) (location, executionContext string, err error) {
 	parsed, err := parseMySQLNetworkDSN(raw)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	endpoint, err := parsed.endpoint()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	query, err := normalizedQuery(parsed.queryText)
 	if err != nil {
-		return "", errors.New("MySQL network DSN has an invalid query")
+		return "", "", errors.New("MySQL network DSN has an invalid query")
 	}
-	executionContext, err := databaseExecutionContext("mysql", url.User(parsed.username), query)
+	executionContext, err = databaseExecutionContext("mysql", url.User(parsed.username), query)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	identity := "mysql\x00" + endpoint + "\x00" + parsed.database + "\x00" + executionContext
-	return sha256Digest([]byte(identity)), nil
+	return "mysql\x00" + endpoint + "\x00" + parsed.database, executionContext, nil
 }
 
 func parseMySQLNetworkDSN(raw string) (mysqlNetworkDSN, error) {

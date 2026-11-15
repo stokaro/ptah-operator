@@ -145,11 +145,19 @@ func TestAMigrationApplyBoundToAShadowRunsTheDriftCheck(t *testing.T) {
 	}
 }
 
+// The target's server and database under a login and session of the shadow's
+// own: the target's identity differs from either, and Ptah refuses both as the
+// target's realm. testShadowPassword stands in for the shadow's password.
+const (
+	targetAsAnotherUser          = "postgres://shadow:shadow-secret@db.example:5432/app"
+	targetUnderAnotherSearchPath = "postgres://app:shadow-secret@DB.example/app?options=-csearch_path%3Dshadow"
+)
+
 // An Apply whose shadow is not the one its plan bound is refused before its
 // child, the way one on a moved target is: a shadow the plan did not name, a
 // plan shadow the Job does not hold, a shadow that is the target under another
-// password, and a URL the runner cannot derive an identity from. None of the
-// refusals names the URL.
+// password, user or search_path, and a URL the runner cannot derive an
+// identity from. None of the refusals names the URL.
 func TestAMigrationApplyRefusesAShadowItsPlanDidNotBindBeforeItsChild(t *testing.T) {
 	t.Parallel()
 	expected := shadowDigest(t, testShadowURL)
@@ -162,6 +170,8 @@ func TestAMigrationApplyRefusesAShadowItsPlanDidNotBindBeforeItsChild(t *testing
 		{name: "no shadow for a plan that binds one", expected: expected, code: "missing_shadow"},
 		{name: "a binding that is not a digest", url: testShadowURL, expected: "sha256:short", code: "missing_shadow_binding"},
 		{name: "the target under another password", url: "postgres://app:shadow-secret@db.example/app", expected: expected, code: "shadow_is_target"},
+		{name: "the target under another user", url: targetAsAnotherUser, expected: expected, code: "shadow_is_target"},
+		{name: "the target under another search_path", url: targetUnderAnotherSearchPath, expected: expected, code: "shadow_is_target"},
 		{name: "a URL with no identity", url: "docker://postgres/18?password=shadow-secret", expected: expected, code: "invalid_shadow"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
@@ -226,6 +236,57 @@ func TestAMigrationHistoryReportsTheShadowIdentityAndHidesTheShadow(t *testing.T
 	}
 	if _, err := ParseResultFor(frame, OperationMigrationHistory, "drift-history"); err != nil {
 		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+}
+
+// The history read refuses the shadow the Apply would refuse, before a plan
+// binds it and a person approves the plan: one that is the target under a
+// login or session of its own, and one with no identity. Another database on
+// the target's server is a shadow of its own, and is read.
+func TestAMigrationHistoryRefusesAShadowThatIsTheTarget(t *testing.T) {
+	t.Parallel()
+	document := `{"contract_version":2,"command":"migrations status","current_version":2,"total_migrations":4,"has_pending_changes":true,"pending_migrations":[3,4]}`
+	for _, row := range []struct {
+		name, url, code string
+	}{
+		{name: "the target under another user", url: targetAsAnotherUser, code: "shadow_is_target"},
+		{name: "the target under another search_path", url: targetUnderAnotherSearchPath, code: "shadow_is_target"},
+		{name: "a URL with no identity", url: "docker://postgres/18?password=shadow-secret", code: "invalid_shadow"},
+		{name: "another database on the target's server", url: "postgres://shadow:shadow-secret@db.example/app_shadow"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}}
+			operationID := "drift-history-" + strings.ReplaceAll(strings.ReplaceAll(row.name, " ", "-"), "'", "")
+			environment := append(migrationEnvironment(operationID), EnvShadowDatabaseURLFile+"="+writeCredential(t, row.url))
+			result := Run(context.Background(), Config{
+				Operation:   OperationMigrationHistory,
+				Environment: withRunnerProtocol(environment),
+				Executor:    executor,
+			})
+			if row.code == "" {
+				if result.Error != nil || result.ShadowIdentityDigest != shadowDigest(t, row.url) {
+					t.Fatalf("Run() = %#v, want the history and the shadow's identity", result)
+				}
+				return
+			}
+			if result.Error == nil || result.Error.Code != row.code {
+				t.Fatalf("error = %#v, want %s", result.Error, row.code)
+			}
+			if len(executor.calls) != 0 || result.ShadowIdentityDigest != "" {
+				t.Fatalf("the refused read ran or named the shadow: calls=%d %#v", len(executor.calls), result)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			if bytes.Contains(frame, []byte(testShadowPassword)) || bytes.Contains(frame, []byte("example")) {
+				t.Fatalf("the refusal carries the shadow URL: %s", frame)
+			}
+			if _, err := ParseResultFor(frame, OperationMigrationHistory, operationID); err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+		})
 	}
 }
 

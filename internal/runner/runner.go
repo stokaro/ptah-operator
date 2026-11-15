@@ -147,7 +147,11 @@ func Run(ctx context.Context, config Config) Result {
 	// A drift check's shadow database is read by the two operations that bind
 	// it: the history read learns its identity for the plan, and the Apply
 	// checks against it. It is never the target, which the check would empty.
-	// The refusals name no part of the URL.
+	// The target is compared by where it is, without the login and the
+	// session parameters its identity also binds: the target's server and
+	// database under another user or search_path is still the target, and
+	// Ptah refuses it, which at Apply is an approval spent on a run that
+	// could never start. The refusals name no part of the URL.
 	if shadowURL := values[EnvShadowDatabaseURL]; shadowURL != "" {
 		if config.Operation != OperationMigrationHistory && config.Operation != OperationMigrationApply {
 			setResultError(&result, "invalid_configuration",
@@ -160,8 +164,9 @@ func Run(ctx context.Context, config Config) Result {
 				errors.New("the shadow database URL is not a PostgreSQL or MySQL URL with a host and a database"), redactor, config.Diagnostics)
 			return result
 		}
-		if shadowDigest == result.TargetIdentityDigest {
-			setResultError(&result, "shadow_is_target", errors.New("the shadow database is the target database"), redactor, config.Diagnostics)
+		if shadowIsTarget(shadowURL, values[envDatabaseURL]) {
+			setResultError(&result, "shadow_is_target",
+				errors.New("the shadow database URL names the target's server and database"), redactor, config.Diagnostics)
 			return result
 		}
 		result.ShadowIdentityDigest = shadowDigest
@@ -1723,6 +1728,15 @@ func sanitizedCapturedText(content []byte, redactor Redactor, truncated bool, li
 
 func outputWasTruncated(result *Result) bool {
 	return result.Truncation != nil
+}
+
+// shadowIsTarget says whether a shadow database URL leads where the target's
+// does. Both were read as identities already, and a target URL that names no
+// location names nothing the shadow could be.
+func shadowIsTarget(shadowURL, targetURL string) bool {
+	shadow, shadowErr := databaseLocation(shadowURL)
+	target, targetErr := databaseLocation(targetURL)
+	return shadowErr == nil && targetErr == nil && shadow == target
 }
 
 // shadowBindingRefusal is the refusal of a migration Apply whose shadow
