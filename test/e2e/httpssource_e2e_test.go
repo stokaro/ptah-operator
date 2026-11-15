@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -45,6 +46,7 @@ func TestHTTPSSources(t *testing.T) {
 		{"https-republished", c.republishedZip},
 		{"https-redirect-refused", c.redirectToAnotherOrigin},
 		{"https-credential-refused", c.credentialForAnotherHost},
+		{"https-ca-pin-refused", c.caPinWithoutTheCA},
 		{"https-source-refused", c.refusedArchives},
 		{"https-source-policy", c.sourcePolicy},
 	} {
@@ -72,9 +74,12 @@ type httpsRun struct {
 	scanner credentialScanner
 
 	host, other string
-	keys        gitServerKeys
-	files       map[string][]byte
-	digests     map[string]string
+	// qualified is the server under its cluster domain name, which only the
+	// CA pin row reads.
+	qualified string
+	keys      gitServerKeys
+	files     map[string][]byte
+	digests   map[string]string
 }
 
 func newHTTPSRun(t *testing.T, run *harness.Run, in phases.HTTPSSourceInputs) *httpsRun {
@@ -103,6 +108,7 @@ func newHTTPSRun(t *testing.T, run *harness.Run, in phases.HTTPSSourceInputs) *h
 	}
 	c.host = httpsServer + "." + in.TestNamespace + ".svc"
 	c.other = httpsOtherServer + "." + in.TestNamespace + ".svc"
+	c.qualified = c.host + ".cluster.local"
 	c.standUp()
 	if c.scanner, err = newCredentialScanner(c.password, c.keys.Token); err != nil {
 		c.fatalf("build the credential scanner: %v", err)
@@ -187,7 +193,7 @@ func (c *httpsRun) url(access, file string) string {
 func (c *httpsRun) standUp() {
 	c.t.Helper()
 	var err error
-	c.keys, err = newGitServerKeys(c.host, c.host, c.other, c.host+".cluster.local", c.other+".cluster.local")
+	c.keys, err = newGitServerKeys(c.host, c.host, c.other, c.qualified, c.other+".cluster.local")
 	c.check(err, "generate the download server's keys")
 	served := map[string][]byte{}
 	for name, data := range c.files {
@@ -201,7 +207,8 @@ func (c *httpsRun) standUp() {
 	}})
 	c.put(&corev1.ConfigMap{ObjectMeta: c.meta(httpsCAConfigMap), Data: map[string]string{"ca.pem": string(c.keys.CAPEM)}})
 	// The Secrets' owner grants each credential one host and the exact CA it
-	// may be sent under. The last grants the token for another host.
+	// may be sent under. The third grants the token for another host, and the
+	// last grants Basic for the server under its cluster domain name.
 	ca := []byte(grantDigest(c.keys.CAPEM))
 	c.put(&corev1.Secret{ObjectMeta: c.meta(httpsBasicCredential), Data: map[string][]byte{
 		"host": []byte(c.host), "username": []byte(httpsUser), "password": []byte(c.keys.Token), "caSHA256": ca,
@@ -211,6 +218,9 @@ func (c *httpsRun) standUp() {
 	}})
 	c.put(&corev1.Secret{ObjectMeta: c.meta(httpsElsewhereGrant), Data: map[string][]byte{
 		"host": []byte(httpsElsewhereHost), "token": []byte(c.keys.Token), "caSHA256": ca,
+	}})
+	c.put(&corev1.Secret{ObjectMeta: c.meta(httpsCAPinCredential), Data: map[string][]byte{
+		"host": []byte(c.qualified), "username": []byte(httpsUser), "password": []byte(c.keys.Token), "caSHA256": ca,
 	}})
 
 	labels := map[string]string{"app.kubernetes.io/name": httpsServer}
@@ -287,16 +297,25 @@ func (c *httpsRun) requests() []httpsServed {
 
 // httpsSourceDocument is what one resource of the phase reads: a download,
 // its digest, format and selected path, the credential if any, and the
-// source policy if any. Every source trusts the phase's CA.
+// source policy if any. Every source selects the phase's CA unless noCA is
+// set, which leaves a pull the system roots.
 type httpsSourceDocument struct {
 	url, digest, path, credential, policy string
 	format                                ptahv1alpha1.HTTPSFormat
+	noCA                                  bool
+}
+
+// httpsTrust is the transport that selects the phase's CA.
+func httpsTrust() map[string]any {
+	return map[string]any{"caFrom": map[string]any{"name": httpsCAConfigMap, "key": "ca.pem"}}
 }
 
 func (source httpsSourceDocument) spec() map[string]any {
 	https := map[string]any{
 		"url": source.url, "digest": source.digest, "format": string(source.format), "path": source.path,
-		"transport": map[string]any{"caFrom": map[string]any{"name": httpsCAConfigMap, "key": "ca.pem"}},
+	}
+	if !source.noCA {
+		https["transport"] = httpsTrust()
 	}
 	if source.credential != "" {
 		https["authFrom"] = map[string]any{"name": source.credential}
@@ -413,8 +432,8 @@ func (c *httpsRun) reset() {
 		objects = append(objects, &ptahv1alpha1.PtahMigration{ObjectMeta: c.meta(name)})
 	}
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema,
-		httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsCAPinSchema,
+		httpsHostPolicySchema, httpsSizePolicySchema,
 	} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: c.meta(name)})
 	}
@@ -428,7 +447,7 @@ func (c *httpsRun) reset() {
 	for _, object := range objects {
 		c.deleteAndWait(object)
 	}
-	for _, database := range []string{httpsSchemaDatabase, httpsZipDatabase, httpsMigrationDatabase} {
+	for _, database := range []string{httpsSchemaDatabase, httpsZipDatabase, httpsMigrationDatabase, httpsCAPinDatabase} {
 		_, err := serverSQL(c.ctx, c.cluster, c.in.TestNamespace, c.engine, "DROP DATABASE IF EXISTS "+database+" WITH (FORCE)")
 		c.check(err, "drop database %s", database)
 	}
@@ -809,6 +828,97 @@ func (c *httpsRun) credentialForAnotherHost() {
 	c.logf("PASS a credential granted for another host was refused before Ptah ran: %s", refusal)
 }
 
+// caPinWithoutTheCA names a credential whose Secret pins caSHA256 from a
+// source that selects no CA. The Resolve Job refuses it while it checks the
+// access, before Ptah runs, so the credential reaches no server: the server
+// logged no request for the URL only this row names. Once the source selects
+// that CA, the same schema resolves, fetches with the credential and plans,
+// and the server logs the credentialed request for that URL. That is what
+// makes the earlier silence a refusal rather than a URL the log never names,
+// and the refusal clearing is what shows the missing CA was its cause.
+//
+// The server's certificate chains to the phase's CA alone, so a pull under
+// the system roots would fail its handshake before it sent anything. The log
+// cannot tell the runner's refusal from that; the message can, and it is what
+// the refusal wait holds to.
+func (c *httpsRun) caPinWithoutTheCA() {
+	c.t.Helper()
+	c.createDatabase(httpsCAPinDatabase, httpsCAPinSecret)
+	path := "/basic/" + httpsfixture.SchemaFile
+	source := httpsSourceDocument{
+		url: "https://" + c.qualified + path, digest: c.digests[httpsfixture.SchemaFile],
+		format: ptahv1alpha1.HTTPSFormatFile, path: httpsfixture.SchemaFile, credential: httpsCAPinCredential, noCA: true,
+	}
+	content, err := httpsfixture.SchemaContent(httpsfixture.SchemaFile)
+	c.check(err, "digest the schema")
+	c.check(c.create(c.schemaDocument(httpsCAPinSchema, httpsCAPinSecret, httpsCAPinDatabase, source)), "create PtahSchema %s", httpsCAPinSchema)
+
+	var refused *ptahv1alpha1.PtahSchema
+	c.wait(httpsCAPinSchema+" to be refused for the CA its credential pins", func() (bool, string) {
+		schema := &ptahv1alpha1.PtahSchema{}
+		if err := c.get(httpsCAPinSchema, schema); err != nil {
+			return false, err.Error()
+		}
+		if err := httpsCAPinRefused(schema.Status.Conditions, schema.Generation); err != nil {
+			return false, err.Error()
+		}
+		refused = schema
+		return true, ""
+	})
+	c.printReading("refused CA pin schema", refused.Status)
+	if refused.Status.Source.HTTPS != nil || refused.Status.Plan != nil {
+		c.fatalf("refused %s still resolved %+v or planned %+v", httpsCAPinSchema, refused.Status.Source.HTTPS, refused.Status.Plan)
+	}
+	refusal := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed).Message
+	c.onlyResolveJobs(labelSchema, httpsCAPinSchema)
+	before := c.requests()
+	c.check(httpsNoRequestFor(before, c.qualified, path), "the server's log")
+
+	generation := c.selectCA(httpsCAPinSchema)
+	recovered := c.waitForSchema(httpsCAPinSchema, generation, "the first plan of "+httpsCAPinSchema+" once it selects the CA",
+		func(schema *ptahv1alpha1.PtahSchema) bool {
+			return schema.Status.ObservedGeneration == generation && awaitingHTTPSPlan(schema)
+		})
+	c.printReading("recovered CA pin schema", recovered.Status)
+	c.check(httpsCAPinCleared(recovered.Status.Conditions, generation), "%s", httpsCAPinSchema)
+	c.check(httpsResolvedTo(recovered.Status.Source.HTTPS, source.url, source.format, source.path, source.digest, content),
+		"the source of %s", httpsCAPinSchema)
+	c.check(downloadVerified(recovered.Status.Conditions, source.digest, content), "%s", httpsCAPinSchema)
+	c.assertHTTPSJobs(labelSchema, httpsCAPinSchema, true, []string{source.digest}, "resolve", "observe", "plan")
+	c.check(httpsReceived(c.requests(), c.qualified, path, "Basic"), "the server's log")
+	c.deleteAndWait(recovered)
+	c.logf("PASS a credential whose Secret pins caSHA256 was refused before Ptah ran under a source that selects no CA, "+
+		"with no request in %d the server logged, and planned once the source selected it: %s", len(before), refusal)
+}
+
+// selectCA has a schema's source select the phase's CA, and returns the
+// generation the edit made.
+func (c *httpsRun) selectCA(name string) int64 {
+	c.t.Helper()
+	body, err := json.Marshal(map[string]any{"spec": map[string]any{"desired": map[string]any{"https": map[string]any{"transport": httpsTrust()}}}})
+	c.check(err, "encode the trust")
+	schema := &ptahv1alpha1.PtahSchema{ObjectMeta: c.meta(name)}
+	c.check(c.cluster.Client.Patch(c.ctx, schema, client.RawPatch(types.MergePatchType, body), client.FieldOwner(harness.FieldOwner)),
+		"select the CA on %s", name)
+	return schema.Generation
+}
+
+// printReading prints a status a wait matched, so a run's log holds the
+// document a predicate test can read. It is scanned like every other document
+// the phase prints, and withheld on a match.
+func (c *httpsRun) printReading(name string, status any) {
+	c.t.Helper()
+	reading, err := json.Marshal(map[string]any{"status": status})
+	if err != nil || !c.scanner.ready() {
+		return
+	}
+	if c.scanner.leaks(reading) {
+		_, _ = fmt.Fprintf(os.Stderr, "e2e HTTPS sources: the %s reading is withheld: it matched a protected credential\n", name)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stderr, "e2e HTTPS sources: the %s reading\n%s\n", name, reading)
+}
+
 // refusedArchives names two migration archives Ptah refuses to unpack: one
 // with a symbolic link in the selected directory and one with an entry that
 // climbs out of the archive. Each is refused at its Resolve with Ptah's
@@ -918,8 +1028,8 @@ func (c *httpsRun) cleanup() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsHostPolicySchema,
-		httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsCAPinSchema,
+		httpsHostPolicySchema, httpsSizePolicySchema,
 	} {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {

@@ -882,9 +882,11 @@ type HTTPSSourceInputs struct {
 // file, refused naming both digests until the spec names the new one, and
 // then kept without a new plan; a redirect to another origin, refused with
 // the credential set and with nothing sent there; a credential granted for
-// another host, refused before Ptah runs; a symbolic link and a ".." entry,
-// each refused at its Resolve; and a source policy whose host list and
-// content bound each refuse the source.
+// another host, refused before Ptah runs; a credential whose Secret pins
+// caSHA256 under a source that selects no CA, refused by the runner before
+// Ptah runs, and planned once the source selects that CA; a symbolic link
+// and a ".." entry, each refused at its Resolve; and a source policy whose
+// host list and content bound each refuse the source.
 var HTTPSSources = define[HTTPSSourceInputs](Phase{
 	Name:    "https-sources",
 	Test:    "TestHTTPSSources",
@@ -896,6 +898,7 @@ var HTTPSSources = define[HTTPSSourceInputs](Phase{
 		"https-republished",
 		"https-redirect-refused",
 		"https-credential-refused",
+		"https-ca-pin-refused",
 		"https-source-refused",
 		"https-source-policy",
 	},

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/test/e2e/httpsfixture"
 )
@@ -93,6 +94,7 @@ func TestThePhasesDownloadsWereCaptured(t *testing.T) {
 	}
 	for _, access := range []string{
 		"/same/basic/" + httpsfixture.SchemaFile,
+		"/basic/" + httpsfixture.SchemaFile,
 		"/bearer/" + httpsfixture.MigrationArchive,
 		"/public/" + httpsfixture.SchemaArchive,
 		"/away/basic/" + httpsfixture.SchemaFile,
@@ -433,6 +435,160 @@ func TestHTTPSNoRequestForNeedsSomeRequestsAndNoneForThePath(t *testing.T) {
 	}
 	if httpsNoRequestFor(nil, testHTTPSHost, "/bearer/schema.sql") == nil {
 		t.Error("httpsNoRequestFor accepted a log with no request")
+	}
+}
+
+func TestHTTPSReceivedNeedsTheCredentialedAnswerOnTheHost(t *testing.T) {
+	t.Parallel()
+	const qualified = testHTTPSHost + ".cluster.local"
+	answered := httpsServed{qualified, "/basic/schema.sql", "Basic", 200}
+	requests := append(httpsServerRequests(testHTTPSServerLog), answered)
+	if err := httpsReceived(requests, qualified, answered.path, "Basic"); err != nil {
+		t.Fatal(err)
+	}
+	// The log the CA pin row reads before its source selects the CA: the
+	// same path answered with Basic, on the shorter name other rows read.
+	if httpsReceived(httpsServerRequests(testHTTPSServerLog), qualified, answered.path, "Basic") == nil {
+		t.Error("httpsReceived accepted the path received on another name of the server")
+	}
+	for name, request := range map[string]httpsServed{
+		"another host":      {testHTTPSOther, answered.path, "Basic", 200},
+		"no credential":     {qualified, answered.path, "", 200},
+		"another scheme":    {qualified, answered.path, "Bearer", 200},
+		"a refused request": {qualified, answered.path, "Basic", 401},
+		"a redirect":        {qualified, answered.path, "Basic", 302},
+		"another path":      {qualified, "/basic/schema.zip", "Basic", 200},
+	} {
+		if httpsReceived([]httpsServed{request}, qualified, answered.path, "Basic") == nil {
+			t.Errorf("httpsReceived accepted %s", name)
+		}
+	}
+	if httpsReceived(nil, qualified, answered.path, "Basic") == nil {
+		t.Error("httpsReceived accepted a log with no request")
+	}
+}
+
+// The words the CA pin row waits for are the runner's: its refusal of the
+// access the Resolve Job of that row carries, a credential and both grants and
+// no CA. The same access without the CA grant is admitted, so the refusal is
+// the pin's.
+func TestHTTPSCAPinRefusalIsTheRunnersRefusalOfThePin(t *testing.T) {
+	t.Parallel()
+	environment := []string{
+		runner.EnvHTTPSURL + "=https://" + testHTTPSHost + ".cluster.local/basic/" + httpsfixture.SchemaFile,
+		runner.EnvHTTPSDigest + "=" + testDownload,
+		runner.EnvHTTPSFormat + "=" + string(ptahv1alpha1.HTTPSFormatFile),
+		runner.EnvHTTPSPath + "=" + httpsfixture.SchemaFile,
+		runner.EnvHTTPSSelects + "=file",
+		runner.EnvHTTPSUsername + "=" + httpsUser,
+		runner.EnvHTTPSPassword + "=password",
+		runner.EnvHTTPSHostGrant + "=" + testHTTPSHost + ".cluster.local",
+	}
+	pinned := append(slices.Clone(environment), runner.EnvHTTPSCASHA256Grant+"="+testContentDigest)
+	source, ok := runner.HTTPSSourceFromEnvironment(pinned)
+	if !ok {
+		t.Fatal("the environment names no HTTPS source")
+	}
+	_, _, err := runner.PrepareHTTPSSourceAccess(source, pinned, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), httpsCAPinRefusal) {
+		t.Fatalf("PrepareHTTPSSourceAccess() = %v, and the row waits for %q", err, httpsCAPinRefusal)
+	}
+	if _, cleanup, err := runner.PrepareHTTPSSourceAccess(source, environment, t.TempDir()); err != nil {
+		t.Fatalf("the same access without the pin was refused: %v", err)
+	} else {
+		cleanup()
+	}
+}
+
+// The statuses the CA pin row's two waits matched on kind: the refusal at
+// generation 1, and the plan once the source selected the CA, at generation 2.
+const (
+	caPinRefusedReading   = "https-ca-pin-refused-schema.json"
+	caPinRecoveredReading = "https-ca-pin-recovered-schema.json"
+)
+
+// changedCondition is conditions with the one of kind changed.
+func changedCondition(t *testing.T, conditions []metav1.Condition, kind string, change func(*metav1.Condition)) []metav1.Condition {
+	t.Helper()
+	changed := slices.Clone(conditions)
+	for index := range changed {
+		if changed[index].Type == kind {
+			change(&changed[index])
+			return changed
+		}
+	}
+	t.Fatalf("no %s condition to change", kind)
+	return nil
+}
+
+func TestHTTPSCAPinRefusedNeedsTheRunnersRefusalAtTheGeneration(t *testing.T) {
+	t.Parallel()
+	refused, generation := readReachabilityReading(t, caPinRefusedReading)
+	if err := httpsCAPinRefused(refused, generation); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, recoveredGeneration := readReachabilityReading(t, caPinRecoveredReading); httpsCAPinRefused(recovered, recoveredGeneration) == nil {
+		t.Error("httpsCAPinRefused accepted the schema once its source selected the CA")
+	}
+	failed := ptahv1alpha1.ConditionReconciliationFailed
+	for name, change := range map[string]func(*metav1.Condition){
+		"not failed": func(condition *metav1.Condition) {
+			condition.Status = metav1.ConditionFalse
+		},
+		"a refusal of an older generation": func(condition *metav1.Condition) {
+			condition.ObservedGeneration--
+		},
+		// What the manager writes for a source it refuses before any Job.
+		"the reason of a source the manager refused": func(condition *metav1.Condition) {
+			condition.Reason = string(ptahv1alpha1.ReasonConfigurationError)
+		},
+		// The same words from a fetch, which reports under its own code.
+		"the pin refused by a fetch": func(condition *metav1.Condition) {
+			condition.Message = strings.Replace(condition.Message, httpsAccessRefused, runner.CodeHTTPSSourceRefused+": ", 1)
+		},
+		"another access the runner refused": func(condition *metav1.Condition) {
+			condition.Message = httpsAccessRefused + httpsElsewhereRefusal
+		},
+		"a CA other than the one granted": func(condition *metav1.Condition) {
+			condition.Message = httpsAccessRefused + "the HTTPS certificate authority is not the one the credential's owner granted"
+		},
+	} {
+		if httpsCAPinRefused(changedCondition(t, refused, failed, change), generation) == nil {
+			t.Errorf("httpsCAPinRefused accepted %s", name)
+		}
+	}
+	if httpsCAPinRefused(nil, generation) == nil {
+		t.Error("httpsCAPinRefused accepted no condition")
+	}
+}
+
+func TestHTTPSCAPinClearedNeedsTheFailureClearedAtTheGeneration(t *testing.T) {
+	t.Parallel()
+	recovered, generation := readReachabilityReading(t, caPinRecoveredReading)
+	if err := httpsCAPinCleared(recovered, generation); err != nil {
+		t.Fatal(err)
+	}
+	refused, _ := readReachabilityReading(t, caPinRefusedReading)
+	for name, conditions := range map[string][]metav1.Condition{
+		"the refused schema": refused,
+		"no condition":       nil,
+		"still failed": changedCondition(t, recovered, ptahv1alpha1.ConditionReconciliationFailed, func(condition *metav1.Condition) {
+			condition.Status = metav1.ConditionTrue
+		}),
+		"cleared at an older generation": changedCondition(t, recovered, ptahv1alpha1.ConditionReconciliationFailed, func(condition *metav1.Condition) {
+			condition.ObservedGeneration--
+		}),
+		"cleared by a settled proof": changedCondition(t, recovered, ptahv1alpha1.ConditionReconciliationFailed, func(condition *metav1.Condition) {
+			condition.Reason = string(ptahv1alpha1.ReasonProofSettled)
+		}),
+		"the refusal left on another condition": changedCondition(t, recovered, ptahv1alpha1.ConditionArtifactResolved,
+			func(condition *metav1.Condition) {
+				condition.Message = httpsAccessRefused + httpsCAPinRefusal
+			}),
+	} {
+		if httpsCAPinCleared(conditions, generation) == nil {
+			t.Errorf("httpsCAPinCleared accepted %s", name)
+		}
 	}
 }
 
