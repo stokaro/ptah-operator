@@ -365,3 +365,27 @@ plan waits for an approval, `ReconciliationFailed=False` with reason
 predicates to accepting them, to refusing the other reading, and to refusing
 copies with the one field each mistake would change. They name the test
 namespace, a Resolve Job and the plan, and hold no credentials or SQL.
+
+`git-ca-pin-refused-schema.json` and `git-ca-pin-recovered-schema.json` are
+what the `git-sources` phase's `git-ca-pin-refused` row printed on a local kind
+run on November 15, 2026, with Kubernetes 1.36.4 on arm64, operator `4c920d6c`
+(a local build of this change whose suite catalog ran that phase alone) and the
+Ptah v0.29.0 release image
+`ghcr.io/stokaro/ptah@sha256:1a33d8ef8b6f06226d6ebd202b8ef8620227d7d3346b66a5991afd04844e17e8`.
+They are stored as the row printed them, one line each. The schema names a
+credential Secret that holds `caSHA256` and grants the Git server under its
+cluster domain name, and its `https://` source selects no CA. The refused
+reading is the status the row's wait matched at generation 1:
+`ReconciliationFailed=True` with reason `OperationFailed` and the runner's
+sentence under `invalid_git_access`, `ArtifactResolved=False` with
+`ResolveFailed`, and no source or plan recorded. The recovered reading is the
+status matched at generation 2, once the source selected the CA: the plan waits
+for an approval, `ReconciliationFailed=False` with reason `Succeeded`, and
+`ArtifactResolved=True` with `CommitResolved` and the commit main names.
+`TestGitCAPinRefusedNeedsTheRunnersRefusalAtTheGeneration` and
+`TestGitCAPinClearedNeedsTheFailureClearedAndTheCommitAtTheGeneration` hold the
+row's predicates to accepting them, to refusing the other reading, and to
+refusing copies with the one field each mistake would change. One of those
+copies carries the message the schema reported on a kind run with the runner's
+check removed, where Ptah ran and failed its TLS handshake. They name the test
+namespace, a Resolve Job and the plan, and hold no credentials or SQL.

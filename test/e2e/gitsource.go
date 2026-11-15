@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -97,6 +99,26 @@ const (
 	gitUnreadableMigrationPath     = "db/unreadable-migrations"
 )
 
+// The CA pin row's schema, its credential and its database. The credential
+// is granted for the server under its cluster domain name, a host no other
+// row names, so the source the row resolves once it selects the CA is the
+// row's own. The schema plans into a database of its own, so nothing else
+// holds its realm.
+const (
+	gitCAPinSchema     = "e2e-git-ca-pin"
+	gitCAPinCredential = "e2e-git-token-ca-pin"
+	gitCAPinDatabase   = "ptah_e2e_git_ca_pin"
+	gitCAPinSecret     = "e2e-git-ca-pin-database"
+
+	// gitCAPinRefusal is the runner's words for a credential whose Secret
+	// pins caSHA256 under an https:// source that selects no CA.
+	gitCAPinRefusal = "the credential's Secret pins caSHA256, so the source has to select it in transport.caFrom"
+	// gitAccessRefused opens the message of a refusal the runner made while
+	// it checked a Git source's access, before it started Ptah: the runner
+	// protocol refuses that code on a result whose child ran.
+	gitAccessRefused = "invalid_git_access: "
+)
+
 // The repository and the keys are shared with the runner harness, which serves
 // the same fixture from a container.
 var (
@@ -155,6 +177,51 @@ func gitResolvedTo(status *ptahv1alpha1.GitSourceRevision, url, path string, ref
 		return fmt.Errorf("the resolution read commit %s, not %s", status.Commit, commit)
 	case status.ContentDigest != content:
 		return fmt.Errorf("the resolution read content %s, not %s", status.ContentDigest, content)
+	}
+	return nil
+}
+
+// gitCAPinRefused holds a schema's conditions at generation to the runner's
+// refusal of a credential whose Secret pins caSHA256 under an https:// source
+// that selects no CA: ReconciliationFailed True with OperationFailed,
+// observed at that generation, and the runner's words under the code it
+// refuses a Git access with before Ptah starts.
+func gitCAPinRefused(conditions []metav1.Condition, generation int64) error {
+	failed := meta.FindStatusCondition(conditions, ptahv1alpha1.ConditionReconciliationFailed)
+	switch {
+	case failed == nil || failed.Status != metav1.ConditionTrue:
+		return fmt.Errorf("ReconciliationFailed is %+v", failed)
+	case failed.ObservedGeneration != generation:
+		return fmt.Errorf("ReconciliationFailed is of generation %d, not %d: %s", failed.ObservedGeneration, generation, failed.Message)
+	case failed.Reason != string(ptahv1alpha1.ReasonOperationFailed):
+		return fmt.Errorf("ReconciliationFailed has the reason %s, want OperationFailed: %s", failed.Reason, failed.Message)
+	case !strings.HasPrefix(failed.Message, gitAccessRefused) || !strings.Contains(failed.Message, gitCAPinRefusal):
+		return fmt.Errorf("ReconciliationFailed says %q, not %q after %q", failed.Message, gitCAPinRefusal, gitAccessRefused)
+	}
+	return nil
+}
+
+// gitCAPinCleared holds a schema's conditions at generation to a source the
+// CA pin no longer refuses: ReconciliationFailed False with Succeeded and
+// ArtifactResolved True with CommitResolved, both observed at that
+// generation, and no condition still giving the refusal.
+func gitCAPinCleared(conditions []metav1.Condition, generation int64) error {
+	failed := meta.FindStatusCondition(conditions, ptahv1alpha1.ConditionReconciliationFailed)
+	resolved := meta.FindStatusCondition(conditions, ptahv1alpha1.ConditionArtifactResolved)
+	switch {
+	case failed == nil || failed.Status != metav1.ConditionFalse || failed.Reason != string(ptahv1alpha1.ReasonSucceeded):
+		return fmt.Errorf("ReconciliationFailed is %+v", failed)
+	case failed.ObservedGeneration != generation:
+		return fmt.Errorf("ReconciliationFailed is of generation %d, not %d", failed.ObservedGeneration, generation)
+	case resolved == nil || resolved.Status != metav1.ConditionTrue || resolved.Reason != string(ptahv1alpha1.ReasonCommitResolved):
+		return fmt.Errorf("ArtifactResolved is %+v, want CommitResolved", resolved)
+	case resolved.ObservedGeneration != generation:
+		return fmt.Errorf("ArtifactResolved is of generation %d, not %d", resolved.ObservedGeneration, generation)
+	}
+	for _, condition := range conditions {
+		if strings.Contains(condition.Message, gitCAPinRefusal) {
+			return fmt.Errorf("%s still says %q", condition.Type, condition.Message)
+		}
 	}
 	return nil
 }

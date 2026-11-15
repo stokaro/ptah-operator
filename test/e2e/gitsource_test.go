@@ -1,12 +1,15 @@
 package e2e
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,6 +23,7 @@ import (
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/sourcebinding"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrefusal"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
@@ -336,8 +340,11 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := certificate.Verify(x509.VerifyOptions{DNSName: host, Roots: roots}); err != nil {
-		t.Fatalf("the certificate does not verify for %s: %v", host, err)
+	// The CA pin row reads the server under its cluster domain name.
+	for _, name := range []string{host, host + ".cluster.local"} {
+		if _, err := certificate.Verify(x509.VerifyOptions{DNSName: name, Roots: roots}); err != nil {
+			t.Fatalf("the certificate does not verify for %s: %v", name, err)
+		}
 	}
 	if _, err := certificate.Verify(x509.VerifyOptions{DNSName: "git.example.com", Roots: roots}); err == nil {
 		t.Fatal("the certificate verifies for another host")
@@ -383,5 +390,173 @@ func TestGitServerKeysFitTogether(t *testing.T) {
 	}
 	if keys.Token == "" || grantDigest(keys.CAPEM) == grantDigest(keys.KnownHosts) {
 		t.Fatal("the token or the grants are empty")
+	}
+}
+
+// countingExecutor counts the commands the runner asked it to run and runs
+// none of them.
+type countingExecutor struct{ calls int }
+
+func (e *countingExecutor) Execute(context.Context, runner.CommandSpec, io.Writer, io.Writer) (int, error) {
+	e.calls++
+	return 1, nil
+}
+
+// The words the CA pin row waits for are the runner's: its refusal, at a
+// Resolve, of the access that row's Resolve Job carries -- the token by file,
+// both grants and no CA. The runner refuses it under the code the row reads
+// before it starts anything, in a result the protocol accepts and would refuse
+// with a child's exit code, and the same access without the CA grant goes on
+// to start Ptah, so the refusal is the pin's.
+func TestGitCAPinRefusalIsTheRunnersRefusalOfThePin(t *testing.T) {
+	t.Parallel()
+	const qualified = "e2e-git.ptah-test.svc.cluster.local"
+	password := filepath.Join(t.TempDir(), "password")
+	if err := os.WriteFile(password, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const operationID = "resolve-git-ca-pin"
+	environment := []string{
+		runner.EnvOperationID + "=" + operationID,
+		runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion),
+		runner.EnvGitURL + "=https://" + qualified + "/" + gitRepository,
+		runner.EnvGitBranch + "=main",
+		runner.EnvGitPath + "=" + gitSchemaPath,
+		runner.EnvGitSelects + "=file",
+		runner.EnvGitPasswordFile + "=" + password,
+		runner.EnvGitHostGrant + "=" + qualified,
+	}
+	resolve := func(environment []string) (runner.Result, int) {
+		executor := &countingExecutor{}
+		result := runner.Run(t.Context(), runner.Config{
+			Operation: runner.OperationResolve, Environment: environment, Executor: executor, TempDir: t.TempDir(),
+		})
+		return result, executor.calls
+	}
+	pinned, calls := resolve(append(slices.Clone(environment), runner.EnvGitCASHA256Grant+"="+testContentDigest))
+	if pinned.Error == nil || pinned.Error.Code+": " != gitAccessRefused || !strings.Contains(pinned.Error.Message, gitCAPinRefusal) ||
+		pinned.ChildExitCode != -1 || calls != 0 {
+		t.Fatalf("Run() = %#v after %d commands, and the row waits for %q after %q", pinned, calls, gitCAPinRefusal, gitAccessRefused)
+	}
+	frame, err := runner.MarshalFrame(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.ParseResultFor(frame, runner.OperationResolve, operationID); err != nil {
+		t.Fatalf("the protocol refused the runner's refusal: %v", err)
+	}
+	ran := pinned
+	ran.ChildExitCode = 1
+	if frame, err := runner.MarshalFrame(ran); err == nil {
+		if _, err := runner.ParseResultFor(frame, runner.OperationResolve, operationID); err == nil {
+			t.Fatal("the protocol accepted the access code on a result whose child ran")
+		}
+	}
+	if result, calls := resolve(environment); calls == 0 {
+		t.Fatalf("the same access without the pin started nothing: %#v", result)
+	}
+}
+
+// The statuses the Git CA pin row's two waits matched on kind: the refusal at
+// generation 1, and the plan once the source selected the CA, at generation 2.
+const (
+	gitCAPinRefusedReading   = "git-ca-pin-refused-schema.json"
+	gitCAPinRecoveredReading = "git-ca-pin-recovered-schema.json"
+)
+
+// gitCAPinMutantMessage is what ReconciliationFailed said on a kind run of
+// the same row with the runner's CA pin check removed: Ptah started with the
+// credential and failed its handshake under the system roots, before the
+// server saw a request.
+const gitCAPinMutantMessage = `child_exit: ptah exited with code 2: list the refs of git+https://e2e-git.ptah-test-a-1-36-4-local-e269ddc069-85945-1464fa9372.svc.cluster.local/acme/app.git: Get "https://e2e-git.ptah-test-a-1-36-4-local-e269ddc069-85945-1464fa9372.svc.cluster.local/acme/app.git/info/refs?service=git-upload-pack": tls: failed to verify certificate: x509: certificate signed by unknown authority`
+
+func TestGitCAPinRefusedNeedsTheRunnersRefusalAtTheGeneration(t *testing.T) {
+	t.Parallel()
+	refused, generation := readReachabilityReading(t, gitCAPinRefusedReading)
+	if err := gitCAPinRefused(refused, generation); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, recoveredGeneration := readReachabilityReading(t, gitCAPinRecoveredReading); gitCAPinRefused(recovered, recoveredGeneration) == nil {
+		t.Error("gitCAPinRefused accepted the schema once its source selected the CA")
+	}
+	failed := ptahv1alpha1.ConditionReconciliationFailed
+	for name, change := range map[string]func(*metav1.Condition){
+		"not failed": func(condition *metav1.Condition) {
+			condition.Status = metav1.ConditionFalse
+		},
+		"a refusal of an older generation": func(condition *metav1.Condition) {
+			condition.ObservedGeneration--
+		},
+		// What the manager writes for a source it refuses before any Job.
+		"the reason of a source the manager refused": func(condition *metav1.Condition) {
+			condition.Reason = string(ptahv1alpha1.ReasonConfigurationError)
+		},
+		// The same words from a fetch, which reports under its own code.
+		"the pin refused by a fetch": func(condition *metav1.Condition) {
+			condition.Message = strings.Replace(condition.Message, gitAccessRefused, runner.CodeGitSourceRefused+": ", 1)
+		},
+		"another access the runner refused": func(condition *metav1.Condition) {
+			condition.Message = gitAccessRefused + "the Git credential is not granted for the source's host"
+		},
+		"the known hosts pin": func(condition *metav1.Condition) {
+			condition.Message = gitAccessRefused + "a Git known hosts digest grant was supplied without the known hosts: " +
+				"the credential's Secret pins knownHostsSHA256, so the source has to select it in transport.knownHostsFrom"
+		},
+		"a CA other than the one granted": func(condition *metav1.Condition) {
+			condition.Message = gitAccessRefused + "the Git certificate authority is not the one the credential's owner granted"
+		},
+		// What the schema said on kind with the runner's check removed: Ptah
+		// ran with the credential and failed its handshake under the system
+		// roots.
+		"the handshake Ptah failed without the CA": func(condition *metav1.Condition) {
+			condition.Message = gitCAPinMutantMessage
+		},
+	} {
+		if gitCAPinRefused(changedCondition(t, refused, failed, change), generation) == nil {
+			t.Errorf("gitCAPinRefused accepted %s", name)
+		}
+	}
+	if gitCAPinRefused(nil, generation) == nil {
+		t.Error("gitCAPinRefused accepted no condition")
+	}
+}
+
+func TestGitCAPinClearedNeedsTheFailureClearedAndTheCommitAtTheGeneration(t *testing.T) {
+	t.Parallel()
+	recovered, generation := readReachabilityReading(t, gitCAPinRecoveredReading)
+	if err := gitCAPinCleared(recovered, generation); err != nil {
+		t.Fatal(err)
+	}
+	refused, _ := readReachabilityReading(t, gitCAPinRefusedReading)
+	failed, resolved := ptahv1alpha1.ConditionReconciliationFailed, ptahv1alpha1.ConditionArtifactResolved
+	for name, conditions := range map[string][]metav1.Condition{
+		"the refused schema": refused,
+		"no condition":       nil,
+		"still failed": changedCondition(t, recovered, failed, func(condition *metav1.Condition) {
+			condition.Status = metav1.ConditionTrue
+		}),
+		"cleared at an older generation": changedCondition(t, recovered, failed, func(condition *metav1.Condition) {
+			condition.ObservedGeneration--
+		}),
+		"cleared by a settled proof": changedCondition(t, recovered, failed, func(condition *metav1.Condition) {
+			condition.Reason = string(ptahv1alpha1.ReasonProofSettled)
+		}),
+		"no commit resolved": changedCondition(t, recovered, resolved, func(condition *metav1.Condition) {
+			condition.Status = metav1.ConditionFalse
+		}),
+		"an HTTPS download resolved": changedCondition(t, recovered, resolved, func(condition *metav1.Condition) {
+			condition.Reason = string(ptahv1alpha1.ReasonDownloadVerified)
+		}),
+		"a commit resolved at an older generation": changedCondition(t, recovered, resolved, func(condition *metav1.Condition) {
+			condition.ObservedGeneration--
+		}),
+		"the refusal left on another condition": changedCondition(t, recovered, ptahv1alpha1.ConditionPlanReady,
+			func(condition *metav1.Condition) {
+				condition.Message = gitAccessRefused + gitCAPinRefusal
+			}),
+	} {
+		if gitCAPinCleared(conditions, generation) == nil {
+			t.Errorf("gitCAPinCleared accepted %s", name)
+		}
 	}
 }
