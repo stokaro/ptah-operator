@@ -14,6 +14,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -547,4 +548,102 @@ func TestWatchRecorderReportsAReplayPastItsBound(t *testing.T) {
 			t.Fatalf("alive reported %v past the replay's overrun, want %q", err, want)
 		}
 	})
+}
+
+// TestWatchRecorderReplaysASecondGapOnTheFirst runs two refusals in one
+// history. The second replay starts from what the first one replayed, so a
+// recorder that dropped the first gap's changes from its state would find the
+// collection at the second resume point unlike its history.
+func TestWatchRecorderReplaysASecondGapOnTheFirst(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		refusal := func(from, start int) watch.Event {
+			return watch.Event{Type: watch.Error, Object: &metav1.Status{
+				Status: metav1.StatusFailure, Code: http.StatusGone, Reason: metav1.StatusReasonExpired,
+				Message: fmt.Sprintf("too old resource version: %d (%d)", from, start),
+			}}
+		}
+		server := &scriptedAPIServer{
+			segments: [][]watch.Event{
+				{{Type: watch.Modified, Object: watchTestJob("b", "12")}},
+				{refusal(12, 15)},
+				{{Type: watch.Modified, Object: watchTestJob("a", "16")}},
+				{refusal(16, 20)},
+				{{Type: watch.Modified, Object: watchTestJob("c", "21")}},
+			},
+			at: func(revision uint64) ([]*batchv1.Job, string, error) {
+				a, b := watchTestJob("a", "5"), watchTestJob("b", "12")
+				if revision >= 14 {
+					b = watchTestJob("b", "14")
+				}
+				if revision >= 16 {
+					a = watchTestJob("a", "16")
+				}
+				return []*batchv1.Job{a, b, watchTestJob("c", "9")}, strconv.FormatUint(revision, 10), nil
+			},
+		}
+		initial := &batchv1.JobList{
+			ListMeta: metav1.ListMeta{ResourceVersion: "10"},
+			Items:    []batchv1.Job{*watchTestJob("a", "5"), *watchTestJob("b", "8"), *watchTestJob("c", "9")},
+		}
+		if _, failure := server.run(t, initial, nil); failure != nil {
+			t.Fatalf("the recorder failed: %v", failure)
+		}
+		if want := []string{"10", "12", "15", "16", "20", "21"}; !slices.Equal(server.watched, want) {
+			t.Errorf("watched from %v, want %v", server.watched, want)
+		}
+		if want := slices.Concat(revisionsFrom(12, 15), revisionsFrom(16, 20)); !slices.Equal(server.listed, want) {
+			t.Errorf("listed the collection at %v, want %v", server.listed, want)
+		}
+		if want := []watchGap{{From: "12", To: "15", Revisions: 3, Events: 1}, {From: "16", To: "20", Revisions: 4}}; !slices.Equal(server.recorder.gaps(), want) {
+			t.Errorf("recorded the gaps %+v, want %+v", server.recorder.gaps(), want)
+		}
+		want := []replayedEvent{
+			{watch.Modified, "b", "12", "12"}, {watch.Modified, "b", "14", "14"},
+			{watch.Modified, "a", "16", "16"}, {watch.Modified, "c", "21", "21"},
+		}
+		if got := replayedEvents(server.recorder.snapshot()); !slices.Equal(got, want) {
+			t.Errorf("recorded the events %+v, want %+v", got, want)
+		}
+	})
+}
+
+// TestWatchRecorderRefusesAStartItCannotRead holds run to the list it starts
+// from: one without a resourceVersion has no position to watch from, and one
+// of another kind is not the collection's history.
+func TestWatchRecorderRefusesAStartItCannotRead(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		initial client.ObjectList
+		want    string
+	}{
+		{
+			name: "a list without a resourceVersion", initial: &batchv1.JobList{},
+			want: "the jobs list the watch starts from carries no resourceVersion",
+		},
+		{
+			name: "a list of another kind",
+			initial: &corev1.PodList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "10"},
+				Items:    []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Namespace: watchTestNamespace, Name: "p", UID: "uid-p"}}},
+			},
+			want: "read the jobs list the watch starts from: the list holds a *v1.Pod, which is not the kind watched",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := &scriptedAPIServer{}
+			r := newWatchRecorder[*batchv1.Job]("jobs", watchTestNamespace, false, server.client(),
+				func() client.ObjectList { return &batchv1.JobList{} })
+			server.recorder = r
+			r.run(test.initial)
+			if err := r.alive(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("the recorder reported %v, want %q", err, test.want)
+			}
+			if len(server.watched) != 0 {
+				t.Errorf("watched from %v, want no watch", server.watched)
+			}
+		})
+	}
 }
