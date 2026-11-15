@@ -25,7 +25,8 @@ const (
 	// state-read alert, counted from the last failure: the rule's 60-second
 	// window and the delivery allowance. A failed read explains what the quiet
 	// window sees of that alert for this long after the scrape before it, so
-	// the window's native history starts this long before its first look.
+	// the window's native history starts this long before the earliest
+	// instant it saw (alQuietLookback).
 	alViewReadResolution = alViewReadWindow + alDetectionSlack
 	// alQuietCloseWait bounds the wait for a history that reads the state past
 	// the window's close: a declared run still open then ends within the hold,
@@ -33,7 +34,13 @@ const (
 	alQuietCloseWait = alStateReadGapHold + 2*alScrapeInterval + alScrapeTimeout
 )
 
-var errAlQuietWindowOpen = errors.New("the native history has not read the state past the close of the quiet window")
+var (
+	errAlQuietWindowOpen = errors.New("the native history has not read the state past the close of the quiet window")
+	// errAlQuietIncident is an answer that names an alert the quiet window
+	// does not allow. Every other error from alQuietFiring is an answer
+	// Prometheus did not give.
+	errAlQuietIncident = errors.New("an alert the quiet window does not allow is firing")
+)
 
 type alNegativeState struct {
 	claim                                    alStalledClaim
@@ -227,7 +234,7 @@ func alQuietFiring(body []byte) (bool, error) {
 	allowed := map[string]string{"__name__": "ALERTS", "alertname": alViewReadAlert, "alertstate": "firing", "severity": "warning"}
 	for _, series := range answer.Data.Result {
 		if !maps.Equal(series.Metric, allowed) {
-			return false, fmt.Errorf("%s is firing with labels %v", series.Metric["alertname"], series.Metric)
+			return false, fmt.Errorf("%w: %s with labels %v", errAlQuietIncident, series.Metric["alertname"], series.Metric)
 		}
 	}
 	return len(answer.Data.Result) != 0, nil
@@ -250,15 +257,48 @@ type alQuietWindowHistory struct {
 	through time.Time
 }
 
+// alQuietInstants are the instants the quiet window saw the state-read alert:
+// each answer that had it firing, and each start, receipt and, for a
+// resolution, end of its notifications.
+func alQuietInstants(seen alQuietSeen) []time.Time {
+	instants := slices.Clone(seen.firing)
+	for _, d := range seen.notifications {
+		instants = append(instants, d.StartsAt, d.ReceivedAt)
+		if d.Status == "resolved" {
+			instants = append(instants, d.EndsAt)
+		}
+	}
+	return instants
+}
+
+// alQuietLookback is where the quiet window's native history starts: the
+// state-read alert's resolution deadline before the earliest of the first
+// look and every instant the window saw the alert. A resolution carries the
+// start of the firing it ends, and declared reads that keep the alert firing
+// can place that start before the window; the read that explains it lies up
+// to that deadline earlier still. A chain too long for one range query is
+// refused by the history reader's own bound.
+func alQuietLookback(firstLook time.Time, seen alQuietSeen) time.Time {
+	earliest := firstLook
+	for _, at := range alQuietInstants(seen) {
+		if at.Before(earliest) {
+			earliest = at
+		}
+	}
+	return earliest.Add(-alViewReadResolution)
+}
+
 // alReadQuietWindowHistory judges the leader's state reads from from to
 // queriedAt. Each family's census is read as the unresolved row reads its
 // gauge: every manager scrapes without a gap, a scrape without the gauge counts
 // only where the leader declared it, with its view at 0 and its read-failure
 // counter risen, a run of declared reads ends within the rules' hold, and every
-// reading reports a synchronized view. Here the census must read zero
-// throughout, as it did before the window, and the counter, which the rule
-// reads on every manager, must not rise on a follower.
-func alReadQuietWindowHistory(groups map[string][]byte, pods []string, leader string, from, queriedAt time.Time) (alQuietWindowHistory, error) {
+// reading reports a synchronized view. From the first look on, the census must
+// read zero, as the API said it was before the window. What it read before
+// the first look belongs to the row before, whose incident the lookback can
+// reach. The counter, which the rule reads on every manager, must not rise on
+// a follower.
+func alReadQuietWindowHistory(groups map[string][]byte, pods []string, leader string, from, firstLook, queriedAt time.Time) (alQuietWindowHistory, error) {
 	var q alQuietWindowHistory
 	census, err := alAdmissionNativeMatrix(groups[alUnresolvedMetric])
 	if err != nil {
@@ -276,7 +316,7 @@ func alReadQuietWindowHistory(groups map[string][]byte, pods []string, leader st
 		if err != nil {
 			return q, err
 		}
-		h, err := alReadUnresolvedHistory(gauge, groups[alViewSyncedMetric], groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, from, queriedAt)
+		h, err := alReadUnresolvedHistoryJudgedFrom(gauge, groups[alViewSyncedMetric], groups[alViewReadFailuresMetric], groups["up"], groups["scrape_duration_seconds"], pods, leader, family, from, firstLook, queriedAt)
 		if err != nil {
 			return q, fmt.Errorf("%s census: %w", family, err)
 		}
@@ -303,14 +343,7 @@ func alQuietWindowVerdict(h alQuietWindowHistory, seen alQuietSeen, closed time.
 	if h.through.Before(closed) {
 		return errAlQuietWindowOpen
 	}
-	instants := slices.Clone(seen.firing)
-	for _, d := range seen.notifications {
-		instants = append(instants, d.StartsAt, d.ReceivedAt)
-		if d.Status == "resolved" {
-			instants = append(instants, d.EndsAt)
-		}
-	}
-	for _, at := range instants {
+	for _, at := range alQuietInstants(seen) {
 		if !slices.ContainsFunc(h.declared, func(r alDeclaredRead) bool {
 			return r.lower.Before(at) && !at.After(r.lower.Add(alViewReadResolution))
 		}) {

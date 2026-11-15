@@ -173,8 +173,8 @@ func (r quietReading) groups(plan quietPlan) map[string][]byte {
 }
 
 // The window's timeline around the stored failed read. The first look comes
-// after the lookback the census reads zero through; the window closes before
-// the last scrape the reading holds.
+// after the read, and the window closes before the last scrape the reading
+// holds.
 type quietTimeline struct {
 	firstLook, closed, queriedAt time.Time
 	seen                         alQuietSeen
@@ -205,9 +205,12 @@ func quietInstallation() alQuietInstallation {
 	return alQuietInstallation{receiver: "sink", namespace: quietNamespace, metricsService: quietService}
 }
 
+// read reads the history the row would read for this timeline: from the
+// lookback the row computes from it, with the census judged from its first
+// look.
 func (r quietReading) read(plan quietPlan, timeline quietTimeline) (alQuietWindowHistory, error) {
 	r.t.Helper()
-	return alReadQuietWindowHistory(r.groups(plan), []string{quietLeader, quietFollower}, quietLeader, timeline.firstLook.Add(-alViewReadResolution), timeline.queriedAt)
+	return alReadQuietWindowHistory(r.groups(plan), []string{quietLeader, quietFollower}, quietLeader, alQuietLookback(timeline.firstLook, timeline.seen), timeline.firstLook, timeline.queriedAt)
 }
 
 func TestAlQuietWindowAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T) {
@@ -225,7 +228,7 @@ func TestAlQuietWindowAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T) {
 	if firing, err := alQuietFiring([]byte(quietAlertAnswer)); err != nil || !firing {
 		t.Fatalf("the CI answer is not the allowed alert: %v, %v", firing, err)
 	}
-	h, err := alReadQuietWindowHistory(reading.groups(quietDeclared()), []string{quietLeader, quietFollower}, quietLeader, timeline.firstLook.Add(-alViewReadResolution), timeline.queriedAt)
+	h, err := reading.read(quietDeclared(), timeline)
 	want := []alDeclaredRead{{lower: quietScrape(t, "1794740709.670"), scrape: quietScrape(t, quietFailed)}}
 	if err != nil || !reflect.DeepEqual(h.declared, want) || !h.through.Equal(quietScrape(t, "1794740783.831")) {
 		t.Fatalf("history across the declared failed read = %+v, %v", h, err)
@@ -289,12 +292,6 @@ func TestAlQuietWindowAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T) {
 		{name: "census counted two records", mutate: func(p *quietPlan) {
 			p.census = map[string]map[string]string{"schema": {quietScrapeAfter(1): "2"}}
 		}, want: "unresolved gauge acquired another incident"},
-		{name: "census changed in the lookback", mutate: func(p *quietPlan) {
-			p.census = map[string]map[string]string{"migration": {"1794740619.670": "1"}}
-		}, want: "the migration unresolved census changed during the quiet window"},
-		{name: "census present before the lookback", mutate: func(p *quietPlan) {
-			p.census = map[string]map[string]string{"migration": {"1794740604.670": "1"}}
-		}, want: "an unresolved incident preceded fault injection"},
 		{name: "view unsynchronized at the recovery read", mutate: func(p *quietPlan) {
 			p.view = map[string]string{quietScrapeAfter(1): "0"}
 		}, want: "unresolved gauge was read without a synchronized view"},
@@ -333,6 +330,118 @@ func TestAlQuietWindowAcceptsTheCIReadFailureOnlyWhenDeclared(t *testing.T) {
 			t.Fatalf("a history that stops reading before the close was judged: %v", err)
 		}
 	})
+	// The census before the first look is the preceding row's: here it reads
+	// that row's incident from the lookback's baseline, 11:03:14.670, to the
+	// last scrape before the first look, 11:05:09.670. The window's own census
+	// is still zero throughout, and a first look before that last scrape makes
+	// it the window's.
+	t.Run("preceding incident in the lookback", func(t *testing.T) {
+		plan := quietDeclared()
+		plan.census = map[string]map[string]string{"migration": {}}
+		for n := -24; n < 0; n++ {
+			plan.census["migration"][quietScrapeAfter(n)] = "1"
+		}
+		open := 0
+		for _, s := range reading.series(plan) {
+			if s.Metric["__name__"] == alUnresolvedMetric && s.Metric["family"] == "migration" {
+				for _, sample := range s.Values {
+					if _, planned := plan.census["migration"][string(sample[0])]; planned && string(sample[1]) == `"1"` {
+						open++
+					}
+				}
+			}
+		}
+		if open != 24 || !quietScrape(t, quietScrapeAfter(-24)).Equal(quietScrape(t, "1794740594.670")) {
+			t.Fatalf("the plan placed the preceding incident at %d scrapes, want 24 from the baseline", open)
+		}
+		h, err := reading.read(plan, timeline)
+		if err != nil || alQuietWindowVerdict(h, timeline.seen, timeline.closed) != nil {
+			t.Fatalf("an incident the preceding row resolved before the first look was refused: %+v, %v", h, err)
+		}
+		early := timeline
+		early.firstLook = quietScrape(t, quietScrapeAfter(-1)).Add(-time.Millisecond)
+		if _, err := reading.read(plan, early); err == nil || !strings.Contains(err.Error(), "the migration unresolved census changed during the quiet window") {
+			t.Fatalf("a census the window itself read was not judged: %v", err)
+		}
+	})
+}
+
+// Single declared reads 55 seconds apart keep the alert firing from
+// 11:03:24.974, before the window, to its resolution inside the window. The resolution carries that start, so the history has to reach the
+// read that explains it, more than the resolution deadline before the first
+// look, and through the preceding row's incident, which the census still
+// reads at the history's baseline.
+func TestAlQuietWindowReachesTheReadBehindAResolvedStart(t *testing.T) {
+	t.Parallel()
+	reading := newQuietReading(t)
+	first, second, third := "1794740599.670", "1794740654.670", "1794740709.670"
+	plan := quietPlan{failed: []string{first, second, third}, rises: map[string][]string{quietLeader: {first, second, third}}}
+	timeline := newQuietTimeline(t)
+	timeline.firstLook = quietInstant(t, "2026-11-15T11:05:20Z")
+	resolved := timeline.seen.notifications[1]
+	resolved.StartsAt, resolved.EndsAt, resolved.ReceivedAt = quietInstant(t, "2026-11-15T11:03:24.974Z"), quietInstant(t, "2026-11-15T11:06:04.974Z"), quietInstant(t, "2026-11-15T11:06:09.985Z")
+	timeline.seen = alQuietSeen{firing: []time.Time{quietInstant(t, "2026-11-15T11:05:21Z"), quietInstant(t, "2026-11-15T11:06:00Z")}, notifications: []alDelivery{resolved}}
+	if !quietInstallation().allows(resolved) {
+		t.Fatal("the chain's resolution is not one the window allows")
+	}
+	lookback := alQuietLookback(timeline.firstLook, timeline.seen)
+	if !lookback.Equal(resolved.StartsAt.Add(-alViewReadResolution)) || !lookback.Before(timeline.firstLook.Add(-alViewReadResolution)) {
+		t.Fatalf("the lookback %s does not start from the resolution's start", lookback)
+	}
+	h, err := reading.read(plan, timeline)
+	if err != nil || len(h.declared) != 3 || !h.declared[0].scrape.Equal(quietScrape(t, first)) {
+		t.Fatalf("history across the chain = %+v, %v", h, err)
+	}
+	if err := alQuietWindowVerdict(h, timeline.seen, timeline.closed); err != nil {
+		t.Fatalf("a chain of declared reads that kept the alert firing into the window was refused: %v", err)
+	}
+	// A chain too long for one range query is refused by the reader's bound.
+	long := timeline
+	long.seen.notifications = slices.Clone(long.seen.notifications)
+	long.seen.notifications[0].StartsAt = timeline.queriedAt.Add(-alAdmissionHistoryWindow + alViewReadResolution)
+	if _, err := reading.read(plan, long); err == nil || !strings.Contains(err.Error(), "does not cover its interval") {
+		t.Fatalf("a lookback beyond one range query was read: %v", err)
+	}
+}
+
+// What the lookback is for: the alert fires at the first look, and the read
+// that explains it lies before the baseline of a history started there. Only
+// the lookback keeps that read. The read here is the leader scrape at
+// 11:04:14.670, and the first look comes either 15 seconds after it or at
+// the verdict's own deadline, 105 seconds after the scrape before it.
+func TestAlQuietWindowLookbackHoldsTheReadBeforeTheFirstLook(t *testing.T) {
+	t.Parallel()
+	reading := newQuietReading(t)
+	failed := quietScrapeAfter(-12)
+	plan := quietPlan{failed: []string{failed}, rises: map[string][]string{quietLeader: {failed}}}
+	read := quietScrape(t, failed)
+	for name, firstLook := range map[string]time.Time{
+		"15 seconds after the read": read.Add(15*time.Second + 330*time.Millisecond),
+		"at the deadline":           read.Add(-alScrapeInterval + alViewReadResolution),
+	} {
+		t.Run(name, func(t *testing.T) {
+			timeline := newQuietTimeline(t)
+			timeline.firstLook, timeline.closed = firstLook, quietInstant(t, "2026-11-15T11:06:05Z")
+			timeline.seen = alQuietSeen{firing: []time.Time{firstLook}}
+			// A history from the first look takes its baseline at the last
+			// scrape two intervals before it, which has to be later than the
+			// read.
+			if next := read.Add(alScrapeInterval); next.After(firstLook.Add(-2 * alScrapeInterval)) {
+				t.Fatal("the first look does not leave the read before the baseline of a history started there")
+			}
+			unread, err := alReadQuietWindowHistory(reading.groups(plan), []string{quietLeader, quietFollower}, quietLeader, firstLook, firstLook, timeline.queriedAt)
+			if err != nil || len(unread.declared) != 0 || alQuietWindowVerdict(unread, timeline.seen, timeline.closed) == nil {
+				t.Fatalf("a history from the first look still explained the alert: %+v, %v", unread, err)
+			}
+			h, err := reading.read(plan, timeline)
+			if err != nil || len(h.declared) != 1 || !h.declared[0].scrape.Equal(read) {
+				t.Fatalf("history behind the first look = %+v, %v", h, err)
+			}
+			if err := alQuietWindowVerdict(h, timeline.seen, timeline.closed); err != nil {
+				t.Fatalf("the read before the first look does not explain the alert firing at it: %v", err)
+			}
+		})
+	}
 }
 
 func TestAlQuietWindowVerdictNeedsADeclaredReadForEveryInstant(t *testing.T) {
@@ -425,21 +534,27 @@ func TestAlQuietFiringAllowsOnlyTheStateReadAlert(t *testing.T) {
 	if firing, err := alQuietFiring(answer(allowed)); err != nil || !firing {
 		t.Fatalf("the state-read alert = %v, %v", firing, err)
 	}
-	for name, body := range map[string][]byte{
-		"unresolved Apply": answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedApply","alertstate":"firing","family":"migration","severity":"critical"}`),
-		"view not synchronized": answer(allowed,
-			`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewNotSynced","alertstate":"firing","severity":"warning"}`),
-		"operation stalled":                    answer(`{"__name__":"ALERTS","alertname":"PtahOperatorOperationStalled","alertstate":"firing","family":"schema","operation":"Resolve","severity":"warning"}`),
-		"state-read alert with a family":       answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewReadFailures","alertstate":"firing","family":"schema","severity":"warning"}`),
-		"state-read alert at another severity": answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewReadFailures","alertstate":"firing","severity":"critical"}`),
-		"null result":                          []byte(`{"status":"success","data":{"resultType":"vector","result":null}}`),
-		"range answer":                         []byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`),
-		"error answer":                         []byte(`{"status":"error","data":{"resultType":"vector","result":[]}}`),
-		"not JSON":                             []byte(`ALERTS`),
+	// An answer that names another alert is an incident. The rest are
+	// answers Prometheus did not give, which the row reports as such.
+	for _, row := range []struct {
+		name     string
+		body     []byte
+		incident bool
+	}{
+		{"unresolved Apply", answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedApply","alertstate":"firing","family":"migration","severity":"critical"}`), true},
+		{"view not synchronized", answer(allowed, `{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewNotSynced","alertstate":"firing","severity":"warning"}`), true},
+		{"operation stalled", answer(`{"__name__":"ALERTS","alertname":"PtahOperatorOperationStalled","alertstate":"firing","family":"schema","operation":"Resolve","severity":"warning"}`), true},
+		{"state-read alert with a family", answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewReadFailures","alertstate":"firing","family":"schema","severity":"warning"}`), true},
+		{"state-read alert at another severity", answer(`{"__name__":"ALERTS","alertname":"PtahOperatorUnresolvedViewReadFailures","alertstate":"firing","severity":"critical"}`), true},
+		{"null result", []byte(`{"status":"success","data":{"resultType":"vector","result":null}}`), false},
+		{"range answer", []byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`), false},
+		{"error answer", []byte(`{"status":"error","data":{"resultType":"vector","result":[]}}`), false},
+		{"not JSON", []byte(`ALERTS`), false},
 	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := alQuietFiring(body); err == nil {
-				t.Fatal("an answer the quiet window cannot allow was accepted")
+		t.Run(row.name, func(t *testing.T) {
+			_, err := alQuietFiring(row.body)
+			if err == nil || errors.Is(err, errAlQuietIncident) != row.incident {
+				t.Fatalf("an answer the quiet window cannot allow was accepted or misread: %v", err)
 			}
 		})
 	}
@@ -490,8 +605,10 @@ func TestAlQuietInstallationAllowsOnlyItsStateReadNotifications(t *testing.T) {
 	}
 }
 
-// The window's native history runs from the lookback before the first look
-// to the read after the close, and one range query has to hold all of it.
+// Without a chain of declared reads, the window's native history runs from
+// the resolution deadline before the first look to the read after the close,
+// and one range query has to hold all of it. A chain moves the lookback
+// earlier, and the reader refuses one that no longer fits.
 func TestAlQuietWindowFitsOneNativeHistory(t *testing.T) {
 	t.Parallel()
 	if alViewReadResolution != 105*time.Second {

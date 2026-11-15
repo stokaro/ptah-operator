@@ -63,6 +63,17 @@ type alDeclaredRead struct{ lower, scrape time.Time }
 // resolved the incident and fails the history rather than stretching what it
 // proves.
 func alReadUnresolvedHistory(gaugeBody, syncedBody, failuresBody, upBody, durationBody []byte, pods []string, leader, family string, started, queriedAt time.Time) (alUnresolvedHistory, error) {
+	return alReadUnresolvedHistoryJudgedFrom(gaugeBody, syncedBody, failuresBody, upBody, durationBody, pods, leader, family, started, time.Time{}, queriedAt)
+}
+
+// alReadUnresolvedHistoryJudgedFrom reads the history as
+// alReadUnresolvedHistory does, and judges the census only from censusFrom
+// on when that is set. Every scrape from the baseline on is still accounted
+// for: a missing census only where the leader declared it, a synchronized
+// view and an unchanged counter where it read the state, and a run of
+// declared reads within the hold. What a scrape before censusFrom counted
+// belongs to whatever ran before it and is not read.
+func alReadUnresolvedHistoryJudgedFrom(gaugeBody, syncedBody, failuresBody, upBody, durationBody []byte, pods []string, leader, family string, started, censusFrom, queriedAt time.Time) (alUnresolvedHistory, error) {
 	h := alUnresolvedHistory{}
 	if family != "schema" && family != "migration" {
 		return h, errors.New("unknown unresolved family")
@@ -169,11 +180,15 @@ func alReadUnresolvedHistory(gaugeBody, syncedBody, failuresBody, upBody, durati
 		if !gapFrom.IsZero() && completed.Sub(gapFrom) >= alStateReadGapHold {
 			return h, errAlReadGapOutlastedHold
 		}
+		if v.at.Before(censusFrom) {
+			gapFrom, lastRead = time.Time{}, v.at
+			continue
+		}
 		if v.value > 1 {
 			return h, errors.New("unresolved gauge acquired another incident")
 		}
 		if !v.at.After(started) && v.value != 0 {
-			return h, errors.New("an unresolved incident preceded fault injection")
+			return h, errors.New("an unresolved incident was open when the history started")
 		}
 		if v.value == 1 {
 			if !h.cleared.IsZero() {
