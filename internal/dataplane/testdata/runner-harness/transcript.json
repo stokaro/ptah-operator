@@ -8652,7 +8652,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:7099412015016c3e963f7700ed237e044e2771480158582d9cf231202e3757a1",
-      "planContentDigest": "sha256:d0d72f785ecf1c1c86b0b9dc04ca97b76d4a4d710373eaaf3b68271a4e2303a1",
+      "planContentDigest": "sha256:d88fded8a39c47f9dd8e63b52727fe5f9b2ffd9ede5b2c80326df62608a609d3",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7a278b43d0eb3c3ecc2432625a8edfb7ae2645fe72df50352780ddf00d748407"
@@ -8864,7 +8864,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "operation": "plan",
       "operationId": "sha256:da958174cc68ee5d30228057033b8f5b9429e4b2f435543cd8d07f46e7202566",
-      "planContentDigest": "sha256:d0d72f785ecf1c1c86b0b9dc04ca97b76d4a4d710373eaaf3b68271a4e2303a1",
+      "planContentDigest": "sha256:d88fded8a39c47f9dd8e63b52727fe5f9b2ffd9ede5b2c80326df62608a609d3",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -8976,7 +8976,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4114ba6eca5d1eb7580a19531edba2188f4ea259ca993ccb512d71a01a335449",
-      "planContentDigest": "sha256:b679df5a61f5aaaf839b6f8bd1150094701ca1bce315c0b51e3f37df5f10db5e",
+      "planContentDigest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7fe0cb2bc3f973c0077d7dec9b8f0978a5776b69d32af02e01b338f9d6eea55b"
@@ -9188,7 +9188,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d69fe2f1f4dc64ff9cda70a036439aa5bf4335896af92b54d0e049f2ec5e3f44",
-      "planContentDigest": "sha256:b679df5a61f5aaaf839b6f8bd1150094701ca1bce315c0b51e3f37df5f10db5e",
+      "planContentDigest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9300,7 +9300,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:813d37e52ae926d1dd6d7a5d91e6244949044cad7df3ef7fac8efe85bbcbd180",
-      "planContentDigest": "sha256:42ba9b858e9c019c43adda445200cbc2402b699fd9232f8835c26b626720ed7f",
+      "planContentDigest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cc9f526a9f4d476d5ad30e0d742482dd5acca572f8b3d26f60a3d293f64fc902"
@@ -9512,7 +9512,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:4b48337a46aa04cd8fab7c9822e4f5cbc99b714df8bda6e3fba7cede92a155be",
-      "planContentDigest": "sha256:42ba9b858e9c019c43adda445200cbc2402b699fd9232f8835c26b626720ed7f",
+      "planContentDigest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9624,7 +9624,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:2d60a967b00a9733bf1c6d00d0d17e24d73cad5edf338ba64c759511be20e0cc",
-      "planContentDigest": "sha256:2b8afb469ec1782efff0b3dc225bcffb83b5e94db387eab7e89be85800f65bd3",
+      "planContentDigest": "sha256:a64a43acfc259e2f84e059e039ba033df03f52d24f18a754bfc4ebef3df71887",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:decf946c09085e5f948b8686cb4bc0303cf85ae90c5882162996d1dbafd62a32"
@@ -9836,7 +9836,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:9b68037a4a75e0c4ab63c61781967e060afe511bac231e6c603af4384208688f",
-      "planContentDigest": "sha256:2b8afb469ec1782efff0b3dc225bcffb83b5e94db387eab7e89be85800f65bd3",
+      "planContentDigest": "sha256:a64a43acfc259e2f84e059e039ba033df03f52d24f18a754bfc4ebef3df71887",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9948,7 +9948,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e281ef9818d2be5da83afd2d1703418c11749d83564beae2556cd138cd7be34a",
-      "planContentDigest": "sha256:96ba98548a02f6760297b9ac19174218ad947aa55dbea35d6690d8c3bfe39ead",
+      "planContentDigest": "sha256:90b525bb2714c67cdb64eab114086d5e4147f25e240ccd044ae860946d277e64",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8a8c90c4cad921f4e734c169f6713bf292e8990cc0e3860cac57c0959286e707"
@@ -10160,7 +10160,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:11b5fc30a372fb07dc8aab1fc68dc0fe4ce020c65f77b0a14dcea9a2f1e1aa0b",
-      "planContentDigest": "sha256:96ba98548a02f6760297b9ac19174218ad947aa55dbea35d6690d8c3bfe39ead",
+      "planContentDigest": "sha256:90b525bb2714c67cdb64eab114086d5e4147f25e240ccd044ae860946d277e64",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10470,7 +10470,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d",
-      "planContentDigest": "sha256:423c446ff6fcb53b9eaf555501e0628c5cf2431d33716470d07c85d0672968ed",
+      "planContentDigest": "sha256:3dbf150ab4daf29ca96d79464459baf297b3ebf09baca491caa8614143bf5128",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8c10f8530a53100380f371664823b3b18abab78d627542be6bcd6812eb0f139e"
@@ -10682,7 +10682,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:ecdfd9250861f5f60477f0d28e8f83828e24b64964b4f8a6979c96d4272449c2",
-      "planContentDigest": "sha256:423c446ff6fcb53b9eaf555501e0628c5cf2431d33716470d07c85d0672968ed",
+      "planContentDigest": "sha256:3dbf150ab4daf29ca96d79464459baf297b3ebf09baca491caa8614143bf5128",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10767,40 +10767,6 @@
     }
   },
   {
-    "name": "differs-view-invoker-unstated-mysql/apply",
-    "operation": "apply",
-    "source": "none",
-    "engine": "MySQL",
-    "children": [
-      {
-        "command": "schema apply",
-        "args": [
-          "schema",
-          "apply",
-          "--plan",
-          "/work/ptah-plan-<random>.hcl",
-          "--auto-approve",
-          "--json",
-          "--run-reference=sha256:4683c4a1353c984090b0e9e4409d379ce6308bbde8e13ecc40234d8842bd2b37"
-        ],
-        "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
-        "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/apply/0-schema-apply.json"
-      }
-    ],
-    "result": {
-      "childExitCode": 0,
-      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
-      "mutationStarted": true,
-      "operation": "apply",
-      "operationId": "sha256:4683c4a1353c984090b0e9e4409d379ce6308bbde8e13ecc40234d8842bd2b37",
-      "planContentDigest": "sha256:1f245798185a713fa6c143be4c65da287f635c8fd1b9262c637f016d701fe917",
-      "protocolVersion": 1,
-      "stdout": "",
-      "targetIdentityDigest": "sha256:42083010ad6a8d1d320050659af189e142d2fd1dd34ca9354f976a860be808b3"
-    }
-  },
-  {
     "name": "differs-view-invoker-unstated-mysql/observe",
     "operation": "observe",
     "source": "oci",
@@ -10876,71 +10842,6 @@
     }
   },
   {
-    "name": "differs-view-invoker-unstated-mysql/observe-applied",
-    "operation": "observe",
-    "source": "oci",
-    "engine": "MySQL",
-    "children": [
-      {
-        "command": "schema pull",
-        "args": [
-          "schema",
-          "pull",
-          "oci://harness-registry:5000/schemas/differs-view-invoker-unstated-mysql@<digest>",
-          "--out",
-          "/source/schema.hcl",
-          "--skip-parse"
-        ],
-        "exit": 0,
-        "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/observe-applied/0-schema-pull.txt"
-      },
-      {
-        "command": "schema drift",
-        "args": [
-          "schema",
-          "drift",
-          "--format",
-          "json"
-        ],
-        "exit": 0,
-        "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/observe-applied/1-schema-drift.json"
-      }
-    ],
-    "result": {
-      "childExitCode": 0,
-      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
-      "driftInventory": [
-        {
-          "desired": 2,
-          "kind": "columns",
-          "observed": 2
-        },
-        {
-          "desired": 1,
-          "kind": "constraints",
-          "observed": 1
-        },
-        {
-          "desired": 1,
-          "kind": "tables",
-          "observed": 1
-        },
-        {
-          "desired": 1,
-          "kind": "views",
-          "observed": 1
-        }
-      ],
-      "driftReportDigest": "sha256:0cc2869db7b4dfd4f5758f1ff74ec1d5631721e7ea1723db80bd7bdb34b2eb13",
-      "observedDialect": "mysql",
-      "operation": "observe",
-      "operationId": "sha256:cd8a15bb9b92f05e29669b8cbbd716404790ed3c414496e16185214d2dc25873",
-      "protocolVersion": 1,
-      "stdout": "",
-      "targetIdentityDigest": "sha256:42083010ad6a8d1d320050659af189e142d2fd1dd34ca9354f976a860be808b3"
-    }
-  },
-  {
     "name": "differs-view-invoker-unstated-mysql/plan",
     "operation": "plan",
     "source": "oci",
@@ -10968,51 +10869,24 @@
           "/work/ptah-plan-output-<random>/first.plan.json",
           "--json"
         ],
-        "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "exit": 2,
+        "stderr": "error: generate schema apply operations: unsupported feature: view differs_notes_view holds SQL SECURITY INVOKER and the schema does not state it. Without it the view runs with its definer's privileges, not its caller's. Declare SQL SECURITY INVOKER to keep it, or SQL SECURITY DEFINER to change it. A Go annotation states the mode as security=\"INVOKER\", a YAML view as security: INVOKER, and an HCL view as security = INVOKER\n",
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/plan/1-schema-plan.json"
-      },
-      {
-        "command": "schema plan",
-        "args": [
-          "schema",
-          "plan",
-          "--output",
-          "/work/ptah-plan-output-<random>/second.plan.json",
-          "--json"
-        ],
-        "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
-        "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/plan/2-schema-plan.json"
-      },
-      {
-        "command": "schema apply --dry-run",
-        "args": [
-          "schema",
-          "apply",
-          "--plan",
-          "/work/ptah-plan-output-<random>/first.plan.json",
-          "--auto-approve",
-          "--json",
-          "--dry-run"
-        ],
-        "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes;\n",
-        "stdout": "runner-harness/documents/differs-view-invoker-unstated-mysql/plan/3-schema-apply---dry-run.json"
       }
     ],
     "result": {
-      "childExitCode": 0,
+      "childExitCode": 2,
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (view-security-option)"
+      },
       "operation": "plan",
       "operationId": "sha256:9d8aaaea00c637a8b92b53cae86209fe4419da7097d954c6c22dcbbc9d2e9ccb",
-      "planContentDigest": "sha256:1f245798185a713fa6c143be4c65da287f635c8fd1b9262c637f016d701fe917",
-      "planOutcome": "Changes",
       "protocolVersion": 1,
-      "stdout": "<sealed plan>",
+      "stdout": "",
       "targetIdentityDigest": "sha256:42083010ad6a8d1d320050659af189e142d2fd1dd34ca9354f976a860be808b3"
-    },
-    "savedPlan": "runner-harness/documents/differs-view-invoker-unstated-mysql/plan/4-saved-plan.json"
+    }
   },
   {
     "name": "differs-view-invoker-unstated-mysql/resolve",

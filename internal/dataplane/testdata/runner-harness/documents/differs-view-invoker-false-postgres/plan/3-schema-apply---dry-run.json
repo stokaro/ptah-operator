@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "dry-run",
   "plan_name": "plan_d5e05a296f0d",
-  "plan_digest": "sha256:b679df5a61f5aaaf839b6f8bd1150094701ca1bce315c0b51e3f37df5f10db5e",
+  "plan_digest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
   "units": [
     {
       "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
@@ -29,7 +29,20 @@
               "after": false,
               "changed": true
             }
-          ]
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
         }
       ]
     }

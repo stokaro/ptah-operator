@@ -35,7 +35,20 @@
               "after": true,
               "changed": true
             }
-          ]
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": false
+              }
+            ]
+          }
         }
       ]
     }
