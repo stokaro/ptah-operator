@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"maps"
 	"strconv"
 	"strings"
 	"testing"
@@ -223,6 +224,14 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		job := built.DeepCopy()
 		// Not empty: an empty set is filled in from the Pod template.
 		job.Labels, job.OwnerReferences = map[string]string{"fixture": "unowned"}, nil
+		// The Pod-intent webhook admits the bare Pod below only from a Job
+		// that carries the operation identity nowhere, its template included,
+		// and the API server lets the template take the identity afterwards
+		// only while the Job is suspended and has not started.
+		job.Spec.Suspend = ptr.To(true)
+		job.Spec.Template.Labels = maps.Clone(job.Spec.Template.Labels)
+		delete(job.Spec.Template.Labels, workload.LabelManagedBy)
+		delete(job.Spec.Template.Labels, workload.LabelComponent)
 		if err := admin.Create(ctx, job); err != nil {
 			t.Fatalf("store Job %s: %v", job.Name, err)
 		}
@@ -249,6 +258,10 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 			}
 		}
 		job.Labels, job.OwnerReferences = built.Labels, built.OwnerReferences
+		for key, value := range built.Spec.Template.Labels {
+			job.Spec.Template.Labels[key] = value
+		}
+		job.Spec.Suspend = built.Spec.Suspend
 		if err := admin.Update(ctx, job); err != nil {
 			t.Fatalf("give Job %s its owner: %v", job.Name, err)
 		}
