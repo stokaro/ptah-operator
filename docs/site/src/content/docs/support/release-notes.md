@@ -51,10 +51,20 @@ propagation is refused from this release: have it name
   MySQL view statement its `SQL SECURITY` mode before and after, as
   `sql_security`
   ([stokaro/ptah#6098](https://github.com/stokaro/ptah/pull/6098)). The
-  operator reads neither, so a plan raises the privilege changes it raised
-  under v0.29.2, as
+  operator reads `before_plan` for one kind of view, as the next entry says,
+  and does not read `sql_security`, so a MySQL or MariaDB plan raises the
+  privilege changes it raised under v0.29.2.
+- **A PostgreSQL view a drop may have taken.** A view a plan makes again after
+  a `DROP ... CASCADE`, a `DROP OWNED` or a `DROP VIEW` with no effect is now
+  read against its statement's `before_plan`, and raised as `SecurityDefiner`
+  only when the view did not exist when the plan started, held another
+  `security_invoker` than the plan gives it, or the plan does not say. Under
+  v0.29.2 every such view was raised. The plan drops something, so it still
+  needs `allowDestructive` and an approval, and under `apply: Always` its
+  `ApprovalRequired` reason is `Waiting` rather than `PrivilegeChanges` where
+  nothing else in it changes privileges.
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
-  describes.
+  says what each view statement raises.
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and
   `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
   `planread.Load` no longer lists one when it refuses a plan for another field.

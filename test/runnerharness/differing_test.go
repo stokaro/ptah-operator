@@ -295,6 +295,19 @@ func differingRows() []differingRow {
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
+		// A view the plan rebuilds, read by a view that a policy of a table the
+		// declaration removes reads in turn. Ptah drops the reader with CASCADE,
+		// which takes the policy, then drops the rebuilt view with IF EXISTS and
+		// no effect, since the CASCADE may have taken it. The manager cannot
+		// tell from the plan's statements what that view held, so it reads the
+		// create's before_plan (stokaro/ptah#6099): the view existed when the
+		// plan started, with invoker rights. Made again with them, it raises
+		// nothing, and the plan waits for an approval as destructive alone;
+		// made again with its owner's rights, it is raised. Neither plan
+		// applies: Ptah still drops the policy the CASCADE took, and PostgreSQL
+		// refuses the statement and takes the transaction back.
+		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
+		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
 		// INVOKER that the declaration leaves without a mode reads as changed.
 		// Up to v0.29.2 the plan replaced it with no mode, which the server
@@ -435,6 +448,41 @@ func differingRows() []differingRow {
 		},
 	}
 	return append(rows, append(partitionRows(), authorityRows()...)...)
+}
+
+// cascadeRebuild is a row whose plan rebuilds the view differs_member_ids with
+// the security_invoker it declares, after a DROP VIEW ... CASCADE of the view
+// that reads it. The seed holds it with invoker rights. The source is Git, so
+// the declaration reaches Ptah as the SQL file states it. defined is the
+// manager's reading beyond the policy the plan drops.
+func cascadeRebuild(name, invoker string, defined []string) differingRow {
+	return differingRow{
+		name: name, engine: enginePostgres, declared: name + "-postgresql.sql", git: true,
+		stored: map[string]string{"plan/saved plan": "differing/plan-" + name + ".json"},
+		seed: []string{
+			"CREATE TABLE differs_members (id bigint NOT NULL PRIMARY KEY, who text NOT NULL)",
+			"CREATE VIEW differs_member_ids WITH (security_invoker = true) AS SELECT id, who FROM differs_members",
+			"CREATE VIEW differs_member_names WITH (security_invoker = true) AS SELECT id, who FROM differs_member_ids",
+			"CREATE TABLE differs_docs (id bigint NOT NULL PRIMARY KEY, member_id bigint NOT NULL)",
+			"ALTER TABLE differs_docs ENABLE ROW LEVEL SECURITY",
+			"CREATE POLICY differs_docs_member ON differs_docs USING (member_id IN (SELECT id FROM differs_member_names))",
+		},
+		want: differingReading{
+			findings: []string{"constraints_removed", "tables_removed", "views_modified"},
+			statements: []string{
+				`DROP VIEW "differs_member_names" CASCADE`,
+				`DROP VIEW IF EXISTS "differs_member_ids"`,
+				`CREATE VIEW "differs_member_ids" WITH (security_invoker=` + invoker + `)`,
+				`CREATE VIEW "differs_member_names" WITH (security_invoker=true)`,
+				`DROP POLICY "differs_docs_member" ON "differs_docs"`,
+				`DROP TABLE IF EXISTS "differs_docs"`,
+			},
+			destructive:      true,
+			privileges:       append([]string{"RowSecurityPolicy"}, defined...),
+			applyRefusal:     `policy "differs_docs_member" for table "differs_docs" does not exist (SQLSTATE 42704)`,
+			driftsAfterApply: true,
+		},
+	}
 }
 
 // partitionRows move a PostgreSQL partition, declared in SQL from a Git-shaped
@@ -1158,6 +1206,37 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 		}
 		captures.Documents[target.SavedPlan] = captures.Documents[source.SavedPlan]
 	}
+	// editEffects rewrites each statement effect of the plan a row saved.
+	editEffects := func(captures *runnerharness.Captures, name string, edit func(map[string]any)) {
+		t.Helper()
+		record, err := capturedRow(*captures, name+"/plan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(bytes.NewReader(captures.Documents[record.SavedPlan]))
+		decoder.UseNumber()
+		var document map[string]any
+		if err := decoder.Decode(&document); err != nil {
+			t.Fatal(err)
+		}
+		edited := 0
+		statements, _ := document["statements"].([]any)
+		for _, statement := range statements {
+			effects, _ := statement.(map[string]any)["effects"].([]any)
+			for _, effect := range effects {
+				edit(effect.(map[string]any))
+				edited++
+			}
+		}
+		if edited == 0 {
+			t.Fatalf("the plan %s saved holds no effect", name)
+		}
+		encoded, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		captures.Documents[record.SavedPlan] = encoded
+	}
 	for _, mistake := range []struct {
 		name, row, want string
 		edit            func(*runnerharness.Captures)
@@ -1333,6 +1412,34 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			name: "a replaced MySQL view the manager runs unattended", row: "differs-view-invoker-declared-mysql", want: "the manager reads the privilege changes",
 			edit: func(captures *runnerharness.Captures) {
 				usePlan(captures, "differs-dependent-view-mysql", "differs-view-invoker-declared-mysql")
+			},
+		},
+		{
+			// A Ptah before v0.29.3 records no before_plan, and the view a
+			// CASCADE may have taken is held whatever it states.
+			name: "a rebuilt view read without what it held before the plan", row: "differs-view-invoker-cascade-kept-postgres",
+			want: "the manager reads the privilege changes",
+			edit: func(captures *runnerharness.Captures) {
+				editEffects(captures, "differs-view-invoker-cascade-kept-postgres", func(effect map[string]any) {
+					delete(effect, "before_plan")
+				})
+			},
+		},
+		{
+			// The view held its owner's rights, so the plan that makes it again
+			// with them takes nobody's rights away.
+			name: "a rebuilt view that held the value it is made with", row: "differs-view-invoker-cascade-changed-postgres",
+			want: "the manager reads the privilege changes",
+			edit: func(captures *runnerharness.Captures) {
+				editEffects(captures, "differs-view-invoker-cascade-changed-postgres", func(effect map[string]any) {
+					held, _ := effect["before_plan"].(map[string]any)
+					properties, _ := held["properties"].([]any)
+					for _, property := range properties {
+						if fields := property.(map[string]any); fields["name"] == "security_invoker" {
+							fields["value"] = false
+						}
+					}
+				})
 			},
 		},
 		{

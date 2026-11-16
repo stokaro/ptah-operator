@@ -34,7 +34,7 @@ var (
 )
 
 // viewEffect is the effect Ptah records for oneView, with a field this build
-// does not declare holding added.
+// does not declare holding added beside the ones it does.
 func viewEffect(added string) []any {
 	return []any{map[string]any{
 		"version": 1,
@@ -43,7 +43,8 @@ func viewEffect(added string) []any {
 		"properties": []any{
 			map[string]any{"name": "security_invoker", "after": false, "changed": true},
 		},
-		"before_plan": map[string]any{"exists": false, "note": added},
+		"before_plan": map[string]any{"exists": false},
+		"note":        added,
 	}}
 }
 
@@ -293,8 +294,9 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 		},
 		{
 			// An effect record decodes itself and ignores a field Ptah adds to
-			// it, as v0.29.3 added before_plan, so the strict decoder reads the
-			// document whole and the walk names nothing in the record.
+			// it, as v0.29.3 added before_plan before this build declared it,
+			// so the strict decoder reads the document whole and the walk
+			// names nothing in the record.
 			name: "a field Ptah added to an effect",
 			document: func(t *testing.T) []byte {
 				return edited(t, oneView, func(d map[string]any) { statementOf(d, 0)["effects"] = viewEffect(unreadValue) })

@@ -442,6 +442,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:8d689e652b8aa06c56bb1be85fc2a8258b3ce7144dce358740b6b448029c89aa",
       "reason": "Carry a refused source access's sentence from its init container (#1085). When the source's access check refuses, the OCI guard and the Git and HTTPS fetches write an access refusal record to their termination message: PTAH_RUNNER_ACCESS_REFUSAL_V1 and one JSON line holding the code a Resolve reports for the same check (invalid_oci_access, invalid_git_access or invalid_https_access) and the check's sentence, redacted as a frame's error is, within 1536 bytes. The guard logs that sentence in place of \"OCI source access is not authorized\", and free text the runner logs has the marker taken out. Every other failure writes no record; exit statuses, frames and summaries are unchanged. A manager that reads the record names the step and the sentence. One that does not, or a Job whose runner writes none, names the step by its exit status as before. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:8b836ee515ca013ebddbba32912a3557fce61054741162dfccc3c1a66d83b1b1",
+      "reason": "Read before_plan for a PostgreSQL view a drop may have taken (stokaro/ptah#6099). After a CASCADE, DROP OWNED or a DROP VIEW whose effect or names the operator cannot read, a later CREATE VIEW, or a CREATE OR REPLACE VIEW whose effect records no value before, raises SecurityDefiner unless its effect's before_plan says the view existed when the plan started with the security_invoker the statement gives it; a MySQL plan reads as before. Only the privilege reading in internal/dataplane changes. The effect record declares before_plan as raw JSON: it ignored the field before and cannot fail on it now, so it accepts the same documents. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is the same, and protocol 1 stays."
     }
   ]
 }

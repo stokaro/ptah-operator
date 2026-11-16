@@ -488,15 +488,16 @@ func TestDecodePlanReadsARebuiltViewAgainstTheViewItDropped(t *testing.T) {
 // After a statement that may have dropped a view without an effect that says
 // what the view held, a view the plan makes again is held whatever it states:
 // the view it replaces may have read with its readers' rights, and one made
-// again with no option reads with its owner's (#1080). Since v0.29.3 Ptah
-// records on each view effect what the view held when the plan started, as
-// before_plan (stokaro/ptah#6099), and until the manager reads it the hold
-// covers every view the statement may have taken. A CASCADE, DROP OWNED and a DROP VIEW whose names
-// are not read may take any view; a DROP VIEW with no effect takes the view it
-// names. Each plan is the new-view capture made again as the row says, after
-// the statements the row puts before it; bare takes the statement's effect
-// out, as Ptah writes a CREATE OR REPLACE VIEW of a view a CASCADE left
-// uncertain.
+// again with no option reads with its owner's (#1080). A CASCADE, DROP OWNED
+// and a DROP VIEW whose names are not read may take any view; a DROP VIEW with
+// no effect takes the view it names. Each plan is the new-view capture made
+// again as the row says, after the statements the row puts before it; bare
+// takes the statement's effect out, as Ptah writes a CREATE OR REPLACE VIEW of
+// a view a CASCADE left uncertain. The capture's before_plan says the view did
+// not exist when the plan started, which releases nothing, so these rows hold
+// as they did before the manager read before_plan;
+// TestDecodePlanReadsAViewMadeAgainAgainstWhatItHeldBeforeThePlan has the rows
+// where it says the view existed.
 func TestDecodePlanHoldsAViewMadeAgainAfterAnUnreadDrop(t *testing.T) {
 	t.Parallel()
 
@@ -594,6 +595,178 @@ func TestDecodePlanHoldsAViewMadeAgainAfterAnUnreadDrop(t *testing.T) {
 	}
 }
 
+// Since v0.29.3 Ptah records on each view effect what the view held when the
+// plan started, as before_plan (stokaro/ptah#6099). After a statement that may
+// have dropped the view without an effect that says what it held, the view the
+// plan makes again is released only where before_plan says the view existed
+// then with the value the statement gives it. Each plan is the new-view capture
+// made again as the row says, after the statements the row puts before it, with
+// its before_plan replaced by the row's; the capture's own says the view did
+// not exist. A row that keeps the hold makes the view with the owner's rights
+// where it can, so a reader that took a missing or unreadable value for false
+// would release it.
+func TestDecodePlanReadsAViewMadeAgainAgainstWhatItHeldBeforeThePlan(t *testing.T) {
+	t.Parallel()
+
+	const withOn = ` WITH (security_invoker=true)`
+	var (
+		cascade    = map[string]any{"sql": `DROP TABLE "differs_notes_archive" CASCADE`, "severity": "destructive"}
+		dropOwned  = map[string]any{"sql": `DROP OWNED BY "differs_app"`, "severity": "destructive"}
+		unreadDrop = map[string]any{"sql": `DROP VIEW IF EXISTS "differs_notes_view"`, "severity": "safe"}
+		recorded   = func(invoker bool) map[string]any {
+			return dropStatement(`DROP VIEW "differs_notes_view"`, "differs_notes_view", invoker)
+		}
+	)
+	held := func(invoker any) map[string]any {
+		return map[string]any{"exists": true, "properties": []any{
+			map[string]any{"name": "security_barrier", "value": false},
+			map[string]any{"name": "security_invoker", "value": invoker},
+		}}
+	}
+	// captured keeps the capture's own before_plan, and absent takes it out.
+	const captured, absent = "captured", "absent"
+	defined := []string{"SecurityDefiner"}
+	rows := []struct {
+		name       string
+		before     []map[string]any
+		replace    bool
+		option     string
+		after      bool
+		beforePlan any
+		want       []string
+	}{
+		// What it releases.
+		{name: "a CASCADE, then the view with the invoker rights it held", before: []map[string]any{cascade}, option: withOn, after: true, beforePlan: held(true)},
+		{name: "a CASCADE, then the view with the owner's rights it held", before: []map[string]any{cascade}, beforePlan: held(false)},
+		{name: "a DROP VIEW with no effect, then the view as it held it", before: []map[string]any{unreadDrop}, option: withOn, after: true, beforePlan: held(true)},
+		{name: "DROP OWNED, then the view as it held it", before: []map[string]any{dropOwned}, beforePlan: held(false), want: []string{"Revoke"}},
+		{
+			name:   "a CASCADE, then CREATE OR REPLACE VIEW with nothing before, as the view held it",
+			before: []map[string]any{cascade}, replace: true, option: withOn, after: true, beforePlan: held(true),
+		},
+
+		// What still holds.
+		{name: "a plan from a Ptah before v0.29.3", before: []map[string]any{cascade}, option: withOn, after: true, beforePlan: absent, want: defined},
+		{name: "a view that did not exist when the plan started", before: []map[string]any{cascade}, beforePlan: captured, want: defined},
+		{name: "a view that did not exist, made with invoker rights", before: []map[string]any{cascade}, option: withOn, after: true, beforePlan: captured, want: defined},
+		{name: "a view that held invoker rights, made again with its owner's", before: []map[string]any{cascade}, beforePlan: held(true), want: defined},
+		{name: "a view that held its owner's rights, made again with invoker rights", before: []map[string]any{cascade}, option: withOn, after: true, beforePlan: held(false), want: defined},
+		{name: "a DROP VIEW with no effect, then the view with another value", before: []map[string]any{unreadDrop}, beforePlan: held(true), want: defined},
+		{
+			// Ptah writes a view that holds no security_invoker as false, and
+			// leaves the property out only where it could not read the value.
+			name: "no security_invoker in before_plan", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": []any{map[string]any{"name": "security_barrier", "value": false}}},
+		},
+		{name: "no properties in before_plan", before: []map[string]any{cascade}, beforePlan: map[string]any{"exists": true}, want: defined},
+		{
+			name: "security_invoker twice in before_plan", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": []any{
+				map[string]any{"name": "security_invoker", "value": false},
+				map[string]any{"name": "security_invoker", "value": false},
+			}},
+		},
+		{name: "a value as a string", before: []map[string]any{cascade}, beforePlan: held("false"), want: defined},
+		{name: "a null value", before: []map[string]any{cascade}, beforePlan: held(nil), want: defined},
+		{
+			name: "no value", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": []any{map[string]any{"name": "security_invoker"}}},
+		},
+		{
+			name: "exists as a string", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": "true", "properties": held(false)["properties"]},
+		},
+		{name: "no exists", before: []map[string]any{cascade}, beforePlan: map[string]any{"properties": held(false)["properties"]}, want: defined},
+		{
+			name: "exists false beside a value", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": false, "properties": held(false)["properties"]},
+		},
+		{name: "a before_plan of another shape", before: []map[string]any{cascade}, beforePlan: "held", want: defined},
+		{name: "a before_plan that is a list", before: []map[string]any{cascade}, beforePlan: []any{held(false)}, want: defined},
+		{name: "a null before_plan", before: []map[string]any{cascade}, beforePlan: nil, want: defined},
+		{
+			name: "properties that are not a list", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": map[string]any{"name": "security_invoker", "value": false}},
+		},
+		{
+			name: "a property that is not a record", before: []map[string]any{cascade}, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": []any{"security_invoker"}},
+		},
+
+		// What it does not move. A drop whose effect the operator reads is
+		// nearer the statement than the start of the plan, and a view nothing
+		// may have dropped is read as a new view: CREATE VIEW of a view the plan
+		// started with, and that nothing dropped, would fail at the server.
+		{name: "a rebuild whose drop says the view kept its value", before: []map[string]any{recorded(true)}, option: withOn, after: true, beforePlan: held(false)},
+		{name: "a rebuild whose drop says the value changed", before: []map[string]any{recorded(true)}, beforePlan: held(false), want: defined},
+		{name: "no statement before it, with invoker rights", option: withOn, after: true, beforePlan: held(true), want: defined},
+		{name: "no statement before it, with the owner's rights", beforePlan: held(true)},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			plan := editStatement(t, madeAgain(t, row.replace, row.option, row.after), func(statement map[string]any) {
+				effect := statement["effects"].([]any)[0].(map[string]any)
+				switch row.beforePlan {
+				case captured:
+					if effect["before_plan"] == nil {
+						t.Fatal("the new-view capture records no before_plan")
+					}
+				case absent:
+					delete(effect, "before_plan")
+				default:
+					effect["before_plan"] = row.beforePlan
+				}
+			})
+			decoded, err := dataplane.DecodePlan(withStatementsBefore(t, plan, row.before...), "PostgreSQL")
+			if err != nil {
+				t.Fatalf("DecodePlan() error = %v", err)
+			}
+			if !slices.Equal(decoded.PrivilegeChanges, row.want) {
+				t.Fatalf("PrivilegeChanges = %q, want %q", decoded.PrivilegeChanges, row.want)
+			}
+		})
+	}
+
+	// A MySQL or MariaDB view has no security_invoker and Ptah records none, so
+	// a MySQL plan that carried one is held as it was. The plan is the first
+	// release row's, which PostgreSQL releases, as a MySQL plan.
+	t.Run("a MySQL plan", func(t *testing.T) {
+		t.Parallel()
+		plan := editStatement(t, madeAgain(t, false, withOn, true), func(statement map[string]any) {
+			statement["effects"].([]any)[0].(map[string]any)["before_plan"] = held(true)
+		})
+		plan = withStatementsBefore(t, plan, cascade)
+		for _, target := range []struct {
+			engine, dialect string
+			want            []string
+		}{
+			{engine: "PostgreSQL", dialect: "postgres"},
+			{engine: "MySQL", dialect: "mysql", want: defined},
+			{engine: "MySQL", dialect: "mariadb", want: defined},
+		} {
+			decoder := json.NewDecoder(bytes.NewReader(plan))
+			decoder.UseNumber()
+			var document map[string]any
+			if err := decoder.Decode(&document); err != nil {
+				t.Fatal(err)
+			}
+			document["dialect"] = target.dialect
+			edited, err := json.Marshal(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := dataplane.DecodePlan(edited, target.engine)
+			if err != nil {
+				t.Fatalf("%s: DecodePlan() error = %v", target.dialect, err)
+			}
+			if !slices.Equal(decoded.PrivilegeChanges, target.want) {
+				t.Errorf("%s: PrivilegeChanges = %q, want %q", target.dialect, decoded.PrivilegeChanges, target.want)
+			}
+		}
+	})
+}
+
 // madeAgain is the new-view capture with its statement made as CREATE VIEW, or
 // CREATE OR REPLACE VIEW with a replace effect, stating option, and its
 // effect's security_invoker after the statement set to after.
@@ -687,7 +860,10 @@ func TestDecodePlanReadsAnEffectPastWhatALaterPtahAdds(t *testing.T) {
 			}}
 		},
 		// Ptah v0.29.3 records before_plan on every view effect
-		// (stokaro/ptah#6099), and the operator does not read it yet.
+		// (stokaro/ptah#6099). A value of another shape is read as none, and
+		// the statement's own value before it decides a view that existed
+		// before the statement: before_plan is read only for a view the plan
+		// may have dropped without a record of what it held.
 		"a before_plan of another shape": func(_, effect map[string]any) { effect["before_plan"] = "held" },
 		"a before_plan that says the view held another value": func(_, effect map[string]any) {
 			effect["before_plan"] = map[string]any{"exists": true, "properties": []any{

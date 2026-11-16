@@ -1,0 +1,147 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "failed",
+  "plan_name": "plan_7485d7ee47ef",
+  "plan_digest": "sha256:c0e1d4cd0a97016aef311fae0066f94f0dfb0e19ee7f34411a1691fe06421e6d",
+  "units": [
+    {
+      "sql": "DROP VIEW \"differs_member_names\" CASCADE",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_member_names"
+          },
+          "action": "drop",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sql": "DROP VIEW IF EXISTS \"differs_member_ids\""
+    },
+    {
+      "sql": "CREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_member_ids"
+          },
+          "action": "create",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "after": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "after": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sql": "CREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_member_names"
+          },
+          "action": "create",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "after": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "after": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
+    },
+    {
+      "sql": "DROP TABLE IF EXISTS \"differs_docs\""
+    }
+  ],
+  "error": {
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: policy \"differs_docs_member\" for table \"differs_docs\" does not exist (SQLSTATE 42704)\nSQL: DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
+  },
+  "failure": {
+    "statement": 5,
+    "statements": 6,
+    "sqlstate": "42704"
+  },
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:d82495bef2ddf11a7ff2397c4fb7e03c4cbfc8720ab9f21440d414a14bbce5c9"
+  }
+}

@@ -230,21 +230,31 @@ and not from the SQL:
   `CREATE VIEW`, and the create's effect records the option as absent before,
   as it does for a view that never existed.
 - A view the plan makes after a statement that may have dropped it without
-  such an effect is raised whatever it states. That is a view a `DROP VIEW`
-  with no effect named, and any view the plan makes after a drop with
-  `CASCADE`, a `DROP OWNED`, or a `DROP VIEW` whose names the operator cannot
-  read, which can take views they do not name. The plan does not say whose
-  rights the dropped view read with, and one made again with no option reads
-  with its owner's, so a person decides. This covers `CREATE VIEW`, a
-  `CREATE OR REPLACE VIEW` whose effect records no value before, and either
-  statement with no effect, which is how Ptah writes a `CREATE OR REPLACE VIEW`
-  of a view a `CASCADE` may have taken. Since v0.29.3 each view effect also
-  records, as `before_plan`, whether the view existed when the plan started and
-  the options it held then
-  ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)). The operator
-  does not read it yet, so the hold cannot tell a view the statement took from
-  one it left or one that never existed, and covers them all. A `CREATE VIEW`
-  with no such statement before it is read as below.
+  such an effect is read against what it held when the plan started. That is
+  a view a `DROP VIEW` with no effect named, and any view the plan makes after
+  a drop with `CASCADE`, a `DROP OWNED`, or a `DROP VIEW` whose names the
+  operator cannot read, which can take views they do not name. Since v0.29.3
+  each view effect records, as `before_plan`, whether the view existed when the
+  plan started and the options it held then
+  ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)). Where it
+  says the view existed with the `security_invoker` the statement gives it,
+  nothing is raised. A view that holds no `security_invoker` reads with its
+  owner's rights, PostgreSQL's default, and Ptah records it as `false`. This
+  covers `CREATE VIEW` and a `CREATE OR REPLACE VIEW` whose effect records no
+  value before. Anything else is raised whatever the statement states: a plan
+  from an earlier Ptah, which records no `before_plan`; a view that did not
+  exist when the plan started, or that the URL or the plan's exclusions leave
+  out of what Ptah read, which it records the same way; a `before_plan` that
+  does not give `security_invoker` once, as `true` or `false`; and a statement
+  with no effect, which is how Ptah writes a `CREATE OR REPLACE VIEW` of a
+  view a `CASCADE` may have taken. The view the statement replaces may have
+  read with its readers' rights, and one made again with no option reads with
+  its owner's, so a person decides. Every such plan drops something, so it is
+  destructive: it needs `allowDestructive` and an approval under every apply
+  policy. `before_plan` decides only whether it also lists `SecurityDefiner`,
+  and so whether `ApprovalRequired` under `Always` gives the reason
+  `PrivilegeChanges` or `Waiting`. A `CREATE VIEW` with no such statement
+  before it is read as below.
 - Any other view the statement creates is raised when it reads with invoker
   rights. One with its owner's rights is raised no more than a view that
   states no option.

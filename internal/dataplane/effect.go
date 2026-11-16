@@ -46,6 +46,13 @@ type PlanEffect struct {
 	Object     PlanEffectObject     `json:"object"`
 	Action     string               `json:"action"`
 	Properties []PlanEffectProperty `json:"properties,omitempty"`
+	// BeforePlan is the object as the catalog the plan read held it when the
+	// plan started, which Ptah v0.29.3 records on every view effect of a plan
+	// that read one (stokaro/ptah#6099): whether it existed, and the value of
+	// each property the effect reports. It stays undecoded here, as a
+	// property's values do, so a value of another shape loses this field and
+	// nothing else of the record; heldBeforePlan reads it.
+	BeforePlan json.RawMessage `json:"before_plan,omitempty"`
 
 	// read is true for a record at PlanEffectVersion whose declared fields
 	// decoded.
@@ -130,20 +137,30 @@ func (e *PlanEffect) UnmarshalJSON(data []byte) error {
 // place with DROP VIEW and then CREATE VIEW, and the create's effect records
 // the option as absent before, as it does for a view that never existed, so
 // the value it replaces is the one the drop's effect recorded: the new view
-// holds when its value differs from that one. Where the plan may have dropped
-// the view without an effect that says what it held, it holds whatever it
-// states: the view it replaces may have read with its readers' rights, and one
-// made again with no option reads with its owner's. That is a view named by a
-// DROP VIEW whose effect the operator does not read, and any view after a
-// statement that may drop views it does not name (see dropsUnnamedViews). The
-// same holds for CREATE VIEW and CREATE OR REPLACE VIEW of such a view with no
+// holds when its value differs from that one.
+//
+// Where the plan may have dropped the view without an effect that says what it
+// held, the view the statement makes again is read against what it held when
+// the plan started, which the effect's before_plan records (see
+// heldBeforePlan). That is a view named by a DROP VIEW whose effect the
+// operator does not read, and any view after a statement that may drop views
+// it does not name (see dropsUnnamedViews), such as the DROP VIEW ... CASCADE
+// after which Ptah drops the next view with IF EXISTS and records no effect
+// for it. It holds unless before_plan says the view existed then with the
+// value the statement gives it. A plan without before_plan, a view that did
+// not exist then or that the read scope left out, which Ptah records alike,
+// and a record that names no value the operator reads, all hold whatever the
+// statement states: the view it replaces may have read with its readers'
+// rights, and one made again with no option reads with its owner's. The same
+// holds for CREATE VIEW and CREATE OR REPLACE VIEW of such a view with no
 // effect the operator reads, which is how Ptah writes a CREATE OR REPLACE VIEW
-// of a view whose state a CASCADE left uncertain. Until Ptah records what such
-// a statement drops (stokaro/ptah#6023), the hold cannot tell a view it took
-// from one it left or one that never existed. A view nothing dropped holds when
-// it reads with its readers' rights. Every new view records the option as changed, from
-// absent to its value, so changed alone would hold every new view; one with its
-// owner's rights is held no more than a new view that states no option.
+// of a view whose state a CASCADE left uncertain: there is no before_plan to
+// read.
+//
+// A view nothing dropped holds when it reads with its readers' rights. Every
+// new view records the option as changed, from absent to its value, so
+// changed alone would hold every new view; one with its owner's rights is held
+// no more than a new view that states no option.
 func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDrops) (hold, described bool) {
 	view, named := readViewStatement(statement.SQL, dialect)
 	if dropsUnnamedViews(statement.SQL, dialect, named) {
@@ -170,7 +187,10 @@ func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDro
 	case known:
 		return replaced != *invoker.after, true
 	case dropped:
-		return true, true
+		// A MySQL or MariaDB view has no security_invoker, and Ptah records
+		// none for one, so before_plan releases nothing there.
+		release := !mysqlDialect(dialect) && invoker.atStart != nil && *invoker.atStart == *invoker.after
+		return !release, true
 	default:
 		return *invoker.after, true
 	}
@@ -178,10 +198,50 @@ func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDro
 
 // viewInvoker is a view's security_invoker as one statement's effect records
 // it, before the statement and after. An absent value says the view does not
-// exist at that point.
+// exist at that point. atStart is the value the effect's before_plan says the
+// view held when the plan started, and nil unless it plainly says the view
+// existed then and what it held.
 type viewInvoker struct {
-	object        PlanEffectObject
-	before, after *bool
+	object                 PlanEffectObject
+	before, after, atStart *bool
+}
+
+// heldBeforePlan reads an effect's before_plan for the security_invoker the view
+// held when the plan started. It is nil unless the record plainly says: exists
+// is true, and security_invoker is listed once, with a boolean value.
+//
+// A view that holds no security_invoker reads with its owner's rights, which is
+// PostgreSQL's default, false, and Ptah records it as the value false. Ptah
+// leaves a property out of before_plan only where it could not read the value,
+// so a record that does not list security_invoker says nothing about it and is
+// nil here, as a view that did not exist then is, and one outside the read
+// scope or the exclusions, which Ptah records as not existing.
+func heldBeforePlan(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	var record struct {
+		Exists     *bool `json:"exists"`
+		Properties []struct {
+			Name  string          `json:"name"`
+			Value json.RawMessage `json:"value"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(raw, &record) != nil || record.Exists == nil || !*record.Exists {
+		return nil
+	}
+	var held *bool
+	for _, property := range record.Properties {
+		if property.Name != PlanEffectSecurityInvoker {
+			continue
+		}
+		value, ok := effectBoolean(property.Value)
+		if !ok || value == nil || held != nil {
+			return nil
+		}
+		held = value
+	}
+	return held
 }
 
 // describedInvoker returns the security_invoker the statement's effects record
@@ -240,7 +300,7 @@ func describedInvoker(effects []PlanEffect, view viewStatement) (viewInvoker, bo
 	if !agrees {
 		return viewInvoker{}, false
 	}
-	return viewInvoker{object: effect.Object, before: before, after: after}, true
+	return viewInvoker{object: effect.Object, before: before, after: after, atStart: heldBeforePlan(effect.BeforePlan)}, true
 }
 
 // viewDrops follows the views a plan drops, statement by statement in the
