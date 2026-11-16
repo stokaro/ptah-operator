@@ -414,7 +414,10 @@ func (l *lifecycleRun) uninstallAndAssertRetained(failure string) {
 	l.captureCertificateSecretNames()
 	privileges := l.captureReleasePrivileges()
 	l.auditQuiescentTransition("release uninstall", func() {
-		l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m")
+		// Helm 4 reports a resource it failed to delete only as "failed to
+		// delete release: <name>", and logs which delete failed and why at
+		// debug level alone, so without --debug a failed uninstall names none.
+		l.mustHelm(failure, "uninstall", l.in.helmRelease, "-n", l.in.operatorNamespace, "--wait", "--timeout", "5m", "--debug")
 	})
 	l.assertReleaseRuntimeRemoved()
 	l.assertReleasePrivilegesRemoved(privileges)
