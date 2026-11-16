@@ -316,6 +316,19 @@ func differingRows() []differingRow {
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
+		// A view the plan rebuilds, read by a view that a policy of a table the
+		// declaration removes reads in turn. Since v0.29.4 Ptah drops the policy
+		// first, then each view without CASCADE and with an effect that records
+		// the security_invoker it held (stokaro/ptah#6118), and both plans
+		// apply; up to v0.29.3 the plan failed at SQLSTATE 42704 on the policy a
+		// CASCADE had already taken. The manager reads each create against the
+		// value its drop's effect recorded: the view made again with invoker
+		// rights raises nothing beyond the policy the plan drops, and the view
+		// made again with its owner's rights raises SecurityDefiner. A drop with
+		// no effect leaves the manager holding the rebuilt view whatever it
+		// states, so the kept row fails on a plan that goes back to one.
+		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
+		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
 		// INVOKER that the declaration leaves without a mode reads as changed.
 		// Up to v0.29.2 the plan replaced it with no mode, which the server
@@ -458,6 +471,40 @@ func differingRows() []differingRow {
 		},
 	}
 	return append(rows, append(partitionRows(), authorityRows()...)...)
+}
+
+// cascadeRebuild is a row whose plan rebuilds the view differs_member_ids with
+// the security_invoker it declares, after the drop of the view that reads it,
+// which a policy of a removed table reads in turn. The seed holds it with
+// invoker rights. The source is Git, so the declaration reaches Ptah as the SQL
+// file states it. defined is the manager's reading beyond the policy the plan
+// drops.
+func cascadeRebuild(name, invoker string, defined []string) differingRow {
+	return differingRow{
+		name: name, engine: enginePostgres, declared: name + "-postgresql.sql", git: true,
+		stored: map[string]string{"plan/saved plan": "differing/plan-" + name + ".json"},
+		seed: []string{
+			"CREATE TABLE differs_members (id bigint NOT NULL PRIMARY KEY, who text NOT NULL)",
+			"CREATE VIEW differs_member_ids WITH (security_invoker = true) AS SELECT id, who FROM differs_members",
+			"CREATE VIEW differs_member_names WITH (security_invoker = true) AS SELECT id, who FROM differs_member_ids",
+			"CREATE TABLE differs_docs (id bigint NOT NULL PRIMARY KEY, member_id bigint NOT NULL)",
+			"ALTER TABLE differs_docs ENABLE ROW LEVEL SECURITY",
+			"CREATE POLICY differs_docs_member ON differs_docs USING (member_id IN (SELECT id FROM differs_member_names))",
+		},
+		want: differingReading{
+			findings: []string{"constraints_removed", "tables_removed", "views_modified"},
+			statements: []string{
+				`DROP POLICY "differs_docs_member" ON "differs_docs"`,
+				`DROP VIEW "differs_member_names"`,
+				`DROP VIEW "differs_member_ids"`,
+				`CREATE VIEW "differs_member_ids" WITH (security_invoker=` + invoker + `)`,
+				`CREATE VIEW "differs_member_names" WITH (security_invoker=true)`,
+				`DROP TABLE "differs_docs"`,
+			},
+			destructive: true,
+			privileges:  append([]string{"RowSecurityPolicy"}, defined...),
+		},
+	}
 }
 
 // partitionRows move a PostgreSQL partition, declared in SQL from a Git-shaped

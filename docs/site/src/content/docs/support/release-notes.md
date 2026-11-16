@@ -109,7 +109,10 @@ propagation is refused from this release: have it name
   `CASCADE` ([stokaro/ptah#6118](https://github.com/stokaro/ptah/pull/6118),
   [stokaro/ptah#6123](https://github.com/stokaro/ptah/pull/6123)). Under v0.29.3
   the `CASCADE` took the policy and the Apply stopped at its `DROP POLICY` with
-  SQLSTATE 42704 and rolled back; both were measured on PostgreSQL 17.
+  SQLSTATE 42704 and rolled back; both were measured on PostgreSQL 17. Each
+  rebuilt view's drop now records the `security_invoker` the view held, so a
+  view made again with the same value is no longer raised as `SecurityDefiner`,
+  while the policy the plan drops still raises `RowSecurityPolicy`.
 - **A definer a migration's login may not name.** The run is refused before its
   first file, as `Failed` with nothing committed, and the Pod log names the
   file, the definer, the login and the privilege.
