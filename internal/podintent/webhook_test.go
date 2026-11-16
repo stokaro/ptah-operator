@@ -593,8 +593,13 @@ func TestValidationHandlerAllowsUnmanagedJobPodForCertificateRecovery(t *testing
 		t.Fatal(err)
 	}
 	job.OwnerReferences = nil
-	job.Labels[workload.LabelManagedBy] = "Helm"
-	job.Labels[workload.LabelComponent] = "certificate-rotation"
+	// The Pod takes its labels from the template, so a Job of another
+	// component carries that component in both; one whose template still
+	// says schema-operation is an operation Job, whatever its own labels say.
+	for _, labels := range []map[string]string{job.Labels, job.Spec.Template.Labels} {
+		labels[workload.LabelManagedBy] = "Helm"
+		labels[workload.LabelComponent] = "certificate-rotation"
+	}
 	if err := api.Update(context.Background(), job); err != nil {
 		t.Fatal(err)
 	}
