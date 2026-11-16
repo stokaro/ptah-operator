@@ -1,8 +1,8 @@
 {
   "format_version": 1,
-  "name": "plan_fb7524432804",
+  "name": "plan_0eb3ab67dd5c",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:5dc5b482de581eb5a5f8a0948b90c9ffa050f2e6071bd2b25fb85acd8da92ea3",
+  "from_fingerprint": "sha256:5eac4168a3537ca9a6ac7a333265567fb3788378de9cb554268f90174b3d1db1",
   "to_fingerprint": "sha256:5dae10dc929acfac5a2fe75b6973434d84b5d904c41db6cde6b87b8502639b8b",
   "scope": {
     "kind": "realm"
@@ -33,7 +33,10 @@
               "after": false,
               "changed": true
             }
-          ]
+          ],
+          "before_plan": {
+            "exists": false
+          }
         }
       ]
     }
