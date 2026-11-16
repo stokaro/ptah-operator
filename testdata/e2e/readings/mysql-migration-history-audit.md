@@ -18,7 +18,8 @@ whether the table exists.
   the v0.23.0 release image (`f47b2bfa`), on 2026-11-13 the v0.26.0 release image (`1cf0563c`),
   on 2026-11-14 the v0.28.0 release image (`2ee460a6`), and on 2026-11-15 the v0.29.0 release
   image (`75fa9991`) and the v0.29.2 release image (`ba500e11`), and on 2026-11-16 the v0.29.3
-  release image (`dfbda1b2`), so it stands for those executors unchanged
+  release image (`dfbda1b2`) and the v0.29.4 release image (`1f1ff93c`), so it stands for those
+  executors unchanged
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

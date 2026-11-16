@@ -26,11 +26,18 @@ const (
 // Ptah's sentence to the Pod log. The two are decided here so that what a resource
 // promises of the log cannot drift from what finishSchemaApply writes.
 func LeavesReportedError(code string) bool {
+	return reportsApplyFailure(code) || code == codeApplyRefused
+}
+
+// reportsApplyFailure says whether a schema Apply that ended with this code is
+// one whose report may say where it stopped, which is what a frame's
+// ApplyFailure carries. A refusal stops before the first statement.
+func reportsApplyFailure(code string) bool {
 	return code == codeApplyFailed || code == codeApplyOutcomeUnknown
 }
 
-// logReportedError writes what Ptah said about a run that failed to the Pod log,
-// and nowhere else. It never reaches the result frame, the termination summary,
+// logReportedError writes what Ptah said about a run that failed, or that it
+// refused, to the Pod log, and nowhere else. It never reaches the result frame, the termination summary,
 // status or an Event.
 //
 // The line can carry what the database read: a role, a host, a database name and

@@ -912,7 +912,7 @@ func validateResult(result Result, options ParseOptions) error {
 		}
 	}
 	if failure := result.ApplyFailure; failure != nil {
-		if result.Operation != OperationApply || result.Error == nil || !LeavesReportedError(result.Error.Code) {
+		if result.Operation != OperationApply || result.Error == nil || !reportsApplyFailure(result.Error.Code) {
 			return fmt.Errorf("%w: apply failure on a result that is not an Apply's reported failure", ErrMalformedFrame)
 		}
 		if err := failure.Validate(); err != nil {

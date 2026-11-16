@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-11-15.
+**Last measured:** 2026-11-16.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.29.3` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.29.4` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.14` | No range | `v0.29.2` | [v0.2.14](https://operator.ptah.run/v0.2.14/) |
 | `v0.2.13` | No range | `v0.29.0` | [v0.2.13](https://operator.ptah.run/v0.2.13/) |
 | `v0.2.12` | No range | `v0.26.0` | [v0.2.12](https://operator.ptah.run/v0.2.12/) |
@@ -50,7 +50,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.29.3`. Commit [`dfbda1b29a7e4591a41334c6949dddac3a6bd69d`](https://github.com/stokaro/ptah/commit/dfbda1b29a7e4591a41334c6949dddac3a6bd69d), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.29.4`. Commit [`1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788`](https://github.com/stokaro/ptah/commit/1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
@@ -60,8 +60,12 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - The verified build contains stokaro/ptah#5545: a MySQL read that cannot see every trigger, routine or view definition in the database fails with permission_denied and names what it could not see, where an executor without #5545, v0.22.0 included, reported those objects as absent. The login the databases page documents holds TRIGGER, EXECUTE and SHOW VIEW on the database for that reason, and the narrower login it documented before fails every Observe and Plan at this build.
 - The verified build contains stokaro/ptah#5954 and #5981: each PostgreSQL view statement of a saved plan records its effect, the view's security_invoker and security_barrier before the statement and after it, and the operator decides the security_invoker hold from it. An executor without them, v0.23.0 included, records none, and the operator reads the option from the SQL, so under apply: Always a plan that changes the body of a view that states security_invoker waits for an approval even when the option keeps its value. An operator that does not declare the field, 0.2.11 included, refuses every plan this build writes with a PostgreSQL view statement as invalid_plan_output.
 - The verified build contains stokaro/ptah#6098 and #6099: each view effect of a plan that read the database also records before_plan, what the view held when the plan started, and each MySQL or MariaDB view statement records its SQL SECURITY mode as sql_security. The operator reads neither, so a PostgreSQL view a CASCADE may have taken is still held whatever it states, and every MySQL view a plan replaces is still raised as SecurityDefiner.
-- The verified build contains stokaro/ptah#5902: a MySQL plan keeps the SQL SECURITY mode a declaration states. From v0.26.0 to v0.29.2 it replaces a view the database holds as SQL SECURITY INVOKER and the declaration leaves without a mode as a DEFINER view. A replacement names no definer, so the login that runs it becomes the view's definer whatever the mode, and the operator holds every MySQL and MariaDB CREATE OR REPLACE VIEW and ALTER VIEW for an approval under apply: Always.
+- The verified build contains stokaro/ptah#5902: a MySQL plan keeps the SQL SECURITY mode a declaration states. From v0.26.0 to v0.29.2 it replaces a view the database holds as SQL SECURITY INVOKER and the declaration leaves without a mode as a DEFINER view. A replacement that names no definer makes the login that runs it the view's definer whatever the mode, and the operator holds every MySQL and MariaDB CREATE OR REPLACE VIEW and ALTER VIEW for an approval under apply: Always.
 - The verified build contains stokaro/ptah#6105: a MySQL plan that would replace a view the database holds as SQL SECURITY INVOKER, where the declaration names no mode, is refused with the code view-security-option, which the Plan reports as plan_refused at every retry while an Observe reports views_modified. An executor without #6105, v0.29.2 included, replaces such a view as a DEFINER view.
+- The verified build contains stokaro/ptah#6109 and #6124: a MySQL or MariaDB plan that would replace a view running as its definer before and after the change keeps that definer. Where the plan's login is the definer, the replacement names it in a DEFINER clause, which the operator raises as Definer beside SecurityDefiner. Where another account is, the plan is refused with the code view-definer, which the Plan reports as plan_refused at every retry, naming each view, its definer and the login, while an Observe reports views_modified. An executor without them, v0.29.3 included, replaces such a view as the login and makes the login its definer.
+- The verified build contains stokaro/ptah#6124: before the first statement, schema apply and migrations up read the login's grants and refuse a statement that names another account as a definer the grants show the login may not name. On MySQL that takes SET_ANY_DEFINER, with ALLOW_NONEXISTENT_DEFINER as well for an account the server lacks, and SUPER, SET_USER_ID and ALL PRIVILEGES pass too; on MariaDB it takes SET USER, and a login that holds only SUPER is left to the server. A migration run refused there applies none of its files and writes no revision row, and the Pod log names the file, the definer, the login and the privilege. A schema Apply meets it only where the plan's login has come to match another MySQL account than the plan's read did, as 'ptah'@'%' and 'ptah'@'10.244.1.%' can from Pods on different nodes: the plan names no definer but the account its read ran as, and the runner refuses an Apply under another login before Ptah runs. Such an Apply ends as apply_refused with the code definer-privilege, and the Pod log carries Ptah's sentence. The check asks whether each definer exists before any file runs and skips the executable comments mysqldump writes, so for a MySQL login that can read mysql.user and holds SET_ANY_DEFINER without ALLOW_NONEXISTENT_DEFINER, SUPER, SET_USER_ID or ALL PRIVILEGES it refuses a file whose definer an earlier file of the run creates, on MariaDB it refuses DEFINER=CURRENT_ROLE and a host-less definer that names a role the login may use, both of which the server accepts, and it leaves a definer inside /*!50013 ... */ to the server (stokaro/ptah#6126). An executor without #6124, v0.29.3 included, runs the files before such a statement, and the server refuses that statement with error 1227.
+- The verified build contains stokaro/ptah#6119: a saved plan's fingerprint records of each table's rows only whether it holds any, so rows written to a table that holds some leave a waiting plan valid, and the first row of an empty table still makes it stale. Measured on PostgreSQL 17 with the release images, a plan v0.29.3 saved against a table with rows is stale under v0.29.4 with no write in between; the execution binding retires every such plan before an Apply could use it. An executor without #6119, v0.29.3 included, reported its own plan stale after 2,000 rows and an ANALYZE.
+- The verified build contains stokaro/ptah#6118 and #6123: a PostgreSQL plan that removes a table whose policy reads a view the plan rebuilds drops the policy first, and the rebuild's drops carry no CASCADE. An executor without them, v0.29.3 included, writes DROP VIEW ... CASCADE, which takes the policy, and the Apply stops at DROP POLICY with SQLSTATE 42704 and rolls back.
 - The verified build contains stokaro/ptah#6014: a schema Apply that sends a statement writes a started and an outcome entry to ptah_schema_apply_log in the target database, as the login in the schema's Secret, and creates the table on the first such Apply. Ptah's own reads leave the table out. A write the database refuses changes neither the outcome nor the exit status, and of the apply_log the apply document reports the operator reads only the run reference. The MySQL privileges the databases page documents hold no INSERT, so there the first such Apply creates the table and loses its entries, and later Applies write theirs once the login holds INSERT on the table, as the databases page shows. Every Apply of either family passes the claim's operation ID as --run-reference, with the approver or the apply-always name in PTAH_ACTOR and admission or policy in PTAH_ACTOR_ORIGIN, and the runner refuses a document whose entries carry another reference, so an entry names the approver, where the name came from and the operation. A migration log an earlier build created gains the nullable run_reference and actor_origin columns on the first run that writes to it. An executor without #6014, v0.26.0 included, keeps no apply log.
 - The verified build contains stokaro/ptah#5994: `migrations up --check-drift` replays the applied history into the shadow database PTAH_SHADOW_DB names, compares it with the target under the migration lock before any pending migration, and reports drift_check in the run document. The operator passes it for a migration whose policy names a drift check, with one --drift-exclude for each selector policy.driftCheck.exclude names, so an object the migrations do not create and the list does not name reads as drift. An executor without #5994, v0.26.0 included, refuses the flag and writes no run document, so such an Apply applies nothing and is recorded Unknown until a history read settles it.
 - The verified build contains stokaro/ptah#6052 and #6055: before a migration run applies any file, it asks every file it selected what the file's transaction or its own text refuses, such as a CREATE INDEX CONCURRENTLY inside the transaction the file runs in or transaction control in a file Ptah wraps in one, and a refusal there ends the run failed with nothing applied and no revision row. The run document does not say which file it refused, so the operator's message names a migration only when the run selected one, and the Pod log holds Ptah's sentence, which names the file. An executor without them, v0.28.0 included, applies the files before the refused one first, and for some refusals leaves that one failed with a dirty revision row.
@@ -87,7 +91,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.14/](https:/
 
 - Ptah `v0.29.2`. Commit [`ba500e11b2536ad7dad1720e5cbd9bf7292dba8b`](https://github.com/stokaro/ptah/commit/ba500e11b2536ad7dad1720e5cbd9bf7292dba8b), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, thirteenth and fourteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, seventeenth and eighteenth limitations.
 
 ### v0.2.13
 
@@ -99,7 +103,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.13/](https:/
 
 - Ptah `v0.29.0`. Commit [`75fa9991177e9049b66fe2e37abec0db40f47568`](https://github.com/stokaro/ptah/commit/75fa9991177e9049b66fe2e37abec0db40f47568), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, twelfth, thirteenth, fourteenth and twenty-first limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, sixteenth, seventeenth, eighteenth and twenty-fifth limitations.
 
 ### v0.2.12
 
@@ -111,7 +115,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.12/](https:/
 
 - Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, twentieth and twenty-first limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, twenty-fourth and twenty-fifth limitations.
 
 ### v0.2.11
 
@@ -123,7 +127,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.11/](https:/
 
 - Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, nineteenth, twentieth and twenty-first limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, twenty-third, twenty-fourth and twenty-fifth limitations.
 
 ### v0.2.10
 
@@ -133,7 +137,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.10/](https:/
 
 **Verified:** the same as [`v0.2.11`](#v0211).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, eighteenth, nineteenth, twentieth and twenty-first limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, twenty-second, twenty-third, twenty-fourth and twenty-fifth limitations.
 
 ### v0.2.9
 
@@ -145,7 +149,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, seventeenth, eighteenth, nineteenth, twentieth and twenty-first limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, twenty-first, twenty-second, twenty-third, twenty-fourth and twenty-fifth limitations.
 
 ### v0.2.8
 

@@ -2,9 +2,9 @@
   "scope": "Isolated CLI readings of the SQL the executor sends for schema diagnostics, plan validation, the refused stale Apply, the allowed Apply, migration History and the refused restored-history Apply; not Kubernetes acceptance.",
   "capturedOn": "2026-11-16",
   "procedure": "python3 support/qualification/probes/schema_sql_readings.py --context <context> --executor-image <image> --out <dir>",
-  "ptahRelease": "v0.29.3",
-  "ptahCommit": "dfbda1b29a7e4591a41334c6949dddac3a6bd69d",
-  "executorImage": "ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96",
+  "ptahRelease": "v0.29.4",
+  "ptahCommit": "1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788",
+  "executorImage": "ghcr.io/stokaro/ptah@sha256:3b9f644a08221cdcde9062c6d23c55b6fbcccaaa9d4edc2aec10dd80f0f448f1",
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
@@ -12,7 +12,7 @@
     "postgresql-16": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28"
   },
   "clientAddress": "172.19.0.3",
-  "control": "The same procedure run with the Ptah v0.28.0 release image reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, apart from the run id and the entry time of the allowed Apply's two ptah_schema_apply_log entries, which every run draws anew and the comparison leaves out. The v0.29.0, v0.29.2 and v0.29.3 release images reproduced every reading the same way, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, so no reading or plan here changed, and each exit status and record count is the one v0.29.3 gave.",
+  "control": "The same procedure run with the Ptah v0.28.0 release image reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, apart from the run id and the entry time of the allowed Apply's two ptah_schema_apply_log entries, which every run draws anew and the comparison leaves out. The v0.29.0, v0.29.2 and v0.29.3 release images reproduced every reading the same way, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte. The v0.29.4 release image reproduced every PostgreSQL reading, the 18 and 16 witnesses included, both History readings, both restored-history refusals and all four saved exclusion plans the same way. In each of the 30 MySQL schema readings the one statement that moved is the view read, which now also selects DEFINER and CURRENT_USER() (stokaro/ptah#6109), so those 30 are v0.29.4's, and each exit status and record count is the one v0.29.3 gave.",
   "readings": {
     "mysql-migration-history-audit.jsonl": {
       "exitCode": 0,
@@ -27,87 +27,87 @@
     "mysql-schema-destructive-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "5cf354f57bcbda5c87970406a929a56d34e83ab5bcddd750a4ed1ca036ea725d"
+      "sha256": "66ae9d7d19b1bd0a24d3525e90ae6dde003a07a3de4cd3977573674b046640cf"
     },
     "mysql-schema-destructive-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "924a169bae94207cadfb763b255a28f95583aae6422cfda62792ae019d7b92ea"
+      "sha256": "54f1608e29360e1e38b32178cf73efa6b3a2563140c71085d82ad95ca5e063f8"
     },
     "mysql-schema-documented-drift-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "715beb9a234cd04a2ecefc80d9825661e338311190737834fe0379ea71362065"
+      "sha256": "6140df78232be9741515f6c6d2f48a9ec21b1c138853dc26c318637463445f62"
     },
     "mysql-schema-documented-drift-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "c740f0c5029e7c497dcdaa633e1801df17fa8b5dc52629a3c07481eec93f4c01"
+      "sha256": "57b95646b2195d951dd64c2d2d27df1d507026e18e0e3d315ffbc031f2087cc3"
     },
     "mysql-schema-documented-drift-stale-apply.jsonl": {
       "exitCode": 2,
       "records": 52,
-      "sha256": "c4020e4cac5909894896dda45ed1e3d8ab623a30ac8040d38b07ad70ea9d66b6"
+      "sha256": "bcb60d539ff6fd67b8604eea545da9fed43ec1eb2466c28a82bfad145040a9c2"
     },
     "mysql-schema-documented-drift-validate-plan.jsonl": {
       "exitCode": 0,
       "records": 52,
-      "sha256": "693ca98b650648b87d8f57cff6bf87fe58fda10e722fd2efa83314f10555d711"
+      "sha256": "9f3be2b6813438aa5043bdb0cf1426ddee66ccf6c548880b7131c3fd4cd5d4a4"
     },
     "mysql-schema-documented-exclusion-narrow-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "c0979c93a00e1a2b1060a7c1be4b6f3d0fc1a2c577265008bfc854da23470127"
+      "sha256": "9157b5274577f657024980946e21c121aa0cd8c25c2f3d338781a3dc37c37321"
     },
     "mysql-schema-documented-exclusion-narrow-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "3beb921ac1d5e167dfdf901c74ae10da2e1e8be9db92b7e6d15e4b7f253509d8"
+      "sha256": "b71d170f2059791d7fa005c1c18a03a557fe832d86ad29b7e6e639c646e0bced"
     },
     "mysql-schema-documented-exclusion-wide-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "e4f01c1d41025cb96cf8974474b9b1845d85ad89798c77a4c5d2d629e8f52bdd"
+      "sha256": "bc92715d38da557e21d552e6ac5ac1b7fef983c4787a70e14592660da009a0d1"
     },
     "mysql-schema-documented-exclusion-wide-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "7ffc45c2703967ef444d9b9ea089dae51b1417ee75c605c388fd9a7bfc23cbe3"
+      "sha256": "f907003aa44d55b390148a0bc200e8c79514690263e6e3bd76996c150a073989"
     },
     "mysql-schema-drift-apply-current.jsonl": {
       "exitCode": 0,
       "records": 65,
-      "sha256": "4db8f1c18307b493c6a0fce1757afb00ed9819197fa56b6264afb74e279e3b30"
+      "sha256": "80fdc3c0261929b394fc77f87bb6e69fd46dc53b49b972fd987556e847fcbf9e"
     },
     "mysql-schema-drift-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "117764cc453c6249dbd54d57afa0e7502adacd8f60f4a2761289edafecfc3eea"
+      "sha256": "37fb13aa0467d78ca2024a49c7354d3c400b1ce0917631b66bea74f45dea6d3c"
     },
     "mysql-schema-drift-plan-before.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "59616e1501e06a3b65e16c7f72f1514701503ce3e400cced358024b3c0407a46"
+      "sha256": "f608233bf245d23496f36e2681e426882c7bcabbb4c9088afe3b824646384f87"
     },
     "mysql-schema-drift-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "c6300096f4187c42994cf2ccaa7fbbeef765fbb856b6019f9c90b8c864a89bd8"
+      "sha256": "252f5b75de3206ba1763cb279774d408bd68929ab94c95a0325a64dcc2169b88"
     },
     "mysql-schema-drift-stale-apply.jsonl": {
       "exitCode": 2,
       "records": 52,
-      "sha256": "43386ce29ee8e6c36e7137c9a8935cce73074486e7deee62327014bbfbcef757"
+      "sha256": "902d2c19a8e659786493d8cac12edef85229538484c4d6232b326dc2ead5f508"
     },
     "mysql-schema-drift-validate-plan.jsonl": {
       "exitCode": 0,
       "records": 52,
-      "sha256": "9d4ba5be5e00e0c818068bb25a51983bd7bbca785d024460133ca7b9de670e74"
+      "sha256": "4aa95b78d0ac9716991ad4772a022e3ebe608edbe72a1803b73883204ea675f0"
     },
     "mysql-schema-exclusion-narrow-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "7cbd0579619974a200714c108e9cc59265e6bac096ebde897bc9688864d5dd9c"
+      "sha256": "2467a7e2348466b77d584bc6a7cb9dc1f384f5c692239a8aab40187b1505d041"
     },
     "mysql-schema-exclusion-narrow-plan.json": {
       "sha256": "4ad30ef52661c25aa56996863792736337e511a6aac08989946d98d925db3b85"
@@ -115,12 +115,12 @@
     "mysql-schema-exclusion-narrow-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "cd112c1430e3e91dab10b533b8cfe1bc7249e7006b58cee626b9d9d5114f3e79"
+      "sha256": "f8f5be7ee4b8fd8f91c4d1513cb3613e35a8a272656c7297ed24e39ef02c9cad"
     },
     "mysql-schema-exclusion-wide-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "51868e60ec6e505c2421ca31f5ba19b8b0e965efc37a41ee4db50fcc8275b898"
+      "sha256": "e87d6cd0b24a63f1f11ff8b4136d5fd0d0bee63c2592163a3e33d10278761e71"
     },
     "mysql-schema-exclusion-wide-plan.json": {
       "sha256": "41d6bd856057239b9632354397e7891ad8935a7488b78cf0f14cbd0415423a47"
@@ -128,57 +128,57 @@
     "mysql-schema-exclusion-wide-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "2ee04e7270f335a53795c4fca751d49bd60ae541624b165f6563b6d1e2f71229"
+      "sha256": "aa46770b71aa754b220f464e37b7a09742346007d78c4ea95b7932475fd87e84"
     },
     "mysql-schema-initial-v1-observe.jsonl": {
       "exitCode": 1,
       "records": 43,
-      "sha256": "3d1cd862da6954bd53e8c6d6d2a799c5dcf7bf42c74606d9fe540ee03a94b455"
+      "sha256": "c923891f99dc3dce1f3e809e6072a9caec04a609973635d6a1c949d03249d2a3"
     },
     "mysql-schema-initial-v1-plan.jsonl": {
       "exitCode": 0,
       "records": 83,
-      "sha256": "934d82dfd73ebd69fd79b57f66b7fe70510bef905f57aa3484edca9cc2c12e54"
+      "sha256": "e34a2ceeca302932656c138949f2035ee856db39d8525eee5bb4035f90ad592a"
     },
     "mysql-schema-lock-45-plan.jsonl": {
       "exitCode": 0,
       "records": 222,
-      "sha256": "d74b97aae428a0daa2adca99fbfa88fcf7a1bb57a39f67f4a03d9fa6da4d7c56"
+      "sha256": "2b301050b0b2769d51edcd427067f1c37ca8c1d72b6756a4ae33ca61d523cb96"
     },
     "mysql-schema-lock-60-plan.jsonl": {
       "exitCode": 0,
       "records": 222,
-      "sha256": "e4c46a80b696c682c99a74c698a2e6949ed29a03af6e315e667662079b79b191"
+      "sha256": "c2e084adb045eba7e0301af9b5afe0a8758a9a9ee160d62e1021d59a17c5433a"
     },
     "mysql-schema-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "b80f43029362e161b9bfadf22cfc963b56a4c580e78ac215de03f848ebf4e091"
+      "sha256": "e6a42844ef6c93d00e67060f1380b432c0de5f071633c910bf3059033fcf4cfb"
     },
     "mysql-schema-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "b18563d3a202aa51c5b1dc0a59b95f9f2011bac0af9b33b0ce684b6f44584fe7"
+      "sha256": "11f781a92f0b819e1aa5264eb5ce161eb4a6e548738a1c04fe9bf44e173e199b"
     },
     "mysql-schema-tag-v2-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "d6b1916b4e47377ed1756370e18104f341f800cdd247788d05a27db2c13355cd"
+      "sha256": "efe77ae8983470bb754cd51cac4cdf287f6125868ce3feb66faa6c86466650dc"
     },
     "mysql-schema-tag-v2-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "0ef30fa5633eb1e6b060d5377c23df20765bd6b3c90813ad520b9773fc12fcd5"
+      "sha256": "70f6d9a7e8be1c09eacc49b5684c8b09538934bbebb3df063f111b0a1836203e"
     },
     "mysql-schema-tag-v3-observe.jsonl": {
       "exitCode": 1,
       "records": 44,
-      "sha256": "60312b88529c7fc923fb44f652c691685cbb05643d2f336d7b6ffd3e154beabe"
+      "sha256": "35b92b48ea753368ceccecc25a36ff677c7ea62d2d863cd91cce3e333086e6b2"
     },
     "mysql-schema-tag-v3-plan.jsonl": {
       "exitCode": 0,
       "records": 85,
-      "sha256": "f18c7070fbc217de74358345b937cd192204961361df2e60c1ce9c95d3d205a9"
+      "sha256": "39abdd2866502259a52ac6da101b39883d3744402429c5a6aee99e28a53594e1"
     },
     "postgresql-16-schema-drift-observe.jsonl": {
       "exitCode": 1,

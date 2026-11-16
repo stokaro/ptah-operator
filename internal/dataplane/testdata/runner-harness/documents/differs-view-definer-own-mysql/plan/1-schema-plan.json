@@ -1,0 +1,54 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:40e9774c28d61905b7fdb928af4cb039d1dcfcb6f2a587fcc9c737901d68a122",
+  "plan_path": "/work/ptah-plan-output-2301686694/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_6b5ffe9ee232",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:e26f69a9acdb675e938b4ead8e4a81f959db77ea9cfd60c7972a96e35aee55ab",
+    "to_fingerprint": "sha256:def6374adc1f0c244e51f1d66426ccc7a5b32417af4c7c06224a662f71009d9d",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_view_definer_own_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE OR REPLACE DEFINER=`harness_view_own`@`%` VIEW `differs_notes_view` AS\nSELECT id FROM differs_notes",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "harness_differs_view_definer_own_mysql",
+              "name": "differs_notes_view"
+            },
+            "action": "replace",
+            "properties": [
+              {
+                "name": "sql_security",
+                "before": "DEFINER",
+                "after": "DEFINER",
+                "changed": false
+              }
+            ],
+            "before_plan": {
+              "exists": true,
+              "properties": [
+                {
+                  "name": "sql_security",
+                  "value": "DEFINER"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

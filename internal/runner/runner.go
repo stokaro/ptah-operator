@@ -1559,6 +1559,11 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 			setResultError(result, "stale_plan", staleApplyMessage(report.Refusal), redactor, diagnostics)
 			return
 		}
+		// The frame names the code, and the views a refusal lists, while Ptah's
+		// sentence says what to change: a definer-privilege refusal names the
+		// privilege to grant. It names accounts and objects of the database, so
+		// it goes to the Pod log, as a failure's does.
+		logReportedError(report.Error, redactor, diagnostics)
 		setResultError(result, codeApplyRefused,
 			errors.New(refusalSentence("ptah refused the approved plan", report.Refusal, redactor)), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeFailed:

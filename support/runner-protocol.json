@@ -447,6 +447,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:c97f9f350bf39fd58ae9be6736fe23b5282147291b46887011ea6e40aefdb039",
       "reason": "Name the views a refusal lists (#1126). Since Ptah v0.29.3 a schema plan or apply report's refusal may carry view_options, one view and option per entry, as view-security-option does. The runner reads the list apart from the rest of the report, so a list in another form never makes a report unreadable. A plan_refused or apply_refused message names the code, then the first eight entries that fit in 497 bytes, each view redacted and cleaned as other free text is, and counts the rest: ptah refused to plan the change (view-security-option: orders_view sql_security, and 2 more). A refusal that lists none, or lists them in another form, reads as before. Codes, fields and the frame shape are unchanged, and the message stays text a manager shows bounded. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a2b016f00e862187791f9f925bf4e3505bb4998c70a92257352f6f36ea240512",
+      "reason": "Since Ptah v0.29.4 a refusal may carry view_definers, each view with the account it runs as and the account the plan's read ran as. The runner reads it apart from the rest of the report, as it reads view_options, and a plan_refused or apply_refused message names the entries after the code within the same bounds: ptah refused to plan the change (view-definer: orders_view definer root@% account deploy@%). An account the read did not record is left out, and each account is redacted and cleaned as other free text is. definer_privileges is not read, so that refusal reads by its code. A refused Apply also writes Ptah's error message to the Pod log, bounded and redacted, and LeavesReportedError counts apply_refused; an apply failure in a frame still belongs to apply_failed and apply_outcome_unknown alone. Codes, fields and the frame shape are unchanged. No release built an earlier digest of this change. Protocol 1 stays."
     }
   ]
 }
