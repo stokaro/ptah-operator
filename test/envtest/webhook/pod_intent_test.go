@@ -97,15 +97,21 @@ func TestPodIntentWebhook(t *testing.T) {
 	// Job stays Terminating. A Job deleted in the background is not: the
 	// garbage collector deletes the Pod, which the webhook does not judge, and
 	// the kubelet records the Pod stopped through pods/status, which it does
-	// not judge either. The e2e rows that delete a running Apply rest on both.
+	// not judge either: the chart's webhook matches CREATE and UPDATE of pods,
+	// pods/ephemeralcontainers and pods/resize. The e2e rows that delete a
+	// running Apply refuse that stopped status themselves, with a policy of
+	// their own, and rest on the webhook leaving pods/status alone only for
+	// the dry-run status probe that shows the policy is in force.
 	t.Run("the garbage collector orphaning a managed Pod is refused, its stopped status is not", func(t *testing.T) {
 		t.Parallel()
 		pod := podFor(job)
 		if err := clientAs(t, jobController).Create(ctx, pod); err != nil {
 			t.Fatalf("the API server refused the Job controller's Pod for %s/%s: %v", job.Namespace, job.Name, err)
 		}
-		// The patch the garbage collector sends to orphan a dependent of a
-		// built-in kind (pkg/controller/garbagecollector/patch.go).
+		// The patch the garbage collector's orphanDependents sends to orphan a
+		// dependent of a built-in kind, built by
+		// GenerateDeleteOwnerRefStrategicMergeBytes in
+		// pkg/controller/controller_ref_manager.go.
 		orphan := fmt.Sprintf(`{"metadata":{"ownerReferences":[{"$patch":"delete","uid":%q}],"uid":%q}}`, job.UID, pod.UID)
 		err := clientAs(t, garbageCollector).Patch(ctx, pod.DeepCopy(), client.RawPatch(types.StrategicMergePatchType, []byte(orphan)), client.DryRunAll)
 		requireDenied(t, err, podIntentWebhook, "managed Pod has no exact Job controller identity")
