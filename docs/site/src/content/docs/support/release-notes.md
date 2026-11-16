@@ -19,51 +19,105 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.3,
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.4,
 which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.29.3 and planned. A MySQL or MariaDB
-view the database holds as `SQL SECURITY INVOKER` and the schema declares with
-no mode now stops the schema's Plan
+the resource has read its database with v0.29.4 and planned. Measured on
+PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
+as stale, with nothing written in between, because the fingerprint keeps less
+of a table's rows
+([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
+retires every such plan before an Apply could use it, so the approval you give
+is for a plan v0.29.4 made.
+
+A MySQL or MariaDB view the database holds as `SQL SECURITY INVOKER` and the
+schema declares with no mode now stops the schema's Plan
 ([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)). An Observe
 reports `views_modified`, as before, and the Plan fails at every retry with
 `plan_refused: ptah refused to plan the change (view-security-option: <view>
 sql_security)`, naming each such view. Under v0.29.2 such a plan replaced the
 view as `SQL SECURITY DEFINER`, with the login the Apply ran as for its definer,
-and waited for an approval as `SecurityDefiner`. To find them before you
-upgrade, list the views that would stop as the schema's login:
+and waited for an approval as `SecurityDefiner`. A view that runs as its
+definer, where the definer is another account than the schema's login, now
+stops the Plan too when the plan would replace it
+([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). The Plan
+fails with `plan_refused: ptah refused to plan the change (view-definer: <view>
+definer <account> account <login>)`. Under v0.29.3 the replacement made the
+login the view's definer, so the view ran with the login's privileges. To find
+both before you upgrade, list the views that could stop as the schema's login:
 
 ```sql
-SELECT TABLE_NAME FROM information_schema.VIEWS
-WHERE TABLE_SCHEMA = DATABASE() AND SECURITY_TYPE = 'INVOKER';
+SELECT TABLE_NAME, SECURITY_TYPE, DEFINER FROM information_schema.VIEWS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND (SECURITY_TYPE = 'INVOKER' OR DEFINER <> CURRENT_USER());
 ```
 
-For each one the schema declares without a mode, declare `INVOKER` to keep it,
-`CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or `security = INVOKER`
-in HCL, or `DEFINER` to change it, or list the view in `spec.policy.exclude`.
+For an `INVOKER` view the schema declares without a mode, declare `INVOKER` to
+keep it, `CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or
+`security = INVOKER` in HCL, or `DEFINER` to change it. For a `DEFINER` view of
+another account, point the schema's Secret at that account, or declare the view
+`INVOKER`, which makes the login its definer. Either view can instead be listed
+in `spec.policy.exclude`. A view only stops a Plan that would replace it.
+
+A MySQL or MariaDB migration file that writes `DEFINER=` for another account
+now stops its run before the first file when the migration's login holds
+neither `SET_ANY_DEFINER` on MySQL nor `SET USER` on MariaDB
+([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)). Under v0.29.3
+the files before it ran and the server refused the statement with error 1227.
+Grant the privilege, or have the file name the login.
+
 A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.29.3, and the runner
+- **Executor.** The verified executor is now Ptah v0.29.4, and the runner
   harness, the schema SQL readings, both History readings and the capacity
-  calibration were measured with it. Each view statement of a saved plan now also
-  records what the view held when the plan started, as `before_plan`
-  ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)), and each
-  MySQL view statement its `SQL SECURITY` mode before and after, as
+  calibration were measured with it. Since v0.29.3 each view statement of a
+  saved plan also records what the view held when the plan started, as
+  `before_plan` ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)),
+  and each MySQL view statement its `SQL SECURITY` mode before and after, as
   `sql_security`
   ([stokaro/ptah#6098](https://github.com/stokaro/ptah/pull/6098)). The
   operator reads neither, so a plan raises the privilege changes it raised
   under v0.29.2, as
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
-  describes.
+  describes. A MySQL view the login defines is now replaced with
+  ``CREATE OR REPLACE DEFINER=`<login>`@`<host>` VIEW``, which also raises
+  `Definer`.
 - **A refused view is named.** When Ptah refuses a plan with
-  `view-security-option`, the `ReconciliationFailed` message now names each view
-  and option Ptah's report lists, as in `plan_refused: ptah refused to plan the
-  change (view-security-option: orders_view sql_security)`, where it named the
-  code alone. It names the first eight that fit in 512 bytes and counts the
-  rest. A refusal whose report lists no view reads as before.
+  `view-security-option` or `view-definer`, the `ReconciliationFailed` message
+  now names each view Ptah's report lists, with the option, or with its definer
+  and the login, as in `plan_refused: ptah refused to plan the change
+  (view-security-option: orders_view sql_security)` and `plan_refused: ptah
+  refused to plan the change (view-definer: orders_view definer owner@%
+  account ptah@%)`, where it named the code alone. It names the first eight
+  that fit in 512 bytes and counts the rest. A refusal whose report lists no
+  view reads as before.
   [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
   says what the message carries.
+- **A plan stays valid while rows are written.** A saved plan's fingerprint now
+  records only whether each table holds rows
+  ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on
+  PostgreSQL 17, a v0.29.4 plan still applied after 2,000 rows and an `ANALYZE`
+  on a table that held rows, where v0.29.3 refused its own plan as stale, so a
+  busy database no longer sends a waiting plan back to be planned and approved
+  again. The first row of an empty table still makes the plan stale.
+- **A removed table's policy and a rebuilt view.** A PostgreSQL plan that
+  removes a table whose row-level security policy reads a view the plan
+  rebuilds now drops the policy first, and the rebuild's drops carry no
+  `CASCADE` ([stokaro/ptah#6118](https://github.com/stokaro/ptah/pull/6118),
+  [stokaro/ptah#6123](https://github.com/stokaro/ptah/pull/6123)). Under v0.29.3
+  the `CASCADE` took the policy and the Apply stopped at its `DROP POLICY` with
+  SQLSTATE 42704 and rolled back; both were measured on PostgreSQL 17.
+- **A definer a migration's login may not name.** The run is refused before its
+  first file, as `Failed` with nothing committed, and the Pod log names the
+  file, the definer, the login and the privilege.
+  [A definer the login may not name](../../troubleshoot/condition-reasons/#a-definer-the-login-may-not-name)
+  says what to grant. At v0.29.4 the check reads each file of a run alone: for
+  a login that holds `SET_ANY_DEFINER` without `ALLOW_NONEXISTENT_DEFINER` it
+  refuses a file whose definer an earlier file of the same run creates, on
+  MariaDB it refuses `DEFINER=CURRENT_ROLE` and a role, which the server
+  accepts, and it leaves a definer inside a mysqldump `/*!50013 ... */` comment
+  to the server ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and
   `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
   `planread.Load` no longer lists one when it refuses a plan for another field.

@@ -271,10 +271,17 @@ leaves without a mode, with the code `view-security-option`
 ([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)), where v0.26.0
 to v0.29.2 replaced it as a `DEFINER` view.
 [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
-says what to declare. Since v0.29.3 each MySQL view statement also records its
+says what to declare. Since v0.29.4 a view that runs as its definer before and
+after the change keeps its definer: a plan read as that definer names it,
+``CREATE OR REPLACE DEFINER=`ptah`@`%` VIEW``, and a plan read as another account
+is refused with the code `view-definer`
+([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109),
+[stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)). The clause is
+raised as `Definer`. Since v0.29.3 each MySQL view statement also records its
 mode before and after the statement, as an `sql_security` effect. The operator
-does not read it, and the mode does not say who the definer becomes, so every
-MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW` is raised as
+does not read it, and a replacement of a view held or declared as `INVOKER`
+names no definer, so the login that runs it becomes the definer. Every MySQL or
+MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW` is therefore raised as
 `SecurityDefiner`, and a plan that changes a view's body waits for an approval
 under `Always`. A new view is raised only when it states `SQL SECURITY
 DEFINER`. Declare the mode a view should keep, `CREATE SQL SECURITY INVOKER

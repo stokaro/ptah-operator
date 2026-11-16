@@ -72,7 +72,7 @@ Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
 Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
-[schema apply log](https://github.com/stokaro/ptah/blob/dfbda1b29a7e4591a41334c6949dddac3a6bd69d/docs/site/src/content/docs/direct/apply-log.md),
+[schema apply log](https://github.com/stokaro/ptah/blob/1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788/docs/site/src/content/docs/direct/apply-log.md),
 the table `ptah_schema_apply_log`: one row before its first statement and one
 after it. The first such Apply creates the table in `public`, and the `CREATE`
 above is all it needs, so the login owns the table. Ptah refuses a table of that
@@ -116,19 +116,48 @@ another account defines later. `SHOW VIEW` shows the definitions of views. Add
 objects are managed.
 
 A view runs as its definer unless it says `SQL SECURITY INVOKER`, and a plan
-that replaces a view sets the mode again and records the connected account as
-the view's definer. Since Ptah v0.29.3 a plan refuses to replace a view the
-database holds as `INVOKER` when the declaration names no mode, and the Plan
-fails with the code `view-security-option`; from v0.26.0 to v0.29.2 such a
-plan switched the view to `DEFINER`. Declare the mode each managed view should
-have.
+that replaces a view sets the mode again. A replacement that names no
+`DEFINER` makes the account that runs it the view's definer. Since Ptah v0.29.3
+a plan refuses to replace a view the database holds as `INVOKER` when the
+declaration names no mode, and the Plan fails with the code
+`view-security-option`; from v0.26.0 to v0.29.2 such a plan switched the view
+to `DEFINER`. Declare the mode each managed view should have.
+
+Since Ptah v0.29.4 a view that runs as its definer, before and after the
+change, keeps that definer. Where the login is the definer, the plan names it,
+``CREATE OR REPLACE DEFINER=`ptah`@`%` VIEW``. Where another account is the
+definer, the plan is refused with the code `view-definer`
+([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)): replacing the
+view as the login would run it with the login's privileges. Manage such a view
+as its definer, declare it `SQL SECURITY INVOKER`, or list it in
+`spec.policy.exclude`. A view held or declared as `INVOKER` is still replaced,
+and the login becomes its definer.
+
+A schema plan names no definer but the login, and an Apply runs as the login
+its plan was read as, so a schema's login needs no global privilege for its
+views. A migration file can name any account. A statement that names another
+account as a definer needs `SET_ANY_DEFINER` on MySQL, with
+`ALLOW_NONEXISTENT_DEFINER` for an account the server does not have, or
+`SET USER` on MariaDB, and since v0.29.4 Ptah refuses a migration run whose
+login lacks it before the first file
+([A definer the login may not name](../../troubleshoot/condition-reasons/#a-definer-the-login-may-not-name)).
+Grant it only to the login of a migration whose files name another definer,
+with `GRANT SET_ANY_DEFINER ON *.* TO 'ptah'@'%'` on MySQL or
+`GRANT SET USER ON *.* TO 'ptah'@'%'` on MariaDB. `SET_ANY_DEFINER` lets the login create objects that run as any account on the
+server, including an administrator, so it reaches past the managed database.
+A migration file that `ptah migrations generate --replay` wrote names no
+definer for a view it replaces, since the replay's definers are the dev
+server's, and Ptah warns about each such view on standard error when it writes
+the file. The migration's login becomes the definer of each such view when the
+operator runs the file. Write `DEFINER=` into the file to keep another one.
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
 says why every MySQL view a plan replaces waits for an approval under
 `apply: Always`.
 
 Do not grant global administration, user-management, file, replication, or
-grant-option privileges. `SHOW_ROUTINE` is the one global privilege the account
-may need. `EXECUTE` does not show the body of a routine another account defined,
+grant-option privileges. `SHOW_ROUTINE` is the one global privilege a schema's
+account may need, and a migration whose files name another definer adds the one
+above. `EXECUTE` does not show the body of a routine another account defined,
 so where the managed database holds one, the read fails at exit 2 and Ptah's
 message names the routine and `SHOW_ROUTINE`. Grant it then, and only then:
 
@@ -171,12 +200,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.29.3, the executor this operator build pins
+This section describes Ptah v0.29.4, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0, v0.28.0, v0.29.0, v0.29.2 and v0.29.3. The acceptance rows that
+v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3 and v0.29.4. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only

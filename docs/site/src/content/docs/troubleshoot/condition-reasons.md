@@ -328,6 +328,41 @@ A migration's status also records `status.lastRun.failure`: the statement's
 position and the SQLSTATE or error number, which hold no row. A schema Apply's
 report carries neither yet.
 
+## A definer the login may not name
+
+A MySQL or MariaDB statement that names another account as the definer of a
+view, a routine, a trigger or an event fails with error 1227 unless the login
+holds `SET_ANY_DEFINER` on MySQL, with `ALLOW_NONEXISTENT_DEFINER` for an
+account the server does not have, or `SET USER` on MariaDB. Those engines run
+DDL outside a transaction, so such a failure halfway through a run would leave
+the statements before it applied. Since v0.29.4 Ptah reads the login's grants
+before the first statement of a schema Apply or a migration run, and refuses
+the run when they do not let it name a definer a statement names
+([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)).
+
+A migration file that writes `DEFINER=` for another account is checked with
+every other file the run selected, before the first of them runs. The run
+applies none of them and reads as
+[a migration that failed and committed nothing](#a-migration-that-failed-and-committed-nothing).
+The Pod log names the file, the definer, the login and the privilege:
+
+```text
+ptah-runner: ptah reported: refusing before any statement runs: view orders_view in 0000000001_view.up.sql names the definer owner@%, and the connected account deploy@% lacks SET_ANY_DEFINER, which naming another account needs. Grant it with GRANT SET_ANY_DEFINER ON *.* TO 'deploy'@'%', or apply as owner@%
+```
+
+Grant the privilege it names to the migration's login, or write the file so
+that it names the login, or `CURRENT_USER`, which needs no privilege. Where the
+grants do not decide it, as when `SHOW GRANTS` fails, Ptah refuses nothing and
+the server answers with error 1227 as before.
+
+A schema plan names a definer only for a view it replaces that runs as its
+definer, and only when the plan's read connected as that definer:
+``CREATE OR REPLACE DEFINER=`owner`@`%` VIEW``. A plan read as another login
+is refused as `view-definer` below. The plan binds the login its URL names, and
+the runner refuses an Apply whose Secret names another one with
+`target_binding_mismatch` before Ptah runs, so the definer a plan names is the
+login the Apply connects as.
+
 ## A database the operation could not open
 
 When an operation cannot open its connection to the target database, what the
@@ -603,15 +638,27 @@ each as the view, spelled as the schema spells it, and the option:
 plan_refused: ptah refused to plan the change (view-security-option: orders_view sql_security, notes_view sql_security)
 ```
 
+Since v0.29.4 a MySQL or MariaDB refusal with the code `view-definer` lists
+each view with the account it runs as and the account the plan's read ran as,
+and the message names both after the view:
+
+```
+plan_refused: ptah refused to plan the change (view-definer: orders_view definer owner@% account ptah@%)
+```
+
+An account the read did not record is left out, and Ptah refuses then too.
+
 It names the first eight that fit in the 512 bytes an Event keeps, then counts
 the rest, as in `, and 3 more`. A view name too long to fit is cut and ends in
-`...`, and a control character in one reads as a space. A report that lists no
-view, or lists them in a form the operator does not read, gives the code alone.
+`...`, and a control character in a view or an account reads as a space. A
+report that lists no view, or lists them in a form the operator does not read,
+gives the code alone.
 
 | What Ptah refused | How it shows | What to do |
 | --- | --- | --- |
 | A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
 | A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and `sql_security`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
+| A MySQL or MariaDB view runs as its definer, under `SQL SECURITY DEFINER` before and after the change, and its definer is another account than the schema's login, since Ptah v0.29.4. A replacement without a `DEFINER` clause would make the login its definer, so the view would run with the login's privileges ([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-definer`, naming each view, its definer and the login. | Point the schema's Secret at the definer, so the plan names that definer and the view keeps it. Or declare the view `SQL SECURITY INVOKER` if it should run with its reader's privileges, and the login becomes its definer. Or list the view in `spec.policy.exclude`. |
 | The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
 

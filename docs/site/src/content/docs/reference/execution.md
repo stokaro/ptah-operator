@@ -500,14 +500,14 @@ read from writing is the command the runner runs, one fixed command line for
 each operation, and the audit below measures what those commands send. The
 runner opens no database connection of its own; it starts Ptah with the target
 URL in its environment. The behavior below was read from the source of the Ptah
-build [`support/ptah.json`](../../support/ptah/) pins, v0.29.3 at commit
-`dfbda1b2`.
+build [`support/ptah.json`](../../support/ptah/) pins, v0.29.4 at commit
+`1f1ff93c`.
 
 | Operation | Runner command | What reaches the database |
 | --- | --- | --- |
 | Observe | `ptah schema drift --format json` | The comparison of the live schema with the desired one: catalog queries, the managed-data comparison's reads, and the probes below. |
 | Plan | `ptah schema plan --output <file> --json`, twice, and the two files must be byte-identical | The same comparison, once for each file. A dev URL names the schema an unqualified file loads into, and the saved plan provisions nothing on it. |
-| Plan, then | `ptah schema apply --plan <first file> --auto-approve --json --dry-run`, with no schema file, dev URL or protected-table list in its environment | The apply's preview lock, a check that the plan still fits the target, and a return before any statement of the plan runs. A plan with no changes stops before this step. |
+| Plan, then | `ptah schema apply --plan <first file> --auto-approve --json --dry-run`, with no schema file, dev URL or protected-table list in its environment | The apply's preview lock, a check that the plan still fits the target, and a return before any statement of the plan runs. On MySQL and MariaDB, where a statement names a definer, `SELECT CURRENT_USER()`, and where it names another account, `SHOW GRANTS` and, on MySQL, a read of `mysql.user` for whether that account exists. A plan with no changes stops before this step. |
 | History, for a `PtahMigration` | `ptah migrations status --migrations-dir <dir> --json` | Catalog reads that find the revision table and its engine, on MySQL the table's definition and one session variable, and a `SELECT` of the revision rows. |
 
 Resolve and Verify, in either family, run `ptah oci resolve` and `ptah oci
@@ -542,9 +542,9 @@ isolated database, on PostgreSQL and on MySQL, and hold each one byte for byte
 to an exact list. For a `PtahSchema` the list is
 `test/e2e/schema-sql-contract.json`, matched by `test/e2e/schema_sql_audit.go`:
 the statements Observe, Plan and a stale Apply send for the acceptance schemas,
-captured from Ptah `dfbda1b2`, each with the operations that may send it. For
+captured from Ptah `1f1ff93c`, each with the operations that may send it. For
 History the lists are in `test/e2e/migration_sql_audit.go` and
-`test/e2e/migration_mysql_audit.go`, and what History sent at `dfbda1b2` is
+`test/e2e/migration_mysql_audit.go`, and what History sent at `1f1ff93c` is
 recorded in `testdata/e2e/readings/postgresql-migration-history-audit.md` and
 `mysql-migration-history-audit.md`: reads only, no table created. A statement
 from a read's Pod that its list does not hold fails the suite.
