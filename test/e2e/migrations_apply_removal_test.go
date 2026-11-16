@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -404,6 +405,149 @@ func TestSingleEtcdForEveryResourceRefusesAnotherStore(t *testing.T) {
 			t.Parallel()
 			if err := singleEtcdForEveryResource(pods); err == nil {
 				t.Fatal("singleEtcdForEveryResource() accepted it")
+			}
+		})
+	}
+}
+
+// TestReadApplyRemovalDecidesTheKindHistory reads the history a kind 1.37.0
+// run recorded for the alert row's Apply Job deleted in the background, as
+// the row printed it, and the same history with the manager letting go at a
+// revision of each kind. testdata/e2e/readings/README.md says where it came
+// from.
+func TestReadApplyRemovalDecidesTheKindHistory(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("../../testdata/e2e/readings/apply-removal-held.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(t *testing.T) applyRemovalReading {
+		t.Helper()
+		var reading applyRemovalReading
+		if err := json.Unmarshal(body, &reading); err != nil {
+			t.Fatal(err)
+		}
+		return reading
+	}
+	reading := decode(t)
+	verdict, err := readApplyRemoval(reading.Histories, reading.Subject)
+	if err != nil || verdict != reading.Verdict {
+		t.Fatalf("readApplyRemoval() = %+v, %v; the row decided %+v", verdict, err, reading.Verdict)
+	}
+	if verdict.Branch != applyHeldToTerm || verdict.Stopped != "2973" || verdict.Gone != "2997" || verdict.Settled != "3026" {
+		t.Fatalf("readApplyRemoval() = %+v, want the hold settled at 3026 after a stop at 2973 and the removal at 2997", verdict)
+	}
+
+	// letGo is the recorded history with the manager's release at rv: the
+	// migration staged it, the Lease lost its holder at the next revision,
+	// and no renewal followed.
+	letGo := func(t *testing.T, rv int) applyRemovalReading {
+		t.Helper()
+		reading := decode(t)
+		h := &reading.Histories
+		var leases []watchEvent[*coordinationv1.Lease]
+		for _, event := range h.Leases {
+			if at, _ := strconv.Atoi(event.Object.ResourceVersion); at < rv {
+				leases = append(leases, event)
+			}
+		}
+		released := leases[len(leases)-1].Object.DeepCopy()
+		released.ResourceVersion, released.Spec.HolderIdentity = strconv.Itoa(rv+1), ptr.To("")
+		h.Leases = append(leases, watchEvent[*coordinationv1.Lease]{Type: watch.Modified, Object: released})
+		staged := h.Migrations[len(h.Migrations)-1].Object.DeepCopy()
+		staged.ResourceVersion, staged.Status.ActiveOperation = strconv.Itoa(rv), nil
+		staged.Status.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{LeaseEpoch: reading.Subject.Epoch}
+		h.Migrations = append(h.Migrations, watchEvent[*ptahv1alpha1.PtahMigration]{Type: watch.Modified, Object: staged})
+		return reading
+	}
+	t.Run("a release while the Pod read stopped", func(t *testing.T) {
+		t.Parallel()
+		reading := letGo(t, 2980)
+		verdict, err := readApplyRemoval(reading.Histories, reading.Subject)
+		if err != nil || verdict.Branch != applyReleasedOnStop || verdict.Released != "2980" || verdict.ReleasedBy != "PtahMigration" {
+			t.Fatalf("readApplyRemoval() = %+v, %v; want the release branch at 2980", verdict, err)
+		}
+	})
+	for name, row := range map[string]struct {
+		rv   int
+		want string
+	}{
+		"a release while the Pod still ran": {2965, "the PtahMigration let go at resourceVersion 2965, before the Pod was stored with its executor stopped under the Job at 2973"},
+		"a release once the Pod was gone":   {3010, "the PtahMigration let go at resourceVersion 3010, after the Pod went at 2997, with no write that held the realm Lease in between"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reading := letGo(t, row.rv)
+			verdict, err := readApplyRemoval(reading.Histories, reading.Subject)
+			if err == nil || errors.Is(err, errApplyRemovalPending) || !strings.Contains(err.Error(), row.want) {
+				t.Fatalf("readApplyRemoval() = %+v, %v; want a refusal that says %q", verdict, err, row.want)
+			}
+		})
+	}
+}
+
+// TestReadApplyRemovalAcceptsTheKindRelease reads the history the same run
+// recorded for the row's MySQL lane, where a pass read the stop the kubelet
+// stored and let go before the Pod went, and copies with that release moved
+// before the stop and after the removal.
+func TestReadApplyRemovalAcceptsTheKindRelease(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("../../testdata/e2e/readings/apply-removal-released.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(t *testing.T) applyRemovalReading {
+		t.Helper()
+		var reading applyRemovalReading
+		if err := json.Unmarshal(body, &reading); err != nil {
+			t.Fatal(err)
+		}
+		return reading
+	}
+	reading := decode(t)
+	verdict, err := readApplyRemoval(reading.Histories, reading.Subject)
+	if err != nil || verdict != reading.Verdict {
+		t.Fatalf("readApplyRemoval() = %+v, %v; the row decided %+v", verdict, err, reading.Verdict)
+	}
+	if verdict.Branch != applyReleasedOnStop || verdict.Stopped != "6179" || verdict.Released != "6180" || verdict.ReleasedBy != "PtahMigration" || verdict.Gone != "6188" {
+		t.Fatalf("readApplyRemoval() = %+v, want the release by the PtahMigration at 6180 after the stop at 6179 and before the removal at 6188", verdict)
+	}
+
+	// moved is the recorded history with the writes at the revisions in to
+	// rewritten to the revisions they map to, each history still in order.
+	moved := func(t *testing.T, to map[string]int) applyRemovalReading {
+		t.Helper()
+		reading := decode(t)
+		for _, event := range reading.Histories.Migrations {
+			if rv, ok := to[event.Object.ResourceVersion]; ok {
+				event.Object.ResourceVersion = strconv.Itoa(rv)
+			}
+		}
+		for _, event := range reading.Histories.Leases {
+			if rv, ok := to[event.Object.ResourceVersion]; ok {
+				event.Object.ResourceVersion = strconv.Itoa(rv)
+			}
+		}
+		return reading
+	}
+	for name, row := range map[string]struct {
+		to   map[string]int
+		want string
+	}{
+		// The staging write before the kubelet's, the Lease's after it.
+		"before the stop": {map[string]int{"6180": 6178}, "the PtahMigration let go at resourceVersion 6178, before the Pod was stored with its executor stopped under the Job at 6179"},
+		// Every write from the release on lands after the removal.
+		"after the Pod's removal": {map[string]int{"6180": 6189, "6181": 6190, "6182": 6191, "6183": 6192},
+			"the PtahMigration let go at resourceVersion 6189, after the Pod went at 6188, with no write that held the realm Lease in between"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reading := moved(t, row.to)
+			verdict, err := readApplyRemoval(reading.Histories, reading.Subject)
+			if err == nil || errors.Is(err, errApplyRemovalPending) || !strings.Contains(err.Error(), row.want) {
+				t.Fatalf("readApplyRemoval() = %+v, %v; want a refusal that says %q", verdict, err, row.want)
 			}
 		})
 	}

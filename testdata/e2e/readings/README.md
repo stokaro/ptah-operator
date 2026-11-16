@@ -401,3 +401,31 @@ refusing copies with the one field each mistake would change. One of those
 copies carries the message the schema reported on a kind run with the runner's
 check removed, where Ptah ran and failed its TLS handshake. They name the test
 namespace, a Resolve Job and the plan, and hold no credentials or SQL.
+
+`apply-removal-held.json` and `apply-removal-released.json` are the readings
+the `unresolved-apply` row of the `alerting-operations` phase printed for its
+PostgreSQL and MySQL lanes on one local kind run on November 16, 2026, with
+Kubernetes 1.37.0, operator `2eb85645` (a local build of this change) and the
+suite's own catalog, stored as the row printed them. Each lane deleted its
+running Apply's Job with background propagation, and the lanes took the two
+branches.
+
+In the PostgreSQL lane the watched Pod reads `Running` under the Job until
+revision 2973, where the kubelet stored it `Failed` with the `ptah` container
+terminated, still naming the Job, and goes at 2997. The realm Lease was renewed
+at 2954 and 2960, before the stop, and next at 3026, after the removal, still
+under the claim's holder and epoch, and the migration kept its claim
+throughout: the hold branch. In the MySQL lane the executor stopped within a
+second of the deletion. The kubelet stored the stop at 6179, the next pass
+staged the release on the migration at 6180 and cleared the Lease's holder at
+6181, and the Pod went at 6188: the release branch.
+
+`TestReadApplyRemovalDecidesTheKindHistory` holds `readApplyRemoval` to the
+hold at those revisions, and to copies with the manager's release added at
+2980, inside the stop window, which it reads as the release branch, at 2965,
+before the stop, and at 3010, after the removal, which it refuses.
+`TestReadApplyRemovalAcceptsTheKindRelease` holds it to the release, and refuses
+copies with the release moved to 6178, before the stop, and past the removal.
+The readings name the test and operator namespaces, the Job, the Pod, the realm
+Lease and the claim, and the MySQL Pod's termination message is the runner's
+summary. They hold no credentials or SQL.
