@@ -55,14 +55,17 @@ propagation is refused from this release: have it name
   and does not read `sql_security`, so a MySQL or MariaDB plan raises the
   privilege changes it raised under v0.29.2.
 - **A PostgreSQL view a drop may have taken.** A view a plan makes again after
-  a `DROP ... CASCADE`, a `DROP OWNED` or a `DROP VIEW` with no effect is now
-  read against its statement's `before_plan`, and raised as `SecurityDefiner`
-  only when the view did not exist when the plan started, held another
-  `security_invoker` than the plan gives it, or the plan does not say. Under
-  v0.29.2 every such view was raised. The plan drops something, so it still
-  needs `allowDestructive` and an approval, and under `apply: Always` its
-  `ApprovalRequired` reason is `Waiting` rather than `PrivilegeChanges` where
-  nothing else in it changes privileges.
+  a `DROP ... CASCADE`, a `DROP OWNED`, a `DROP VIEW` with no effect or a
+  `DROP VIEW` whose names the operator cannot read is now read against its
+  statement's `before_plan`. It is not raised as `SecurityDefiner` where
+  `before_plan` says the view existed when the plan started with the
+  `security_invoker` the plan gives it. Every other such view is still raised,
+  including a `CREATE OR REPLACE VIEW` Ptah writes with no effect after a
+  `CASCADE`, and under v0.29.2 every one was. The plan drops something, so it
+  still needs `allowDestructive` and an approval. Under `apply: Always`, where
+  nothing else in it changes privileges, its `ApprovalRequired` reason is
+  `PlanReady` on the pass that publishes it and `Waiting` after that, rather
+  than `PrivilegeChanges`.
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
   says what each view statement raises.
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and

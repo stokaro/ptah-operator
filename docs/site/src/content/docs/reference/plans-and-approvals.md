@@ -253,8 +253,9 @@ and not from the SQL:
   destructive: it needs `allowDestructive` and an approval under every apply
   policy. `before_plan` decides only whether it also lists `SecurityDefiner`,
   and so whether `ApprovalRequired` under `Always` gives the reason
-  `PrivilegeChanges` or `Waiting`. A `CREATE VIEW` with no such statement
-  before it is read as below.
+  `PrivilegeChanges`, or `PlanReady` and then `Waiting` where nothing else in
+  the plan changes privileges. A `CREATE VIEW` with no such statement before
+  it is read as below.
 - Any other view the statement creates is raised when it reads with invoker
   rights. One with its owner's rights is raised no more than a view that
   states no option.
