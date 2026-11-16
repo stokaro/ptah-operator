@@ -106,7 +106,7 @@ func (m *migrationRun) uncertainApplyProof() {
 	originalPodUID := string(owned[0].UID)
 	migrationExecutorWatchBarrier(m, jobs, live)
 	migrationExecutorPodWatchBarrier(m, pods, &owned[0])
-	m.deleteAndWait(live, "the "+m.engine.name+" Apply Job")
+	m.removeApplyWithItsStopUnstored(live, "the "+m.engine.name+" Apply Job")
 	m.assertUncertainApplyBlocksWithoutReplaying(original)
 	m.assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID)
 	// Close both watches before a person's acknowledgment can authorize any
@@ -169,24 +169,32 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 	name := m.uncertainMigration()
 	// The Job and its Pod are gone, and nothing says the executor stopped, so
 	// the claim keeps the database to the end of the term it took the realm
-	// Lease for (ApplyPodGone). Until shortly before that term the claim has
-	// to read exactly as it was dispatched, and the wait is read from the term.
-	// The time is taken after the status is read, so a reading that passes as
-	// early was taken early.
+	// Lease for (ApplyPodGone), and says so in an ApplyPodGone Warning that
+	// names the Job, its UID and that term. Until shortly before that term the
+	// claim has to read exactly as it was dispatched, and the wait is read from
+	// the term. The time is taken after the status is read, so a reading that
+	// passes as early was taken early.
 	term, err := applyLeaseTerm(original)
 	m.check(err, "read the Lease term of the interrupted %s Apply", m.engine.name)
 	settled := false
 	held := 0
+	var warnings []corev1.Event
+	var warned *ptahv1alpha1.PtahMigration
 	for deadline := term.Add(applyLeaseTermSlack); !settled && time.Now().Before(deadline); {
 		current := m.migration(name)
 		pods := &corev1.PodList{}
 		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
+		events := &corev1.EventList{}
+		m.check(m.list(events), "list the Events of %s while the interrupted Apply settles", name)
 		settled, err = uncertainApplySettled(current.Status, original, pods.Items)
 		m.check(err, "%s violated its interrupted Apply boundary", name)
 		if time.Now().Before(term.Add(-applyLeaseTermMargin)) {
 			if !equality.Semantic.DeepEqual(current.Status.ActiveOperation, original) {
 				m.fatalf("%s let go of its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
 					name, time.Until(term).Round(time.Second), term.UTC().Format(time.RFC3339))
+			}
+			if found := applyPodGoneWarnings(events.Items, current, applyPodGoneApplyWaits, original.JobName, original.JobUID, term); len(found) > 0 {
+				warnings, warned = found, current
 			}
 			held++
 		}
@@ -206,8 +214,16 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 		m.fatalf("%s was never read holding its interrupted Apply's claim before %s short of its Lease term at %s",
 			name, applyLeaseTermMargin, term.UTC().Format(time.RFC3339))
 	}
-	m.logf("%s held its interrupted Apply's claim through %d looks to %s before the end of its Lease term",
-		name, held, applyLeaseTermMargin)
+	if err := applyPodGoneWarnedInTerm(warnings, original.StartedAt.Time, term); err != nil {
+		m.fatalf("%s held its interrupted Apply's claim to the Lease term, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
+		m.fatalf("%s retired its interrupted Apply's claim, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	m.logf("%s held its interrupted Apply's claim through %d looks to %s before the end of its Lease term, and said so in %d ApplyPodGone Warnings",
+		name, held, applyLeaseTermMargin, len(warnings))
 	// The run is over and the database keeps what it committed. Both halves
 	// matter: without the first the refusal is about nothing, and without the
 	// second there would be nothing a replay could double.

@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -21,6 +23,9 @@ const (
 	// as. envtest runs no Job controller, so the test acts as it; the API
 	// server's bootstrap RBAC already grants it Pod creation.
 	jobController = "system:serviceaccount:kube-system:job-controller"
+	// garbageCollector is the identity the garbage collector writes as. The
+	// API server's bootstrap RBAC grants it patch on every resource.
+	garbageCollector = "system:serviceaccount:kube-system:generic-garbage-collector"
 )
 
 // podFor is the Pod the Job controller creates for job: the template's
@@ -83,6 +88,45 @@ func TestPodIntentWebhook(t *testing.T) {
 		if !hasToleration(pod.Spec.Tolerations, "node.kubernetes.io/not-ready") {
 			t.Fatalf("the stored Pod %s/%s has tolerations %v; the DefaultTolerationSeconds plugin did not run, so the webhook judged an unmutated Pod",
 				pod.Namespace, pod.Name, pod.Spec.Tolerations)
+		}
+	})
+
+	// A Job deleted with the orphan propagation policy is held by the orphan
+	// finalizer until the garbage collector has taken the Job's owner
+	// reference off every Pod, and the webhook refuses that write, so such a
+	// Job stays Terminating. A Job deleted in the background is not: the
+	// garbage collector deletes the Pod, which the webhook does not judge, and
+	// the kubelet records the Pod stopped through pods/status, which it does
+	// not judge either: the chart's webhook matches CREATE and UPDATE of pods,
+	// pods/ephemeralcontainers and pods/resize. The e2e rows that delete a
+	// running Apply refuse that stopped status themselves, with a policy of
+	// their own, and rest on the webhook leaving pods/status alone only for
+	// the dry-run status probe that shows the policy is in force.
+	t.Run("the garbage collector orphaning a managed Pod is refused, its stopped status is not", func(t *testing.T) {
+		t.Parallel()
+		pod := podFor(job)
+		if err := clientAs(t, jobController).Create(ctx, pod); err != nil {
+			t.Fatalf("the API server refused the Job controller's Pod for %s/%s: %v", job.Namespace, job.Name, err)
+		}
+		// The patch the garbage collector's orphanDependents sends to orphan a
+		// dependent of a built-in kind, built by
+		// GenerateDeleteOwnerRefStrategicMergeBytes in
+		// pkg/controller/controller_ref_manager.go.
+		orphan := fmt.Sprintf(`{"metadata":{"ownerReferences":[{"$patch":"delete","uid":%q}],"uid":%q}}`, job.UID, pod.UID)
+		err := clientAs(t, garbageCollector).Patch(ctx, pod.DeepCopy(), client.RawPatch(types.StrategicMergePatchType, []byte(orphan)), client.DryRunAll)
+		requireDenied(t, err, podIntentWebhook, "managed Pod has no exact Job controller identity")
+
+		pod.Status.Phase = corev1.PodFailed
+		for _, container := range pod.Spec.Containers {
+			pod.Status.ContainerStatuses = append(pod.Status.ContainerStatuses, corev1.ContainerStatus{
+				Name: container.Name, Image: container.Image,
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 143, Reason: "Error"}},
+			})
+		}
+		err = admin.Status().Update(ctx, pod)
+		requireNotDeniedBy(t, err, podIntentWebhook)
+		if err != nil {
+			t.Fatalf("the API server refused the stopped status of %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
 	})
 

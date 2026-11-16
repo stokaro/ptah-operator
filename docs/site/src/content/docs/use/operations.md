@@ -1694,9 +1694,17 @@ the end of the Apply's execution window and its Pods' termination grace. A
 `PtahMigration` keeps it until its claim's `startedAt` plus
 `leaseDurationSeconds`, which is `spec.execution.activeDeadlineSeconds` and 2
 minutes, and an `ApplyPodGone` Warning Event names the Job, its UID and when
-the wait ends. The same holds where its Job was deleted, or another Job took the Job's
-name. A `PodStuckTerminating` Warning about a migration's Job that still stands
-comes only past that term, so there the Lease goes back once the Job finishes.
+the wait ends. The same holds where its Job was deleted and no Pod of it is
+left, or another Job took the Job's name. On a node the API server can reach,
+deleting a running Apply's Job stops its executor: the kubelet records the Pod
+`Failed`, then removes it. A `PtahMigration` then usually finds the Pod already
+gone and keeps the Lease until the end of its term, with an `ApplyPodGone`
+Warning, and a pass that reads the Pod before it goes hands the Lease back at
+once. On a node the API server cannot reach, the Pod stays `Terminating` and
+`Running`, and the Lease stays held, with no bound, until the Pod is deleted by
+force as above. A `PodStuckTerminating` Warning about a migration's Job that
+still stands comes only past that term, so there the Lease goes back once the
+Job finishes.
 For a Job deleted by hand a Pod is named sooner, and the wait runs out the rest
 of the term. A Job that finished with no Pod counted failed, as one whose Pod
 the API server refused, had no Pod to lose, and the Lease goes back at once.
@@ -1800,10 +1808,9 @@ copy the log before you delete the Job:
 `kubectl logs -n <namespace> job/<name> -c ptah > apply.log`. A log shipper
 that collects Pod logs keeps it past the Pod as well. How long the operator
 keeps the Job for you to read is in
-[What a failed Apply leaves in its Pod log](#failed-apply-log). Deleting a
-running Apply's Job stops its executor. A `PtahMigration` then usually finds
-the Pod already gone and keeps the database Lease until the end of its term,
-with an `ApplyPodGone` Warning. Delete the Job once it has finished. A Job an
+[What a failed Apply leaves in its Pod log](#failed-apply-log). Delete the Job
+once it has finished: what deleting it while the Apply runs does to the
+executor and to the database Lease is described above. A Job an
 orphaning deletion left `Terminating` before the policy was installed is
 released the way a resource is: delete it again with `kubectl delete job`,
 whose `Background` takes the `orphan` finalizer off, and the Job goes. The

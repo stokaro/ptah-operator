@@ -253,8 +253,9 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		original, originalJob, originalPod = active.DeepCopy(), j.DeepCopy(), owned[0].DeepCopy()
 		return true, "", nil
 	}), "retain a real in-flight mutation")
-	jobUID := originalJob.UID
-	a.check(a.cluster.Client.Delete(a.ctx, originalJob, client.Preconditions{UID: &jobUID}, client.PropagationPolicy(metav1.DeletePropagationBackground)), "remove only the interrupted Apply and its evidence")
+	// Remove only the interrupted Apply and its evidence, so that nothing the
+	// API server held ever said its executor stopped.
+	m.removeApplyWithItsStopUnstored(originalJob, "the interrupted "+m.engine.name+" Apply Job")
 	var unknown *ptahv1.PtahMigration
 	a.check(harness.Wait(a.ctx, "the persisted unknown Apply", alTimeout, time.Second, func(context.Context) (bool, string, error) {
 		check()
