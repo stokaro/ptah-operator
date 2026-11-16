@@ -1012,12 +1012,14 @@ credential, only while the Pod runs. A Job 0.2.10 created still carries its
 credentials in its environment for the 24 hours. Once you have read the reason you
 can end the wait early: `kubectl delete job -n <namespace> <job>` removes the Job and
 its Pod, and the node drops what it kept. It takes `delete` on `jobs`,
-which the diagnostic reader role does not grant, and no admission policy or webhook
-judges it. The run is already recorded by the time status names the log, so nothing
-waits on the Job, and the resource goes on as it would have. Delete a Job that has
-finished: one that is still running holds a statement. A client other than `kubectl`
-has to ask for `propagationPolicy: Background`, because the API server otherwise leaves
-a Job's Pods behind. Admission lets the
+which the diagnostic reader role does not grant, and admission refuses only a
+deletion that would
+[orphan the Job's Pods](../operations/#suspension-and-deletion). The run is already
+recorded by the time status names the log, so nothing waits on the Job, and the
+resource goes on as it would have. Delete a Job that has finished: one that is still
+running holds a statement. A client other than `kubectl` has to ask for
+`propagationPolicy: Background`, because the API server otherwise orphans a Job's
+Pods, and admission refuses that on a Job the operator runs. Admission lets the
 manager write the long TTL only on an Apply Job, and the webhook refuses it on a run
 whose termination summary reports success and on a claim that names no approval.
 

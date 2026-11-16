@@ -39,7 +39,9 @@ WHERE TABLE_SCHEMA = DATABASE() AND SECURITY_TYPE = 'INVOKER';
 For each one the schema declares without a mode, declare `INVOKER` to keep it,
 `CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or `security = INVOKER`
 in HCL, or `DEFINER` to change it, or list the view in `spec.policy.exclude`.
-Nothing else.
+A client other than `kubectl` that deletes a Job the operator runs and names no
+propagation is refused from this release: have it name
+`propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
 - **Executor.** The verified executor is now Ptah v0.29.3, and the runner
   harness, the schema SQL readings, both History readings and the capacity
@@ -76,6 +78,16 @@ Nothing else.
   ([stokaro/ptah#6097](https://github.com/stokaro/ptah/pull/6097)). Ptah's
   sentence in the Pod log names the qualified spelling that keeps the table
   where it is; write the table that way, or pin `search_path` in the URL.
+- **An orphaning deletion of an operation Job is refused.** `kubectl delete job
+  --cascade=orphan`, `orphanDependents: true`, and a deletion that names no
+  propagation, which `batch/v1` orphans by default, would leave an operation
+  Job `Terminating`: the garbage collector has to take the Job's owner
+  reference off each Pod, and the Pod-intent webhook refuses that. A new
+  admission policy refuses such a deletion of a Job the operator labels as its
+  own, for every caller, and its message names `Background`.
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
+  how to keep an Apply's log without orphaning its Pods, and how to release a
+  Job an orphaning deletion left `Terminating`.
 
 ## 0.2.14
 

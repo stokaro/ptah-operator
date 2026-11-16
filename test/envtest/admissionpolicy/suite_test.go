@@ -28,6 +28,7 @@ var groups = []func(*testing.T, *catalog){
 	applyPolicyRows,
 	managerStateRows,
 	orphanDeletionRows,
+	jobOrphanDeletionRows,
 }
 
 func buildCatalog(t *testing.T) *catalog {

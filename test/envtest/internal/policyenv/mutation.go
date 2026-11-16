@@ -297,6 +297,34 @@ func RewriteValidations(policy, message, old, replacement string) func(context.C
 	}
 }
 
+// RewriteMatchConditions replaces old with replacement in the expression of
+// every match condition of the policy, which is how a chart that rendered one
+// literal of its selection differently would read. It fails the mutation if no
+// condition holds old: rewriting nothing would prove nothing, and the rows
+// would say so only as a timeout.
+func RewriteMatchConditions(policy, old, replacement string) func(context.Context, *Env) (func(context.Context) error, error) {
+	return func(ctx context.Context, env *Env) (func(context.Context) error, error) {
+		rendered, err := env.renderedPolicy(policy)
+		if err != nil {
+			return nil, err
+		}
+		rewritten := false
+		conditions := slices.Clone(rendered.Spec.MatchConditions)
+		for index := range conditions {
+			if strings.Contains(conditions[index].Expression, old) {
+				conditions[index].Expression = strings.ReplaceAll(conditions[index].Expression, old, replacement)
+				rewritten = true
+			}
+		}
+		if !rewritten {
+			return nil, fmt.Errorf("policy %s has no match condition whose expression holds %q", policy, old)
+		}
+		return editPolicy(policy, func(spec *admissionregistrationv1.ValidatingAdmissionPolicySpec) {
+			spec.MatchConditions = conditions
+		})(ctx, env)
+	}
+}
+
 func editPolicy(
 	name string,
 	edit func(*admissionregistrationv1.ValidatingAdmissionPolicySpec),

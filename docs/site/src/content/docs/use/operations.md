@@ -1771,6 +1771,45 @@ kubectl get jobs,configmaps,ptahschemaplans -n application \
   -l operator.ptah.run/schema=storefront
 ```
 
+`kubectl delete job --cascade=orphan` on an operation Job is refused too. An
+orphaning deletion of a Job makes the garbage collector take the Job's owner
+reference off each of its Pods, and the Pod-intent webhook refuses that change
+for every caller: the operator finds an Apply's executor through the Pods its
+Job owns, and an executor in a Pod no Job owns could go on writing after the
+database Lease was handed back. So the `orphan` finalizer would never come off,
+and the Job would stay `Terminating`. Another admission policy refuses, for
+every caller, `propagationPolicy: Orphan` and `orphanDependents: true` on a Job
+whose Pod template, or whose own metadata, carries the labels the operator
+writes on every Job it runs: `app.kubernetes.io/managed-by: ptah-operator`, and
+`app.kubernetes.io/component` `schema-operation` or `migration-operation`. The
+API server refuses any change to the template of a Job that is not suspended,
+so taking a label off the Job does not take the Job out of scope. The message
+names `Background`. The policy also refuses a deletion of such a Job that names
+no propagation, unless the Job carries the `foregroundDeletion` finalizer:
+Kubernetes orphans a Job's Pods by default, and the API server applies that
+default to a client that names nothing. `kubectl delete job` and the namespace
+controller name `Background`, and the TTL controller names `Foreground`, so
+none of them is refused. The garbage collector names `Background` for a Job
+whose owner is gone, unless the Job carries the `orphan` finalizer, as one a
+person added would. It then names `Orphan`, which is refused, and the Job stays
+as it is, running if it ran; `kubectl delete job` takes the finalizer off and
+deletes it. No other Job is judged.
+
+Orphaning is not how to keep an Apply's log. Wait for the Job to finish, then
+copy the log before you delete the Job:
+`kubectl logs -n <namespace> job/<name> -c ptah > apply.log`. A log shipper
+that collects Pod logs keeps it past the Pod as well. How long the operator
+keeps the Job for you to read is in
+[What a failed Apply leaves in its Pod log](#failed-apply-log). Deleting a
+running Apply's Job stops its executor. A `PtahMigration` then usually finds
+the Pod already gone and keeps the database Lease until the end of its term,
+with an `ApplyPodGone` Warning. Delete the Job once it has finished. A Job an
+orphaning deletion left `Terminating` before the policy was installed is
+released the way a resource is: delete it again with `kubectl delete job`,
+whose `Background` takes the `orphan` finalizer off, and the Job goes. The
+garbage collector then deletes its Pods, so wait until the Pod has finished:
+the orphaning deletion did not stop it.
+
 ### Deleting a namespace {#delete-namespace}
 
 A namespace that ran a `PtahSchema` or a `PtahMigration` stays `Terminating` for

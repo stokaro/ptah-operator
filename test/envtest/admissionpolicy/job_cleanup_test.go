@@ -209,10 +209,12 @@ func cleanupRows(t *testing.T, c *catalog) {
 		overTheLongOne     = "manager gives a finished Apply Job a cleanup TTL past the long one"
 		alreadyHarvested   = "manager moves a Job a previous release harvested to the long cleanup TTL"
 	)
-	// No policy judges a person deleting a Job, which is what the security page tells
-	// someone to do once they have read a failed Apply's log.
+	// A person deletes a Job with the propagation kubectl delete sends, which is
+	// what the security page tells someone to do once they have read a failed
+	// Apply's log. Only a deletion that would orphan the Job's Pods is refused,
+	// and the job orphan-deletion guard's rows hold that.
 	c.row(policyenv.Row{Name: "a person deletes a finished Apply Job", Do: func(ctx context.Context, env *policyenv.Env) error {
-		return as(policyenv.User(), dryRunDelete(schemaApply()))(ctx, env)
+		return as(policyenv.User(), deleteStored(schemaApply(), client.PropagationPolicy(metav1.DeletePropagationBackground)))(ctx, env)
 	}})
 	c.row(policyenv.Row{Name: readOnlyShort, Do: setTTL(readOnly, 300)})
 	c.row(policyenv.Row{Name: schemaApplyShort, Do: setTTL(schemaApply, 300)})

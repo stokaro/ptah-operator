@@ -1,0 +1,192 @@
+package crdupgrade
+
+import (
+	"fmt"
+
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+const (
+	jobOrphanDeletionGuardNamePrefix = "ptah-operator-job-orphan-deletion-guard-"
+	jobOrphanDeletionGuardComponent  = "job-orphan-deletion-guard"
+
+	// The identity the manager writes on every operation Job and on its Pod
+	// template (internal/workload), spelled here the way the finalizers are so
+	// the guards do not import the builder.
+	operationComponentLabel     = "app.kubernetes.io/component"
+	operationManager            = "ptah-operator"
+	schemaOperationComponent    = "schema-operation"
+	migrationOperationComponent = "migration-operation"
+)
+
+// JobOrphanDeletionGuardPolicyName returns the name of the release's guard on a
+// deletion of an operation Job that would orphan the Job's Pods.
+func JobOrphanDeletionGuardPolicyName(releaseNamespace, releaseName string) string {
+	return jobOrphanDeletionGuardNamePrefix + releaseDigest(releaseNamespace, releaseName)
+}
+
+func jobOrphanDeletionDenialMessage() string {
+	return "An operation Job's deletion cannot orphan its Pods: the garbage collector would have to take the Job's " +
+		"owner reference off each Pod, which the Pod intent webhook refuses because the manager finds an Apply's " +
+		"executor through the Pods its Job owns, so the Job would stay Terminating. Delete it with kubectl's " +
+		"default propagation, Background, and save the Pod log with kubectl logs before you do if you need it"
+}
+
+func jobDefaultOrphanDenialMessage() string {
+	return "A Job deletion that names no propagation orphans the Job's Pods, by the batch/v1 default or the orphan " +
+		"finalizer the Job carries, and an operation Job's Pods cannot be orphaned, so the Job would stay " +
+		"Terminating. Name propagationPolicy: Background, which kubectl delete sends by default"
+}
+
+// JobOrphanDeletionGuard builds the policy that refuses a deletion of an
+// operation Job that would orphan the Job's Pods.
+//
+// Orphaning makes the garbage collector take the Job's owner reference off each
+// Pod before it removes the orphan finalizer. The Pod-intent webhook refuses
+// that write on an operation Pod, the garbage collector's included, and it has
+// to: the manager finds a dispatched Apply's executor through the Pods the Job
+// owns, so a Pod orphaned while its executor runs would let the database Lease
+// go under it. So such a deletion never finishes, and the Job stays Terminating.
+//
+// It selects an operation Job by the two labels the manager writes on the Job
+// and on its Pod template: app.kubernetes.io/managed-by ptah-operator, and
+// app.kubernetes.io/component schema-operation or migration-operation. On a
+// Pod those two labels are one of the ways the Pod-intent webhook decides the
+// Pod is managed, and a Pod takes them from the template. The template is what
+// the condition reads first, because the API server keeps it immutable on
+// every Job but a suspended one that never started, while anyone who may
+// update the Job can change its own labels: a condition on those alone would
+// let a person strip one label and then orphan the Pods. The Job's own labels
+// are read as well, for that one Job whose template can change. The manager
+// writes both, so for a Job it built neither clause selects anything the other
+// does not. spec.execution.podMetadata cannot declare either key, and nothing
+// else in the chart or the manager writes either component, so no Job but one
+// that claims the operator's identity is judged. A Job keeps the labels when
+// an orphaning deletion of its owner, before the orphan-deletion guard
+// existed, took its owner reference off, so that Job is selected too.
+//
+// The webhook also keeps owned the Pods of a Job named like an operation Job
+// that carries neither label. The condition does not select that Job.
+//
+// The verdict follows the registry (shouldOrphanDependents in k8s.io/apiserver
+// pkg/registry/generic/registry/store.go): orphanDependents, when the request
+// sets it, then propagationPolicy, then the finalizers the Job carries, and
+// last the kind's default. The API server serves Jobs only as batch/v1, and
+// its default there is to orphan, so a deletion that names no propagation
+// orphans the Pods unless the Job carries the foregroundDeletion finalizer.
+// kubectl delete names Background unless --cascade says otherwise, the
+// namespace controller names Background and the TTL controller Foreground, so
+// none of them is refused. The garbage collector names Background for a Job
+// whose owner is gone, unless the Job carries the orphan finalizer, which it
+// honors by naming Orphan. That deletion is refused, which leaves the Job
+// running rather than Terminating, and kubectl delete job, naming Background,
+// takes the finalizer off and releases it.
+//
+// It refuses no write that adds the orphan finalizer, for the reason
+// OrphanDeletionGuard gives. It is a policy of its own rather than a rule in
+// OrphanDeletionGuard because the two select different objects, decide a
+// deletion that names no propagation differently and refuse for different
+// reasons, so one policy would need every variable to branch on the resource.
+//
+// This is the only place the policy is written. hack/chartpolicies generates
+// templates/job-orphan-deletion-guard.yaml from it, with the policy's name left
+// as a Helm expression.
+type JobOrphanDeletionGuard struct {
+	ReleaseName      string
+	ReleaseNamespace string
+}
+
+func (g *JobOrphanDeletionGuard) name() string {
+	return JobOrphanDeletionGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+}
+
+// Policy is the guard's ValidatingAdmissionPolicy.
+func (g *JobOrphanDeletionGuard) Policy() *admissionregistrationv1.ValidatingAdmissionPolicy {
+	fail := admissionregistrationv1.Fail
+	forbidden := metav1.StatusReasonForbidden
+	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
+		ObjectMeta: metav1.ObjectMeta{Name: g.name(), Labels: componentLabels(jobOrphanDeletionGuardComponent)},
+		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+			FailurePolicy:    &fail,
+			MatchConstraints: g.matchResources(),
+			MatchConditions: []admissionregistrationv1.MatchCondition{{
+				Name:       "operation-job",
+				Expression: operationJobMatchExpression(),
+			}},
+			Variables: []admissionregistrationv1.Variable{
+				orphanRequestedVariable(),
+				propagationNamedVariable(),
+				{
+					Name: "foregroundFinalizer",
+					Expression: fmt.Sprintf(`has(oldObject.metadata.finalizers) && %q in oldObject.metadata.finalizers`,
+						metav1.FinalizerDeleteDependents),
+				},
+			},
+			Validations: []admissionregistrationv1.Validation{
+				{Expression: `!variables.orphanRequested`, Message: jobOrphanDeletionDenialMessage(), Reason: &forbidden},
+				{
+					Expression: `variables.propagationNamed || variables.foregroundFinalizer`,
+					Message:    jobDefaultOrphanDenialMessage(),
+					Reason:     &forbidden,
+				},
+			},
+		},
+	}
+}
+
+// operationJobMatchExpression selects a Job whose Pod template, or whose own
+// metadata, carries the operation identity. A deletion has no object, so it
+// reads the stored one.
+func operationJobMatchExpression() string {
+	return operationIdentityIn(`has(oldObject.spec) && has(oldObject.spec.template) && has(oldObject.spec.template.metadata)`,
+		"oldObject.spec.template.metadata.labels") +
+		" || " + operationIdentityIn("", "oldObject.metadata.labels")
+}
+
+// operationIdentityIn says whether the label map at labels carries the
+// operation identity, after the presence checks guard reads of what holds it.
+func operationIdentityIn(guard, labels string) string {
+	if guard != "" {
+		guard += " && "
+	}
+	return fmt.Sprintf(
+		`(%[1]shas(%[2]s) && %[3]q in %[2]s && %[2]s[%[3]q] == %[4]q && %[5]q in %[2]s && %[2]s[%[5]q] in [%[6]q, %[7]q])`,
+		guard, labels, managedByLabel, operationManager, operationComponentLabel, schemaOperationComponent, migrationOperationComponent)
+}
+
+// Binding is the binding that enforces Policy.
+func (g *JobOrphanDeletionGuard) Binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
+		ObjectMeta: metav1.ObjectMeta{Name: g.name(), Labels: componentLabels(jobOrphanDeletionGuardComponent)},
+		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
+			PolicyName:        g.name(),
+			MatchResources:    g.matchResources(),
+			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
+		},
+	}
+}
+
+// matchResources selects every deletion of a Job. The match condition narrows
+// it to the operation Jobs.
+func (g *JobOrphanDeletionGuard) matchResources() *admissionregistrationv1.MatchResources {
+	equivalent := admissionregistrationv1.Equivalent
+	return &admissionregistrationv1.MatchResources{
+		MatchPolicy:       &equivalent,
+		NamespaceSelector: &metav1.LabelSelector{},
+		ObjectSelector:    &metav1.LabelSelector{},
+		ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
+			RuleWithOperations: admissionregistrationv1.RuleWithOperations{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Delete},
+				Rule: admissionregistrationv1.Rule{
+					APIGroups:   []string{"batch"},
+					APIVersions: []string{"*"},
+					Resources:   []string{"jobs"},
+					Scope:       scopePtr(admissionregistrationv1.NamespacedScope),
+				},
+			},
+		}},
+	}
+}
