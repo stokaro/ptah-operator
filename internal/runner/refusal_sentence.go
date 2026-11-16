@@ -91,7 +91,8 @@ func joinRefusalEntries(entries []refusalEntry) string {
 //
 // A definer-privilege refusal lists the statements whose definer the login may
 // not name, and this does not read that list, so it reads by its code alone
-// (dataplane.SchemaRefusal says why no operator path is expected to meet it).
+// (dataplane.SchemaRefusal says when an Apply meets it). The Pod log carries
+// Ptah's sentence for it.
 //
 // A view and an account come from a schema or a database, so each goes through
 // freeText, which redacts it, puts a space where a control or format character

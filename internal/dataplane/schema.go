@@ -118,8 +118,10 @@ type SchemaRefusal struct {
 	// the list. A plan names no definer but the account its read ran as, and
 	// the runner refuses an Apply under another login than the plan's
 	// (target_binding_mismatch), so an Apply meets this refusal only where
-	// the same login has come to match another account. It reads by its code
-	// alone.
+	// the plan's login has come to match another MySQL account, as
+	// 'ptah'@'%' and 'ptah'@'10.244.1.%' can from Pods on different nodes.
+	// It reads by its code alone, and Ptah's sentence, which names the
+	// privilege, goes to the Pod log.
 }
 
 // SchemaRefusalViewDefiner is one view a view-definer refusal names. View is

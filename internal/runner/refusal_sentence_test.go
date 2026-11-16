@@ -322,9 +322,10 @@ func TestAPlanRefusalWithAListItCannotReadKeepsItsCode(t *testing.T) {
 // names them as a Plan's refusal does, and one that lists none reads as it did.
 //
 // A definer-privilege refusal lists the statements whose definer the login may
-// not name (stokaro/ptah#6124), and the runner does not read that list: no
-// operator path is expected to meet the refusal, so it reads by its code alone,
-// whatever the list holds.
+// not name (stokaro/ptah#6124), and the runner does not read that list, so it
+// reads by its code alone, whatever the list holds. An Apply meets it only where
+// the plan's login has come to match another MySQL account, and Ptah's sentence
+// is then in the Pod log (TestARefusedApplyLeavesPtahsSentenceInThePodLog).
 func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 	t.Parallel()
 
