@@ -82,18 +82,8 @@ func (g *OrphanDeletionGuard) Policy() *admissionregistrationv1.ValidatingAdmiss
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(),
 			Variables: []admissionregistrationv1.Variable{
-				// The legacy field wins over propagationPolicy, as it does in
-				// the registry; the API server refuses a request that sets both.
-				{
-					Name: "orphanRequested",
-					Expression: fmt.Sprintf(
-						`has(request.options.orphanDependents) ? request.options.orphanDependents : has(request.options.propagationPolicy) && request.options.propagationPolicy == %q`,
-						metav1.DeletePropagationOrphan),
-				},
-				{
-					Name:       "propagationNamed",
-					Expression: `has(request.options.orphanDependents) || has(request.options.propagationPolicy)`,
-				},
+				orphanRequestedVariable(),
+				propagationNamedVariable(),
 				{
 					Name: "orphanFinalizer",
 					Expression: fmt.Sprintf(`has(oldObject.metadata.finalizers) && %q in oldObject.metadata.finalizers`,
@@ -109,6 +99,28 @@ func (g *OrphanDeletionGuard) Policy() *admissionregistrationv1.ValidatingAdmiss
 				},
 			},
 		},
+	}
+}
+
+// orphanRequestedVariable says whether the deletion's own options ask for its
+// dependents to be orphaned. The legacy field wins over propagationPolicy, as
+// it does in the registry; the API server refuses a request that sets both.
+func orphanRequestedVariable() admissionregistrationv1.Variable {
+	return admissionregistrationv1.Variable{
+		Name: "orphanRequested",
+		Expression: fmt.Sprintf(
+			`has(request.options.orphanDependents) ? request.options.orphanDependents : has(request.options.propagationPolicy) && request.options.propagationPolicy == %q`,
+			metav1.DeletePropagationOrphan),
+	}
+}
+
+// propagationNamedVariable says whether the deletion's options decide the
+// propagation, so that neither the finalizers the object carries nor the
+// kind's default do.
+func propagationNamedVariable() admissionregistrationv1.Variable {
+	return admissionregistrationv1.Variable{
+		Name:       "propagationNamed",
+		Expression: `has(request.options.orphanDependents) || has(request.options.propagationPolicy)`,
 	}
 }
 

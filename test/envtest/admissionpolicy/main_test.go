@@ -46,5 +46,8 @@ func setup() error {
 	if err := setupOrphaningTenant(ctx); err != nil {
 		return err
 	}
+	if err := setupOrphaningJobs(ctx); err != nil {
+		return err
+	}
 	return setupSnapshots(ctx)
 }

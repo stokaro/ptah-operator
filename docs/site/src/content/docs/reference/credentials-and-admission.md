@@ -582,6 +582,21 @@ other reasons. [Suspension and
 deletion](../../use/operations/#suspension-and-deletion) says what to run
 instead.
 
+**A deletion that would orphan an operation Job's Pods** is refused by a policy
+of its own, from everyone. The garbage collector would have to take the Job's
+owner reference off each Pod, the Pod-intent webhook refuses that change, and
+the Job would stay `Terminating`. The policy selects a Job by the two labels the
+manager writes on it and on its Pod template, `app.kubernetes.io/managed-by:
+ptah-operator` and `app.kubernetes.io/component` `schema-operation` or
+`migration-operation`, which `spec.execution.podMetadata` cannot declare, so no
+other Job is judged. It decides as the registry does for `batch/v1`, whose
+default is to orphan: `orphanDependents`, then `propagationPolicy`, then the
+`foregroundDeletion` finalizer the Job carries, and otherwise a deletion that
+names no propagation is refused. It is a policy apart from the one above
+because the two select different objects and decide a deletion that names
+nothing differently: a `PtahSchema` or `PtahMigration` defaults to
+`Background`.
+
 A Job carries an annotation envelope that admission checks as a set: eight
 annotations, including the manager image, revision and controller-state
 version, and two more on a schema Apply for the plan fingerprint and content
