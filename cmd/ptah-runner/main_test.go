@@ -159,7 +159,8 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				runner.EnvOCIAuthRegistryGrant + "=attacker.example",
 				runnerProtocol,
 			},
-			wantExit: 2,
+			wantExit:   2,
+			wantStderr: "ptah-runner: " + runner.CodeInvalidOCIAccess + ": registry credential is not granted for the OCI source authority\n",
 		},
 		// The Secret pins a CA and the source selects none: the guard of an
 		// Observe, a Plan, a History or an Apply refuses the system roots
@@ -173,8 +174,9 @@ func TestRunValidatesOCISourceWithoutStartingAChild(t *testing.T) {
 				runner.EnvOCICASHA256Grant + "=sha256:" + strings.Repeat("a", 64),
 				runnerProtocol,
 			},
-			wantExit:   2,
-			wantStderr: "OCI source access is not authorized",
+			wantExit: 2,
+			wantStderr: "ptah-runner: " + runner.CodeInvalidOCIAccess + ": registry certificate authority digest grant was supplied without a custom CA: " +
+				"the registry credential's Secret pins caSHA256, so the source has to select that CA in transport.caFrom\n",
 		},
 	} {
 		test := test

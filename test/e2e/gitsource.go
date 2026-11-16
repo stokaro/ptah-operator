@@ -46,6 +46,15 @@ const (
 	// schema in sync on the phase's database. Each is refused at its Resolve,
 	// before anything reads a database.
 	gitRefusedKey = "ptah_e2e_git_refused"
+	// The schema whose Observe fetch refuses the credential its Resolve was
+	// allowed, its credential, and the database Secret the kubelet waits for
+	// while the credential's grant moves. Its realm and the database its URL
+	// names are its own, and the database is never created: the fetch refuses
+	// before anything reads it.
+	gitFetchRefusedSchema     = "e2e-git-fetch-refused"
+	gitFetchRefusedCredential = "e2e-git-token-fetch-refused"
+	gitFetchRefusedSecret     = "e2e-git-fetch-refused-database"
+	gitFetchRefusedKey        = "ptah_e2e_git_fetch_refused"
 
 	// gitServer is the fixture Deployment and Service; gitServerSecret holds
 	// its TLS key, token and SSH keys, and gitSpecConfigMap the repository.
@@ -57,6 +66,8 @@ const (
 	// The credential Secrets and trust ConfigMaps the resources select.
 	gitTokenCredential     = "e2e-git-token"
 	gitElsewhereCredential = "e2e-git-token-elsewhere"
+	// gitElsewhereHost is the host gitElsewhereCredential is granted for.
+	gitElsewhereHost       = "git.example.com"
 	gitDeployKeyCredential = "e2e-git-deploy-key"
 	gitCAConfigMap         = "e2e-git-ca"
 	// gitOpenPolicy allows the server's host, and gitClosedPolicy another.

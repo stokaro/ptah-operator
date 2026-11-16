@@ -78,6 +78,16 @@ const (
 	httpsCAPinCredential = "e2e-https-ca-pin"
 	httpsCAPinDatabase   = "ptah_e2e_https_ca_pin"
 	httpsCAPinSecret     = "e2e-https-ca-pin-database"
+
+	// The schema whose Observe fetch refuses the credential its Resolve was
+	// allowed, its credential, and the database Secret the kubelet waits for
+	// while the credential's grant moves. Its realm and the database its URL
+	// names are its own, and the database is never created: the fetch refuses
+	// before anything reads it.
+	httpsFetchRefusedSchema     = "e2e-https-fetch-refused"
+	httpsFetchRefusedCredential = "e2e-https-fetch-refused"
+	httpsFetchRefusedSecret     = "e2e-https-fetch-refused-database"
+	httpsFetchRefusedKey        = "ptah_e2e_https_fetch_refused"
 )
 
 // What the refused sources' rows match in a condition message: Ptah's words
@@ -369,6 +379,18 @@ func httpsRedirectFollowed(requests []httpsServed, host, from, to, scheme string
 		}
 	}
 	return fmt.Errorf("the server logged no %s redirect from %s followed to %s on %s, in %d requests", scheme, from, to, host, len(requests))
+}
+
+// httpsRequestCount is how many of the server's requests were for path on
+// host, whatever they carried and however they were answered.
+func httpsRequestCount(requests []httpsServed, host, path string) int {
+	count := 0
+	for _, request := range requests {
+		if request.host == host && request.path == path {
+			count++
+		}
+	}
+	return count
 }
 
 // httpsNoRequestFor holds the server's requests to having none for path on

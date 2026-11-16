@@ -2367,11 +2367,12 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 // was refused, or the artifact never arrived. Each of those has a different
 // answer, and none of them is a retry.
 //
-// The container's own words are deliberately not carried. The container that
-// fetches an artifact holds registry credentials, so its output is not
-// evidence this controller puts in a status; the name and the exit code are
-// structured fields Kubernetes sets, and they are enough to say which boundary
-// failed.
+// The container's own words are not carried. The container that fetches an
+// artifact holds registry credentials, so its output is not evidence this
+// controller puts in a status; the name and the exit code are structured
+// fields Kubernetes sets, and they say which boundary failed. The one
+// exception is the runner's record of a refused source access, from a step
+// that checks one (sourceAccessRefusal).
 func failedInitBoundary(ctx context.Context, reader client.Reader, job *batchv1.Job) (string, error) {
 	if job == nil {
 		return "", nil
@@ -2391,6 +2392,9 @@ func initBoundaryOf(pods []*corev1.Pod) string {
 			if terminated == nil || terminated.ExitCode == 0 {
 				continue
 			}
+			if refusal, refused := sourceAccessRefusal(status); refused {
+				return fmt.Sprintf("the %s step refused the source's access, so the run never started: %s", status.Name, refusal)
+			}
 			return fmt.Sprintf(
 				"the %s step exited %d, so the run never started",
 				status.Name, terminated.ExitCode,
@@ -2398,6 +2402,30 @@ func initBoundaryOf(pods []*corev1.Pod) string {
 		}
 	}
 	return ""
+}
+
+// sourceAccessRefusal is why an init container that checks a source's access
+// refused it, in the words a Resolve's refusal of the same access reads in:
+// the code and the runner's sentence. A Resolve checks with the same code, so
+// a person reads the same grant, field or host whichever operation met it.
+//
+// Only the record the runner writes is read, and only from a step that checks
+// a source's access, under the code that step refuses with. The record carries
+// the check's sentence and no output of Ptah's. The sentence names grants,
+// keys, fields and hosts, and the runner redacts it with the container's
+// credentials as it does a frame's error. Any other termination message, a
+// record from another step, or one that is not exactly a record, says nothing
+// here, and the step is named by its exit status.
+func sourceAccessRefusal(status corev1.ContainerStatus) (string, bool) {
+	code, checks := workload.SourceAccessCode(status.Name)
+	if !checks || status.State.Terminated == nil {
+		return "", false
+	}
+	refusal, err := runner.ParseAccessRefusal(status.State.Terminated.Message)
+	if err != nil || refusal.Code != code {
+		return "", false
+	}
+	return resultCodeMessage(refusal.Code, refusal.Message), true
 }
 
 // retryMigrationOperation advances to a fresh attempt with a fresh

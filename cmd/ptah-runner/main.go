@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -110,6 +111,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		if err := remote.fetch(ctx, *ptahBinary, environment, *remote.destination, "", runner.OSExecutor{}, stderr); err != nil {
+			writeAccessRefusal(err, terminationLog, stderr)
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
 			return 2
 		}
@@ -193,14 +195,11 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+runner.CodeRunnerProtocolMismatch+": "+err.Error())
 			return 2
 		}
-		var err error
-		if *snapshotOCICATo == "" {
-			err = runner.ValidateOCISourceAccess(*validateOCISource, environment)
-		} else {
-			err = runner.SnapshotOCISourceAccess(*validateOCISource, environment, *snapshotOCICATo)
-		}
-		if err != nil {
-			_, _ = fmt.Fprintln(stderr, "ptah-runner: OCI source access is not authorized")
+		// The guard holds the credential's grants and never the credential, so
+		// its log names the refusal as the record does.
+		if err := runner.GuardOCISourceAccess(*validateOCISource, environment, *snapshotOCICATo); err != nil {
+			writeAccessRefusal(err, terminationLog, stderr)
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: "+err.Error())
 			return 2
 		}
 		return 0
@@ -324,4 +323,23 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	// A complete frame is the Job transport success. Child and operation-level
 	// failures remain explicit in the authenticated result payload.
 	return 0
+}
+
+// writeAccessRefusal leaves a source-access check's refusal in the termination
+// message, where the controller reads it in place of the step's exit status.
+// Any other failure writes nothing there. A record that cannot be written
+// costs the status its sentence and nothing else: the step still exits 2.
+func writeAccessRefusal(err error, terminationLog string, stderr io.Writer) {
+	var refusal *runner.AccessRefusalError
+	if terminationLog == "" || !errors.As(err, &refusal) {
+		return
+	}
+	record, encodeErr := runner.EncodeAccessRefusal(refusal.Refusal)
+	if encodeErr != nil {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: the access refusal has no termination record: "+encodeErr.Error())
+		return
+	}
+	if writeErr := runner.WriteTerminationMessage(terminationLog, record); writeErr != nil {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: could not write the access refusal record")
+	}
 }

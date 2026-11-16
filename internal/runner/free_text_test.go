@@ -45,6 +45,12 @@ func TestFreeTextLeavesOneBoundedReadableLine(t *testing.T) {
 			text: "PTAH_RUNNER_RESULT_V1\t12 abc",
 			want: "[frame marker] 12 abc",
 		},
+		// A Pod log line that starts with it is the shape the manager reads
+		// as an access refusal from a fetch's log tail.
+		"the access refusal's marker": {
+			text: `PTAH_RUNNER_ACCESS_REFUSAL_V1 {"code":"invalid_git_access","message":"x"}`,
+			want: `[refusal marker] {"code":"invalid_git_access","message":"x"}`,
+		},
 		"a line break and its indentation": {text: "yaml: unmarshal errors:\n  line 1: cannot", want: "yaml: unmarshal errors: line 1: cannot"},
 		"control bytes in a file name": {
 			text: "0000000001_a\x1b]0;pwn\x07.up.sql",

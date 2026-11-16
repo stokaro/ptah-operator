@@ -432,11 +432,14 @@ func (c *httpsRun) reset() {
 		objects = append(objects, &ptahv1alpha1.PtahMigration{ObjectMeta: c.meta(name)})
 	}
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsCAPinSchema,
-		httpsHostPolicySchema, httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsFetchRefusedSchema,
+		httpsCAPinSchema, httpsHostPolicySchema, httpsSizePolicySchema,
 	} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: c.meta(name)})
 	}
+	// The fetch refusal row's database Secret has to be missing when its
+	// schema is created.
+	objects = append(objects, &corev1.Secret{ObjectMeta: c.meta(httpsFetchRefusedSecret)})
 	for _, name := range []string{"e2e-https-schema-v1", "e2e-https-zip-v1"} {
 		objects = append(objects, &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: c.meta(name)})
 	}
@@ -815,6 +818,9 @@ func (c *httpsRun) redirectToAnotherOrigin() {
 // credentialForAnotherHost names a credential whose owner granted it for
 // another host. The Resolve Job refuses it before Ptah runs, so the server
 // never sees a request for the path only this row names.
+//
+// The same grant then meets an Observe's fetch rather than a Resolve
+// (refusedAtFetch), and the schema says it in the Resolve's words.
 func (c *httpsRun) credentialForAnotherHost() {
 	c.t.Helper()
 	source := httpsSourceDocument{
@@ -823,9 +829,104 @@ func (c *httpsRun) credentialForAnotherHost() {
 	}
 	c.check(c.create(c.schemaDocument(httpsElsewhereSchema, httpsSchemaSecret, httpsRefusedKey, source)), "create PtahSchema %s", httpsElsewhereSchema)
 	refusal := c.refusedAtResolve(httpsElsewhereSchema, says(httpsElsewhereRefusal))
+	if !strings.HasPrefix(refusal, httpsAccessRefused) {
+		c.fatalf("the Resolve refused the credential with %q, not under %q", c.scanned(refusal), httpsAccessRefused)
+	}
 	c.deleteAndWait(c.onlyResolved(httpsElsewhereSchema))
 	c.check(httpsNoRequestFor(c.requests(), c.host, "/bearer/"+httpsfixture.SchemaFile), "the server's log")
 	c.logf("PASS a credential granted for another host was refused before Ptah ran: %s", refusal)
+	source.credential = httpsFetchRefusedCredential
+	c.refusedAtFetch(source, refusal)
+}
+
+// refusedAtFetch has the credential's owner grant it for another host after
+// a Resolve was allowed it, so the refusal comes from the fetch-https-source
+// step of the Observe that follows, which checks the access itself before
+// Ptah runs. The kubelet holds that Observe's Pod before any container starts,
+// for a database Secret that does not exist yet; the grant moves while it
+// holds, and the Secret is created after. The step reads the grant when it
+// starts, refuses, and the schema's ReconciliationFailed names the step and
+// then says exactly what the Resolve said of the same grant. The server
+// logged the Resolve's request for the download and nothing after it.
+//
+// A kubelet that started the step on the old grant would let the fetch run,
+// and the Observe would fail on the database its URL names, which is never
+// created: the row's wait fails then, naming what the schema said.
+func (c *httpsRun) refusedAtFetch(source httpsSourceDocument, resolveRefusal string) {
+	c.t.Helper()
+	// A new object on each write: put updates an existing Secret only from
+	// one that names no resource version.
+	grantedFor := func(host string) *corev1.Secret {
+		return &corev1.Secret{ObjectMeta: c.meta(httpsFetchRefusedCredential), Data: map[string][]byte{
+			"host": []byte(host), "token": []byte(c.keys.Token), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
+		}}
+	}
+	c.put(grantedFor(c.host))
+	c.check(c.create(c.schemaDocument(httpsFetchRefusedSchema, httpsFetchRefusedSecret, httpsFetchRefusedKey, source)),
+		"create PtahSchema %s", httpsFetchRefusedSchema)
+
+	missing := `secret "` + httpsFetchRefusedSecret + `" not found`
+	var held *ptahv1alpha1.PtahSchema
+	c.wait(httpsFetchRefusedSchema+" to resolve and hold its Observe for the database Secret", func() (bool, string) {
+		schema := c.schemaNamed(httpsFetchRefusedSchema)
+		if err := heldBeforeFetch(schema, missing); err != nil {
+			return false, c.scanned(err.Error())
+		}
+		held = schema
+		return true, ""
+	})
+	download := path.Join("/bearer", httpsfixture.SchemaFile)
+	resolved := httpsRequestCount(c.requests(), c.host, download)
+	if resolved == 0 {
+		c.fatalf("the server logged no request for %s, so the Resolve of %s read nothing the log names", download, httpsFetchRefusedSchema)
+	}
+	c.put(grantedFor(httpsElsewhereHost))
+	c.put(&corev1.Secret{ObjectMeta: c.meta(httpsFetchRefusedSecret), Data: map[string][]byte{
+		"url": []byte(c.engine.databaseURL(c.in.TestNamespace, migrationDatabaseUser, c.password, httpsFetchRefusedKey)),
+	}})
+
+	var refused *ptahv1alpha1.PtahSchema
+	c.wait(httpsFetchRefusedSchema+" to be refused at its Observe's fetch in the Resolve's words", func() (bool, string) {
+		schema := c.schemaNamed(httpsFetchRefusedSchema)
+		if err := refusedAtFetch(schema, held.Generation, httpsFetchInit, resolveRefusal); err != nil {
+			// Nothing else fails this generation: its Resolve passed, and
+			// the held Pod is not a failure. Any other failure is the
+			// verdict, and waiting would only hide it.
+			if failedAt(schema, held.Generation) {
+				c.fatalf("%s failed otherwise: %s", httpsFetchRefusedSchema, c.scanned(err.Error()))
+			}
+			return false, c.scanned(err.Error())
+		}
+		refused = schema
+		return true, ""
+	})
+	c.printReading("fetch-refused schema", refused.Status)
+	reading, err := json.Marshal(refused)
+	c.check(err, "encode %s", httpsFetchRefusedSchema)
+	if !c.scanner.ready() || c.scanner.leaks(reading) {
+		c.fatalf("%s could not be scanned, or holds a protected credential", httpsFetchRefusedSchema)
+	}
+	if refused.Status.Plan != nil {
+		c.fatalf("%s planned %+v although its fetch refused the source", httpsFetchRefusedSchema, refused.Status.Plan)
+	}
+	if after := httpsRequestCount(c.requests(), c.host, download); after != resolved {
+		c.fatalf("the server logged %d requests for %s after the refusal, and %d before it", after, download, resolved)
+	}
+	message := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed).Message
+	c.deleteAndWait(refused)
+	c.deleteAndWait(grantedFor(httpsElsewhereHost))
+	c.deleteAndWait(&corev1.Secret{ObjectMeta: c.meta(httpsFetchRefusedSecret)})
+	c.logf("PASS a credential granted for another host after its Resolve was refused at the Observe's fetch, "+
+		"with no request sent: %s", c.scanned(message))
+}
+
+// scanned is what a wait may report of text that came from a status: the
+// text, or a notice that it matched a protected credential.
+func (c *httpsRun) scanned(text string) string {
+	if !c.scanner.ready() || c.scanner.leaks([]byte(text)) {
+		return "the reading is withheld: it could not be scanned or matched a protected credential"
+	}
+	return text
 }
 
 // caPinWithoutTheCA names a credential whose Secret pins caSHA256 from a
@@ -1028,8 +1129,8 @@ func (c *httpsRun) cleanup() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	for _, name := range []string{
-		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsCAPinSchema,
-		httpsHostPolicySchema, httpsSizePolicySchema,
+		httpsSchema, httpsZipSchema, httpsRedirectControl, httpsRedirectSchema, httpsElsewhereSchema, httpsFetchRefusedSchema,
+		httpsCAPinSchema, httpsHostPolicySchema, httpsSizePolicySchema,
 	} {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {

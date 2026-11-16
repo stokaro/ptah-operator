@@ -239,7 +239,10 @@ func (b Builder) remoteFetch(
 		VolumeMounts:    mounts,
 		// The refusal a person has to read: the runner names the content and
 		// the download or commit it was held to, and Ptah's own reason,
-		// redacted, never a credential.
+		// redacted, never a credential. A refusal of the source's access
+		// writes its record to the file instead, and the controller reads
+		// that record and nothing else (runner.ParseAccessRefusal says why a
+		// log tail cannot pass for one).
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, volumes, nil
 }
@@ -253,4 +256,21 @@ func gitSchemaFile(destination string, binding operatorv1alpha1.GitSourceBinding
 
 func sortEnvironment(environment []corev1.EnvVar) {
 	sort.Slice(environment, func(left, right int) bool { return environment[left].Name < environment[right].Name })
+}
+
+// SourceAccessCode is the result code an init container's access refusal
+// carries, for the containers that check a source's access before a fetch: the
+// OCI guard, and the Git and HTTPS fetches, which check it themselves. It
+// reports false for every other container, whose termination message is not
+// read for one.
+func SourceAccessCode(container string) (string, bool) {
+	switch container {
+	case guardContainerName:
+		return runner.CodeInvalidOCIAccess, true
+	case gitFetchContainerName:
+		return runner.CodeInvalidGitAccess, true
+	case httpsFetchContainerName:
+		return runner.CodeInvalidHTTPSAccess, true
+	}
+	return "", false
 }

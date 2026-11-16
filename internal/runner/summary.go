@@ -134,21 +134,28 @@ func EncodeSummary(result Result) ([]byte, error) {
 }
 
 // WriteTerminationSummary writes a summary to the termination message file.
+func WriteTerminationSummary(path string, summary []byte) error {
+	return WriteTerminationMessage(path, summary)
+}
+
+// WriteTerminationMessage writes a record -- a summary, or an init
+// container's access refusal -- to the termination message file, in place of
+// whatever it held.
 //
 // The file is opened, never created. The kubelet mounts it into every
 // container, so a path that does not exist is a process running outside a Pod,
 // and writing a new file there would be writing somewhere nobody reads.
-func WriteTerminationSummary(path string, summary []byte) error {
+func WriteTerminationMessage(path string, record []byte) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
-	written, writeErr := file.Write(summary)
+	written, writeErr := file.Write(record)
 	closeErr := file.Close()
 	switch {
 	case writeErr != nil:
 		return writeErr
-	case written != len(summary):
+	case written != len(record):
 		return io.ErrShortWrite
 	default:
 		return closeErr

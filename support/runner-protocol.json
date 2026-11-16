@@ -437,6 +437,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:7e0001c4d8f16ad47cf11776a6dba614a07c6edc1544ca2e8572d598ce0e24ca",
       "reason": "Check a migration's live schema against its history before an Apply (#1054). Under a drift check policy, a migration History or Apply Job mounts the shadow URL as a file. The runner reports the shadow's credential-free identity as shadowIdentityDigest, and before the child refuses a shadow on another operation, one that is the target, and at an Apply one its plan did not bind. A bound Apply runs ptah migrations up --check-drift with the shadow URL in the child's environment alone and one --drift-exclude= per selector PTAH_DRIFT_EXCLUDE names, sorted; a list elsewhere or one the API refuses is invalid_input. migrationRun carries driftSummary, outcome, stage, reason and a finding count, never Ptah's messages. A check not asked for, a requested one missing, and a refusing check beside an applied version are refused. A Job without the policy is built and framed as before. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:8d689e652b8aa06c56bb1be85fc2a8258b3ce7144dce358740b6b448029c89aa",
+      "reason": "Carry a refused source access's sentence from its init container (#1085). When the source's access check refuses, the OCI guard and the Git and HTTPS fetches write an access refusal record to their termination message: PTAH_RUNNER_ACCESS_REFUSAL_V1 and one JSON line holding the code a Resolve reports for the same check (invalid_oci_access, invalid_git_access or invalid_https_access) and the check's sentence, redacted as a frame's error is, within 1536 bytes. The guard logs that sentence in place of \"OCI source access is not authorized\", and free text the runner logs has the marker taken out. Every other failure writes no record; exit statuses, frames and summaries are unchanged. A manager that reads the record names the step and the sentence. One that does not, or a Job whose runner writes none, names the step by its exit status as before. Protocol 1 stays."
     }
   ]
 }

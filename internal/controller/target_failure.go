@@ -32,7 +32,14 @@ func resultFailure(failure *runner.ResultError, url corev1.SecretKeySelector) er
 	if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 		return &targetFailureError{kind: kind, url: url, unseenObjects: failure.UnseenObjects}
 	}
-	return resultCodeError{code: failure.Code, message: fmt.Sprintf("%s: %s", failure.Code, bounded(failure.Message, 512))}
+	return resultCodeError{code: failure.Code, message: resultCodeMessage(failure.Code, failure.Message)}
+}
+
+// resultCodeMessage is how a runner's code and message read in status: the
+// code, then the message as the runner wrote it, bounded. A frame's error and
+// an init container's access refusal read the same through it.
+func resultCodeMessage(code, message string) string {
+	return fmt.Sprintf("%s: %s", code, bounded(message, 512))
 }
 
 // targetFailureError is a failure that names why an operation could not open

@@ -557,6 +557,35 @@ desired-state author role does not:
 kubectl logs -n application job/<job> -c fetch-schema
 ```
 
+## A source access refused before the fetch
+
+Before an Observe, a Plan, or a migration's History or Apply fetches a source
+through a credential, an init container checks the access the credential's
+owner granted: `validate-source-authority` for an OCI source, and the
+`fetch-git-source` or `fetch-https-source` step itself for Git and HTTPS. A
+Resolve checks the same grants first, so the step refuses what changed after
+it: a Secret whose grant now names another host, a `caSHA256` pin added to the
+Secret, or a check an upgrade added after the source resolved, such as the
+refusal of a `caSHA256` pin without `transport.caFrom`. The message names the step, then says what a Resolve says
+of the same refusal, code and sentence:
+
+```
+the validate-source-authority step refused the source's access, so the run never started: invalid_oci_access: registry credential is not granted for the OCI source authority
+```
+
+A schema carries it in `ReconciliationFailed`, a migration in `Progressing`,
+both with the reason `OperationFailed`, and the Warning Event carries the same
+sentence. An Apply stopped there ends uncertain, as an Apply whose result was
+not read does, and the read that settles it meets the same step and says the
+same. The sentence names a grant, a key, a field or a host and never a
+credential's value, and the runner redacts it with the container's credentials,
+as it does a Resolve's error. Change what it names in the Secret or in the
+resource; the operation tries again at its failure retry interval.
+
+Any other failure of these steps names only the step and its exit status, as
+for the `fetch-schema` step above, and so does a step whose runner writes no
+refusal record, such as one from an earlier release.
+
 ## A Plan that stops without saying why
 
 Ptah refuses some changes rather than plan them. A refusal Ptah names by a code

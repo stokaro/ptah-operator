@@ -233,9 +233,11 @@ type DataPlaneInputs struct {
 }
 
 // DataPlane proves the PostgreSQL lifecycle, both engines' size limits,
-// four-eyes approval, Pod metadata, a PostgreSQL extension's drift in Ptah's
-// feature categories, what a schema artifact the executor cannot parse says, and
-// drift under the documented login. It also prepares the other suites.
+// four-eyes approval, Pod metadata, a Pod held for a missing Secret, a
+// registry grant an Observe's guard refuses in its Resolve's words, a
+// PostgreSQL extension's drift in Ptah's feature categories, what a schema
+// artifact the executor cannot parse says, and drift under the documented
+// login. It also prepares the other suites.
 var DataPlane = define[DataPlaneInputs](Phase{
 	Name:         "dataplane",
 	Test:         "TestDataPlane",
@@ -838,7 +840,8 @@ type GitSourceInputs struct {
 // schema pinned to a commit; a force-push that replaces that commit, which the
 // branch follows and the pinned schema's Resolve refuses; a migration
 // directory from a tag over SSH with a deploy key and pinned known hosts; a
-// credential granted for another host, refused before Ptah runs; a
+// credential granted for another host, refused before Ptah runs, at a Resolve
+// and at an Observe's fetch in the same words; a
 // credential whose Secret pins caSHA256 under an https:// source that selects
 // no CA, refused by the runner before Ptah runs, and planned once the source
 // selects that CA; and a submodule, an LFS pointer and a host key the known
@@ -886,7 +889,8 @@ type HTTPSSourceInputs struct {
 // file, refused naming both digests until the spec names the new one, and
 // then kept without a new plan; a redirect to another origin, refused with
 // the credential set and with nothing sent there; a credential granted for
-// another host, refused before Ptah runs; a credential whose Secret pins
+// another host, refused before Ptah runs, at a Resolve and at an Observe's
+// fetch in the same words; a credential whose Secret pins
 // caSHA256 under a source that selects no CA, refused by the runner before
 // Ptah runs, and planned once the source selects that CA; a symbolic link
 // and a ".." entry, each refused at its Resolve; and a source policy whose

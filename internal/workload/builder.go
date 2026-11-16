@@ -780,6 +780,12 @@ func (b Builder) artifactFetch(
 		Resources:       resources,
 		SecurityContext: hardenedContainerContext(),
 		VolumeMounts:    guardMounts,
+		// A refusal leaves its record in the termination message, where the
+		// controller reads why the guard stopped the fetch. The file and
+		// nothing else: the record is the only thing the guard says there.
+		// It is the API server's default, so a Job built before this said so
+		// is built the same.
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
 	fetch := corev1.Container{
 		Name:            fetchName,
