@@ -26,10 +26,11 @@ view the database holds as `SQL SECURITY INVOKER` and the schema declares with
 no mode now stops the schema's Plan
 ([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)). An Observe
 reports `views_modified`, as before, and the Plan fails at every retry with
-`plan_refused: ptah refused to plan the change (view-security-option)`. Under
-v0.29.2 such a plan replaced the view as `SQL SECURITY DEFINER`, with the login
-the Apply ran as for its definer, and waited for an approval as
-`SecurityDefiner`. As the schema's login, list the views that would stop:
+`plan_refused: ptah refused to plan the change (view-security-option: <view>
+sql_security)`, naming each such view. Under v0.29.2 such a plan replaced the
+view as `SQL SECURITY DEFINER`, with the login the Apply ran as for its definer,
+and waited for an approval as `SecurityDefiner`. To find them before you
+upgrade, list the views that would stop as the schema's login:
 
 ```sql
 SELECT TABLE_NAME FROM information_schema.VIEWS
@@ -68,6 +69,14 @@ propagation is refused from this release: have it name
   than `PrivilegeChanges`.
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
   says what each view statement raises.
+- **A refused view is named.** When Ptah refuses a plan with
+  `view-security-option`, the `ReconciliationFailed` message now names each view
+  and option Ptah's report lists, as in `plan_refused: ptah refused to plan the
+  change (view-security-option: orders_view sql_security)`, where it named the
+  code alone. It names the first eight that fit in 512 bytes and counts the
+  rest. A refusal whose report lists no view reads as before.
+  [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  says what the message carries.
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and
   `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
   `planread.Load` no longer lists one when it refuses a plan for another field.
@@ -101,6 +110,17 @@ propagation is refused from this release: have it name
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
   how to keep an Apply's log without orphaning its Pods, and how to release a
   Job an orphaning deletion left `Terminating`.
+- **An orphaning deletion of a Job only named like an operation Job
+  finishes.** The Pod-intent webhook refused to let the garbage collector take
+  the owner reference off a Pod of any Job whose name starts the way an
+  operation Job's does, such as `ptah-apply-nightly`, so
+  `kubectl delete job --cascade=orphan` of such a Job of your own left it
+  `Terminating`. It now admits that change when neither the Pod, nor the Job's
+  Pod template, nor the Job carries the operator's labels. It still refuses it
+  when it cannot read the Job, when the Job is gone, and when another Job now
+  holds its name. An update that moves a Pod to another Job is decided the
+  same way, by the Job it leaves; one that moved a Pod without the operator's
+  labels off an operation Job was admitted before.
 
 ## 0.2.14
 

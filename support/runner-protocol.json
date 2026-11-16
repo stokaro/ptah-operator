@@ -445,7 +445,12 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:8b836ee515ca013ebddbba32912a3557fce61054741162dfccc3c1a66d83b1b1",
+      "sourceDigest": "sha256:c97f9f350bf39fd58ae9be6736fe23b5282147291b46887011ea6e40aefdb039",
+      "reason": "Name the views a refusal lists (#1126). Since Ptah v0.29.3 a schema plan or apply report's refusal may carry view_options, one view and option per entry, as view-security-option does. The runner reads the list apart from the rest of the report, so a list in another form never makes a report unreadable. A plan_refused or apply_refused message names the code, then the first eight entries that fit in 497 bytes, each view redacted and cleaned as other free text is, and counts the rest: ptah refused to plan the change (view-security-option: orders_view sql_security, and 2 more). A refusal that lists none, or lists them in another form, reads as before. Codes, fields and the frame shape are unchanged, and the message stays text a manager shows bounded. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:da49edf683640111fe4eed685e43b7b4137db089ca75f89147f7e5a6e2b9174c",
       "reason": "Read before_plan for a PostgreSQL view a drop may have taken (stokaro/ptah#6099). After a CASCADE, DROP OWNED or a DROP VIEW whose effect or names the operator cannot read, a later CREATE VIEW, or a CREATE OR REPLACE VIEW whose effect records no value before, raises SecurityDefiner unless its effect's before_plan says the view existed when the plan started with the security_invoker the statement gives it; a MySQL plan reads as before. Only the privilege reading in internal/dataplane changes. The effect record declares before_plan as raw JSON: it ignored the field before and cannot fail on it now, so it accepts the same documents. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is the same, and protocol 1 stays."
     }
   ]

@@ -95,10 +95,11 @@ type differingReading struct {
 	// planCode the code the frame carries then: invalid_plan_output for a plan
 	// Ptah failed to make, plan_refused for one it refused by a code.
 	planRefusal, planCode string
-	// planRefusalCode is the code Ptah's plan document gives a refusal, which
-	// the frame's message names. It is what tells one plan_refused from
-	// another.
-	planRefusalCode string
+	// planRefusalCode is the code Ptah's plan document gives a refusal, and
+	// planRefusalMessage the frame's message, which names the code and the
+	// views and options the document lists. They are what tell one
+	// plan_refused from another.
+	planRefusalCode, planRefusalMessage string
 	// applyRefusal is what `schema apply` says when the database refuses it.
 	applyRefusal string
 	// driftsAfterApply says the read after the Apply still reports drift.
@@ -225,10 +226,11 @@ func differingRows() []differingRow {
 			name: "view-invoker-unstated", engine: enginePostgres, declared: "view-postgresql.sql",
 			seed: []string{notes, invoker},
 			want: differingReading{
-				findings:        []string{"views_modified"},
-				planRefusal:     "holds security_invoker=true and the schema does not state it",
-				planCode:        "plan_refused",
-				planRefusalCode: "view-security-option",
+				findings:           []string{"views_modified"},
+				planRefusal:        "holds security_invoker=true and the schema does not state it",
+				planCode:           "plan_refused",
+				planRefusalCode:    "view-security-option",
+				planRefusalMessage: "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)",
 			},
 		},
 		{
@@ -315,17 +317,19 @@ func differingRows() []differingRow {
 		// Up to v0.29.2 the plan replaced it with no mode, which the server
 		// takes as DEFINER (stokaro/ptah#5902). Since v0.29.3 Ptah refuses the
 		// plan instead, as it refuses a lost PostgreSQL security_invoker, and
-		// names the view and the mode in its sentence; the frame carries the
-		// code alone (stokaro/ptah#6105). The read still reports the change.
+		// names the view and the mode in its sentence and in the document's
+		// view_options (stokaro/ptah#6105). The frame names the code, the view
+		// and the mode. The read still reports the change.
 		{
 			name: "view-invoker-unstated", engine: engineMySQL, declared: "view-mysql.sql",
 			seed: []string{mysqlNotes, mysqlInvoker},
 			want: differingReading{
-				findings:        []string{"views_modified"},
-				observed:        map[string]int32{"views": 1},
-				planRefusal:     "view differs_notes_view holds SQL SECURITY INVOKER and the schema does not state it",
-				planCode:        "plan_refused",
-				planRefusalCode: "view-security-option",
+				findings:           []string{"views_modified"},
+				observed:           map[string]int32{"views": 1},
+				planRefusal:        "view differs_notes_view holds SQL SECURITY INVOKER and the schema does not state it",
+				planCode:           "plan_refused",
+				planRefusalCode:    "view-security-option",
+				planRefusalMessage: "ptah refused to plan the change (view-security-option: differs_notes_view sql_security)",
 			},
 		},
 		// A declaration that states the mode keeps it: the read agrees and
@@ -1068,8 +1072,8 @@ func frameField(row runnerharness.Row, field string) string {
 }
 
 // checkRefusalCode holds Ptah's plan document to the refusal code the row
-// names, and the frame's message to naming that code, which is all of the
-// refusal a resource's status says.
+// names, and the frame's message to the row's, which names that code and the
+// views the document lists: all of the refusal a resource's status says.
 func (row differingRow) checkRefusalCode(name string, document []byte, record runnerharness.Row) error {
 	report, err := dataplane.DecodeSchemaPlan(document)
 	if err != nil {
@@ -1082,8 +1086,8 @@ func (row differingRow) checkRefusalCode(name string, document []byte, record ru
 	frame, _ := record.Result.(map[string]any)
 	failure, _ := frame["error"].(map[string]any)
 	message, _ := failure["message"].(string)
-	if want := "ptah refused to plan the change (" + row.want.planRefusalCode + ")"; message != want {
-		problems = append(problems, fmt.Errorf("%s: the frame's message is %q, want %q", name, message, want))
+	if message != row.want.planRefusalMessage {
+		problems = append(problems, fmt.Errorf("%s: the frame's message is %q, want %q", name, message, row.want.planRefusalMessage))
 	}
 	return errors.Join(problems...)
 }
@@ -1325,6 +1329,14 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			edit: func(captures *runnerharness.Captures) {
 				editDocument(captures, "differs-view-invoker-unstated-mysql/plan", "schema plan", func(document map[string]any) {
 					document["refusal"].(map[string]any)["code"] = "dependent-object"
+				})
+			},
+		},
+		{
+			name: "a frame that names the code and not the view", row: "differs-view-invoker-unstated-mysql", want: "the frame's message is",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-invoker-unstated-mysql/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "plan_refused", "message": "ptah refused to plan the change (view-security-option)"}}
 				})
 			},
 		},

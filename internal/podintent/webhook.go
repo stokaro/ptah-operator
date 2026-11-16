@@ -89,8 +89,8 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 			return cradmission.Denied("managed Pod has no exact Job controller identity")
 		}
 		if oldPod != nil {
-			if _, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod {
-				return cradmission.Denied("Pod update removed its exact Job owner")
+			if previous, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod {
+				return h.judgeJobOwnerRemoval(ctx, oldPod.Namespace, previous)
 			}
 		}
 		return cradmission.Allowed("Pod is not controlled by a Job")
@@ -102,12 +102,23 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	if job.UID == "" || job.UID != jobOwner.UID {
 		return cradmission.Denied("managed Pod owner does not match the current Job UID")
 	}
+	// An update that moves the Pod to another Job takes the old Job's owner
+	// reference off as surely as one that leaves the Pod with none, and is
+	// decided the same way. Without this, a Pod without the labels could leave
+	// an operation Job for any Job the operator does not run.
+	if oldPod != nil {
+		if previous, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod && previous.UID != jobOwner.UID {
+			if response := h.judgeJobOwnerRemoval(ctx, oldPod.Namespace, previous); !response.Allowed {
+				return response
+			}
+		}
+	}
 	subject, ok := operationSubjectFor(job.OwnerReferences)
 	if !ok {
 		if len(binding.References(pod)) != 0 || len(binding.References(oldPod)) != 0 {
 			return cradmission.Denied("result credentials may only be projected by their operation Pod")
 		}
-		if managedPodIdentity(pod.Labels) || managedPodIdentity(job.Labels) ||
+		if managedPodIdentity(pod.Labels) || operationJob(job) ||
 			oldPod != nil && managedPodIdentity(oldPod.Labels) {
 			return cradmission.Denied("managed Pod Job has no exact operator controller identity")
 		}
@@ -214,6 +225,73 @@ func managedPodIdentity(labels map[string]string) bool {
 	}
 	component := labels[workload.LabelComponent]
 	return component == workload.ComponentSchemaOperation || component == workload.ComponentMigrationOperation
+}
+
+// operationJob reports whether a Job carries the operation identity the
+// builder writes on every operation Job and on its Pod template, in either
+// map. The Job orphan-deletion guard selects a Job by the same two labels in
+// the same two maps (crdupgrade.JobOrphanDeletionGuard), and
+// TestJobOrphanDeletionGuardAgreesWithPodIntent in internal/crdupgrade
+// holds the two to the same Jobs.
+func operationJob(job *batchv1.Job) bool {
+	return managedPodIdentity(job.Spec.Template.Labels) || managedPodIdentity(job.Labels)
+}
+
+// judgeJobOwnerRemoval decides an update that takes the Job controller
+// reference off a Pod that carries no operation identity of its own, or moves
+// any Pod to another Job; Handle refuses a moved Pod that carries the identity
+// by its labels after this admits it. The garbage collector sends the first
+// for every Pod of a Job deleted with Orphan propagation, and the Job stays
+// Terminating until each is admitted.
+//
+// A Pod's own labels are the durable record of what it is: the Job controller
+// copies them from the template, this webhook admits an operation Pod only with
+// them and refuses every update that changes them, and Handle refuses to orphan
+// a Pod that carries them before it calls this. A Pod that reaches here without
+// them is a Pod of a Job the operator does not run, which the match condition
+// routes here only because the Job's name starts like an operation Job's, or an
+// operation Pod whose labels changed while the webhook did not see the write.
+// The Job tells the two apart, by operationJob, the test the Job
+// orphan-deletion guard applies, so an orphaning deletion that guard admits is
+// one this webhook lets finish. The operation Pod keeps its owner, because the
+// manager finds a dispatched Apply's executor through the Pods its Job owns
+// (podsOwnedByJob in internal/controller).
+//
+// The Job is a second record only while nobody changes it. Anyone who may
+// update a Job can change its own labels, and the API server keeps the
+// template immutable on a Job that is not suspended. A suspended Job's template
+// can change before the Job starts, and from Kubernetes 1.36, where
+// MutableSchedulingDirectivesForSuspendedJobs is on by default, also after it,
+// once no Pod is active: the Job controller clears startTime on suspension, and
+// shouldAllowMutablePodTemplate in pkg/registry/batch/job/strategy.go admits a
+// suspended Job with the JobSuspended condition and no active Pod. Such a Job
+// stripped of the identity in both maps is no longer selected by the guard,
+// while its Pods, which still carry the labels, keep their owner by their own
+// labels, so its orphaning deletion waits until they finish the termination
+// the suspension began. A Pod of that Job whose labels were also changed
+// unseen is let go, since nothing records what it is any more.
+// TestJobOrphanDeletionGuardAgreesWithPodIntent in internal/crdupgrade holds
+// both states as known.
+//
+// A Job that cannot be read as the one the Pod named keeps the Pod: a failed
+// read, a Job that is gone and one that holds the name under another UID say
+// nothing about whether the Pod runs an operation.
+func (h *ValidationHandler) judgeJobOwnerRemoval(
+	ctx context.Context,
+	namespace string,
+	owner metav1.OwnerReference,
+) cradmission.Response {
+	job := &batchv1.Job{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: owner.Name}, job); err != nil {
+		return podIntentReadError("read the Job the Pod update removed", err)
+	}
+	if job.UID == "" || job.UID != owner.UID {
+		return cradmission.Denied("Pod update removed the owner reference of a Job that has been replaced")
+	}
+	if operationJob(job) {
+		return cradmission.Denied("Pod update removed its exact Job owner")
+	}
+	return cradmission.Allowed("Pod update removed the owner reference of a Job the operator does not run")
 }
 
 func isKubernetesJobController(username string) bool {
