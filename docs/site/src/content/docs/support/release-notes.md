@@ -102,9 +102,10 @@ propagation is refused from this release: have it name
   the owner reference off a Pod of any Job whose name starts the way an
   operation Job's does, such as `ptah-apply-nightly`, so
   `kubectl delete job --cascade=orphan` of such a Job of your own left it
-  `Terminating`. It now refuses that only where the Pod, the Job's Pod template
-  or the Job itself carries the operator's labels: the Jobs the new policy
-  refuses to orphan.
+  `Terminating`. It now admits that change when neither the Pod, nor the Job's
+  Pod template, nor the Job carries the operator's labels. It still refuses it
+  when it cannot read the Job, when the Job is gone, and when another Job now
+  holds its name.
 
 ## 0.2.14
 

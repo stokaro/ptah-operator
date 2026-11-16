@@ -37,6 +37,27 @@ type agreementJob struct {
 	// operationName is a name with an operation Job's prefix on a Job the
 	// operator does not run.
 	operationName bool
+	// madeFrom is the template labels the Job's Pods were made with, where a
+	// person changed the template after; nil means the template as it is.
+	madeFrom map[string]string
+	// known is the verdict a Pod of the Job is held to instead of the
+	// agreement, by the Pod's name in podLabels.
+	known map[string]knownVerdict
+}
+
+// knownVerdict is a verdict the test holds exactly, and why it is known.
+type knownVerdict struct {
+	verdict agreementVerdict
+	why     string
+}
+
+// podLabels is the labels of the Pod the Job controller made from the Job, and
+// the same with the operation identity taken off.
+func (j agreementJob) podLabels() map[string]map[string]string {
+	if j.madeFrom != nil {
+		return agreementPodLabels(j.madeFrom)
+	}
+	return agreementPodLabels(j.job.Spec.Template.Labels)
 }
 
 // agreementVerdict is what each of the three decides about one Pod of one
@@ -61,19 +82,40 @@ func (v agreementVerdict) protected() bool { return v.routed && v.refused }
 // ones the builder produces, every golden Job of this release and of v0.2.10,
 // which an upgrade can find running, the states a person can put such a Job
 // in, and Jobs the operator does not run, a name-only one among them. Each Job
-// is held to the Pod the Job controller makes from it and to that Pod with the
+// is held to the Pod the Job controller made from it and to that Pod with the
 // operation labels taken off, which is how a Pod looks once they were changed
 // while the webhook did not see the write.
+//
+// One state is held to known verdicts instead: a started Job a person
+// suspended and took the identity off in both maps, which the API server
+// allows from 1.36. The guard no longer selects it while the webhook keeps its
+// Pod by the Pod's own labels, so its orphaning deletion waits until that Pod
+// has terminated; and a Pod of it that lost its labels too is let go. The test
+// fails if either verdict moves, as it fails if any other Pod disagrees.
 func TestJobOrphanDeletionGuardAgreesWithPodIntent(t *testing.T) {
 	t.Parallel()
 
 	jobs := agreementJobs(t)
 	guard := testJobOrphanDeletionGuard().Policy()
 	verdicts := map[string]agreementVerdict{}
+	knowns := 0
 	for name, candidate := range jobs {
-		for pod, labels := range agreementPodLabels(candidate.job) {
-			verdicts[name+", "+pod] = judgeOrphaning(t, guard, candidate.job, labels)
+		for pod, labels := range candidate.podLabels() {
+			verdict := judgeOrphaning(t, guard, candidate.job, labels)
+			if known, ok := candidate.known[pod]; ok {
+				// A known verdict that moves is news either way: a disagreement
+				// that went away, or a protection that changed shape.
+				if verdict != known.verdict {
+					t.Errorf("%s, %s: %+v, want the known %+v, because %s", name, pod, verdict, known.verdict, known.why)
+				}
+				knowns++
+				continue
+			}
+			verdicts[name+", "+pod] = verdict
 		}
+	}
+	if knowns != 2 {
+		t.Fatalf("%d known verdicts were held, want 2", knowns)
 	}
 	if disagreements := agreementDisagreements(verdicts); len(disagreements) != 0 {
 		t.Fatalf("the guard and the Pod-intent webhook disagree about which Pods keep their Job:\n%s", strings.Join(disagreements, "\n"))
@@ -84,9 +126,11 @@ func TestJobOrphanDeletionGuardAgreesWithPodIntent(t *testing.T) {
 	// do reach the handler, so it is the handler that lets them go.
 	operations, nameOnly := 0, 0
 	for name, candidate := range jobs {
-		for pod := range agreementPodLabels(candidate.job) {
-			verdict := verdicts[name+", "+pod]
+		for pod := range candidate.podLabels() {
+			verdict, judged := verdicts[name+", "+pod]
 			switch {
+			case !judged:
+				continue
 			case candidate.operation && !verdict.protected():
 				t.Errorf("%s, %s: the operator's Job does not keep its Pod: %+v", name, pod, verdict)
 			case !candidate.operation && verdict.protected():
@@ -106,7 +150,7 @@ func TestJobOrphanDeletionGuardAgreesWithPodIntent(t *testing.T) {
 	// no identity go lets no operation's Pod go: the webhook holds a Pod of an
 	// operator-owned Job to that Job's claim, and admits no Pod of this one.
 	claimed := jobs["a Job named like a schema Plan Job that names a PtahSchema its owner"].job
-	for pod, labels := range agreementPodLabels(claimed) {
+	for pod, labels := range agreementPodLabels(claimed.Spec.Template.Labels) {
 		if askPodIntent(t, claimed, admissionv1.AdmissionRequest{
 			Operation: admissionv1.Create,
 			UserInfo:  authenticationv1.UserInfo{Username: "system:serviceaccount:kube-system:job-controller"},
@@ -115,7 +159,7 @@ func TestJobOrphanDeletionGuardAgreesWithPodIntent(t *testing.T) {
 		}
 	}
 	current, released := goldenJobFiles(t, currentJobDirectory), goldenJobFiles(t, releasedJobDirectory)
-	if want := 3 + len(current) + len(released) + 3; operations != want || nameOnly != 3 {
+	if want := 3 + len(current) + len(released) + 4; operations != want || nameOnly != 3 {
 		t.Fatalf("the agreement was held to %d operation Jobs and %d name-only Jobs, want %d and 3", operations, nameOnly, want)
 	}
 }
@@ -158,7 +202,7 @@ func TestJobOrphanDeletionAgreementReportsADisagreement(t *testing.T) {
 			if candidate.job == nil {
 				t.Fatalf("no Job is named %q", mutation.disagrees)
 			}
-			for pod, labels := range agreementPodLabels(candidate.job) {
+			for pod, labels := range candidate.podLabels() {
 				verdicts[mutation.disagrees+", "+pod] = judgeOrphaning(t, guard, candidate.job, labels)
 			}
 			if disagreements := agreementDisagreements(verdicts); len(disagreements) == 0 {
@@ -183,14 +227,14 @@ func agreementDisagreements(verdicts map[string]agreementVerdict) []string {
 	return disagreements
 }
 
-// agreementPodLabels is the labels of the Pod the Job controller makes from
-// job, and the same with the operation identity taken off.
-func agreementPodLabels(job *batchv1.Job) map[string]map[string]string {
-	stripped := maps.Clone(job.Spec.Template.Labels)
+// agreementPodLabels is the labels of the Pod the Job controller makes from a
+// template with labels, and the same with the operation identity taken off.
+func agreementPodLabels(template map[string]string) map[string]map[string]string {
+	stripped := maps.Clone(template)
 	delete(stripped, workload.LabelManagedBy)
 	delete(stripped, workload.LabelComponent)
 	return map[string]map[string]string{
-		"its Pod":                    maps.Clone(job.Spec.Template.Labels),
+		"its Pod":                    maps.Clone(template),
 		"its Pod without the labels": stripped,
 	}
 }
@@ -327,8 +371,9 @@ func agreementJobs(t *testing.T) map[string]agreementJob {
 
 	// An orphaning deletion of its owner, before the resource guard existed,
 	// left a Job with no owner reference; anyone who may update a Job can take
-	// its own labels off; and on the one Job whose template can change, a
-	// suspended one that never started, a person can take the template's.
+	// its own labels off; and on a suspended Job a person can take the
+	// template's: on one that never started on every supported minor, and from
+	// 1.36 on one that started and has no active Pod.
 	orphaned := schemaJob.DeepCopy()
 	orphaned.OwnerReferences = nil
 	add("a schema Job left with no owner", orphaned, true, false)
@@ -341,6 +386,45 @@ func agreementJobs(t *testing.T) map[string]agreementJob {
 	suspended.Spec.Template.Labels = maps.Clone(suspended.Spec.Template.Labels)
 	delete(suspended.Spec.Template.Labels, workload.LabelComponent)
 	add("a suspended schema Job whose template a person took the component label off", suspended, true, false)
+
+	// From 1.36, where MutableSchedulingDirectivesForSuspendedJobs is on by
+	// default, the Job controller clears startTime when it suspends a Job and
+	// marks it JobSuspended, and the API server then lets the template change
+	// once no Pod is active: the Pod the suspension deleted is terminating. It
+	// was made from the template before the change, and keeps those labels.
+	// Stripped in both maps, the Job is no longer the guard's, and only the
+	// Pod's own labels say what it runs.
+	strippedSuspended := schemaJob.DeepCopy()
+	strippedSuspended.Spec.Suspend = ptr.To(true)
+	strippedSuspended.Status = batchv1.JobStatus{
+		Terminating: ptr.To(int32(1)),
+		Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobSuspended, Status: corev1.ConditionTrue, Reason: "JobSuspended", Message: "Job suspended",
+		}},
+	}
+	strippedSuspended.Labels = maps.Clone(strippedSuspended.Labels)
+	strippedSuspended.Spec.Template.Labels = maps.Clone(strippedSuspended.Spec.Template.Labels)
+	for _, labels := range []map[string]string{strippedSuspended.Labels, strippedSuspended.Spec.Template.Labels} {
+		delete(labels, workload.LabelManagedBy)
+		delete(labels, workload.LabelComponent)
+	}
+	const strippedSuspendedName = "a started schema Job a person suspended and took the identity off in both maps"
+	add(strippedSuspendedName, strippedSuspended, true, false)
+	entry := jobs[strippedSuspendedName]
+	entry.madeFrom = maps.Clone(schemaJob.Spec.Template.Labels)
+	entry.known = map[string]knownVerdict{
+		"its Pod": {
+			verdict: agreementVerdict{routed: true, refused: true},
+			why: "the guard admits orphaning the Job while the webhook keeps the Pod by its own labels, so the deletion " +
+				"waits until the Pod finishes the termination the suspension began, and no longer",
+		},
+		"its Pod without the labels": {
+			verdict: agreementVerdict{routed: true},
+			why: "a Pod whose labels also changed while the webhook did not see the write carries nothing that says it ran " +
+				"an operation, so it is let go, as it was already being stopped",
+		},
+	}
+	jobs[strippedSuspendedName] = entry
 
 	// Jobs the operator does not run. A person can name a Job after the
 	// command it runs, which is the name the webhook routes by, and can name a

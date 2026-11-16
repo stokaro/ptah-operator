@@ -231,19 +231,34 @@ func operationJob(job *batchv1.Job) bool {
 // garbage collector sends one for every Pod of a Job deleted with Orphan
 // propagation, and the Job stays Terminating until each is admitted.
 //
-// The Job decides, not the Pod. A Pod an operation Job made takes the identity
-// from the Job's template, and this webhook keeps it there, so an operation
-// Pod without it is one whose labels changed while the webhook did not see the
-// write. That Pod keeps its owner: the manager finds a dispatched Apply's
-// executor through the Pods its Job owns (podsOwnedByJob in
-// internal/controller), and the template still says what the Pod is, because
-// the API server refuses a change to the template of every Job but a suspended
-// one that never started, which has made no Pod. Every other Pod that reaches
-// here belongs to a Job the operator does not run, which the match condition
-// routes here only because its name starts like an operation Job's, and its
-// Pods are orphaned as any Job's are. The test is operationJob, the one the
-// Job orphan-deletion guard applies, so an orphaning deletion that guard admits
-// is one this webhook lets finish.
+// A Pod's own labels are the durable record of what it is: the Job controller
+// copies them from the template, this webhook admits an operation Pod only with
+// them and refuses every update that changes them, and Handle refuses to orphan
+// a Pod that carries them before it calls this. A Pod that reaches here without
+// them is a Pod of a Job the operator does not run, which the match condition
+// routes here only because the Job's name starts like an operation Job's, or an
+// operation Pod whose labels changed while the webhook did not see the write.
+// The Job tells the two apart, by operationJob, the test the Job
+// orphan-deletion guard applies, so an orphaning deletion that guard admits is
+// one this webhook lets finish. The operation Pod keeps its owner, because the
+// manager finds a dispatched Apply's executor through the Pods its Job owns
+// (podsOwnedByJob in internal/controller).
+//
+// The Job is a second record only while nobody changes it. Anyone who may
+// update a Job can change its own labels, and the API server keeps the
+// template immutable on a Job that is not suspended. A suspended Job's template
+// can change before the Job starts, and from Kubernetes 1.36, where
+// MutableSchedulingDirectivesForSuspendedJobs is on by default, also after it,
+// once no Pod is active: the Job controller clears startTime on suspension, and
+// shouldAllowMutablePodTemplate in pkg/registry/batch/job/strategy.go admits a
+// suspended Job with the JobSuspended condition and no active Pod. Such a Job
+// stripped of the identity in both maps is no longer selected by the guard,
+// while its Pods, which still carry the labels, keep their owner by their own
+// labels, so its orphaning deletion waits until they finish the termination
+// the suspension began. A Pod of that Job whose labels were also changed
+// unseen is let go, since nothing records what it is any more.
+// TestJobOrphanDeletionGuardAgreesWithPodIntent in internal/crdupgrade holds
+// both states as known.
 //
 // A Job that cannot be read as the one the Pod named keeps the Pod: a failed
 // read, a Job that is gone and one that holds the name under another UID say

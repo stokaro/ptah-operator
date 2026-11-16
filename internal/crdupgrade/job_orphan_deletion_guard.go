@@ -54,13 +54,20 @@ func jobDefaultOrphanDenialMessage() string {
 // app.kubernetes.io/component schema-operation or migration-operation. On a
 // Pod those two labels are one of the ways the Pod-intent webhook decides the
 // Pod is managed, and a Pod takes them from the template. The template is what
-// the condition reads first, because the API server keeps it immutable on
-// every Job but a suspended one that never started, while anyone who may
-// update the Job can change its own labels: a condition on those alone would
-// let a person strip one label and then orphan the Pods. The Job's own labels
-// are read as well, for that one Job whose template can change. The manager
-// writes both, so for a Job it built neither clause selects anything the other
-// does not. spec.execution.podMetadata cannot declare either key, and nothing
+// the condition reads first, because the API server keeps it immutable on a
+// Job that is not suspended, while anyone who may update the Job can change its
+// own labels: a condition on those alone would let a person strip one label
+// and then orphan the Pods. The Job's own labels are read as well, for a
+// suspended Job, whose template can change: on every supported minor before it
+// starts, and from Kubernetes 1.36, where
+// MutableSchedulingDirectivesForSuspendedJobs is on by default, after it too,
+// once no Pod is active. A person who suspends an operation Job and takes the
+// labels off both maps takes it out of this condition. Its Pods keep the
+// labels they were made with, and the Pod-intent webhook keeps them owned by
+// those, so an orphaning deletion of that Job waits until they finish the
+// termination the suspension began. The manager writes both maps, so for a Job
+// it built neither clause selects anything the other does not.
+// spec.execution.podMetadata cannot declare either key, and nothing
 // else in the chart or the manager writes either component, so no Job but one
 // that claims the operator's identity is judged. A Job keeps the labels when
 // an orphaning deletion of its owner, before the orphan-deletion guard
@@ -71,7 +78,8 @@ func jobDefaultOrphanDenialMessage() string {
 // internal/podintent). So the Pods of a Job only named like an operation Job,
 // which its match condition routes by name, are orphaned as any Job's are, and
 // this condition does not select that Job either.
-// TestJobOrphanDeletionGuardAgreesWithPodIntent holds the two to the same Jobs.
+// TestJobOrphanDeletionGuardAgreesWithPodIntent holds the two to the same Jobs,
+// and the suspended Job stripped in both maps to the verdicts known for it.
 //
 // The verdict follows the registry (shouldOrphanDependents in k8s.io/apiserver
 // pkg/registry/generic/registry/store.go): orphanDependents, when the request

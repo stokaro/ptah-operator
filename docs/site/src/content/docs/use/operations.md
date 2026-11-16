@@ -1793,8 +1793,13 @@ whose Pod template, or whose own metadata, carries the labels the operator
 writes on every Job it runs: `app.kubernetes.io/managed-by: ptah-operator`, and
 `app.kubernetes.io/component` `schema-operation` or `migration-operation`. The
 API server refuses any change to the template of a Job that is not suspended,
-so taking a label off the Job does not take the Job out of scope. The message
-names `Background`. The policy also refuses a deletion of such a Job that names
+so taking a label off the Job does not take the Job out of scope. A suspended
+Job's template can change before the Job starts, and from Kubernetes 1.36 also
+after it, once no Pod is active. If you suspend an operation Job and take the
+labels off both, the policy no longer judges it, but its Pods keep the labels
+they were made with and the Pod-intent webhook keeps them owned, so an
+orphaning deletion of that Job finishes only once they have terminated. The
+message names `Background`. The policy also refuses a deletion of such a Job that names
 no propagation, unless the Job carries the `foregroundDeletion` finalizer:
 Kubernetes orphans a Job's Pods by default, and the API server applies that
 default to a client that names nothing. `kubectl delete job` and the namespace

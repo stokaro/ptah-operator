@@ -52,9 +52,10 @@ type orphaningJobs struct {
 	// would; carriesForeground the foregroundDeletion one.
 	carriesOrphan, carriesForeground *batchv1.Job
 	// strippedJob is an operation Job a person took the component label off,
-	// which its immutable Pod template still carries. strippedTemplate is a
-	// suspended one that never started, the one Job whose template a person
-	// can change, with the component label taken off its template.
+	// which its Pod template, immutable while the Job is not suspended, still
+	// carries. strippedTemplate is a suspended one that never started, whose
+	// template a person can change on every supported minor, with the
+	// component label taken off its template.
 	strippedJob, strippedTemplate *batchv1.Job
 	// plain carries no label at all; otherManager the operation component
 	// under another manager; otherComponent this operator with another
