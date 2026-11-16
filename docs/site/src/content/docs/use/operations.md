@@ -1795,22 +1795,20 @@ person added would. It then names `Orphan`, which is refused, and the Job stays
 as it is, running if it ran; `kubectl delete job` takes the finalizer off and
 deletes it. No other Job is judged.
 
-Orphaning is not how to keep an Apply's log. Copy the log before you delete the
-Job: `kubectl logs -n <namespace> job/<name> -c ptah > apply.log` reads a Job
-that has finished, and `kubectl logs -f` started before the delete follows a run
-still in flight to its end. A log shipper that collects Pod logs keeps it past
-the Pod as well. How long the operator keeps the Job for you to read is in
-[What a failed Apply leaves in its Pod log](#failed-apply-log). Deleting the
-Job with `Background` deletes its Pods, and the kubelet stops each one and
-records it `Failed`, its executor terminated, before the Pod goes. A
-`PtahMigration` pass that reads the Pod in that state can hand the database
-Lease back at once; one that finds the Pod already gone keeps the Lease to the
-end of its term, as above. A Job an orphaning deletion left `Terminating`
-before the policy was installed is released the way a resource is: delete it
-again with `kubectl delete job`, whose `Background` takes the `orphan`
-finalizer off, and the Job goes. The garbage collector then deletes its Pods,
-so wait until the Pod has finished: the orphaning deletion did not stop it,
-and an Apply still running would be stopped between statements.
+Orphaning is not how to keep an Apply's log. Wait for the Job to finish, then
+copy the log before you delete the Job:
+`kubectl logs -n <namespace> job/<name> -c ptah > apply.log`. A log shipper
+that collects Pod logs keeps it past the Pod as well. How long the operator
+keeps the Job for you to read is in
+[What a failed Apply leaves in its Pod log](#failed-apply-log). Deleting a
+running Apply's Job stops its executor. A `PtahMigration` then usually finds
+the Pod already gone and keeps the database Lease until the end of its term,
+with an `ApplyPodGone` Warning. Delete the Job once it has finished. A Job an
+orphaning deletion left `Terminating` before the policy was installed is
+released the way a resource is: delete it again with `kubectl delete job`,
+whose `Background` takes the `orphan` finalizer off, and the Job goes. The
+garbage collector then deletes its Pods, so wait until the Pod has finished:
+the orphaning deletion did not stop it.
 
 ### Deleting a namespace {#delete-namespace}
 
