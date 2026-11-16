@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-16T19:20:57.367122+00:00",
+  "frozenAt": "2026-11-16T20:04:33.419389+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "e1877051e7b28bf6f2dcadbe1c758dcf25a0896919b724d347ff2eaaeaa48725"
+      "sha256": "016e07889bb341c2f0942db1109342728ec31b657885a62b7f653ff4ea132a51"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "c5bb093df5188227b23f1aa0fa3de97ffdd0f0bfd51c90dbccbe19f222450e4f"
+      "sha256": "1c43a85370fde40893348311e7704650fad10f5ac6333cf2817479b625811238"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
