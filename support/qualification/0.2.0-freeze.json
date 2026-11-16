@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-16T05:08:35.015968+00:00",
+  "frozenAt": "2026-11-16T05:33:10.024436+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -36,7 +36,7 @@
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
-      "sha256": "dcf9e10345510d69dea5efc5f4a335d87036f4841f2608ce9cbbc76d283bea0d"
+      "sha256": "5992598bd994d7f61aa91a5241e857dbb1fc85a043b69026c101ebac68868f5f"
     },
     {
       "path": "support/qualification/kindnet/pending-pod.patch",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 110,
+  "revision": 111,
   "supersedes": {
-    "freezeCommit": "2f7202fb73c6786bdfe319c1cbf4fa1390a5984c",
-    "sha256": "e08528195744da5399238960dafcbd332f8c2eb305e2b53352c0d2ee10b84255"
+    "freezeCommit": "1e6ed02d7a3920f99831281534c7a8f8a3cdb71b",
+    "sha256": "d427257c30839b9de322ce87c9712693f2ad1535af75b1658cd3324f79985e3b"
   },
-  "revisionReason": "Declare the published v0.2.14 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.14 as the published predecessor of the next candidate. The edge row now names Ptah v0.29.2 as the build run 43780370228 passed at. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Build the qualification kindnetd with Go 1.27.4, the toolchain the operator image and the e2e builds already use: support/qualification/kindnet/Dockerfile moves its golang build stage from 1.27.3 to 1.27.4. The kind sources, the patch, the shipped kindnetd base image, the profile, its targets and every other input are unchanged."
 }
