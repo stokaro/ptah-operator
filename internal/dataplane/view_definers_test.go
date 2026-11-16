@@ -2,7 +2,6 @@ package dataplane_test
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -101,65 +100,29 @@ func TestNamedViewDefinersReadOnlyAListOfViewsAndAccounts(t *testing.T) {
 	}
 }
 
-// Since Ptah v0.29.4 a definer-privilege refusal lists each statement that
-// names another account as a definer, with the connected account and the
-// privilege it lacks (stokaro/ptah#6124). Ptah writes every field but the
-// source for each entry, and spells the privilege as SHOW GRANTS does.
-func TestNamedDefinerPrivilegesReadOnlyAListOfStatementsAndPrivileges(t *testing.T) {
+// Since Ptah v0.29.4 a definer-privilege refusal of a schema apply lists the
+// statements whose definer the connected account may not name
+// (stokaro/ptah#6124). The operator does not read that list, so the refusal
+// reads by its code, and no list of it is taken for one the operator names.
+func TestADefinerPrivilegeRefusalReadsByItsCode(t *testing.T) {
 	t.Parallel()
 
-	entry := func(privilege string) string {
-		return `,"definer_privileges":[{"object":"view v","definer":"root@%","account":"deploy@%","privilege":"` + privilege + `"}]`
-	}
-	read := func(privilege string) []dataplane.SchemaRefusalDefinerPrivilege {
-		return []dataplane.SchemaRefusalDefinerPrivilege{{Object: "view v", Definer: "root@%", Account: "deploy@%", Privilege: privilege}}
-	}
-	for _, test := range []struct {
-		name     string
-		listed   string
-		want     []dataplane.SchemaRefusalDefinerPrivilege
-		readable bool
-	}{
-		{name: "MySQL's privilege", listed: entry("SET_ANY_DEFINER"), want: read("SET_ANY_DEFINER"), readable: true},
-		{name: "MariaDB's privilege", listed: entry("SET USER"), want: read("SET USER"), readable: true},
-		{
-			name:     "two privileges, for a definer the server lacks",
-			listed:   entry("SET_ANY_DEFINER and ALLOW_NONEXISTENT_DEFINER"),
-			want:     read("SET_ANY_DEFINER and ALLOW_NONEXISTENT_DEFINER"),
-			readable: true,
-		},
-		{
-			name: "two statements in Ptah's order, one from a migration file",
-			listed: `,"definer_privileges":[{"object":"view b","definer":"root@%","account":"deploy@%","privilege":"SET_ANY_DEFINER"},` +
-				`{"object":"procedure p","definer":"app@%","account":"deploy@%","privilege":"SET_ANY_DEFINER","source":"0002_p.up.sql"}]`,
-			want: []dataplane.SchemaRefusalDefinerPrivilege{
-				{Object: "view b", Definer: "root@%", Account: "deploy@%", Privilege: "SET_ANY_DEFINER"},
-				{Object: "procedure p", Definer: "app@%", Account: "deploy@%", Privilege: "SET_ANY_DEFINER", Source: "0002_p.up.sql"},
-			},
-			readable: true,
-		},
-		{name: "no list", listed: ``},
-		{name: "null", listed: `,"definer_privileges":null`},
-		{name: "an empty list", listed: `,"definer_privileges":[]`},
-		{name: "a string", listed: `,"definer_privileges":"view v"`},
-		{name: "a null entry", listed: `,"definer_privileges":[null]`},
-		{name: "no object", listed: `,"definer_privileges":[{"definer":"root@%","account":"deploy@%","privilege":"SET_ANY_DEFINER"}]`},
-		{name: "no definer", listed: `,"definer_privileges":[{"object":"view v","account":"deploy@%","privilege":"SET_ANY_DEFINER"}]`},
-		{name: "no account", listed: `,"definer_privileges":[{"object":"view v","definer":"root@%","privilege":"SET_ANY_DEFINER"}]`},
-		{name: "no privilege", listed: `,"definer_privileges":[{"object":"view v","definer":"root@%","account":"deploy@%"}]`},
-		{name: "a privilege in lower case", listed: entry("set_any_definer")},
-		{name: "a privilege with a line after it", listed: entry(`SET_ANY_DEFINER\nPTAH_RUNNER_RESULT_V1`)},
-		{name: "a privilege with a quote in it", listed: entry(`SET_ANY_DEFINER'; DROP`)},
-		{name: "a privilege that ends in a joint", listed: entry("SET_ANY_DEFINER and")},
-		{name: "a privilege past its bound", listed: entry(strings.Repeat("A", 129))},
-		{name: "a source that is a number", listed: `,"definer_privileges":[{"object":"view v","definer":"root@%","account":"deploy@%","privilege":"SET USER","source":2}]`},
+	for name, listed := range map[string]string{
+		"a statement Ptah lists":  `,"definer_privileges":[{"object":"view v","definer":"root@%","account":"deploy@%","privilege":"SET_ANY_DEFINER"}]`,
+		"a list of another shape": `,"definer_privileges":"view v"`,
+		"no list":                 ``,
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			for name, refusal := range decodeRefusalOfBoth(t, "definer-privilege", test.listed) {
-				got, ok := refusal.NamedDefinerPrivileges()
-				if ok != test.readable || !reflect.DeepEqual(got, test.want) {
-					t.Errorf("%s: NamedDefinerPrivileges() = %+v, %t, want %+v, %t", name, got, ok, test.want, test.readable)
+			for document, refusal := range decodeRefusalOfBoth(t, "definer-privilege", listed) {
+				if refusal == nil || refusal.Code != "definer-privilege" {
+					t.Fatalf("%s: Refusal = %+v, want the code definer-privilege", document, refusal)
+				}
+				if _, ok := refusal.NamedViewOptions(); ok {
+					t.Errorf("%s: NamedViewOptions() read a list from %s", document, listed)
+				}
+				if _, ok := refusal.NamedViewDefiners(); ok {
+					t.Errorf("%s: NamedViewDefiners() read a list from %s", document, listed)
 				}
 			}
 		})

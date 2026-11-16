@@ -89,17 +89,7 @@ var (
 	// one is a malformed document rather than a new code. An option a refusal
 	// names is held to it too, for the same reason.
 	schemaRefusalCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
-	// schemaRefusalPrivilegePattern is the shape of a global privilege a
-	// definer-privilege refusal names: a name in capitals, as SHOW GRANTS
-	// spells it, or two joined by "and", as in
-	// "SET_ANY_DEFINER and ALLOW_NONEXISTENT_DEFINER". Ptah writes it from a
-	// list of its own, so a value of another shape is a malformed document.
-	schemaRefusalPrivilegePattern = regexp.MustCompile(`^[A-Z][A-Z_]*(?: (?:and )?[A-Z][A-Z_]*)*$`)
 )
-
-// maxSchemaRefusalPrivilegeBytes bounds a privilege a refusal names, which
-// the runner keeps whole in a sentence of 512 bytes.
-const maxSchemaRefusalPrivilegeBytes = 128
 
 // SchemaRefusal is why a plan or an apply refused. Only the fields its code
 // describes are set.
@@ -122,11 +112,14 @@ type SchemaRefusal struct {
 	// read ran as, which a replacement would make its definer, since Ptah
 	// v0.29.4 (stokaro/ptah#6109). They are read by NamedViewDefiners.
 	ViewDefiners json.RawMessage `json:"view_definers,omitempty"`
-	// DefinerPrivileges are the statements a definer-privilege refusal names,
-	// each naming another account as a definer that the connected account
-	// lacks the privilege to name, since Ptah v0.29.4 (stokaro/ptah#6124).
-	// They are read by NamedDefinerPrivileges.
-	DefinerPrivileges json.RawMessage `json:"definer_privileges,omitempty"`
+	// Since Ptah v0.29.4 a definer-privilege refusal of a schema apply also
+	// lists the statements whose definer the connected account may not name,
+	// as definer_privileges (stokaro/ptah#6124). The operator does not read
+	// the list. A plan names no definer but the account its read ran as, and
+	// the runner refuses an Apply under another login than the plan's
+	// (target_binding_mismatch), so an Apply meets this refusal only where
+	// the same login has come to match another account. It reads by its code
+	// alone.
 }
 
 // SchemaRefusalViewDefiner is one view a view-definer refusal names. View is
@@ -139,20 +132,6 @@ type SchemaRefusalViewDefiner struct {
 	View    string `json:"view"`
 	Definer string `json:"definer"`
 	Account string `json:"account"`
-}
-
-// SchemaRefusalDefinerPrivilege is one statement a definer-privilege refusal
-// names. Object is what the statement writes, as "view orders_view"; Definer
-// is the account its DEFINER clause names, Account the connected account, and
-// Privilege the global privilege that account lacks, as "SET_ANY_DEFINER" or
-// "SET USER". Source is the migration file the statement is in, and empty for
-// a schema plan.
-type SchemaRefusalDefinerPrivilege struct {
-	Object    string `json:"object"`
-	Definer   string `json:"definer"`
-	Account   string `json:"account"`
-	Privilege string `json:"privilege"`
-	Source    string `json:"source,omitempty"`
 }
 
 // NamedViewDefiners reads the views a refusal names with their definers, in
@@ -172,29 +151,6 @@ func (r SchemaRefusal) NamedViewDefiners() ([]SchemaRefusalViewDefiner, bool) {
 	}
 	for _, each := range named {
 		if each.View == "" {
-			return nil, false
-		}
-	}
-	return named, true
-}
-
-// NamedDefinerPrivileges reads the statements a refusal names with the
-// definers they name, in the order Ptah lists them. It reports false when the
-// refusal names none, and when it names them in a form this operator does not
-// read: anything but a list of objects, each with an object, a definer and an
-// account, and a privilege of the shape SHOW GRANTS spells.
-//
-// The object, the definer, the account and the source are returned as
-// written; a caller that shows one cleans it first.
-func (r SchemaRefusal) NamedDefinerPrivileges() ([]SchemaRefusalDefinerPrivilege, bool) {
-	named, ok := decodeRefusalList[SchemaRefusalDefinerPrivilege](r.DefinerPrivileges)
-	if !ok {
-		return nil, false
-	}
-	for _, each := range named {
-		if each.Object == "" || each.Definer == "" || each.Account == "" ||
-			len(each.Privilege) > maxSchemaRefusalPrivilegeBytes ||
-			!schemaRefusalPrivilegePattern.MatchString(each.Privilege) {
 			return nil, false
 		}
 	}

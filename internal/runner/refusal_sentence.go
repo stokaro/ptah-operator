@@ -55,9 +55,8 @@ func refusalSentence(lead string, refusal *dataplane.SchemaRefusal, redactor Red
 	list := joinRefusalEntries(entries[:shown]) + andMore(shown, len(entries))
 	if shown == 0 {
 		// The cut keeps a few hundred bytes of what the first entry names: a
-		// code, the words Ptah names in its own vocabulary (a privilege is
-		// bounded at 128 bytes) and a count take less than 260 of the 497, so
-		// the cut is never empty.
+		// code, the option (an identifier of at most 64 bytes) and a count
+		// take less than 200 of the 497, so the cut is never empty.
 		const cut = "..."
 		first, more := entries[0], andMore(1, len(entries))
 		list = cutLine(first.named, room-len(more)-len(first.own)-len(cut)) + cut + first.own + more
@@ -88,18 +87,16 @@ func joinRefusalEntries(entries []refusalEntry) string {
 //   - each view of view_definers (view-definer), with the account it runs as
 //     and the account the plan's read ran as, as
 //     `orders_view definer app@% account deploy@%`, leaving out an account the
-//     read did not record;
-//   - each statement of definer_privileges (definer-privilege), with the
-//     definer it names, the connected account and the privilege that account
-//     lacks, as `view orders_view definer app@% account deploy@% lacks
-//     SET_ANY_DEFINER`, and the file a migration's statement is in after the
-//     object, as `view orders_view in 0002_views.up.sql definer ...`.
+//     read did not record.
 //
-// A view, an object, an account and a file come from a schema or a database,
-// so each goes through freeText, which redacts it, puts a space where a control
-// or format character was and keeps it on one line. An option has to be an
-// identifier and a privilege a name SHOW GRANTS spells, which the dataplane
-// readers hold them to.
+// A definer-privilege refusal lists the statements whose definer the login may
+// not name, and this does not read that list, so it reads by its code alone
+// (dataplane.SchemaRefusal says why no operator path is expected to meet it).
+//
+// A view and an account come from a schema or a database, so each goes through
+// freeText, which redacts it, puts a space where a control or format character
+// was and keeps it on one line. An option has to be an identifier, which the
+// dataplane reader holds it to.
 //
 // It reports false when the refusal lists nothing, when a list it carries is in
 // a form the readers refuse, and when nothing readable is left of a value that
@@ -153,23 +150,6 @@ func refusalEntries(refusal *dataplane.SchemaRefusal, redactor Redactor) ([]refu
 				return nil, false
 			}
 			entries = append(entries, refusalEntry{named: text})
-		}
-	}
-	if len(refusal.DefinerPrivileges) != 0 {
-		named, ok := refusal.NamedDefinerPrivileges()
-		if !ok {
-			return nil, false
-		}
-		for _, each := range named {
-			object, ok := clean(each.Object)
-			if !ok {
-				return nil, false
-			}
-			text, ok := labeled(object, "in", each.Source, "definer", each.Definer, "account", each.Account)
-			if !ok {
-				return nil, false
-			}
-			entries = append(entries, refusalEntry{named: text, own: " lacks " + each.Privilege})
 		}
 	}
 	return entries, len(entries) > 0
