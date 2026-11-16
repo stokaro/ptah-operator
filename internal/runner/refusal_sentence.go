@@ -16,7 +16,7 @@ const (
 	// maxRefusalSentenceBytes is what of a refusal's sentence fits an Event
 	// with the longer code in front: the controller keeps 512 bytes of the
 	// whole sentence there, as for maxDesiredSourceReasonBytes, so a longer
-	// sentence would lose the count of the views it does not name.
+	// sentence would lose the count of the entries it does not name.
 	maxRefusalSentenceBytes = 512 - len(codeApplyRefused) - len(": ")
 
 	// namedRefusalEntries is how many of the entries a refusal lists its
@@ -28,50 +28,151 @@ const (
 // refusalSentence is how a refusal Ptah named by a code reads in a frame: the
 // lead and the code, as in `ptah refused to plan the change (dependent-object)`.
 //
-// A refusal that lists views and options, as view-security-option does, names
-// them after the code: the first few that fit maxRefusalSentenceBytes, each as
-// the view and the option, then how many more there are, as in
-// `(view-security-option: app.orders_view sql_security, and 2 more)`. A view
-// comes from a schema or a database, so it goes through freeText, which
-// redacts it, puts a space where a control or format character was and keeps
-// it on one line. A first view too long to fit is cut, and ends in "...". An
-// option is an identifier, which NamedViewOptions holds it to.
+// A refusal that lists what it refused names the entries after the code: the
+// first few that fit maxRefusalSentenceBytes, then how many more there are, as
+// in `(view-security-option: app.orders_view sql_security, and 2 more)`.
+// refusalEntries says how each list reads. A first entry too long to fit is cut
+// before the words Ptah names in its own vocabulary, such as the option, and
+// the cut ends in "...".
 //
-// A refusal that lists none, or lists them in a form NamedViewOptions does not
-// read, reads as the lead and the code alone, as every refusal did before Ptah
-// listed the views.
+// A refusal that lists nothing, or lists something in a form this runner does
+// not read, reads as the lead and the code alone, as every refusal did before
+// Ptah listed what it refused.
 func refusalSentence(lead string, refusal *dataplane.SchemaRefusal, redactor Redactor) string {
 	plain := lead + " (" + refusal.Code + ")"
-	named, ok := refusal.NamedViewOptions()
+	entries, ok := refusalEntries(refusal, redactor)
 	if !ok {
 		return plain
-	}
-	entries := make([]string, 0, len(named))
-	for _, each := range named {
-		view := freeText(each.View, redactor, maxRefusalSentenceBytes)
-		if view == "" {
-			return plain
-		}
-		entries = append(entries, view+" "+each.Option)
 	}
 	// What the list may take: the sentence less the lead, the code and its
 	// parentheses, and the separator in front of the list.
 	room := maxRefusalSentenceBytes - len(plain) - len(": ")
 	shown := 0
 	for shown < min(len(entries), namedRefusalEntries) &&
-		len(strings.Join(entries[:shown+1], ", ")+andMore(shown+1, len(entries))) <= room {
+		len(joinRefusalEntries(entries[:shown+1])+andMore(shown+1, len(entries))) <= room {
 		shown++
 	}
-	list := strings.Join(entries[:shown], ", ") + andMore(shown, len(entries))
+	list := joinRefusalEntries(entries[:shown]) + andMore(shown, len(entries))
 	if shown == 0 {
-		// The cut keeps a few hundred bytes of a view the loop above found
-		// readable: a code, an option and a count take less than 200 of the
-		// 497, so the cut view is never empty.
+		// The cut keeps a few hundred bytes of what the first entry names: a
+		// code, the words Ptah names in its own vocabulary (a privilege is
+		// bounded at 128 bytes) and a count take less than 260 of the 497, so
+		// the cut is never empty.
 		const cut = "..."
-		option, more := " "+named[0].Option, andMore(1, len(entries))
-		list = freeText(named[0].View, redactor, room-len(more)-len(option)-len(cut)) + cut + option + more
+		first, more := entries[0], andMore(1, len(entries))
+		list = cutLine(first.named, room-len(more)-len(first.own)-len(cut)) + cut + first.own + more
 	}
 	return lead + " (" + refusal.Code + ": " + list + ")"
+}
+
+// refusalEntry is one thing a refusal lists, as its sentence names it: named
+// is what came from a schema or a database, already through freeText, with the
+// words that join its parts, and own is what follows it in words Ptah takes
+// from a vocabulary of its own, which a cut leaves whole.
+type refusalEntry struct {
+	named, own string
+}
+
+func joinRefusalEntries(entries []refusalEntry) string {
+	spelled := make([]string, 0, len(entries))
+	for _, each := range entries {
+		spelled = append(spelled, each.named+each.own)
+	}
+	return strings.Join(spelled, ", ")
+}
+
+// refusalEntries reads what a refusal lists, in the order Ptah lists it:
+//
+//   - each view and option of view_options (view-security-option), as
+//     `orders_view sql_security`;
+//   - each view of view_definers (view-definer), with the account it runs as
+//     and the account the plan's read ran as, as
+//     `orders_view definer app@% account deploy@%`, leaving out an account the
+//     read did not record;
+//   - each statement of definer_privileges (definer-privilege), with the
+//     definer it names, the connected account and the privilege that account
+//     lacks, as `view orders_view definer app@% account deploy@% lacks
+//     SET_ANY_DEFINER`, and the file a migration's statement is in after the
+//     object, as `view orders_view in 0002_views.up.sql definer ...`.
+//
+// A view, an object, an account and a file come from a schema or a database,
+// so each goes through freeText, which redacts it, puts a space where a control
+// or format character was and keeps it on one line. An option has to be an
+// identifier and a privilege a name SHOW GRANTS spells, which the dataplane
+// readers hold them to.
+//
+// It reports false when the refusal lists nothing, when a list it carries is in
+// a form the readers refuse, and when nothing readable is left of a value that
+// was there: an account left out would read as one the read did not record.
+func refusalEntries(refusal *dataplane.SchemaRefusal, redactor Redactor) ([]refusalEntry, bool) {
+	var entries []refusalEntry
+	clean := func(text string) (string, bool) {
+		cleaned := freeText(text, redactor, maxRefusalSentenceBytes)
+		return cleaned, cleaned != ""
+	}
+	// labeled appends each label and value whose value is set; an empty value
+	// is one Ptah did not record.
+	labeled := func(text string, parts ...string) (string, bool) {
+		for index := 0; index+1 < len(parts); index += 2 {
+			if parts[index+1] == "" {
+				continue
+			}
+			value, ok := clean(parts[index+1])
+			if !ok {
+				return "", false
+			}
+			text += " " + parts[index] + " " + value
+		}
+		return text, true
+	}
+	if len(refusal.ViewOptions) != 0 {
+		named, ok := refusal.NamedViewOptions()
+		if !ok {
+			return nil, false
+		}
+		for _, each := range named {
+			view, ok := clean(each.View)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, refusalEntry{named: view, own: " " + each.Option})
+		}
+	}
+	if len(refusal.ViewDefiners) != 0 {
+		named, ok := refusal.NamedViewDefiners()
+		if !ok {
+			return nil, false
+		}
+		for _, each := range named {
+			view, ok := clean(each.View)
+			if !ok {
+				return nil, false
+			}
+			text, ok := labeled(view, "definer", each.Definer, "account", each.Account)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, refusalEntry{named: text})
+		}
+	}
+	if len(refusal.DefinerPrivileges) != 0 {
+		named, ok := refusal.NamedDefinerPrivileges()
+		if !ok {
+			return nil, false
+		}
+		for _, each := range named {
+			object, ok := clean(each.Object)
+			if !ok {
+				return nil, false
+			}
+			text, ok := labeled(object, "in", each.Source, "definer", each.Definer, "account", each.Account)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, refusalEntry{named: text, own: " lacks " + each.Privilege})
+		}
+	}
+	return entries, len(entries) > 0
 }
 
 // andMore counts what a list of total entries leaves out after naming shown.
