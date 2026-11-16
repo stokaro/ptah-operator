@@ -2653,14 +2653,57 @@ ensure_inotify_capacity() (
 ensure_inotify_capacity
 
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
-CLUSTER_CREATED=1
-debug_logs_start_following
-kind create cluster \
-	--name "$CLUSTER_NAME" \
-	--image "$KIND_NODE_IMAGE" \
-	--config "$KIND_CONFIG" \
-	--kubeconfig "$KUBECONFIG_FILE" \
-	--wait 5m
+
+# run_kind_create_cluster creates the cluster once. kind's output reaches the
+# run's log through tee as it is written, and the copy in $1 is what
+# create_kind_cluster reads. A pipe ends with its last command's status, so
+# kind's own status goes through a file beside the copy.
+run_kind_create_cluster() {
+	{
+		kind_create_status=0
+		kind create cluster \
+			--name "$CLUSTER_NAME" \
+			--image "$KIND_NODE_IMAGE" \
+			--config "$KIND_CONFIG" \
+			--kubeconfig "$KUBECONFIG_FILE" \
+			--wait 5m 2>&1 || kind_create_status=$?
+		printf '%s\n' "$kind_create_status" >"$1.status"
+	} | tee -- "$1" >&2 ||
+		fail "could not keep a copy of kind's output in $1"
+	read -r kind_create_status <"$1.status" ||
+		fail "kind create cluster ended without recording its exit status"
+}
+
+# kind gives every control plane of a cluster with more than one a random host
+# port for its API server. It picks the port by listening on port 0 and closes
+# that listener before docker run binds the port, and it creates the nodes
+# concurrently, so two control planes can draw the same port. Docker refuses
+# the second with "port is already allocated", and the configuration cannot pin
+# those ports. kind draws new ones on every create, so that refusal earns one
+# more attempt. Any other failure, or the same one twice, ends the run.
+#
+# kind deletes the nodes of a failed create unless --retain is passed, but it
+# ignores the result of that delete, and it returns at the first node that
+# failed without waiting for the others, so a node still being made can be left
+# behind. The delete here runs after kind has exited and its result counts. The
+# kubeconfig goes too, so the second attempt starts from what the first did.
+# The log follower started once, before the first attempt, serves both.
+create_kind_cluster() {
+	CLUSTER_CREATED=1
+	debug_logs_start_following
+	run_kind_create_cluster "$WORK_DIR/kind-create-1.log"
+	[ "$kind_create_status" -ne 0 ] || return 0
+	grep -Fq 'port is already allocated' "$WORK_DIR/kind-create-1.log" ||
+		fail "kind create cluster failed with status $kind_create_status; its output is above"
+	printf '%s\n' 'e2e: kind create cluster lost a race for a host port ("port is already allocated"); deleting the half-made cluster and creating it once more'
+	kind delete cluster --name "$CLUSTER_NAME" --kubeconfig "$KUBECONFIG_FILE" ||
+		fail "could not delete the half-made kind cluster $CLUSTER_NAME before creating it again"
+	rm -f -- "$KUBECONFIG_FILE"
+	run_kind_create_cluster "$WORK_DIR/kind-create-2.log"
+	[ "$kind_create_status" -ne 0 ] || return 0
+	fail "kind create cluster failed again with status $kind_create_status after one retry for an allocated host port; its output is above"
+}
+create_kind_cluster
 if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then
 	configure_control_plane_memory
 fi
