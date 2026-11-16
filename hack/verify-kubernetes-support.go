@@ -3583,7 +3583,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--image "$KIND_NODE_IMAGE" \`,
 			`--config "$KIND_CONFIG" \`,
 			`--kubeconfig "$KUBECONFIG_FILE" \`,
-			`--wait 5m`,
+			`--wait 5m 2>&1 || kind_create_status=$?`,
+		}),
+		// hack/e2e-kind-create-retry-selftest.sh holds what the function
+		// does between its attempts; this holds that the bootstrap calls it.
+		exactSourceLineSequence("kind cluster creation call", []string{
+			`create_kind_cluster`,
 			`if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_runs_phase alerting-certificates; then`,
 			`configure_control_plane_memory`,
 			`fi`,
@@ -4051,6 +4056,11 @@ func verifyStaticChecksWiring(files e2eWiringFiles) error {
 		// refuses one that is wrong, and those are two behaviors of the same
 		// loop. A loop that stopped refusing would still look like it waited.
 		exactSourceLine("control-plane shape self-test wiring", `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`),
+		// The bootstrap creates its cluster once more after kind lost its own
+		// race for a host port. A retry that widened would hide a real
+		// failure behind a second attempt, and one that stopped would fail
+		// the run on the race again.
+		exactSourceLine("kind create retry self-test wiring", `"$ROOT_DIR/hack/e2e-kind-create-retry-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4067,8 +4077,11 @@ func verifyStaticChecksWiring(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-control-plane-shape-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the control-plane shape self-test must be wired exactly once", files.staticChecks)
 	}
+	if bytes.Count(staticContents, []byte("e2e-kind-create-retry-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the kind create retry self-test must be wired exactly once", files.staticChecks)
+	}
 	for _, step := range []sourceContractStep{
-		staticContract[2], staticContract[3], staticContract[4], staticContract[5],
+		staticContract[2], staticContract[3], staticContract[4], staticContract[5], staticContract[6],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err

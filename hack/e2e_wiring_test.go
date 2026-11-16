@@ -1640,6 +1640,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "kind cluster creation",
 		},
 		{
+			name:        "kind cluster creation call omitted",
+			old:         "\ncreate_kind_cluster\n",
+			replacement: "\n: # kind cluster creation call omitted\n",
+			wantError:   "kind cluster creation call",
+		},
+		{
 			name:        "control-plane memory setup omitted",
 			old:         "\tconfigure_control_plane_memory\n",
 			replacement: "\t: # control-plane memory setup omitted\n",
@@ -2805,6 +2811,50 @@ func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
 		},
 	}
 	const invocation = `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+// The retry after kind's host-port race is held to its one message by a
+// self-test, and that holds only while the gate runs it.
+func TestVerifyKindCreateRetrySelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # kind create retry self-test removed`,
+			wantError:   "kind create retry self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-kind-create-retry-selftest.sh" || true`,
+			wantError:   "kind create retry self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-kind-create-retry-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-kind-create-retry-selftest.sh"`
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
