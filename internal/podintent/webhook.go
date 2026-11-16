@@ -102,12 +102,23 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	if job.UID == "" || job.UID != jobOwner.UID {
 		return cradmission.Denied("managed Pod owner does not match the current Job UID")
 	}
+	// An update that moves the Pod to another Job takes the old Job's owner
+	// reference off as surely as one that leaves the Pod with none, and is
+	// decided the same way. Without this, a Pod without the labels could leave
+	// an operation Job for any Job the operator does not run.
+	if oldPod != nil {
+		if previous, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod && previous.UID != jobOwner.UID {
+			if response := h.judgeJobOwnerRemoval(ctx, oldPod.Namespace, previous); !response.Allowed {
+				return response
+			}
+		}
+	}
 	subject, ok := operationSubjectFor(job.OwnerReferences)
 	if !ok {
 		if len(binding.References(pod)) != 0 || len(binding.References(oldPod)) != 0 {
 			return cradmission.Denied("result credentials may only be projected by their operation Pod")
 		}
-		if managedPodIdentity(pod.Labels) || managedPodIdentity(job.Labels) ||
+		if managedPodIdentity(pod.Labels) || operationJob(job) ||
 			oldPod != nil && managedPodIdentity(oldPod.Labels) {
 			return cradmission.Denied("managed Pod Job has no exact operator controller identity")
 		}
@@ -227,9 +238,11 @@ func operationJob(job *batchv1.Job) bool {
 }
 
 // judgeJobOwnerRemoval decides an update that takes the Job controller
-// reference off a Pod that carries no operation identity of its own. The
-// garbage collector sends one for every Pod of a Job deleted with Orphan
-// propagation, and the Job stays Terminating until each is admitted.
+// reference off a Pod that carries no operation identity of its own, or moves
+// any Pod to another Job; Handle refuses a moved Pod that carries the identity
+// by its labels after this admits it. The garbage collector sends the first
+// for every Pod of a Job deleted with Orphan propagation, and the Job stays
+// Terminating until each is admitted.
 //
 // A Pod's own labels are the durable record of what it is: the Job controller
 // copies them from the template, this webhook admits an operation Pod only with

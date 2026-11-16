@@ -10,6 +10,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -179,5 +180,168 @@ func TestValidationHandlerKeepsTheOwnerOfAPodWhoseJobIsGone(t *testing.T) {
 		!strings.Contains(response.Result.Message, "read the Job the Pod update removed") {
 		t.Fatalf("Handle() allowed = %t, code %d, %q; want a refusal with code 409 that names the Job read",
 			response.Allowed, response.Result.Code, response.Result.Message)
+	}
+}
+
+// moveRequest is an update by an ordinary user that moves pod from its Job to
+// target, with the controller reference the Job controller would have written.
+func moveRequest(t *testing.T, handler *podintent.ValidationHandler, pod *corev1.Pod, target *batchv1.Job) cradmission.Request {
+	t.Helper()
+	api := handler.Reader.(client.Client)
+	if err := api.Create(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	moved := pod.DeepCopy()
+	moved.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "batch/v1", Kind: "Job", Name: target.Name, UID: target.UID,
+		Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true),
+	}}
+	request := podUpdateRequest(t, pod, moved)
+	request.UserInfo.Username = "mallory@example.com"
+	return request
+}
+
+// nightlyReport is a Job the operator does not run, which the moved Pods go to.
+func nightlyReport(namespace string) *batchv1.Job {
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "nightly-report", UID: "nightly-report-uid"},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "report", Image: "registry.example/report"}},
+		}}},
+	}
+}
+
+// An update that moves a Pod to another Job takes the old Job's owner
+// reference off, and is decided by that Job as a removal is: a Pod without the
+// labels cannot leave an operation Job for a Job the operator does not run,
+// and leaves any other Job freely.
+func TestValidationHandlerDecidesAMovedPodByTheJobItLeaves(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		job  func(*batchv1.Job)
+		// labeled keeps the operation labels on the Pod.
+		labeled bool
+		allowed bool
+		message string
+	}{
+		{
+			name:    "a Pod without the labels of an operation Job",
+			message: "Pod update removed its exact Job owner",
+		},
+		{
+			// The Job no longer says what the Pod is, as on a Job a person
+			// suspended and stripped from 1.36; the Pod's own labels still do.
+			name: "a Pod with the labels of a Job that carries the identity nowhere",
+			job: func(job *batchv1.Job) {
+				job.Labels = withoutIdentity(job.Labels)
+				job.Spec.Template.Labels = withoutIdentity(job.Spec.Template.Labels)
+			},
+			labeled: true,
+			message: "managed Pod Job has no exact operator controller identity",
+		},
+		{
+			name: "a Pod without the labels of a Job whose template alone carries the identity",
+			job: func(job *batchv1.Job) {
+				job.OwnerReferences = nil
+				job.Labels = withoutIdentity(job.Labels)
+			},
+			message: "Pod update removed its exact Job owner",
+		},
+		{
+			name: "a Pod of a Job the operator does not run",
+			job: func(job *batchv1.Job) {
+				job.OwnerReferences = nil
+				job.Labels = withoutIdentity(job.Labels)
+				job.Spec.Template.Labels = withoutIdentity(job.Spec.Template.Labels)
+			},
+			allowed: true,
+			message: "Job is not an operator workload",
+		},
+		{
+			name: "a Pod of a Job another Job replaced",
+			job: func(job *batchv1.Job) {
+				job.UID = "replacement-job-uid"
+				job.OwnerReferences = nil
+				job.Labels = withoutIdentity(job.Labels)
+				job.Spec.Template.Labels = withoutIdentity(job.Spec.Template.Labels)
+			},
+			message: "a Job that has been replaced",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			if test.job != nil {
+				editStoredJob(t, handler, pod, func(job *batchv1.Job) {
+					job.Labels = maps.Clone(job.Labels)
+					job.Spec.Template.Labels = maps.Clone(job.Spec.Template.Labels)
+					test.job(job)
+				})
+			}
+			if !test.labeled {
+				pod.Labels = withoutIdentity(pod.Labels)
+			}
+			response := handler.Handle(context.Background(), moveRequest(t, handler, pod, nightlyReport(pod.Namespace)))
+			if response.Allowed != test.allowed || !strings.Contains(response.Result.Message, test.message) {
+				t.Fatalf("Handle() allowed = %t with %q, want allowed = %t with %q",
+					response.Allowed, response.Result.Message, test.allowed, test.message)
+			}
+		})
+	}
+}
+
+// A Job that names no operator owner is judged by the same identity whether
+// its Pod is created, updated or orphaned: one whose template carries it
+// admits no Pod without the labels, and one that carries it nowhere admits
+// any.
+func TestValidationHandlerJudgesAPodOfAnOwnerlessJobByTheJobsIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		job     func(*batchv1.Job)
+		allowed bool
+		message string
+	}{
+		{
+			name:    "a Job whose template alone carries the identity",
+			job:     func(job *batchv1.Job) { job.Labels = withoutIdentity(job.Labels) },
+			message: "managed Pod Job has no exact operator controller identity",
+		},
+		{
+			name:    "a Job whose own labels alone carry the identity",
+			job:     func(job *batchv1.Job) { job.Spec.Template.Labels = withoutIdentity(job.Spec.Template.Labels) },
+			message: "managed Pod Job has no exact operator controller identity",
+		},
+		{
+			name: "a Job that carries the identity nowhere",
+			job: func(job *batchv1.Job) {
+				job.Labels = withoutIdentity(job.Labels)
+				job.Spec.Template.Labels = withoutIdentity(job.Spec.Template.Labels)
+			},
+			allowed: true,
+			message: "Job is not an operator workload",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			editStoredJob(t, handler, pod, func(job *batchv1.Job) {
+				job.OwnerReferences = nil
+				job.Labels = maps.Clone(job.Labels)
+				job.Spec.Template.Labels = maps.Clone(job.Spec.Template.Labels)
+				test.job(job)
+			})
+			pod.Labels = withoutIdentity(pod.Labels)
+			response := handler.Handle(context.Background(), podRequest(t, pod))
+			if response.Allowed != test.allowed || !strings.Contains(response.Result.Message, test.message) {
+				t.Fatalf("Handle() allowed = %t with %q, want allowed = %t with %q",
+					response.Allowed, response.Result.Message, test.allowed, test.message)
+			}
+		})
 	}
 }

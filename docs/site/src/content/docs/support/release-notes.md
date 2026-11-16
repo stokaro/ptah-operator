@@ -105,7 +105,9 @@ propagation is refused from this release: have it name
   `Terminating`. It now admits that change when neither the Pod, nor the Job's
   Pod template, nor the Job carries the operator's labels. It still refuses it
   when it cannot read the Job, when the Job is gone, and when another Job now
-  holds its name.
+  holds its name. An update that moves a Pod to another Job is decided the
+  same way, by the Job it leaves; one that moved a Pod without the operator's
+  labels off an operation Job was admitted before.
 
 ## 0.2.14
 
