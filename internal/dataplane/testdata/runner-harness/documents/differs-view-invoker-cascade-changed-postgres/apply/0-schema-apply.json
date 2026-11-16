@@ -1,12 +1,15 @@
 {
   "contract_version": 4,
   "command": "schema apply",
-  "outcome": "failed",
+  "outcome": "applied",
   "plan_name": "plan_c3181afa6f22",
-  "plan_digest": "sha256:21d0cf8d759dd470aa19d04da3cffbe1979c53868859b1d8fd7dc8b963176020",
+  "plan_digest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
   "units": [
     {
-      "sql": "DROP VIEW \"differs_member_names\" CASCADE",
+      "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
+    },
+    {
+      "sql": "DROP VIEW \"differs_member_names\"",
       "effects": [
         {
           "version": 1,
@@ -45,7 +48,43 @@
       ]
     },
     {
-      "sql": "DROP VIEW IF EXISTS \"differs_member_ids\""
+      "sql": "DROP VIEW \"differs_member_ids\"",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_member_ids"
+          },
+          "action": "drop",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "sql": "CREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members",
@@ -126,20 +165,9 @@
       ]
     },
     {
-      "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
-    },
-    {
-      "sql": "DROP TABLE IF EXISTS \"differs_docs\""
+      "sql": "DROP TABLE \"differs_docs\""
     }
   ],
-  "error": {
-    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: policy \"differs_docs_member\" for table \"differs_docs\" does not exist (SQLSTATE 42704)\nSQL: DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
-  },
-  "failure": {
-    "statement": 5,
-    "statements": 6,
-    "sqlstate": "42704"
-  },
   "apply_log": {
     "written": 2,
     "run_reference": "sha256:384e79d77ac7692c0b9e49c1846887306bab8ca871812f17b3ce74b6f34e134d"

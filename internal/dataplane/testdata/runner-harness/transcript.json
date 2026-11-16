@@ -9483,31 +9483,21 @@
           "--json",
           "--run-reference=sha256:384e79d77ac7692c0b9e49c1846887306bab8ca871812f17b3ce74b6f34e134d"
         ],
-        "exit": 2,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: policy \"differs_docs_member\" for table \"differs_docs\" does not exist (SQLSTATE 42704)\nSQL: DROP POLICY \"differs_docs_member\" ON \"differs_docs\"\n",
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/apply/0-schema-apply.json"
       }
     ],
     "result": {
-      "applyFailure": {
-        "sqlstate": "42704",
-        "statement": 5,
-        "statements": 6
-      },
-      "childExitCode": 2,
+      "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "error": {
-        "code": "apply_failed",
-        "message": "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent"
-      },
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:384e79d77ac7692c0b9e49c1846887306bab8ca871812f17b3ce74b6f34e134d",
-      "planContentDigest": "sha256:21d0cf8d759dd470aa19d04da3cffbe1979c53868859b1d8fd7dc8b963176020",
+      "planContentDigest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
       "protocolVersion": 1,
       "stdout": "",
-      "targetIdentityDigest": "sha256:de66faaacbbecb8754099b03453790c557be9839da9dce06605777c43e82d0ea",
-      "uncertain": true
+      "targetIdentityDigest": "sha256:de66faaacbbecb8754099b03453790c557be9839da9dce06605777c43e82d0ea"
     }
   },
   {
@@ -9596,31 +9586,13 @@
           "--format",
           "json"
         ],
-        "exit": 1,
+        "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/observe-applied/0-schema-drift.json"
       }
     ],
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "driftFindingCount": 4,
-      "driftFindings": [
-        {
-          "category": "constraints_removed",
-          "count": 1,
-          "severity": "destructive"
-        },
-        {
-          "category": "tables_removed",
-          "count": 1,
-          "severity": "destructive"
-        },
-        {
-          "category": "views_modified",
-          "count": 2,
-          "severity": "warning"
-        }
-      ],
       "driftInventory": [
         {
           "desired": 2,
@@ -9628,14 +9600,9 @@
           "observed": 2
         },
         {
-          "desired": 0,
-          "kind": "constraints",
-          "observed": 1
-        },
-        {
           "desired": 1,
           "kind": "tables",
-          "observed": 2
+          "observed": 1
         },
         {
           "desired": 2,
@@ -9643,10 +9610,8 @@
           "observed": 2
         }
       ],
-      "driftReportDigest": "sha256:c501e7e0c23decfbc5db6a1e943de183c199b378043d7309c22327ad734ab7f8",
-      "highestDriftSeverity": "destructive",
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
       "observedDialect": "postgres",
-      "observedDrift": true,
       "operation": "observe",
       "operationId": "sha256:210f2bf69ffc024bdbc0988947c755b7fec292388d70ed6b9492c15be5d9c792",
       "protocolVersion": 1,
@@ -9670,7 +9635,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/0-schema-plan.json"
       },
       {
@@ -9683,7 +9648,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/1-schema-plan.json"
       },
       {
@@ -9698,7 +9663,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -9707,7 +9672,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d61866e9fdb79ac98bb0206b6180d254e5655bc702e9137750e032743a58b0ce",
-      "planContentDigest": "sha256:21d0cf8d759dd470aa19d04da3cffbe1979c53868859b1d8fd7dc8b963176020",
+      "planContentDigest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9732,31 +9697,21 @@
           "--json",
           "--run-reference=sha256:d82495bef2ddf11a7ff2397c4fb7e03c4cbfc8720ab9f21440d414a14bbce5c9"
         ],
-        "exit": 2,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: policy \"differs_docs_member\" for table \"differs_docs\" does not exist (SQLSTATE 42704)\nSQL: DROP POLICY \"differs_docs_member\" ON \"differs_docs\"\n",
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/apply/0-schema-apply.json"
       }
     ],
     "result": {
-      "applyFailure": {
-        "sqlstate": "42704",
-        "statement": 5,
-        "statements": 6
-      },
-      "childExitCode": 2,
+      "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "error": {
-        "code": "apply_failed",
-        "message": "ptah reported that the apply stopped after it sent a statement and the database rolled back every statement it sent"
-      },
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d82495bef2ddf11a7ff2397c4fb7e03c4cbfc8720ab9f21440d414a14bbce5c9",
-      "planContentDigest": "sha256:c0e1d4cd0a97016aef311fae0066f94f0dfb0e19ee7f34411a1691fe06421e6d",
+      "planContentDigest": "sha256:cfb60670bca1f5da18ecbf1ded8e9b66c43fab8a12bf536c8a5587f840489309",
       "protocolVersion": 1,
       "stdout": "",
-      "targetIdentityDigest": "sha256:9a5d6cc5ebd6501322378727cccbe01d448b287ab9b58ee9427e304fab48be2d",
-      "uncertain": true
+      "targetIdentityDigest": "sha256:9a5d6cc5ebd6501322378727cccbe01d448b287ab9b58ee9427e304fab48be2d"
     }
   },
   {
@@ -9845,31 +9800,13 @@
           "--format",
           "json"
         ],
-        "exit": 1,
+        "exit": 0,
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/observe-applied/0-schema-drift.json"
       }
     ],
     "result": {
       "childExitCode": 0,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
-      "driftFindingCount": 4,
-      "driftFindings": [
-        {
-          "category": "constraints_removed",
-          "count": 1,
-          "severity": "destructive"
-        },
-        {
-          "category": "tables_removed",
-          "count": 1,
-          "severity": "destructive"
-        },
-        {
-          "category": "views_modified",
-          "count": 2,
-          "severity": "warning"
-        }
-      ],
       "driftInventory": [
         {
           "desired": 2,
@@ -9877,14 +9814,9 @@
           "observed": 2
         },
         {
-          "desired": 0,
-          "kind": "constraints",
-          "observed": 1
-        },
-        {
           "desired": 1,
           "kind": "tables",
-          "observed": 2
+          "observed": 1
         },
         {
           "desired": 2,
@@ -9892,10 +9824,8 @@
           "observed": 2
         }
       ],
-      "driftReportDigest": "sha256:7f49ee726a5833874684c0a58ef1810722de8c331a7bf3c80ad7ece2a0869d23",
-      "highestDriftSeverity": "destructive",
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
       "observedDialect": "postgres",
-      "observedDrift": true,
       "operation": "observe",
       "operationId": "sha256:8f4a3f9abe9f85625faa5265ad18e1fa6858d80a7fa1d83943856232ed7b5198",
       "protocolVersion": 1,
@@ -9919,7 +9849,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/0-schema-plan.json"
       },
       {
@@ -9932,7 +9862,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/1-schema-plan.json"
       },
       {
@@ -9947,7 +9877,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP VIEW \"differs_member_names\" CASCADE;\nDROP VIEW IF EXISTS \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP TABLE IF EXISTS \"differs_docs\";\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -9956,7 +9886,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:c2a34f267d2625bd3b8839d465a34612374e523724a13672f18feb11e5dab1fa",
-      "planContentDigest": "sha256:c0e1d4cd0a97016aef311fae0066f94f0dfb0e19ee7f34411a1691fe06421e6d",
+      "planContentDigest": "sha256:cfb60670bca1f5da18ecbf1ded8e9b66c43fab8a12bf536c8a5587f840489309",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",

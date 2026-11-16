@@ -2,8 +2,8 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:21d0cf8d759dd470aa19d04da3cffbe1979c53868859b1d8fd7dc8b963176020",
-  "plan_path": "/work/ptah-plan-output-2228967000/first.plan.json",
+  "plan_digest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
+  "plan_path": "/work/ptah-plan-output-2257529377/first.plan.json",
   "plan": {
     "format_version": 1,
     "name": "plan_c3181afa6f22",
@@ -16,9 +16,20 @@
     "destructive": true,
     "statements": [
       {
-        "sql": "DROP VIEW \"differs_member_names\" CASCADE",
+        "transactions": [
+          "allowed"
+        ],
+        "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\"",
         "severity": "destructive",
-        "reason": "DROP VIEW with CASCADE also drops every object that depends on the view, and creating the view again does not bring them back",
+        "reason": "DROP POLICY removes an access-control protection",
+        "owned": true,
+        "access": "narrows",
+        "access_reason": "removing a permissive policy can hide the rows it admitted"
+      },
+      {
+        "sql": "DROP VIEW \"differs_member_names\"",
+        "severity": "warning",
+        "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it",
         "effects": [
           {
             "version": 1,
@@ -57,9 +68,45 @@
         ]
       },
       {
-        "sql": "DROP VIEW IF EXISTS \"differs_member_ids\"",
+        "sql": "DROP VIEW \"differs_member_ids\"",
         "severity": "warning",
-        "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it"
+        "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "public",
+              "name": "differs_member_ids"
+            },
+            "action": "drop",
+            "properties": [
+              {
+                "name": "security_barrier",
+                "before": false,
+                "changed": true
+              },
+              {
+                "name": "security_invoker",
+                "before": true,
+                "changed": true
+              }
+            ],
+            "before_plan": {
+              "exists": true,
+              "properties": [
+                {
+                  "name": "security_barrier",
+                  "value": false
+                },
+                {
+                  "name": "security_invoker",
+                  "value": true
+                }
+              ]
+            }
+          }
+        ]
       },
       {
         "sql": "CREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members",
@@ -144,18 +191,7 @@
         ]
       },
       {
-        "transactions": [
-          "allowed"
-        ],
-        "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\"",
-        "severity": "destructive",
-        "reason": "DROP POLICY removes an access-control protection",
-        "owned": true,
-        "access": "narrows",
-        "access_reason": "removing a permissive policy can hide the rows it admitted"
-      },
-      {
-        "sql": "DROP TABLE IF EXISTS \"differs_docs\"",
+        "sql": "DROP TABLE \"differs_docs\"",
         "severity": "destructive",
         "reason": "DROP TABLE removes the table and all rows"
       }

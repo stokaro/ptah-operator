@@ -317,18 +317,15 @@ func differingRows() []differingRow {
 			},
 		},
 		// A view the plan rebuilds, read by a view that a policy of a table the
-		// declaration removes reads in turn. Ptah drops the reader with CASCADE,
-		// which takes the policy, then drops the rebuilt view with IF EXISTS and
-		// no effect, since the CASCADE may have taken it. The manager cannot
-		// tell from the plan's statements what that view held, so it reads the
-		// create's before_plan (stokaro/ptah#6099): the view existed when the
-		// plan started, with invoker rights. Made again with them, it raises
+		// declaration removes reads in turn. Up to v0.29.3 Ptah dropped the
+		// reader with CASCADE, which took the policy, then the rebuilt view with
+		// IF EXISTS and no effect, and its later DROP POLICY failed at SQLSTATE
+		// 42704. Since v0.29.4 it drops the policy first and both views without
+		// CASCADE, each with an effect (stokaro/ptah#6118), and both plans
+		// apply. The manager reads each create against the value its drop's
+		// effect recorded: made again with invoker rights, the view raises
 		// nothing, and the plan waits for an approval as destructive alone;
-		// made again with its owner's rights, it is raised. Neither plan
-		// applies: Ptah still drops the policy the CASCADE took, and PostgreSQL
-		// refuses the statement and takes the transaction back. That is
-		// reported to Ptah and being fixed there, so the next repin recaptures
-		// both rows, and the kept row is expected to apply then.
+		// made again with its owner's rights, it is raised.
 		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
 		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
@@ -476,8 +473,8 @@ func differingRows() []differingRow {
 }
 
 // cascadeRebuild is a row whose plan rebuilds the view differs_member_ids with
-// the security_invoker it declares, after a DROP VIEW ... CASCADE of the view
-// that reads it. The seed holds it with invoker rights. The source is Git, so
+// the security_invoker it declares, after the drop of the view that reads it,
+// which a policy of a removed table reads in turn. The seed holds it with invoker rights. The source is Git, so
 // the declaration reaches Ptah as the SQL file states it. defined is the
 // manager's reading beyond the policy the plan drops.
 func cascadeRebuild(name, invoker string, defined []string) differingRow {
@@ -495,17 +492,15 @@ func cascadeRebuild(name, invoker string, defined []string) differingRow {
 		want: differingReading{
 			findings: []string{"constraints_removed", "tables_removed", "views_modified"},
 			statements: []string{
-				`DROP VIEW "differs_member_names" CASCADE`,
-				`DROP VIEW IF EXISTS "differs_member_ids"`,
+				`DROP POLICY "differs_docs_member" ON "differs_docs"`,
+				`DROP VIEW "differs_member_names"`,
+				`DROP VIEW "differs_member_ids"`,
 				`CREATE VIEW "differs_member_ids" WITH (security_invoker=` + invoker + `)`,
 				`CREATE VIEW "differs_member_names" WITH (security_invoker=true)`,
-				`DROP POLICY "differs_docs_member" ON "differs_docs"`,
-				`DROP TABLE IF EXISTS "differs_docs"`,
+				`DROP TABLE "differs_docs"`,
 			},
-			destructive:      true,
-			privileges:       append([]string{"RowSecurityPolicy"}, defined...),
-			applyRefusal:     `policy "differs_docs_member" for table "differs_docs" does not exist (SQLSTATE 42704)`,
-			driftsAfterApply: true,
+			destructive: true,
+			privileges:  append([]string{"RowSecurityPolicy"}, defined...),
 		},
 	}
 }
