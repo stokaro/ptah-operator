@@ -1,0 +1,40 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_6b5ffe9ee232",
+  "plan_digest": "sha256:40e9774c28d61905b7fdb928af4cb039d1dcfcb6f2a587fcc9c737901d68a122",
+  "units": [
+    {
+      "sql": "CREATE OR REPLACE DEFINER=`harness_view_own`@`%` VIEW `differs_notes_view` AS\nSELECT id FROM differs_notes",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "harness_differs_view_definer_own_mysql",
+            "name": "differs_notes_view"
+          },
+          "action": "replace",
+          "properties": [
+            {
+              "name": "sql_security",
+              "before": "DEFINER",
+              "after": "DEFINER",
+              "changed": false
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "sql_security",
+                "value": "DEFINER"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

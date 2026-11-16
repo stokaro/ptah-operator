@@ -72,3 +72,28 @@ func TestACapturedMySQLViewSecurityRefusalReadsInStatus(t *testing.T) {
 		})
 	}
 }
+
+// Since Ptah v0.29.4 a MySQL plan refuses to replace a view that runs as its
+// definer when the plan's read connected as another account
+// (stokaro/ptah#6109). The runner harness captured the refusal from the release
+// image as the documented login, which did not define the view, and the frame's
+// message names the view, its definer and that login. Fed to a schema's Plan,
+// the frame reads as a failed reconciliation in those words.
+func TestACapturedMySQLViewDefinerRefusalReadsInStatus(t *testing.T) {
+	t.Parallel()
+	const want = "plan_refused: ptah refused to plan the change (view-definer: differs_notes_view definer root@localhost account harness_view_other@%)"
+	failure := capturedPlanFailure(t, "differs-view-definer-other-mysql/plan")
+	previous := previousReachability()["a target that refused"]
+	for _, path := range planPaths(t) {
+		t.Run(path.name, func(t *testing.T) {
+			t.Parallel()
+			_, actual, _ := harvestSchemaFailure(t, path, failure, previous)
+			failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+			if failed == nil || failed.Status != metav1.ConditionTrue ||
+				failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) || failed.Message != want {
+				t.Fatalf("ReconciliationFailed = %#v, want True OperationFailed with %q", failed, want)
+			}
+			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
+		})
+	}
+}

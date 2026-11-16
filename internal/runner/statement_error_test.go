@@ -304,7 +304,7 @@ func TestLeavesReportedErrorSaysWhatTheRunnerWrote(t *testing.T) {
 		{
 			name:   "another refusal",
 			stdout: document(`"outcome":"refused","refusal":{"code":"plan_contract"},"error":{"message":"ERROR: refused"}`),
-			code:   "apply_refused",
+			code:   "apply_refused", wrote: true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -320,6 +320,45 @@ func TestLeavesReportedErrorSaysWhatTheRunnerWrote(t *testing.T) {
 				t.Fatalf("LeavesReportedError(%q) = %v, and the runner wrote: %v", test.code, got, test.wrote)
 			}
 		})
+	}
+}
+
+// A refused Apply's frame names the code, and Ptah's sentence, which says what to
+// grant, is in the Pod log alone. A definer-privilege refusal reaches an Apply
+// where the plan's login matches another MySQL account from the Apply's Pod than
+// it did from the Plan's, as 'ptah'@'%' and 'ptah'@'10.244.1.%' can. The line
+// is held to the same bound and redaction as a failure's.
+func TestARefusedApplyLeavesPtahsSentenceInThePodLog(t *testing.T) {
+	t.Parallel()
+
+	const sentence = "refusing before any statement runs: view orders_view names the definer ptah@%, and the connected " +
+		"account ptah@10.244.1.% lacks SET_ANY_DEFINER, which naming another account needs. " +
+		"Grant it with GRANT SET_ANY_DEFINER ON *.* TO 'ptah'@'10.244.1.%', or apply as ptah@%"
+	document := func(message string) string {
+		return `{"contract_version":4,"command":"schema apply","outcome":"refused","plan_name":"operator-plan",` +
+			`"plan_digest":"` + sha256Digest([]byte(targetFailurePlan)) + `","refusal":{"code":"definer-privilege",` +
+			`"definer_privileges":[{"object":"view orders_view","definer":"ptah@%","account":"ptah@10.244.1.%",` +
+			`"privilege":"SET_ANY_DEFINER"}]},"error":{"message":` + string(mustMarshal(t, message)) + `}}`
+	}
+	run := targetFailureRuns()["apply"]
+
+	result, log, encoded := runRefusedStatement(t, run, document(sentence))
+	if result.Error == nil || result.Error.Code != codeApplyRefused ||
+		result.Error.Message != "ptah refused the approved plan (definer-privilege)" {
+		t.Fatalf("Run() error = %#v, want %s with the code alone", result.Error, codeApplyRefused)
+	}
+	if !strings.Contains(log, "ptah-runner: ptah reported: "+sentence+"\n") {
+		t.Fatalf("the log does not carry Ptah's sentence whole on one line:\n%s", log)
+	}
+	for name, crossing := range map[string][]byte{"the frame": encoded.Frame, "the summary": encoded.Summary} {
+		if bytes.Contains(crossing, []byte("SET_ANY_DEFINER")) || bytes.Contains(crossing, []byte("10.244.1.")) {
+			t.Errorf("%s carries Ptah's sentence: %s", name, crossing)
+		}
+	}
+
+	_, log, _ = runRefusedStatement(t, run, document("refusing before any statement runs: view v names the definer secret@%\nmore"))
+	if strings.Contains(log, "secret") || !strings.Contains(log, RedactionMarker) || strings.Contains(log, "more") {
+		t.Fatalf("the line is not redacted and cut at its first line break:\n%s", log)
 	}
 }
 
@@ -483,6 +522,9 @@ func TestFrameRefusesAnApplyFailureItCannotCarry(t *testing.T) {
 	}{
 		{name: "an Apply that succeeded", mutate: succeeded},
 		{name: "an error the report did not set", mutate: func(result *Result) { result.Error.Code = "invalid_apply_output" }},
+		// A refused Apply leaves Ptah's sentence in the Pod log too, and
+		// stops before its first statement, so it has no place to name.
+		{name: "a refused Apply", mutate: func(result *Result) { result.Error.Code = codeApplyRefused }},
 		{name: "another operation", mutate: func(result *Result) { result.Operation = OperationMigrationApply }},
 		{name: "no statements", mutate: func(result *Result) { result.ApplyFailure.Statements = 0 }},
 		{name: "a statement past the last", mutate: func(result *Result) { result.ApplyFailure.Statement = 2 }},

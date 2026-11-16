@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "dfbda1b29a7e4591a41334c6949dddac3a6bd69d",
+  "ptahCommit": "1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -860,7 +860,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -871,7 +871,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {

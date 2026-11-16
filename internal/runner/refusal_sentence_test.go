@@ -24,6 +24,16 @@ func listedViews(t *testing.T, entries ...dataplane.SchemaRefusalViewOption) jso
 	return encoded
 }
 
+// listed is any list a refusal carries, as Ptah writes it.
+func listed[Entry any](t *testing.T, entries ...Entry) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 // numberedViews are count views of the same length, named apart by a number at
 // the end, each with the option.
 func numberedViews(count, length int, option string) []dataplane.SchemaRefusalViewOption {
@@ -89,11 +99,11 @@ func TestARefusalSentenceNamesTheViewsItLists(t *testing.T) {
 			want: "ptah refused to plan the change (view-security-option: notes security_barrier, notes security_invoker)",
 		},
 		{
-			// Any code that lists views names them.
-			name: "another code that lists views",
-			refusal: dataplane.SchemaRefusal{Code: "view-definer", ViewOptions: listedViews(t,
-				dataplane.SchemaRefusalViewOption{View: "orders_view", Option: "definer"})},
-			want: "ptah refused to plan the change (view-definer: orders_view definer)",
+			// The list is read by its field, whatever the code.
+			name: "another code that lists views and options",
+			refusal: dataplane.SchemaRefusal{Code: "dependent-object", ViewOptions: listedViews(t,
+				dataplane.SchemaRefusalViewOption{View: "orders_view", Option: "security_barrier"})},
+			want: "ptah refused to plan the change (dependent-object: orders_view security_barrier)",
 		},
 		{
 			name:    "more views than it names",
@@ -250,6 +260,13 @@ func TestAPlanRefusalNamesTheViewsTheCapturedDocumentLists(t *testing.T) {
 			environment: databaseEnvironment("captured-view-refusal"),
 			want:        "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)",
 		},
+		{
+			// Since Ptah v0.29.4 (stokaro/ptah#6109), as an account that did
+			// not define the view.
+			row:         "differs-view-definer-other-mysql/plan",
+			environment: mysqlEnvironment("captured-definer-refusal"),
+			want:        "ptah refused to plan the change (view-definer: differs_notes_view definer root@localhost account harness_view_other@%)",
+		},
 	} {
 		t.Run(test.row, func(t *testing.T) {
 			t.Parallel()
@@ -303,6 +320,12 @@ func TestAPlanRefusalWithAListItCannotReadKeepsItsCode(t *testing.T) {
 
 // An approved plan's apply that Ptah refuses under a code that lists views
 // names them as a Plan's refusal does, and one that lists none reads as it did.
+//
+// A definer-privilege refusal lists the statements whose definer the login may
+// not name (stokaro/ptah#6124), and the runner does not read that list, so it
+// reads by its code alone, whatever the list holds. An Apply meets it only where
+// the plan's login has come to match another MySQL account, and Ptah's sentence
+// is then in the Pod log (TestARefusedApplyLeavesPtahsSentenceInThePodLog).
 func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 	t.Parallel()
 
@@ -311,13 +334,23 @@ func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		refusal dataplane.SchemaRefusal
-		want    string
+		// listed is spliced into the document after the refusal's code, as
+		// Ptah writes a list this runner's types do not declare.
+		listed string
+		want   string
 	}{
 		{
 			name: "a refusal that lists a view",
-			refusal: dataplane.SchemaRefusal{Code: "view-definer", ViewOptions: listedViews(t,
-				dataplane.SchemaRefusalViewOption{View: "app.orders_view", Option: "definer"})},
-			want: "ptah refused the approved plan (view-definer: app.orders_view definer)",
+			refusal: dataplane.SchemaRefusal{Code: "view-security-option", ViewOptions: listedViews(t,
+				dataplane.SchemaRefusalViewOption{View: "app.orders_view", Option: "sql_security"})},
+			want: "ptah refused the approved plan (view-security-option: app.orders_view sql_security)",
+		},
+		{
+			name:    "a refusal that lists a statement naming another definer",
+			refusal: dataplane.SchemaRefusal{Code: "definer-privilege"},
+			listed: `,"definer_privileges":[{"object":"view app.orders_view","definer":"app@%",` +
+				`"account":"deploy@%","privilege":"SET_ANY_DEFINER"}]`,
+			want: "ptah refused the approved plan (definer-privilege)",
 		},
 		{
 			name:    "a refusal that lists none",
@@ -332,17 +365,22 @@ func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 				t.Fatal(err)
 			}
 			refusal := test.refusal
-			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
-				stdout: encodeApplyReport(t, dataplane.SchemaApplyReport{
-					ContractVersion: dataplane.SupportedSchemaApplyContract,
-					Outcome:         dataplane.SchemaApplyOutcomeRefused,
-					PlanName:        "operator-plan",
-					PlanDigest:      approved,
-					Refusal:         &refusal,
-					Error:           &dataplane.CommandError{Message: "refused"},
-				}),
-				exitCode: 2,
-			}}}
+			stdout := encodeApplyReport(t, dataplane.SchemaApplyReport{
+				ContractVersion: dataplane.SupportedSchemaApplyContract,
+				Outcome:         dataplane.SchemaApplyOutcomeRefused,
+				PlanName:        "operator-plan",
+				PlanDigest:      approved,
+				Refusal:         &refusal,
+				Error:           &dataplane.CommandError{Message: "refused"},
+			})
+			if test.listed != "" {
+				code := `"code": "` + refusal.Code + `"`
+				if strings.Count(stdout, code) != 1 {
+					t.Fatalf("the document does not carry the refusal's code once: %s", stdout)
+				}
+				stdout = strings.Replace(stdout, code, code+test.listed, 1)
+			}
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: stdout, exitCode: 2}}}
 			environment := append(databaseEnvironment("apply-view-refusal"),
 				envPlanDir+"="+planDir,
 				envExpectedPlanDigest+"="+approved,
@@ -352,6 +390,123 @@ func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 			result := Run(context.Background(), Config{Operation: OperationApply, Environment: withRunnerProtocol(environment), Executor: executor})
 			if result.Error == nil || result.Error.Code != codeApplyRefused || result.Error.Message != test.want || !result.Uncertain {
 				t.Fatalf("Run() = %#v, want an uncertain %s with %q", result, codeApplyRefused, test.want)
+			}
+		})
+	}
+}
+
+// Since Ptah v0.29.4 a view-definer refusal lists each view with the account
+// it runs as and the account the plan's read ran as (stokaro/ptah#6109). Each
+// entry is named as the view-security-option ones are: the first eight that
+// fit, the rest counted. An account comes from the database, so it is cleaned
+// as a view is.
+func TestARefusalSentenceNamesTheDefinersItLists(t *testing.T) {
+	t.Parallel()
+
+	redactor := NewRedactor([]string{foldedDatabaseURL})
+	definers := func(entries ...dataplane.SchemaRefusalViewDefiner) dataplane.SchemaRefusal {
+		return dataplane.SchemaRefusal{Code: "view-definer", ViewDefiners: listed(t, entries...)}
+	}
+	nine := make([]dataplane.SchemaRefusalViewDefiner, 0, 9)
+	for index := range 9 {
+		nine = append(nine, dataplane.SchemaRefusalViewDefiner{View: fmt.Sprintf("v%d", index+1), Definer: "a@%", Account: "b@%"})
+	}
+	nineNamed := make([]string, 0, 8)
+	for _, each := range nine[:8] {
+		nineNamed = append(nineNamed, each.View+" definer a@% account b@%")
+	}
+	huge := strings.Repeat("h", 10<<10)
+	for _, test := range []struct {
+		name    string
+		refusal dataplane.SchemaRefusal
+		want    string
+	}{
+		{
+			name:    "a view another account defined",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "orders_view", Definer: "root@%", Account: "deploy@%"}),
+			want:    "ptah refused to plan the change (view-definer: orders_view definer root@% account deploy@%)",
+		},
+		{
+			// Ptah refuses where the read did not record the definer, and
+			// says nothing of it; the sentence leaves it out rather than
+			// naming an account nobody read.
+			name:    "a definer the read did not record",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "orders_view", Account: "deploy@%"}),
+			want:    "ptah refused to plan the change (view-definer: orders_view account deploy@%)",
+		},
+		{
+			name:    "neither account recorded",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "orders_view"}),
+			want:    "ptah refused to plan the change (view-definer: orders_view)",
+		},
+		{
+			name:    "more views than it names",
+			refusal: definers(nine...),
+			want:    "ptah refused to plan the change (view-definer: " + strings.Join(nineNamed, ", ") + ", and 1 more)",
+		},
+		{
+			// A host is text the database holds: control and format
+			// characters, a frame header and a credential stay out of the
+			// frame, and the account keeps one line.
+			name: "a definer account that carries a terminal sequence, a frame header and a password",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{
+				View: "v", Definer: "app@\x1b[2J‮%\nPTAH_RUNNER_RESULT_V1 Hunter2Hunter2", Account: "deploy@%",
+			}),
+			want: "ptah refused to plan the change (view-definer: v definer app@ [2J % [frame marker] " +
+				RedactionMarker + " account deploy@%)",
+		},
+		{
+			// The account the plan's read ran as is the database's text too,
+			// and the definer before it is left as it is.
+			name: "a login account that carries a terminal sequence, a frame header and a password",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{
+				View: "v", Definer: "root@%", Account: "deploy@\x1b]0;x\x07‮%\nPTAH_RUNNER_RESULT_V1 Hunter2Hunter2",
+			}),
+			want: "ptah refused to plan the change (view-definer: v definer root@% account deploy@ ]0;x % [frame marker] " +
+				RedactionMarker + ")",
+		},
+		{
+			// An account left out would read as one the read did not record.
+			name:    "a definer nothing readable is left of",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "v", Definer: "\x1b​", Account: "deploy@%"}),
+			want:    "ptah refused to plan the change (view-definer)",
+		},
+		{
+			name:    "a login account nothing readable is left of",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "v", Definer: "root@%", Account: "\u200b\x1b"}),
+			want:    "ptah refused to plan the change (view-definer)",
+		},
+		{
+			name: "a view too long for the sentence",
+			refusal: definers(
+				dataplane.SchemaRefusalViewDefiner{View: huge, Definer: "root@%", Account: "deploy@%"},
+				dataplane.SchemaRefusalViewDefiner{View: "b", Definer: "root@%", Account: "deploy@%"},
+			),
+			want: "ptah refused to plan the change (view-definer: " +
+				huge[:497-len("ptah refused to plan the change (view-definer: ")-len(")")-len(", and 1 more")-len("...")] +
+				"..., and 1 more)",
+		},
+		{
+			// Ptah sets only the list its code describes. A document that
+			// carries one this runner cannot read beside one it can is read
+			// as one it does not read at all.
+			name: "a list it cannot read beside one it can",
+			refusal: dataplane.SchemaRefusal{
+				Code:         "view-definer",
+				ViewOptions:  json.RawMessage(`"v sql_security"`),
+				ViewDefiners: listed(t, dataplane.SchemaRefusalViewDefiner{View: "v", Definer: "root@%", Account: "deploy@%"}),
+			},
+			want: "ptah refused to plan the change (view-definer)",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := refusalSentence(planRefusalLead, &test.refusal, redactor)
+			if got != test.want {
+				t.Fatalf("refusalSentence() = %q (%d bytes), want %q (%d bytes)", got, len(got), test.want, len(test.want))
+			}
+			if whole := "apply_refused: " + got; len(whole) > 512 {
+				t.Fatalf("%q is %d bytes, more than the 512 an Event keeps", whole, len(whole))
 			}
 		})
 	}

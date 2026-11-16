@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-view-definer-rotated-mysql@sha256:9234a6035dc4eb8df1ec57058cc9eb8f29385a2854223d417d6a6b6e206d8b47",
+  "digest": "sha256:9234a6035dc4eb8df1ec57058cc9eb8f29385a2854223d417d6a6b6e206d8b47",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

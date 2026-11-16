@@ -42,6 +42,10 @@ type differingRow struct {
 	server []string
 	// login is the account the URL names. Empty is the server's superuser.
 	login string
+	// applyLogin is the account the Apply's URL names where it is not login:
+	// the schema's Secret named another login by the time its plan was
+	// approved.
+	applyLogin string
 	// git reads the declaration from a Git-shaped source rather than an OCI
 	// artifact. An artifact carries HCL, which drops what a SQL file can say
 	// and HCL cannot, such as which table a partition belongs to.
@@ -102,6 +106,9 @@ type differingReading struct {
 	planRefusalCode, planRefusalMessage string
 	// applyRefusal is what `schema apply` says when the database refuses it.
 	applyRefusal string
+	// applyFrame is the code of an Apply the runner refused before it started
+	// Ptah, which then ran no `schema apply`.
+	applyFrame string
 	// driftsAfterApply says the read after the Apply still reports drift.
 	driftsAfterApply bool
 }
@@ -114,13 +121,25 @@ func (row differingRow) database() string {
 
 // url is the row's database as its login reaches it.
 func (row differingRow) url(l *lab) string {
+	return row.urlAs(l, row.login)
+}
+
+// applyURL is the row's database as its Apply's login reaches it.
+func (row differingRow) applyURL(l *lab) string {
+	if row.applyLogin == "" {
+		return row.url(l)
+	}
+	return row.urlAs(l, row.applyLogin)
+}
+
+func (row differingRow) urlAs(l *lab, login string) string {
 	switch {
-	case row.login == "":
+	case login == "":
 		return l.databaseURL(row.engine, row.database()) + row.urlParameters
 	case row.engine == engineMySQL:
-		return "mysql://" + row.login + ":" + l.databasePassword + "@" + mysqlHost + ":3306/" + row.database() + row.urlParameters
+		return "mysql://" + login + ":" + l.databasePassword + "@" + mysqlHost + ":3306/" + row.database() + row.urlParameters
 	default:
-		return "postgres://" + row.login + ":" + l.databasePassword + "@" + postgresHost + ":5432/" + row.database() + "?sslmode=disable" + row.urlParameters
+		return "postgres://" + login + ":" + l.databasePassword + "@" + postgresHost + ":5432/" + row.database() + "?sslmode=disable" + row.urlParameters
 	}
 }
 
@@ -673,6 +692,59 @@ func authorityRows() []differingRow {
 				unseen: []string{dataplane.UnseenViews},
 			},
 		},
+		// Since Ptah v0.29.4 a MySQL plan that would replace a view running as
+		// its definer, here root, as another account is refused: a replacement
+		// with no DEFINER clause makes the account that runs it the definer
+		// (stokaro/ptah#6109). The document lists the view, its definer and the
+		// account the read ran as, and the frame names all three.
+		{
+			name: "view-definer-other", engine: engineMySQL, declared: "view-body-mysql.sql", seed: []string{notes, view},
+			server: account("harness_view_other", documented), login: "harness_view_other",
+			stored: map[string]string{"plan/schema plan": "differing/plan-view-definer-refused.json"},
+			want: differingReading{
+				findings:           []string{"views_modified"},
+				planRefusal:        "view differs_notes_view runs with the privileges of its definer root@localhost",
+				planCode:           "plan_refused",
+				planRefusalCode:    "view-definer",
+				planRefusalMessage: "ptah refused to plan the change (view-definer: differs_notes_view definer root@localhost account harness_view_other@%)",
+			},
+		},
+		// The view's own definer replaces it, and the plan names the definer it
+		// read, so the view keeps it wherever the plan runs (stokaro/ptah#6124).
+		// The manager raises every MySQL view a plan replaces, and the DEFINER
+		// clause as well.
+		{
+			name: "view-definer-own", engine: engineMySQL, declared: "view-body-mysql.sql",
+			seed:   []string{notes, "CREATE DEFINER='harness_view_own'@'%' VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes"},
+			server: account("harness_view_own", documented+", CREATE VIEW"), login: "harness_view_own",
+			stored: map[string]string{"plan/saved plan": "differing/plan-view-definer-named.json"},
+			want: differingReading{
+				findings:   []string{"views_modified"},
+				statements: []string{"CREATE OR REPLACE DEFINER=`harness_view_own`@`%`"},
+				privileges: []string{"SecurityDefiner", "Definer"},
+			},
+		},
+		// The same plan, approved after the schema's Secret came to name another
+		// login, which holds no SET_ANY_DEFINER. A plan binds the login its
+		// URL names, so the runner refuses the Apply before it starts Ptah, and
+		// the DEFINER clause never reaches a login that may not write it. Ptah
+		// would refuse it as definer-privilege before the first statement
+		// (stokaro/ptah#6124); a runner that stopped binding the login would
+		// fail this row on that refusal. The view is as it was.
+		{
+			name: "view-definer-rotated", engine: engineMySQL, declared: "view-body-mysql.sql",
+			seed: []string{notes, "CREATE DEFINER='harness_view_owner'@'%' VIEW differs_notes_view AS SELECT id, owner_name FROM differs_notes"},
+			server: append(account("harness_view_owner", documented+", CREATE VIEW"),
+				account("harness_view_deploy", documented+", CREATE VIEW")...),
+			login: "harness_view_owner", applyLogin: "harness_view_deploy",
+			want: differingReading{
+				findings:         []string{"views_modified"},
+				statements:       []string{"CREATE OR REPLACE DEFINER=`harness_view_owner`@`%`"},
+				privileges:       []string{"SecurityDefiner", "Definer"},
+				applyFrame:       "target_binding_mismatch",
+				driftsAfterApply: true,
+			},
+		},
 		// The login owns the database and the table, and the declaration names
 		// it. Ptah before stokaro/ptah#5508 planned to revoke the owner's own
 		// privileges on the table here.
@@ -813,6 +885,7 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 		return
 	}
 	run.publishPlan("plan", planned.plan)
+	run.url = row.applyURL(l)
 	run.apply("apply", recordAny, keep("apply"))
 	run.observe("observe-applied", recordAny, source, keep("observe-applied"))
 }
@@ -994,6 +1067,16 @@ func (row differingRow) checkApply(captures runnerharness.Captures) error {
 	if err != nil {
 		return err
 	}
+	if row.want.applyFrame != "" {
+		var problems []error
+		if code := frameCode(record); code != row.want.applyFrame {
+			problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", apply, code, row.want.applyFrame))
+		}
+		if _, err := capturedChild(captures, apply, "schema apply"); err == nil {
+			problems = append(problems, fmt.Errorf("%s: `ptah schema apply` ran, want the runner to refuse the Apply before it starts Ptah", apply))
+		}
+		return errors.Join(append(problems, row.checkReadAfterApply(captures))...)
+	}
 	child, err := capturedChild(captures, apply, "schema apply")
 	if err != nil {
 		return err
@@ -1014,18 +1097,24 @@ func (row differingRow) checkApply(captures runnerharness.Captures) error {
 	case !strings.Contains(child.Stderr, row.want.applyRefusal):
 		problems = append(problems, fmt.Errorf("%s: `schema apply` says %q, want the refusal %q", apply, child.Stderr, row.want.applyRefusal))
 	}
+	return errors.Join(append(problems, row.checkReadAfterApply(captures))...)
+}
+
+// checkReadAfterApply holds the read after the Apply to whether the database
+// still differs from the declaration.
+func (row differingRow) checkReadAfterApply(captures runnerharness.Captures) error {
 	after, err := capturedChild(captures, row.family()+"/observe-applied", "schema drift")
 	if err != nil {
-		return errors.Join(append(problems, err)...)
+		return err
 	}
 	report, err := dataplane.DecodeDrift(captures.Documents[after.Stdout], after.Exit)
 	if err != nil {
-		return errors.Join(append(problems, fmt.Errorf("%s: the read after the Apply: %w", row.family(), err))...)
+		return fmt.Errorf("%s: the read after the Apply: %w", row.family(), err)
 	}
 	if report.Drift != row.want.driftsAfterApply {
-		problems = append(problems, fmt.Errorf("%s: the read after the Apply says drift=%v, want %v", row.family(), report.Drift, row.want.driftsAfterApply))
+		return fmt.Errorf("%s: the read after the Apply says drift=%v, want %v", row.family(), report.Drift, row.want.driftsAfterApply)
 	}
-	return errors.Join(problems...)
+	return nil
 }
 
 // checkUnseen holds a refused read's frame to the kinds of object the row's
@@ -1345,6 +1434,48 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			edit: func(captures *runnerharness.Captures) {
 				editRow(captures, "differs-view-invoker-unstated-mysql/plan", func(row *runnerharness.Row) {
 					row.Result = map[string]any{"error": map[string]any{"code": "plan_refused", "message": "ptah refused to plan the change"}}
+				})
+			},
+		},
+		{
+			name: "a definer refusal Ptah gave another code", row: "differs-view-definer-other-mysql", want: "want the code view-definer",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-view-definer-other-mysql/plan", "schema plan", func(document map[string]any) {
+					document["refusal"].(map[string]any)["code"] = "view-security-option"
+				})
+			},
+		},
+		{
+			name: "a definer refusal whose frame does not name the accounts", row: "differs-view-definer-other-mysql", want: "the frame's message is",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-definer-other-mysql/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "plan_refused", "message": "ptah refused to plan the change (view-definer: differs_notes_view)"}}
+				})
+			},
+		},
+		{
+			name: "a replacement that leaves the definer to the login", row: "differs-view-definer-own-mysql", want: "CREATE OR REPLACE DEFINER=",
+			edit: func(captures *runnerharness.Captures) {
+				usePlan(captures, "differs-view-invoker-declared-mysql", "differs-view-definer-own-mysql")
+			},
+		},
+		{
+			name: "an Apply under another login the runner let through", row: "differs-view-definer-rotated-mysql", want: "want target_binding_mismatch",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-definer-rotated-mysql/apply", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"operation": "apply"}
+				})
+			},
+		},
+		{
+			name: "an Apply under another login that reached Ptah", row: "differs-view-definer-rotated-mysql", want: "`ptah schema apply` ran",
+			edit: func(captures *runnerharness.Captures) {
+				source, err := capturedRow(*captures, "differs-view-definer-own-mysql/apply")
+				if err != nil {
+					t.Fatal(err)
+				}
+				editRow(captures, "differs-view-definer-rotated-mysql/apply", func(row *runnerharness.Row) {
+					row.Children = slices.Clone(source.Children)
 				})
 			},
 		},

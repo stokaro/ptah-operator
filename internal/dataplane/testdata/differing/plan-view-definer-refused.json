@@ -1,0 +1,18 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "refused",
+  "refusal": {
+    "code": "view-definer",
+    "view_definers": [
+      {
+        "view": "differs_notes_view",
+        "definer": "root@localhost",
+        "account": "harness_view_other@%"
+      }
+    ]
+  },
+  "error": {
+    "message": "generate schema apply operations: unsupported feature: view differs_notes_view runs with the privileges of its definer root@localhost under SQL SECURITY DEFINER, and replacing it as harness_view_other@% would make harness_view_other@% its definer. Connect as root@localhost to replace it, declare SQL SECURITY INVOKER if it should run with its caller's privileges, or leave the view unchanged"
+  }
+}

@@ -36,10 +36,16 @@ func freeText(text string, redactor Redactor, limit int) string {
 	}, redactor.redactFolded(text))
 	line := strings.ReplaceAll(strings.Join(strings.Fields(readable), " "), strings.TrimSpace(frameHeader), "[frame marker]")
 	line = strings.ReplaceAll(line, strings.TrimSpace(accessRefusalMarker), "[refusal marker]")
+	return cutLine(line, limit)
+}
+
+// cutLine keeps at most limit bytes of a line freeText already cleaned, cut at
+// a character boundary and without the spaces the cut leaves at its end.
+func cutLine(line string, limit int) string {
 	if len(line) <= limit {
 		return line
 	}
-	cut := limit
+	cut := max(limit, 0)
 	for cut > 0 && !utf8.RuneStart(line[cut]) {
 		cut--
 	}
