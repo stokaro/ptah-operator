@@ -106,9 +106,8 @@ func (m *migrationRun) uncertainApplyProof() {
 	originalPodUID := string(owned[0].UID)
 	migrationExecutorWatchBarrier(m, jobs, live)
 	migrationExecutorPodWatchBarrier(m, pods, &owned[0])
-	removal := m.watchApplyRemoval(m.migration(m.uncertainMigration()), original, "the "+m.engine.name+" Apply Job")
-	m.deleteAndWait(live, "the "+m.engine.name+" Apply Job")
-	m.assertUncertainApplyBlocksWithoutReplaying(original, removal)
+	m.removeApplyWithItsStopUnstored(live, "the "+m.engine.name+" Apply Job")
+	m.assertUncertainApplyBlocksWithoutReplaying(original)
 	m.assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID)
 	// Close both watches before a person's acknowledgment can authorize any
 	// later work. Their histories include the original ADDED events because
@@ -165,32 +164,37 @@ func (m *migrationRun) uncertainWidgetRows() string {
 	return m.query("SELECT count(*) FROM e2e_migration_widgets", m.uncertainDatabase())
 }
 
-func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptahv1alpha1.MigrationOperationStatus, removal *applyRemoval) {
+func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptahv1alpha1.MigrationOperationStatus) {
 	m.t.Helper()
 	name := m.uncertainMigration()
-	// The Job went with its Pods, so the kubelet stored the Pod stopped
-	// before it let the Pod go. A pass that read that state let the claim go
-	// at once; once the Pod was gone, the claim keeps the database to the end
-	// of the term it took the realm Lease for (ApplyPodGone). The stored order
-	// of the writes says which branch this run took. On the hold, until
-	// shortly before that term the claim has to read exactly as it was
-	// dispatched, and the wait is read from the term. The time is taken after
-	// the status is read, so a reading that passes as early was taken early.
+	// The Job and its Pod are gone, and nothing says the executor stopped, so
+	// the claim keeps the database to the end of the term it took the realm
+	// Lease for (ApplyPodGone), and says so in an ApplyPodGone Warning that
+	// names the Job, its UID and that term. Until shortly before that term the
+	// claim has to read exactly as it was dispatched, and the wait is read from
+	// the term. The time is taken after the status is read, so a reading that
+	// passes as early was taken early.
 	term, err := applyLeaseTerm(original)
 	m.check(err, "read the Lease term of the interrupted %s Apply", m.engine.name)
-	hold := removal.settle(term).Branch == applyHeldToTerm
 	settled := false
 	held := 0
+	var warnings []corev1.Event
+	var warned *ptahv1alpha1.PtahMigration
 	for deadline := term.Add(applyLeaseTermSlack); !settled && time.Now().Before(deadline); {
 		current := m.migration(name)
 		pods := &corev1.PodList{}
 		m.check(m.list(pods), "read all Pods while the interrupted Apply settles")
+		events := &corev1.EventList{}
+		m.check(m.list(events), "list the Events of %s while the interrupted Apply settles", name)
 		settled, err = uncertainApplySettled(current.Status, original, pods.Items)
 		m.check(err, "%s violated its interrupted Apply boundary", name)
-		if hold && time.Now().Before(term.Add(-applyLeaseTermMargin)) {
+		if time.Now().Before(term.Add(-applyLeaseTermMargin)) {
 			if !equality.Semantic.DeepEqual(current.Status.ActiveOperation, original) {
 				m.fatalf("%s let go of its interrupted Apply's claim %s before its Lease term at %s, with nothing to say the executor stopped",
 					name, time.Until(term).Round(time.Second), term.UTC().Format(time.RFC3339))
+			}
+			if found := applyPodGoneWarnings(events.Items, current, applyPodGoneApplyWaits, original.JobName, original.JobUID, term); len(found) > 0 {
+				warnings, warned = found, current
 			}
 			held++
 		}
@@ -206,14 +210,20 @@ func (m *migrationRun) assertUncertainApplyBlocksWithoutReplaying(original *ptah
 	// A hold nobody looked at proves nothing. If the Job went away within the
 	// margin of the term, every look came after it and the check above never
 	// ran.
-	switch {
-	case hold && held == 0:
+	if held == 0 {
 		m.fatalf("%s was never read holding its interrupted Apply's claim before %s short of its Lease term at %s",
 			name, applyLeaseTermMargin, term.UTC().Format(time.RFC3339))
-	case hold:
-		m.logf("%s held its interrupted Apply's claim through %d looks to %s before the end of its Lease term",
-			name, held, applyLeaseTermMargin)
 	}
+	if err := applyPodGoneWarnedInTerm(warnings, original.StartedAt.Time, term); err != nil {
+		m.fatalf("%s held its interrupted Apply's claim to the Lease term, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
+		m.fatalf("%s retired its interrupted Apply's claim, but %v: Job %s, UID %s, term %s",
+			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	}
+	m.logf("%s held its interrupted Apply's claim through %d looks to %s before the end of its Lease term, and said so in %d ApplyPodGone Warnings",
+		name, held, applyLeaseTermMargin, len(warnings))
 	// The run is over and the database keeps what it committed. Both halves
 	// matter: without the first the refusal is about nothing, and without the
 	// second there would be nothing a replay could double.

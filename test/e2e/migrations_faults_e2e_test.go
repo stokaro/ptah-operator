@@ -159,24 +159,18 @@ func (m *migrationRun) deletionDuringApplyProof() {
 	}
 	lease := types.NamespacedName{Namespace: leaseNamespace, Name: leaseName}
 
-	// Now take the Job away, and its Pod with it. The kubelet stores the Pod
-	// stopped before it lets the Pod go, and a pass that reads that state
-	// lets the deletion go on at once. Once the Pod is gone, nothing the API
-	// server holds says the executor stopped, and nothing wakes the controller
+	// Now take the Job away, and its Pod with it, so that nothing the API
+	// server held ever said the executor stopped. Nothing wakes the controller
 	// once the term ends: no Job left to change, and a status write the
-	// primary watch discards. The stored order of the writes says which branch
-	// this run took, and the hold is read only where it did.
+	// primary watch discards.
 	m.logf("removing the %s Apply Job so only the hold to its Lease term is left", m.engine.kind)
-	deleting := &ptahv1alpha1.PtahMigration{}
-	m.check(m.get(name, deleting), "read the deleted %s migration before removing its Apply Job", m.engine.name)
-	removal := m.watchApplyRemoval(deleting, claim, "the "+m.engine.name+" Apply Job")
 	applyJob := &batchv1.Job{}
-	applyJob.Namespace, applyJob.Name = m.in.TestNamespace, job
-	m.deleteAndWait(applyJob, "the "+m.engine.name+" Apply Job")
-	var warned *ptahv1alpha1.PtahMigration
-	if removal.settle(term).Branch == applyHeldToTerm {
-		warned = m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
+	m.check(m.get(job, applyJob), "read the %s Apply Job before removing it", m.engine.name)
+	if applyJob.UID != claim.JobUID {
+		m.fatalf("the %s Apply Job %s has UID %s, not the claim's %s", m.engine.name, job, applyJob.UID, claim.JobUID)
 	}
+	m.removeApplyWithItsStopUnstored(applyJob, "the "+m.engine.name+" Apply Job")
+	warned := m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
 
 	// The resource has to go on its own. A manager whose settling pass asked
 	// for nothing to follow it would sit here holding the finalizer.
@@ -187,11 +181,9 @@ func (m *migrationRun) deletionDuringApplyProof() {
 				m.fatalf("the deleted %s migration went and the realm Lease %s still names %q (read error %v)",
 					m.engine.name, lease, current, err)
 			}
-			if warned != nil {
-				if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneDeletionWaits, claim, term); err != nil {
-					m.fatalf("the deleted %s migration went, but %v: Job %s, UID %s, term %s",
-						m.engine.name, err, claim.JobName, claim.JobUID, term.UTC().Format(time.RFC3339))
-				}
+			if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneDeletionWaits, claim, term); err != nil {
+				m.fatalf("the deleted %s migration went, but %v: Job %s, UID %s, term %s",
+					m.engine.name, err, claim.JobName, claim.JobUID, term.UTC().Format(time.RFC3339))
 			}
 			m.logf("PASS %s held a deleted migration until its Apply could not write", m.engine.kind)
 			// The rows the run committed are still the database's own
@@ -244,10 +236,9 @@ func (m *migrationRun) assertDeletionRetainsItsRunningApply(name, job string) {
 }
 
 // assertDeletionHoldsToTheLeaseTerm holds a deleted migration whose Apply Job
-// and Pod are gone, and which still held the realm Lease once the Pod was
-// gone, to keeping its claim, its finalizer and the realm Lease's holder until
-// the end of the term the claim took the Lease for, and to saying so in an
-// ApplyPodGone Warning that names the Job, its UID and that term. The
+// and Pod are gone to keeping its claim, its finalizer and the realm Lease's
+// holder until the end of the term the claim took the Lease for, and to saying
+// so in an ApplyPodGone Warning that names the Job, its UID and that term. The
 // Warning is dated by its own timestamps, not by the look that found it. It
 // returns the migration as the look that found the Warning read it.
 func (m *migrationRun) assertDeletionHoldsToTheLeaseTerm(name string, claim *ptahv1alpha1.MigrationOperationStatus,
