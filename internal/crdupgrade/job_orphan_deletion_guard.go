@@ -54,18 +54,17 @@ func jobDefaultOrphanDenialMessage() string {
 // app.kubernetes.io/component schema-operation or migration-operation. On a
 // Pod those two labels are one of the ways the Pod-intent webhook decides the
 // Pod is managed, and a Pod takes them from the template. The template is what
-// the condition reads first, because the API server keeps it immutable on a
-// Job that has started, while anyone who may update the Job can change its own
-// labels: a condition on those alone would let a person strip one label and
-// then orphan the Pods. The Job's own labels are read as well, for the one
-// case where the template can change: a suspended Job that never started, whose
-// Pods, if it had any, kept what they were created with. The manager writes
-// both, so for a Job it built neither clause selects anything the other does
-// not. spec.execution.podMetadata cannot declare either key, and nothing else
-// in the chart or the manager writes either component, so no Job but one that
-// claims the operator's identity is judged. A Job keeps the labels when an
-// orphaning deletion of its owner, before the orphan-deletion guard existed,
-// took its owner reference off, so that Job is selected too.
+// the condition reads first, because the API server keeps it immutable on
+// every Job but a suspended one that never started, while anyone who may
+// update the Job can change its own labels: a condition on those alone would
+// let a person strip one label and then orphan the Pods. The Job's own labels
+// are read as well, for that one Job whose template can change. The manager
+// writes both, so for a Job it built neither clause selects anything the other
+// does not. spec.execution.podMetadata cannot declare either key, and nothing
+// else in the chart or the manager writes either component, so no Job but one
+// that claims the operator's identity is judged. A Job keeps the labels when
+// an orphaning deletion of its owner, before the orphan-deletion guard
+// existed, took its owner reference off, so that Job is selected too.
 //
 // The webhook also keeps owned the Pods of a Job named like an operation Job
 // that carries neither label. The condition does not select that Job.
