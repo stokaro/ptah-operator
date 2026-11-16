@@ -447,7 +447,7 @@ func TestARefusalSentenceNamesTheDefinersItLists(t *testing.T) {
 			// A host is text the database holds: control and format
 			// characters, a frame header and a credential stay out of the
 			// frame, and the account keeps one line.
-			name: "an account that carries a terminal sequence, a frame header and a password",
+			name: "a definer account that carries a terminal sequence, a frame header and a password",
 			refusal: definers(dataplane.SchemaRefusalViewDefiner{
 				View: "v", Definer: "app@\x1b[2J‮%\nPTAH_RUNNER_RESULT_V1 Hunter2Hunter2", Account: "deploy@%",
 			}),
@@ -455,9 +455,24 @@ func TestARefusalSentenceNamesTheDefinersItLists(t *testing.T) {
 				RedactionMarker + " account deploy@%)",
 		},
 		{
+			// The account the plan's read ran as is the database's text too,
+			// and the definer before it is left as it is.
+			name: "a login account that carries a terminal sequence, a frame header and a password",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{
+				View: "v", Definer: "root@%", Account: "deploy@\x1b]0;x\x07‮%\nPTAH_RUNNER_RESULT_V1 Hunter2Hunter2",
+			}),
+			want: "ptah refused to plan the change (view-definer: v definer root@% account deploy@ ]0;x % [frame marker] " +
+				RedactionMarker + ")",
+		},
+		{
 			// An account left out would read as one the read did not record.
 			name:    "a definer nothing readable is left of",
 			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "v", Definer: "\x1b​", Account: "deploy@%"}),
+			want:    "ptah refused to plan the change (view-definer)",
+		},
+		{
+			name:    "a login account nothing readable is left of",
+			refusal: definers(dataplane.SchemaRefusalViewDefiner{View: "v", Definer: "root@%", Account: "\u200b\x1b"}),
 			want:    "ptah refused to plan the change (view-definer)",
 		},
 		{
