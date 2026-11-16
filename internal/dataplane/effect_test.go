@@ -605,13 +605,19 @@ func TestDecodePlanHoldsAViewMadeAgainAfterAnUnreadDrop(t *testing.T) {
 // not exist. A row that keeps the hold makes the view with the owner's rights
 // where it can, so a reader that took a missing or unreadable value for false
 // would release it.
+//
+// Every statement that may have dropped the view drops something, so a plan
+// that reaches before_plan is destructive, and needs allowDestructive and an
+// approval whatever it raises. Ptah rates each statement the rows put before
+// the view no higher than a warning, so the plan is destructive only because
+// the operator reads a DROP in it.
 func TestDecodePlanReadsAViewMadeAgainAgainstWhatItHeldBeforeThePlan(t *testing.T) {
 	t.Parallel()
 
 	const withOn = ` WITH (security_invoker=true)`
 	var (
-		cascade    = map[string]any{"sql": `DROP TABLE "differs_notes_archive" CASCADE`, "severity": "destructive"}
-		dropOwned  = map[string]any{"sql": `DROP OWNED BY "differs_app"`, "severity": "destructive"}
+		cascade    = map[string]any{"sql": `DROP TABLE "differs_notes_archive" CASCADE`, "severity": "safe"}
+		dropOwned  = map[string]any{"sql": `DROP OWNED BY "differs_app"`, "severity": "safe"}
 		unreadDrop = map[string]any{"sql": `DROP VIEW IF EXISTS "differs_notes_view"`, "severity": "safe"}
 		recorded   = func(invoker bool) map[string]any {
 			return dropStatement(`DROP VIEW "differs_notes_view"`, "differs_notes_view", invoker)
@@ -664,6 +670,13 @@ func TestDecodePlanReadsAViewMadeAgainAgainstWhatItHeldBeforeThePlan(t *testing.
 			beforePlan: map[string]any{"exists": true, "properties": []any{
 				map[string]any{"name": "security_invoker", "value": false},
 				map[string]any{"name": "security_invoker", "value": false},
+			}},
+		},
+		{
+			name: "security_invoker twice, the first with no value", before: []map[string]any{cascade}, option: withOn, after: true, want: defined,
+			beforePlan: map[string]any{"exists": true, "properties": []any{
+				map[string]any{"name": "security_invoker"},
+				map[string]any{"name": "security_invoker", "value": true},
 			}},
 		},
 		{name: "a value as a string", before: []map[string]any{cascade}, beforePlan: held("false"), want: defined},
@@ -724,6 +737,9 @@ func TestDecodePlanReadsAViewMadeAgainAgainstWhatItHeldBeforeThePlan(t *testing.
 			}
 			if !slices.Equal(decoded.PrivilegeChanges, row.want) {
 				t.Fatalf("PrivilegeChanges = %q, want %q", decoded.PrivilegeChanges, row.want)
+			}
+			if len(row.before) > 0 && !decoded.Destructive {
+				t.Fatal("the plan reads as not destructive, though a statement before the view drops something")
 			}
 		})
 	}

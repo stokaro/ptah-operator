@@ -305,7 +305,9 @@ func differingRows() []differingRow {
 		// nothing, and the plan waits for an approval as destructive alone;
 		// made again with its owner's rights, it is raised. Neither plan
 		// applies: Ptah still drops the policy the CASCADE took, and PostgreSQL
-		// refuses the statement and takes the transaction back.
+		// refuses the statement and takes the transaction back. That is
+		// reported to Ptah and being fixed there, so the next repin recaptures
+		// both rows, and the kept row is expected to apply then.
 		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
 		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
