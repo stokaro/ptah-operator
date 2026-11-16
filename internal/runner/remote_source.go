@@ -115,9 +115,11 @@ func fetchRemoteSource(
 	case !filepath.IsAbs(destination):
 		return fmt.Errorf("%s: the destination is not an absolute path", refused)
 	}
+	// The access check is the one a Resolve makes, and its refusal leaves
+	// the record that carries the Resolve's code and words to the status.
 	pull, cleanup, err := source.prepare(environment, tempDir)
 	if err != nil {
-		return fmt.Errorf("%s: %w", refused, err)
+		return fmt.Errorf("%s: %w", refused, accessRefused(source.accessCode(), err, NewRedactor(environment)))
 	}
 	defer cleanup()
 	scratch, err := os.MkdirTemp(tempDir, "ptah-"+strings.ToLower(source.kind())+"-fetch-*")

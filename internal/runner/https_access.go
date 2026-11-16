@@ -263,7 +263,7 @@ func (s HTTPSSource) selectsFile() bool     { return s.Schema }
 func (s HTTPSSource) selectsKnown() bool    { return s.selects != "" }
 func (s HTTPSSource) selected() string      { return s.Path }
 func (s HTTPSSource) contentDigest() string { return s.ExpectedContentDigest }
-func (s HTTPSSource) accessCode() string    { return "invalid_https_access" }
+func (s HTTPSSource) accessCode() string    { return CodeInvalidHTTPSAccess }
 func (s HTTPSSource) refusedCode() string   { return CodeHTTPSSourceRefused }
 
 func (s HTTPSSource) fetchable() error {

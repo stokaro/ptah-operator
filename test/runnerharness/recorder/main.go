@@ -143,8 +143,5 @@ func validate(reference, snapshotTo string, environment []string) error {
 	if err := runner.CheckProtocolBinding(environment); err != nil {
 		return fmt.Errorf("%s: %w", runner.CodeRunnerProtocolMismatch, err)
 	}
-	if snapshotTo == "" {
-		return runner.ValidateOCISourceAccess(reference, environment)
-	}
-	return runner.SnapshotOCISourceAccess(reference, environment, snapshotTo)
+	return runner.GuardOCISourceAccess(reference, environment, snapshotTo)
 }

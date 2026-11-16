@@ -299,7 +299,7 @@ func Run(ctx context.Context, config Config) Result {
 			config.TempDir,
 		)
 		if err != nil {
-			setResultError(&result, "invalid_oci_access", err, redactor, config.Diagnostics)
+			setResultError(&result, CodeInvalidOCIAccess, err, redactor, config.Diagnostics)
 			return result
 		}
 		defer cleanupCA()

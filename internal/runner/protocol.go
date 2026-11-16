@@ -788,7 +788,7 @@ func validateResult(result Result, options ParseOptions) error {
 			return fmt.Errorf("%w: invalid truncation metadata", ErrMalformedFrame)
 		}
 	}
-	if result.Error != nil && (result.Error.Code == "invalid_oci_access" || result.Error.Code == "invalid_git_access" || result.Error.Code == "invalid_https_access") {
+	if result.Error != nil && (result.Error.Code == CodeInvalidOCIAccess || result.Error.Code == CodeInvalidGitAccess || result.Error.Code == CodeInvalidHTTPSAccess) {
 		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,

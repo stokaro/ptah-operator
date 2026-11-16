@@ -255,7 +255,7 @@ func (s GitSource) selectsFile() bool     { return s.Schema }
 func (s GitSource) selectsKnown() bool    { return s.selects != "" }
 func (s GitSource) selected() string      { return s.Path }
 func (s GitSource) contentDigest() string { return s.ExpectedContentDigest }
-func (s GitSource) accessCode() string    { return "invalid_git_access" }
+func (s GitSource) accessCode() string    { return CodeInvalidGitAccess }
 func (s GitSource) refusedCode() string   { return CodeGitSourceRefused }
 
 func (s GitSource) fetchable() error {
