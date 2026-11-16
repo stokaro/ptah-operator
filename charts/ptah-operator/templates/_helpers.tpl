@@ -194,6 +194,10 @@ app.kubernetes.io/component: metrics
 {{- printf "ptah-operator-orphan-deletion-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}
 
+{{- define "ptah-operator.jobOrphanDeletionGuardPolicyName" -}}
+{{- printf "ptah-operator-job-orphan-deletion-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
+{{- end -}}
+
 {{- define "ptah-operator.applyPolicyGuardPolicyName" -}}
 {{- printf "ptah-operator-apply-policy-guard-%s" (include "ptah-operator.releaseDigest" .) -}}
 {{- end -}}

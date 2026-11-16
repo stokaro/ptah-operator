@@ -16,6 +16,23 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.15
+
+**Before you upgrade.** A client other than `kubectl` that deletes a Job the
+operator runs and names no propagation is refused from this release: have it
+name `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
+
+- **An orphaning deletion of an operation Job is refused.** `kubectl delete job
+  --cascade=orphan`, `orphanDependents: true`, and a deletion that names no
+  propagation, which `batch/v1` orphans by default, would leave an operation
+  Job `Terminating`: the garbage collector has to take the Job's owner
+  reference off each Pod, and the Pod-intent webhook refuses that. A new
+  admission policy refuses such a deletion of a Job the operator labels as its
+  own, for every caller, and its message names `Background`.
+  [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
+  how to keep an Apply's log without orphaning its Pods, and how to release a
+  Job an orphaning deletion left `Terminating`.
+
 ## 0.2.14
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

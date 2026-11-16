@@ -67,6 +67,10 @@ func templates(v values) []template {
 		ReleaseName:      v.ReleaseName,
 		ReleaseNamespace: v.ReleaseNamespace,
 	}
+	jobOrphan := &crdupgrade.JobOrphanDeletionGuard{
+		ReleaseName:      v.ReleaseName,
+		ReleaseNamespace: v.ReleaseNamespace,
+	}
 	secret := certrotation.SecretCreateGuard{
 		Namespace:          v.ReleaseNamespace,
 		ReleaseName:        v.ReleaseName,
@@ -136,6 +140,14 @@ func templates(v values) []template {
 				{crdupgrade.OrphanDeletionGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.orphanDeletionGuardPolicyName" .`},
 			},
 			pairs: []policyPair{{policy: orphan.Policy(), binding: orphan.Binding()}},
+		},
+		{
+			path:   "templates/job-orphan-deletion-guard.yaml",
+			source: "internal/crdupgrade/job_orphan_deletion_guard.go",
+			parameters: []parameter{
+				{crdupgrade.JobOrphanDeletionGuardPolicyName(v.ReleaseNamespace, v.ReleaseName), `include "ptah-operator.jobOrphanDeletionGuardPolicyName" .`},
+			},
+			pairs: []policyPair{{policy: jobOrphan.Policy(), binding: jobOrphan.Binding()}},
 		},
 		{
 			path:   "templates/certificate-secret-guard.yaml",
