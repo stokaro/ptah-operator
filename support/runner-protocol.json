@@ -447,6 +447,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:c97f9f350bf39fd58ae9be6736fe23b5282147291b46887011ea6e40aefdb039",
       "reason": "Name the views a refusal lists (#1126). Since Ptah v0.29.3 a schema plan or apply report's refusal may carry view_options, one view and option per entry, as view-security-option does. The runner reads the list apart from the rest of the report, so a list in another form never makes a report unreadable. A plan_refused or apply_refused message names the code, then the first eight entries that fit in 497 bytes, each view redacted and cleaned as other free text is, and counts the rest: ptah refused to plan the change (view-security-option: orders_view sql_security, and 2 more). A refusal that lists none, or lists them in another form, reads as before. Codes, fields and the frame shape are unchanged, and the message stays text a manager shows bounded. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:433e51cc2467097d0670f94c6160458ab75ba48928f8f2ed2641be3044fe2bb5",
+      "reason": "Name the views and definers a MySQL definer refusal lists. Since Ptah v0.29.4 a report's refusal may carry view_definers (view-definer: each view with the account it runs as and the account the plan's read ran as) and definer_privileges (definer-privilege: each statement with the definer it names, the connected account and the privilege it lacks). The runner reads each list apart from the rest of the report, as it reads view_options, so a list in another form never makes a report unreadable. A plan_refused or apply_refused message names the entries after the code within the bounds view_options has: ptah refused to plan the change (view-definer: orders_view definer root@% account deploy@%). An account the read did not record is left out, each account is redacted and cleaned as other free text is, and a privilege must have the shape SHOW GRANTS spells. Codes, fields and the frame shape are unchanged. Protocol 1 stays."
     }
   ]
 }
