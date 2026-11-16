@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "08b1f2ad78e549bb7ed9a1d0248a69c1dd285cf1af15473f39d4d268213ee9a7"
+      "sha256": "5e8902e6c7292519fe733bfc69fafb67644e98aa156d4f75e188bd521cbae32d"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -84,5 +84,5 @@
     "freezeCommit": "899fd7d8d15f6a41eba4e115e7469f32cf826a56",
     "sha256": "2b3a5dadd8d8cd93a21467b5b5b34a4dcd82ff2a4c9ff88744b39fccb907debf"
   },
-  "revisionReason": "Record in the edge row of support/ptah.json that the operator now reads the before_plan Ptah v0.29.3 writes on a view statement, so a PostgreSQL view a drop may have taken and the plan makes again with the security_invoker it held is no longer raised as a privilege change. The executor, the functional matrix, the databases page, phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Record in the edge row of support/ptah.json that the operator now reads the before_plan Ptah v0.29.3 writes on a view statement, so a PostgreSQL view a drop may have taken is not raised as a privilege change where before_plan says the view existed when the plan started with the security_invoker the plan gives it, and every other such view still is. The executor, the functional matrix, the databases page, phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }
