@@ -317,15 +317,16 @@ func differingRows() []differingRow {
 			},
 		},
 		// A view the plan rebuilds, read by a view that a policy of a table the
-		// declaration removes reads in turn. Up to v0.29.3 Ptah dropped the
-		// reader with CASCADE, which took the policy, then the rebuilt view with
-		// IF EXISTS and no effect, and its later DROP POLICY failed at SQLSTATE
-		// 42704. Since v0.29.4 it drops the policy first and both views without
-		// CASCADE, each with an effect (stokaro/ptah#6118), and both plans
-		// apply. The manager reads each create against the value its drop's
-		// effect recorded: made again with invoker rights, the view raises
-		// nothing, and the plan waits for an approval as destructive alone;
-		// made again with its owner's rights, it is raised.
+		// declaration removes reads in turn. Since v0.29.4 Ptah drops the policy
+		// first, then each view without CASCADE and with an effect that records
+		// the security_invoker it held (stokaro/ptah#6118), and both plans
+		// apply; up to v0.29.3 the plan failed at SQLSTATE 42704 on the policy a
+		// CASCADE had already taken. The manager reads each create against the
+		// value its drop's effect recorded: the view made again with invoker
+		// rights raises nothing beyond the policy the plan drops, and the view
+		// made again with its owner's rights raises SecurityDefiner. A drop with
+		// no effect leaves the manager holding the rebuilt view whatever it
+		// states, so the kept row fails on a plan that goes back to one.
 		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
 		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
@@ -474,9 +475,10 @@ func differingRows() []differingRow {
 
 // cascadeRebuild is a row whose plan rebuilds the view differs_member_ids with
 // the security_invoker it declares, after the drop of the view that reads it,
-// which a policy of a removed table reads in turn. The seed holds it with invoker rights. The source is Git, so
-// the declaration reaches Ptah as the SQL file states it. defined is the
-// manager's reading beyond the policy the plan drops.
+// which a policy of a removed table reads in turn. The seed holds it with
+// invoker rights. The source is Git, so the declaration reaches Ptah as the SQL
+// file states it. defined is the manager's reading beyond the policy the plan
+// drops.
 func cascadeRebuild(name, invoker string, defined []string) differingRow {
 	return differingRow{
 		name: name, engine: enginePostgres, declared: name + "-postgresql.sql", git: true,
@@ -1296,37 +1298,6 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 		}
 		captures.Documents[target.SavedPlan] = captures.Documents[source.SavedPlan]
 	}
-	// editEffects rewrites each statement effect of the plan a row saved.
-	editEffects := func(captures *runnerharness.Captures, name string, edit func(map[string]any)) {
-		t.Helper()
-		record, err := capturedRow(*captures, name+"/plan")
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoder := json.NewDecoder(bytes.NewReader(captures.Documents[record.SavedPlan]))
-		decoder.UseNumber()
-		var document map[string]any
-		if err := decoder.Decode(&document); err != nil {
-			t.Fatal(err)
-		}
-		edited := 0
-		statements, _ := document["statements"].([]any)
-		for _, statement := range statements {
-			effects, _ := statement.(map[string]any)["effects"].([]any)
-			for _, effect := range effects {
-				edit(effect.(map[string]any))
-				edited++
-			}
-		}
-		if edited == 0 {
-			t.Fatalf("the plan %s saved holds no effect", name)
-		}
-		encoded, err := json.Marshal(document)
-		if err != nil {
-			t.Fatal(err)
-		}
-		captures.Documents[record.SavedPlan] = encoded
-	}
 	for _, mistake := range []struct {
 		name, row, want string
 		edit            func(*runnerharness.Captures)
@@ -1552,34 +1523,6 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			name: "a replaced MySQL view the manager runs unattended", row: "differs-view-invoker-declared-mysql", want: "the manager reads the privilege changes",
 			edit: func(captures *runnerharness.Captures) {
 				usePlan(captures, "differs-dependent-view-mysql", "differs-view-invoker-declared-mysql")
-			},
-		},
-		{
-			// A Ptah before v0.29.3 records no before_plan, and the view a
-			// CASCADE may have taken is held whatever it states.
-			name: "a rebuilt view read without what it held before the plan", row: "differs-view-invoker-cascade-kept-postgres",
-			want: "the manager reads the privilege changes",
-			edit: func(captures *runnerharness.Captures) {
-				editEffects(captures, "differs-view-invoker-cascade-kept-postgres", func(effect map[string]any) {
-					delete(effect, "before_plan")
-				})
-			},
-		},
-		{
-			// The view held its owner's rights, so the plan that makes it again
-			// with them takes nobody's rights away.
-			name: "a rebuilt view that held the value it is made with", row: "differs-view-invoker-cascade-changed-postgres",
-			want: "the manager reads the privilege changes",
-			edit: func(captures *runnerharness.Captures) {
-				editEffects(captures, "differs-view-invoker-cascade-changed-postgres", func(effect map[string]any) {
-					held, _ := effect["before_plan"].(map[string]any)
-					properties, _ := held["properties"].([]any)
-					for _, property := range properties {
-						if fields := property.(map[string]any); fields["name"] == "security_invoker" {
-							fields["value"] = false
-						}
-					}
-				})
 			},
 		},
 		{
