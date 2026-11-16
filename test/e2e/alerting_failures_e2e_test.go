@@ -102,7 +102,7 @@ func (a *alertingRun) operationsFailingFamily(family string) {
 		v.Spec.Execution.NodeSelector = nil
 		v.Spec.Execution.FailureRetryInterval.Duration = 10 * time.Second
 	}
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open operation-failure histories")
 	// Only the affected family owes resource events. Watching both would
 	// require unrelated activity to satisfy closeRunnerWatches' nonempty gate.

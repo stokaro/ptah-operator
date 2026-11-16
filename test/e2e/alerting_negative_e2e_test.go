@@ -35,7 +35,7 @@ func (a *alertingRun) negativeControls() {
 	migration := &ptahv1.PtahMigration{}
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.schemaProducer}, schema), "read the real reference schema producer")
 	a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: a.in.TestNamespace, Name: a.scope.migrationProducer}, migration), "read the real migration producer")
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open negative-control watches")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "negative-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 	migrations := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "negative-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })

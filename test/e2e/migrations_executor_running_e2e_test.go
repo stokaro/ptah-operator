@@ -32,10 +32,11 @@ func migrationExecutorRecorder[T client.Object](m *migrationRun, watcher client.
 	if list.GetResourceVersion() == "" {
 		m.fatalf("the migration executor %s list has no resourceVersion", name)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	r := &watchRecorder[T]{name: "migration-executor-" + name, namespace: namespace, newList: newList,
-		watcher: watcher, ctx: ctx, cancel: cancel, quiet: true, done: make(chan struct{})}
-	go r.run(list.GetResourceVersion())
+	r := newWatchRecorder[T]("migration-executor-"+name, namespace, true, watcher, newList)
+	go r.run(list)
+	// Cleanups run last registered first: the watch has ended before its
+	// gaps are logged.
+	m.t.Cleanup(func() { logWatchGaps(m.t, r) })
 	m.t.Cleanup(r.abort)
 	return r
 }
@@ -204,7 +205,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 	if m.query(restoreRevisionsQuery(m.engine.name), database) != "1" || m.query("SELECT count(*) FROM e2e_migration_widgets", database) != "3" {
 		m.fatalf("the seed Apply did not create its table, rows and version-1 history")
 	}
-	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
+	watcher, err := newRecorderClient(m.cluster.Config, m.cluster.Scheme)
 	m.check(err, "open direct API watches for the running migration")
 	migrations := migrationExecutorRecorder[*ptahv1alpha1.PtahMigration](m, watcher, "resources", m.in.TestNamespace, func() client.ObjectList { return &ptahv1alpha1.PtahMigrationList{} })
 	jobs := migrationExecutorRecorder[*batchv1.Job](m, watcher, "jobs", m.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })

@@ -43,10 +43,11 @@ func newStoredStateRecorder[T client.Object](t *testing.T, ctx context.Context, 
 	if list.GetResourceVersion() == "" {
 		t.Fatal("the stored-state watch list has no resourceVersion")
 	}
-	watchCtx, cancel := context.WithCancel(context.Background())
-	r := &watchRecorder[T]{name: name, namespace: namespace, newList: newList,
-		watcher: watcher, ctx: watchCtx, cancel: cancel, quiet: true, done: make(chan struct{})}
-	go r.run(list.GetResourceVersion())
+	r := newWatchRecorder[T](name, namespace, true, watcher, newList)
+	go r.run(list)
+	// Cleanups run last registered first: the watch has ended before its
+	// gaps are logged.
+	t.Cleanup(func() { logWatchGaps(t, r) })
 	t.Cleanup(r.abort)
 	return r
 }
@@ -223,7 +224,7 @@ func holdUnsupportedStoredState(t *testing.T, ctx context.Context, cluster *harn
 	storedStateCheck(t, cluster.Client.Get(ctx, client.ObjectKeyFromObject(initial), live), "read the held supported-state control")
 	storedStateCheck(t, storedStateChangedOnlyByVersion(initial, live, supported), "retain the original approval boundary")
 	initial = live.DeepCopyObject().(client.Object)
-	watcher, err := client.NewWithWatch(cluster.Config, client.Options{Scheme: cluster.Scheme})
+	watcher, err := newRecorderClient(cluster.Config, cluster.Scheme)
 	storedStateCheck(t, err, "open direct stored-state watches")
 	jobs := newStoredStateRecorder[*batchv1.Job](t, ctx, watcher, "stored-state-jobs", initial.GetNamespace(), func() client.ObjectList { return &batchv1.JobList{} })
 	pods := newStoredStateRecorder[*corev1.Pod](t, ctx, watcher, "stored-state-pods", initial.GetNamespace(), func() client.ObjectList { return &corev1.PodList{} })

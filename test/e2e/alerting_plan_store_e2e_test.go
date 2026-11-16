@@ -91,7 +91,7 @@ func (a *alertingRun) planStoreLarge() {
 		uid := secret.UID
 		a.check(a.cluster.Client.Delete(ctx, secret, client.Preconditions{UID: &uid}), "remove the isolated plan-store Secret")
 	}()
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open plan-store histories")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "alert-plan-store-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 	jobs := newStoredStateRecorder[*batchv1.Job](a.t, a.ctx, watcher, "alert-plan-store-jobs", a.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })

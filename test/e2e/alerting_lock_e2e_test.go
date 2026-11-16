@@ -130,7 +130,7 @@ func (a *alertingRun) lockReleaseCase(m *migrationRun, schemaTemplate *ptahv1.Pt
 	sibling.Spec.Target.SharedRealm = true
 	sibling.Spec.Interval.Duration = time.Hour
 	sibling.Spec.Execution.NodeSelector = nil
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open lock alert watches")
 	schemas := newStoredStateRecorder[*ptahv1.PtahSchema](a.t, a.ctx, watcher, "alert-lock-schemas", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahSchemaList{} })
 	migrations := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, "alert-lock-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })

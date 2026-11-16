@@ -107,7 +107,7 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 	resource.Spec.Interval.Duration = time.Hour
 	resource.Spec.Execution.ActiveDeadlineSeconds = 300
 	resource.Spec.Execution.NodeSelector = nil
-	watcher, err := client.NewWithWatch(a.cluster.Config, client.Options{Scheme: a.cluster.Scheme})
+	watcher, err := newRecorderClient(a.cluster.Config, a.cluster.Scheme)
 	a.check(err, "open unresolved histories before dispatch")
 	migrations := newStoredStateRecorder[*ptahv1.PtahMigration](a.t, a.ctx, watcher, name+"-migrations", a.in.TestNamespace, func() client.ObjectList { return &ptahv1.PtahMigrationList{} })
 	jobs := newStoredStateRecorder[*batchv1.Job](a.t, a.ctx, watcher, name+"-jobs", a.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })

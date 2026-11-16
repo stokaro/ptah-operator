@@ -55,7 +55,7 @@ func (m *migrationRun) uncertainApplyProof() {
 	m.t.Helper()
 	m.isolatedDatabase(m.uncertainDatabase(), m.uncertainSecret())
 	m.publish("uncertain", m.fixtureDir("-uncertain"), m.reference("-uncertain"))
-	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
+	watcher, err := newRecorderClient(m.cluster.Config, m.cluster.Scheme)
 	m.check(err, "open direct API watches before the uncertain migration exists")
 	jobs := migrationExecutorRecorder[*batchv1.Job](m, watcher, "uncertain-jobs", m.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
 	pods := migrationExecutorRecorder[*corev1.Pod](m, watcher, "uncertain-pods", m.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })

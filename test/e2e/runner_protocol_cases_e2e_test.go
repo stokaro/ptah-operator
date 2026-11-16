@@ -25,7 +25,7 @@ import (
 
 func (f *faultRun) unsupportedRunnerProtocols() {
 	f.t.Helper()
-	watcher, err := client.NewWithWatch(f.cluster.Config, client.Options{Scheme: f.cluster.Scheme})
+	watcher, err := newRecorderClient(f.cluster.Config, f.cluster.Scheme)
 	f.check(err, "open the unsupported runner's direct API watches")
 	jobs := newStoredStateRecorder[*batchv1.Job](f.t, f.ctx, watcher, "runner-schema-jobs", f.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
 	pods := newStoredStateRecorder[*corev1.Pod](f.t, f.ctx, watcher, "runner-schema-pods", f.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
@@ -191,7 +191,7 @@ func (m *migrationRun) unsupportedRunnerProtocol() {
 	m.t.Helper()
 	name, database := "e2e-migration-runner-protocol-"+m.engine.name, "ptah_e2e_runner_protocol"
 	secret := name + "-db"
-	watcher, err := client.NewWithWatch(m.cluster.Config, client.Options{Scheme: m.cluster.Scheme})
+	watcher, err := newRecorderClient(m.cluster.Config, m.cluster.Scheme)
 	m.check(err, "open the unsupported migration runner's direct API watches")
 	jobs := newStoredStateRecorder[*batchv1.Job](m.t, m.ctx, watcher, "runner-migration-jobs", m.in.TestNamespace, func() client.ObjectList { return &batchv1.JobList{} })
 	pods := newStoredStateRecorder[*corev1.Pod](m.t, m.ctx, watcher, "runner-migration-pods", m.in.TestNamespace, func() client.ObjectList { return &corev1.PodList{} })
