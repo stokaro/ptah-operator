@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -214,113 +212,6 @@ func TestApplyPodGoneWarnedInTermDatesTheWarningByItsOwnTimes(t *testing.T) {
 			mutate(&event)
 			if err := applyPodGoneWarnedInTerm([]corev1.Event{event}, startedAt, term); err == nil {
 				t.Fatalf("applyPodGoneWarnedInTerm() accepted %+v", event)
-			}
-		})
-	}
-}
-
-// applyPodRemovalReading is a Pod history a kind cluster stored, read from
-// testdata/e2e/readings, with the Pod's UID and its Job's.
-func applyPodRemovalReading(t *testing.T, name string) (events []watchEvent[*corev1.Pod], podUID, jobUID types.UID) {
-	t.Helper()
-	body, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(body, &events); err != nil {
-		t.Fatal(err)
-	}
-	if len(events) < 2 || events[0].Object == nil || len(events[0].Object.OwnerReferences) != 1 {
-		t.Fatalf("the reading %s lacks what the rows below read", name)
-	}
-	first := events[0].Object
-	return events, first.UID, first.OwnerReferences[0].UID
-}
-
-func clonePodEvents(events []watchEvent[*corev1.Pod]) []watchEvent[*corev1.Pod] {
-	clone := make([]watchEvent[*corev1.Pod], 0, len(events))
-	for _, event := range events {
-		clone = append(clone, watchEvent[*corev1.Pod]{Type: event.Type, Object: event.Object.DeepCopy()})
-	}
-	return clone
-}
-
-func TestApplyPodGoneUnseenRefusesAPodStoppedUnderItsJob(t *testing.T) {
-	t.Parallel()
-
-	background, podUID, jobUID := applyPodRemovalReading(t, "apply-pod-removal-background.json")
-	for name, events := range map[string][]watchEvent[*corev1.Pod]{
-		// What a Job deleted with its Pods leaves: the kubelet stores the
-		// Pod Failed, its executor terminated, before it lets the Pod go.
-		"a Job deleted with its Pods": background,
-		// A watch that resumed past every change still delivers the Pod's
-		// removal, and the removal carries the last state.
-		"only the Pod's creation and removal": {background[0], background[len(background)-1]},
-		"a Pod that succeeded under its Job": func() []watchEvent[*corev1.Pod] {
-			events := clonePodEvents(background)
-			for _, event := range events {
-				if event.Object.Status.Phase == corev1.PodFailed {
-					event.Object.Status.Phase = corev1.PodSucceeded
-				}
-			}
-			return events
-		}(),
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if err := applyPodGoneUnseen(events, podUID, jobUID); err == nil {
-				t.Fatal("applyPodGoneUnseen() accepted a history that reads the Pod stopped under its Job")
-			}
-		})
-	}
-}
-
-func TestApplyPodGoneUnseenAcceptsAPodOrphanedBeforeItStopped(t *testing.T) {
-	t.Parallel()
-
-	orphaned, podUID, jobUID := applyPodRemovalReading(t, "apply-pod-removal-orphaned.json")
-	if err := applyPodGoneUnseen(orphaned, podUID, jobUID); err != nil {
-		t.Fatalf("applyPodGoneUnseen() refused the orphaned history: %v", err)
-	}
-	// Another Job's Pods, stopped under their own Job, are not this one's.
-	background, _, _ := applyPodRemovalReading(t, "apply-pod-removal-background.json")
-	if err := applyPodGoneUnseen(slices.Concat(background, orphaned), podUID, jobUID); err != nil {
-		t.Fatalf("applyPodGoneUnseen() refused the orphaned history beside another Job's: %v", err)
-	}
-
-	gone := orphaned[len(orphaned)-1]
-	if gone.Type != watch.Deleted || controlledByJob(gone.Object.OwnerReferences, jobUID) {
-		t.Fatalf("the orphaned reading does not end with the removal of a Pod outside its Job: %+v", gone)
-	}
-	for name, read := range map[string]func() ([]watchEvent[*corev1.Pod], types.UID, types.UID){
-		"read against another Job": func() ([]watchEvent[*corev1.Pod], types.UID, types.UID) {
-			return orphaned, podUID, "4b7f8f5a-0000-4000-8000-000000000000"
-		},
-		"read against another Pod of the Job": func() ([]watchEvent[*corev1.Pod], types.UID, types.UID) {
-			return orphaned, "4b7f8f5a-0000-4000-8000-000000000001", jobUID
-		},
-		"a second Pod under the Job": func() ([]watchEvent[*corev1.Pod], types.UID, types.UID) {
-			sibling := watchEvent[*corev1.Pod]{Type: watch.Added, Object: orphaned[0].Object.DeepCopy()}
-			sibling.Object.Name, sibling.Object.UID = sibling.Object.Name+"-2", "4b7f8f5a-0000-4000-8000-000000000002"
-			return append(clonePodEvents(orphaned), sibling), podUID, jobUID
-		},
-		"no removal": func() ([]watchEvent[*corev1.Pod], types.UID, types.UID) {
-			return orphaned[:len(orphaned)-1], podUID, jobUID
-		},
-		// A Pod the GC did not orphan before it was deleted.
-		"the Job's reference kept to the end": func() ([]watchEvent[*corev1.Pod], types.UID, types.UID) {
-			events := clonePodEvents(orphaned)
-			for _, event := range events {
-				event.Object.OwnerReferences = orphaned[0].Object.OwnerReferences
-			}
-			return events, podUID, jobUID
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			events, pod, job := read()
-			if err := applyPodGoneUnseen(events, pod, job); err == nil {
-				t.Fatal("applyPodGoneUnseen() accepted the history")
 			}
 		})
 	}

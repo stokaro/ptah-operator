@@ -196,25 +196,6 @@ first recorded at 06:54:03Z and last at 06:57:34Z, four times.
 and `applyPodGoneWarnedInTerm` to accepting it. It names what the deletion
 reading names, and holds no credentials or SQL.
 
-`apply-pod-removal-background.json` and `apply-pod-removal-orphaned.json` are
-Pod watch histories a two-node kind v0.33.0 cluster on Kubernetes 1.37.0 stored
-on November 15, 2026, trimmed to each object's identity, owner references,
-finalizers, deletion fields, phase and container states. No operator ran. Each
-Job ran one `busybox:1.37.0` container that exits 3 a second after SIGTERM,
-under `backoffLimit: 0`, `podReplacementPolicy: Failed` and a 30-second
-termination grace, as an Apply Job does. The first history is of a Job deleted
-with background propagation: the Pod reads `Failed` with its container
-terminated at resourceVersion 1918 while it still names the Job, and its
-removal follows at 1920. In 20 such deletions on that cluster every Pod stood
-in that state for 0.11 to 0.97 seconds. The second is of a Job deleted with its
-Pod orphaned and the Pod deleted after the Job was gone: the garbage collector
-took the Job's reference off the Pod at 1944, while it still ran, and the Pod
-read `Failed` only after that. `TestApplyPodGoneUnseenRefusesAPodStoppedUnderItsJob`
-and `TestApplyPodGoneUnseenAcceptsAPodOrphanedBeforeItStopped` hold
-`applyPodGoneUnseen` to refusing the first, accepting the second, and refusing
-copies of the second with the one change each mistake would make. They name a
-`lab` namespace, the Jobs and the Pods, and hold no credentials.
-
 `native-refusal-schema.json`, `native-refusal-migration.json`,
 `native-refusal-recovered-migration.json`, `approved-run-postgresql.json`,
 `partial-run-left-a-dirty-revision.json` and

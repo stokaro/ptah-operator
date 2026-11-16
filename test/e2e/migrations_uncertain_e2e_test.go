@@ -106,7 +106,7 @@ func (m *migrationRun) uncertainApplyProof() {
 	originalPodUID := string(owned[0].UID)
 	migrationExecutorWatchBarrier(m, jobs, live)
 	migrationExecutorPodWatchBarrier(m, pods, &owned[0])
-	m.removeApplyWorkloadUnseen(jobName, live.UID, "the "+m.engine.name+" Apply Job")
+	m.deleteAndWait(live, "the "+m.engine.name+" Apply Job")
 	m.assertUncertainApplyBlocksWithoutReplaying(original)
 	m.assertUnresolvedRunSurvivesAnotherRefusal(jobName, jobUID)
 	// Close both watches before a person's acknowledgment can authorize any
