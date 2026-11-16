@@ -26,10 +26,11 @@ view the database holds as `SQL SECURITY INVOKER` and the schema declares with
 no mode now stops the schema's Plan
 ([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)). An Observe
 reports `views_modified`, as before, and the Plan fails at every retry with
-`plan_refused: ptah refused to plan the change (view-security-option)`. Under
-v0.29.2 such a plan replaced the view as `SQL SECURITY DEFINER`, with the login
-the Apply ran as for its definer, and waited for an approval as
-`SecurityDefiner`. As the schema's login, list the views that would stop:
+`plan_refused: ptah refused to plan the change (view-security-option: <view>
+sql_security)`, naming each such view. Under v0.29.2 such a plan replaced the
+view as `SQL SECURITY DEFINER`, with the login the Apply ran as for its definer,
+and waited for an approval as `SecurityDefiner`. To find them before you
+upgrade, list the views that would stop as the schema's login:
 
 ```sql
 SELECT TABLE_NAME FROM information_schema.VIEWS
@@ -55,6 +56,14 @@ propagation is refused from this release: have it name
   under v0.29.2, as
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
   describes.
+- **A refused view is named.** When Ptah refuses a plan with
+  `view-security-option`, the `ReconciliationFailed` message now names each view
+  and option Ptah's report lists, as in `plan_refused: ptah refused to plan the
+  change (view-security-option: orders_view sql_security)`, where it named the
+  code alone. It names the first eight that fit in 512 bytes and counts the
+  rest. A refusal whose report lists no view reads as before.
+  [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  says what the message carries.
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and
   `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
   `planread.Load` no longer lists one when it refuses a plan for another field.
