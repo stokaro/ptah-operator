@@ -16,6 +16,67 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.15
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.3,
+which retires the execution binding: approve again whatever was waiting, after
+the resource has read its database with v0.29.3 and planned. A MySQL or MariaDB
+view the database holds as `SQL SECURITY INVOKER` and the schema declares with
+no mode now stops the schema's Plan
+([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)). An Observe
+reports `views_modified`, as before, and the Plan fails at every retry with
+`plan_refused: ptah refused to plan the change (view-security-option)`. Under
+v0.29.2 such a plan replaced the view as `SQL SECURITY DEFINER`, with the login
+the Apply ran as for its definer, and waited for an approval as
+`SecurityDefiner`. As the schema's login, list the views that would stop:
+
+```sql
+SELECT TABLE_NAME FROM information_schema.VIEWS
+WHERE TABLE_SCHEMA = DATABASE() AND SECURITY_TYPE = 'INVOKER';
+```
+
+For each one the schema declares without a mode, declare `INVOKER` to keep it,
+`CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or `security = INVOKER`
+in HCL, or `DEFINER` to change it, or list the view in `spec.policy.exclude`.
+Nothing else.
+
+- **Executor.** The verified executor is now Ptah v0.29.3, and the runner
+  harness, the schema SQL readings, both History readings and the capacity
+  calibration were measured with it. Each view statement of a saved plan now also
+  records what the view held when the plan started, as `before_plan`
+  ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)), and each
+  MySQL view statement its `SQL SECURITY` mode before and after, as
+  `sql_security`
+  ([stokaro/ptah#6098](https://github.com/stokaro/ptah/pull/6098)). The
+  operator reads neither, so a plan raises the privilege changes it raised
+  under v0.29.2, as
+  [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
+  describes.
+- **A field Ptah adds to an effect.** `kubectl ptah plan` and
+  `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
+  `planread.Load` no longer lists one when it refuses a plan for another field.
+  An effect record ignores the fields it does not declare, so such a field never
+  stopped either read, and naming it beside a field that did pointed at the
+  wrong one.
+- **A PostgreSQL dev database an ordinary role owns.** Ptah used to list a dev
+  database's user mappings from `pg_user_mapping`, which only a superuser may
+  read, so a Plan whose `spec.dev` connected as an ordinary role failed before
+  it compared anything, with `permission denied for table pg_user_mapping`.
+  v0.29.3 reads `pg_user_mappings` instead
+  ([stokaro/ptah#6095](https://github.com/stokaro/ptah/pull/6095)). The
+  acceptance suites run no dev database, so this is Ptah's measurement.
+- **An unqualified table and a login's own schema.** On a PostgreSQL URL that
+  pins no `search_path`, a login whose current schema is not `public`, such as
+  a role that owns a schema of its own name, resolves an unqualified table name
+  to that schema. A plan that would create such a table there and drop the
+  table of that name from another schema, with its rows, is now refused, and
+  the Plan fails with
+  `plan_refused: ptah refused to plan the change (declaration-refused)`
+  ([stokaro/ptah#6097](https://github.com/stokaro/ptah/pull/6097)). Ptah's
+  sentence in the Pod log names the qualified spelling that keeps the table
+  where it is; write the table that way, or pin `search_path` in the URL.
+
 ## 0.2.14
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
