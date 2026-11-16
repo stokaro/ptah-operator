@@ -775,8 +775,10 @@ the reserved operation prefixes. A label-less clone of a real operation Pod
 therefore still reaches the webhook, while unrelated non-operation Job Pods
 remain outside its outage scope. The handler then requires an exact Job
 controller owner and binds that Job to the current PtahSchema, operation, and
-persisted Pod intent. The same scope covers the `ephemeralcontainers` and
-`resize` subresources.
+persisted Pod intent. A Job with a reserved prefix that carries the operation
+labels neither on its template nor on itself is not an operation Job: the
+handler binds no claim to its Pods, and lets them lose their Job owner. The same
+scope covers the `ephemeralcontainers` and `resize` subresources.
 
 On create, the webhook also requires the built-in Kubernetes Job-controller
 identity. The Pod must preserve the full `<job-name>-` `generateName`, while
@@ -1791,8 +1793,13 @@ whose Pod template, or whose own metadata, carries the labels the operator
 writes on every Job it runs: `app.kubernetes.io/managed-by: ptah-operator`, and
 `app.kubernetes.io/component` `schema-operation` or `migration-operation`. The
 API server refuses any change to the template of a Job that is not suspended,
-so taking a label off the Job does not take the Job out of scope. The message
-names `Background`. The policy also refuses a deletion of such a Job that names
+so taking a label off the Job does not take the Job out of scope. A suspended
+Job's template can change before the Job starts, and from Kubernetes 1.36 also
+after it, once no Pod is active. If you suspend an operation Job and take the
+labels off both, the policy no longer judges it, but its Pods keep the labels
+they were made with and the Pod-intent webhook keeps them owned, so an
+orphaning deletion of that Job finishes only once they have terminated. The
+message names `Background`. The policy also refuses a deletion of such a Job that names
 no propagation, unless the Job carries the `foregroundDeletion` finalizer:
 Kubernetes orphans a Job's Pods by default, and the API server applies that
 default to a client that names nothing. `kubectl delete job` and the namespace
@@ -1801,7 +1808,12 @@ none of them is refused. The garbage collector names `Background` for a Job
 whose owner is gone, unless the Job carries the `orphan` finalizer, as one a
 person added would. It then names `Orphan`, which is refused, and the Job stays
 as it is, running if it ran; `kubectl delete job` takes the finalizer off and
-deletes it. No other Job is judged.
+deletes it. No other Job is judged. A Job of your own whose name only starts
+the way an operation Job's does, such as `ptah-apply-nightly` for a Job that
+runs `ptah apply`, is one of them: the webhook decides by the same labels, on
+the Pod or on its Job's template or the Job, whether a Pod may lose its owner,
+so that Job's Pods are orphaned as any Job's are. Before 0.2.15 the webhook went
+by the name, and such a deletion left the Job `Terminating`.
 
 Orphaning is not how to keep an Apply's log. Wait for the Job to finish, then
 copy the log before you delete the Job:
