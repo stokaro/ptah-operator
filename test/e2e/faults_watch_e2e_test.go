@@ -49,9 +49,9 @@ func startRecorder[T client.Object](f *faultRun, name, namespace string, quiet b
 	return r
 }
 
-// logWatchGaps logs every gap r replayed. A recorder outside the fault run
-// calls it as its test closes the recorder, so a gap crossed there is in the
-// log as one crossed in the fault run is.
+// logWatchGaps logs every gap r replayed. Every recorder calls it as its test
+// closes the recorder, on a failed run as on a passing one, so each gap a
+// watch crossed is in the log.
 func logWatchGaps(t testing.TB, r recorder) {
 	t.Helper()
 	for _, gap := range r.gaps() {
@@ -368,13 +368,10 @@ func (f *faultRun) databasePod() string {
 }
 
 // validateAndScanWatches holds every watch to having recorded something and
-// to carrying no credential, and logs every gap a watch replayed.
+// to carrying no credential. The fault run's cleanup logs the gaps.
 func (f *faultRun) validateAndScanWatches() {
 	f.t.Helper()
 	for _, r := range f.recorders {
-		for _, gap := range r.gaps() {
-			f.logf("%s", describeWatchGap(r.stem(), gap))
-		}
 		content, count, err := r.history()
 		f.check(err, "encode the %s watch history", r.stem())
 		if count == 0 {

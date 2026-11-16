@@ -340,6 +340,9 @@ func (f *faultRun) cleanup() {
 		if r.await(35*time.Second) != nil {
 			r.abort()
 		}
+		// On every path, a failed proof included: a replayed event may be the
+		// evidence a reader of the failure needs.
+		logWatchGaps(t, r)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
