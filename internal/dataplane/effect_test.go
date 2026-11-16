@@ -10,9 +10,10 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
-// The plans below are the ones Ptah v0.26.0 saved for a PostgreSQL view, as the
-// runner harness captured them from the pinned release image: each holds one
-// statement and the effect Ptah recorded for it.
+// The plans below are the ones Ptah saved for a PostgreSQL view, as the runner
+// harness captured them from the pinned release image: each holds one
+// statement and the effect Ptah recorded for it, which since v0.29.3 also
+// carries before_plan.
 var viewPlans = []struct {
 	file string
 	// action is the effect's, and before and after its security_invoker.
@@ -48,6 +49,46 @@ var viewPlans = []struct {
 		file: "differing/plan-view-invoker-new.json", action: "create", before: "", after: "true",
 		withEffect: []string{"SecurityDefiner"}, fromSQL: nil,
 	},
+}
+
+// Since Ptah v0.29.3 a MySQL view statement records its SQL SECURITY mode as
+// the effect property sql_security, a string, and before_plan beside it
+// (stokaro/ptah#6098, #6099). The plan is the one the runner harness captured
+// for a declaration of INVOKER over a view held as DEFINER. The effect decodes
+// with both values as Ptah wrote them, and the privilege reading still comes
+// from the SQL, which raises every MySQL view a plan replaces.
+func TestDecodePlanKeepsAMySQLViewsModeAndReadsTheSQL(t *testing.T) {
+	t.Parallel()
+
+	data := loadCapture(t, "runner-harness/documents/differs-view-invoker-declared-mysql/plan/4-saved-plan.json")
+	decoded, err := dataplane.DecodePlan(data, "MySQL")
+	if err != nil {
+		t.Fatalf("DecodePlan() error = %v", err)
+	}
+	if len(decoded.Statements) != 1 || len(decoded.Statements[0].Effects) != 1 {
+		t.Fatalf("decoded %d statements, want one with one effect: %+v", len(decoded.Statements), decoded.Statements)
+	}
+	effect := decoded.Statements[0].Effects[0]
+	mode := propertyOf(effect, "sql_security")
+	if effect.Action != "replace" || effect.Object.Kind != "view" || mode == nil ||
+		string(mode.Before) != `"DEFINER"` || string(mode.After) != `"INVOKER"` {
+		t.Fatalf("effect = %+v, want a view replaced from DEFINER to INVOKER", effect)
+	}
+	if propertyOf(effect, dataplane.PlanEffectSecurityInvoker) != nil {
+		t.Fatalf("effect = %+v names security_invoker, which a MySQL view does not have", effect)
+	}
+	if !slices.Equal(decoded.PrivilegeChanges, []string{"SecurityDefiner"}) {
+		t.Fatalf("PrivilegeChanges = %q, want SecurityDefiner from the SQL", decoded.PrivilegeChanges)
+	}
+	bare, err := dataplane.DecodePlan(editStatement(t, data, func(statement map[string]any) {
+		delete(statement, "effects")
+	}), "MySQL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(bare.PrivilegeChanges, decoded.PrivilegeChanges) {
+		t.Fatalf("the plan without its effect reads %q, and with it %q", bare.PrivilegeChanges, decoded.PrivilegeChanges)
+	}
 }
 
 func TestDecodePlanReadsAViewsSecurityInvokerFromItsEffect(t *testing.T) {
@@ -447,9 +488,10 @@ func TestDecodePlanReadsARebuiltViewAgainstTheViewItDropped(t *testing.T) {
 // After a statement that may have dropped a view without an effect that says
 // what the view held, a view the plan makes again is held whatever it states:
 // the view it replaces may have read with its readers' rights, and one made
-// again with no option reads with its owner's (#1080). Until Ptah records what
-// such a statement drops (stokaro/ptah#6023), the hold covers every view the
-// statement may have taken. A CASCADE, DROP OWNED and a DROP VIEW whose names
+// again with no option reads with its owner's (#1080). Since v0.29.3 Ptah
+// records on each view effect what the view held when the plan started, as
+// before_plan (stokaro/ptah#6099), and until the manager reads it the hold
+// covers every view the statement may have taken. A CASCADE, DROP OWNED and a DROP VIEW whose names
 // are not read may take any view; a DROP VIEW with no effect takes the view it
 // names. Each plan is the new-view capture made again as the row says, after
 // the statements the row puts before it; bare takes the statement's effect
@@ -643,6 +685,21 @@ func TestDecodePlanReadsAnEffectPastWhatALaterPtahAdds(t *testing.T) {
 				"version": 1, "action": "alter", "properties": []any{},
 				"object": map[string]any{"kind": "table", "schema": "public", "name": "differs_notes"},
 			}}
+		},
+		// Ptah v0.29.3 records before_plan on every view effect
+		// (stokaro/ptah#6099), and the operator does not read it yet.
+		"a before_plan of another shape": func(_, effect map[string]any) { effect["before_plan"] = "held" },
+		"a before_plan that says the view held another value": func(_, effect map[string]any) {
+			effect["before_plan"] = map[string]any{"exists": true, "properties": []any{
+				map[string]any{"name": "security_barrier", "value": false},
+				map[string]any{"name": "security_invoker", "value": false},
+			}}
+		},
+		// Ptah v0.29.3 widens a property's value to a bool or a string, which
+		// it writes for a MySQL view's sql_security (stokaro/ptah#6098).
+		"a string property beside security_invoker": func(_, effect map[string]any) {
+			effect["properties"] = append(effect["properties"].([]any),
+				map[string]any{"name": "sql_security", "before": "INVOKER", "after": "INVOKER", "changed": false})
 		},
 	}
 	for name, edit := range edits {
