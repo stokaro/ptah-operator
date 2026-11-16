@@ -253,6 +253,7 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		original, originalJob, originalPod = active.DeepCopy(), j.DeepCopy(), owned[0].DeepCopy()
 		return true, "", nil
 	}), "retain a real in-flight mutation")
+	removal := m.watchApplyRemoval(read(), original, "the interrupted "+m.engine.name+" Apply Job")
 	jobUID := originalJob.UID
 	a.check(a.cluster.Client.Delete(a.ctx, originalJob, client.Preconditions{UID: &jobUID}, client.PropagationPolicy(metav1.DeletePropagationBackground)), "remove only the interrupted Apply and its evidence")
 	var unknown *ptahv1.PtahMigration
@@ -284,13 +285,19 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 			a.fatalf("unresolved alert acquired an unbounded label")
 		}
 	}
-	// The Job and its Pod are gone, and nothing says the executor stopped, so
-	// the claim keeps the database to the end of the term it took the realm
-	// Lease for (ApplyPodGone). The term is read from the claim, and so is
+	// The Job went with its Pods, so the kubelet stored the Pod stopped
+	// before it let the Pod go. A pass that read that state gave the realm
+	// Lease back at once; once the Pod was gone, the claim keeps the database
+	// to the end of the term it took the Lease for (ApplyPodGone). The stored
+	// order of the writes says which branch this run took, and the hold is
+	// read only where it did. The term is read from the claim, and so is
 	// every bound below that waits on it.
 	term, err := applyLeaseTerm(original)
 	a.check(err, "read the interrupted Apply's Lease term")
-	warned := a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
+	var warned *ptahv1.PtahMigration
+	if removal.settle(term).Branch == applyHeldToTerm {
+		warned = a.holdUnresolvedApplyToItsTerm(m, name, original, term, read, check)
+	}
 	// A missing Job alone cannot authorize repair. Require retirement of the
 	// original claim, terminal/absent Pods, and no database session of that user.
 	a.check(harness.Wait(a.ctx, "the interrupted executor to become unable to write", time.Until(term)+applyLeaseTermSlack, time.Second, func(context.Context) (bool, string, error) {
@@ -309,9 +316,11 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 		body, err := serverSQL(a.ctx, a.cluster, a.in.TestNamespace, m.engine, statement)
 		return err == nil && trimmedSQL(body) == "0", "waiting for every old database session to finish", err
 	}), "establish the runbook repair boundary")
-	if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
-		a.fatalf("%s retired its claim, but %v: Job %s, UID %s, term %s",
-			name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+	if warned != nil {
+		if err := m.applyPodGoneWarnedOnlyInTerm(warned, applyPodGoneApplyWaits, original, term); err != nil {
+			a.fatalf("%s retired its claim, but %v: Job %s, UID %s, term %s",
+				name, err, original.JobName, original.JobUID, term.UTC().Format(time.RFC3339))
+		}
 	}
 	if sql("SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state='applied'") != "2" || sql("SELECT count(*) FROM schema_migrations WHERE version=3 AND state='applied'") != "0" || sql("SELECT count(*) FROM e2e_migration_widgets") != "3" {
 		a.fatalf("interruption changed the accounted database effects")
@@ -397,7 +406,8 @@ func (a *alertingRun) unresolvedMigrationCase(m *migrationRun, template *ptahv1.
 }
 
 // holdUnresolvedApplyToItsTerm holds a migration whose Apply Job and Pod were
-// deleted to keeping its claim and the realm Lease's holder until
+// deleted, and which still held the realm Lease once the Pod was gone, to
+// keeping its claim and the realm Lease's holder until
 // applyLeaseTermMargin short of term, and to saying so in an ApplyPodGone
 // Warning that names the Job, its UID and that term. The Warning is dated by its
 // own timestamps, not by the look that found it. Each look also runs check, so
