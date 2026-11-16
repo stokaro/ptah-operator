@@ -10879,7 +10879,7 @@
       "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
       "error": {
         "code": "plan_refused",
-        "message": "ptah refused to plan the change (view-security-option)"
+        "message": "ptah refused to plan the change (view-security-option: differs_notes_view sql_security)"
       },
       "operation": "plan",
       "operationId": "sha256:9d8aaaea00c637a8b92b53cae86209fe4419da7097d954c6c22dcbbc9d2e9ccb",
@@ -11077,7 +11077,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
         "code": "plan_refused",
-        "message": "ptah refused to plan the change (view-security-option)"
+        "message": "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)"
       },
       "operation": "plan",
       "operationId": "sha256:f41ba30ad0f393ef84cdb2c3dbfd2257fb67926fd95e166ee8f1218814aa9fe1",

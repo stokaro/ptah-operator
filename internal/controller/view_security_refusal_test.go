@@ -48,12 +48,12 @@ func capturedPlanFailure(t *testing.T, row string) *runner.ResultError {
 // SECURITY INVOKER and the declaration leaves without a mode
 // (stokaro/ptah#6105). The runner harness captured the refusal from the
 // release image and the frame the runner wrote for it, whose message names the
-// refusal's code and not the view. Fed to a schema's Plan, that frame reads as
-// a failed reconciliation in exactly those words, and as a Plan that reached
-// its database.
+// refusal's code and the view and option the document lists. Fed to a
+// schema's Plan, that frame reads as a failed reconciliation in exactly those
+// words, and as a Plan that reached its database.
 func TestACapturedMySQLViewSecurityRefusalReadsInStatus(t *testing.T) {
 	t.Parallel()
-	const want = "plan_refused: ptah refused to plan the change (view-security-option)"
+	const want = "plan_refused: ptah refused to plan the change (view-security-option: differs_notes_view sql_security)"
 	failure := capturedPlanFailure(t, "differs-view-invoker-unstated-mysql/plan")
 	previous := previousReachability()["a target that refused"]
 	for _, path := range planPaths(t) {

@@ -442,6 +442,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:8d689e652b8aa06c56bb1be85fc2a8258b3ce7144dce358740b6b448029c89aa",
       "reason": "Carry a refused source access's sentence from its init container (#1085). When the source's access check refuses, the OCI guard and the Git and HTTPS fetches write an access refusal record to their termination message: PTAH_RUNNER_ACCESS_REFUSAL_V1 and one JSON line holding the code a Resolve reports for the same check (invalid_oci_access, invalid_git_access or invalid_https_access) and the check's sentence, redacted as a frame's error is, within 1536 bytes. The guard logs that sentence in place of \"OCI source access is not authorized\", and free text the runner logs has the marker taken out. Every other failure writes no record; exit statuses, frames and summaries are unchanged. A manager that reads the record names the step and the sentence. One that does not, or a Job whose runner writes none, names the step by its exit status as before. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c97f9f350bf39fd58ae9be6736fe23b5282147291b46887011ea6e40aefdb039",
+      "reason": "Name the views a refusal lists (#1126). Since Ptah v0.29.3 a schema plan or apply report's refusal may carry view_options, one view and option per entry, as view-security-option does. The runner reads the list apart from the rest of the report, so a list in another form never makes a report unreadable. A plan_refused or apply_refused message names the code, then the first eight entries that fit in 497 bytes, each view redacted and cleaned as other free text is, and counts the rest: ptah refused to plan the change (view-security-option: orders_view sql_security, and 2 more). A refusal that lists none, or lists them in another form, reads as before. Codes, fields and the frame shape are unchanged, and the message stays text a manager shows bounded. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }

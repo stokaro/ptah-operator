@@ -855,9 +855,10 @@ type nativePlan struct {
 // sentence, which names the tables and no row. A declaration refusal first asks
 // reportProblem whether the desired schema explains it, as a failure does: it
 // is the refusal Ptah v0.23.0 writes where v0.22.0 failed with the same message.
-// Any other refusal is reported by its code, and a failure, a report this runner
-// cannot read, a plan saved somewhere else and a file whose digest is not the
-// reported one are all invalid plan output. A failure that names no target
+// Any other refusal is reported by its code and the views it lists
+// (refusalSentence), and a failure, a report this runner cannot read, a plan
+// saved somewhere else and a file whose digest is not the reported one are all
+// invalid plan output. A failure that names no target
 // failure kind first asks reportProblem whether the desired schema explains it.
 // The exit status decides nothing; see noteReportedSuccess.
 func readNativePlan(
@@ -895,7 +896,7 @@ func readNativePlan(
 			reportProblem(report.Error.Message) {
 			return nativePlan{}, false
 		}
-		setResultError(result, "plan_refused", fmt.Errorf("ptah refused to plan the change (%s)", report.Refusal.Code), redactor, config.Diagnostics)
+		setResultError(result, codePlanRefused, errors.New(refusalSentence("ptah refused to plan the change", report.Refusal, redactor)), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	case dataplane.SchemaPlanOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
@@ -1558,8 +1559,8 @@ func finishSchemaApply(result *Result, outcome commandOutcome, redactor Redactor
 			setResultError(result, "stale_plan", staleApplyMessage(report.Refusal), redactor, diagnostics)
 			return
 		}
-		setResultError(result, "apply_refused",
-			fmt.Errorf("ptah refused the approved plan (%s)", report.Refusal.Code), redactor, diagnostics)
+		setResultError(result, codeApplyRefused,
+			errors.New(refusalSentence("ptah refused the approved plan", report.Refusal, redactor)), redactor, diagnostics)
 	case dataplane.SchemaApplyOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
 			setReportedTargetFailure(result, report.Error, kind, redactor, diagnostics)
