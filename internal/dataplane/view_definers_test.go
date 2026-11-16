@@ -165,3 +165,22 @@ func TestNamedDefinerPrivilegesReadOnlyAListOfStatementsAndPrivileges(t *testing
 		})
 	}
 }
+
+// The view-definer refusal the runner harness captured from the release image,
+// planned as an account that did not define the view, reads as the view, the
+// definer it runs as and the account the read ran as.
+func TestNamedViewDefinersReadTheCapturedRefusal(t *testing.T) {
+	t.Parallel()
+	report, err := dataplane.DecodeSchemaPlan(loadCapture(t, "differing/plan-view-definer-refused.json"))
+	if err != nil {
+		t.Fatalf("DecodeSchemaPlan() = %v", err)
+	}
+	if report.Refusal == nil || report.Refusal.Code != "view-definer" {
+		t.Fatalf("Refusal = %+v, want the code view-definer", report.Refusal)
+	}
+	got, ok := report.Refusal.NamedViewDefiners()
+	want := []dataplane.SchemaRefusalViewDefiner{{View: "differs_notes_view", Definer: "root@localhost", Account: "harness_view_other@%"}}
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("NamedViewDefiners() = %+v, %t, want %+v, true", got, ok, want)
+	}
+}

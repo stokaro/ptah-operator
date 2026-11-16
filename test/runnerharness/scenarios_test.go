@@ -988,6 +988,30 @@ func statementErrors(t *testing.T, l *lab) {
 		before := run.history("history")
 		return run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
 	}
+	// definerUp runs a migration whose file names another account as a view's
+	// definer, as a login that holds every privilege on its database and no
+	// global one. Since Ptah v0.29.4 the run is refused before its first file:
+	// naming another account needs SET_ANY_DEFINER, and MySQL would otherwise
+	// fail the statement with error 1227 after the files before it committed
+	// (stokaro/ptah#6124).
+	definerUp := func(t *testing.T, name string) rowOutcome {
+		t.Helper()
+		family := "statement-errors-" + name
+		database := "harness_" + strings.ReplaceAll(strings.TrimSuffix(name, "-up"), "-", "_") + "_up"
+		l.createDatabase(t, engineMySQL, database)
+		l.sql(t, engineMySQL, "mysql",
+			"CREATE USER 'harness_definer_owner'@'%' IDENTIFIED BY '"+l.databasePassword+"'",
+			"CREATE USER 'harness_definer_deploy'@'%' IDENTIFIED BY '"+l.databasePassword+"'",
+			"GRANT ALL ON "+database+".* TO 'harness_definer_deploy'@'%'",
+		)
+		l.sql(t, engineMySQL, database, "CREATE TABLE orders (id bigint PRIMARY KEY)")
+		url := "mysql://harness_definer_deploy:" + l.databasePassword + "@" + mysqlHost + ":3306/" + database
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/statement-errors/"+name)
+		run := l.newMigration(t, family, engineMySQL, url, ociSource(reference))
+		run.resolve("resolve")
+		before := run.history("history")
+		return run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
+	}
 	const hidden = "[in the statement]"
 	for _, row := range []struct {
 		name, want, refuse string
@@ -1049,6 +1073,10 @@ func statementErrors(t *testing.T, l *lab) {
 					"INSERT INTO orders VALUES (1, 'declared-literal-in-plan@example.com')",
 				})
 			},
+		},
+		{
+			name: "my-definer-up", want: "lacks SET_ANY_DEFINER, which naming another account needs", refuse: "SELECT id FROM orders",
+			run: definerUp,
 		},
 		{
 			name: "my-control-up", want: `Duplicate entry 'esc- [2K- FORGED-TEXT' for key 'orders.orders_one_per_customer'`, refuse: "\x1b",

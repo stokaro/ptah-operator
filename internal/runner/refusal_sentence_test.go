@@ -260,6 +260,13 @@ func TestAPlanRefusalNamesTheViewsTheCapturedDocumentLists(t *testing.T) {
 			environment: databaseEnvironment("captured-view-refusal"),
 			want:        "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)",
 		},
+		{
+			// Since Ptah v0.29.4 (stokaro/ptah#6109), as an account that did
+			// not define the view.
+			row:         "differs-view-definer-other-mysql/plan",
+			environment: mysqlEnvironment("captured-definer-refusal"),
+			want:        "ptah refused to plan the change (view-definer: differs_notes_view definer root@localhost account harness_view_other@%)",
+		},
 	} {
 		t.Run(test.row, func(t *testing.T) {
 			t.Parallel()
