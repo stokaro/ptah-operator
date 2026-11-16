@@ -16,7 +16,14 @@ v0.28.0, and on November 15, 2026 with the Ptah v0.29.0 release image, commit
 image, commit `ba500e11b2536ad7dad1720e5cbd9bf7292dba8b`, which both reproduced
 every reading, so no file changed. On November 16, 2026 the Ptah v0.29.3 release
 image, commit `dfbda1b29a7e4591a41334c6949dddac3a6bd69d`, reproduced every
-reading again.
+reading again. Later that day the Ptah v0.29.4 release image, commit
+`1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788`, reproduced every PostgreSQL reading
+and the four saved plans. In each MySQL reading one statement moved: the view
+read also selects `DEFINER` and `CURRENT_USER()`, which the planner compares to
+refuse a replacement that would hand a view to another account
+([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). The MySQL
+readings here are v0.29.4's, with the exit status and record count v0.29.3
+gave, and the contract names the new statement.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.

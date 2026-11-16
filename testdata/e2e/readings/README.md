@@ -297,7 +297,12 @@ effect gains `before_plan`, which says whether the view existed when the plan
 started and the options it held then
 ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)), and nothing
 else moved but the plan name and the `from_fingerprint`, which identify the
-database the plan read. The predicate does not read `before_plan`.
+database the plan read. The predicate does not read `before_plan`. On November
+16, 2026 the v0.29.4 release image
+`ghcr.io/stokaro/ptah@sha256:3b9f644a08221cdcde9062c6d23c55b6fbcccaaa9d4edc2aec10dd80f0f448f1`
+(commit `1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788`), run through the same lab,
+saved the three plans byte for byte, and each Apply wrote its two schema apply
+log entries, so they stay.
 
 The plans they replace were the ones the Ptah v0.26.0 release image
 `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`

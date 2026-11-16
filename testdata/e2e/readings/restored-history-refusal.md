@@ -14,7 +14,8 @@ reading record for record. On MySQL it creates the revision table with
 reading here is v0.26.0's; every other record matched. On 2026-11-14 the v0.28.0
 release image (`2ee460a6`) reproduced both readings record for record, and on
 2026-11-15 so did the v0.29.0 release image (`75fa9991`) and the v0.29.2 release
-image (`ba500e11`), and on 2026-11-16 the v0.29.3 release image (`dfbda1b2`). They
+image (`ba500e11`), and on 2026-11-16 the v0.29.3 release image (`dfbda1b2`) and the
+v0.29.4 release image (`1f1ff93c`). They
 exercise the
 migration selection guard used by the operator's `restoredHistoryProof`.
 
