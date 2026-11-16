@@ -564,8 +564,9 @@ through a credential, an init container checks the access the credential's
 owner granted: `validate-source-authority` for an OCI source, and the
 `fetch-git-source` or `fetch-https-source` step itself for Git and HTTPS. A
 Resolve checks the same grants first, so the step refuses what changed after
-it, such as a Secret whose grant now names another host, or a `caSHA256` pin
-added to the Secret. The message names the step, then says what a Resolve says
+it: a Secret whose grant now names another host, a `caSHA256` pin added to the
+Secret, or a check an upgrade added after the source resolved, such as the
+refusal of a `caSHA256` pin without `transport.caFrom`. The message names the step, then says what a Resolve says
 of the same refusal, code and sentence:
 
 ```

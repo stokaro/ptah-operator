@@ -255,8 +255,9 @@ only under the trust its owner granted. The pin holds the other way too: a
 resource that names a Secret holding `caSHA256` and selects no CA is refused
 before Ptah runs, rather than sending the credential under the system roots: a
 Resolve fails with `invalid_git_access`, and the `fetch-git-source` step of a
-later operation stops with the same code and sentence, which the condition
-carries after the step's name. Over `ssh://`, where no TLS is spoken, the pin
+later read stops with the same code and sentence, which the condition carries
+after the step's name. An Apply stopped there ends uncertain, and the read that
+settles it says the same. Over `ssh://`, where no TLS is spoken, the pin
 is not read:
 
 ```sh

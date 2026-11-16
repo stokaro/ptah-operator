@@ -1448,9 +1448,10 @@ A registry Secret that holds `caSHA256` binds the credential to that CA, so an
 HTTPS source that names the Secret and selects no `transport.caFrom` fails
 before the registry client starts too, rather than pulling under the system
 roots. A Resolve or a Verify fails with `invalid_oci_access`, naming the field
-to set; an Observe, a Plan, or a migration's History or Apply stops at its
+to set; an Observe, a Plan, or a migration's History stops at its
 `validate-source-authority` step, and the condition names the step and then
-the same `invalid_oci_access` sentence. To move such a source to the system roots,
+the same `invalid_oci_access` sentence. An Apply stopped there ends uncertain,
+and the read that settles it says the same. To move such a source to the system roots,
 remove `caFrom` from the resource and `caSHA256` from the Secret together;
 until both have changed, read-only source operations fail closed. A plain-HTTP
 source does not read the pin.

@@ -381,10 +381,6 @@ func httpsRedirectFollowed(requests []httpsServed, host, from, to, scheme string
 	return fmt.Errorf("the server logged no %s redirect from %s followed to %s on %s, in %d requests", scheme, from, to, host, len(requests))
 }
 
-// httpsNoRequestFor holds the server's requests to having none for path on
-// host, and to having some: an empty reading cannot show that a path received
-// nothing. The host is part of the URL a row names: the redirect row's control
-// reads /public/ on the other origin, a URL no other row names.
 // httpsRequestCount is how many of the server's requests were for path on
 // host, whatever they carried and however they were answered.
 func httpsRequestCount(requests []httpsServed, host, path string) int {
@@ -397,6 +393,10 @@ func httpsRequestCount(requests []httpsServed, host, path string) int {
 	return count
 }
 
+// httpsNoRequestFor holds the server's requests to having none for path on
+// host, and to having some: an empty reading cannot show that a path received
+// nothing. The host is part of the URL a row names: the redirect row's control
+// reads /public/ on the other origin, a URL no other row names.
 func httpsNoRequestFor(requests []httpsServed, host, path string) error {
 	if len(requests) == 0 {
 		return errors.New("the server logged no request at all")
