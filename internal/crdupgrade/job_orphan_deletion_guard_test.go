@@ -1,6 +1,7 @@
 package crdupgrade
 
 import (
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/utils/ptr"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -121,12 +123,29 @@ func TestJobOrphanDeletionGuardSelectsExactlyTheOperationJobs(t *testing.T) {
 	orphaned := schemaJob.DeepCopy()
 	orphaned.OwnerReferences = nil
 	built["a schema Job left with no owner"] = orphaned
+	// Anyone who may update the Job can change its own labels, and the
+	// template still says what its Pods were made from.
+	stripped := schemaJob.DeepCopy()
+	delete(stripped.Labels, workload.LabelComponent)
+	built["a schema Job a person took the component label off"] = stripped
+	// The template can change only on a suspended Job that never started, and
+	// the Job's own labels still say whose it is.
+	suspended := schemaJob.DeepCopy()
+	suspended.Spec.Suspend = ptr.To(true)
+	delete(suspended.Spec.Template.Labels, workload.LabelComponent)
+	built["a suspended schema Job whose template a person took the component label off"] = suspended
 
+	// Each near miss carries its labels on the Job and on its template, so the
+	// condition refuses it whichever map it reads.
 	withLabels := func(labels map[string]string) *batchv1.Job {
-		return &batchv1.Job{
+		job := &batchv1.Job{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
 			ObjectMeta: metav1.ObjectMeta{Namespace: "tenant-a", Name: "nightly-report", Labels: labels},
 		}
+		if labels != nil {
+			job.Spec.Template.Labels = maps.Clone(labels)
+		}
+		return job
 	}
 	other := map[string]*batchv1.Job{
 		"a Job with no labels": withLabels(nil),
@@ -158,16 +177,16 @@ func TestJobOrphanDeletionGuardSelectsExactlyTheOperationJobs(t *testing.T) {
 	}
 	for name, job := range built {
 		if !evaluatePolicyMatchConditions(t, policy, nil, celObject(t, job), request) {
-			t.Errorf("the guard does not select %s, labels %v", name, job.Labels)
+			t.Errorf("the guard does not select %s, labels %v, template labels %v", name, job.Labels, job.Spec.Template.Labels)
 		}
 	}
 	for name, job := range other {
 		if evaluatePolicyMatchConditions(t, policy, nil, celObject(t, job), request) {
-			t.Errorf("the guard selects %s, labels %v", name, job.Labels)
+			t.Errorf("the guard selects %s, labels %v, template labels %v", name, job.Labels, job.Spec.Template.Labels)
 		}
 	}
-	if len(built) != 4 || len(other) != 7 {
-		t.Fatalf("the condition was held to %d Jobs it selects and %d it refuses, want 4 and 7", len(built), len(other))
+	if len(built) != 6 || len(other) != 7 {
+		t.Fatalf("the condition was held to %d Jobs it selects and %d it refuses, want 6 and 7", len(built), len(other))
 	}
 }
 

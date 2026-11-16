@@ -51,14 +51,24 @@ func jobDefaultOrphanDenialMessage() string {
 //
 // It selects an operation Job by the two labels the manager writes on the Job
 // and on its Pod template: app.kubernetes.io/managed-by ptah-operator, and
-// app.kubernetes.io/component schema-operation or migration-operation. They
-// are the pair the Pod-intent webhook reads on a Pod to decide it is managed,
-// so the condition selects the Jobs whose Pods that webhook keeps owned.
-// spec.execution.podMetadata cannot declare either key, and nothing else in the
-// chart or the manager writes either component, so no other Job is judged. A
-// Job keeps the labels when an orphaning deletion of its owner, before the
-// orphan-deletion guard existed, took its owner reference off, and its Pods
-// keep them from the template, so that Job is selected too.
+// app.kubernetes.io/component schema-operation or migration-operation. On a
+// Pod those two labels are one of the ways the Pod-intent webhook decides the
+// Pod is managed, and a Pod takes them from the template. The template is what
+// the condition reads first, because the API server keeps it immutable on a
+// Job that has started, while anyone who may update the Job can change its own
+// labels: a condition on those alone would let a person strip one label and
+// then orphan the Pods. The Job's own labels are read as well, for the one
+// case where the template can change: a suspended Job that never started, whose
+// Pods, if it had any, kept what they were created with. The manager writes
+// both, so for a Job it built neither clause selects anything the other does
+// not. spec.execution.podMetadata cannot declare either key, and nothing else
+// in the chart or the manager writes either component, so no Job but one that
+// claims the operator's identity is judged. A Job keeps the labels when an
+// orphaning deletion of its owner, before the orphan-deletion guard existed,
+// took its owner reference off, so that Job is selected too.
+//
+// The webhook also keeps owned the Pods of a Job named like an operation Job
+// that carries neither label. The condition does not select that Job.
 //
 // The verdict follows the registry (shouldOrphanDependents in k8s.io/apiserver
 // pkg/registry/generic/registry/store.go): orphanDependents, when the request
@@ -66,9 +76,13 @@ func jobDefaultOrphanDenialMessage() string {
 // last the kind's default. The API server serves Jobs only as batch/v1, and
 // its default there is to orphan, so a deletion that names no propagation
 // orphans the Pods unless the Job carries the foregroundDeletion finalizer.
-// kubectl delete names Background unless --cascade says otherwise, the garbage
-// collector and the namespace controller name a propagation, and so does the
-// TTL controller, so none of them is refused.
+// kubectl delete names Background unless --cascade says otherwise, the
+// namespace controller names Background and the TTL controller Foreground, so
+// none of them is refused. The garbage collector names Background for a Job
+// whose owner is gone, unless the Job carries the orphan finalizer, which it
+// honors by naming Orphan. That deletion is refused, which leaves the Job
+// running rather than Terminating, and kubectl delete job, naming Background,
+// takes the finalizer off and releases it.
 //
 // It refuses no write that adds the orphan finalizer, for the reason
 // OrphanDeletionGuard gives. It is a policy of its own rather than a rule in
@@ -123,12 +137,24 @@ func (g *JobOrphanDeletionGuard) Policy() *admissionregistrationv1.ValidatingAdm
 	}
 }
 
-// operationJobMatchExpression selects a Job that carries the operation
-// identity. A deletion has no object, so it reads the stored one.
+// operationJobMatchExpression selects a Job whose Pod template, or whose own
+// metadata, carries the operation identity. A deletion has no object, so it
+// reads the stored one.
 func operationJobMatchExpression() string {
+	return operationIdentityIn(`has(oldObject.spec) && has(oldObject.spec.template) && has(oldObject.spec.template.metadata)`,
+		"oldObject.spec.template.metadata.labels") +
+		" || " + operationIdentityIn("", "oldObject.metadata.labels")
+}
+
+// operationIdentityIn says whether the label map at labels carries the
+// operation identity, after the presence checks guard reads of what holds it.
+func operationIdentityIn(guard, labels string) string {
+	if guard != "" {
+		guard += " && "
+	}
 	return fmt.Sprintf(
-		`has(oldObject.metadata.labels) && %[1]q in oldObject.metadata.labels && oldObject.metadata.labels[%[1]q] == %[2]q && %[3]q in oldObject.metadata.labels && oldObject.metadata.labels[%[3]q] in [%[4]q, %[5]q]`,
-		managedByLabel, operationManager, operationComponentLabel, schemaOperationComponent, migrationOperationComponent)
+		`(%[1]shas(%[2]s) && %[3]q in %[2]s && %[2]s[%[3]q] == %[4]q && %[5]q in %[2]s && %[2]s[%[5]q] in [%[6]q, %[7]q])`,
+		guard, labels, managedByLabel, operationManager, operationComponentLabel, schemaOperationComponent, migrationOperationComponent)
 }
 
 // Binding is the binding that enforces Policy.

@@ -23,7 +23,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: operation-job
-      expression: {{ `has(oldObject.metadata.labels) && "app.kubernetes.io/managed-by" in oldObject.metadata.labels && oldObject.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && "app.kubernetes.io/component" in oldObject.metadata.labels && oldObject.metadata.labels["app.kubernetes.io/component"] in ["schema-operation", "migration-operation"]` | quote }}
+      expression: {{ `(has(oldObject.spec) && has(oldObject.spec.template) && has(oldObject.spec.template.metadata) && has(oldObject.spec.template.metadata.labels) && "app.kubernetes.io/managed-by" in oldObject.spec.template.metadata.labels && oldObject.spec.template.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && "app.kubernetes.io/component" in oldObject.spec.template.metadata.labels && oldObject.spec.template.metadata.labels["app.kubernetes.io/component"] in ["schema-operation", "migration-operation"]) || (has(oldObject.metadata.labels) && "app.kubernetes.io/managed-by" in oldObject.metadata.labels && oldObject.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && "app.kubernetes.io/component" in oldObject.metadata.labels && oldObject.metadata.labels["app.kubernetes.io/component"] in ["schema-operation", "migration-operation"])` | quote }}
   variables:
     - name: orphanRequested
       expression: {{ `has(request.options.orphanDependents) ? request.options.orphanDependents : has(request.options.propagationPolicy) && request.options.propagationPolicy == "Orphan"` | quote }}

@@ -3,7 +3,9 @@ package admissionpolicy_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +48,11 @@ type orphaningJobs struct {
 	// carriesOrphan carries the orphan finalizer, as one a person put there
 	// would; carriesForeground the foregroundDeletion one.
 	carriesOrphan, carriesForeground *batchv1.Job
+	// strippedJob is an operation Job a person took the component label off,
+	// which its immutable Pod template still carries. strippedTemplate is a
+	// suspended one that never started, the one Job whose template a person
+	// can change, with the component label taken off its template.
+	strippedJob, strippedTemplate *batchv1.Job
 	// plain carries no label at all; otherManager the operation component
 	// under another manager; otherComponent this operator with another
 	// component.
@@ -55,13 +62,14 @@ type orphaningJobs struct {
 var orphaningFixtures orphaningJobs
 
 // otherJob is a Job the operator does not run: suspended, so nothing would
-// start it even where a Job controller ran.
+// start it even where a Job controller ran. Its labels are on the Job and on
+// its Pod template, so a near miss misses on both maps the guard reads.
 func otherJob(name string, labels map[string]string) *batchv1.Job {
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Namespace: tenantNamespace, Name: name, Labels: labels},
 		Spec: batchv1.JobSpec{
 			Suspend: ptr.To(true),
-			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels)}, Spec: corev1.PodSpec{
 				RestartPolicy:   corev1.RestartPolicyNever,
 				SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
 				Containers: []corev1.Container{{
@@ -93,6 +101,17 @@ func setupOrphaningJobs(ctx context.Context) error {
 	carriesOrphan.Finalizers = []string{metav1.FinalizerOrphanDependents}
 	carriesForeground = renamedJob(carriesForeground, "ptah-m-resolve-", "foreground")
 	carriesForeground.Finalizers = []string{metav1.FinalizerDeleteDependents}
+	strippedJob, err := resolveJob()
+	if err != nil {
+		return err
+	}
+	strippedTemplate, err := migrationResolveJob()
+	if err != nil {
+		return err
+	}
+	strippedJob = renamedJob(strippedJob, "ptah-resolve-", "stripped")
+	strippedTemplate = renamedJob(strippedTemplate, "ptah-m-resolve-", "suspended")
+	strippedTemplate.Spec.Suspend = ptr.To(true)
 	fixtures := orphaningJobs{
 		carriesOrphan:     carriesOrphan,
 		carriesForeground: carriesForeground,
@@ -106,11 +125,34 @@ func setupOrphaningJobs(ctx context.Context) error {
 	}
 	for _, job := range []*batchv1.Job{
 		fixtures.carriesOrphan, fixtures.carriesForeground, fixtures.plain, fixtures.otherManager, fixtures.otherComponent,
+		strippedJob, strippedTemplate,
 	} {
 		if err := env.Admin.Create(ctx, job); err != nil {
 			return fmt.Errorf("store Job %s: %w", job.Name, err)
 		}
 	}
+	// An ordinary user takes the labels off, as anyone who may update a Job
+	// can: the Job's own on a Job that has started or may, and the template's
+	// on a suspended Job that never started. No Job controller runs here, so
+	// the suspended Job never starts.
+	user, err := env.As(policyenv.User())
+	if err != nil {
+		return err
+	}
+	for _, strip := range []struct {
+		job    *batchv1.Job
+		labels func(*batchv1.Job) map[string]string
+	}{
+		{strippedJob, func(job *batchv1.Job) map[string]string { return job.Labels }},
+		{strippedTemplate, func(job *batchv1.Job) map[string]string { return job.Spec.Template.Labels }},
+	} {
+		edited := strip.job.DeepCopy()
+		delete(strip.labels(edited), workload.LabelComponent)
+		if err := user.Patch(ctx, edited, client.MergeFrom(strip.job)); err != nil {
+			return fmt.Errorf("take the component label off Job %s as an ordinary user: %w", strip.job.Name, err)
+		}
+	}
+	fixtures.strippedJob, fixtures.strippedTemplate = strippedJob, strippedTemplate
 	orphaningFixtures = fixtures
 	return nil
 }
@@ -136,6 +178,9 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		migrationDefaultRow      = "ordinary user deletes a migration Apply Job naming no propagation"
 		schemaDefaultRow         = "ordinary user deletes a schema Apply Job naming no propagation"
 		carriesOrphanDefaultRow  = "ordinary user deletes an operation Job that carries the orphan finalizer, naming no propagation"
+		strippedJobRow           = "ordinary user deletes an operation Job a person took the component label off, with propagationPolicy Orphan"
+		strippedTemplateRow      = "ordinary user deletes a suspended operation Job whose template a person took the component label off, with propagationPolicy Orphan"
+		danglingOrphanRow        = "garbage collector deletes a dangling operation Job that carries orphan, with Orphan"
 
 		migrationBackgroundRow    = "ordinary user deletes a migration Apply Job with propagationPolicy Background"
 		schemaBackgroundRow       = "ordinary user deletes a schema Apply Job with propagationPolicy Background"
@@ -153,6 +198,8 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		propagationPolicyAlone    = `has(request.options.propagationPolicy) && request.options.propagationPolicy == "Orphan"`
 		orphanDependentsAlone     = `has(request.options.orphanDependents) && request.options.orphanDependents`
 		unrelatedOperationLiteral = `"another-operation"`
+		templateClause            = `has(oldObject.spec.template.metadata.labels) &&`
+		jobLabelsClause           = `(has(oldObject.metadata.labels) &&`
 	)
 
 	// Every way of asking for orphaned Pods is refused, the cluster
@@ -172,18 +219,37 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		{migrationDefaultRow, user, migrationApply, nil, jobDefaultOrphanMessage},
 		{schemaDefaultRow, user, schemaApply, nil, jobDefaultOrphanMessage},
 		{carriesOrphanDefaultRow, user, fixtures.carriesOrphan, nil, jobDefaultOrphanMessage},
+		// A label anyone may take off the Job does not take the Job out of
+		// scope: its Pod template keeps it, and on the one Job whose template
+		// can change, the Job's own labels do.
+		{strippedJobRow, user, fixtures.strippedJob, []client.DeleteOption{orphan}, jobOrphanDeletionMessage},
+		{strippedTemplateRow, user, fixtures.strippedTemplate, []client.DeleteOption{orphan}, jobOrphanDeletionMessage},
 	} {
 		c.row(policyenv.Row{
 			Name: row.name, Deny: []string{guard}, Message: row.message,
 			Do: as(row.as, deleteStored(row.object, row.options...)),
 		})
 	}
+	// The garbage collector deletes a Job whose owner is gone by the finalizer
+	// the Job carries, so for one that carries orphan it names Orphan, with the
+	// Job's UID as a precondition. That deletion is refused too, which leaves
+	// the Job running rather than Terminating; a person's kubectl delete job,
+	// naming Background, takes the finalizer off.
+	c.row(policyenv.Row{
+		Name: danglingOrphanRow, Deny: []string{guard}, Message: jobOrphanDeletionMessage,
+		Do: func(ctx context.Context, env *policyenv.Env) error {
+			uid := fixtures.carriesOrphan.UID
+			return as(garbageCollector, deleteStored(fixtures.carriesOrphan, orphan, client.Preconditions{UID: &uid}))(ctx, env)
+		},
+	})
 
 	// Every other deletion of an operation Job goes through: the default
 	// propagation kubectl sends and the foreground one, the legacy field set
 	// false, a named propagation on a Job that carries the orphan finalizer,
 	// which takes it off, a Job whose foreground finalizer decides for it, and
-	// the controllers that delete Jobs, each naming a propagation.
+	// the controllers' ordinary deletions: the namespace controller's
+	// Background, the garbage collector's Background for a Job that carries no
+	// orphan finalizer, and the TTL controller's Foreground.
 	c.row(policyenv.Row{Name: migrationBackgroundRow, Do: as(user, deleteStored(migrationApply, background))})
 	c.row(policyenv.Row{Name: schemaBackgroundRow, Do: as(user, deleteStored(schemaApply, background))})
 	c.row(policyenv.Row{Name: migrationForegroundRow, Do: as(user, deleteStored(migrationApply, foreground))})
@@ -206,7 +272,8 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 
 	refused := []string{
 		migrationOrphanRow, schemaOrphanRow, migrationLegacyOrphanRow, administratorOrphanRow,
-		migrationDefaultRow, schemaDefaultRow, carriesOrphanDefaultRow,
+		migrationDefaultRow, schemaDefaultRow, carriesOrphanDefaultRow, strippedJobRow, strippedTemplateRow,
+		danglingOrphanRow,
 	}
 	namedPropagation := []string{
 		migrationBackgroundRow, schemaBackgroundRow, migrationForegroundRow, schemaLegacyCascadeRow,
@@ -239,7 +306,7 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "job orphan-deletion guard reads no propagationPolicy", Policies: []string{guard},
 		Apply:  policyenv.SetVariables(guard, map[string]string{"orphanRequested": orphanDependentsAlone}),
-		Breaks: []string{migrationOrphanRow, schemaOrphanRow, administratorOrphanRow}, Admits: true,
+		Breaks: []string{migrationOrphanRow, schemaOrphanRow, administratorOrphanRow, danglingOrphanRow}, Admits: true,
 	})
 	// The default is what refuses a deletion that names nothing: read as named
 	// everywhere, the guard admits those, and read as named nowhere it refuses
@@ -270,12 +337,28 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "job orphan-deletion guard reads another migration component", Policies: []string{guard},
 		Apply:  policyenv.RewriteMatchConditions(guard, `"`+workload.ComponentMigrationOperation+`"`, unrelatedOperationLiteral),
-		Breaks: []string{migrationOrphanRow, migrationLegacyOrphanRow, migrationDefaultRow}, Admits: true,
+		Breaks: []string{migrationOrphanRow, migrationLegacyOrphanRow, migrationDefaultRow, strippedTemplateRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "job orphan-deletion guard reads another schema component", Policies: []string{guard},
-		Apply:  policyenv.RewriteMatchConditions(guard, `"`+workload.ComponentSchemaOperation+`"`, unrelatedOperationLiteral),
-		Breaks: []string{schemaOrphanRow, administratorOrphanRow, schemaDefaultRow, carriesOrphanDefaultRow}, Admits: true,
+		Apply: policyenv.RewriteMatchConditions(guard, `"`+workload.ComponentSchemaOperation+`"`, unrelatedOperationLiteral),
+		Breaks: []string{
+			schemaOrphanRow, administratorOrphanRow, schemaDefaultRow, carriesOrphanDefaultRow, strippedJobRow, danglingOrphanRow,
+		},
+		Admits: true,
+	})
+	// Each map the condition reads holds a Job in scope on its own: read only
+	// the Job's labels, and a person who took one off orphans the Pods; read
+	// only the template, and the suspended Job whose template they edited goes.
+	c.mutation(policyenv.Mutation{
+		Name: "job orphan-deletion guard reads no Pod template", Policies: []string{guard},
+		Apply:  policyenv.RewriteMatchConditions(guard, templateClause, "false &&"),
+		Breaks: []string{strippedJobRow}, Admits: true,
+	})
+	c.mutation(policyenv.Mutation{
+		Name: "job orphan-deletion guard reads no Job labels", Policies: []string{guard},
+		Apply:  policyenv.RewriteMatchConditions(guard, jobLabelsClause, "(false &&"),
+		Breaks: []string{strippedTemplateRow}, Admits: true,
 	})
 }
 
@@ -302,6 +385,30 @@ func TestJobOrphanDeletionGuardOnStoredJobs(t *testing.T) {
 			return api.Delete(ctx, job.DeepCopy(), options...)
 		})
 	}
+
+	// The guard reads the template first because a person cannot take a label
+	// off it: on a Job that is not suspended the API server refuses any change
+	// to the template, an ordinary user's included.
+	t.Run("the Pod template of a Job that is not suspended keeps its labels", func(t *testing.T) {
+		job, err := stored(ctx, orphaningFixtures.strippedJob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Labels[workload.LabelComponent] != "" || job.Spec.Template.Labels[workload.LabelComponent] != workload.ComponentSchemaOperation {
+			t.Fatalf("Job %s labels %v, template labels %v: want the component off the Job and on its template",
+				job.Name, job.Labels, job.Spec.Template.Labels)
+		}
+		edited := job.DeepCopy()
+		delete(edited.Spec.Template.Labels, workload.LabelComponent)
+		api, err := env.As(user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = api.Patch(ctx, edited, client.MergeFrom(job), client.DryRunAll)
+		if !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "field is immutable") {
+			t.Fatalf("an ordinary user taking the component label off Job %s's template: %v, want Invalid, field is immutable", job.Name, err)
+		}
+	})
 
 	t.Run("a refused deletion leaves the Job as it was", func(t *testing.T) {
 		job := otherJob("premise-refused", operationIdentity(workload.ComponentMigrationOperation))

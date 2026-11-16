@@ -1779,15 +1779,21 @@ Job owns, and an executor in a Pod no Job owns could go on writing after the
 database Lease was handed back. So the `orphan` finalizer would never come off,
 and the Job would stay `Terminating`. Another admission policy refuses, for
 every caller, `propagationPolicy: Orphan` and `orphanDependents: true` on a Job
-that carries the labels the operator writes on every Job it runs,
-`app.kubernetes.io/managed-by: ptah-operator` and `app.kubernetes.io/component`
-`schema-operation` or `migration-operation`. Its message names `Background`. It
-also refuses a deletion of such a Job that names no propagation, unless the Job
-carries the `foregroundDeletion` finalizer: Kubernetes orphans a Job's Pods by
-default, and the API server applies that default to a client that names
-nothing. `kubectl delete job` names `Background`, and so do the garbage
-collector and the namespace controller; the TTL controller names `Foreground`.
-None of them is refused, and no other Job is judged.
+whose Pod template, or whose own metadata, carries the labels the operator
+writes on every Job it runs: `app.kubernetes.io/managed-by: ptah-operator`, and
+`app.kubernetes.io/component` `schema-operation` or `migration-operation`. The
+API server refuses any change to the template of a Job that is not suspended,
+so taking a label off the Job does not take the Job out of scope. The message
+names `Background`. The policy also refuses a deletion of such a Job that names
+no propagation, unless the Job carries the `foregroundDeletion` finalizer:
+Kubernetes orphans a Job's Pods by default, and the API server applies that
+default to a client that names nothing. `kubectl delete job` and the namespace
+controller name `Background`, and the TTL controller names `Foreground`, so
+none of them is refused. The garbage collector names `Background` for a Job
+whose owner is gone, unless the Job carries the `orphan` finalizer, as one a
+person added would. It then names `Orphan`, which is refused, and the Job stays
+as it is, running if it ran; `kubectl delete job` takes the finalizer off and
+deletes it. No other Job is judged.
 
 Orphaning is not how to keep an Apply's log. Copy the log before you delete the
 Job: `kubectl logs -n <namespace> job/<name> -c ptah > apply.log` reads a Job
