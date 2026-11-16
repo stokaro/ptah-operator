@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-16T22:48:24.946739+00:00",
+  "frozenAt": "2026-11-16T20:04:33.419389+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "b6d7ccbad721e5fddd71f143bea55c9cda11110ac79b84d96a202ed8c737ab93"
+      "sha256": "016e07889bb341c2f0942db1109342728ec31b657885a62b7f653ff4ea132a51"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 114,
+  "revision": 113,
   "supersedes": {
-    "freezeCommit": "1c25a28c6115457e049a4cbd9388c0097a362817",
-    "sha256": "c53f76d400c98bb9cf58b3e2a26556ebc1031627011a24324d86434a35a6db37"
+    "freezeCommit": "899fd7d8d15f6a41eba4e115e7469f32cf826a56",
+    "sha256": "2b3a5dadd8d8cd93a21467b5b5b34a4dcd82ff2a4c9ff88744b39fccb907debf"
   },
-  "revisionReason": "Record in the edge row of support/ptah.json that the operator now reads the before_plan Ptah writes on a view statement since v0.29.3, so a PostgreSQL view a drop may have taken is not raised as a privilege change where before_plan says the view existed when the plan started with the security_invoker the plan gives it, and every other such view still is. The executor, the functional matrix, the databases page, phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.29.3 to the v0.29.4 release image, and record in the edge row what v0.29.4 changes: a MySQL or MariaDB plan that would replace a view running as another definer is refused as view-definer, a statement naming a definer the login may not name is refused before the first statement runs, a saved plan records only whether each table holds rows, and a removed table's policy is dropped before a view rebuild. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

@@ -170,9 +170,9 @@ program, and `kubectl ptah plan -o sql` and `-o json` refuse such a plan.
 
 `planread.Load` makes no such promise and refuses any field the build does not
 declare, as the manager and the runner do. A statement's effect record is the
-exception for both reads: it reads the fields it declares, which include the
-`before_plan` Ptah v0.29.3 added, and ignores any other Ptah adds to it, so
-such a field neither stops a read nor comes back in `UnreadFields`. Ptah does not read
+exception for both reads: it reads the fields it declares and ignores the ones
+Ptah adds to it, such as the `before_plan` of Ptah v0.29.3, so such a field
+neither stops a read nor comes back in `UnreadFields`. Ptah does not read
 effects when it applies a plan. That strictness is what keeps a
 statement's `inputs`, which name an environment variable Ptah reads at Apply, and
 a plan's `annotations` out of an Apply Pod. An approval is a decision about the

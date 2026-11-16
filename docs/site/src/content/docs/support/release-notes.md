@@ -79,25 +79,12 @@ propagation is refused from this release: have it name
   and each MySQL view statement its `SQL SECURITY` mode before and after, as
   `sql_security`
   ([stokaro/ptah#6098](https://github.com/stokaro/ptah/pull/6098)). The
-  operator reads `before_plan` for one kind of view, as the next entry says,
-  and does not read `sql_security`, so a MySQL or MariaDB plan raises the
-  privilege changes it raised under v0.29.2. A MySQL view the login defines is
-  now replaced with ``CREATE OR REPLACE DEFINER=`<login>`@`<host>` VIEW``,
-  which also raises `Definer`.
-- **A PostgreSQL view a drop may have taken.** A view a plan makes again after
-  a `DROP ... CASCADE`, a `DROP OWNED`, a `DROP VIEW` with no effect or a
-  `DROP VIEW` whose names the operator cannot read is now read against its
-  statement's `before_plan`. It is not raised as `SecurityDefiner` where
-  `before_plan` says the view existed when the plan started with the
-  `security_invoker` the plan gives it. Every other such view is still raised,
-  including a `CREATE OR REPLACE VIEW` Ptah writes with no effect after a
-  `CASCADE`, and under v0.29.2 every one was. The plan drops something, so it
-  still needs `allowDestructive` and an approval. Under `apply: Always`, where
-  nothing else in it changes privileges, its `ApprovalRequired` reason is
-  `PlanReady` on the pass that publishes it and `Waiting` after that, rather
-  than `PrivilegeChanges`.
+  operator reads neither, so a plan raises the privilege changes it raised
+  under v0.29.2, as
   [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
-  says what each view statement raises.
+  describes. A MySQL view the login defines is now replaced with
+  ``CREATE OR REPLACE DEFINER=`<login>`@`<host>` VIEW``, which also raises
+  `Definer`.
 - **A refused view is named.** When Ptah refuses a plan with
   `view-security-option` or `view-definer`, the `ReconciliationFailed` message
   now names each view Ptah's report lists, with the option, or with its definer
@@ -122,7 +109,10 @@ propagation is refused from this release: have it name
   `CASCADE` ([stokaro/ptah#6118](https://github.com/stokaro/ptah/pull/6118),
   [stokaro/ptah#6123](https://github.com/stokaro/ptah/pull/6123)). Under v0.29.3
   the `CASCADE` took the policy and the Apply stopped at its `DROP POLICY` with
-  SQLSTATE 42704 and rolled back; both were measured on PostgreSQL 17.
+  SQLSTATE 42704 and rolled back; both were measured on PostgreSQL 17. Each
+  rebuilt view's drop now records the `security_invoker` the view held, so a
+  view made again with the same value is no longer raised as `SecurityDefiner`,
+  while the policy the plan drops still raises `RowSecurityPolicy`.
 - **A definer a migration's login may not name.** The run is refused before its
   first file, as `Failed` with nothing committed, and the Pod log names the
   file, the definer, the login and the privilege.

@@ -452,11 +452,6 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a2b016f00e862187791f9f925bf4e3505bb4998c70a92257352f6f36ea240512",
       "reason": "Since Ptah v0.29.4 a refusal may carry view_definers, each view with the account it runs as and the account the plan's read ran as. The runner reads it apart from the rest of the report, as it reads view_options, and a plan_refused or apply_refused message names the entries after the code within the same bounds: ptah refused to plan the change (view-definer: orders_view definer root@% account deploy@%). An account the read did not record is left out, and each account is redacted and cleaned as other free text is. definer_privileges is not read, so that refusal reads by its code. A refused Apply also writes Ptah's error message to the Pod log, bounded and redacted, and LeavesReportedError counts apply_refused; an apply failure in a frame still belongs to apply_failed and apply_outcome_unknown alone. Codes, fields and the frame shape are unchanged. No release built an earlier digest of this change. Protocol 1 stays."
-    },
-    {
-      "protocolVersion": 1,
-      "sourceDigest": "sha256:3644d9a2a15ec60ea55846f1ea72c2294c5f448ab1495464fa1979f1f4be76b5",
-      "reason": "Read before_plan for a PostgreSQL view a drop may have taken (stokaro/ptah#6099). After a CASCADE, DROP OWNED or a DROP VIEW whose effect or names the operator cannot read, a later CREATE VIEW, or a CREATE OR REPLACE VIEW whose effect records no value before, raises SecurityDefiner unless its effect's before_plan says the view existed when the plan started with the security_invoker the statement gives it; a MySQL plan reads as before. Only the privilege reading in internal/dataplane changes. The effect record declares before_plan as raw JSON: it ignored the field before and cannot fail on it now, so it accepts the same documents. The runner calls DecodePlan only to validate a plan and returns none of the kinds, so what it accepts, enforces and returns is the same, and protocol 1 stays."
     }
   ]
 }
