@@ -591,8 +591,12 @@ or whose own metadata, carries the two labels the manager writes on both,
 `schema-operation` or `migration-operation`, which `spec.execution.podMetadata`
 cannot declare. The template is what the Pods were made from, and the API
 server refuses a change to it on a Job that is not suspended, so a label taken
-off the Job does not take the Job out of scope. No other Job is judged. It
-decides as the registry does for `batch/v1`, whose default is to orphan:
+off the Job does not take the Job out of scope. No other Job is judged. The
+Pod-intent webhook decides by the same identity whether a Pod that does not
+carry it may lose its Job owner, reading the Job's template and the Job, so a
+Job whose name only starts like an operation Job's is neither judged here nor
+kept owning its Pods there. The policy decides as the registry does for
+`batch/v1`, whose default is to orphan:
 `orphanDependents`, then `propagationPolicy`, then the `foregroundDeletion`
 finalizer the Job carries, and otherwise a deletion that names no propagation
 is refused. It is a policy apart from the one above because the two select

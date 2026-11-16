@@ -30,6 +30,9 @@ import (
 //
 // The guard selects a Job by the identity the manager writes on it, so a Job
 // the operator does not run is deleted as it always was, orphaning included.
+// A Job only named like an operation Job is one of them: the Pod-intent
+// webhook decides by the same identity whether its Pods may lose their owner,
+// and lets them (test/envtest/webhook), so its orphaning deletion finishes.
 //
 // envtest runs no garbage collector and no Pod-intent webhook here, so these
 // rows prove the verdict, which comes before either would act, and not what
@@ -55,8 +58,9 @@ type orphaningJobs struct {
 	strippedJob, strippedTemplate *batchv1.Job
 	// plain carries no label at all; otherManager the operation component
 	// under another manager; otherComponent this operator with another
-	// component.
-	plain, otherManager, otherComponent *batchv1.Job
+	// component. nameOnly carries no label either, under the name a person
+	// gives a Job that runs the Ptah command of an operation.
+	plain, otherManager, otherComponent, nameOnly *batchv1.Job
 }
 
 var orphaningFixtures orphaningJobs
@@ -116,6 +120,7 @@ func setupOrphaningJobs(ctx context.Context) error {
 		carriesOrphan:     carriesOrphan,
 		carriesForeground: carriesForeground,
 		plain:             otherJob("nightly-report", nil),
+		nameOnly:          otherJob("ptah-apply-nightly", nil),
 		otherManager: otherJob("helm-migration-hook", map[string]string{
 			workload.LabelManagedBy: "Helm", workload.LabelComponent: workload.ComponentMigrationOperation,
 		}),
@@ -125,7 +130,7 @@ func setupOrphaningJobs(ctx context.Context) error {
 	}
 	for _, job := range []*batchv1.Job{
 		fixtures.carriesOrphan, fixtures.carriesForeground, fixtures.plain, fixtures.otherManager, fixtures.otherComponent,
-		strippedJob, strippedTemplate,
+		fixtures.nameOnly, strippedJob, strippedTemplate,
 	} {
 		if err := env.Admin.Create(ctx, job); err != nil {
 			return fmt.Errorf("store Job %s: %w", job.Name, err)
@@ -195,11 +200,14 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		plainDefaultRow           = "ordinary user deletes a Job the operator does not run, naming no propagation"
 		otherManagerOrphanRow     = "ordinary user deletes a Job another manager labels as an operation with propagationPolicy Orphan"
 		otherComponentOrphanRow   = "ordinary user deletes a Job of another operator component with propagationPolicy Orphan"
+		nameOnlyOrphanRow         = "ordinary user deletes a Job only named like an operation Job with propagationPolicy Orphan"
+		nameOnlyDefaultRow        = "ordinary user deletes a Job only named like an operation Job, naming no propagation"
 		propagationPolicyAlone    = `has(request.options.propagationPolicy) && request.options.propagationPolicy == "Orphan"`
 		orphanDependentsAlone     = `has(request.options.orphanDependents) && request.options.orphanDependents`
 		unrelatedOperationLiteral = `"another-operation"`
 		templateClause            = `has(oldObject.spec.template.metadata.labels) &&`
 		jobLabelsClause           = `(has(oldObject.metadata.labels) &&`
+		operationNameClause       = `oldObject.metadata.name.matches("^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-") || `
 	)
 
 	// Every way of asking for orphaned Pods is refused, the cluster
@@ -269,6 +277,8 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 	c.row(policyenv.Row{Name: plainDefaultRow, Do: as(user, deleteStored(fixtures.plain))})
 	c.row(policyenv.Row{Name: otherManagerOrphanRow, Do: as(user, deleteStored(fixtures.otherManager, orphan))})
 	c.row(policyenv.Row{Name: otherComponentOrphanRow, Do: as(user, deleteStored(fixtures.otherComponent, orphan))})
+	c.row(policyenv.Row{Name: nameOnlyOrphanRow, Do: as(user, deleteStored(fixtures.nameOnly, orphan))})
+	c.row(policyenv.Row{Name: nameOnlyDefaultRow, Do: as(user, deleteStored(fixtures.nameOnly))})
 
 	refused := []string{
 		migrationOrphanRow, schemaOrphanRow, migrationLegacyOrphanRow, administratorOrphanRow,
@@ -280,7 +290,9 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		carriesOrphanClearedRow, namespaceJobsRow, garbageCollectorRow, ttlControllerRow,
 	}
 	admitted := append(slices.Clone(namedPropagation), carriesForegroundRow)
-	other := []string{plainOrphanRow, plainDefaultRow, otherManagerOrphanRow, otherComponentOrphanRow}
+	other := []string{
+		plainOrphanRow, plainDefaultRow, otherManagerOrphanRow, otherComponentOrphanRow, nameOnlyOrphanRow, nameOnlyDefaultRow,
+	}
 
 	c.mutation(policyenv.Mutation{
 		Name: "job orphan-deletion guard binding dropped", Policies: []string{guard},
@@ -359,6 +371,14 @@ func jobOrphanDeletionRows(t *testing.T, c *catalog) {
 		Name: "job orphan-deletion guard reads no Job labels", Policies: []string{guard},
 		Apply:  policyenv.RewriteMatchConditions(guard, jobLabelsClause, "(false &&"),
 		Breaks: []string{strippedTemplateRow}, Admits: true,
+	})
+	// A guard that also took an operation Job's name for its identity would
+	// refuse to orphan the Pods of a Job only named like one, which the
+	// Pod-intent webhook lets go.
+	c.mutation(policyenv.Mutation{
+		Name: "job orphan-deletion guard reads the Job's name", Policies: []string{guard},
+		Apply:  policyenv.RewriteMatchConditions(guard, jobLabelsClause, operationNameClause+jobLabelsClause),
+		Breaks: []string{nameOnlyOrphanRow, nameOnlyDefaultRow},
 	})
 }
 

@@ -66,8 +66,12 @@ func jobDefaultOrphanDenialMessage() string {
 // an orphaning deletion of its owner, before the orphan-deletion guard
 // existed, took its owner reference off, so that Job is selected too.
 //
-// The webhook also keeps owned the Pods of a Job named like an operation Job
-// that carries neither label. The condition does not select that Job.
+// The webhook decides by the same identity in the same two maps whether a Pod
+// without the labels may lose its Job owner (operationJob in
+// internal/podintent). So the Pods of a Job only named like an operation Job,
+// which its match condition routes by name, are orphaned as any Job's are, and
+// this condition does not select that Job either.
+// TestJobOrphanDeletionGuardAgreesWithPodIntent holds the two to the same Jobs.
 //
 // The verdict follows the registry (shouldOrphanDependents in k8s.io/apiserver
 // pkg/registry/generic/registry/store.go): orphanDependents, when the request

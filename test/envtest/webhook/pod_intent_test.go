@@ -3,6 +3,7 @@ package webhook_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 
@@ -47,6 +48,41 @@ func podFor(job *batchv1.Job) *corev1.Pod {
 			}},
 		},
 		Spec: *job.Spec.Template.Spec.DeepCopy(),
+	}
+}
+
+// orphanPatch is the patch the garbage collector's orphanDependents sends to
+// orphan pod, a dependent of job of a built-in kind, built by
+// GenerateDeleteOwnerRefStrategicMergeBytes in
+// pkg/controller/controller_ref_manager.go.
+func orphanPatch(job *batchv1.Job, pod *corev1.Pod) client.Patch {
+	return client.RawPatch(types.StrategicMergePatchType,
+		fmt.Appendf(nil, `{"metadata":{"ownerReferences":[{"$patch":"delete","uid":%q}],"uid":%q}}`, job.UID, pod.UID))
+}
+
+// namedLikeAnOperation is a Job a person named after the Ptah command it runs:
+// the name starts the way an operation Job's does, and nothing else about it
+// is the operator's.
+func namedLikeAnOperation(namespace, name string) *batchv1.Job {
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Labels: map[string]string{"app.kubernetes.io/name": "nightly"}},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(0)),
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "nightly"}},
+				Spec: corev1.PodSpec{
+					RestartPolicy:   corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+					Containers: []corev1.Container{{
+						Name: "ptah", Image: "registry.example/ptah@sha256:" + strings.Repeat("9", 64), Args: []string{"apply"},
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: ptr.To(false),
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+						},
+					}},
+				},
+			},
+		},
 	}
 }
 
@@ -171,6 +207,70 @@ func TestPodIntentWebhook(t *testing.T) {
 		long := stored(t, "long", func(job *batchv1.Job) { job.Spec.TTLSecondsAfterFinished = ptr.To(int32(86400)) })
 		err := clientAs(t, jobController).Create(ctx, podFor(long), client.DryRunAll)
 		requireDenied(t, err, podIntentWebhook, "a read-only Job's cleanup TTL is 300 seconds")
+	})
+
+	// Whether the garbage collector may orphan a Pod that carries no operation
+	// labels is the Job's to say, by the identity the Job orphan-deletion guard
+	// reads: on the Job's template or on the Job. A Job only named like an
+	// operation Job, which the match condition routes its Pods by, has none,
+	// so its Pods are orphaned as any Job's are, and an orphaning deletion of
+	// it, which the guard admits, finishes. That patch is the request this row
+	// sends.
+	t.Run("the garbage collector orphaning a Pod of a Job only named like an operation Job is admitted", func(t *testing.T) {
+		t.Parallel()
+		job := namedLikeAnOperation(fixture.namespace, "ptah-apply-nightly")
+		if err := admin.Create(ctx, job); err != nil {
+			t.Fatalf("create Job %s/%s: %v", job.Namespace, job.Name, err)
+		}
+		pod := podFor(job)
+		if err := clientAs(t, jobController).Create(ctx, pod); err != nil {
+			t.Fatalf("the API server refused the Job controller's Pod for %s/%s: %v", job.Namespace, job.Name, err)
+		}
+		// The name is what routes the Pod to the webhook, so it is the handler
+		// that admits the patch below: a Pod that names this Job under another
+		// UID is refused there.
+		impostor := podFor(job)
+		impostor.OwnerReferences[0].UID = "another-job-uid"
+		err := clientAs(t, jobController).Create(ctx, impostor, client.DryRunAll)
+		requireDenied(t, err, podIntentWebhook, "managed Pod owner does not match the current Job UID")
+
+		orphaned := pod.DeepCopy()
+		err = clientAs(t, garbageCollector).Patch(ctx, orphaned, orphanPatch(job, pod), client.DryRunAll)
+		requireNotDeniedBy(t, err, podIntentWebhook)
+		if err != nil {
+			t.Fatalf("the API server refused the garbage collector orphaning %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+		if len(orphaned.OwnerReferences) != 0 {
+			t.Fatalf("the admitted patch left %s/%s with owner references %v, so it did not orphan the Pod", pod.Namespace, pod.Name, orphaned.OwnerReferences)
+		}
+	})
+
+	// A Pod an operation Job made can lose its labels only while the webhook
+	// does not see the write, and then the Job's template still carries them.
+	// The webhook would refuse that Pod here, so the row stands it in with the
+	// one Pod it admits without them: one of a Job that names no operator
+	// owner, which an orphaning deletion of its PtahSchema took off before the
+	// resource guard existed, and whose own labels a person took off.
+	t.Run("the garbage collector orphaning a Pod without the operation labels of a Job whose template carries them is refused", func(t *testing.T) {
+		t.Parallel()
+		job := stored(t, "template-only", func(job *batchv1.Job) {
+			job.OwnerReferences = nil
+			delete(job.Labels, workload.LabelManagedBy)
+			delete(job.Labels, workload.LabelComponent)
+		})
+		if job.Spec.Template.Labels[workload.LabelManagedBy] != "ptah-operator" ||
+			job.Spec.Template.Labels[workload.LabelComponent] != workload.ComponentSchemaOperation {
+			t.Fatalf("the stored Job %s/%s carries template labels %v, want the operation identity", job.Namespace, job.Name, job.Spec.Template.Labels)
+		}
+		pod := podFor(job)
+		pod.Labels = maps.Clone(pod.Labels)
+		delete(pod.Labels, workload.LabelManagedBy)
+		delete(pod.Labels, workload.LabelComponent)
+		if err := clientAs(t, jobController).Create(ctx, pod); err != nil {
+			t.Fatalf("the API server refused the Pod without the operation labels for %s/%s: %v", job.Namespace, job.Name, err)
+		}
+		err := clientAs(t, garbageCollector).Patch(ctx, pod.DeepCopy(), orphanPatch(job, pod), client.DryRunAll)
+		requireDenied(t, err, podIntentWebhook, "Pod update removed its exact Job owner")
 	})
 }
 

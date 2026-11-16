@@ -97,6 +97,14 @@ propagation is refused from this release: have it name
   [Suspension and deletion](../../use/operations/#suspension-and-deletion) says
   how to keep an Apply's log without orphaning its Pods, and how to release a
   Job an orphaning deletion left `Terminating`.
+- **An orphaning deletion of a Job only named like an operation Job
+  finishes.** The Pod-intent webhook refused to let the garbage collector take
+  the owner reference off a Pod of any Job whose name starts the way an
+  operation Job's does, such as `ptah-apply-nightly`, so
+  `kubectl delete job --cascade=orphan` of such a Job of your own left it
+  `Terminating`. It now refuses that only where the Pod, the Job's Pod template
+  or the Job itself carries the operator's labels: the Jobs the new policy
+  refuses to orphan.
 
 ## 0.2.14
 

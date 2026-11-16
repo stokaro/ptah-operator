@@ -89,8 +89,8 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 			return cradmission.Denied("managed Pod has no exact Job controller identity")
 		}
 		if oldPod != nil {
-			if _, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod {
-				return cradmission.Denied("Pod update removed its exact Job owner")
+			if previous, wasJobPod := uniqueControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job"); wasJobPod {
+				return h.judgeJobOwnerRemoval(ctx, oldPod.Namespace, previous)
 			}
 		}
 		return cradmission.Allowed("Pod is not controlled by a Job")
@@ -214,6 +214,56 @@ func managedPodIdentity(labels map[string]string) bool {
 	}
 	component := labels[workload.LabelComponent]
 	return component == workload.ComponentSchemaOperation || component == workload.ComponentMigrationOperation
+}
+
+// operationJob reports whether a Job carries the operation identity the
+// builder writes on every operation Job and on its Pod template, in either
+// map. The Job orphan-deletion guard selects a Job by the same two labels in
+// the same two maps (crdupgrade.JobOrphanDeletionGuard), and
+// TestJobOrphanDeletionGuardAgreesWithPodIntent in internal/crdupgrade
+// holds the two to the same Jobs.
+func operationJob(job *batchv1.Job) bool {
+	return managedPodIdentity(job.Spec.Template.Labels) || managedPodIdentity(job.Labels)
+}
+
+// judgeJobOwnerRemoval decides an update that takes the Job controller
+// reference off a Pod that carries no operation identity of its own. The
+// garbage collector sends one for every Pod of a Job deleted with Orphan
+// propagation, and the Job stays Terminating until each is admitted.
+//
+// The Job decides, not the Pod. A Pod an operation Job made takes the identity
+// from the Job's template, and this webhook keeps it there, so an operation
+// Pod without it is one whose labels changed while the webhook did not see the
+// write. That Pod keeps its owner: the manager finds a dispatched Apply's
+// executor through the Pods its Job owns (podsOwnedByJob in
+// internal/controller), and the template still says what the Pod is, because
+// the API server refuses a change to the template of every Job but a suspended
+// one that never started, which has made no Pod. Every other Pod that reaches
+// here belongs to a Job the operator does not run, which the match condition
+// routes here only because its name starts like an operation Job's, and its
+// Pods are orphaned as any Job's are. The test is operationJob, the one the
+// Job orphan-deletion guard applies, so an orphaning deletion that guard admits
+// is one this webhook lets finish.
+//
+// A Job that cannot be read as the one the Pod named keeps the Pod: a failed
+// read, a Job that is gone and one that holds the name under another UID say
+// nothing about whether the Pod runs an operation.
+func (h *ValidationHandler) judgeJobOwnerRemoval(
+	ctx context.Context,
+	namespace string,
+	owner metav1.OwnerReference,
+) cradmission.Response {
+	job := &batchv1.Job{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: owner.Name}, job); err != nil {
+		return podIntentReadError("read the Job the Pod update removed", err)
+	}
+	if job.UID == "" || job.UID != owner.UID {
+		return cradmission.Denied("Pod update removed the owner reference of a Job that has been replaced")
+	}
+	if operationJob(job) {
+		return cradmission.Denied("Pod update removed its exact Job owner")
+	}
+	return cradmission.Allowed("Pod update removed the owner reference of a Job the operator does not run")
 }
 
 func isKubernetesJobController(username string) bool {
