@@ -116,10 +116,12 @@ another account defines later. `SHOW VIEW` shows the definitions of views. Add
 objects are managed.
 
 A view runs as its definer unless it says `SQL SECURITY INVOKER`, and a plan
-that replaces a view sets the mode again. Since Ptah v0.26.0 a plan switches a
-view the database holds as `INVOKER` to `DEFINER` when the declaration names no
-mode, and records the connected account as the view's definer. Declare the mode
-each managed view should have.
+that replaces a view sets the mode again and records the connected account as
+the view's definer. Since Ptah v0.29.3 a plan refuses to replace a view the
+database holds as `INVOKER` when the declaration names no mode, and the Plan
+fails with the code `view-security-option`; from v0.26.0 to v0.29.2 such a
+plan switched the view to `DEFINER`. Declare the mode each managed view should
+have.
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
 says why every MySQL view a plan replaces waits for an approval under
 `apply: Always`.

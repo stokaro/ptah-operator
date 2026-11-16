@@ -238,12 +238,13 @@ and not from the SQL:
   with its owner's, so a person decides. This covers `CREATE VIEW`, a
   `CREATE OR REPLACE VIEW` whose effect records no value before, and either
   statement with no effect, which is how Ptah writes a `CREATE OR REPLACE VIEW`
-  of a view a `CASCADE` may have taken. Until Ptah records what such a
-  statement drops
-  ([stokaro/ptah#6023](https://github.com/stokaro/ptah/issues/6023)), the hold
-  cannot tell a view the statement took from one it left or one that never
-  existed, so it covers them all. A `CREATE VIEW` with no such statement before
-  it is read as below.
+  of a view a `CASCADE` may have taken. Since v0.29.3 each view effect also
+  records, as `before_plan`, whether the view existed when the plan started and
+  the options it held then
+  ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)). The operator
+  does not read it yet, so the hold cannot tell a view the statement took from
+  one it left or one that never existed, and covers them all. A `CREATE VIEW`
+  with no such statement before it is read as below.
 - Any other view the statement creates is raised when it reads with invoker
   rights. One with its owner's rights is raised no more than a view that
   states no option.
@@ -261,17 +262,24 @@ were read from, so an Apply refuses the plan as stale if that database moved.
 
 A MySQL or MariaDB view runs with its definer's rights unless it says
 `SQL SECURITY INVOKER`, and `CREATE OR REPLACE VIEW` and `ALTER VIEW` set the
-mode afresh, to `DEFINER` where they name none. Since v0.26.0 Ptah reads a
-view's mode and plans the one the declaration states
-([stokaro/ptah#5902](https://github.com/stokaro/ptah/pull/5902)), so a view the
-database holds as `INVOKER` and the declaration leaves without a mode is
-replaced as a `DEFINER` view. Ptah records no effect for a MySQL view, and the
-statement does not say what the view held, so every MySQL or MariaDB
-`CREATE OR REPLACE VIEW` and `ALTER VIEW` is raised as `SecurityDefiner`, and a
-plan that changes a view's body waits for an approval under `Always`. A new view
-is raised only when it states `SQL SECURITY DEFINER`. Declare the mode a view
-should keep, `CREATE SQL SECURITY INVOKER VIEW` in a SQL schema file or
-`security="INVOKER"` on a view annotation, so that a plan does not change it.
+mode afresh, to `DEFINER` where they name none, and make the login that runs
+them the view's definer. Since v0.26.0 Ptah reads a view's mode and plans the
+one the declaration states
+([stokaro/ptah#5902](https://github.com/stokaro/ptah/pull/5902)). Since v0.29.3
+it refuses to plan a view the database holds as `INVOKER` and the declaration
+leaves without a mode, with the code `view-security-option`
+([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)), where v0.26.0
+to v0.29.2 replaced it as a `DEFINER` view.
+[A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+says what to declare. Since v0.29.3 each MySQL view statement also records its
+mode before and after the statement, as an `sql_security` effect. The operator
+does not read it, and the mode does not say who the definer becomes, so every
+MySQL or MariaDB `CREATE OR REPLACE VIEW` and `ALTER VIEW` is raised as
+`SecurityDefiner`, and a plan that changes a view's body waits for an approval
+under `Always`. A new view is raised only when it states `SQL SECURITY
+DEFINER`. Declare the mode a view should keep, `CREATE SQL SECURITY INVOKER
+VIEW` in a SQL schema file or `security="INVOKER"` on a view annotation, so that
+a plan does not change it.
 
 The class only adds. Ptah's plan document has no field for it and a document
 that tried to supply one is refused, a statement Ptah rated `safe` is raised all
