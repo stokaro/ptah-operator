@@ -589,16 +589,29 @@ refusal record, such as one from an earlier release.
 ## A Plan that stops without saying why
 
 Ptah refuses some changes rather than plan them. A refusal Ptah names by a code
-reaches status as `plan_refused: ptah refused to plan the change (<code>)`, with
-no more than the code. A plan Ptah fails to make for any other reason than
-opening the target or reading the file reads `invalid_plan_output: plan command
-did not complete successfully`. Either way the sentence stays in the Pod, and
-running `ptah schema plan` yourself, at the digest the operator pins, prints it.
+reaches status as `plan_refused: ptah refused to plan the change (<code>)`. A
+plan Ptah fails to make for any other reason than opening the target or reading
+the file reads `invalid_plan_output: plan command did not complete
+successfully`. Either way Ptah's sentence stays in the Pod, and running `ptah
+schema plan` yourself, at the digest the operator pins, prints it.
+
+Where Ptah's report lists the views and options it refused, as it does for
+`view-security-option` since v0.29.3, the message names them after the code,
+each as the view, spelled as the schema spells it, and the option:
+
+```
+plan_refused: ptah refused to plan the change (view-security-option: orders_view sql_security, notes_view sql_security)
+```
+
+It names the first eight that fit in the 512 bytes an Event keeps, then counts
+the rest, as in `, and 3 more`. A view name too long to fit is cut and ends in
+`...`, and a control character in one reads as a space. A report that lists no
+view, or lists them in a form the operator does not read, gives the code alone.
 
 | What Ptah refused | How it shows | What to do |
 | --- | --- | --- |
-| A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
-| A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
+| A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
+| A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and `sql_security`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
 | The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
 

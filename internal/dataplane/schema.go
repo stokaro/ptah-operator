@@ -86,7 +86,8 @@ var (
 	}
 	// schemaRefusalCodePattern is the shape a refusal code may take. A code is
 	// an identifier the runner may name in a message, so a value that is not
-	// one is a malformed document rather than a new code.
+	// one is a malformed document rather than a new code. An option a refusal
+	// names is held to it too, for the same reason.
 	schemaRefusalCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 )
 
@@ -100,6 +101,45 @@ type SchemaRefusal struct {
 	Changed             string `json:"changed,omitempty"`
 	PlanFingerprint     string `json:"plan_fingerprint,omitempty"`
 	DatabaseFingerprint string `json:"database_fingerprint,omitempty"`
+	// ViewOptions are the views and security options a refusal names, one
+	// entry per view and option, as view-security-option does since Ptah
+	// v0.29.3 (stokaro/ptah#6105). They are kept as Ptah wrote them and read
+	// by NamedViewOptions, so a list in a form this operator does not read
+	// leaves the rest of the document readable.
+	ViewOptions json.RawMessage `json:"view_options,omitempty"`
+}
+
+// SchemaRefusalViewOption is one view and one of its options that a refusal
+// names. View is spelled as the schema spells it, so it can hold any text an
+// identifier can; Option is the option's name, or sql_security for a MySQL or
+// MariaDB view's SQL SECURITY mode.
+type SchemaRefusalViewOption struct {
+	View   string `json:"view"`
+	Option string `json:"option"`
+}
+
+// NamedViewOptions reads the views and options the refusal names, in the order
+// Ptah lists them. It reports false when the refusal names none, and when it
+// names them in a form this operator does not read: anything but a list of
+// objects, each with a view and an option that is an identifier. A caller then
+// names the refusal by its code alone, as it did before Ptah named the views.
+//
+// The view is returned as written. It comes from a schema or a database, so a
+// caller that shows it cleans it first.
+func (r SchemaRefusal) NamedViewOptions() ([]SchemaRefusalViewOption, bool) {
+	if len(r.ViewOptions) == 0 {
+		return nil, false
+	}
+	var named []SchemaRefusalViewOption
+	if err := json.Unmarshal(r.ViewOptions, &named); err != nil || len(named) == 0 {
+		return nil, false
+	}
+	for _, each := range named {
+		if each.View == "" || !schemaRefusalCodePattern.MatchString(each.Option) {
+			return nil, false
+		}
+	}
+	return named, true
 }
 
 // SchemaPlanReport is Ptah's `schema plan --json` document.
