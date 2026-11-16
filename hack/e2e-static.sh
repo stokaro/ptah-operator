@@ -2403,10 +2403,10 @@ hook_service_account_name=$(awk '
 # The release keeps twelve admission policies -- seven on the manager's own
 # writes, the apply-policy guard, the two that keep status and the copy of an
 # unresolved run the manager's, and the two that refuse an orphaning deletion,
-# of a resource and of an operation Job -- and each is an ordinary release object: no hook annotation, no keep policy
-# and no parameter. Their
-# names carry the release's own digest and nothing that changes between its
-# upgrades, so an upgrade updates each in place and the uninstall deletes it.
+# of a resource and of an operation Job -- and each is an ordinary release
+# object: no hook annotation, no keep policy and no parameter. Their names carry
+# the release's own digest and nothing that changes between its upgrades, so an
+# upgrade updates each in place and the uninstall deletes it.
 controller_guard_policy_names() {
 	awk '
       /^kind: ValidatingAdmissionPolicy$/ {policy = 1; next}

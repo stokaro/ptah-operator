@@ -280,8 +280,11 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		}
 	}
 
-	// The webhook judges a Job's CREATE and UPDATE. A person who has read a failed
-	// Apply's log deletes the Job, and nothing here stands in the way.
+	// The webhook judges a Job's CREATE and UPDATE, not its deletion. A person who
+	// has read a failed Apply's log deletes the Job with the propagation kubectl
+	// sends. The chart's job orphan-deletion guard, which this suite does not
+	// install, refuses a deletion that names none, because batch/v1 would orphan
+	// the Job's Pods; test/envtest/admissionpolicy holds that.
 	t.Run("a person deletes a retained Job", func(t *testing.T) {
 		grant(t, fixture.namespace, "person-job-delete", rbacv1.Subject{Kind: rbacv1.UserKind, Name: "retained-job-reader"},
 			rbacv1.PolicyRule{APIGroups: []string{batchv1.GroupName}, Resources: []string{"jobs"}, Verbs: []string{"delete"}})
@@ -292,7 +295,8 @@ func TestControllerWriteWebhookHoldsTheCleanupTTLToItsReason(t *testing.T) {
 		if err := admin.Patch(ctx, patched, client.MergeFrom(job)); err != nil {
 			t.Fatalf("give Job %s its TTL: %v", job.Name, err)
 		}
-		if err := clientAs(t, "retained-job-reader").Delete(ctx, patched, client.DryRunAll); err != nil {
+		if err := clientAs(t, "retained-job-reader").Delete(ctx, patched,
+			client.PropagationPolicy(metav1.DeletePropagationBackground), client.DryRunAll); err != nil {
 			t.Fatalf("delete Job %s: %v", patched.Name, err)
 		}
 	})
