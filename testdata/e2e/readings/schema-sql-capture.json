@@ -1,10 +1,10 @@
 {
   "scope": "Isolated CLI readings of the SQL the executor sends for schema diagnostics, plan validation, the refused stale Apply, the allowed Apply, migration History and the refused restored-history Apply; not Kubernetes acceptance.",
-  "capturedOn": "2026-11-15",
+  "capturedOn": "2026-11-16",
   "procedure": "python3 support/qualification/probes/schema_sql_readings.py --context <context> --executor-image <image> --out <dir>",
-  "ptahRelease": "v0.29.2",
-  "ptahCommit": "ba500e11b2536ad7dad1720e5cbd9bf7292dba8b",
-  "executorImage": "ghcr.io/stokaro/ptah@sha256:f3272308b3d28008f9d574690fe1543637c3f4c09f60028437ae27780d719d2a",
+  "ptahRelease": "v0.29.3",
+  "ptahCommit": "dfbda1b29a7e4591a41334c6949dddac3a6bd69d",
+  "executorImage": "ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96",
   "serverImages": {
     "postgresql": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
     "mysql": "mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
@@ -12,7 +12,7 @@
     "postgresql-16": "postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28"
   },
   "clientAddress": "172.19.0.3",
-  "control": "The same procedure run with the Ptah v0.28.0 release image reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, apart from the run id and the entry time of the allowed Apply's two ptah_schema_apply_log entries, which every run draws anew and the comparison leaves out. The v0.29.0 and v0.29.2 release images reproduced every reading the same way, and all four saved exclusion plans byte for byte, so no reading or plan here changed, and each exit status and record count is the one v0.29.2 gave.",
+  "control": "The same procedure run with the Ptah v0.28.0 release image reproduced every checked-in reading record for record, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, apart from the run id and the entry time of the allowed Apply's two ptah_schema_apply_log entries, which every run draws anew and the comparison leaves out. The v0.29.0, v0.29.2 and v0.29.3 release images reproduced every reading the same way, the PostgreSQL 18 and 16 witnesses included, and all four saved exclusion plans byte for byte, so no reading or plan here changed, and each exit status and record count is the one v0.29.3 gave.",
   "readings": {
     "mysql-migration-history-audit.jsonl": {
       "exitCode": 0,
