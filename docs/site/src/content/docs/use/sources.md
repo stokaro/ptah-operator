@@ -254,9 +254,10 @@ hold `caSHA256`, the SHA-256 of those exact bytes, so the credential is sent
 only under the trust its owner granted. The pin holds the other way too: a
 resource that names a Secret holding `caSHA256` and selects no CA is refused
 before Ptah runs, rather than sending the credential under the system roots: a
-Resolve fails with `invalid_git_access`, and a fetch step with
-`git_source_refused` in its termination message. Over `ssh://`, where no TLS
-is spoken, the pin is not read:
+Resolve fails with `invalid_git_access`, and the `fetch-git-source` step of a
+later operation stops with the same code and sentence, which the condition
+carries after the step's name. Over `ssh://`, where no TLS is spoken, the pin
+is not read:
 
 ```sh
 kubectl -n application create configmap git-example-ca --from-file=ca.pem

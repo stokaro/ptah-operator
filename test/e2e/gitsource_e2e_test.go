@@ -208,7 +208,7 @@ func (c *gitRun) standUp() {
 		"sshPrivateKey": c.keys.ClientKeyPEM, "host": []byte(c.host), "knownHostsSHA256": []byte(grantDigest(c.keys.OtherKnownHosts)),
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitElsewhereCredential), Data: map[string][]byte{
-		"password": []byte(c.keys.Token), "host": []byte("git.example.com"), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
+		"password": []byte(c.keys.Token), "host": []byte(gitElsewhereHost), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
 	}})
 	c.put(&corev1.Secret{ObjectMeta: object(gitCAPinCredential), Data: map[string][]byte{
 		"password": []byte(c.keys.Token), "host": []byte(c.qualified), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
@@ -401,10 +401,14 @@ func (c *gitRun) reset() {
 		&ptahv1alpha1.PtahMigrationApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "e2e-git-migration-v1"}},
 	}
 	for _, schema := range []string{
-		gitSchema, gitRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema, gitUnreadableSchema,
+		gitSchema, gitRefusedSchema, gitFetchRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema,
+		gitHostKeySchema, gitUnreadableSchema,
 	} {
 		objects = append(objects, &ptahv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: schema}})
 	}
+	// The fetch refusal row's database Secret has to be missing when its
+	// schema is created.
+	objects = append(objects, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitFetchRefusedSecret}})
 	for _, approval := range []string{"e2e-git-schema-v1", "e2e-git-schema-v2", "e2e-git-schema-v3", "e2e-git-pinned-v1"} {
 		objects = append(objects, &ptahv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: approval}})
 	}
@@ -853,14 +857,93 @@ func (c *gitRun) migrationOverSSH() {
 // reaches the database. The schema still in sync on the phase's database
 // holds that realm, so the refused one takes a key of its own, as the
 // refused sources do: sharing it would block both before any Resolve.
+//
+// The same grant then meets an Observe's fetch rather than a Resolve
+// (refusedAtFetch), and the schema says it in the Resolve's words.
 func (c *gitRun) credentialForAnotherHost() {
 	c.t.Helper()
 	c.check(c.create(c.schemaDocumentFor(gitRefusedSchema, gitSchemaSecret, gitRefusedKey,
 		c.httpsSource(gitSchemaPath, gitElsewhereCredential))), "create PtahSchema %s", gitRefusedSchema)
 	refusal := c.refusedAtResolve(gitRefusedSchema, "not granted for the source's host")
+	if !strings.HasPrefix(refusal, gitAccessRefused) {
+		c.fatalf("the Resolve refused the credential with %q, not under %q", c.scanned(refusal), gitAccessRefused)
+	}
 	schema := c.onlyResolved(gitRefusedSchema)
 	c.deleteAndWait(schema)
 	c.logf("PASS a credential granted for another host was refused before Ptah ran: %s", refusal)
+	c.refusedAtFetch(refusal)
+}
+
+// refusedAtFetch has the credential's owner grant it for another host after
+// a Resolve was allowed it, so the refusal comes from the fetch-git-source
+// step of the Observe that follows, which checks the access itself before
+// Ptah runs. The kubelet holds that Observe's Pod before any container starts,
+// for a database Secret that does not exist yet; the grant moves while it
+// holds, and the Secret is created after. The step reads the grant when it
+// starts, refuses, and the schema's ReconciliationFailed names the step and
+// then says exactly what the Resolve said of the same grant.
+//
+// A kubelet that started the step on the old grant would let the fetch run,
+// and the Observe would fail on the database its URL names, which is never
+// created: the row's wait fails then, naming what the schema said.
+func (c *gitRun) refusedAtFetch(resolveRefusal string) {
+	c.t.Helper()
+	namespace := c.in.TestNamespace
+	// A new object on each write: put updates an existing Secret only from
+	// one that names no resource version.
+	grantedFor := func(host string) *corev1.Secret {
+		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitFetchRefusedCredential}, Data: map[string][]byte{
+			"password": []byte(c.keys.Token), "host": []byte(host), "caSHA256": []byte(grantDigest(c.keys.CAPEM)),
+		}}
+	}
+	c.put(grantedFor(c.host))
+	c.check(c.create(c.schemaDocumentFor(gitFetchRefusedSchema, gitFetchRefusedSecret, gitFetchRefusedKey,
+		c.httpsSource(gitSchemaPath, gitFetchRefusedCredential))), "create PtahSchema %s", gitFetchRefusedSchema)
+
+	missing := `secret "` + gitFetchRefusedSecret + `" not found`
+	var held *ptahv1alpha1.PtahSchema
+	c.wait(gitFetchRefusedSchema+" to resolve and hold its Observe for the database Secret", func() (bool, string) {
+		schema := c.schemaNamed(gitFetchRefusedSchema)
+		if err := heldBeforeFetch(schema, missing); err != nil {
+			return false, c.scanned(err.Error())
+		}
+		held = schema
+		return true, ""
+	})
+	c.put(grantedFor(gitElsewhereHost))
+	c.put(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitFetchRefusedSecret}, Data: map[string][]byte{
+		"url": []byte(c.engine.databaseURL(namespace, migrationDatabaseUser, c.password, gitFetchRefusedKey)),
+	}})
+
+	var refused *ptahv1alpha1.PtahSchema
+	c.wait(gitFetchRefusedSchema+" to be refused at its Observe's fetch in the Resolve's words", func() (bool, string) {
+		schema := c.schemaNamed(gitFetchRefusedSchema)
+		if err := refusedAtFetch(schema, held.Generation, gitFetchInit, resolveRefusal); err != nil {
+			// Nothing else fails this generation: its Resolve passed, and
+			// the held Pod is not a failure. Any other failure is the
+			// verdict, and waiting would only hide it.
+			if failedAt(schema, held.Generation) {
+				c.fatalf("%s failed otherwise: %s", gitFetchRefusedSchema, c.scanned(err.Error()))
+			}
+			return false, c.scanned(err.Error())
+		}
+		refused = schema
+		return true, ""
+	})
+	c.printReading("fetch-refused schema", refused.Status)
+	reading, err := json.Marshal(refused)
+	c.check(err, "encode %s", gitFetchRefusedSchema)
+	if !c.scanner.ready() || c.scanner.leaks(reading) {
+		c.fatalf("%s could not be scanned, or holds a protected credential", gitFetchRefusedSchema)
+	}
+	if refused.Status.Plan != nil {
+		c.fatalf("%s planned %+v although its fetch refused the source", gitFetchRefusedSchema, refused.Status.Plan)
+	}
+	message := meta.FindStatusCondition(refused.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed).Message
+	c.deleteAndWait(refused)
+	c.deleteAndWait(grantedFor(gitElsewhereHost))
+	c.deleteAndWait(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: gitFetchRefusedSecret}})
+	c.logf("PASS a credential granted for another host after its Resolve was refused at the Observe's fetch: %s", c.scanned(message))
 }
 
 // caPinWithoutTheCA names a credential whose Secret pins caSHA256 from an
@@ -1197,7 +1280,9 @@ func (c *gitRun) cleanup() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	for _, name := range []string{gitSchema, gitRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema} {
+	for _, name := range []string{
+		gitSchema, gitRefusedSchema, gitFetchRefusedSchema, gitCAPinSchema, gitPinnedSchema, gitSubmoduleSchema, gitLFSSchema, gitHostKeySchema,
+	} {
 		schema := &ptahv1alpha1.PtahSchema{}
 		if c.cluster.Client.Get(ctx, c.key(name), schema) == nil {
 			_, _ = fmt.Fprintf(os.Stderr, "e2e Git sources: %s status %+v\n", name, schema.Status)

@@ -958,7 +958,15 @@ status out of a desired file.
 
 Outside status and Events, a failed `fetch-git-source` or `fetch-https-source`
 init container writes standard error, handled by the same function, to its log, and the kubelet copies
-the end of that log into the Pod's status. The `fetch-schema` and `fetch-migrations`
+the end of that log into the Pod's status. When the runner refuses the source's
+access in one of them, or in the `validate-source-authority` step before an OCI
+fetch, it writes a refusal record to the termination message instead: the code
+and the sentence a Resolve reports for the same check, redacted with the
+container's credentials as a frame's error is, and at most 1536 bytes. The
+sentence names grants, keys, fields and hosts, never a credential's value, and
+the manager carries it into status and the Event after the step's name. It
+reads the record only from those steps, and only when the termination message
+is that record and nothing else. The `fetch-schema` and `fetch-migrations`
 init containers run Ptah's pull through the runner, which reads the registry
 credential files and hands Ptah's output to the container's streams as Ptah wrote
 it, with nothing removed. Those containers hold the registry credentials, which is
