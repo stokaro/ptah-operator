@@ -69,6 +69,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - PostgreSQL 16.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 43292445627 passed on every supported Kubernetes minor at Ptah v0.23.0.
 - Run 43574056611 of the same workflow passed both lines on every supported Kubernetes minor at Ptah v0.26.0.
 - Run 43687878804 of the same workflow passed both lines on every supported Kubernetes minor at Ptah v0.29.0.
+- Run 43780370228 of the same workflow passed both lines on every supported Kubernetes minor at the Ptah build under Verified.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
 
 ### v0.2.13
@@ -81,7 +82,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.13/](https:/
 
 - Ptah `v0.29.0`. Commit [`75fa9991177e9049b66fe2e37abec0db40f47568`](https://github.com/stokaro/ptah/commit/75fa9991177e9049b66fe2e37abec0db40f47568), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its tenth limitation.
+**Limitations:** the same as [`edge`](#edge) without its tenth and seventeenth limitations.
 
 ### v0.2.12
 
@@ -93,7 +94,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.12/](https:/
 
 - Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its seventh, eighth, ninth, tenth and sixteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its seventh, eighth, ninth, tenth, sixteenth and seventeenth limitations.
 
 ### v0.2.11
 
@@ -105,7 +106,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.11/](https:/
 
 - Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, fifteenth and sixteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, fifteenth, sixteenth and seventeenth limitations.
 
 ### v0.2.10
 
@@ -115,7 +116,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.10/](https:/
 
 **Verified:** the same as [`v0.2.11`](#v0211).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, fourteenth, fifteenth and sixteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, fourteenth, fifteenth, sixteenth and seventeenth limitations.
 
 ### v0.2.9
 
@@ -127,7 +128,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, thirteenth, fourteenth, fifteenth and sixteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, thirteenth, fourteenth, fifteenth, sixteenth and seventeenth limitations.
 
 ### v0.2.8
 

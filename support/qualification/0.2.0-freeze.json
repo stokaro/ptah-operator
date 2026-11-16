@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-15T19:26:14.576012+00:00",
+  "frozenAt": "2026-11-16T01:58:16.773908+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "782440e4c6ec020654c35357c5921a151dae08907989773bb173a2e205258343"
+      "sha256": "f76f691da357fef2e65abfadfb3dbb7d17af76e29ec93fd42947e789d074ab73"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.13 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 108,
+  "revision": 109,
   "supersedes": {
-    "freezeCommit": "5d1af57ad3bbe11612388f3bf7ffae4a34dbb4ea",
-    "sha256": "43004f0e44294fc00ec769cdf60ed27d7b404317268f24da79aaa93d4c184932"
+    "freezeCommit": "36cfcdeed3f213f9e30b34c4a7f34713839970ec",
+    "sha256": "f33a3b22f2c0f864832008022d89eebbbc43f1cd9547c1cc0c3d3102848867bc"
   },
-  "revisionReason": "Add the scenario git-ca-pin-refused to the phase git-sources: the acceptance row for the CA pin v0.2.12 enforces on an https:// Git source, under which a credential whose Secret holds caSHA256 is refused for a source that selects no CA. The functional matrix gains the scenario. Phases, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Prepare 0.2.14: PostgreSQL 18.x and 16.x name run 43780370228 of the Added database lines workflow, which passed both lines on every supported Kubernetes minor at Ptah v0.29.2, the build the edge row verifies. The profile, its targets and every other input are unchanged."
 }
