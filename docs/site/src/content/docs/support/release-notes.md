@@ -59,11 +59,13 @@ another account, point the schema's Secret at that account, or declare the view
 in `spec.policy.exclude`. A view only stops a Plan that would replace it.
 
 A MySQL or MariaDB migration file that writes `DEFINER=` for another account
-now stops its run before the first file when the migration's login holds
-neither `SET_ANY_DEFINER` on MySQL nor `SET USER` on MariaDB
-([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)). Under v0.29.3
-the files before it ran and the server refused the statement with error 1227.
-Grant the privilege, or have the file name the login.
+now stops its run before the first file when the login's grants show that it
+may not name that account
+([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)). Where the
+grants do not decide it, as for a MariaDB login that holds only `SUPER`, the run
+goes ahead and the server answers as before. Under v0.29.3 the files before it
+ran and the server refused the statement with error 1227. Grant the privilege
+the Pod log names, or have the file name the login.
 
 A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
@@ -112,12 +114,15 @@ propagation is refused from this release: have it name
   first file, as `Failed` with nothing committed, and the Pod log names the
   file, the definer, the login and the privilege.
   [A definer the login may not name](../../troubleshoot/condition-reasons/#a-definer-the-login-may-not-name)
-  says what to grant. At v0.29.4 the check reads each file of a run alone: for
-  a login that holds `SET_ANY_DEFINER` without `ALLOW_NONEXISTENT_DEFINER` it
-  refuses a file whose definer an earlier file of the same run creates, on
-  MariaDB it refuses `DEFINER=CURRENT_ROLE` and a role, which the server
-  accepts, and it leaves a definer inside a mysqldump `/*!50013 ... */` comment
-  to the server ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
+  says what to grant. At v0.29.4 the check asks whether each definer exists
+  before any file runs. For a MySQL login that can read `mysql.user` and holds
+  `SET_ANY_DEFINER` without `ALLOW_NONEXISTENT_DEFINER`, `SUPER`,
+  `SET_USER_ID` or `ALL PRIVILEGES`, it therefore refuses a file whose definer
+  an earlier file of the same run creates. On MariaDB it refuses
+  `DEFINER=CURRENT_ROLE` and a host-less definer that names a role the login
+  may use, both of which the server accepts. It leaves a definer inside a
+  mysqldump `/*!50013 ... */` comment to the server
+  ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
 - **A refused Apply says why in its Pod log.** When Ptah refuses the plan an
   Apply was given, the runner now writes Ptah's sentence to the operation Pod's
   log, as it does for a failed Apply, and `Applying` ends with the command that

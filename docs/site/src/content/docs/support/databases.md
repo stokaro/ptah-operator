@@ -133,13 +133,18 @@ as its definer, declare it `SQL SECURITY INVOKER`, or list it in
 `spec.policy.exclude`. A view held or declared as `INVOKER` is still replaced,
 and the login becomes its definer.
 
-A schema plan names no definer but the login, and an Apply runs as the login
-its plan was read as, so a schema's login needs no global privilege for its
-views. A migration file can name any account. A statement that names another
-account as a definer needs `SET_ANY_DEFINER` on MySQL, with
-`ALLOW_NONEXISTENT_DEFINER` for an account the server does not have, or
-`SET USER` on MariaDB, and since v0.29.4 Ptah refuses a migration run whose
-login lacks it before the first file
+A schema plan names no definer but the account its read ran as, and an Apply
+connects as the login its plan was read as, so a schema's login needs no global
+privilege for its views while it matches the same MySQL account from every
+Pod. A login that matches two, as `'ptah'@'%'` and `'ptah'@'10.244.1.%'` do,
+can run an Apply as another account than its plan's read, and Ptah refuses
+that Apply as `definer-privilege`. A migration file can name any account. A
+statement that names another account as a definer needs the privilege the
+server checks for it: `SET_ANY_DEFINER` on MySQL, with
+`ALLOW_NONEXISTENT_DEFINER` as well for an account the server does not have,
+and `SET USER` on MariaDB. Since v0.29.4 Ptah refuses a migration run before
+the first file when the login's grants show that it may not name such an
+account
 ([A definer the login may not name](../../troubleshoot/condition-reasons/#a-definer-the-login-may-not-name)).
 Grant it only to the login of a migration whose files name another definer,
 with `GRANT SET_ANY_DEFINER ON *.* TO 'ptah'@'%'` on MySQL or

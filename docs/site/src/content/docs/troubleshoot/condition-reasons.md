@@ -332,8 +332,10 @@ report carries neither yet.
 
 A MySQL or MariaDB statement that names another account as the definer of a
 view, a routine, a trigger or an event fails with error 1227 unless the login
-holds `SET_ANY_DEFINER` on MySQL, with `ALLOW_NONEXISTENT_DEFINER` for an
-account the server does not have, or `SET USER` on MariaDB. Those engines run
+holds the privilege the server checks for it. On MySQL that is
+`SET_ANY_DEFINER`, with `ALLOW_NONEXISTENT_DEFINER` as well for an account the
+server does not have; `SUPER`, the older `SET_USER_ID` and `ALL PRIVILEGES`
+pass Ptah's check too. On MariaDB it is `SET USER`. Those engines run
 DDL outside a transaction, so such a failure halfway through a run would leave
 the statements before it applied. Since v0.29.4 Ptah reads the login's grants
 before the first statement of a schema Apply or a migration run, and refuses
@@ -352,16 +354,24 @@ ptah-runner: ptah reported: refusing before any statement runs: view orders_view
 
 Grant the privilege it names to the migration's login, or write the file so
 that it names the login, or `CURRENT_USER`, which needs no privilege. Where the
-grants do not decide it, as when `SHOW GRANTS` fails, Ptah refuses nothing and
-the server answers with error 1227 as before.
+grants do not decide it, as when `SHOW GRANTS` fails or a MariaDB login holds
+only `SUPER`, which some MariaDB releases accept and others refuse, Ptah
+refuses nothing, and the server answers as it did before v0.29.4.
 
 A schema plan names a definer only for a view it replaces that runs as its
 definer, and only when the plan's read connected as that definer:
 ``CREATE OR REPLACE DEFINER=`owner`@`%` VIEW``. A plan read as another login
 is refused as `view-definer` below. The plan binds the login its URL names, and
 the runner refuses an Apply whose Secret names another one with
-`target_binding_mismatch` before Ptah runs, so the definer a plan names is the
-login the Apply connects as.
+`target_binding_mismatch` before Ptah runs, so an Apply connects as the login
+the plan was read as. It runs as the same account unless that login matches
+more than one MySQL account, as `'ptah'@'%'` and `'ptah'@'10.244.1.%'` do. An
+Apply whose Pod connects from an address another of them matches runs as that
+account, and Ptah refuses the definer the plan names before the first
+statement. Status names the code,
+`apply_refused: ptah refused the approved plan (definer-privilege)`, and the
+Pod log carries Ptah's sentence, which names the privilege. Drop the account
+the login should not match, or grant the privilege.
 
 ## A database the operation could not open
 
