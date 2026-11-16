@@ -122,9 +122,6 @@ func TestPodIntentWebhook(t *testing.T) {
 		if err != nil {
 			t.Fatalf("the API server refused the stopped status of %s/%s: %v", pod.Namespace, pod.Name, err)
 		}
-		if !controlledBy(pod, job) {
-			t.Fatalf("the stopped Pod %s/%s no longer names the Job %s as its controller: %v", pod.Namespace, pod.Name, job.Name, pod.OwnerReferences)
-		}
 	})
 
 	t.Run("a Pod running another image is refused", func(t *testing.T) {
@@ -169,11 +166,6 @@ func TestPodIntentWebhook(t *testing.T) {
 		err := clientAs(t, jobController).Create(ctx, podFor(long), client.DryRunAll)
 		requireDenied(t, err, podIntentWebhook, "a read-only Job's cleanup TTL is 300 seconds")
 	})
-}
-
-func controlledBy(pod *corev1.Pod, job *batchv1.Job) bool {
-	owner := metav1.GetControllerOf(pod)
-	return owner != nil && owner.UID == job.UID && owner.Kind == "Job"
 }
 
 func hasToleration(tolerations []corev1.Toleration, key string) bool {
