@@ -3,7 +3,7 @@
   "command": "schema apply",
   "outcome": "applied",
   "plan_name": "plan_1d26fef34867",
-  "plan_digest": "sha256:96ba98548a02f6760297b9ac19174218ad947aa55dbea35d6690d8c3bfe39ead",
+  "plan_digest": "sha256:90b525bb2714c67cdb64eab114086d5e4147f25e240ccd044ae860946d277e64",
   "units": [
     {
       "sql": "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
@@ -29,7 +29,20 @@
               "after": true,
               "changed": true
             }
-          ]
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": false
+              }
+            ]
+          }
         }
       ]
     }

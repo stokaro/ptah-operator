@@ -283,14 +283,26 @@ field each mistake would change. They name the lab namespace, the Job and the
 Pod, and hold no credentials or SQL.
 
 `view-invoker-created-plan.json`, `view-invoker-turned-on-plan.json` and
-`view-invoker-body-kept-plan.json` are the plans the Ptah v0.26.0 release image
+`view-invoker-body-kept-plan.json` are the plans the Ptah v0.29.3 release image
+`ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`
+(commit `dfbda1b29a7e4591a41334c6949dddac3a6bd69d`) saved on November 16, 2026
+for `testdata/e2e/postgresql-external-v4-view.sql`, `-v5-view-invoker.sql` and
+`-v6-view-body.sql`, in that order, through the lab of
+`support/qualification/probes/schema_sql_readings.py`, against one PostgreSQL 17
+database that a plan of `postgresql-external-v3-grant.sql` had been applied to.
+Each was applied with `ptah schema apply --plan` before the next was planned,
+and each Apply wrote its two schema apply log entries. They are stored as Ptah
+wrote them, and hold no credentials. Against the plans they replace, each
+effect gains `before_plan`, which says whether the view existed when the plan
+started and the options it held then
+([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)), and nothing
+else moved but the plan name and the `from_fingerprint`, which identify the
+database the plan read. The predicate does not read `before_plan`.
+
+The plans they replace were the ones the Ptah v0.26.0 release image
 `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`
 (commit `1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`) saved on November 13, 2026
-for `testdata/e2e/postgresql-external-v4-view.sql`, `-v5-view-invoker.sql` and
-`-v6-view-body.sql`, in that order, against one PostgreSQL 17.12 database that
-`postgresql-external-v3-grant.sql` had been applied to. Each was applied with
-`ptah schema apply --plan` before the next was planned. They are stored as Ptah
-wrote them, and hold no credentials. On November 14, 2026 the v0.28.0 release
+the same way, in another setup, against a PostgreSQL 17.12 database. On November 14, 2026 the v0.28.0 release
 image (commit `2ee460a6`), run the same way against PostgreSQL 17.11, saved the
 same three files byte for byte, and each Apply wrote its two schema apply log
 entries. On November 15, 2026 the v0.29.0 release image (commit `75fa9991`)

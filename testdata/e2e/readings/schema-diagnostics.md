@@ -14,7 +14,9 @@ November 4, 2026 with v0.18.0, on November 6, 2026 with v0.22.0, on November 7,
 v0.28.0, and on November 15, 2026 with the Ptah v0.29.0 release image, commit
 `75fa9991177e9049b66fe2e37abec0db40f47568`, and with the Ptah v0.29.2 release
 image, commit `ba500e11b2536ad7dad1720e5cbd9bf7292dba8b`, which both reproduced
-every reading, so no file changed.
+every reading, so no file changed. On November 16, 2026 the Ptah v0.29.3 release
+image, commit `dfbda1b29a7e4591a41334c6949dddac3a6bd69d`, reproduced every
+reading again.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.

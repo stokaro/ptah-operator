@@ -28,7 +28,24 @@ const (
 	addedKey = "added_by_a_newer_ptah"
 )
 
-var oneStatement = []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}
+var (
+	oneStatement = []string{"CREATE TABLE customers (id BIGINT PRIMARY KEY)"}
+	oneView      = []string{"CREATE VIEW customer_ids AS SELECT id FROM customers"}
+)
+
+// viewEffect is the effect Ptah records for oneView, with a field this build
+// does not declare holding added.
+func viewEffect(added string) []any {
+	return []any{map[string]any{
+		"version": 1,
+		"object":  map[string]any{"kind": "view", "schema": "public", "name": "customer_ids"},
+		"action":  "create",
+		"properties": []any{
+			map[string]any{"name": "security_invoker", "after": false, "changed": true},
+		},
+		"before_plan": map[string]any{"exists": false, "note": added},
+	}}
+}
 
 // edited is a plan document after an edit a test makes to its decoded form.
 func edited(t *testing.T, statements []string, edit func(map[string]any)) []byte {
@@ -275,6 +292,25 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 			unread:   []string{strings.Repeat("a", 128)},
 		},
 		{
+			// An effect record decodes itself and ignores a field Ptah adds to
+			// it, as v0.29.3 added before_plan, so the strict decoder reads the
+			// document whole and the walk names nothing in the record.
+			name: "a field Ptah added to an effect",
+			document: func(t *testing.T) []byte {
+				return edited(t, oneView, func(d map[string]any) { statementOf(d, 0)["effects"] = viewEffect(unreadValue) })
+			},
+		},
+		{
+			name: "a field on the plan beside a field Ptah added to an effect",
+			document: func(t *testing.T) []byte {
+				return edited(t, oneView, func(d map[string]any) {
+					d["annotations"] = unreadValue
+					statementOf(d, 0)["effects"] = viewEffect(unreadValue)
+				})
+			},
+			unread: []string{"annotations"},
+		},
+		{
 			name:     "a document as it was published",
 			document: func(t *testing.T) []byte { return planreadtest.Document(t, oneStatement) },
 		},
@@ -334,10 +370,8 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 				if !errors.Is(err, planread.ErrUnsupported) || !errors.Is(err, planread.ErrUnreadFields) || len(whole.Statements) != 0 {
 					t.Fatalf("Load(%s) = %d statements, %v; want ErrUnsupported and ErrUnreadFields", selection, len(whole.Statements), err)
 				}
-				for _, name := range test.unread {
-					if !strings.Contains(err.Error(), name) {
-						t.Fatalf("Load(%s) does not name %s: %v", selection, name, err)
-					}
+				if !strings.HasSuffix(err.Error(), ": "+strings.Join(test.unread, ", ")) {
+					t.Fatalf("Load(%s) does not name exactly %v: %v", selection, test.unread, err)
 				}
 				holdNoValue(t, whole, err)
 			}

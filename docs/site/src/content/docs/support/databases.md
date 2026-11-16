@@ -72,7 +72,7 @@ Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
 Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
-[schema apply log](https://github.com/stokaro/ptah/blob/ba500e11b2536ad7dad1720e5cbd9bf7292dba8b/docs/site/src/content/docs/direct/apply-log.md),
+[schema apply log](https://github.com/stokaro/ptah/blob/dfbda1b29a7e4591a41334c6949dddac3a6bd69d/docs/site/src/content/docs/direct/apply-log.md),
 the table `ptah_schema_apply_log`: one row before its first statement and one
 after it. The first such Apply creates the table in `public`, and the `CREATE`
 above is all it needs, so the login owns the table. Ptah refuses a table of that
@@ -116,10 +116,12 @@ another account defines later. `SHOW VIEW` shows the definitions of views. Add
 objects are managed.
 
 A view runs as its definer unless it says `SQL SECURITY INVOKER`, and a plan
-that replaces a view sets the mode again. Since Ptah v0.26.0 a plan switches a
-view the database holds as `INVOKER` to `DEFINER` when the declaration names no
-mode, and records the connected account as the view's definer. Declare the mode
-each managed view should have.
+that replaces a view sets the mode again and records the connected account as
+the view's definer. Since Ptah v0.29.3 a plan refuses to replace a view the
+database holds as `INVOKER` when the declaration names no mode, and the Plan
+fails with the code `view-security-option`; from v0.26.0 to v0.29.2 such a
+plan switched the view to `DEFINER`. Declare the mode each managed view should
+have.
 [Plans that change privileges](../../reference/plans-and-approvals/#privilege-changes)
 says why every MySQL view a plan replaces waits for an approval under
 `apply: Always`.
@@ -169,12 +171,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.29.2, the executor this operator build pins
+This section describes Ptah v0.29.3, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0, v0.28.0, v0.29.0 and v0.29.2. The acceptance rows that
+v0.26.0, v0.28.0, v0.29.0, v0.29.2 and v0.29.3. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only

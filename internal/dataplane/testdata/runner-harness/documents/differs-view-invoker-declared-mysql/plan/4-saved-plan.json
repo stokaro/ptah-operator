@@ -13,7 +13,35 @@
     {
       "sql": "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes",
       "severity": "safe",
-      "reason": "does not remove data or tighten constraints"
+      "reason": "does not remove data or tighten constraints",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "harness_differs_view_invoker_declared_mysql",
+            "name": "differs_notes_view"
+          },
+          "action": "replace",
+          "properties": [
+            {
+              "name": "sql_security",
+              "before": "DEFINER",
+              "after": "INVOKER",
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "sql_security",
+                "value": "DEFINER"
+              }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

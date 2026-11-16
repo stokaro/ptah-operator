@@ -2,8 +2,8 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:423c446ff6fcb53b9eaf555501e0628c5cf2431d33716470d07c85d0672968ed",
-  "plan_path": "/work/ptah-plan-output-2308045729/second.plan.json",
+  "plan_digest": "sha256:3dbf150ab4daf29ca96d79464459baf297b3ebf09baca491caa8614143bf5128",
+  "plan_path": "/work/ptah-plan-output-1939021359/second.plan.json",
   "plan": {
     "format_version": 1,
     "name": "plan_891c4a594988",
@@ -41,7 +41,20 @@
                 "after": true,
                 "changed": true
               }
-            ]
+            ],
+            "before_plan": {
+              "exists": true,
+              "properties": [
+                {
+                  "name": "security_barrier",
+                  "value": false
+                },
+                {
+                  "name": "security_invoker",
+                  "value": false
+                }
+              ]
+            }
           }
         ]
       }

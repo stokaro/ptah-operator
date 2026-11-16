@@ -24,6 +24,11 @@ const (
 
 var unreadFieldName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
+// unmarshaler is implemented by a declared type that decodes itself, such as
+// dataplane.PlanEffect. The strict decoder's refusal of an unknown field stops at
+// such a type, which reads its own keys, so the walk does not judge them either.
+var unmarshaler = reflect.TypeFor[json.Unmarshaler]()
+
 // decodeForDisplay reads a document through the strict decoder, with every
 // field this build does not declare taken out first. There is no second
 // decoder: the format version, the dialect, the statements, the operator's own
@@ -79,8 +84,14 @@ func withoutUnreadFields(document []byte) ([]byte, []string, error) {
 type unreadFields map[string]bool
 
 // value copies one value of a declared type. A value of the wrong shape passes
-// through, and the strict decoder refuses it.
+// through, and the strict decoder refuses it. A value of a type that decodes
+// itself passes through whole: the strict decoder leaves what it holds to that
+// type, so a key the type ignores is not a field this build fails to read. An
+// effect record is one, and it ignores the fields Ptah adds to it.
 func (u unreadFields) value(raw json.RawMessage, declared reflect.Type, path string) (json.RawMessage, error) {
+	if declared.Implements(unmarshaler) || reflect.PointerTo(declared).Implements(unmarshaler) {
+		return raw, nil
+	}
 	switch declared.Kind() {
 	case reflect.Pointer:
 		return u.value(raw, declared.Elem(), path)

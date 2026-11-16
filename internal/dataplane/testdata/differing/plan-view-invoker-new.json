@@ -33,7 +33,10 @@
               "after": true,
               "changed": true
             }
-          ]
+          ],
+          "before_plan": {
+            "exists": false
+          }
         }
       ]
     }
