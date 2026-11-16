@@ -45,15 +45,21 @@ func (m *migrationRun) removeApplyWithItsStopUnstored(job *batchv1.Job, what str
 	listed := &corev1.PodList{}
 	m.check(m.cluster.Client.List(m.ctx, listed, client.InNamespace(job.Namespace)), "read the Pods of %s before removing it", what)
 	owned := ownedPods(listed.Items, job.UID)
-	if len(owned) != 1 || owned[0].Status.Phase != corev1.PodRunning || owned[0].DeletionTimestamp != nil || storedStop(&owned[0]) != "" {
-		m.fatalf("%s does not own exactly one running Pod whose executor runs before its removal: it owns %d", what, len(owned))
+	if len(owned) != 1 {
+		m.fatalf("%s does not own exactly one Pod before its removal: it owns %d", what, len(owned))
 	}
 	pod := owned[0].DeepCopy()
+	if stop := storedStop(pod); pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil || stop != "" {
+		m.fatalf("Pod %s of %s is not running with its executor before its removal: phase %s, deleting %t, stop %q",
+			pod.Name, what, pod.Status.Phase, pod.DeletionTimestamp != nil, stop)
+	}
 	probe := func(ctx context.Context) error {
 		return m.cluster.Client.Status().Patch(ctx, pod.DeepCopy(), client.RawPatch(types.StrategicMergePatchType, unstoredStopProbe), client.DryRunAll)
 	}
 	// Without the policy the probe is admitted, so the refusal below is the
-	// policy's and nothing else's.
+	// policy's and nothing else's. The probe reaches one API server of the
+	// three the suite's cluster runs, the one its connection was balanced to,
+	// and the Pod's kubelet may talk to another.
 	m.check(probe(m.ctx), "admit a status write to Pod %s before its stop is kept out", pod.Name)
 
 	policy, binding := unstoredStopPolicy(pod)
@@ -80,13 +86,16 @@ func (m *migrationRun) removeApplyWithItsStopUnstored(job *batchv1.Job, what str
 		m.check(m.cluster.Client.Create(m.ctx, object), "install %s", object.GetName())
 		created = append(created, object)
 	}
-	m.check(harness.Wait(m.ctx, "the refusal of status writes to Pod "+pod.Name, 30*time.Second, time.Second,
+	// Each API server compiles the policies it has seen on its own one-second
+	// tick, so the refusal has to hold on the server the probe reaches for two
+	// of those ticks (unstoredStopRefusal), and starts over if one probe is
+	// admitted, before the Job goes. That makes it likely, not certain, that
+	// the others refuse too; a server still behind lets the kubelet store the
+	// stop, and the check after the removal fails the row on it.
+	refusal := unstoredStopRefusal{policy: policy.Name}
+	m.check(harness.Wait(m.ctx, "the refusal of status writes to Pod "+pod.Name, 30*time.Second, 250*time.Millisecond,
 		func(ctx context.Context) (bool, string, error) {
-			err := probe(ctx)
-			if err != nil && !unstoredStopDenied(err, policy.Name) {
-				return false, "", err
-			}
-			return err != nil, "the policy " + policy.Name + " does not refuse the probe yet", nil
+			return refusal.observe(probe(ctx), time.Now())
 		}), "keep the stop of %s out of the API server", what)
 
 	jobUID := job.UID

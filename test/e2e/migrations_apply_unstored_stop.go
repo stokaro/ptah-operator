@@ -3,7 +3,9 @@ package e2e
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
+	"time"
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +45,13 @@ const applyExecutorContainer = "ptah"
 // it refuses a status write.
 const unstoredStopMessage = "the e2e suite keeps the stop of this Apply Pod out of the API server"
 
+// unstoredStopLabels mark the policy and binding unstoredStopPolicy builds, so
+// that one a test binary left behind when it died can be found by label.
+var unstoredStopLabels = map[string]string{
+	"app.kubernetes.io/part-of":   "ptah-e2e",
+	"app.kubernetes.io/component": "e2e-unstored-stop",
+}
+
 // unstoredStopPolicy is the ValidatingAdmissionPolicy, with its binding, that
 // refuses every status write to one Pod, named by namespace, name and UID.
 // Nothing but the Pod's kubelet writes that Pod's status here: the Job
@@ -50,7 +59,7 @@ const unstoredStopMessage = "the e2e suite keeps the stop of this Apply Pod out 
 // status only for a Pod whose node is gone or out of service.
 func unstoredStopPolicy(pod *corev1.Pod) (*admissionv1.ValidatingAdmissionPolicy, *admissionv1.ValidatingAdmissionPolicyBinding) {
 	name := "ptah-e2e-unstored-stop-" + string(pod.UID)
-	policy := &admissionv1.ValidatingAdmissionPolicy{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: admissionv1.ValidatingAdmissionPolicySpec{
+	policy := &admissionv1.ValidatingAdmissionPolicy{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: maps.Clone(unstoredStopLabels)}, Spec: admissionv1.ValidatingAdmissionPolicySpec{
 		FailurePolicy: ptr.To(admissionv1.Fail),
 		MatchConstraints: &admissionv1.MatchResources{ResourceRules: []admissionv1.NamedRuleWithOperations{{
 			ResourceNames: []string{pod.Name},
@@ -65,18 +74,50 @@ func unstoredStopPolicy(pod *corev1.Pod) (*admissionv1.ValidatingAdmissionPolicy
 			pod.UID, pod.Namespace, pod.Name)}},
 		Validations: []admissionv1.Validation{{Expression: "false", Message: unstoredStopMessage, Reason: ptr.To(metav1.StatusReasonForbidden)}},
 	}}
-	binding := &admissionv1.ValidatingAdmissionPolicyBinding{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: admissionv1.ValidatingAdmissionPolicyBindingSpec{
+	binding := &admissionv1.ValidatingAdmissionPolicyBinding{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: maps.Clone(unstoredStopLabels)}, Spec: admissionv1.ValidatingAdmissionPolicyBindingSpec{
 		PolicyName: name, ValidationActions: []admissionv1.ValidationAction{admissionv1.Deny},
 	}}
 	return policy, binding
+}
+
+// unstoredStopRefusalHold is how long the status probe has to stay refused
+// before the Job is deleted: two of the one-second ticks on which each API
+// server compiles the admission policies it has seen (policyRefreshInterval in
+// k8s.io/apiserver's policy_source.go).
+const unstoredStopRefusalHold = 2 * time.Second
+
+// unstoredStopRefusal counts how long the status probe has been refused
+// without a break by the policy named policy.
+type unstoredStopRefusal struct {
+	policy string
+	since  time.Time
+}
+
+// observe takes one probe's result, read at now. It reports whether the
+// refusal has held for unstoredStopRefusalHold, what it saw where it has not,
+// and the error of a probe that failed for another reason. An admitted probe
+// starts the count over.
+func (r *unstoredStopRefusal) observe(err error, now time.Time) (bool, string, error) {
+	switch {
+	case err == nil:
+		r.since = time.Time{}
+		return false, "the policy " + r.policy + " does not refuse the probe yet", nil
+	case !unstoredStopDenied(err, r.policy):
+		return false, "", err
+	case r.since.IsZero():
+		r.since = now
+	}
+	if now.Sub(r.since) >= unstoredStopRefusalHold {
+		return true, "", nil
+	}
+	return false, "the policy " + r.policy + " has refused the probe for under " + unstoredStopRefusalHold.String(), nil
 }
 
 // unstoredStopDenied reports whether err is the refusal of the policy named
 // policy: a Forbidden API status that names the policy and carries its
 // message.
 func unstoredStopDenied(err error, policy string) bool {
-	var status apierrors.APIStatus
-	return err != nil && errors.As(err, &status) && apierrors.IsForbidden(err) &&
+	return apierrors.IsForbidden(err) &&
 		strings.Contains(err.Error(), policy) && strings.Contains(err.Error(), unstoredStopMessage)
 }
 

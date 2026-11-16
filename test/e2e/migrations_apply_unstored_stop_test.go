@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	celgo "github.com/google/cel-go/cel"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
@@ -44,6 +45,17 @@ func TestUnstoredStopPolicyRefusesStatusWritesToItsPodAlone(t *testing.T) {
 	if binding.Name != policy.Name || binding.Spec.PolicyName != policy.Name ||
 		len(binding.Spec.ValidationActions) != 1 || binding.Spec.ValidationActions[0] != admissionv1.Deny {
 		t.Fatalf("the binding %s binds %s with %v, want the policy with Deny", binding.Name, binding.Spec.PolicyName, binding.Spec.ValidationActions)
+	}
+	// A policy a dead test binary left behind is found by these labels.
+	for _, labels := range []map[string]string{policy.Labels, binding.Labels} {
+		if labels["app.kubernetes.io/part-of"] != "ptah-e2e" || labels["app.kubernetes.io/component"] != "e2e-unstored-stop" {
+			t.Fatalf("the policy and binding carry %v and %v, want the ptah-e2e unstored-stop labels on both", policy.Labels, binding.Labels)
+		}
+	}
+	policy.Labels["app.kubernetes.io/component"] = "changed-policy"
+	binding.Labels["app.kubernetes.io/component"] = "changed-binding"
+	if policy.Labels["app.kubernetes.io/component"] != "changed-policy" || unstoredStopLabels["app.kubernetes.io/component"] != "e2e-unstored-stop" {
+		t.Fatalf("the policy and binding share a labels map with each other or the package: %v, %v, %v", policy.Labels, binding.Labels, unstoredStopLabels)
 	}
 
 	environment, err := celgo.NewEnv(celgo.Variable("object", celgo.DynType))
@@ -115,6 +127,65 @@ func TestUnstoredStopDeniedNamesThePolicyAndItsMessage(t *testing.T) {
 			t.Errorf("%s was read as the policy's refusal: %v", test.name, test.err)
 		}
 	}
+}
+
+func TestUnstoredStopRefusalHoldsTwoTicksWithoutABreak(t *testing.T) {
+	t.Parallel()
+	const policy = "ptah-e2e-unstored-stop-pod-uid"
+	resource := schema.GroupResource{Resource: "pods"}
+	refused := apierrors.NewForbidden(resource, "apply-1", errors.New("ValidatingAdmissionPolicy '"+policy+"' denied request: "+unstoredStopMessage))
+	other := apierrors.NewConflict(resource, "apply-1", errors.New("the object has been modified"))
+	start := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	type probe struct {
+		after time.Duration
+		err   error
+		done  bool
+	}
+	for _, test := range []struct {
+		name   string
+		probes []probe
+	}{
+		{name: "admitted probes never end the wait", probes: []probe{
+			{0, nil, false}, {time.Second, nil, false}, {3 * time.Second, nil, false},
+		}},
+		{name: "a refusal ends the wait once it has held two ticks", probes: []probe{
+			{0, refused, false}, {time.Second, refused, false}, {2*time.Second - time.Millisecond, refused, false}, {2 * time.Second, refused, true},
+		}},
+		{name: "a refusal counts from the first probe it answered", probes: []probe{
+			{0, nil, false}, {500 * time.Millisecond, refused, false}, {2 * time.Second, refused, false}, {2500 * time.Millisecond, refused, true},
+		}},
+		{name: "an admitted probe starts the count over", probes: []probe{
+			{0, refused, false}, {1500 * time.Millisecond, nil, false}, {1750 * time.Millisecond, refused, false},
+			{3 * time.Second, refused, false}, {3750 * time.Millisecond, refused, true},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			refusal := unstoredStopRefusal{policy: policy}
+			for _, p := range test.probes {
+				done, saw, err := refusal.observe(p.err, start.Add(p.after))
+				if err != nil {
+					t.Fatalf("at %s the probe's %v ended the wait with %v", p.after, p.err, err)
+				}
+				if done != p.done {
+					t.Fatalf("at %s after %v the wait read done %t (%q), want %t", p.after, p.err, done, saw, p.done)
+				}
+				if !done && !strings.Contains(saw, policy) {
+					t.Fatalf("at %s the wait says %q, which does not name the policy", p.after, saw)
+				}
+			}
+		})
+	}
+	t.Run("a probe that failed for another reason ends the wait with its error", func(t *testing.T) {
+		t.Parallel()
+		refusal := unstoredStopRefusal{policy: policy}
+		if done, _, err := refusal.observe(refused, start); done || err != nil {
+			t.Fatalf("the first refusal read done %t with %v", done, err)
+		}
+		if done, _, err := refusal.observe(other, start.Add(3*time.Second)); done || !errors.Is(err, other) {
+			t.Fatalf("a conflict read done %t with %v, want the conflict", done, err)
+		}
+	})
 }
 
 // unstoredStopHistory is the history of one Apply Pod through its removal,
