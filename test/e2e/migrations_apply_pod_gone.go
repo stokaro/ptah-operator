@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -129,4 +130,52 @@ func eventLastSeen(event *corev1.Event) time.Time {
 		return event.EventTime.Time
 	}
 	return event.LastTimestamp.Time
+}
+
+// applyPodGoneUnseen is nil where a Pod history shows an Apply's Pod removed
+// with no state a manager pass could have read as its Job's executor
+// stopping. The events are every Pod the history holds; podUID is the Pod the
+// Job ran and jobUID the Job.
+//
+// A state that reads Succeeded or Failed while it names the Job as its
+// controller is the kubelet's word that the executor stopped, and a migration
+// hands its realm Lease back at once on that, whatever the Pod does next
+// (podStopUnconfirmed in internal/controller). A Job deleted with its Pods
+// always leaves one: the kubelet records a Pod's terminal phase before it
+// lets the Pod go. A state that names no such Job is not read as the Job's at
+// all, since the manager finds a Job's Pods by that controller reference.
+//
+// The history has to name the Job's Pod under the Job at least once, which is
+// what ties it to the two UIDs: read against another Job, every state would
+// pass. It has to hold no other Pod of the Job, since the manager reads all of
+// them, and it has to hold the Pod's removal, since a state after the last one
+// read could still be the one that says it stopped.
+func applyPodGoneUnseen(events []watchEvent[*corev1.Pod], podUID, jobUID types.UID) error {
+	owned, gone := 0, false
+	for _, event := range events {
+		pod := event.Object
+		if pod == nil {
+			continue
+		}
+		underJob := controlledByJob(pod.OwnerReferences, jobUID)
+		switch {
+		case underJob && pod.UID != podUID:
+			return fmt.Errorf("another Pod, %s with UID %s, names the Job as its controller", pod.Name, pod.UID)
+		case underJob && (pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed):
+			return fmt.Errorf("the Pod was stored %s at resourceVersion %s while it still named the Job as its controller",
+				pod.Status.Phase, pod.ResourceVersion)
+		case underJob:
+			owned++
+		}
+		if pod.UID == podUID && event.Type == watch.Deleted {
+			gone = true
+		}
+	}
+	switch {
+	case owned == 0:
+		return errors.New("no state of the Pod named the Job as its controller")
+	case !gone:
+		return errors.New("the Pod's removal is not in the history")
+	}
+	return nil
 }

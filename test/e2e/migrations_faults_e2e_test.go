@@ -159,14 +159,12 @@ func (m *migrationRun) deletionDuringApplyProof() {
 	}
 	lease := types.NamespacedName{Namespace: leaseNamespace, Name: leaseName}
 
-	// Now take the Job away, and its Pod with it. Nothing the API server holds
-	// then says the executor stopped, and nothing wakes the controller once
-	// the term ends: no Job left to change, and a status write the primary
+	// Now take the Job away, and then its Pod, so that nothing the API server
+	// holds says the executor stopped. Nothing wakes the controller once the
+	// term ends either: no Job left to change, and a status write the primary
 	// watch discards.
 	m.logf("removing the %s Apply Job so only the hold to its Lease term is left", m.engine.kind)
-	applyJob := &batchv1.Job{}
-	applyJob.Namespace, applyJob.Name = m.in.TestNamespace, job
-	m.deleteAndWait(applyJob, "the "+m.engine.name+" Apply Job")
+	m.removeApplyWorkloadUnseen(job, claim.JobUID, "the "+m.engine.name+" Apply Job")
 	warned := m.assertDeletionHoldsToTheLeaseTerm(name, claim, term, lease, holder)
 
 	// The resource has to go on its own. A manager whose settling pass asked

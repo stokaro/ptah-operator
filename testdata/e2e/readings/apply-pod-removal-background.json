@@ -1,0 +1,321 @@
+[
+  {
+    "type": "ADDED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1904",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "finalizers": [
+          "batch.kubernetes.io/job-tracking"
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "running": {
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "MODIFIED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1912",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "running": {
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "MODIFIED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1913",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "deletionTimestamp": "2026-11-15T23:53:14Z",
+        "deletionGracePeriodSeconds": 30
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "running": {
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "MODIFIED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1915",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "deletionTimestamp": "2026-11-15T23:53:14Z",
+        "deletionGracePeriodSeconds": 30
+      },
+      "status": {
+        "phase": "Running",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "running": {
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "MODIFIED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1918",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "deletionTimestamp": "2026-11-15T23:53:14Z",
+        "deletionGracePeriodSeconds": 30
+      },
+      "status": {
+        "phase": "Failed",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "terminated": {
+                "containerID": "containerd://742c46c0ef658ca10518dacdb728a90afeec8f62f25e0f4c6c47aecf62a84d24",
+                "exitCode": 3,
+                "finishedAt": "2026-11-15T23:52:45Z",
+                "reason": "Error",
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "MODIFIED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1919",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "deletionTimestamp": "2026-11-15T23:52:45Z",
+        "deletionGracePeriodSeconds": 0
+      },
+      "status": {
+        "phase": "Failed",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "terminated": {
+                "containerID": "containerd://742c46c0ef658ca10518dacdb728a90afeec8f62f25e0f4c6c47aecf62a84d24",
+                "exitCode": 3,
+                "finishedAt": "2026-11-15T23:52:45Z",
+                "reason": "Error",
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "DELETED",
+    "object": {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "capture-bg-n967v",
+        "namespace": "lab",
+        "uid": "dc1e672a-b12d-405b-9d02-4a9b23f19bf7",
+        "resourceVersion": "1920",
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "batch.kubernetes.io/job-name": "capture-bg",
+          "controller-uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7",
+          "job-name": "capture-bg"
+        },
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "capture-bg",
+            "uid": "a05a781e-6c3a-4976-828b-9e4d0dcfb1d7"
+          }
+        ],
+        "deletionTimestamp": "2026-11-15T23:52:45Z",
+        "deletionGracePeriodSeconds": 0
+      },
+      "status": {
+        "phase": "Failed",
+        "containerStatuses": [
+          {
+            "name": "executor",
+            "state": {
+              "terminated": {
+                "containerID": "containerd://742c46c0ef658ca10518dacdb728a90afeec8f62f25e0f4c6c47aecf62a84d24",
+                "exitCode": 3,
+                "finishedAt": "2026-11-15T23:52:45Z",
+                "reason": "Error",
+                "startedAt": "2026-11-15T23:52:41Z"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+]
