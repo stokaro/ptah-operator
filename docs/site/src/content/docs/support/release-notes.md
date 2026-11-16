@@ -118,6 +118,14 @@ propagation is refused from this release: have it name
   MariaDB it refuses `DEFINER=CURRENT_ROLE` and a role, which the server
   accepts, and it leaves a definer inside a mysqldump `/*!50013 ... */` comment
   to the server ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
+- **A refused Apply says why in its Pod log.** When Ptah refuses the plan an
+  Apply was given, the runner now writes Ptah's sentence to the operation Pod's
+  log, as it does for a failed Apply, and `Applying` ends with the command that
+  reads it. Status still names the refusal by its code, as in
+  `apply_refused: ptah refused the approved plan (definer-privilege)`, so the
+  log is where such a refusal names the privilege to grant.
+  [What a failed Apply leaves in its Pod log](../../use/operations/#failed-apply-log)
+  says what the line carries.
 - **A field Ptah adds to an effect.** `kubectl ptah plan` and
   `planread.LoadForDisplay` no longer name one under `Unread fields:`, and
   `planread.Load` no longer lists one when it refuses a plan for another field.

@@ -2611,8 +2611,9 @@ labels to metrics.
 
 ### What a failed Apply leaves in its Pod log {#failed-apply-log}
 
-When a schema or a migration Apply fails, the runner writes one line to the log
-of its operation Pod, the first line of what Ptah reported:
+When a schema or a migration Apply fails, or Ptah refuses the plan a schema
+Apply was given, the runner writes one line to the log of its operation Pod,
+the first line of what Ptah reported:
 
 ```text
 ptah-runner: ptah reported: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index "[in the statement]" (SQLSTATE 23505)
@@ -2640,7 +2641,9 @@ Anything that ships Pod logs elsewhere carries the line too, so a log pipeline
 receives row values from a failed Apply. Whoever holds `pods/log` in the namespace can
 read it, which includes the diagnostic reader role. A target failure with a known
 kind writes no such line, because the operator's own sentence already names what to
-check.
+check, and nor does a stale plan, whose status says what moved. A refusal's frame
+names its code, so the line is where a `definer-privilege` refusal names the
+privilege to grant.
 
 How long the log stays depends on whether anything paces the runs:
 

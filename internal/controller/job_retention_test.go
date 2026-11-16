@@ -306,7 +306,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "a failure before any statement", failure: coded("apply_failed"), want: applyLogHoldsReport},
 		{name: "a wrapped result", failure: fmt.Errorf("while settling: %w", coded("apply_failed")), want: applyLogHoldsReport},
 		{name: "a target that could not be opened", failure: coded("database_unreachable"), want: applyLogSaysNothing},
-		{name: "a refusal", failure: coded("apply_refused"), want: applyLogSaysNothing},
+		{name: "a refusal", failure: coded("apply_refused"), want: applyLogHoldsReport},
 		{name: "a stale plan", failure: coded("stale_plan"), want: applyLogSaysNothing},
 		{name: "a report that does not decode", failure: coded("invalid_apply_output"), want: applyLogSaysNothing},
 		// A Pod that has not ended and reports no executor yet can still start
@@ -352,7 +352,7 @@ func TestAFailureSaysWhatItsLogHolds(t *testing.T) {
 		{name: "a failure before any statement from a Pod whose node went", failure: coded("apply_failed"), executors: []string{gone}, want: applyLogHoldsReportOnGoneNode},
 		{name: "a failure before any statement, an executor that exited and a Pod whose node went", failure: coded("apply_failed"), executors: []string{"Error", gone}, want: applyLogHoldsReport},
 		{name: "a failure before any statement, a Pod whose node went and an executor that exited", failure: coded("apply_failed"), executors: []string{gone, "Error"}, want: applyLogHoldsReport},
-		{name: "a refusal from a Pod whose node went", failure: coded("apply_refused"), executors: []string{gone}, want: applyLogSaysNothing},
+		{name: "a refusal from a Pod whose node went", failure: coded("apply_refused"), executors: []string{gone}, want: applyLogHoldsReportOnGoneNode},
 		{name: "a target that could not be opened from a Pod whose node went", failure: coded("database_unreachable"), executors: []string{gone}, want: applyLogSaysNothing},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -538,14 +538,16 @@ func TestASchemaApplyKeepsItsLogByHowItEnded(t *testing.T) {
 			name: "a failure before any statement", approved: true, ttl: long, pointer: "What Ptah reported is in the Pod log for 24 hours",
 			failure: &runner.ResultError{Code: "apply_failed", Message: "ptah reported that the apply failed before it sent any statement"},
 		},
+		// The frame names a refusal's code, and Ptah's sentence about it is in
+		// the log.
+		{
+			name: "a refused plan", approved: true, ttl: long, pointer: "What Ptah reported is in the Pod log for 24 hours",
+			failure: &runner.ResultError{Code: "apply_refused", Message: "ptah refused the approved plan (plan_contract)"},
+		},
 		// The runner writes no line for these, so the status promises none.
 		{
 			name: "a target that could not be opened", approved: true, ttl: long,
 			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
-		},
-		{
-			name: "a refused plan", approved: true, ttl: long,
-			failure: &runner.ResultError{Code: "apply_refused", Message: "ptah refused the approved plan (plan_contract)"},
 		},
 		{
 			name: "a stale plan", approved: true, ttl: long,
