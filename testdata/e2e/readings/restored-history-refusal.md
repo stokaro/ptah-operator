@@ -15,9 +15,8 @@ reading here is v0.26.0's; every other record matched. On 2026-11-14 the v0.28.0
 release image (`2ee460a6`) reproduced both readings record for record, and on
 2026-11-15 so did the v0.29.0 release image (`75fa9991`) and the v0.29.2 release
 image (`ba500e11`), and on 2026-11-16 the v0.29.3 release image (`dfbda1b2`) and the
-v0.29.4 release image (`1f1ff93c`). They
-exercise the
-migration selection guard used by the operator's `restoredHistoryProof`.
+v0.29.4 release image (`1f1ff93c`), and on 2026-11-17 the v0.29.5 release image
+(`8a634c05`). They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

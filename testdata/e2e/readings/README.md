@@ -302,7 +302,9 @@ database the plan read. The predicate does not read `before_plan`. On November
 `ghcr.io/stokaro/ptah@sha256:3b9f644a08221cdcde9062c6d23c55b6fbcccaaa9d4edc2aec10dd80f0f448f1`
 (commit `1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788`), run through the same lab,
 saved the three plans byte for byte, and each Apply wrote its two schema apply
-log entries, so they stay.
+log entries, so they stay. On November 17, 2026 the v0.29.5 release image
+`ghcr.io/stokaro/ptah@sha256:98874de7994f2314d3acb699430ca5b21025792c44ff8c17086a222226ae1aae`
+(commit `8a634c0574427e313392f1131382cf4346d05b0d`) did the same again.
 
 The plans they replace were the ones the Ptah v0.26.0 release image
 `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`

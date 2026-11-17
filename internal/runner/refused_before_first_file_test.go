@@ -66,17 +66,18 @@ func TestMigrationRunRefusedBeforeItsFirstFile(t *testing.T) {
 }
 
 // TestMigrationRunRefusedForADefinerItsLoginMayNotName runs the document Ptah
-// v0.29.4 printed, as the runner harness captured it, for a run whose only file
-// names another account as a view's definer while the login lacks
-// SET_ANY_DEFINER (stokaro/ptah#6124). Ptah refuses before any statement runs,
-// and its sentence names the file, the definer, the login and the privilege.
+// printed, as the runner harness captured it, for a run whose first file
+// creates a table and whose second names another account as a view's definer
+// while the login lacks SET_ANY_DEFINER (stokaro/ptah#6124). Ptah refuses
+// before any statement runs, so both files stay pending, and its sentence
+// names the file, the definer, the login and the privilege.
 // The Pod log keeps that sentence whole, since it carries no statement, and the
 // frame carries none of it, only a failed run that applied nothing.
 func TestMigrationRunRefusedForADefinerItsLoginMayNotName(t *testing.T) {
 	t.Parallel()
 
 	document := ptahV023Document(t, "statement-errors/my-definer-up.json")
-	const sentence = "refusing before any statement runs: view orders_view in 0000000001_view.up.sql names the definer " +
+	const sentence = "refusing before any statement runs: view orders_view in 0000000002_view.up.sql names the definer " +
 		"harness_definer_owner@%, and the connected account harness_definer_deploy@% lacks SET_ANY_DEFINER, which " +
 		"naming another account needs. Grant it with GRANT SET_ANY_DEFINER ON *.* TO 'harness_definer_deploy'@'%', " +
 		"or apply as harness_definer_owner@%"
@@ -113,8 +114,8 @@ func TestMigrationRunRefusedForADefinerItsLoginMayNotName(t *testing.T) {
 	if run == nil || run.Outcome != dataplane.MigrationOutcomeFailed || len(run.Applied) != 0 || run.Failure != nil {
 		t.Fatalf("the controller parsed migration run %#v, want a failed run that applied nothing and names no failure", run)
 	}
-	if run.Status == nil || run.Status.DirtyRevision != nil || len(run.Status.Pending()) != 1 {
-		t.Fatalf("the controller parsed history %#v, want the one migration pending and no dirty row", run.Status)
+	if run.Status == nil || run.Status.DirtyRevision != nil || len(run.Status.Pending()) != 2 {
+		t.Fatalf("the controller parsed history %#v, want both migrations pending and no dirty row", run.Status)
 	}
 	if parsed.Uncertain {
 		t.Fatal("the run is marked uncertain, and Ptah applied nothing")

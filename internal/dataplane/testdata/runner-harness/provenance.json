@@ -1,5 +1,5 @@
 {
-  "ptahRelease": "v0.29.4",
-  "ptahCommit": "1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788",
-  "ptahImage": "ghcr.io/stokaro/ptah@sha256:3b9f644a08221cdcde9062c6d23c55b6fbcccaaa9d4edc2aec10dd80f0f448f1"
+  "ptahRelease": "v0.29.5",
+  "ptahCommit": "8a634c0574427e313392f1131382cf4346d05b0d",
+  "ptahImage": "ghcr.io/stokaro/ptah@sha256:98874de7994f2314d3acb699430ca5b21025792c44ff8c17086a222226ae1aae"
 }

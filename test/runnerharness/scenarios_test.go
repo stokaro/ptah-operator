@@ -988,12 +988,14 @@ func statementErrors(t *testing.T, l *lab) {
 		before := run.history("history")
 		return run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
 	}
-	// definerUp runs a migration whose file names another account as a view's
-	// definer, as a login that holds every privilege on its database and no
-	// global one. Since Ptah v0.29.4 the run is refused before its first file:
-	// naming another account needs SET_ANY_DEFINER, and MySQL would otherwise
-	// fail the statement with error 1227 after the files before it committed
-	// (stokaro/ptah#6124).
+	// definerUp runs a migration whose second file names another account as a
+	// view's definer, as a login that holds every privilege on its database and
+	// no global one. The first file creates the table the view reads, and the
+	// database starts without it. Since Ptah v0.29.4 the run is refused before
+	// its first file: naming another account needs SET_ANY_DEFINER, and MySQL
+	// would otherwise fail the statement with error 1227 after the first file
+	// committed (stokaro/ptah#6124). The row reads the table's absence after
+	// the run, so a refusal that came after the first file fails it.
 	definerUp := func(t *testing.T, name string) rowOutcome {
 		t.Helper()
 		family := "statement-errors-" + name
@@ -1004,13 +1006,19 @@ func statementErrors(t *testing.T, l *lab) {
 			"CREATE USER 'harness_definer_deploy'@'%' IDENTIFIED BY '"+l.databasePassword+"'",
 			"GRANT ALL ON "+database+".* TO 'harness_definer_deploy'@'%'",
 		)
-		l.sql(t, engineMySQL, database, "CREATE TABLE orders (id bigint PRIMARY KEY)")
 		url := "mysql://harness_definer_deploy:" + l.databasePassword + "@" + mysqlHost + ":3306/" + database
 		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/statement-errors/"+name)
 		run := l.newMigration(t, family, engineMySQL, url, ociSource(reference))
 		run.resolve("resolve")
 		before := run.history("history")
-		return run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
+		outcome := run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "statement-errors/"+name+".json"), wantCode("child_exit"))
+		tables := l.docker.must(t, []string{"MYSQL_PWD=" + l.databasePassword}, "exec", "--env", "MYSQL_PWD", l.name("mysql"),
+			"mysql", "-uroot", "-N", "-B", "-e",
+			"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '"+database+"' AND TABLE_NAME = 'orders'")
+		if strings.TrimSpace(tables) != "0" {
+			t.Errorf("the database holds %s tables named orders after the refused run, want none: the first file ran", strings.TrimSpace(tables))
+		}
+		return outcome
 	}
 	const hidden = "[in the statement]"
 	for _, row := range []struct {

@@ -1,7 +1,7 @@
 {
   "reference": "oci://harness-registry:5000/migrations/statement-errors-my-definer-up:v1",
-  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-my-definer-up@sha256:e7df4d1133f80ffce42a3b105a32d9f7e5798fd9702995593ba444076d954ec1",
-  "digest": "sha256:e7df4d1133f80ffce42a3b105a32d9f7e5798fd9702995593ba444076d954ec1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/statement-errors-my-definer-up@sha256:04b34f157132edfd85525706a5caa697c48efa9971463dc5f888eb11c61d6b55",
+  "digest": "sha256:04b34f157132edfd85525706a5caa697c48efa9971463dc5f888eb11c61d6b55",
   "media_type": "application/vnd.oci.image.manifest.v1+json",
-  "size": 1073
+  "size": 1539
 }
