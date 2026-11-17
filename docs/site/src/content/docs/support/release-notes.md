@@ -65,7 +65,7 @@ may not name that account
 grants do not decide it, as for a MariaDB login that holds only `SUPER`, the run
 goes ahead and the server answers as before. Under v0.29.3 the files before it
 ran and the server refused the statement with error 1227. A definer inside a
-mysqldump ``/*!50013 DEFINER=... */`` comment stops the run the same way
+mysqldump `/*!50013 DEFINER=... */` comment stops the run the same way
 ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)). Grant the
 privilege the Pod log names, or have the file name the login.
 
@@ -141,14 +141,11 @@ propagation is refused from this release: have it name
   without `ALLOW_NONEXISTENT_DEFINER` is not refused a definer an earlier file
   of the same run creates, and the server decides. On MariaDB it leaves
   `DEFINER=CURRENT_ROLE` and a host-less definer, which may name a role, to the
-  server. This was measured on MySQL 8.4 with each release image's
-  `migrations up --tx-mode none`, the command a run under
-  `spec.policy.transactionMode: none` runs. A run whose first file creates the
-  definer a later view names was refused before its first file by v0.29.4 and
-  applied in full by v0.29.5. A run whose view names its definer inside
-  `/*!50013 ... */` applied the file before the view under v0.29.4, and the
-  server then refused the view with error 1227; v0.29.5 refused that run before
-  its first file.
+  server. Measured on MySQL 8.4 with v0.29.5's `migrations up --tx-mode none`,
+  the command a run under `spec.policy.transactionMode: none` runs, a run whose
+  first file creates the definer a later view names applied in full, and a run
+  whose view names its definer inside `/*!50013 ... */` was refused before its
+  first file.
 - **A refused Apply says why in its Pod log.** When Ptah refuses the plan an
   Apply was given, the runner now writes Ptah's sentence to the operation Pod's
   log, as it does for a failed Apply, and `Applying` ends with the command that
