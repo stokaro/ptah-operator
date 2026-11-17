@@ -2025,7 +2025,7 @@ cleanup() {
 		fi
 	fi
 	if [ "$CLUSTER_CREATED" -eq 1 ]; then
-		if ! kind delete cluster --name "$CLUSTER_NAME" >/dev/null; then
+		if ! kind delete cluster --name "$CLUSTER_NAME" --kubeconfig "$KUBECONFIG_FILE" >/dev/null; then
 			printf 'e2e: could not delete kind cluster %s\n' "$CLUSTER_NAME" >&2
 			cleanup_failed=1
 		fi
@@ -3164,7 +3164,7 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 	printf 'e2e:   kubeconfig   %s\n' "$KUBECONFIG_FILE"
 	printf 'e2e:   namespace    %s\n' "$TEST_NAMESPACE"
 	printf 'e2e:   environment  %s\n' "$E2E_ENVIRONMENT_FILE"
-	printf 'e2e:   remove it    kind delete cluster --name %s\n' "$CLUSTER_NAME"
+	printf 'e2e:   remove it    kind delete cluster --name %s --kubeconfig %s\n' "$CLUSTER_NAME" "$KUBECONFIG_FILE"
 	exit 0
 fi
 
