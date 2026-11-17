@@ -23,6 +23,15 @@ read also selects `DEFINER` and `CURRENT_USER()`, which the planner compares to
 refuse a replacement that would hand a view to another account
 ([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). The MySQL
 readings here are v0.29.4's, with the exit status and record count v0.29.3
+gave, and the contract names the new statement. On November 17, 2026 the Ptah
+v0.29.5 release image, commit `8a634c0574427e313392f1131382cf4346d05b0d`,
+reproduced every MySQL reading and the four saved plans. In each PostgreSQL
+reading, the 18 and 16 witnesses included, one statement moved: the trigger
+read also selects the schema of each trigger's function, which the planner
+uses to name a function that lives outside the trigger's schema
+([stokaro/ptah#6129](https://github.com/stokaro/ptah/pull/6129)), and the name
+of the prepared statement that carries it moved with it. The PostgreSQL
+readings here are v0.29.5's, with the exit status and record count v0.29.4
 gave, and the contract names the new statement.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
