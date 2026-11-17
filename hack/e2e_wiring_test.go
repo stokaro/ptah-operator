@@ -1533,6 +1533,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "task-owned image-audit cleanup removal",
 		},
 		{
+			name:        "kind cluster teardown without the run's kubeconfig",
+			old:         `if ! kind delete cluster --name "$CLUSTER_NAME" --kubeconfig "$KUBECONFIG_FILE" >/dev/null; then`,
+			replacement: `if ! kind delete cluster --name "$CLUSTER_NAME" >/dev/null; then`,
+			wantError:   "kind cluster teardown with the run's kubeconfig",
+		},
+		{
 			name:        "runtime generated-name boundary fixture shortened",
 			old:         `RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)`,
 			replacement: `RUNTIME_FULLNAME=$(dns_name ptah-runtime "$identity" 35)`,

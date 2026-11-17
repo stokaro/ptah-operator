@@ -3530,6 +3530,13 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("task-owned image-audit cleanup full ID", `image_audit_cleanup_id=$IMAGE_AUDIT_CONTAINER_ID`),
 		exactSourceLine("task-owned image-audit cleanup verification", `if ! image_audit_container_matches_task "$image_audit_cleanup_id"; then`),
 		exactSourceLine("task-owned image-audit cleanup removal", `elif ! docker --context "$DOCKER_CONTEXT" container rm -f "$image_audit_cleanup_id" >/dev/null 2>&1; then`),
+		// Without --kubeconfig, kind's delete edits $KUBECONFIG or
+		// ~/.kube/config, which this run never wrote, and returns an error
+		// after deleting the nodes when it cannot lock or read that file.
+		exactSourceLineSequence("kind cluster teardown with the run's kubeconfig", []string{
+			`if [ "$CLUSTER_CREATED" -eq 1 ]; then`,
+			`if ! kind delete cluster --name "$CLUSTER_NAME" --kubeconfig "$KUBECONFIG_FILE" >/dev/null; then`,
+		}),
 		exactSourceLineSequence("task claim cleanup presence check", []string{
 			`if [ "$TASK_CLAIM_CREATE_STARTED" -eq 1 ] &&`,
 			`docker --context "$DOCKER_CONTEXT" volume inspect "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then`,
