@@ -96,13 +96,15 @@ Run it after touching `api/` or any marker.
 
 ### What a pull request says
 
-Match the existing message style; read `git log` before writing. An imperative
-subject under about 72 characters, a blank line, then a body explaining why. The
-diff already shows what changed, so spend the body on the reason, the trade-off,
-or the risk.
+Read `git log` before writing. Use an imperative title under about 72
+characters that names the purpose of the complete PR.
 
-American English, and plain international English: short sentences, concrete
-nouns, active voice.
+Use the [PR template](.github/pull_request_template.md).
+[Pull request descriptions](AGENTS.md#pull-request-descriptions) defines the
+content requirements; the repository-specific section below it names the
+additional details needed for affected contracts and workflows. Describe
+behavior and reasoning in plain American English without a file-by-file
+retelling of the diff.
 
 ## Dependency updates
 
