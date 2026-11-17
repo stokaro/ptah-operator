@@ -27420,7 +27420,7 @@
           "--run-reference=sha256:2a70b733b4579a762504070ddb644dc21c6ecab7c5e5800a84d1cc4a3a0268a0"
         ],
         "exit": 2,
-        "stderr": "error: error running migrations: refusing before any statement runs: view orders_view in 0000000001_view.up.sql names the definer harness_definer_owner@%, and the connected account harness_definer_deploy@% lacks SET_ANY_DEFINER, which naming another account needs. Grant it with GRANT SET_ANY_DEFINER ON *.* TO 'harness_definer_deploy'@'%', or apply as harness_definer_owner@%\n",
+        "stderr": "error: error running migrations: refusing before any statement runs: view orders_view in 0000000002_view.up.sql names the definer harness_definer_owner@%, and the connected account harness_definer_deploy@% lacks SET_ANY_DEFINER, which naming another account needs. Grant it with GRANT SET_ANY_DEFINER ON *.* TO 'harness_definer_deploy'@'%', or apply as harness_definer_owner@%\n",
         "stdout": "statement-errors/my-definer-up.json"
       }
     ],
@@ -27439,7 +27439,8 @@
         },
         "outcome": "failed",
         "planned": [
-          1
+          1,
+          2
         ],
         "status": {
           "contract_version": 2,
@@ -27447,17 +27448,25 @@
           "has_pending_changes": true,
           "migrations": [
             {
-              "checksum": "b6e740adfcf14fad587269a35ae1853589e6ec4407bc4733f40613e3455bd012",
-              "description": "View",
+              "checksum": "fb3b85fc509f2a83daf8e8e481cd833e6ca8848b96fcaa714fa06eb08f167fd7",
+              "description": "Orders",
               "state": "pending",
               "version": 1,
               "version_key": "1"
+            },
+            {
+              "checksum": "b6e740adfcf14fad587269a35ae1853589e6ec4407bc4733f40613e3455bd012",
+              "description": "View",
+              "state": "pending",
+              "version": 2,
+              "version_key": "2"
             }
           ],
           "pending_migrations": [
-            1
+            1,
+            2
           ],
-          "total_migrations": 1
+          "total_migrations": 2
         }
       },
       "mutationStarted": true,
@@ -27508,17 +27517,25 @@
         "has_pending_changes": true,
         "migrations": [
           {
-            "checksum": "b6e740adfcf14fad587269a35ae1853589e6ec4407bc4733f40613e3455bd012",
-            "description": "View",
+            "checksum": "fb3b85fc509f2a83daf8e8e481cd833e6ca8848b96fcaa714fa06eb08f167fd7",
+            "description": "Orders",
             "state": "pending",
             "version": 1,
             "version_key": "1"
+          },
+          {
+            "checksum": "b6e740adfcf14fad587269a35ae1853589e6ec4407bc4733f40613e3455bd012",
+            "description": "View",
+            "state": "pending",
+            "version": 2,
+            "version_key": "2"
           }
         ],
         "pending_migrations": [
-          1
+          1,
+          2
         ],
-        "total_migrations": 1
+        "total_migrations": 2
       },
       "operation": "migration-history",
       "operationId": "sha256:3e1cefa40b180676e6a94020f42ce9d61d39a671d5c8bf8c849b7ba1e11024f6",
@@ -27554,7 +27571,7 @@
       "resolvedDigest": "<volatile>",
       "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
       "resolvedReference": "oci://harness-registry:5000/migrations/statement-errors-my-definer-up@<digest>",
-      "resolvedSize": 1073,
+      "resolvedSize": 1539,
       "stdout": ""
     }
   },
