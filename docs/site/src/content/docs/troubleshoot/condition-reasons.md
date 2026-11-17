@@ -343,8 +343,11 @@ the run when they do not let it name a definer a statement names
 ([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)).
 
 A migration file that writes `DEFINER=` for another account is checked with
-every other file the run selected, before the first of them runs. The run
-applies none of them and reads as
+every other file the run selected, before the first of them runs. Since v0.29.5
+that includes a definer inside the executable comments mysqldump writes, as in
+``/*!50013 DEFINER=`owner`@`%` SQL SECURITY DEFINER */``, which Ptah reads as the
+server would ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
+A refused run applies none of the files and reads as
 [a migration that failed and committed nothing](#a-migration-that-failed-and-committed-nothing).
 The Pod log names the file, the definer, the login and the privilege:
 
@@ -354,9 +357,14 @@ ptah-runner: ptah reported: refusing before any statement runs: view orders_view
 
 Grant the privilege it names to the migration's login, or write the file so
 that it names the login, or `CURRENT_USER`, which needs no privilege. Where the
-grants do not decide it, as when `SHOW GRANTS` fails or a MariaDB login holds
-only `SUPER`, which some MariaDB releases accept and others refuse, Ptah
-refuses nothing, and the server answers as it did before v0.29.4.
+grants do not decide it, Ptah refuses nothing, and the server answers as it did
+before v0.29.4: when `SHOW GRANTS` fails, when a MariaDB login holds only
+`SUPER`, which some MariaDB releases accept and others refuse, and for
+`DEFINER=CURRENT_ROLE` and a host-less definer on MariaDB. When a file of the
+run creates or renames an account or a role, Ptah does not ask whether a
+definer exists, since it reads the server before that file runs. A login that
+holds `SET_ANY_DEFINER` without `ALLOW_NONEXISTENT_DEFINER` is then not refused
+a definer an earlier file of the run creates, and the server decides.
 
 A schema plan names a definer only for a view it replaces that runs as its
 definer, and only when the plan's read connected as that definer:

@@ -19,15 +19,15 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.4,
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.5,
 which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.29.4 and planned. Measured on
+the resource has read its database with v0.29.5 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.29.4 made.
+is for a plan v0.29.5 made.
 
 A MySQL or MariaDB view the database holds as `SQL SECURITY INVOKER` and the
 schema declares with no mode now stops the schema's Plan
@@ -64,14 +64,16 @@ may not name that account
 ([stokaro/ptah#6124](https://github.com/stokaro/ptah/pull/6124)). Where the
 grants do not decide it, as for a MariaDB login that holds only `SUPER`, the run
 goes ahead and the server answers as before. Under v0.29.3 the files before it
-ran and the server refused the statement with error 1227. Grant the privilege
-the Pod log names, or have the file name the login.
+ran and the server refused the statement with error 1227. A definer inside a
+mysqldump ``/*!50013 DEFINER=... */`` comment stops the run the same way
+([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)). Grant the
+privilege the Pod log names, or have the file name the login.
 
 A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.29.4, and the runner
+- **Executor.** The verified executor is now Ptah v0.29.5, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. Since v0.29.3 each view statement of a
   saved plan also records what the view held when the plan started, as
@@ -113,19 +115,40 @@ propagation is refused from this release: have it name
   rebuilt view's drop now records the `security_invoker` the view held, so a
   view made again with the same value is no longer raised as `SecurityDefiner`,
   while the policy the plan drops still raises `RowSecurityPolicy`.
+- **A PostgreSQL trigger whose function lives in another schema.** Ptah's read
+  now also selects the schema of the function each trigger runs, and names the
+  function with that schema when it is not the schema the read resolves names
+  in ([stokaro/ptah#6129](https://github.com/stokaro/ptah/pull/6129)), where
+  v0.29.4 read the name alone. A schema that names such a function without its
+  schema still matches what the database holds. The function Ptah generates for
+  a trigger is recognized as the trigger's own in whatever schema holds it: a
+  plan that removes the trigger drops the function there, and one that replaces
+  the trigger keeps the function where it is rather than creating a second one
+  ([stokaro/ptah#6131](https://github.com/stokaro/ptah/pull/6131),
+  [stokaro/ptah#6136](https://github.com/stokaro/ptah/pull/6136)). The
+  acceptance suites hold no trigger whose function is outside the read's
+  schema, so this is Ptah's measurement.
 - **A definer a migration's login may not name.** The run is refused before its
   first file, as `Failed` with nothing committed, and the Pod log names the
   file, the definer, the login and the privilege.
   [A definer the login may not name](../../troubleshoot/condition-reasons/#a-definer-the-login-may-not-name)
-  says what to grant. At v0.29.4 the check asks whether each definer exists
-  before any file runs. For a MySQL login that can read `mysql.user` and holds
-  `SET_ANY_DEFINER` without `ALLOW_NONEXISTENT_DEFINER`, `SUPER`,
-  `SET_USER_ID` or `ALL PRIVILEGES`, it therefore refuses a file whose definer
-  an earlier file of the same run creates. On MariaDB it refuses
-  `DEFINER=CURRENT_ROLE` and a host-less definer that names a role the login
-  may use, both of which the server accepts. It leaves a definer inside a
-  mysqldump `/*!50013 ... */` comment to the server
-  ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)).
+  says what to grant. Since v0.29.5 the check reads a definer inside a
+  mysqldump `/*!50013 ... */` comment as the server does, and refuses it before
+  the first file
+  ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)). Where a
+  file of the run creates or renames an account or a role, the check does not
+  ask whether a definer exists, so a MySQL login that holds `SET_ANY_DEFINER`
+  without `ALLOW_NONEXISTENT_DEFINER` is not refused a definer an earlier file
+  of the same run creates, and the server decides. On MariaDB it leaves
+  `DEFINER=CURRENT_ROLE` and a host-less definer, which may name a role, to the
+  server. This was measured on MySQL 8.4 with each release image's
+  `migrations up --tx-mode none`, the command a run under
+  `spec.policy.transactionMode: none` runs. A run whose first file creates the
+  definer a later view names was refused before its first file by v0.29.4 and
+  applied in full by v0.29.5. A run whose view names its definer inside
+  `/*!50013 ... */` applied the file before the view under v0.29.4, and the
+  server then refused the view with error 1227; v0.29.5 refused that run before
+  its first file.
 - **A refused Apply says why in its Pod log.** When Ptah refuses the plan an
   Apply was given, the runner now writes Ptah's sentence to the operation Pod's
   log, as it does for a failed Apply, and `Applying` ends with the command that
