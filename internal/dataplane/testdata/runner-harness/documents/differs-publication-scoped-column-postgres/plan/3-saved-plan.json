@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "name": "plan_fd107f73759f",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:2c302f0275d84be4a2ec230fad3d37c9cf52546f92f855591b0b8ec3c62137d4",
+  "to_fingerprint": "sha256:5499d0d59291985dd1f3f4f0f183f91080b2cd8a08d4587a11570d2503a58b56",
+  "scope": {
+    "kind": "schema",
+    "name": "public"
+  },
+  "destructive": false,
+  "statements": [
+    {
+      "sql": "-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL",
+      "severity": "safe",
+      "reason": "does not remove data or tighten constraints"
+    }
+  ]
+}

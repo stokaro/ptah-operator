@@ -1752,6 +1752,7 @@ const (
 	ReasonDigestPinned                 ConditionReason = "DigestPinned"
 	ReasonDispatchCommitted            ConditionReason = "DispatchCommitted"
 	ReasonDownloadVerified             ConditionReason = "DownloadVerified"
+	ReasonDriftUndecided               ConditionReason = "DriftUndecided"
 	ReasonExecutionBindingChanged      ConditionReason = "ExecutionBindingChanged"
 	ReasonInputsChanged                ConditionReason = "InputsChanged"
 	ReasonInSync                       ConditionReason = "InSync"

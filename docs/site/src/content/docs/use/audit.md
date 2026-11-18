@@ -95,7 +95,7 @@ documentation and the run did not exercise it.
 | Apply dispatched | The Apply Job and Pod, and an `operation claimed` line in the manager's log | The manager | The Job: five minutes, or 24 hours when a person approved an Apply that failed or ended unknown | Measured |
 | How each statement ended | The journal's `ApplyFinished`: `Succeeded` or `Unknown`, the plan by name, UID and fingerprint, the approval and its approver, the `operationID`, the Job once the API server confirmed it, and the position of the statement it stopped at with the SQLSTATE, with no message. At 0.2.10, in the measured run, it held only the outcome, the plan and when it started | The manager | The journal's bounds | Read |
 | What the database answered | One line in the Apply Pod's log | The runner | As long as the Job | Measured |
-| Verification after Apply | The journal's `Verified`: `InSync` or `DriftRemains` | The manager | The journal's bounds | Measured |
+| Verification after Apply | The journal's `Verified`: `InSync`, `DriftRemains`, or `Undecided` where Ptah could not decide a declared object | The manager | The journal's bounds | Measured |
 | `apply: Always` | No approval, so no `ApprovalAccepted` before the `ApplyFinished` | The manager | The journal's bounds | Read |
 | Deletion | The API audit log | The API server | As long as the log is kept | Measured |
 | Anything, in the target database | Nothing at Ptah v0.23.0, which keeps no table for a declared schema | | | Measured |

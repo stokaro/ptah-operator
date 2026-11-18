@@ -108,10 +108,12 @@ the operator raises no privilege change for one.
 
 Ptah reads publications only when the read covers every schema the database
 holds. Under a URL that pins `search_path` in a database with another schema,
-a declared publication is never created: the plan leaves it out, and the drift
-report counts it as `undecided` and fails without finding drift. This operator
-refuses such a report, so every Observe fails with `invalid_observed_state`.
-Declare a publication only for a URL that reads the whole database.
+Ptah cannot decide whether a declared publication exists, so it never creates
+one: the plan leaves it out, and the drift report counts it as `undecided` and
+fails without finding drift. The schema reads
+[`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide):
+it is not in sync, nothing is planned for the publication, and `Ready` names
+it. Declare a publication only for a URL that reads the whole database.
 
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the

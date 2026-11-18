@@ -8500,6 +8500,306 @@
     "savedPlan": "runner-harness/documents/differs-publication-declared-postgres/plan/3-saved-plan.json"
   },
   {
+    "name": "differs-publication-scoped-column-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:7d2a9e398bae947d92b12ff8a05541c3bb7d900d9ef3e5c0401de9885b7d5cc7"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\n-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:7d2a9e398bae947d92b12ff8a05541c3bb7d900d9ef3e5c0401de9885b7d5cc7",
+      "planContentDigest": "sha256:69cf600092cf02ce33a75dd4c5c7c44c70c151e0ffbd46dda9a737b832f6e434",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0f64438228b103b03edd133255f68c5c2cda67f0600b13936a1d2525beffbb1f"
+    }
+  },
+  {
+    "name": "differs-publication-scoped-column-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "columns_added",
+          "count": 1,
+          "severity": "warning"
+        },
+        {
+          "category": "undecided",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:a0a62c79a5eac2d3430d30a356edca89c7c65e3dfce08c6b593ab36604096b17",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:495831db39a884339019cf834348c63f19723d13e01e03e6ff617e484a55cb26",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0f64438228b103b03edd133255f68c5c2cda67f0600b13936a1d2525beffbb1f"
+    }
+  },
+  {
+    "name": "differs-publication-scoped-column-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "undecided",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:b80fdbe6460e39614129fe0e4a362fc846d356d91fa3b5089694914f93c8db7d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:0f64438228b103b03edd133255f68c5c2cda67f0600b13936a1d2525beffbb1f"
+    }
+  },
+  {
+    "name": "differs-publication-scoped-column-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\nPlanned schema changes:\n-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\nPlanned schema changes:\n-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\n-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL;\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-column-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:e732ea0aeb1adbd43bf831df17b323c6b5d596aa3d526b6aaa0c4a26003612bf",
+      "planContentDigest": "sha256:69cf600092cf02ce33a75dd4c5c7c44c70c151e0ffbd46dda9a737b832f6e434",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:0f64438228b103b03edd133255f68c5c2cda67f0600b13936a1d2525beffbb1f"
+    },
+    "savedPlan": "runner-harness/documents/differs-publication-scoped-column-postgres/plan/3-saved-plan.json"
+  },
+  {
+    "name": "differs-publication-scoped-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\n",
+        "stdout": "differing/drift-undecided-publication-postgres.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "undecided",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:e921a65960d9eb57f90a78feee2ac6a4e8cffb5c917d878fd37ffb9cdc231d81",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:070da9c62bf4865ce26c20a4a027f5b897d1939cc486a42d7ab9fc34e54f3e28"
+    }
+  },
+  {
+    "name": "differs-publication-scoped-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\nNo changes planned, but 1 comparison limit remains unresolved.\n",
+        "stdout": "differing/plan-undecided-publication-postgres.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: PostgreSQL publication differs_notes_pub could not be compared between the database and the desired schema: whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database\nNo changes planned, but 1 comparison limit remains unresolved.\n",
+        "stdout": "runner-harness/documents/differs-publication-scoped-postgres/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:8ade9b3b2999329336033e5e1400de6c252875ebe2aab7a3ba53347065dcd580",
+      "planOutcome": "Undecided",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:070da9c62bf4865ce26c20a4a027f5b897d1939cc486a42d7ab9fc34e54f3e28",
+      "undecided": "ptah could not decide 1 declared object: PostgreSQL publication differs_notes_pub (whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database)"
+    }
+  },
+  {
     "name": "differs-publication-undeclared-postgres/observe",
     "operation": "observe",
     "source": "git",

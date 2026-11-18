@@ -358,6 +358,12 @@ schema nothing has read; the second is a database that matches its declaration
 as far as the login can read it, which on MySQL
 [leaves some objects out](../../support/databases/#what-the-login-cannot-see).
 
+A read that found no drift and could not decide some declared objects prints
+`Drift: none found; 1 declared object undecided`, then the `undecided`
+finding. Ptah did not look at those objects, so the line does not say the
+database matches; the `Ready` condition names each object and Ptah's reason
+([`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide)).
+
 A change the drift report has no category for prints
 `Drift: found, in no category the report counts; the plan says what changes`.
 The report saw a difference and counted nothing, so there is no count and no

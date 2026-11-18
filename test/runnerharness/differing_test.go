@@ -116,6 +116,14 @@ type differingReading struct {
 	applyFrame string
 	// driftsAfterApply says the read after the Apply still reports drift.
 	driftsAfterApply bool
+	// undecided is what the Plan's frame names among the declared objects Ptah
+	// could not decide, where the plan changes nothing and its outcome is
+	// Undecided.
+	undecided string
+	// undecidedAfterApply says the read after the Apply finds no drift and
+	// still lists the declared objects Ptah could not decide, and the runner
+	// frames it as an observation.
+	undecidedAfterApply bool
 }
 
 func (row differingRow) family() string { return "differs-" + row.name + "-" + row.engine }
@@ -439,6 +447,41 @@ func differingRows() []differingRow {
 					`DROP PUBLICATION "differs_old_pub"`,
 				},
 				destructive: true,
+			},
+		},
+		// Ptah reads publications only where the read covers every schema of the
+		// database. Under a URL that pins search_path in a database with another
+		// schema it cannot tell whether the declared publication exists: the
+		// drift report counts it undecided and finds no drift, failing at the
+		// threshold all, and the plan saves nothing (stokaro/ptah#3850). The
+		// runner frames the read with that one finding and the plan as
+		// Undecided, naming the publication and Ptah's reason.
+		{
+			name: "publication-scoped", engine: enginePostgres, declared: "publication-postgresql.sql", git: true,
+			urlParameters: scoped,
+			seed:          []string{notes, outside},
+			stored: map[string]string{
+				"observe/schema drift": "differing/drift-undecided-publication-postgres.json",
+				"plan/schema plan":     "differing/plan-undecided-publication-postgres.json",
+			},
+			want: differingReading{
+				findings: []string{"undecided"},
+				undecided: "ptah could not decide 1 declared object: PostgreSQL publication differs_notes_pub " +
+					"(whether the publication exists was not established",
+			},
+		},
+		// Beside a difference Ptah can plan, the publication it cannot decide
+		// leaves the plan as it is: the plan adds the column and leaves the
+		// publication out, and the read after the Apply finds no drift and still
+		// cannot decide it.
+		{
+			name: "publication-scoped-column", engine: enginePostgres, declared: "publication-postgresql.sql", git: true,
+			urlParameters: scoped,
+			seed:          []string{"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY)", outside},
+			want: differingReading{
+				findings:            []string{"columns_added", "undecided"},
+				statements:          []string{`ADD COLUMN "owner_name" text NOT NULL`},
+				undecidedAfterApply: true,
 			},
 		},
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
@@ -1070,6 +1113,19 @@ func (row differingRow) checkFirstRead(captures runnerharness.Captures) error {
 		return fmt.Errorf("%s: the first read: %w", row.family(), err)
 	}
 	var problems []error
+	// A read that could not decide a declared object is an observation the
+	// runner frames, not a malformed report.
+	if slices.ContainsFunc(report.Findings, func(finding dataplane.DriftFinding) bool {
+		return finding.Category == dataplane.DriftFindingUndecided
+	}) {
+		record, err := capturedRow(captures, row.family()+"/observe")
+		if err != nil {
+			return err
+		}
+		if code := frameCode(record); code != "" {
+			problems = append(problems, fmt.Errorf("%s: the runner refused the first read with %s", row.family(), code))
+		}
+	}
 	categories := make([]string, 0, len(report.Findings))
 	for _, finding := range report.Findings {
 		categories = append(categories, finding.Category)
@@ -1130,6 +1186,16 @@ func (row differingRow) checkPlan(captures runnerharness.Captures) error {
 			problems = append(problems, row.checkRefusalCode(name, captures.Documents[child.Stdout], record))
 		}
 		return errors.Join(append(problems, row.checkUnseen(record))...)
+	}
+	if row.want.undecided != "" {
+		var problems []error
+		if outcome := frameField(record, "planOutcome"); outcome != string(runner.PlanOutcomeUndecided) {
+			problems = append(problems, fmt.Errorf("%s: the plan outcome is %q, want %s", name, outcome, runner.PlanOutcomeUndecided))
+		}
+		if named := frameField(record, "undecided"); !strings.Contains(named, row.want.undecided) {
+			problems = append(problems, fmt.Errorf("%s: the frame names %q undecided, want %q in it", name, named, row.want.undecided))
+		}
+		return errors.Join(problems...)
 	}
 	if len(row.want.statements) == 0 {
 		if outcome := frameField(record, "planOutcome"); outcome != string(runner.PlanOutcomeNoChanges) {
@@ -1225,6 +1291,18 @@ func (row differingRow) checkReadAfterApply(captures runnerharness.Captures) err
 	}
 	if report.Drift != row.want.driftsAfterApply {
 		return fmt.Errorf("%s: the read after the Apply says drift=%v, want %v", row.family(), report.Drift, row.want.driftsAfterApply)
+	}
+	if row.want.undecidedAfterApply {
+		if !dataplane.UndecidedOnly(report.Findings) {
+			return fmt.Errorf("%s: the read after the Apply finds %#v, want the undecided objects alone", row.family(), report.Findings)
+		}
+		record, err := capturedRow(captures, row.family()+"/observe-applied")
+		if err != nil {
+			return err
+		}
+		if code := frameCode(record); code != "" {
+			return fmt.Errorf("%s: the runner refused the read after the Apply with %s", row.family(), code)
+		}
 	}
 	return nil
 }
@@ -1533,6 +1611,56 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			edit: func(captures *runnerharness.Captures) {
 				editDocument(captures, "differs-view-invoker-unstated-mysql/plan", "schema plan", func(document map[string]any) {
 					document["refusal"].(map[string]any)["code"] = "dependent-object"
+				})
+			},
+		},
+		{
+			name: "a plan of undecided objects framed as converged", row: "differs-publication-scoped-postgres", want: "the plan outcome is \"NoChanges\"",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-publication-scoped-postgres/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"planOutcome": string(runner.PlanOutcomeNoChanges)}
+				})
+			},
+		},
+		{
+			name: "a plan of undecided objects that names another", row: "differs-publication-scoped-postgres", want: "undecided, want",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-publication-scoped-postgres/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{
+						"planOutcome": string(runner.PlanOutcomeUndecided),
+						"undecided":   "ptah could not decide 1 declared object: view reports (not-inspected)",
+					}
+				})
+			},
+		},
+		{
+			name: "a first read of undecided objects the runner refused", row: "differs-publication-scoped-postgres", want: "refused the first read with invalid_observed_state",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-publication-scoped-postgres/observe", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "invalid_observed_state"}}
+				})
+			},
+		},
+		{
+			name: "a read after the Apply that decided the publication", row: "differs-publication-scoped-column-postgres", want: "want the undecided objects alone",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-publication-scoped-column-postgres/observe-applied", "schema drift", func(document map[string]any) {
+					delete(document, "findings")
+					delete(document, "highest_severity")
+					delete(document, "undecided")
+					document["failed"] = false
+				})
+				// A check that passes exits 0.
+				editRow(captures, "differs-publication-scoped-column-postgres/observe-applied", func(row *runnerharness.Row) {
+					row.Children[0].Exit = 0
+				})
+			},
+		},
+		{
+			name: "a read after the Apply the runner refused", row: "differs-publication-scoped-column-postgres", want: "refused the read after the Apply",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-publication-scoped-column-postgres/observe-applied", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "invalid_observed_state"}}
 				})
 			},
 		},

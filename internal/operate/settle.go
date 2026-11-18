@@ -466,6 +466,9 @@ func (w *waiter) proofEnded(s snapshot, schema *operatorv1alpha1.PtahSchema) ver
 	case operatorv1alpha1.JournalDriftRemains:
 		return w.stop(s, StopProofEnded, fmt.Sprintf("a read of the target plan %s was made for ended the proof, and the "+
 			"journal records Verified DriftRemains: changes are still to make", plan))
+	case operatorv1alpha1.JournalUndecided:
+		return w.stop(s, StopProofEnded, fmt.Sprintf("a read of the target plan %s was made for ended the proof, and the "+
+			"journal records Verified Undecided: Ptah could not decide some declared objects", plan))
 	default:
 		return w.stop(s, StopProofEnded, fmt.Sprintf("the proof settled under a newer generation, policy or execution "+
 			"binding, and the journal records Verified %s for plan %s", orNone(string(ended.Outcome)), plan))

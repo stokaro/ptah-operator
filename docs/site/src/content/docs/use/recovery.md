@@ -455,8 +455,8 @@ settle changes nothing, and exits 4, for:
 `--wait` stays until the operator has taken the statement: the proof is gone
 and the journal records it `Verified`, `Unknown`. A proof that ends without
 it stops the wait with exit status 8: a read of the first target recorded
-`Verified` with `InSync` or `DriftRemains`, or a newer generation, policy or
-execution binding recorded `Superseded`. So does an annotation removed or
+`Verified` with `InSync`, `DriftRemains` or `Undecided`, or a newer
+generation, policy or execution binding recorded `Superseded`. So does an annotation removed or
 changed while the proof is still owed. A wait that times out exits 7
 and says what the statement still waits for: the next read of the target, a
 resume, or a stop that prints the value again. Which target the URL Secret

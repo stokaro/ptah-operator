@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -781,8 +782,21 @@ func runPlan(
 		}
 		reads[index] = read
 	}
-	if reads[0].outcome != reads[1].outcome || !bytes.Equal(reads[0].document, reads[1].document) {
+	if reads[0].outcome != reads[1].outcome || !bytes.Equal(reads[0].document, reads[1].document) ||
+		!reflect.DeepEqual(reads[0].undecided, reads[1].undecided) {
 		setResultError(&result, "unstable_plan", errors.New("consecutive plan reads did not return identical bytes"), redactor, config.Diagnostics)
+		return result
+	}
+	// A plan that changes nothing has shown the database matches only where
+	// its comparison decided every declared object. One it could not decide
+	// is neither created nor shown to exist (stokaro/ptah#3850), so the plan
+	// is undecided, and names the objects. A plan with changes is published
+	// as it is: the objects it could not decide are still undecided at the
+	// read after its Apply.
+	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges && reads[0].document == nil && !reads[0].undecided.Empty() {
+		result.ChildExitCode = 0
+		result.PlanOutcome = PlanOutcomeUndecided
+		result.Undecided = undecidedSentence(reads[0].undecided, redactor)
 		return result
 	}
 	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges && reads[0].document == nil {
@@ -858,11 +872,13 @@ func runPlan(
 	return result
 }
 
-// nativePlan is what one `schema plan --json` read produced: how it ended, and
-// for a plan with changes or with notes alone the exact bytes it saved.
+// nativePlan is what one `schema plan --json` read produced: how it ended, for
+// a plan with changes or with notes alone the exact bytes it saved, and the
+// declared objects its comparison could not decide.
 type nativePlan struct {
-	outcome  string
-	document []byte
+	outcome   string
+	document  []byte
+	undecided dataplane.Undecided
 }
 
 // readNativePlan runs one plan and reads it back through its report.
@@ -937,7 +953,7 @@ func readNativePlan(
 	}
 	noteReportedSuccess(outcome.exitCode, config.Diagnostics)
 	if report.Outcome == dataplane.SchemaPlanOutcomeNoChanges && report.PlanPath == "" {
-		return nativePlan{outcome: report.Outcome}, true
+		return nativePlan{outcome: report.Outcome, undecided: report.Undecided}, true
 	}
 	if report.PlanPath != outputPath {
 		setResultError(result, "invalid_plan_output", errors.New("ptah reported saving the plan somewhere other than the path it was given"), redactor, config.Diagnostics)
@@ -952,7 +968,7 @@ func readNativePlan(
 		setResultError(result, "invalid_plan_output", errors.New("the saved plan does not match the digest its report names"), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	}
-	return nativePlan{outcome: report.Outcome, document: document}, true
+	return nativePlan{outcome: report.Outcome, document: document, undecided: report.Undecided}, true
 }
 
 // validatePlanDryRun runs the saved plan through `schema apply --dry-run` and
@@ -1434,6 +1450,9 @@ func driftInventory(inventory []dataplane.DriftInventoryEntry) []DriftInventoryS
 
 func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, []DriftFindingSummary, error) {
 	severity := strings.ToLower(strings.TrimSpace(report.HighestSeverity))
+	if !report.Drift && dataplane.UndecidedOnly(report.Findings) {
+		return undecidedDriftSummary(report, severity)
+	}
 	if !report.Drift {
 		if len(report.Findings) != 0 {
 			return "", 0, nil, errors.New("converged drift report contains findings")

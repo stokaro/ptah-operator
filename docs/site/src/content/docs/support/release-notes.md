@@ -19,9 +19,13 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.31.0,
-which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.31.0 and planned. Measured on
+on the upgrade. The journal of a schema and a migration gains the outcome
+`Undecided`, so the CRD schema version moves from 21 to 22. Once this
+release's hook has updated the CRDs, 0.2.14's CRD hook refuses
+[a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
+refuses CRD schemas newer than the release reads. The executor moves to Ptah
+v0.31.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.31.0 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
@@ -204,8 +208,24 @@ propagation is refused from this release: have it name
   change. [PostgreSQL authority](../databases/#postgresql-authority) says what
   the login needs. Ptah reads publications only when the read covers every
   schema of the database: under a URL that pins `search_path` in a database
-  with another schema, a declared publication is never created and every
-  Observe fails with `invalid_observed_state`.
+  with another schema, a declared publication is never created, and the schema
+  reads `DriftUndecided`, as below.
+- **A declared object Ptah could not decide is not in sync.** Where Ptah's
+  read cannot decide whether a declared object exists, its drift check fails
+  without finding drift and lists the object as `undecided`
+  ([stokaro/ptah#3850](https://github.com/stokaro/ptah/pull/3850)). The
+  operator refused that report, and every Observe failed with
+  `invalid_observed_state`. A plan that changes nothing and lists undecided
+  objects now sets
+  [`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide):
+  `DriftDetected` is unknown, `InSync` and `Ready` are false, nothing is
+  published, and `Ready` and a Warning Event name each object and Ptah's
+  reason. Such a plan used to read as in sync where an exclusion removed the
+  rest of the drift, and the read after an Apply that left an undecided object
+  failed at every attempt; it now ends the proof without recording the Apply as
+  converged, and the journal records `Verified` with the new outcome
+  `Undecided`. `kubectl ptah wait --for applied` and `settle --wait` stop on it
+  and say that Ptah could not decide some declared objects.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on

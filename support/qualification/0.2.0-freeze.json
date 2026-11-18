@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-18T05:08:26.651356+00:00",
+  "frozenAt": "2026-11-18T07:02:34.359277+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "ba2b183bed9478c3e5a95a01e562ef4a8f8d4b8194fb29e573dc0a234fadc0d7"
+      "sha256": "d2a00aabb954a0a5a27207d66a69017e5db7e3d9d9e30a08247ef8117e2a7af4"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "ab08f2e284b565b333c64fbc1be710fdf1a50d19bfe1f8d72465c8db0b9a3b09"
+      "sha256": "f125ccf4422e6eca598c76df7ab8c3408aefd20449fe5757fb6afb02ad751f9b"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 116,
+  "revision": 117,
   "supersedes": {
-    "freezeCommit": "f921457fa86a7625460a1809235cb98c91fecb53",
-    "sha256": "185e99339adea48db070d1dbb20a2516a1cd1795faa6b1180de3601177bc355c"
+    "freezeCommit": "9f730b6b9b6f1e9c568fad0f22258f6a9038f469",
+    "sha256": "46580103886a6541af2316b26acd70e09b221dd2ffa3ab5e62b93412f1a97020"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.30.1 to the v0.31.0 release image, and record in the edge row what v0.31 changes: the owner check of schema apply counts the role statements of the plan, the record of repeatable migrations keeps each one's body, and a PostgreSQL schema may declare a logical replication publication, after which a plan drops each one the schema does not declare. The functional matrix names the new build, and the databases page describes it and what a publication needs. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Replace the publication limitation in the edge row of support/ptah.json and on the databases page with what the operator now does: a plan that changes nothing because Ptah could not decide a declared object, such as a publication under a URL that pins search_path, sets DriftUndecided, where every Observe failed with invalid_observed_state. The Ptah build under test, phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

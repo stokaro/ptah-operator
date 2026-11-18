@@ -38,6 +38,7 @@ decision.
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
 | `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the target's schema cannot be read, the applied history cannot be replayed, the applied migrations fail on the shadow, Ptah refused a selector in its `exclude`, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `DriftUndecided` | The Plan changed nothing because Ptah could not decide whether some declared objects exist, such as a PostgreSQL publication under a URL that reads some of the database's schemas. `DriftDetected` is unknown, `InSync` and `Ready` are false, nothing is published or applied, and `Ready` names each object and Ptah's reason. See [A declared object Ptah could not decide](#a-declared-object-ptah-could-not-decide). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
 | `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
@@ -766,6 +767,36 @@ The operator reads again at `spec.interval`, so a database changed by hand, or
 an artifact that matches the database, converges with no other step. A plan
 with statements and notes is published and approved as any other plan, and
 `kubectl ptah plan` prints each note where Ptah placed it.
+
+## A declared object Ptah could not decide
+
+Ptah decides whether a declared object exists only where its read of the
+database describes that kind of object. It reads PostgreSQL publications, for
+one, only when the read covers every schema the database holds, since a
+publication belongs to the whole database. Under a URL that pins
+`search_path` in a database with another schema, it can neither create a
+declared publication nor show that one exists: the plan leaves it out, and
+the drift report counts it as `undecided` and fails without finding drift
+([stokaro/ptah#3850](https://github.com/stokaro/ptah/pull/3850)). Before
+0.2.15 the operator refused that report, and every Observe failed with
+`invalid_observed_state`.
+
+A Plan that changes nothing and lists undecided objects sets `DriftUndecided`
+on `DriftDetected`, which is unknown, and on `PlanReady`, `InSync` and
+`Ready`, which are false. The resource is `Blocked` with no plan to approve,
+and no failure is reported. `Ready` and a Warning Event name each object and
+Ptah's reason:
+
+```
+ptah could not decide 1 declared object: PostgreSQL publication notes_pub (whether the publication exists was not established: ...). Nothing is planned for them: use a URL that reads the whole database, with a login that may read what each reason names
+```
+
+Point the URL at the whole database, with no `search_path` and a login that
+may read each schema, and the next read decides the object. The operator reads
+again at `spec.interval`. A plan with statements beside undecided objects is
+published and approved as any other plan, and it leaves the undecided objects
+out, so the read after its Apply sets `DriftUndecided` and records no Apply as
+converged.
 
 ## Unsupported engines
 

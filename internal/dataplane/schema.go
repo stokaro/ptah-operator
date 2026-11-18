@@ -7,6 +7,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 const (
@@ -306,6 +307,79 @@ type SchemaPlanReport struct {
 	// fence refusal's tables and nothing else; its kind names a target that
 	// could not be opened.
 	Error *CommandError `json:"error,omitempty"`
+	// Undecided names the declared objects the plan's comparison could not
+	// decide, and so planned nothing for. A report that plans no change and
+	// names one has not shown the database matches.
+	Undecided Undecided `json:"undecided,omitzero"`
+}
+
+// Undecided is what a comparison could not decide, as Ptah's drift and plan
+// documents list it under "undecided" (stokaro/ptah#3850): the declared
+// objects of a kind the read of the database did not describe, so nothing
+// checked whether they exist. Ptah counts them as the drift finding
+// DriftFindingUndecided.
+type Undecided struct {
+	// Common are objects of a kind every engine shares, such as a view.
+	Common []UndecidedObject `json:"common,omitempty"`
+	// Features are objects a feature owner compares, such as a PostgreSQL
+	// publication.
+	Features []UndecidedFeature `json:"features,omitempty"`
+}
+
+// UndecidedObject is one common object the read did not describe. Reason is
+// a token of Ptah's coverage vocabulary, such as not-inspected, and may be
+// empty.
+type UndecidedObject struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// UndecidedFeature is one object a feature owner could not compare. Reason is
+// Ptah's sentence for why, and Label the owner's name for the kind, such as
+// "PostgreSQL publication", where it states one.
+type UndecidedFeature struct {
+	Kind    string           `json:"kind"`
+	Subject UndecidedSubject `json:"subject"`
+	Reason  string           `json:"reason"`
+	Label   string           `json:"label,omitempty"`
+}
+
+// UndecidedSubject is the part of an object identity a name is spelled from.
+// A subject with none of them stands for every object of its kind.
+type UndecidedSubject struct {
+	Catalog IdentityPart `json:"catalog,omitzero"`
+	Schema  IdentityPart `json:"schema,omitzero"`
+	Parent  IdentityPart `json:"parent,omitzero"`
+	Name    IdentityPart `json:"name,omitzero"`
+}
+
+// IdentityPart is one component of an object identity, as it was spelled.
+type IdentityPart struct {
+	Source string `json:"source"`
+}
+
+// Empty reports whether the comparison decided every declared object.
+func (u Undecided) Empty() bool { return len(u.Common) == 0 && len(u.Features) == 0 }
+
+// Count is how many declared objects the comparison could not decide, which
+// is the count Ptah gives the undecided finding.
+func (u Undecided) Count() int { return len(u.Common) + len(u.Features) }
+
+// validate refuses an entry that does not say what it is: a common object with
+// no kind, or a feature object with no kind or no reason.
+func (u Undecided) validate() error {
+	for _, object := range u.Common {
+		if strings.TrimSpace(object.Kind) == "" {
+			return errors.New("names an undecided object of no kind")
+		}
+	}
+	for _, feature := range u.Features {
+		if strings.TrimSpace(feature.Kind) == "" || strings.TrimSpace(feature.Reason) == "" {
+			return errors.New("names an undecided object without its kind or its reason")
+		}
+	}
+	return nil
 }
 
 // SchemaApplyReport is Ptah's `schema apply --json` document.
@@ -434,6 +508,9 @@ func DecodeSchemaPlan(data []byte) (SchemaPlanReport, error) {
 	}
 	if err := validateSchemaRefusal(report.Outcome == SchemaPlanOutcomeRefused, report.Refusal); err != nil {
 		return SchemaPlanReport{}, fmt.Errorf("schema plan %w", err)
+	}
+	if err := report.Undecided.validate(); err != nil {
+		return SchemaPlanReport{}, fmt.Errorf("schema plan report %w", err)
 	}
 	switch report.Outcome {
 	case SchemaPlanOutcomeChanges:
