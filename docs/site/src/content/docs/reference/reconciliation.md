@@ -157,6 +157,11 @@ The operator rolls nothing back. Each branch has its own recovery, and
   run](../../use/operations/#clear-unresolved-run), which a person creates after
   establishing what the run did.
 - **Changes remain.** A proof that still finds changes publishes a new plan.
+  One whose plan Ptah could not make, because it would change a protected
+  table or holds only notes, publishes none: the proof ends `Blocked` with
+  `ProtectedTable` or `DifferenceNotPlannable`, as a Plan outside a proof does,
+  records no Apply as converged, and hands the database realm back. The next
+  read is a whole interval away.
 - **A read fails.** Resolve, Verify, Observe, Plan and a history read change
   nothing, so they retry after `spec.execution.failureRetryInterval`.
 
@@ -472,10 +477,11 @@ never establishes that the database changed the way the plan said it would.
 ### Blocked is a refusal, not a fault
 
 `Blocked` means the answer will not change until somebody changes an input. It
-is reached from eight places: a realm conflict, a `PtahRealm` that does not
+is reached from a realm conflict, a `PtahRealm` that does not
 admit the resource, an unsupported engine, a
 verification policy that refused the artifact, a plan that would change a
-protected table, a destructive plan the policy disallows, [a proof whose target
+protected table, a difference Ptah cannot plan, declared objects Ptah could not
+decide, a destructive plan the policy disallows, [a proof whose target
 moved](../../use/recovery/#a-schema-whose-target-moved), and `apply: Never`,
 which is not a problem at all — it is the policy that records plans and applies
 none, and a resource can sit there for as long as somebody wants. `Failed` is
@@ -781,7 +787,7 @@ decision an entry names is still stored.
 | `PlanPublished` | `status.plan` names a plan the journal does not already hold. A plan republished while the resource refreshes is the same plan and writes nothing. On a schema, `approvalRequired` says the plan asked for a person's approval when it was published, and `replaced` names the plan it took the place of, when a person could approve that plan or had approved it and it never ran. That is the record of what a [`PlanStale`](../../troubleshoot/events/) Warning reports, since the Event [can be lost](../../troubleshoot/events/#an-event-can-be-lost). A schema counts a plan in `ptah_operator_plans_total` on the write that records this entry, and a plan that asks for an approval when it is published has its `ApprovalRequired` Event in the same write. A plan that starts asking later, as after an edit of `spec.policy.apply`, has its Event with no entry, and `approvalRequired` keeps what the plan asked when it was published: [Events](../../troubleshoot/events/) lists when. |
 | `ApprovalAccepted` | An Apply consumes an approval: the one a schema's plan records, or the one a migration's Apply claim names, with the approver admission stamped. `approvalUID` is what tells two decisions apart: a later approval may take the name of an earlier one, and writes its own entry. |
 | `ApplyFinished` | A schema's Apply ends and its post-Apply observation takes its place: `Succeeded`, or `Unknown` when its outcome is unknown. It names the Apply claim, the plan, the approval and the Job, and the statement the Apply stopped at. An Apply withdrawn before dispatch changed nothing and writes nothing. |
-| `Verified` | That observation settles: `InSync`, `DriftRemains`, `Undecided` when its plan changed nothing because Ptah could not decide a declared object ([`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide)), `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run named: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that named none writes no such entry. |
+| `Verified` | That observation settles: `InSync`, `DriftRemains` when it found changes to make, including a change to a protected table or one Ptah cannot plan, `Undecided` when its plan changed nothing because Ptah could not decide a declared object ([`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide)), `Superseded` when a newer generation, policy or execution binding took over, or `Unknown` when a person [gave it up](../../use/recovery/#a-schema-whose-target-moved) because its target moved. For a migration, the first reading after the run of the database the run named: `InSync`, `Pending` when the source has more to apply, or `Blocked`. A run that named none writes no such entry. |
 | `RunFinished` | A migration run ends, with its outcome, the plan it carried out, how many versions it applied, and where it stopped. One run writes one entry: a run that ends `Partial` or `Unknown` also holds the resource in `status.unresolvedRun`, which writes none of its own. A hold a restore brings back without status writes the entry the lost status held, with the outcome and time the hold recorded. |
 | `RunAcknowledged` | A person acknowledges an unresolved run, named by its operation, its plan and its Job, with the `outcome` that run ended with. |
 | `OperationFailed` | An attempt fails. Attempts that fail with the same operation and reason in a row are one entry with a `count` and the time of the last one. |

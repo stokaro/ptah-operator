@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
@@ -33,13 +34,14 @@ func TestARefusalIsRecordedByAClaimThatTookNoLease(t *testing.T) {
 		// to fail the pass.
 		leased bool
 		// proof says whether a post-Apply observation is outstanding. It owns
-		// the realm, so the claim retiring under it owes nothing.
+		// the realm, and a refusal of the read that proves the Apply ends the
+		// proof, so the write that records it owes the proof's release.
 		proof bool
 		owes  bool
 	}{
 		{name: "holding a Lease, no proof outstanding", leased: true, proof: false, owes: true},
 		{name: "holding no Lease, no proof outstanding", leased: false, proof: false, owes: false},
-		{name: "holding a Lease under an outstanding proof", leased: true, proof: true, owes: false},
+		{name: "holding a Lease under an outstanding proof", leased: true, proof: true, owes: true},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -71,8 +73,16 @@ func TestARefusalIsRecordedByAClaimThatTookNoLease(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := reconciler.refuseProtectedTable(
-				context.Background(), stored, nil, `table "orders" is protected`); err != nil {
+			result := runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationPlan, OperationID: "plan-operation",
+				CoordinationDigest: digest, TargetIdentityDigest: testDigest,
+				Error: &runner.ResultError{Code: "protected_table", Message: `table "orders" is protected`},
+			}
+			end, refused := planEndFor(operatorv1alpha1.OperationPlan, result.Error)
+			if !refused {
+				t.Fatal("a fence refusal does not read as a plan that ended with nothing to publish")
+			}
+			if _, err := reconciler.endRefusedPlan(context.Background(), stored, nil, result, end, nil, 0, false); err != nil {
 				t.Fatalf("the refusal was not recorded: %v", err)
 			}
 

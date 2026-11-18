@@ -243,6 +243,24 @@ propagation is refused from this release: have it name
   converged, and the journal records `Verified` with the new outcome
   `Undecided`. `kubectl ptah wait --for applied` and `settle --wait` stop on it
   and say that Ptah could not decide some declared objects.
+- **A proof that meets a fence ends.** When Ptah refused the read after an
+  Apply because the plan would change a protected table, the proof stayed
+  owed: the resource held the database realm and its finalizer, the next pass
+  claimed the same read again, and the journal recorded nothing. The read now
+  ends the proof `Blocked` with `ProtectedTable`, records no Apply as
+  converged, and releases the realm, and the journal records `Verified`
+  `DriftRemains`, so `kubectl ptah wait --for applied`, `approve --wait` and
+  `settle --wait` stop on it. A read after an Apply that finds only a
+  difference Ptah cannot plan ends the proof the same way, with
+  `DifferenceNotPlannable`. A fence refusal, in a proof or not, now also sets
+  `DriftDetected` true with `ProtectedTable`, where it kept the value the
+  Observe before it wrote.
+- **A refused re-plan stops asking for an approval.** Under `apply:
+  OnApproval`, a plan waiting for an approval whose next Plan Ptah refused for
+  a protected table left `ApprovalRequired` true beside `Blocked`, with no plan
+  in status to approve. The condition now turns false with
+  `PlanNoLongerCurrent`. The same holds when the next Plan finds only a
+  difference Ptah cannot plan.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on
