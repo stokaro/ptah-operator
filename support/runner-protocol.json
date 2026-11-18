@@ -457,6 +457,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:f58e547a9b6834a704775db00da6008876819aea01bb12b6cf029a801d363953",
       "reason": "Read Ptah v0.30's documents. The plan decoder accepts placed_schema, and annotations as notes nothing runs: in order, within the statements, never empty. A no-changes report that names a saved plan of notes and no statement is difference_not_plannable, with the notes redacted and cleaned within 512 bytes, and no dry run runs. A refusal's owner names its statement and role, with the login and privilege or the schema, after missing-owner-role, owner-transfer or owner-schema-privilege, and a dry run that refuses an owner is plan_refused where it was invalid_plan_output; other dry-run refusals are unchanged. On PostgreSQL a validate fault naming a table without its schema matches it placed in one schema, as plan or drift prints it. Migration status repeatables are read, bounded and cleaned. Fields and the frame shape are unchanged. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:2c231cbc24f03a7f20ee39e7c73c65757a0dd575e5c9892ed49cc015a09e5ca7",
+      "reason": "Read a drift report that fails without drift when its only findings are undecided, and frame it as an observation with no drift, no highest severity and the one undecided finding; every other failed report without drift is still invalid_observed_state. A plan report's undecided objects are read and must agree between the two reads, or the plan is unstable_plan. A plan that changes nothing and lists undecided objects is the new outcome Undecided, with the new field undecided naming each object and Ptah's reason, redacted and cleaned within 512 bytes, and no dry run runs; a plan with changes is framed as before. The api package the runner builds against gains the journal outcome Undecided, which no frame carries. An earlier manager refuses both frames as malformed, which is what a version mismatch would give, and its Jobs run its own runner. Protocol 1 stays."
     }
   ]
 }
