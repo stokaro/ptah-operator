@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_bf1e4cb96b85",
-  "plan_digest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
+  "plan_name": "plan_a58a27d92d20",
+  "plan_digest": "sha256:099ea240f2b5cdf1a3c1d2e2c022e5e41d49e11eed360857a460df441444b5b5",
   "units": [
     {
       "sql": "CREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"

@@ -1,0 +1,39 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:7d9e7f05c030e67922e127e6124f567bb06675061aa88753b68ec0975efdf4af",
+  "plan_path": "/work/ptah-plan-output-292171514/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_214829bc97b8",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:65481d6153003fc8d6b5f1175ab060bf7e65b7e903d47fcd691323d3908c1824",
+    "to_fingerprint": "sha256:8659bd146a708d1d61623af3f4dc4ac068fb47816a1aef78ef84b2b23a21d640",
+    "scope": {
+      "kind": "realm"
+    },
+    "placed_schema": "public",
+    "destructive": true,
+    "statements": [
+      {
+        "transactions": [
+          "allowed"
+        ],
+        "sql": "CREATE PUBLICATION \"differs_notes_pub\" FOR TABLE ONLY \"public\".\"differs_notes\"",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints",
+        "owned": true
+      },
+      {
+        "transactions": [
+          "allowed"
+        ],
+        "sql": "DROP PUBLICATION \"differs_old_pub\"",
+        "severity": "destructive",
+        "reason": "DROP PUBLICATION stops logical replication to every subscriber that reads the publication",
+        "owned": true
+      }
+    ]
+  }
+}

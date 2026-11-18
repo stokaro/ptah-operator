@@ -19,15 +19,15 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.30.1,
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.31.0,
 which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.30.1 and planned. Measured on
+the resource has read its database with v0.31.0 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.30.1 made.
+is for a plan v0.31.0 made.
 
 A `PtahMigration` whose artifact holds an `R__<identity>.sql` file now stops at
 its history read. Since v0.30.0 Ptah reads such a file as a repeatable
@@ -50,9 +50,9 @@ another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or
 `ALTER MATERIALIZED VIEW ... OWNER TO` for a materialized view
 ([stokaro/ptah#6166](https://github.com/stokaro/ptah/pull/6166)), and waits
 for an approval as `Ownership`, under `apply: Always` too. Under v0.29.2 the
-rebuild left the login as the view's owner. Ptah v0.30.1's `schema apply`
-refuses such a plan before any statement runs when the login may not give the
-view back: it needs `SET` on the role on PostgreSQL 16 and later, membership in
+rebuild left the login as the view's owner. Since v0.30.1 Ptah's `schema
+apply` refuses such a plan before any statement runs when the login may not
+give the view back: it needs `SET` on the role on PostgreSQL 16 and later, membership in
 it before 16, and the role needs `CREATE` on the view's schema
 ([stokaro/ptah#6196](https://github.com/stokaro/ptah/pull/6196)). `schema plan`
 does not check owners, so the Plan meets the refusal in the `schema apply` dry
@@ -123,7 +123,7 @@ A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.30.1, and the runner
+- **Executor.** The verified executor is now Ptah v0.31.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. A migration's status and run now ask
   whether `schema_migrations_repeatable` exists, with the query that asks for
@@ -194,6 +194,18 @@ propagation is refused from this release: have it name
   sorted them by name
   ([stokaro/ptah#6158](https://github.com/stokaro/ptah/pull/6158)), so a table
   that gains columns holds them in the order one created from the schema does.
+- **PostgreSQL publications.** Since v0.31.0 a PostgreSQL schema may declare a
+  logical replication publication with `CREATE PUBLICATION`
+  ([stokaro/ptah#6216](https://github.com/stokaro/ptah/pull/6216)), where
+  v0.29.2 refused the schema file. A schema that declares none leaves the
+  publications the database holds alone, as before. Once it declares one, its
+  plan drops each publication it does not declare, which makes the plan
+  destructive, and creates the ones it declares, which raises no privilege
+  change. [PostgreSQL authority](../databases/#postgresql-authority) says what
+  the login needs. Ptah reads publications only when the read covers every
+  schema of the database: under a URL that pins `search_path` in a database
+  with another schema, a declared publication is never created and every
+  Observe fails with `invalid_observed_state`.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on

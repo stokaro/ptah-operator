@@ -410,6 +410,37 @@ func differingRows() []differingRow {
 					`OWNER TO "harness_view_nobody" role harness_view_nobody does not exist)`,
 			},
 		},
+		// Since Ptah v0.31.0 a PostgreSQL schema may declare a logical
+		// replication publication (stokaro/ptah#6216). Ptah manages publications
+		// from the first one the declaration names. Until then it leaves every
+		// publication the database holds alone and lists it under not_compared,
+		// which the manager does not read, so the read is converged and the plan
+		// is empty.
+		{
+			name: "publication-undeclared", engine: enginePostgres, declared: "publication-none-postgresql.sql", git: true,
+			seed: []string{notes, "CREATE PUBLICATION differs_old_pub FOR TABLE differs_notes"},
+			held: []heldQuery{{
+				name: "the publications", query: "SELECT string_agg(pubname, ',' ORDER BY pubname) FROM pg_publication",
+				seeded: "differs_old_pub",
+			}},
+			want: differingReading{observed: map[string]int32{"tables": 1}},
+		},
+		// The first declared publication makes Ptah manage them all: the plan
+		// creates it and drops the one the declaration leaves out, which Ptah rates
+		// destructive. A publication grants no role anything, so the manager
+		// raises no privilege kind for either statement.
+		{
+			name: "publication-declared", engine: enginePostgres, declared: "publication-postgresql.sql", git: true,
+			seed: []string{notes, "CREATE PUBLICATION differs_old_pub FOR TABLE differs_notes"},
+			want: differingReading{
+				findings: []string{"feature_changes:ptah.run/pgpublication/publication-change"},
+				statements: []string{
+					`CREATE PUBLICATION "differs_notes_pub" FOR TABLE ONLY "public"."differs_notes"`,
+					`DROP PUBLICATION "differs_old_pub"`,
+				},
+				destructive: true,
+			},
+		},
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
 		// INVOKER that the declaration leaves without a mode reads as changed.
 		// Up to v0.29.2 the plan replaced it with no mode, which the server

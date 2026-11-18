@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "unknown",
-  "plan_name": "plan_5de14a26faee",
-  "plan_digest": "sha256:df11f1eab9cc6678dc64818521dc7a67ad7f2547bb6d63885b29fc91ef232622",
+  "plan_name": "plan_95573d42586f",
+  "plan_digest": "sha256:d2fb197fbb67b5e28574f1ac8cc1dce0b14d6bf1d03f5af0b59669b5d60a732f",
   "units": [
     {
       "sql": "ALTER TABLE `items` MODIFY COLUMN `qty` integer"

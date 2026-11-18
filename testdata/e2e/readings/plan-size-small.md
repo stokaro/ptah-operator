@@ -33,7 +33,12 @@ changed, so it stays. The PostgreSQL document here is v0.30.1's: its statement
 names the table's schema, as `CREATE TABLE "public"."e2e_plan_size_limit"`, and
 the plan records that schema as `placed_schema`
 ([stokaro/ptah#6132](https://github.com/stokaro/ptah/pull/6132)), so it
-measures 819 bytes where v0.29.5's measured 779. Each run was
+measures 819 bytes where v0.29.5's measured 779. Later that day the v0.31.0
+release image
+`ghcr.io/stokaro/ptah@sha256:ffd3bdc6e81e3875df4b7784eaf6cf6732834c70eeef2776edec47caea97a7e2`
+(commit `dc2decdee2617a350475d0f17347c7fb09dbce97`), run through the same lab,
+wrote both documents with only the plan name and the fingerprints changed, both
+of them on PostgreSQL and the `from_fingerprint` on MySQL, so both stay. Each run was
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what
@@ -73,7 +78,7 @@ a MySQL TEXT default. All native plans are non-destructive CREATE TABLE
 statements, with no padding or edited plan bytes in the CLI probes.
 
 Adding one `<` byte increases the saved native JSON by six bytes; adding one
-`x` increases it by one. With v0.30.1 the PostgreSQL envelope is 627 bytes and
+`x` increases it by one. With v0.30.1 and v0.31.0 the PostgreSQL envelope is 627 bytes and
 the MySQL envelope is 23,181 bytes. With v0.22.0, v0.23.0, v0.28.0, v0.29.0,
 v0.29.2, v0.29.3, v0.29.4 and v0.29.5 they were 587 and 23,181; with v0.17.0
 549 and 23,117, and before it 592 and 27,517. At v0.23.0 the cluster scenario, which

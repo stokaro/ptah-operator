@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_374ce3dd7032",
-  "plan_digest": "sha256:ccb7ed2b0e40e4d9d8b94a91c1605208ba31c68466b69f3bab54d061eff56531",
+  "plan_name": "plan_b52d04768af6",
+  "plan_digest": "sha256:d45c946467083a959c82055030264587069860ed3f445ea6b9a03c8434c65191",
   "units": [
     {
       "sql": "ALTER TABLE `differs_notes` ADD COLUMN `note` varchar(64)"

@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_a10413912581",
-  "plan_digest": "sha256:ac2ec5e9740bf06906ca3b25abc918c44760eca94faa9671bb84cc48403de887",
+  "plan_name": "plan_72bc25468812",
+  "plan_digest": "sha256:279690f2c5f234c16447e1d23bec76fc3b61e7be60aebc63e7413d41c0260d89",
   "units": [
     {
       "sql": "DROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\""

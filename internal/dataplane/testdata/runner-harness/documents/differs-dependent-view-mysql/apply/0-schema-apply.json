@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_56acdc5347c1",
-  "plan_digest": "sha256:147d60c4d5804aaab608830eb7991d3100b875712bf078907723c9beb8172a08",
+  "plan_name": "plan_a0637fc4da85",
+  "plan_digest": "sha256:71ced67bb23c85c63faa517d0ce5211c38420e332aff0e1c014ab4bbf223eb50",
   "units": [
     {
       "sql": "DROP TABLE `differs_parent`"

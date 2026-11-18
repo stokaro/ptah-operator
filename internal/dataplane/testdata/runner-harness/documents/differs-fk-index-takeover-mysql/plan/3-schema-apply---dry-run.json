@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_37680130e5d5",
-  "plan_digest": "sha256:144c663c73dffb93e8f46562ebf9fab7bd429839fc97cd9c14de9a0741206204",
+  "plan_name": "plan_2c02da93d388",
+  "plan_digest": "sha256:06068910feaf1590e8fb30abc3341bacf93e0e4a43c1b4b048fae90da550a7e0",
   "units": [
     {
       "sql": "ALTER TABLE `differs_child` DROP INDEX `differs_child_parent`, ADD CONSTRAINT `differs_child_parent_unique` UNIQUE (`parent_id`)"

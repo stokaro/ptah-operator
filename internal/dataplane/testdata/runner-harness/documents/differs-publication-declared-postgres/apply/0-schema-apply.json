@@ -1,0 +1,19 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_214829bc97b8",
+  "plan_digest": "sha256:7d9e7f05c030e67922e127e6124f567bb06675061aa88753b68ec0975efdf4af",
+  "units": [
+    {
+      "sql": "CREATE PUBLICATION \"differs_notes_pub\" FOR TABLE ONLY \"public\".\"differs_notes\""
+    },
+    {
+      "sql": "DROP PUBLICATION \"differs_old_pub\""
+    }
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:fd7fdc71dd2f9200d5ccf18a1e78a1bf1ef377868d22009472617f41574dc431"
+  }
+}

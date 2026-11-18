@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "refused",
-  "plan_name": "plan_207fed48544c",
-  "plan_digest": "sha256:8b21e920017f88144d5f2036d6335fa1f861baebfc37c4d0f4e104179e2bf5db",
+  "plan_name": "plan_f86af30fa6d4",
+  "plan_digest": "sha256:5d1c21b46c91930d4c8aa1c869a6478fe9c934ba590aea6badad7cb50a4f7f0c",
   "units": [
     {
       "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\""
