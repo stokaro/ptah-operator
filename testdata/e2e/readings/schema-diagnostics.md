@@ -32,7 +32,11 @@ uses to name a function that lives outside the trigger's schema
 ([stokaro/ptah#6129](https://github.com/stokaro/ptah/pull/6129)), and the name
 of the prepared statement that carries it moved with it. The PostgreSQL
 readings here are v0.29.5's, with the exit status and record count v0.29.4
-gave, and the contract names the new statement.
+gave, and the contract names the new statement. On November 18, 2026 the Ptah
+v0.30.1 release image, commit `c5fba763a6fb346fc8a35d2f336d75a91385e3b9`,
+reproduced both MySQL saved plans byte for byte and moved every reading, as
+the comparison with v0.29.5 below says. The readings and the PostgreSQL saved
+plans here are v0.30.1's, and the contract names the moved statements.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -79,6 +83,25 @@ then checked in byte for byte, and the probe's unit test holds the checked-in
 contract to the checked-in readings. The v0.28.0 contract is the one it wrote
 from the v0.28.0 readings, and the v0.29.0 contract differs from it only in the
 Ptah commit it names.
+
+Against v0.29.5, v0.30.1 changed every reading on both engines. Ptah now keeps
+a record of repeatable migrations in the table `schema_migrations_repeatable`,
+and every catalog read of a schema leaves that table out beside the migration
+tables it already left out. Each of the 30 MySQL schema readings changes in
+that alone and keeps its exit status and record count. Each PostgreSQL schema reading,
+the 18 and 16 witnesses included, also reads `pg_db_role_setting`, once in an
+Observe, a plan validation or an Apply and twice in a plan, which reads twice,
+so an Observe has one record more and a Plan two. The statements a plan or an
+Apply sends name their schema, as `ALTER TABLE "public"."e2e_widgets" ADD COLUMN
+"enabled" boolean`, and both PostgreSQL saved exclusion plans name it and record
+it as `placed_schema`
+([stokaro/ptah#6132](https://github.com/stokaro/ptah/pull/6132)). Each History
+reading and each restored-history refusal asks whether
+`schema_migrations_repeatable` exists, once per History read: a PostgreSQL
+History has one record more and its refusal three, and MySQL asks in a session
+of its own, so its History has five records more and its refusal eleven. The
+contract has 98 statements where it had 97: the `pg_db_role_setting` read is
+new, and 17 reads gain the table, 7 on PostgreSQL and 10 on MySQL.
 
 Against v0.28.0, v0.29.0 changed no reading on either engine, the PostgreSQL 18
 and 16 witnesses included: every schema and migration journal matched record for
@@ -381,8 +404,9 @@ readings and both restored-history refusals. The saved exclusion plans differ in
 their source fingerprint and name and hold the same statements. The three witnesses
 below were taken again with the v0.22.0 image on November 6, 2026, at 50, 89 and 47
 records as on PostgreSQL 17, with the v0.23.0 image on November 7, 2026, at 53,
-95 and 50, and with the v0.26.0 image on November 13, 2026, at 56, 101 and 53.
-Each time they still differ from 17 in that one statement. Since v0.22.0
+95 and 50, with the v0.26.0 image on November 13, 2026, at 56, 101 and 53, and
+with the v0.30.1 image on November 18, 2026, at 57, 103 and 54. Each time they
+still differ from 17 in that one statement. Since v0.22.0
 Ptah reads the columns from `pg_catalog`, so the two statements are the same read
 with that name selected or left empty.
 
@@ -411,9 +435,9 @@ Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
 
 `postgresql-16-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply`
 are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
-53, 95 and 50 records, and again with the v0.26.0 image on November 13, 2026, at
-56, 101 and 53, with every statement and parameter value of the PostgreSQL 17
-readings. They witness the declarations the PostgreSQL 17 readings
+53, 95 and 50 records, again with the v0.26.0 image on November 13, 2026, at
+56, 101 and 53, and with the v0.30.1 image on November 18, 2026, at 57, 103 and
+54, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 
@@ -453,19 +477,19 @@ databases page lists `TEMPORARY` for that reason.
 
 | Reading | Fixture and command | PostgreSQL records | MySQL records (Query/Execute) |
 | --- | --- | ---: | ---: |
-| `observe`, `plan` | v3 with a control row; drift and plan of fault-v1 | 56, 101 | 44 (20), 85 (39) |
-| `destructive-observe`, `-plan` | the same, desired v4 | 56, 101 | 44 (20), 85 (39) |
-| `exclusion-wide-observe`, `-plan` | adds `e2e_excluded_policy_keep` as the lifecycle creates it; fault-v1 | 56, 101 | 44 (20), 85 (39) |
-| `exclusion-narrow-observe`, `-plan` | the same; Plan alone receives `--exclude=e2e_excluded_policy_keep` | 56, 101 | 44 (20), 85 (39) |
-| `initial-v1-observe`, `-plan` | no tables; desired v1 | 49, 92 | 43 (19), 83 (37) |
-| `tag-v2-observe`, `-plan`, `tag-v3-…` | v1 with one control row; desired v2 or v3 | 56, 101 | 44 (20), 85 (39) |
-| `drift-plan-before` | v3; saved plan of fault-v1 | 101 | 85 (39) |
-| `drift-stale-apply` | `enabled` dropped under the saved plan; Apply refused `stale-plan` (exit 2), lock timeout 60s | 53 | 52 (23) |
-| `drift-observe`, `drift-plan` | the changed database, observed and planned again | 56, 101 | 44 (20), 85 (39) |
-| `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 53 | 52 (23) |
-| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 63 | 65 (30) |
-| `documented-exclusion-wide-observe`, `-plan`, `documented-exclusion-narrow-…` | the exclusion sequences as the documented login | 56, 101 | 44 (20), 85 (39) |
-| `documented-drift-stale-apply`, `-drift-observe`, `-drift-plan`, `-drift-validate-plan` | the drift sequence as the documented login | 53, 56, 101, 53 | 52 (23), 44 (20), 85 (39), 52 (23) |
+| `observe`, `plan` | v3 with a control row; drift and plan of fault-v1 | 57, 103 | 44 (20), 85 (39) |
+| `destructive-observe`, `-plan` | the same, desired v4 | 57, 103 | 44 (20), 85 (39) |
+| `exclusion-wide-observe`, `-plan` | adds `e2e_excluded_policy_keep` as the lifecycle creates it; fault-v1 | 57, 103 | 44 (20), 85 (39) |
+| `exclusion-narrow-observe`, `-plan` | the same; Plan alone receives `--exclude=e2e_excluded_policy_keep` | 57, 103 | 44 (20), 85 (39) |
+| `initial-v1-observe`, `-plan` | no tables; desired v1 | 50, 94 | 43 (19), 83 (37) |
+| `tag-v2-observe`, `-plan`, `tag-v3-…` | v1 with one control row; desired v2 or v3 | 57, 103 | 44 (20), 85 (39) |
+| `drift-plan-before` | v3; saved plan of fault-v1 | 103 | 85 (39) |
+| `drift-stale-apply` | `enabled` dropped under the saved plan; Apply refused `stale-plan` (exit 2), lock timeout 60s | 54 | 52 (23) |
+| `drift-observe`, `drift-plan` | the changed database, observed and planned again | 57, 103 | 44 (20), 85 (39) |
+| `drift-validate-plan` | `schema apply --dry-run` of the fresh plan, lock timeout 30s | 54 | 52 (23) |
+| `drift-apply-current` | the fresh plan applied, lock timeout 60s | 64 | 65 (30) |
+| `documented-exclusion-wide-observe`, `-plan`, `documented-exclusion-narrow-…` | the exclusion sequences as the documented login | 57, 103 | 44 (20), 85 (39) |
+| `documented-drift-stale-apply`, `-drift-observe`, `-drift-plan`, `-drift-validate-plan` | the drift sequence as the documented login | 54, 57, 103, 54 | 52 (23), 44 (20), 85 (39), 52 (23) |
 | `lock-45-plan`, `lock-60-plan` | MySQL only: a runner Plan's two plan reads and dry-run validation under a 45s or 60s lock timeout | | 222 (101) |
 
 Every Observe exited 1 with drift, every Plan and validation exited 0, the stale

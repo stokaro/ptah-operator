@@ -1,16 +1,17 @@
 {
   "format_version": 1,
-  "name": "plan_f9662b120280",
+  "name": "plan_9788eaf85287",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:a28d6879c9388903dba6ca3014d1fa05b1313c2193759b0766318a692b85a4a0",
-  "to_fingerprint": "sha256:1ebbf637e9ef0da9db7634087a6df0b187743217b74cd97e6bd6f85d14384237",
+  "from_fingerprint": "sha256:da7a1e081e5f7fe7d2f82f619cdafdc1616a95c2bd9d97168b4961175f29cf19",
+  "to_fingerprint": "sha256:cc9bfbba68cbc1a1b9b6c685b39571bc7ccaa429dc2167d4c0d3490ef77662df",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "ALTER VIEW \"e2e_widget_names\" SET (security_invoker=true)",
+      "sql": "ALTER VIEW \"public\".\"e2e_widget_names\" SET (security_invoker=true)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints",
       "effects": [

@@ -1,21 +1,22 @@
 {
   "format_version": 1,
-  "name": "plan_5e81a90c55b1",
+  "name": "plan_ad5428409b30",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:c89464fa562a860cd435fab91d19c51edc3cfdb6d0de1fcb52983f88da81d871",
-  "to_fingerprint": "sha256:a13270c0586d2e3447303da39eba23c7c171fc1e2315093a4bf54520b699cccb",
+  "from_fingerprint": "sha256:f3915a7236be844ad5e0db71bacb480cb434c8add24bacd6e29a258f8269edc5",
+  "to_fingerprint": "sha256:0cca1f6e1d54814495fdd67fbd0f909ea930a2f94897f20798fb2f3f0fcbd066",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": true,
   "statements": [
     {
-      "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "sql": "ALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"fault_token\" text",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },
     {
-      "sql": "DROP TABLE \"e2e_excluded_policy_keep\"",
+      "sql": "DROP TABLE \"public\".\"e2e_excluded_policy_keep\"",
       "severity": "destructive",
       "reason": "DROP TABLE removes the table and all rows"
     }

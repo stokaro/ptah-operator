@@ -149,7 +149,7 @@ class WorkloadTests(unittest.TestCase):
                 # Independently pinned outputs from native calibration. Every
                 # round of a band takes the same length, so the suffix below is
                 # what makes round one fail when round nine was requested.
-                repeated = (505, 42134, 168716)[slot % 3]
+                repeated = (498, 42122, 168682)[slot % 3]
                 if engine == 'MySQL':
                     repeated = (495, 42107, 168619)[slot % 3]
                 result = []

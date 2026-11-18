@@ -346,7 +346,10 @@ func postgresMigrationHistoryStatement(statement, parameters string) bool {
 			return true
 		}
 	}
-	if statement == postgresHistoryExists && parameters == "Parameters: $1 = 'schema_migrations'" {
+	// Since Ptah v0.30.0 History also asks whether the repeatable migration
+	// record exists, and reads it only where it does, which no fixture's does.
+	if statement == postgresHistoryExists && (parameters == "Parameters: $1 = 'schema_migrations'" ||
+		parameters == "Parameters: $1 = 'schema_migrations_repeatable'") {
 		return true
 	}
 	const tableParameters = "Parameters: $1 = '', $2 = 'schema_migrations'"

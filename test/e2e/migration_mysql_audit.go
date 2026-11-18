@@ -264,6 +264,13 @@ func mysqlMigrationHistoryStatement(command, statement, database string) bool {
 				return true
 			}
 		}
+		// Since Ptah v0.30.0 History also asks whether the repeatable
+		// migration record exists, on a connection of its own, and reads it
+		// only where it does, which no fixture's does.
+		repeatable := strings.Replace(mysqlHistoryExists, "?", "'"+database+"'", 1)
+		if statement == strings.Replace(repeatable, "?", "'schema_migrations_repeatable'", 1) {
+			return true
+		}
 		for _, column := range []string{"state", "applied", "total", "error", "error_stmt", "execution_time_ms", "checksum"} {
 			bound := strings.Replace(mysqlHistoryColumn, "?", "'"+database+"'", 1)
 			bound = strings.Replace(bound, "?", "'schema_migrations'", 1)
