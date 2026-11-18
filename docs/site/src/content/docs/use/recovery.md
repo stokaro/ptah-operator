@@ -534,7 +534,7 @@ the reason.
 
 Everything below was measured with Ptah v0.22.0, directly and under this operator's
 edge build on Kubernetes 1.37.0, against PostgreSQL 17.11 and MySQL 8.4.11, except
-where it names Ptah v0.23.0 or v0.26.0.
+where it names a later Ptah release.
 
 ### Retry the migration {#retry-failed-migration}
 
@@ -611,8 +611,12 @@ again and go back to the cause.
 
 ### Retrying outside the operator
 
-`ptah migrations up --allow-dirty` is the retry Ptah's own messages name. It reuses
-the row, and it runs the SQL under your login with no plan, no approval and no Job.
+`ptah migrations up --allow-dirty` is the retry Ptah's status names for a migration
+none of whose statements reached the database. For one that stopped part-way the
+status names `ptah migrations repair --version 2 --resume-from 2`, and the retry
+below finishes it too, as [Finish what it started](#failed-partial) says. Either
+command reuses the row, and runs the SQL under your login with no plan, no approval
+and no Job.
 The resource reads the result at its next read and reaches `Ready=True`, and
 `status.lastRun` goes on saying `Failed` until a later run replaces it. With nothing
 left pending, that read also settles a `status.unresolvedRun`, with no acknowledgment.
@@ -667,25 +671,36 @@ A PostgreSQL migration that runs in a transaction rolls back when it is stopped
 and still leaves `state=failed` and the run `Failed`.
 
 `ptah migrations status` calls that run interrupted, and tells you to apply what is
-missing by hand and then run `ptah migrations repair --version 2`. Do that only if you
-do apply it by hand: [that repair](#what-repair-records) records the migration applied
-and runs nothing. `ptah migrations up --allow-dirty` refuses the row. Look in the
-database for what the statement would have changed, and where it changed nothing,
-[remove the row](#retry-failed-run).
+missing by hand and then run `ptah migrations repair --version 2 --force`. Do that only
+if you do apply it by hand: [that repair](#what-repair-records) records the migration
+applied and runs nothing. Without `--force` the repair refuses the row, and so does
+`ptah migrations up --allow-dirty`, although its refusal names the repair without the
+flag:
+
+```text
+error: error running migrations: migration 2 cannot resume automatically: the outcome of statement 1 is unknown after an interrupted run; inspect the database, then use 'ptah migrations repair --version 2'
+```
+
+Look in the database for what the statement would have changed, and where it changed
+nothing, [remove the row](#retry-failed-run).
 
 A session killed while its transaction was open leaves `state=pending` with no error.
 That transaction rolled back, and the retry above takes the row.
 
 ### Finish what it started {#failed-partial}
 
-A count above zero means the first statements committed. The retry above runs what
-is left. It skips the committed statements, once it has checked that they are
-unchanged, and the statements after them may be corrected.
-`ptah migrations repair --version 2 --resume-from 2` does the same. When the committed
-statements did change, Ptah refuses:
+A count above zero means the first statements committed.
+`ptah migrations up --allow-dirty`, the retry above, runs what is left. It skips the
+committed statements, once it has checked that they are unchanged, and the statements
+after them may be corrected. `ptah migrations repair --version 2 --resume-from 2` does
+the same, prints `Repaired migration 2`, and records the migration applied. A statement
+that still fails stops either command again, and the row keeps `applied=1/2`. When the
+committed statements did change, both refuse and leave the row as it was. The retry
+prints the first line, and the repair the second:
 
 ```text
-migration 2 cannot resume automatically: the already committed statement prefix changed after 1 of 2 statements committed; inspect the database before choosing a repair point
+error: error running migrations: migration 2 cannot resume automatically: the already committed statement prefix changed after 1 of 2 statements committed; inspect the database before choosing a repair point
+error: migration 2 cannot resume the migration: the already committed statement prefix changed after 1 of 2 statements committed; inspect the database before choosing a repair point
 ```
 
 Do not remove the row here unless you have also undone what committed. Without that,
@@ -701,27 +716,55 @@ Do not use `ptah migrations repair --force` for a statement that did not run. It
 records the migration as applied, and nothing runs it afterwards.
 :::
 
-`ptah migrations repair --version 2 --force` runs no SQL. It writes the row as
-`state=applied`, `applied=2/2`, prints `Repaired migration 2` and exits 0. On
-PostgreSQL and on MySQL, with the table that migration creates absent:
+Measured with the Ptah v0.32.0 release image against PostgreSQL 17.11 and MySQL
+8.4.13. The resource states are what the operator makes of the status documents those
+commands left.
 
-- `ptah migrations status` says the database is up to date.
-- `ptah migrations up` says it is already up to date, and runs nothing.
+`ptah migrations repair --version 2 --force` runs no SQL. At `state=failed applied=0/2`,
+at `state=failed applied=1/2`, and at the [MySQL row above](#failed-pending-row), it
+writes the row as `state=applied`, `applied=2/2`, keeps the checksum of the file that
+failed, prints `Updated migration 2 revision metadata; no migration SQL ran` and exits
+0. On PostgreSQL and on MySQL, with the statements the failed run did not commit
+still not run:
+
+- `ptah migrations status` says `Database is up to date`.
+- `ptah migrations up` says `Database is already up to date!`, and runs nothing.
 - The resource reaches `InSync`, with `Ready=True` and reason `HistoryMatched`.
 - A `status.unresolvedRun` settles at the next read, because nothing is left pending,
   so nobody is asked to account for the run.
 - A corrected file later reads as modified, and the resource `Blocked` with
-  `HistoryModified`, because the row now holds the checksum of the file that failed.
+  `HistoryModified`, because the row holds the checksum of the file that failed.
 
 The flag is right when a person ran every statement by hand and wants that recorded.
 To take the record back, remove the row as in [Run it](#retry-failed-run), and the
 migration is pending again.
 
-Without `--force`, `repair` follows the row, and the refusal covers one shape. At
-`state=failed applied=0/2` it refuses and names the retry. At `state=failed applied=1/2`,
-and at the [MySQL row above](#failed-pending-row), it prints `Repaired migration 2` and
-writes `applied=2/2` without running what is left, because it takes you to have
-finished the migration by hand. Use `--resume-from` if you want Ptah to run the rest.
+Without `--force` or `--resume-from`, `repair` refuses each of those rows, exits 2,
+and leaves the row as it was. At `state=failed applied=0/2` it names the retry:
+
+```text
+error: migration 2 recorded no applied statement, so there is nothing to finish: run 'ptah migrations up --allow-dirty' to apply it, or repair with --force to record it applied because you ran it yourself
+```
+
+At `state=failed applied=1/2` it names the resume:
+
+```text
+error: migration 2 recorded 1 of 2 applied statements; repair without --resume-from would mark the rest applied without running them: rerun with --resume-from 2 to run the rest, or with --force only after running them yourself
+```
+
+At the MySQL `state=pending` row it names the forced repair, and `--resume-from 2` is
+refused as well. Without a flag it prints the first line, and with `--resume-from 2`
+the second, here for a row whose statement was
+`ALTER TABLE no_such_table ADD COLUMN x int`:
+
+```text
+error: migration 2 has an unknown statement outcome; repair without --resume-from would record unverified SQL as applied without running it: inspect the database and rerun with --force only after reconciling the migration yourself
+error: migration 2 has an unknown statement outcome for "ALTER TABLE no_such_table ADD COLUMN x int"; inspect the database before repair and omit --resume-from to avoid repeating committed SQL
+```
+
+Ptah v0.22.0 recorded the last two rows applied without `--force`, and printed
+`Repaired migration 2` for every repair. Both refusals and the new message arrived in
+v0.26.0 ([stokaro/ptah#5839](https://github.com/stokaro/ptah/pull/5839)).
 
 ## What this page does not promise
 
