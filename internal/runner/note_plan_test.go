@@ -4,19 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// notePlanText is the note Ptah v0.30.0 saved against PostgreSQL 16 for a
-// generated column whose expression changed, a change that server cannot
-// make in place (stokaro/ptah#6165).
+// notePlanText is the note the pinned Ptah v0.30.1 saved against PostgreSQL
+// 16 for a generated column whose expression changed, a change that server
+// cannot make in place (stokaro/ptah#6165). capturedNotePlan holds it.
 const notePlanText = "WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires " +
 	"target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); " +
 	"manual migration required."
 
-// notePlanDocument is a plan of notes as Ptah v0.30.0 saves it: no statement,
-// and the notes in order.
+// capturedNotePlan is the plan of notes the pinned image saved with `schema
+// plan --output --json` against postgres:16-alpine, for a table whose
+// generated column the schema file gives another expression.
+// testdata/note-plan holds it and says where it is from.
+func capturedNotePlan(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "note-plan", "saved-plan-postgres-16.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// notePlanDocument is a plan of notes in the shape capturedNotePlan has: no
+// statement, and the notes in order.
 func notePlanDocument(t *testing.T, statements string, notes ...map[string]any) string {
 	t.Helper()
 	encoded, err := json.Marshal(notes)
@@ -64,8 +79,8 @@ func TestAPlanOfNotesIsADifferenceNotPlannable(t *testing.T) {
 		want string
 	}{
 		{
-			name: "the note Ptah saved against PostgreSQL 16",
-			plan: notePlanDocument(t, "[]", note(0, notePlanText)),
+			name: "the plan Ptah saved against PostgreSQL 16",
+			plan: capturedNotePlan(t),
 			want: lead + notePlanText,
 		},
 		{
@@ -123,7 +138,16 @@ func TestAPlanOfNotesIsADifferenceNotPlannable(t *testing.T) {
 func TestAPlanOfNotesIsCheckedAsAPlanIs(t *testing.T) {
 	t.Parallel()
 
-	plan := notePlanDocument(t, "[]", note(0, notePlanText))
+	plan := capturedNotePlan(t)
+	// edited is the captured plan with old replaced by new, once, so that a
+	// row whose edit no longer applies fails rather than checks the capture.
+	edited := func(old, new string) string {
+		t.Helper()
+		if strings.Count(plan, old) != 1 {
+			t.Fatalf("the captured plan holds %q %d times, want once", old, strings.Count(plan, old))
+		}
+		return strings.Replace(plan, old, new, 1)
+	}
 	for _, test := range []struct {
 		name      string
 		responses []scriptedResponse
@@ -166,8 +190,8 @@ func TestAPlanOfNotesIsCheckedAsAPlanIs(t *testing.T) {
 		{
 			name: "a field the plan does not declare",
 			responses: []scriptedResponse{
-				notePlanResponse(strings.Replace(plan, `"destructive":false`, `"destructive":false,"future":1`, 1)),
-				notePlanResponse(strings.Replace(plan, `"destructive":false`, `"destructive":false,"future":1`, 1)),
+				notePlanResponse(edited(`"destructive": false`, `"destructive": false, "future": 1`)),
+				notePlanResponse(edited(`"destructive": false`, `"destructive": false, "future": 1`)),
 			},
 			code: "invalid_plan_output",
 		},
@@ -176,8 +200,8 @@ func TestAPlanOfNotesIsCheckedAsAPlanIs(t *testing.T) {
 			// and one that names others answers another question.
 			name: "a plan of notes under other exclusions",
 			responses: []scriptedResponse{
-				notePlanResponse(strings.Replace(plan, `"scope"`, `"exclude":["public.audit_log"],"scope"`, 1)),
-				notePlanResponse(strings.Replace(plan, `"scope"`, `"exclude":["public.audit_log"],"scope"`, 1)),
+				notePlanResponse(edited(`"scope"`, `"exclude": ["public.audit_log"], "scope"`)),
+				notePlanResponse(edited(`"scope"`, `"exclude": ["public.audit_log"], "scope"`)),
 			},
 			code: "invalid_plan_output",
 		},

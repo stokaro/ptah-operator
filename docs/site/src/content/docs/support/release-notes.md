@@ -46,7 +46,8 @@ Remove them, and write what they did as versioned migrations.
 says what the refusal names.
 
 A PostgreSQL plan that drops and makes again a view or a materialized view
-another role owns now ends with `ALTER VIEW ... OWNER TO` that role
+another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or
+`ALTER MATERIALIZED VIEW ... OWNER TO` for a materialized view
 ([stokaro/ptah#6166](https://github.com/stokaro/ptah/pull/6166)), and waits
 for an approval as `Ownership`, under `apply: Always` too. Under v0.29.2 the
 rebuild left the login as the view's owner. Ptah v0.30.1's `schema apply`

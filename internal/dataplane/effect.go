@@ -145,11 +145,13 @@ func (e *PlanEffect) UnmarshalJSON(data []byte) error {
 // where the statement states the option, whose value its SQL is not read for,
 // and where it states none and the dropped view read with its readers' rights.
 // Ptah v0.30.1 records an effect on the CREATE VIEW of every such rebuild it
-// plans (stokaro/ptah#6198), so the hold is for a plan that carries none. A
-// view nothing dropped holds when
-// it reads with its readers' rights. Every new view records the option as changed, from
-// absent to its value, so changed alone would hold every new view; one with its
-// owner's rights is held no more than a new view that states no option.
+// plans (stokaro/ptah#6198), so the hold is for a plan that carries none: a
+// drop that recorded security_invoker=true and a CREATE with no effect would
+// otherwise raise nothing, and the view would read with its owner's rights
+// unapproved. A view nothing dropped holds when it reads with its readers'
+// rights. Every new view records the option as changed, from absent to its
+// value, so changed alone would hold every new view; one with its owner's
+// rights is held no more than a new view that states no option.
 func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDrops) (hold, described bool) {
 	view, named := readViewStatement(statement.SQL, dialect)
 	if dropsUnnamedViews(statement.SQL, dialect, named) {

@@ -677,12 +677,12 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	return plan, nil
 }
 
-// DecodeNotePlan reads the plan Ptah v0.30.0 saves when the only difference it
-// found is one it cannot plan: no statement, and the notes that say what
-// differs and why it was not planned (stokaro/ptah#6165). The plan runs
-// nothing, so it is not one to publish, approve or apply, and the notes are
-// what a reader needs. It is decoded as strictly as an executable plan, and a
-// plan with any statement, or with no note, is not one.
+// DecodeNotePlan reads the plan Ptah saves since v0.30.0 when the only
+// difference it found is one it cannot plan: no statement, and the notes that
+// say what differs and why it was not planned (stokaro/ptah#6165). The plan
+// runs nothing, so it is not one to publish, approve or apply, and the notes
+// are what a reader needs. It is decoded as strictly as an executable plan,
+// and a plan with any statement, or with no note, is not one.
 func DecodeNotePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	plan, err := decodePlanDocument(data, expectedDialect)
 	if err != nil {

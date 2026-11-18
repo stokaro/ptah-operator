@@ -2076,7 +2076,8 @@ func repeatablesRefusal(repeatables []dataplane.MigrationRepeatable) string {
 	}
 	return bounded(fmt.Sprintf(
 		"The history lists %d repeatable %s, which this operator does not run: %s. Remove the R__ files from the artifact "+
-			"and write what they do as versioned migrations; a row of the database's record goes with `ptah migrations repair`",
+			"and write what they do as versioned migrations; `ptah migrations repair --repeatable <identity>` deletes a row "+
+			"of the database's record, with --force while its file is still in the migration directory",
 		len(repeatables), byCount(len(repeatables), "migration", "migrations"), listed), 1024)
 }
 

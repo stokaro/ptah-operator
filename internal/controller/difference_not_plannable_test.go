@@ -34,8 +34,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
-// The sentence the runner reports for the plan of notes Ptah v0.30.0 saved
-// against PostgreSQL 16 for a generated column whose expression changed.
+// The sentence the runner reports for the plan of notes the pinned Ptah v0.30.1
+// saved against PostgreSQL 16 for a generated column whose expression changed,
+// which internal/runner/testdata/note-plan holds. The runner's
+// TestAPlanOfNotesIsADifferenceNotPlannable reads that capture to this
+// sentence.
 const unplannableNote = "ptah found a difference it cannot plan: WARNING: Generated column public.tasks.code changed, " +
 	"but ALTER COLUMN SET EXPRESSION requires target capability alter_generated_column_expression, unavailable on " +
 	"this target (PostgreSQL added it in 17); manual migration required."

@@ -202,8 +202,9 @@ hide a clause from it.
 
 Every `OWNER TO` raises `Ownership`, the one a declaration asks for and the
 one Ptah writes itself. Since v0.30.0 a PostgreSQL plan that drops and makes
-again a view another role owns ends with `ALTER VIEW ... OWNER TO` that role,
-since the `CREATE VIEW` makes the login its owner. Ptah v0.29.2 left the login
+again a view or a materialized view another role owns ends with
+`ALTER VIEW ... OWNER TO` or `ALTER MATERIALIZED VIEW ... OWNER TO` that role,
+since the `CREATE` makes the login its owner. Ptah v0.29.2 left the login
 the owner. The two statements read alike, and the operator does not read Ptah's
 reason, so a rebuild of a view another role owns waits for an approval as
 `Ownership` under `Always` too. Ptah v0.30.1's `schema apply` refuses such a plan,

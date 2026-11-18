@@ -56,7 +56,7 @@ func TestAHistoryThatListsRepeatableMigrationsPublishesNoPlan(t *testing.T) {
 			// A row the database's record keeps after its file went.
 			name:        "a row the database records and no file carries",
 			repeatables: []dataplane.MigrationRepeatable{{Identity: "old_grants", State: "orphaned"}},
-			says:        []string{"old_grants (recorded by the database, in no file of the artifact)", "ptah migrations repair"},
+			says:        []string{"old_grants (recorded by the database, in no file of the artifact)", "ptah migrations repair --repeatable <identity>", "with --force while its file"},
 		},
 		{
 			name:        "more files than a message names",

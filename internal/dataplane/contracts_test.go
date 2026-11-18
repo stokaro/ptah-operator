@@ -1,6 +1,8 @@
 package dataplane_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -331,12 +333,51 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	}
 }
 
-// A plan of notes is what Ptah v0.30.0 saves when every difference it found is
-// one it cannot plan, such as a generated column's new expression on
+func noteCapture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "runner", "testdata", "note-plan", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// A plan of notes is what Ptah saves since v0.30.0 when every difference it
+// found is one it cannot plan, such as a generated column's new expression on
 // PostgreSQL 16 (stokaro/ptah#6165). It reads only as notes: a statement, a
 // declared row, a destructive mark or no note at all makes it something else.
 func TestDecodeNotePlanReadsOnlyNotes(t *testing.T) {
 	t.Parallel()
+
+	// The fixtures are what the image support/ptah.json pins printed and
+	// saved with `schema plan --output --json` against postgres:16-alpine, for
+	// a table whose generated column the schema file gives another
+	// expression. The report says no changes and names the plan it saved.
+	// internal/runner/testdata/note-plan holds them, outside the runner
+	// harness's captures, since the harness runs PostgreSQL 17 only.
+	saved := noteCapture(t, "saved-plan-postgres-16.json")
+	captured, err := dataplane.DecodeNotePlan(saved, "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodeNotePlan() refused the captured plan: %v", err)
+	}
+	if len(captured.Statements) != 0 || len(captured.Annotations) != 1 || captured.Annotations[0].Before != 0 ||
+		!strings.HasPrefix(captured.Annotations[0].Text, "WARNING: Generated column public.tasks.code changed") ||
+		captured.PlacedSchema != "public" {
+		t.Fatalf("DecodeNotePlan() = %#v, want one note before no statement", captured)
+	}
+	if _, err := dataplane.DecodePlan(saved, "PostgreSQL"); err == nil {
+		t.Fatal("DecodePlan() accepted the captured plan of notes as one to apply")
+	}
+	report, err := dataplane.DecodeSchemaPlan(noteCapture(t, "schema-plan-postgres-16.json"))
+	if err != nil {
+		t.Fatalf("DecodeSchemaPlan() error = %v", err)
+	}
+	sum := sha256.Sum256(saved)
+	if report.Outcome != dataplane.SchemaPlanOutcomeNoChanges || report.PlanPath == "" ||
+		report.PlanDigest != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("report = %#v, want no changes naming the saved plan", report)
+	}
+
 	base := `{"format_version":1,"name":"plan_c293f78ac36c","dialect":"postgres","from_fingerprint":"from","to_fingerprint":"to",` +
 		`"scope":{"kind":"realm"},"placed_schema":"public","destructive":false,"statements":[],` +
 		`"annotations":[{"before":0,"text":"WARNING: Generated column public.tasks.code changed"}]}`
@@ -505,8 +546,9 @@ func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
 // Ptah v0.30.0 records the schema it placed unqualified names in on every
 // plan of a PostgreSQL URL that pins no search_path, so a decoder that does
 // not declare it refuses every such plan. The statement and the fields around
-// it are what v0.30.0 saved against PostgreSQL 17 for a generated column whose
-// expression changes; the fingerprints are shortened.
+// it are what the pinned v0.30.1 saved against PostgreSQL 17 for a generated
+// column whose expression changes, as v0.30.0 did; the fingerprints are
+// shortened.
 func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {
 	t.Parallel()
 	document := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +

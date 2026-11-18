@@ -79,8 +79,9 @@ above is all it needs, so the login owns the table. Ptah refuses a table of that
 name another role owns, and the Apply then goes on without its rows.
 
 A view the schema gives to another role, by declaring its owner, needs more.
-So does a view of another role that a plan drops and makes again, which since
-Ptah v0.30.0 ends with `ALTER VIEW ... OWNER TO` that role. The login has to be
+So does a view or a materialized view of another role that a plan drops and
+makes again, which since Ptah v0.30.0 ends with `ALTER VIEW ... OWNER TO` that
+role, or `ALTER MATERIALIZED VIEW ... OWNER TO`. The login has to be
 allowed to give the view to that role: since PostgreSQL 16 it needs `SET` on
 the role, granted by `GRANT reporting TO ptah WITH SET TRUE`, and before 16 it
 needs membership in the role. The role needs `CREATE` on the view's schema.
@@ -243,7 +244,9 @@ MySQL refuses the read
 ### PostgreSQL
 
 The executor reads a schema from `pg_catalog`, which lists every object to every
-role, so the report does not depend on what the login holds. The login this page
+role, so the report does not depend on what the login holds. Since Ptah v0.30.0
+it also reads the settings of each role from `pg_db_role_setting`, which every
+role can read as well. The login this page
 describes gets the report a superuser gets, and a login that owns through a
 no-login owner role reads the same:
 

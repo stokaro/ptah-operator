@@ -141,13 +141,15 @@ reads again at `spec.interval`. The message names each file, or, for a row the
 database's record keeps after its file went, the identity:
 
 ```
-The history lists 1 repeatable migration, which this operator does not run: R__account_names.sql. Remove the R__ files from the artifact and write what they do as versioned migrations; a row of the database's record goes with `ptah migrations repair`
+The history lists 1 repeatable migration, which this operator does not run: R__account_names.sql. Remove the R__ files from the artifact and write what they do as versioned migrations; `ptah migrations repair --repeatable <identity>` deletes a row of the database's record, with --force while its file is still in the migration directory
 ```
 
 Remove the files from the artifact and publish what they did as versioned
 migrations. Where the database already records a repeatable migration, because
 someone ran Ptah by hand, `ptah migrations repair --repeatable <identity>`
-deletes its row.
+deletes its row and runs no migration SQL. While the file is still in the
+migration directory the command reads, it needs `--force`, and the next
+`migrations up` would run that file as new.
 
 ## A migration that failed and committed nothing
 

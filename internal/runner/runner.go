@@ -990,14 +990,18 @@ func validatePlanDryRun(
 		return false
 	}
 	switch {
-	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal.Code != dataplane.SchemaRefusalStalePlan:
+	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && report.Refusal.RefusesOwner():
 		// Since Ptah v0.30.1 the dry run refuses an owner the server would
 		// refuse, as the Apply would, before any statement (stokaro/ptah#6196):
 		// it reads the roles a plan never reads. That is a refusal of the plan
 		// as it stands, named the way a plan's own refusal is. Ptah's sentence
 		// says what to grant, and names roles and objects of the database, so
-		// it goes to the Pod log. A stale plan is one the database moved under
-		// between the two reads, which the next Plan reads again.
+		// it goes to the Pod log.
+		//
+		// Every other refusal of the dry run stays the failed validation it was
+		// before: a stale plan is one the database moved under between the two
+		// reads, and a lock timeout can come from another schema's Apply, since
+		// MySQL's GET_LOCK name is server-wide. Neither says the plan is wrong.
 		logReportedError(report.Error, redactor, config.Diagnostics)
 		setResultError(result, codePlanRefused,
 			errors.New(refusalSentence("ptah refused to plan the change", report.Refusal, redactor)), redactor, config.Diagnostics)
@@ -1044,13 +1048,13 @@ const maxNotePlanSentenceBytes = 512 - len(CodeDifferenceNotPlannable) - len(": 
 // notePlanLead opens the sentence a plan of notes is reported with.
 const notePlanLead = "ptah found a difference it cannot plan: "
 
-// reportNotePlan reports the plan Ptah v0.30.0 saves when every difference it
-// found is one it cannot plan (stokaro/ptah#6165): a plan of notes, with no
-// statement to approve or run. A plan of notes is checked as an executable
-// plan is, strictly decoded, bound to the requested exclusions and free of
-// the credential, and is then reported as difference_not_plannable with the
-// notes, cleaned as other free text is and cut to what an Event keeps. Nothing
-// of it is published.
+// reportNotePlan reports the plan Ptah saves since v0.30.0 when every
+// difference it found is one it cannot plan (stokaro/ptah#6165): a plan of
+// notes, with no statement to approve or run. A plan of notes is checked as
+// an executable plan is, strictly decoded, bound to the requested exclusions
+// and free of the credential, and is then reported as
+// difference_not_plannable with the notes, cleaned as other free text is and
+// cut to what an Event keeps. Nothing of it is published.
 func reportNotePlan(result *Result, rawPlan []byte, engine string, excludes []string, redactor Redactor, diagnostics io.Writer) {
 	if !utf8.Valid(rawPlan) {
 		setResultError(result, "invalid_plan_output", errors.New("plan output is not valid UTF-8"), redactor, diagnostics)

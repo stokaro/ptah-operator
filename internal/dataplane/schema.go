@@ -129,6 +129,11 @@ type SchemaRefusal struct {
 	// read ran as, which a replacement would make its definer, since Ptah
 	// v0.29.4 (stokaro/ptah#6109). They are read by NamedViewDefiners.
 	ViewDefiners json.RawMessage `json:"view_definers,omitempty"`
+	// Owner is the statement an owner refusal names, with the owner it gives
+	// the object to, since Ptah v0.30.1 (stokaro/ptah#6196). It is read by
+	// NamedOwner.
+	Owner json.RawMessage `json:"owner,omitempty"`
+
 	// Since Ptah v0.29.4 a definer-privilege refusal of a schema apply also
 	// lists the statements whose definer the connected account may not name,
 	// as definer_privileges (stokaro/ptah#6124). The operator does not read
@@ -139,9 +144,17 @@ type SchemaRefusal struct {
 	// 'ptah'@'%' and 'ptah'@'10.244.1.%' can from Pods on different nodes.
 	// It reads by its code alone, and Ptah's sentence, which names the
 	// privilege, goes to the Pod log.
-	// Owner is the statement an owner refusal names, with the owner it gives
-	// the object to, since Ptah v0.30.1. It is read by NamedOwner.
-	Owner json.RawMessage `json:"owner,omitempty"`
+}
+
+// RefusesOwner reports whether the refusal is one of an owner the server would
+// refuse: missing-owner-role, owner-transfer or owner-schema-privilege.
+func (r SchemaRefusal) RefusesOwner() bool {
+	switch r.Code {
+	case SchemaRefusalMissingOwnerRole, SchemaRefusalOwnerTransfer, SchemaRefusalOwnerSchemaPrivilege:
+		return true
+	default:
+		return false
+	}
 }
 
 // SchemaRefusalOwner is the statement an owner refusal names. Statement is the
