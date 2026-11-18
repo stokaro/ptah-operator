@@ -1,9 +1,9 @@
 {
   "format_version": 1,
-  "name": "plan_919d72b43c2f",
+  "name": "plan_ddd426bb8d23",
   "dialect": "mysql",
   "from_fingerprint": "sha256:2c0e5f62125075c5d6553be6926f5768565526f899041ffc5ac657e851793fa7",
-  "to_fingerprint": "sha256:2fb208bc5ac61e15b5008a8b321e00451e65aafc9af72fd296b000c4ed50d1ad",
+  "to_fingerprint": "sha256:c2251544ff45c7db93accb5e7d7dbf0ba0adb56a62937082676fe069127bfd80",
   "scope": {
     "kind": "schema",
     "name": "harness_my_unique"

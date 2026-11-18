@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_7b92cf1e48e9",
-  "plan_digest": "sha256:a0d1d57478f3f12cea606f55ea9a3c46aa3066e54f1646d02139f5fc788a790c",
+  "plan_name": "plan_91078a5cc333",
+  "plan_digest": "sha256:ef3c983faa8ddb7db2c5b1a18e1e8e62422337282788245a0d1e9770d67bfbfe",
   "units": [
     {
       "sql": "CREATE OR REPLACE DEFINER=`harness_view_owner`@`%` VIEW `differs_notes_view` AS\nSELECT id FROM differs_notes",

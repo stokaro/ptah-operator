@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_af4638957370",
-  "plan_digest": "sha256:95d3697367da53025117c9c3b847a08b6928f06af0df796a7dc85c5c5a42abc9",
+  "plan_name": "plan_4accc709626a",
+  "plan_digest": "sha256:25c578b39f9a357457ace7ce504c16edb431ef0cc0c568dc1f1f461eb8a54928",
   "units": [
     {
       "sql": "ALTER TABLE `differs_events` MODIFY COLUMN `happened_at` timestamp NOT NULL"

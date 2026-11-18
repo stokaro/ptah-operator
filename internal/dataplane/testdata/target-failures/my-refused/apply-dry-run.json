@@ -2,10 +2,10 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_d68a3b20b7c5",
-  "plan_digest": "sha256:af91d081da7d5ece8d3fbf4070d5e6279bf3800ad99e6f264696520ff8b005e6",
+  "plan_name": "plan_2cdddc7d2c44",
+  "plan_digest": "sha256:d6a2cc46e96d79e9cd1a888b8d11307f6d660ff1222b65c274a8c898d427ed29",
   "error": {
     "kind": "database_unreachable",
-    "message": "connect to --db-url: failed to ping database: dial tcp 172.22.0.3:3309: connect: connection refused"
+    "message": "connect to --db-url: failed to ping database: dial tcp 192.168.107.3:3309: connect: connection refused"
   }
 }

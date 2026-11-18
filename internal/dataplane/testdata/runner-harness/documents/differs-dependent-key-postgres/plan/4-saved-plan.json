@@ -1,9 +1,9 @@
 {
   "format_version": 1,
-  "name": "plan_59ffec879bfc",
+  "name": "plan_6391cee74bb6",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:2b8859bb136a0d1471fb627ef336e449a67203c48246acc8d6f2aa369f1985ed",
-  "to_fingerprint": "sha256:d613394cc3c2cf3b9439059cc5702f6f9a18a7d763fa0b82fd3fc4f6a603c59b",
+  "from_fingerprint": "sha256:9e026cf9e5641cbebc6fae78254e022c0115187478df5249fb25eb3aff22b646",
+  "to_fingerprint": "sha256:381543cd9d92ada7902693d97dee3848712364d61db94a55e653cc6e9a48eeb0",
   "scope": {
     "kind": "schema",
     "name": "public"

@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_d62053588fdf",
-  "plan_digest": "sha256:683b8e2819b6f6dcaaeb86981674dd33cb6c788fafbc60500f96fd46962f9fb6",
+  "plan_name": "plan_a57f23957f29",
+  "plan_digest": "sha256:358e90245be1a7cd2c33a5402ccf3f59928654d325d3dec7a9e1259d0a2450ed",
   "units": [
     {
       "sql": "CREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n)"

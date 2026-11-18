@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_6b5ffe9ee232",
-  "plan_digest": "sha256:40e9774c28d61905b7fdb928af4cb039d1dcfcb6f2a587fcc9c737901d68a122",
+  "plan_name": "plan_69b52dde81f9",
+  "plan_digest": "sha256:b9070fa2bd88fcb61385b3f45daf1fcb32ff9708b7b726ac18c7f84dc335b3a9",
   "units": [
     {
       "sql": "CREATE OR REPLACE DEFINER=`harness_view_own`@`%` VIEW `differs_notes_view` AS\nSELECT id FROM differs_notes",
@@ -44,13 +44,13 @@
         "state": "started",
         "sqlstate": "42000",
         "error_number": 1142,
-        "message": "Error 1142 (42000): INSERT command denied to user 'harness_view_own'@'192.168.107.8' for table 'ptah_schema_apply_log'"
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_view_own'@'192.168.107.7' for table 'ptah_schema_apply_log'"
       },
       {
         "state": "applied",
         "sqlstate": "42000",
         "error_number": 1142,
-        "message": "Error 1142 (42000): INSERT command denied to user 'harness_view_own'@'192.168.107.8' for table 'ptah_schema_apply_log'"
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_view_own'@'192.168.107.7' for table 'ptah_schema_apply_log'"
       }
     ]
   }

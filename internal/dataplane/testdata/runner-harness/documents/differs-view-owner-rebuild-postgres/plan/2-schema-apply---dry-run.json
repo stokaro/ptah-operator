@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_826f1d1ab47e",
-  "plan_digest": "sha256:67058ee617e11aa5f51fe759505b44a235444aece7d929601c838338c7abf8e7",
+  "plan_name": "plan_e27b9dcc9dc6",
+  "plan_digest": "sha256:795781abae2f76d47a9bd4ee76116dc5fbaadf27857324dfbab5ec2d650118bd",
   "units": [
     {
       "sql": "DROP VIEW \"public\".\"differs_notes_view\"",

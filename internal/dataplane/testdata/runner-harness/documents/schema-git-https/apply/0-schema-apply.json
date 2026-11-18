@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_d947192c3c09",
-  "plan_digest": "sha256:b96926d221565574a15d1eb2f6d5b09817b4910b170ee5b66c8ef13a451f38ba",
+  "plan_name": "plan_c2565ae34240",
+  "plan_digest": "sha256:30c9dc0bd6ac1505a258e55cc17158bc83c70673e0100a3950be6e5e19af681b",
   "units": [
     {
       "sql": "CREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)"
