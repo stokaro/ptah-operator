@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "lastVerified": "2026-11-17",
+  "lastVerified": "2026-11-18",
   "axis": "Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.",
   "releases": [
     {
@@ -16,10 +16,10 @@
       },
       "verified": [
         {
-          "ptahRelease": "v0.31.0",
-          "ptahCommit": "dc2decdee2617a350475d0f17347c7fb09dbce97",
-          "ptahDescribe": "v0.31.0",
-          "ptahImage": "ghcr.io/stokaro/ptah@sha256:ffd3bdc6e81e3875df4b7784eaf6cf6732834c70eeef2776edec47caea97a7e2",
+          "ptahRelease": "v0.32.0",
+          "ptahCommit": "da2df4a5e7088e3efcdec6b8f08110c23572bb74",
+          "ptahDescribe": "v0.32.0",
+          "ptahImage": "ghcr.io/stokaro/ptah@sha256:0d4ae16df66558f7710ce968d930c1e7b337f9ac93309e36412841cbdf1bc8fc",
           "runnerProtocolVersion": 1,
           "evidence": "kubernetes-e2e",
           "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL."

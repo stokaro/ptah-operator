@@ -1190,6 +1190,12 @@ func unreadableSources(t *testing.T, l *lab) {
 // Ptah planned. Its fixed sentences hold neither the row the database was
 // seeded with nor anything drift said of the schema the database holds, which
 // no check of a code would show.
+//
+// excluded-index names the table of its faulty index in spec.policy.exclude.
+// The Plan passes the entry as --exclude and stops on the fault all the same,
+// as v0.31.0 did too: since v0.32.0 every comparing command checks the indexes
+// before the selection (stokaro/ptah#6219), and the plan already did. The
+// Observe passes no exclude, so drift reads the whole file.
 func structuralFaults(t *testing.T, l *lab) {
 	t.Helper()
 	const (
@@ -1219,7 +1225,9 @@ func structuralFaults(t *testing.T, l *lab) {
 	for _, row := range []struct {
 		name, engine, file string
 		// extra is what the database holds besides the seeded row.
-		extra                   []string
+		extra []string
+		// exclude is the schema's policy.exclude.
+		exclude                 []string
 		observeCode, planCode   string
 		observeWords, planWords string
 	}{
@@ -1256,6 +1264,11 @@ func structuralFaults(t *testing.T, l *lab) {
 			observeWords: "schema.sql: " + indexKey, planWords: "schema.sql: " + indexKey,
 		},
 		{
+			name: "excluded-index", engine: enginePostgres, file: "excluded-index.sql", exclude: []string{"t"},
+			observeCode: invalid, planCode: invalid,
+			observeWords: "schema.sql: " + indexKey, planWords: "schema.sql: " + indexKey,
+		},
+		{
 			name: "other-and-key", engine: enginePostgres, file: "other-and-key.sql", extra: otherSchema,
 			observeCode: "child_exit", planCode: "plan_refused", observeWords: noReason, planWords: declarationRefused,
 		},
@@ -1270,6 +1283,7 @@ func structuralFaults(t *testing.T, l *lab) {
 			l.fillSource(t, volume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/"+row.file)})
 			schema := l.newSchema(t, family, row.engine, l.databaseURL(row.engine, database),
 				operatorv1alpha1.SourceSpec{Git: l.gitHTTPS(gitfixture.SchemaPath, operatorv1alpha1.GitRef{Branch: "main"})})
+			schema.schema.Spec.Policy.Exclude = row.exclude
 			git := schema.schema.Spec.Desired.Git
 			schema.schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{Git: &operatorv1alpha1.GitSourceRevision{
 				URL: git.URL, Ref: git.Ref, Path: git.Path, Commit: commit, ContentDigest: content,

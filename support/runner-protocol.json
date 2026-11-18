@@ -462,6 +462,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:2c231cbc24f03a7f20ee39e7c73c65757a0dd575e5c9892ed49cc015a09e5ca7",
       "reason": "Read a drift report that fails without drift when its only findings are undecided, and frame it as an observation with no drift, no highest severity and the one undecided finding; every other failed report without drift is still invalid_observed_state. A plan report's undecided objects are read and must agree between the two reads, or the plan is unstable_plan. A plan that changes nothing and lists undecided objects is the new outcome Undecided, with the new field undecided naming each object and Ptah's reason, redacted and cleaned within 512 bytes, and no dry run runs; a plan with changes is framed as before. The api package the runner builds against gains the journal outcome Undecided, which no frame carries. An earlier manager refuses both frames as malformed, which is what a version mismatch would give, and its Jobs run its own runner. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:bd04d25818ca0887e286eb7de619b57739fdce3e3107b45b49373a7a7042fcd1",
+      "reason": "Say in the comment of SchemaStructuralProblem that since Ptah v0.32.0 the plan names the table of an index fault with its schema, as drift did, which the matching already admitted. Only that comment changes: the code, the commands, the fields and the frame shape are as they were. Protocol 1 stays."
     }
   ]
 }

@@ -30511,6 +30511,96 @@
     }
   },
   {
+    "name": "structural-excluded-index/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
+        "stdout": "desired-source/drift-excluded-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-excluded-index.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: index \"i\": names column \"missing_column\", which table \"t\" does not declare"
+      },
+      "operation": "observe",
+      "operationId": "sha256:4d8454cf24bf45ac734c59dc78db2de69482a6569f95ac758a827387b671b91c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:fa1af80c4692e09212af58b6a62a41c1f291036216faec0905dce3e3f477ec9b"
+    }
+  },
+  {
+    "name": "structural-excluded-index/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json",
+          "--exclude=t"
+        ],
+        "exit": 2,
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
+        "stdout": "desired-source/plan-excluded-index.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/structural-excluded-index/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: index \"i\": names column \"missing_column\", which table \"t\" does not declare"
+      },
+      "operation": "plan",
+      "operationId": "sha256:fb6c34e585021cd413fadbb2c76ac9d4579a3fdc42fe6eefc796e241a86435a2",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:fa1af80c4692e09212af58b6a62a41c1f291036216faec0905dce3e3f477ec9b"
+    }
+  },
+  {
     "name": "structural-foreign-key/observe",
     "operation": "observe",
     "source": "git",
@@ -30748,7 +30838,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare\n",
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
         "stdout": "desired-source/plan-key-and-index.json"
       },
       {
@@ -31015,7 +31105,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare\n",
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
         "stdout": "desired-source/plan-other-and-index.json"
       },
       {
