@@ -6,6 +6,6 @@
     "code": "declaration-refused"
   },
   "error": {
-    "message": "postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare"
+    "message": "postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare"
   }
 }

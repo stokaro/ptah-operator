@@ -20,8 +20,9 @@ v0.29.4 release image (`1f1ff93c`), and on 2026-11-17 the v0.29.5 release image
 taken on 2026-11-18. Each History read of the refused Apply also asks whether
 `schema_migrations_repeatable` exists: the PostgreSQL reading has three records
 more and the MySQL one eleven, since MySQL asks in a session of its own. No
-other record moved. Later that day the v0.31.0 release image (`dc2decde`)
-reproduced both readings record for record. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+other record moved. Later that day the v0.31.0 release image (`dc2decde`) and
+the v0.32.0 release image (`da2df4a5`) reproduced both readings record for
+record. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

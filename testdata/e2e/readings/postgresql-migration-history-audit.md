@@ -21,7 +21,8 @@ after asking whether the table exists.
   release image (`dfbda1b2`) and the v0.29.4 release image (`1f1ff93c`), and on 2026-11-17 the
   v0.29.5 release image (`8a634c05`). The v0.30.1 image adds one record, the count of
   `schema_migrations_repeatable` below, and changes no other. On 2026-11-18 the v0.31.0 release
-  image (`dc2decde`) reproduced it record for record
+  image (`dc2decde`) and the v0.32.0 release image (`da2df4a5`) reproduced it record for
+  record
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - Client address: `10.244.3.97`
 - Isolated database: `ptah_e2e_retarget`

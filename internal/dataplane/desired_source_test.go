@@ -144,6 +144,9 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 		{"an index on a table nothing declares", "index-table", "PostgreSQL", `index "i": names table "nowhere", which no declaration defines`},
 		{"an index before a key", "key-and-index", "PostgreSQL", indexKey},
 		{"an index before a key the database refuses", "other-and-index", "PostgreSQL", indexKey},
+		// The plan of this one excludes the table, and stops on the fault all
+		// the same.
+		{"an index on a table the plan excludes", "excluded-index", "PostgreSQL", indexKey},
 	} {
 		for _, command := range []string{"drift", "plan"} {
 			t.Run(test.name+"/"+command, func(t *testing.T) {
@@ -162,7 +165,8 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 // drift since v0.30.1 can name the table they placed in public with that
 // schema, and validate does not. The sentences are the ones v0.30.1 wrote for
 // not-unique.sql and key-and-index.sql, and variations of them; the fault
-// returned is validate's.
+// returned is validate's. Since v0.32.0 the plan's index line names the table
+// that way too, which the captures of key-and-index.sql hold.
 func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) {
 	t.Parallel()
 

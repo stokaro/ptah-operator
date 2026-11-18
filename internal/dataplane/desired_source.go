@@ -61,13 +61,14 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 // (stokaro/ptah#6132) and drift since v0.30.1 (stokaro/ptah#6204) place every
 // name the file writes without a schema in the schema the database resolves it
 // to, and a sentence can name a table that way, as "public.parent", where
-// validate, which has no database, prints "parent". At v0.30.1 drift does in
-// both kinds of line and plan in a schema fault only, and both place a table
-// and nothing else: an index, a column or a constraint keeps the name validate
-// prints. So on PostgreSQL a table validate names without a schema matches the
-// same table with a schema in front of it, in both kinds of line, and the
-// tables one sentence places share one schema (see placedFault). On MySQL the
-// words have to be validate's.
+// validate, which has no database, prints "parent". Drift does in both kinds of
+// line, and plan does in a schema fault and, since v0.32.0, in an index line
+// as well (stokaro/ptah#6219). Both place a table and nothing else: an index, a
+// column or a constraint keeps the name validate prints. So on PostgreSQL a
+// table validate names without a schema matches the same table with a schema
+// in front of it, in both kinds of line, and the tables one sentence places
+// share one schema (see placedFault). On MySQL the words have to be
+// validate's.
 //
 // failed is compared and never returned. Its command had a connection, so it
 // could quote the database. What is returned comes from a run that had none.

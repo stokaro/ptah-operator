@@ -24,14 +24,14 @@ on the upgrade. The journal of a schema and a migration gains the outcome
 release's hook has updated the CRDs, 0.2.14's CRD hook refuses
 [a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
 refuses CRD schemas newer than the release reads. The executor moves to Ptah
-v0.31.0, which retires the execution binding: approve again whatever was
-waiting, after the resource has read its database with v0.31.0 and planned. Measured on
+v0.32.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.32.0 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.31.0 made.
+is for a plan v0.32.0 made.
 
 A `PtahMigration` whose artifact holds an `R__<identity>.sql` file now stops at
 its history read. Since v0.30.0 Ptah reads such a file as a repeatable
@@ -48,6 +48,23 @@ find migrations -name 'R__*.sql'
 Remove them, and write what they did as versioned migrations.
 [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
 says what the refusal names.
+
+A migration file whose first bytes are a UTF-8 byte order mark now runs, and
+its revision row records the checksum of the file without the mark
+([stokaro/ptah#6223](https://github.com/stokaro/ptah/pull/6223)). Under v0.29.2
+the mark reached the server, PostgreSQL and MySQL refused the first statement,
+and the resource stopped `Blocked` with `HistoryDirty`. That row still reads
+dirty after the upgrade; remove it as
+[Run it](../../use/recovery/#retry-failed-run) says, and the file applies. If
+someone ran such a file by hand and recorded it with `ptah migrations repair
+--version N --force`, the row holds the checksum with the mark, and after the
+upgrade the resource stops `Blocked` with `HistoryModified`. Run the same repair
+once more with v0.32.0 to record the checksum without the mark. List the files
+in the directory each artifact is built from:
+
+```sh
+find migrations -name '*.sql' -exec sh -c 'for f; do [ "$(head -c 3 "$f" | od -An -tx1 | tr -d " \n")" = efbbbf ] && printf "%s\n" "$f"; done' sh {} +
+```
 
 A PostgreSQL plan that drops and makes again a view or a materialized view
 another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or
@@ -127,7 +144,7 @@ A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.31.0, and the runner
+- **Executor.** The verified executor is now Ptah v0.32.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. A migration's status and run now ask
   whether `schema_migrations_repeatable` exists, with the query that asks for

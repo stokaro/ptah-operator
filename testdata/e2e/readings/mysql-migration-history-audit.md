@@ -22,7 +22,8 @@ whether the table exists.
   release image (`dfbda1b2`) and the v0.29.4 release image (`1f1ff93c`), and on 2026-11-17 the
   v0.29.5 release image (`8a634c05`). The v0.30.1 image adds five records, a second session
   that asks whether `schema_migrations_repeatable` exists, and changes no other. On 2026-11-18
-  the v0.31.0 release image (`dc2decde`) reproduced it record for record
+  the v0.31.0 release image (`dc2decde`) and the v0.32.0 release image (`da2df4a5`)
+  reproduced it record for record
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 
