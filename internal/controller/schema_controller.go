@@ -1777,6 +1777,28 @@ func (r *SchemaReconciler) warnPlanEnd(schema *operatorv1alpha1.PtahSchema, end 
 	}
 }
 
+// setPlanEndConditions records what a Plan that ended with nothing to publish
+// found, in a proof or outside one: no plan, a database that differs, and no
+// plan ready. A plan that was waiting for an approval went away with nothing
+// in its place, so nobody can approve it, and left standing the condition
+// would keep asking for an approval beside Blocked.
+//
+// ApprovalRequired says what became of that plan, PlanNoLongerCurrent, and
+// not why Ptah planned nothing, which the other conditions carry. NoChanges
+// would say the database converged, and the journal reads it as a plan
+// nothing replaces: here the difference remains, so a plan approved and never
+// run is still the one the next plan replaces.
+func setPlanEndConditions(schema *operatorv1alpha1.PtahSchema, end planEnd) {
+	schema.Status.Plan = nil
+	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
+	if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
+		meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPlanNoLongerCurrent,
+			"No plan is waiting: the plan that was is no longer current, and Ptah planned none in its place")
+	}
+}
+
 // endRefusedPlan records a Plan that ended with nothing to publish. A proof's
 // read that ends this way found the database after the Apply differing from
 // the artifact, so consumeResultWithTransport settles the proof: no Applied
@@ -1802,6 +1824,9 @@ func (r *SchemaReconciler) endRefusedPlan(
 // endPlanWithoutPlan records a Plan that ended with nothing to publish and is
 // no failure of the run, outside a proof: the conditions name why, the
 // resource reads as blocked, and the operator reads again at the interval.
+// endRefusedPlan sends every Plan that serves a proof to the proof's own
+// settlement, so no proof is pending here and the finalizer goes with the
+// claim.
 func (r *SchemaReconciler) endPlanWithoutPlan(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -1820,25 +1845,21 @@ func (r *SchemaReconciler) endPlanWithoutPlan(
 	now := metav1.NewTime(r.now())
 	next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
 	before := schema.DeepCopy()
-	schema.Status.Plan = nil
 	schema.Status.LastAttemptTime = &now
 	schema.Status.NextReconciliationTime = &next
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	clearFailure(schema)
 	// The plan compared the artifact with the target, so the target answered.
 	setSchemaTargetObserved(schema)
-	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
+	setPlanEndConditions(schema, end)
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, end.reason, end.inSync)
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, end.reason, end.ready)
 	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
 	}
 	r.observeOperation(operation, telemetry.OperationSucceeded)
-	if schema.Status.PendingObservation == nil {
-		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
+		return ctrl.Result{}, err
 	}
 	r.warnPlanEnd(schema, end)
 	return requeueAtDeadline(&next, r.now()), nil
@@ -2128,13 +2149,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 				return r.retryOperation(ctx, schema, nil, fmt.Errorf("refused plan result carries content or serves no proof"))
 			}
 			planEnded = &end
-			schema.Status.Plan = nil
-			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
-			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
-			if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
-				meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
-				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, end.reason, "No plan is waiting: Ptah planned nothing")
-			}
+			setPlanEndConditions(schema, end)
 			if pending.ApplyGeneration == schema.Generation &&
 				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
 				schema.Status.Phase = operatorv1alpha1.PhaseBlocked

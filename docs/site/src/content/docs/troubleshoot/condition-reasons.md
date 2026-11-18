@@ -33,7 +33,7 @@ decision.
 | `DatabaseUnreachable` | `DatabaseReachable` is false because the host did not resolve, refused the connection, or did not answer in time. |
 | `DesiredStateChanged` | New desired inputs arrived after older work completed. |
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
-| `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. A read after an Apply that finds one ends the proof without recording the Apply. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
+| `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. A read after an Apply that finds one ends the proof and records no Apply as converged. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
@@ -60,7 +60,7 @@ decision.
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
 | `PermissionDenied` | `DatabaseReachable` is false because the server accepted the credentials and refused the user access to the database. |
-| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. |
+| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. On `ApprovalRequired` it says a plan was waiting for an approval and the Plan after it ended with `ProtectedTable` or `DifferenceNotPlannable`, so nothing is left to approve. |
 | `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
 | `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Past the deadline, the failure the run records keeps the refusal as what was last reported, unless the Job counted a Pod by then. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
@@ -72,7 +72,7 @@ decision.
 | `PrivilegeChanges` | Apply policy `Always` waits for an approval because the plan changes privileges; the message names the kinds. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
 | `ProofSettled` | A person gave up the post-Apply proof of an Apply whose target moved, so nothing established what that Apply did and none is recorded. The resource reads the database again under the URL the Secret holds. Under `apply: Always` the next plan applies with no approval unless it is destructive or changes privileges. |
-| `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. A read after an Apply that is refused this way ends the proof without recording the Apply. |
+| `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. A read after an Apply that is refused this way ends the proof and records no Apply as converged. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
 | `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`, or the `PtahRealm` they name admits one claimant at a time. |
 | `RealmNotAuthorized` | The `PtahRealm` in `spec.target.realmRef` does not admit this resource: it does not exist, does not list the resource's namespace, or names another engine. Nothing runs, and the resource is not counted against the ones the realm admits. |
@@ -748,14 +748,16 @@ plan, and dispatches nothing. `DriftDetected` is true with the same reason,
 since Ptah refuses only a plan that would change the table. Unlike the
 destructive-change policy, it has no approval that overrides it: while the
 table is listed, no plan may change it, and the operator keeps reading at
-`spec.interval` without making progress.
+`spec.interval` without making progress. A plan that was waiting for an
+approval when the fence refused the next Plan goes with it: `ApprovalRequired`
+turns false with `PlanNoLongerCurrent`.
 
 The read after an Apply meets the fence when the fenced table changed in the
-database after the Apply's plan was made. The proof ends there: the Apply is not recorded as converged,
-the database realm is released, and the journal records `Verified`
-`DriftRemains`, which stops `kubectl ptah wait --for applied`. Before 0.2.15
-the proof stayed owed, held the realm, and claimed the same read again at the
-next pass.
+database after the Apply's plan was made. The proof ends there: the Apply is
+not recorded as converged, the database realm is released, and the journal
+records `Verified` `DriftRemains`, which stops `kubectl ptah wait --for
+applied`. Before 0.2.15 the proof stayed owed, held the realm, and claimed the
+same read again at the next pass.
 
 Two things end it, both of them spec edits by a person: take the table out of
 `spec.policy.protectedTables`, or express the change as a versioned migration
@@ -773,8 +775,9 @@ planned nothing for it either, and the resource read as in sync.
 A Plan whose plan holds only notes sets `DifferenceNotPlannable` on
 `DriftDetected`, which is true, and on `PlanReady`, `InSync` and `Ready`, which
 are false. The resource is `Blocked`, nothing is published, approved or
-applied, and no failure is reported. `Ready` and a Warning Event carry the
-notes:
+applied, and no failure is reported. A plan that was waiting for an approval
+goes, and `ApprovalRequired` turns false with `PlanNoLongerCurrent`. `Ready`
+and a Warning Event carry the notes:
 
 ```
 ptah found a difference it cannot plan: WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); manual migration required. Nothing is planned: make the change by hand or with a migration, or change the artifact

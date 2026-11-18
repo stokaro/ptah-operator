@@ -255,6 +255,12 @@ propagation is refused from this release: have it name
   `DifferenceNotPlannable`. A fence refusal, in a proof or not, now also sets
   `DriftDetected` true with `ProtectedTable`, where it kept the value the
   Observe before it wrote.
+- **A refused re-plan stops asking for an approval.** Under `apply:
+  OnApproval`, a plan waiting for an approval whose next Plan Ptah refused for
+  a protected table left `ApprovalRequired` true beside `Blocked`, with no plan
+  in status to approve. The condition now turns false with
+  `PlanNoLongerCurrent`. The same holds when the next Plan finds only a
+  difference Ptah cannot plan.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on
