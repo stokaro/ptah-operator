@@ -107,10 +107,10 @@ func withoutUndecided(t *testing.T, document []byte) []byte {
 }
 
 // runCapturedRead runs the runner on what job hands its operation container,
-// with the URL file the kubelet would project holding databaseURL, against
-// ptah, and frames what it returns.
+// with the URL file the kubelet would project holding undecidedDatabaseURL,
+// against ptah, and frames what it returns.
 func runCapturedRead(
-	t *testing.T, reconciler *SchemaReconciler, job *batchv1.Job, operation operatorv1alpha1.OperationType, ptah capturedPtah,
+	t *testing.T, reconciler *SchemaReconciler, job *batchv1.Job, operation operatorv1alpha1.OperationType, ptah runner.Executor,
 ) (runner.Result, []byte) {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "url")

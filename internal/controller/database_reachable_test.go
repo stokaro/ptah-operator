@@ -231,6 +231,19 @@ func harvestSchemaFailure(
 	previous *metav1.Condition,
 ) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchema, *statusWrites) {
 	t.Helper()
+	return harvestSchemaFrame(t, path, failure, previous, "")
+}
+
+// harvestSchemaFrame is harvestSchemaFailure with a frame that names target,
+// as the runner names the URL's target before the child starts.
+func harvestSchemaFrame(
+	t *testing.T,
+	path targetOpeningSchema,
+	failure *runner.ResultError,
+	previous *metav1.Condition,
+	target string,
+) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchema, *statusWrites) {
+	t.Helper()
 	schema, others := path.build(t)
 	if previous != nil {
 		meta.SetStatusCondition(&schema.Status.Conditions, *previous.DeepCopy())
@@ -240,7 +253,8 @@ func harvestSchemaFailure(
 	job, pod := terminalWorkload(schema, batchv1.JobComplete)
 	frame := safetyRunnerFrame(t, runner.Result{
 		ProtocolVersion: runner.ProtocolVersion, Operation: path.operation, OperationID: schema.Status.ActiveOperation.ID,
-		ChildExitCode: 2, CoordinationDigest: schema.Status.ActiveOperation.CoordinationDigest, Error: failure,
+		ChildExitCode: 2, CoordinationDigest: schema.Status.ActiveOperation.CoordinationDigest,
+		TargetIdentityDigest: target, Error: failure,
 	})
 	objects := append([]client.Object{schema, job, pod}, others...)
 	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, objects...)
@@ -882,8 +896,30 @@ func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 		}
 		t.Run(path.name+"/a fenced table", func(t *testing.T) {
 			t.Parallel()
-			_, actual, writes := harvestSchemaFailure(t, path,
-				&runner.ResultError{Code: "protected_table", Message: "the plan would change a protected table"}, previous)
+			// A fence refusal of a proof's read ends the proof, which settles
+			// under the policy the source was verified by: the Plan ends Blocked
+			// only where that policy still holds, as it does here.
+			fenced := path
+			fenced.build = func(t *testing.T) (*operatorv1alpha1.PtahSchema, []client.Object) {
+				t.Helper()
+				schema, others := path.build(t)
+				digest := fingerprint.DigestBytes([]byte("policy"))
+				schema.Status.Source.VerificationPolicyDigest = digest
+				if pending := schema.Status.PendingObservation; pending != nil {
+					pending.Plan.VerificationPolicyDigest = digest
+				}
+				bindActiveInput(t, schema)
+				policy := &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID,
+					},
+					Immutable: ptr(true),
+					Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
+				}
+				return schema, append(others, policy)
+			}
+			_, actual, writes := harvestSchemaFrame(t, fenced,
+				&runner.ResultError{Code: "protected_table", Message: "the plan would change a protected table"}, previous, testDigest)
 			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
 			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
 				return conditionMatches(conditions, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonProtectedTable)

@@ -33,7 +33,7 @@ decision.
 | `DatabaseUnreachable` | `DatabaseReachable` is false because the host did not resolve, refused the connection, or did not answer in time. |
 | `DesiredStateChanged` | New desired inputs arrived after older work completed. |
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
-| `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
+| `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. A read after an Apply that finds one ends the proof without recording the Apply. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
@@ -72,7 +72,7 @@ decision.
 | `PrivilegeChanges` | Apply policy `Always` waits for an approval because the plan changes privileges; the message names the kinds. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
 | `ProofSettled` | A person gave up the post-Apply proof of an Apply whose target moved, so nothing established what that Apply did and none is recorded. The resource reads the database again under the URL the Secret holds. Under `apply: Always` the next plan applies with no approval unless it is destructive or changes privileges. |
-| `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. |
+| `ProtectedTable` | The artifact asks for a change to a table `spec.policy.protectedTables` fences off. A read after an Apply that is refused this way ends the proof without recording the Apply. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
 | `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`, or the `PtahRealm` they name admits one claimant at a time. |
 | `RealmNotAuthorized` | The `PtahRealm` in `spec.target.realmRef` does not admit this resource: it does not exist, does not list the resource's namespace, or names another engine. Nothing runs, and the resource is not counted against the ones the realm admits. |
@@ -744,9 +744,18 @@ gives the code alone.
 ## A change a policy fences off
 
 `ProtectedTable` sets `Blocked=True` and leaves `Ready` false, publishes no
-plan, and dispatches nothing. Unlike the destructive-change policy, it has no
-approval that overrides it: while the table is listed, no plan may change it,
-and the operator keeps reading at `spec.interval` without making progress.
+plan, and dispatches nothing. `DriftDetected` is true with the same reason,
+since Ptah refuses only a plan that would change the table. Unlike the
+destructive-change policy, it has no approval that overrides it: while the
+table is listed, no plan may change it, and the operator keeps reading at
+`spec.interval` without making progress.
+
+The read after an Apply meets the fence when the fenced table changed in the
+database after the Apply's plan was made. The proof ends there: the Apply is not recorded as converged,
+the database realm is released, and the journal records `Verified`
+`DriftRemains`, which stops `kubectl ptah wait --for applied`. Before 0.2.15
+the proof stayed owed, held the realm, and claimed the same read again at the
+next pass.
 
 Two things end it, both of them spec edits by a person: take the table out of
 `spec.policy.protectedTables`, or express the change as a versioned migration
@@ -774,7 +783,9 @@ ptah found a difference it cannot plan: WARNING: Generated column public.tasks.c
 The operator reads again at `spec.interval`, so a database changed by hand, or
 an artifact that matches the database, converges with no other step. A plan
 with statements and notes is published and approved as any other plan, and
-`kubectl ptah plan` prints each note where Ptah placed it.
+`kubectl ptah plan` prints each note where Ptah placed it. A read after an
+Apply that finds only notes ends the proof as a fenced table does: no Apply is
+recorded as converged, and the journal records `Verified` `DriftRemains`.
 
 ## A declared object Ptah could not decide
 

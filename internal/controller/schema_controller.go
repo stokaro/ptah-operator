@@ -1367,14 +1367,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		// A fenced plan is not a run that went wrong: Ptah refused to compute a
 		// plan that would change a table the policy protects, and it saved
-		// nothing. Naming it keeps a reader from reading a refusal as a fault.
-		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == "protected_table" {
-			return r.refuseProtectedTable(ctx, schema, job, result.Error.Message)
-		}
-		// A plan of notes is not a fault either: Ptah found a difference it
-		// cannot plan, said why, and planned nothing to approve or run.
-		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == runner.CodeDifferenceNotPlannable {
-			return r.refuseUnplannableDifference(ctx, schema, job, result.Error.Message)
+		// nothing. A plan of notes is not a fault either: Ptah found a
+		// difference it cannot plan, said why, and planned nothing to approve
+		// or run. Naming each keeps a reader from reading it as a fault.
+		if end, refused := planEndFor(operation.Type, result.Error); refused {
+			return r.endRefusedPlan(ctx, schema, job, result, end, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
 		}
 		if schemaOperation(operation).Mutating || result.Uncertain {
 			// A terminal result belongs to only one Pod attempt. Kubernetes may
@@ -1694,15 +1691,32 @@ func (r *SchemaReconciler) blockVerification(
 	return ctrl.Result{RequeueAfter: interval(schema)}, nil
 }
 
-// refuseProtectedTable records a plan Ptah refused because it would change a
-// table the policy fences off.
+// planEndFor is how a Plan that ended with nothing to publish, and is no
+// failure of the run, reads: a fence refusal (protectedTableEnd) or a plan of
+// notes (unplannableDifferenceEnd). Any other result is not one.
+func planEndFor(operation operatorv1alpha1.OperationType, failure *runner.ResultError) (planEnd, bool) {
+	if operation != operatorv1alpha1.OperationPlan || failure == nil {
+		return planEnd{}, false
+	}
+	switch failure.Code {
+	case "protected_table":
+		return protectedTableEnd(failure.Message), true
+	case runner.CodeDifferenceNotPlannable:
+		return unplannableDifferenceEnd(failure.Message), true
+	}
+	return planEnd{}, false
+}
+
+// protectedTableEnd is a plan Ptah refused because it would change a table
+// the policy fences off.
 //
 // It is a refusal rather than a failure of the run, and it carries no override:
 // the fence is the statement that no approval, no allowDestructive and no
 // severity makes this change permissible from the declarative path. So the
 // conditions name it, the resource reads as blocked the way a refused
 // verification policy does, and no failure is reported for a run that did
-// exactly what the policy asked.
+// exactly what the policy asked. Ptah refuses only a plan that would change
+// the table, so the database differs from the artifact there.
 //
 // It also ends the operation rather than retrying it. A retry would re-plan
 // within the second and be refused again for as long as the fence and the
@@ -1710,69 +1724,84 @@ func (r *SchemaReconciler) blockVerification(
 // database lock on every pass. The refusal stands until the fence goes or the
 // artifact stops asking for the change, and the blocked interval is when this
 // operator looks for either.
-func (r *SchemaReconciler) refuseProtectedTable(
-	ctx context.Context,
-	schema *operatorv1alpha1.PtahSchema,
-	job *batchv1.Job,
-	message string,
-) (ctrl.Result, error) {
-	result, err := r.endPlanWithoutPlan(ctx, schema, job, planEnd{
+func protectedTableEnd(message string) planEnd {
+	return planEnd{
 		reason:    operatorv1alpha1.ReasonProtectedTable,
+		drift:     "The managed scope differs from the artifact in a table spec.policy.protectedTables fences off",
 		planReady: "No plan may change a table spec.policy.protectedTables fences off",
 		inSync:    "The artifact asks for a change to a protected table, so the managed scope cannot converge",
 		ready:     "Remove the protectedTables entry to plan the change, or write the rows as a migration",
-	})
-	if err != nil {
-		return result, err
+		message:   message,
 	}
-	r.event(schema, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
-	return result, nil
 }
 
-// refuseUnplannableDifference records a plan Ptah saved with notes and no
-// statement: since Ptah v0.30.0 that is what a difference Ptah cannot plan
-// produces, such as a generated column whose expression changed on a
-// PostgreSQL before 17 (stokaro/ptah#6165). The database differs, so the
-// resource is not in sync, and there is nothing to approve or apply.
+// unplannableDifferenceEnd is a plan Ptah saved with notes and no statement:
+// since Ptah v0.30.0 that is what a difference Ptah cannot plan produces, such
+// as a generated column whose expression changed on a PostgreSQL before 17
+// (stokaro/ptah#6165). The database differs, so the resource is not in sync,
+// and there is nothing to approve or apply.
 //
 // It ends the operation the way a fence refusal does, for the same reason: a
 // re-plan would find the same difference within the second. The notes go to
 // Ready and to an Event, and the next read at the interval picks up a person's
 // change to the database or the artifact.
-func (r *SchemaReconciler) refuseUnplannableDifference(
-	ctx context.Context,
-	schema *operatorv1alpha1.PtahSchema,
-	job *batchv1.Job,
-	message string,
-) (ctrl.Result, error) {
-	result, err := r.endPlanWithoutPlan(ctx, schema, job, planEnd{
+func unplannableDifferenceEnd(message string) planEnd {
+	return planEnd{
 		reason:    operatorv1alpha1.ReasonDifferenceNotPlannable,
 		drift:     "The managed scope differs from the artifact in a way Ptah cannot plan",
 		planReady: "Ptah found a difference it cannot plan and planned no statement",
 		inSync:    "The managed scope differs from the artifact in a way Ptah cannot plan",
 		ready: strings.TrimSuffix(bounded(message, 512), ".") +
 			". Nothing is planned: make the change by hand or with a migration, or change the artifact",
-	})
-	if err != nil {
-		return result, err
+		message: message,
 	}
-	r.event(schema, corev1.EventTypeWarning, "DifferenceNotPlannable", "%s", bounded(message, 512))
-	return result, nil
 }
 
 // planEnd is how a Plan that ends with no plan to publish reads: the reason
-// every condition it sets carries, and their messages. The caller records the
-// Event once the status is written.
+// every condition it sets carries, their messages, and what the Warning
+// recorded once the status is written says (warnPlanEnd). Each such end found
+// a difference, so DriftDetected becomes true.
 type planEnd struct {
-	reason operatorv1alpha1.ConditionReason
-	// drift, when set, is DriftDetected's message, and the condition becomes
-	// true: the plan found a difference.
-	drift, planReady, inSync, ready string
+	reason                                   operatorv1alpha1.ConditionReason
+	drift, planReady, inSync, ready, message string
+}
+
+// warnPlanEnd records the Warning a Plan that ended with nothing to publish
+// owes, once the status that says so is written.
+func (r *SchemaReconciler) warnPlanEnd(schema *operatorv1alpha1.PtahSchema, end planEnd) {
+	switch end.reason {
+	case operatorv1alpha1.ReasonProtectedTable:
+		r.event(schema, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(end.message, 512))
+	case operatorv1alpha1.ReasonDifferenceNotPlannable:
+		r.event(schema, corev1.EventTypeWarning, "DifferenceNotPlannable", "%s", bounded(end.message, 512))
+	}
+}
+
+// endRefusedPlan records a Plan that ended with nothing to publish. A proof's
+// read that ends this way found the database after the Apply differing from
+// the artifact, so consumeResultWithTransport settles the proof: no Applied
+// record, and the realm released. Kept, the proof would claim its read again
+// at the next pass, and every pass would read the same difference while it
+// held the database. Any other Plan ends the operation (endPlanWithoutPlan).
+func (r *SchemaReconciler) endRefusedPlan(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	result runner.Result,
+	end planEnd,
+	podUIDs []types.UID,
+	podCount int32,
+	durable bool,
+) (ctrl.Result, error) {
+	if schemaClaimServesProof(schema) {
+		return r.consumeResultWithTransport(ctx, schema, job, result, podUIDs, podCount, durable)
+	}
+	return r.endPlanWithoutPlan(ctx, schema, job, end)
 }
 
 // endPlanWithoutPlan records a Plan that ended with nothing to publish and is
-// no failure of the run: the conditions name why, the resource reads as
-// blocked, and the operator reads again at the interval.
+// no failure of the run, outside a proof: the conditions name why, the
+// resource reads as blocked, and the operator reads again at the interval.
 func (r *SchemaReconciler) endPlanWithoutPlan(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -1798,9 +1827,7 @@ func (r *SchemaReconciler) endPlanWithoutPlan(
 	clearFailure(schema)
 	// The plan compared the artifact with the target, so the target answered.
 	setSchemaTargetObserved(schema)
-	if end.drift != "" {
-		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
-	}
+	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
 	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, end.reason, end.inSync)
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, end.reason, end.ready)
@@ -1813,6 +1840,7 @@ func (r *SchemaReconciler) endPlanWithoutPlan(
 			return ctrl.Result{}, err
 		}
 	}
+	r.warnPlanEnd(schema, end)
 	return requeueAtDeadline(&next, r.now()), nil
 }
 
@@ -1866,6 +1894,9 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	// undecided is what a Plan could not decide, which the Warning after the
 	// status write carries.
 	var undecided string
+	// planEnded is how a proof's read ended that planned nothing, whose
+	// Warning follows the status write.
+	var planEnded *planEnd
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	if schemaClaimServesProof(schema) {
@@ -2078,11 +2109,46 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if result.CoordinationDigest != expectedCoordination || result.TargetIdentityDigest != expectedTarget {
 			return r.reobserveAfterStalePlan(ctx, schema, fmt.Errorf("planning target changed after observation"))
 		}
-		if result.PlanOutcome != runner.PlanOutcomeChanges && result.PlanOutcome != runner.PlanOutcomeNoChanges &&
+		end, ended := planEndFor(operation.Type, result.Error)
+		if !ended && result.PlanOutcome != runner.PlanOutcomeChanges && result.PlanOutcome != runner.PlanOutcomeNoChanges &&
 			result.PlanOutcome != runner.PlanOutcomeUndecided {
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("plan result has no explicit managed-scope outcome"))
 		}
-		if result.PlanOutcome == runner.PlanOutcomeUndecided {
+		if ended {
+			// The read after the Apply found the database differing from the
+			// artifact in a way no plan here may change: a fenced table, or a
+			// difference Ptah cannot plan. The Apply did not converge, and a
+			// read of the same database within the second would find the same,
+			// so the proof ends here without an Applied record and the next
+			// read is a whole interval away. The journal records it Verified
+			// DriftRemains, or Superseded where a newer generation, policy or
+			// execution binding decides what follows. Only a proof's read
+			// reaches here with an end (endRefusedPlan).
+			if pending == nil || result.Stdout != "" || result.PlanContentDigest != "" || result.PlanOutcome != "" {
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("refused plan result carries content or serves no proof"))
+			}
+			planEnded = &end
+			schema.Status.Plan = nil
+			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
+			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
+			if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
+				meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, end.reason, "No plan is waiting: Ptah planned nothing")
+			}
+			if pending.ApplyGeneration == schema.Generation &&
+				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
+				schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+				next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
+				schema.Status.NextReconciliationTime = &next
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, end.reason, end.inSync)
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, end.reason, end.ready)
+			} else {
+				schema.Status.Phase = operatorv1alpha1.PhasePending
+				schema.Status.NextReconciliationTime = nil
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "The applied generation left a difference no plan here may change, and newer desired inputs must be reconciled")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
+			}
+		} else if result.PlanOutcome == runner.PlanOutcomeUndecided {
 			// The plan changes nothing, and that proves nothing: Ptah could not
 			// decide some declared objects, so it neither created them nor showed
 			// they exist. Drift is unknown, the resource is not in sync, and
@@ -2335,6 +2401,9 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
 	if undecided != "" {
 		r.event(schema, corev1.EventTypeWarning, "DriftUndecided", "%s", bounded(undecided, 512))
+	}
+	if planEnded != nil {
+		r.warnPlanEnd(schema, *planEnded)
 	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }

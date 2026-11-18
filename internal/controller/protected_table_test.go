@@ -92,6 +92,11 @@ func TestAPlanThatWouldChangeAProtectedTableIsRefusedByName(t *testing.T) {
 			t.Fatalf("%s does not name the fence: %#v", expected.condition, actual.Status.Conditions)
 		}
 	}
+	// Ptah refuses only a plan that would change a fenced table, so the scope
+	// differs from the artifact.
+	if !conditionMatches(actual.Status.Conditions, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, operatorv1alpha1.ReasonProtectedTable) {
+		t.Fatalf("DriftDetected does not say the fenced table differs: %#v", actual.Status.Conditions)
+	}
 	// A refusal is not a fault: nothing went wrong, and the answer will not
 	// change until the policy or the artifact does. The resource reads as
 	// blocked, and no failure is reported for it.
