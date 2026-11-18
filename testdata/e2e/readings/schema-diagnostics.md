@@ -36,7 +36,12 @@ gave, and the contract names the new statement. On November 18, 2026 the Ptah
 v0.30.1 release image, commit `c5fba763a6fb346fc8a35d2f336d75a91385e3b9`,
 reproduced both MySQL saved plans byte for byte and moved every reading, as
 the comparison with v0.29.5 below says. The readings and the PostgreSQL saved
-plans here are v0.30.1's, and the contract names the moved statements.
+plans here are v0.30.1's, and the contract names the moved statements. Later
+that day the v0.31.0 release image, commit
+`dc2decdee2617a350475d0f17347c7fb09dbce97`, reproduced every MySQL reading, both
+MySQL saved plans and every migration reading, and moved every PostgreSQL schema
+reading, as the comparison with v0.30.1 below says. The PostgreSQL schema readings
+and saved plans here are v0.31.0's, and the contract names the new statements.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -83,6 +88,24 @@ then checked in byte for byte, and the probe's unit test holds the checked-in
 contract to the checked-in readings. The v0.28.0 contract is the one it wrote
 from the v0.28.0 readings, and the v0.29.0 contract differs from it only in the
 Ptah commit it names.
+
+Against v0.30.1, v0.31.0 changed the PostgreSQL schema readings and nothing
+else. Ptah now manages logical replication publications
+([stokaro/ptah#6216](https://github.com/stokaro/ptah/pull/6216)). The read of
+event triggers, which also listed each publication's name, now lists event
+triggers alone, and four reads take the rest of its place: the schemas the
+database describes, so that publications are read only where the read covers
+every schema, and then `pg_publication`, `pg_publication_rel` and
+`pg_publication_namespace`. Each of the 34 PostgreSQL schema readings, the 18
+and 16 witnesses included, sends them once in an Observe, a plan validation or
+an Apply and twice in a plan, so an Observe has four records more and a Plan
+eight, and keeps its exit status. Both PostgreSQL saved exclusion plans hold the
+same statements under a new name and fingerprints. Every MySQL reading, both
+History readings and both restored-history refusals matched record for record,
+apart from the two apply log values every run draws anew, and both MySQL saved
+exclusion plans byte for byte. The contract has 102 statements where it had 98:
+the four reads and the narrower read of event triggers are new, and the read of
+event triggers and publications is gone.
 
 Against v0.29.5, v0.30.1 changed every reading on both engines. Ptah now keeps
 a record of repeatable migrations in the table `schema_migrations_repeatable`,
@@ -405,7 +428,8 @@ their source fingerprint and name and hold the same statements. The three witnes
 below were taken again with the v0.22.0 image on November 6, 2026, at 50, 89 and 47
 records as on PostgreSQL 17, with the v0.23.0 image on November 7, 2026, at 53,
 95 and 50, with the v0.26.0 image on November 13, 2026, at 56, 101 and 53, and
-with the v0.30.1 image on November 18, 2026, at 57, 103 and 54. Each time they
+with the v0.30.1 image on November 18, 2026, at 57, 103 and 54, and with the
+v0.31.0 image the same day, at 61, 111 and 58. Each time they
 still differ from 17 in that one statement. Since v0.22.0
 Ptah reads the columns from `pg_catalog`, so the two statements are the same read
 with that name selected or left empty.
@@ -436,8 +460,8 @@ Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
 `postgresql-16-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply`
 are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 53, 95 and 50 records, again with the v0.26.0 image on November 13, 2026, at
-56, 101 and 53, and with the v0.30.1 image on November 18, 2026, at 57, 103 and
-54, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
+56, 101 and 53, with the v0.30.1 image on November 18, 2026, at 57, 103 and
+54, and with the v0.31.0 image the same day, at 61, 111 and 58, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 

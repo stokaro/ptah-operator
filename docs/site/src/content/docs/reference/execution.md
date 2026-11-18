@@ -500,15 +500,15 @@ read from writing is the command the runner runs, one fixed command line for
 each operation, and the audit below measures what those commands send. The
 runner opens no database connection of its own; it starts Ptah with the target
 URL in its environment. The behavior below was read from the source of the Ptah
-build [`support/ptah.json`](../../support/ptah/) pins, v0.30.1 at commit
-`c5fba763`.
+build [`support/ptah.json`](../../support/ptah/) pins, v0.31.0 at commit
+`dc2decde`.
 
 | Operation | Runner command | What reaches the database |
 | --- | --- | --- |
 | Observe | `ptah schema drift --format json` | The comparison of the live schema with the desired one: catalog queries, the managed-data comparison's reads, and the probes below. |
 | Plan | `ptah schema plan --output <file> --json`, twice, and the two files must be byte-identical | The same comparison, once for each file. A dev URL names the schema an unqualified file loads into, and the saved plan provisions nothing on it. |
 | Plan, then | `ptah schema apply --plan <first file> --auto-approve --json --dry-run`, with no schema file, dev URL or protected-table list in its environment | The apply's preview lock, a check that the plan still fits the target, and a return before any statement of the plan runs. On MySQL and MariaDB, where a statement names a definer, `SELECT CURRENT_USER()`, and where it names another account, `SHOW GRANTS` and, on MySQL, a read of `mysql.user` for whether that account exists. A plan with no changes stops before this step. |
-| History, for a `PtahMigration` | `ptah migrations status --migrations-dir <dir> --json` | Catalog reads that find the revision table and its engine, on MySQL the table's definition and one session variable, a `SELECT` of the revision rows, and a catalog read that asks whether the table of repeatable migrations, `schema_migrations_repeatable`, exists, which MySQL sends in a second session. Where that table exists, Ptah checks that it is its own and selects its rows; no acceptance database holds one. |
+| History, for a `PtahMigration` | `ptah migrations status --migrations-dir <dir> --json` | Catalog reads that find the revision table and its engine, on MySQL the table's definition and one session variable, a `SELECT` of the revision rows, and a catalog read that asks whether the table of repeatable migrations, `schema_migrations_repeatable`, exists, which MySQL sends in a second session. Where that table exists, Ptah checks that it is its own and selects its rows, and since Ptah v0.31.0 whether each keeps a body; no acceptance database holds one. |
 
 Resolve and Verify, in either family, run `ptah oci resolve` and `ptah oci
 verify`, and open no database session. A `PtahMigration` runs no Plan Job.
@@ -542,9 +542,10 @@ isolated database, on PostgreSQL and on MySQL, and hold each one byte for byte
 to an exact list. For a `PtahSchema` the list is
 `test/e2e/schema-sql-contract.json`, matched by `test/e2e/schema_sql_audit.go`:
 the statements Observe, Plan and a stale Apply send for the acceptance schemas,
-captured from Ptah `c5fba763`, each with the operations that may send it. For
+captured from Ptah `dc2decde`, each with the operations that may send it. For
 History the lists are in `test/e2e/migration_sql_audit.go` and
-`test/e2e/migration_mysql_audit.go`, and what History sent at `c5fba763` is
+`test/e2e/migration_mysql_audit.go`, and what History sent at `c5fba763`, and
+again at `dc2decde`, is
 recorded in `testdata/e2e/readings/postgresql-migration-history-audit.md` and
 `mysql-migration-history-audit.md`: reads only, no table created. A statement
 from a read's Pod that its list does not hold fails the suite.

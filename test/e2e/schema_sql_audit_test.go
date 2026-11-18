@@ -225,7 +225,7 @@ func TestSchemaSQLPlanValidation(t *testing.T) {
 			}
 			raw := schemaAuditReading(t, engine, "drift-validate-plan")
 			counts, err := check(raw, "plan")
-			want := map[string]int{"postgresql": 54, "mysql": 23}[engine]
+			want := map[string]int{"postgresql": 58, "mysql": 23}[engine]
 			if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != want {
 				t.Fatalf("native Plan validation: counts=%v, error=%v", counts, err)
 			}
@@ -376,16 +376,16 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			for _, variant := range []string{"", "destructive-", "exclusion-wide-", "exclusion-narrow-", "initial-v1-", "tag-v2-", "tag-v3-", "drift-",
 				"documented-exclusion-wide-", "documented-exclusion-narrow-", "documented-drift-"} {
 				for _, operation := range []string{"observe", "plan"} {
-					count := map[string]map[string]int{"postgresql": {"observe": 57, "plan": 103}, "mysql": {"observe": 20, "plan": 39}}[engine][operation]
+					count := map[string]map[string]int{"postgresql": {"observe": 61, "plan": 111}, "mysql": {"observe": 20, "plan": 39}}[engine][operation]
 					if variant == "initial-v1-" {
-						count = map[string]map[string]int{"postgresql": {"observe": 50, "plan": 94}, "mysql": {"observe": 19, "plan": 37}}[engine][operation]
+						count = map[string]map[string]int{"postgresql": {"observe": 54, "plan": 102}, "mysql": {"observe": 19, "plan": 37}}[engine][operation]
 					}
 					readings = append(readings, witness{name: variant + operation, operation: operation, count: count, stem: engine})
 				}
 			}
 			for _, login := range []string{"", "documented-"} {
-				readings = append(readings, witness{name: login + "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 54, "mysql": 23}[engine], stem: engine},
-					witness{name: login + "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 54, "mysql": 23}[engine], stem: engine})
+				readings = append(readings, witness{name: login + "drift-validate-plan", operation: "plan", count: map[string]int{"postgresql": 58, "mysql": 23}[engine], stem: engine},
+					witness{name: login + "drift-stale-apply", operation: "stale-apply", count: map[string]int{"postgresql": 58, "mysql": 23}[engine], stem: engine})
 			}
 			if engine == "mysql" {
 				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 101, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 101, stem: engine})
@@ -398,9 +398,9 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			if engine == "postgresql" {
 				for _, stem := range addedPostgresLineStems(t) {
 					readings = append(readings,
-						witness{name: "drift-observe", operation: "observe", count: 57, stem: stem},
-						witness{name: "drift-plan", operation: "plan", count: 103, stem: stem},
-						witness{name: "drift-stale-apply", operation: "stale-apply", count: 54, stem: stem})
+						witness{name: "drift-observe", operation: "observe", count: 61, stem: stem},
+						witness{name: "drift-plan", operation: "plan", count: 111, stem: stem},
+						witness{name: "drift-stale-apply", operation: "stale-apply", count: 58, stem: stem})
 				}
 			}
 			for _, reading := range readings {

@@ -297,7 +297,11 @@ v0.29.3 saved and v0.29.5 reproduced, each statement names the view's schema,
 as `CREATE VIEW "public"."e2e_widget_names"`, and each plan records that schema
 as `placed_schema`
 ([stokaro/ptah#6132](https://github.com/stokaro/ptah/pull/6132)). Nothing else
-moved but the plan name and the fingerprints.
+moved but the plan name and the fingerprints. On November 18, 2026 the v0.31.0
+release image
+`ghcr.io/stokaro/ptah@sha256:ffd3bdc6e81e3875df4b7784eaf6cf6732834c70eeef2776edec47caea97a7e2`
+(commit `dc2decdee2617a350475d0f17347c7fb09dbce97`) saved all three the same way
+with nothing moved but the plan name and the fingerprints again, so they stay.
 
 Before them the plans were the ones the Ptah v0.29.3 release image
 `ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "c5fba763a6fb346fc8a35d2f336d75a91385e3b9",
+  "ptahCommit": "dc2decdee2617a350475d0f17347c7fb09dbce97",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -528,6 +528,50 @@
         "stale-apply"
       ],
       "command": "query",
+      "statement": "SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.nspname <> 'information_schema'\n\t\t\t  AND n.nspname NOT LIKE 'pg\\_%' ESCAPE '\\'\n\t\t\t  AND NOT EXISTS (\n\t\t\t        SELECT 1\n\t\t\t        FROM pg_depend d\n\t\t\t        WHERE d.classid = 'pg_namespace'::regclass\n\t\t\t          AND d.objid = n.oid\n\t\t\t          AND d.deptype = 'e') ORDER BY n.nspname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
+      "statement": "\n\t\tSELECT p.pubname, pg_catalog.pg_get_userbyid(p.pubowner), p.puballtables,\n\t\t       p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, p.pubviaroot,\n\t\t       COALESCE(pg_catalog.to_jsonb(p)->>'pubgencols', '')\n\t\tFROM pg_catalog.pg_publication p\n\t\tORDER BY p.pubname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
+      "statement": "\n\t\tSELECT p.pubname, n.nspname, c.relname,\n\t\t       COALESCE(pg_catalog.pg_get_expr(pr.prqual, pr.prrelid), ''),\n\t\t       COALESCE((SELECT pg_catalog.json_agg(a.attname ORDER BY a.attnum)::text\n\t\t                 FROM pg_catalog.pg_attribute a\n\t\t                 WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs)), '[]')\n\t\tFROM pg_catalog.pg_publication_rel pr\n\t\tJOIN pg_catalog.pg_publication p ON p.oid = pr.prpubid\n\t\tJOIN pg_catalog.pg_class c ON c.oid = pr.prrelid\n\t\tJOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n\t\tORDER BY p.pubname, n.nspname, c.relname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
+      "statement": "\n\t\tSELECT p.pubname, n.nspname\n\t\tFROM pg_catalog.pg_publication_namespace pn\n\t\tJOIN pg_catalog.pg_publication p ON p.oid = pn.pnpubid\n\t\tJOIN pg_catalog.pg_namespace n ON n.oid = pn.pnnspid\n\t\tORDER BY p.pubname, n.nspname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
       "statement": "\n\t\tSELECT kind, name FROM (\n\t\t\tSELECT 'aggregate' AS kind,\n\t\t\t       p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS name,\n\t\t\t       p.pronamespace AS namespace\n\t\t\tFROM pg_catalog.pg_proc p WHERE p.prokind = 'a'\n\t\t\tUNION ALL\n\t\t\tSELECT 'collation', c.collname, c.collnamespace\n\t\t\tFROM pg_catalog.pg_collation c\n\t\t\tUNION ALL\n\t\t\tSELECT 'foreign table', c.relname, c.relnamespace\n\t\t\tFROM pg_catalog.pg_class c WHERE c.relkind = 'f'\n\t\t) objects\n\t\tJOIN pg_catalog.pg_namespace n ON n.oid = objects.namespace\n\t\tWHERE n.nspname = $1\n\t\tORDER BY kind, name",
       "parameters": "Parameters: $1 = 'public'"
     },
@@ -539,7 +583,7 @@
         "stale-apply"
       ],
       "command": "query",
-      "statement": "\n\t\tSELECT 'event trigger' AS kind, evtname AS name FROM pg_catalog.pg_event_trigger\n\t\tUNION ALL\n\t\tSELECT 'publication', pubname FROM pg_catalog.pg_publication\n\t\tORDER BY kind, name",
+      "statement": "\n\t\tSELECT 'event trigger' AS kind, evtname AS name FROM pg_catalog.pg_event_trigger\n\t\tORDER BY kind, name",
       "parameters": ""
     },
     {
