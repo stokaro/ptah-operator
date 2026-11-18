@@ -204,8 +204,22 @@ propagation is refused from this release: have it name
   change. [PostgreSQL authority](../databases/#postgresql-authority) says what
   the login needs. Ptah reads publications only when the read covers every
   schema of the database: under a URL that pins `search_path` in a database
-  with another schema, a declared publication is never created and every
-  Observe fails with `invalid_observed_state`.
+  with another schema, a declared publication is never created, and the schema
+  reads `DriftUndecided`, as below.
+- **A declared object Ptah could not decide is not in sync.** Where Ptah's
+  read cannot decide whether a declared object exists, its drift check fails
+  without finding drift and lists the object as `undecided`
+  ([stokaro/ptah#3850](https://github.com/stokaro/ptah/pull/3850)). The
+  operator refused that report, and every Observe failed with
+  `invalid_observed_state`. A plan that changes nothing and lists undecided
+  objects now sets
+  [`DriftUndecided`](../../troubleshoot/condition-reasons/#a-declared-object-ptah-could-not-decide):
+  `DriftDetected` is unknown, `InSync` and `Ready` are false, nothing is
+  published, and `Ready` and a Warning Event name each object and Ptah's
+  reason. Such a plan used to read as in sync where an exclusion removed the
+  rest of the drift, and the read after an Apply that left an undecided object
+  failed at every attempt; it now ends the proof without recording the Apply as
+  converged.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -125,16 +126,27 @@ func (o Operation) Mutating() bool {
 // PlanOutcome distinguishes an executable immutable plan from an exact
 // read-only proof that the managed scope has no changes. It is explicit so an
 // empty or truncated plan payload can never be mistaken for convergence.
+//
+// PlanOutcomeUndecided is a plan that changes nothing because Ptah could not
+// decide some declared objects: the read did not describe their kind, so the
+// plan neither creates them nor shows they exist. It proves no convergence,
+// and Undecided names the objects. A manager that predates it refuses the
+// frame as having no outcome it knows.
 type PlanOutcome string
 
 const (
 	PlanOutcomeChanges   PlanOutcome = "Changes"
 	PlanOutcomeNoChanges PlanOutcome = "NoChanges"
+	PlanOutcomeUndecided PlanOutcome = "Undecided"
 )
 
 func (o PlanOutcome) Valid() bool {
-	return o == PlanOutcomeChanges || o == PlanOutcomeNoChanges
+	return o == PlanOutcomeChanges || o == PlanOutcomeNoChanges || o == PlanOutcomeUndecided
 }
+
+// MaxUndecidedBytes bounds the sentence a plan of undecided objects carries,
+// which is what an Event keeps of a message.
+const MaxUndecidedBytes = 512
 
 // ResultError describes an operation-level failure without relying on Job
 // process exit semantics. Message is always sanitized before framing.
@@ -232,8 +244,13 @@ type Result struct {
 	VerificationRequirements []string    `json:"verificationRequirements,omitempty"`
 	PlanContentDigest        string      `json:"planContentDigest,omitempty"`
 	PlanOutcome              PlanOutcome `json:"planOutcome,omitempty"`
-	MutationStarted          bool        `json:"mutationStarted,omitempty"`
-	Uncertain                bool        `json:"uncertain,omitempty"`
+	// Undecided names the declared objects a plan with PlanOutcomeUndecided
+	// could not decide, each with Ptah's reason, cleaned as other free text is
+	// and within MaxUndecidedBytes. It is set on that outcome and on nothing
+	// else.
+	Undecided       string `json:"undecided,omitempty"`
+	MutationStarted bool   `json:"mutationStarted,omitempty"`
+	Uncertain       bool   `json:"uncertain,omitempty"`
 	// MigrationHistory is the history a migration-history operation read, and
 	// MigrationRun the evidence a migration-apply operation left. Both are the
 	// documents Ptah produced, validated before they were carried here: the
@@ -969,9 +986,20 @@ func validateResult(result Result, options ParseOptions) error {
 			if result.Stdout != "" || result.PlanContentDigest != "" {
 				return fmt.Errorf("%w: no-change plan outcome carries executable content", ErrMalformedFrame)
 			}
+		case PlanOutcomeUndecided:
+			if result.Stdout != "" || result.PlanContentDigest != "" {
+				return fmt.Errorf("%w: undecided plan outcome carries executable content", ErrMalformedFrame)
+			}
+			if strings.TrimSpace(result.Undecided) == "" || len(result.Undecided) > MaxUndecidedBytes ||
+				!utf8.ValidString(result.Undecided) {
+				return fmt.Errorf("%w: undecided plan outcome does not name what was undecided", ErrMalformedFrame)
+			}
 		}
 	} else if result.PlanOutcome != "" {
 		return fmt.Errorf("%w: plan outcome is set on a non-successful plan result", ErrMalformedFrame)
+	}
+	if result.Undecided != "" && result.PlanOutcome != PlanOutcomeUndecided {
+		return fmt.Errorf("%w: undecided objects are named outside an undecided plan outcome", ErrMalformedFrame)
 	}
 	if result.Operation == OperationObserve && result.Error == nil {
 		if result.Stdout != "" || result.DriftReportDigest == "" || result.TargetIdentityDigest == "" ||
@@ -985,9 +1013,10 @@ func validateResult(result Result, options ParseOptions) error {
 			if err := validateDriftFindingSummaries(result); err != nil {
 				return err
 			}
-		} else if result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 ||
-			len(result.DriftFindings) != 0 {
-			return fmt.Errorf("%w: converged observation carries drift findings", ErrMalformedFrame)
+		} else if result.HighestDriftSeverity != "" {
+			return fmt.Errorf("%w: converged observation carries a drift severity", ErrMalformedFrame)
+		} else if err := validateUndecidedFindingSummaries(result); err != nil {
+			return err
 		}
 		if err := validateDriftInventory(result.DriftInventory); err != nil {
 			return err
@@ -1071,6 +1100,25 @@ func validateDriftFindingSummaries(result Result) error {
 		previousCategory = finding.Category
 	}
 	if carried != int64(result.DriftFindingCount) {
+		return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
+	}
+	return nil
+}
+
+// validateUndecidedFindingSummaries holds an observation that found no drift
+// to no findings, or to the one finding of declared objects Ptah could not
+// decide: a read that did not look is not one that matched, and the frame says
+// which. The severity Ptah rates that finding is not drift's, so the frame
+// carries no highest severity for it.
+func validateUndecidedFindingSummaries(result Result) error {
+	switch {
+	case len(result.DriftFindings) == 0 && result.DriftFindingCount == 0:
+		return nil
+	case len(result.DriftFindings) != 1 || result.DriftFindings[0].Category != dataplane.DriftFindingUndecided:
+		return fmt.Errorf("%w: converged observation carries drift findings", ErrMalformedFrame)
+	case result.DriftFindings[0].Count <= 0 || !validDriftSeverity(result.DriftFindings[0].Severity):
+		return fmt.Errorf("%w: drift observation has an invalid finding summary", ErrMalformedFrame)
+	case result.DriftFindings[0].Count != result.DriftFindingCount:
 		return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
 	}
 	return nil

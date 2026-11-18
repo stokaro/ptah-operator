@@ -191,6 +191,28 @@ func IsKnownDriftFindingCategory(category string) bool {
 	return !qualified || (len(kind) <= MaxDriftFindingKindBytes && driftFindingKindPattern.MatchString(kind))
 }
 
+// DriftFindingUndecided is the category a drift report counts the declared
+// objects under whose existence the comparison did not establish: the read of
+// the database did not describe their kind, so nothing checked them. It is no
+// difference. Ptah rates it a warning, and its drift stays false when it is
+// the only finding.
+const DriftFindingUndecided = "undecided"
+
+// UndecidedOnly reports whether findings holds at least one finding and every
+// one of them is DriftFindingUndecided: a report that found no difference and
+// could not decide some declared objects.
+func UndecidedOnly(findings []DriftFinding) bool {
+	if len(findings) == 0 {
+		return false
+	}
+	for _, finding := range findings {
+		if finding.Category != DriftFindingUndecided {
+			return false
+		}
+	}
+	return true
+}
+
 type ResolveReport struct {
 	Reference       string `json:"reference"`
 	PinnedReference string `json:"pinned_reference"`
@@ -520,8 +542,11 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 	if report.Error != nil {
 		return DriftReport{}, fmt.Errorf("drift observation failed")
 	}
-	if report.Failed && !report.Drift {
-		return DriftReport{}, fmt.Errorf("drift report says failed=true without drift")
+	// Ptah fails a check it could not complete. Where the only findings are
+	// declared objects it could not decide, the report says failed with no
+	// drift found (stokaro/ptah#3850), and nothing else may.
+	if report.Failed && !report.Drift && !UndecidedOnly(report.Findings) {
+		return DriftReport{}, fmt.Errorf("drift report says failed=true without drift or undecided objects alone")
 	}
 	if report.Failed && exitCode != 1 {
 		return DriftReport{}, fmt.Errorf("drift report says failed=true but process exited %d instead of 1", exitCode)

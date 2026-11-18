@@ -1863,6 +1863,9 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	var observedDrift *bool
 	var completedProofPolicyErr error
 	var completedProofExecutionBindingErr error
+	// undecided is what a Plan could not decide, which the Warning after the
+	// status write carries.
+	var undecided string
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	if schemaClaimServesProof(schema) {
@@ -2075,10 +2078,43 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if result.CoordinationDigest != expectedCoordination || result.TargetIdentityDigest != expectedTarget {
 			return r.reobserveAfterStalePlan(ctx, schema, fmt.Errorf("planning target changed after observation"))
 		}
-		if result.PlanOutcome != runner.PlanOutcomeChanges && result.PlanOutcome != runner.PlanOutcomeNoChanges {
+		if result.PlanOutcome != runner.PlanOutcomeChanges && result.PlanOutcome != runner.PlanOutcomeNoChanges &&
+			result.PlanOutcome != runner.PlanOutcomeUndecided {
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("plan result has no explicit managed-scope outcome"))
 		}
-		if result.PlanOutcome == runner.PlanOutcomeNoChanges {
+		if result.PlanOutcome == runner.PlanOutcomeUndecided {
+			// The plan changes nothing, and that proves nothing: Ptah could not
+			// decide some declared objects, so it neither created them nor showed
+			// they exist. Drift is unknown, the resource is not in sync, and
+			// there is nothing to approve. A proof ends here as it ends on a plan
+			// with changes, without an Applied record, which only convergence
+			// writes. The next read is a whole interval away: the same read
+			// would decide nothing new within the second.
+			if result.Stdout != "" || result.PlanContentDigest != "" || result.Undecided == "" {
+				return r.retryOperation(ctx, schema, nil, fmt.Errorf("undecided plan result carries executable content or names nothing"))
+			}
+			undecided = result.Undecided
+			schema.Status.Plan = nil
+			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonDriftUndecided, "Ptah could not decide whether some declared objects exist, so whether the database differs is unknown")
+			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDriftUndecided, "Ptah planned nothing for the declared objects it could not decide")
+			if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
+				meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+				setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonDriftUndecided, "No plan is waiting: Ptah planned nothing")
+			}
+			if (pending == nil || pending.ApplyGeneration == schema.Generation) &&
+				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
+				schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+				next := cycleDeadline(schema.Status.NextReconciliationTime, r.now(), interval(schema))
+				schema.Status.NextReconciliationTime = &next
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonDriftUndecided, "The declared objects Ptah could not decide may be missing from the database")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDriftUndecided, undecidedReadyMessage(undecided))
+			} else {
+				schema.Status.Phase = operatorv1alpha1.PhasePending
+				schema.Status.NextReconciliationTime = nil
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "The applied generation left objects Ptah could not decide, and newer desired inputs must be reconciled")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
+			}
+		} else if result.PlanOutcome == runner.PlanOutcomeNoChanges {
 			if result.Stdout != "" || result.PlanContentDigest != "" {
 				return r.retryOperation(ctx, schema, nil, fmt.Errorf("no-change plan result contains executable content"))
 			}
@@ -2297,7 +2333,18 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		}
 	}
 	r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
+	if undecided != "" {
+		r.event(schema, corev1.EventTypeWarning, "DriftUndecided", "%s", bounded(undecided, 512))
+	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// undecidedReadyMessage is Ready's message for a Plan that could not decide
+// some declared objects: the runner's sentence, which names each object and
+// Ptah's reason, and what lets Ptah decide them.
+func undecidedReadyMessage(undecided string) string {
+	return strings.TrimSuffix(bounded(undecided, 512), ".") +
+		". Nothing is planned for them: use a URL that reads the whole database, with a login that may read what each reason names"
 }
 
 func (r *SchemaReconciler) expectedJob(

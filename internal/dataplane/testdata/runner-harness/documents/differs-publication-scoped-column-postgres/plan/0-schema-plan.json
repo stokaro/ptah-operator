@@ -1,0 +1,42 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:69cf600092cf02ce33a75dd4c5c7c44c70c151e0ffbd46dda9a737b832f6e434",
+  "plan_path": "/work/ptah-plan-output-2643015966/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_fd107f73759f",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:2c302f0275d84be4a2ec230fad3d37c9cf52546f92f855591b0b8ec3c62137d4",
+    "to_fingerprint": "sha256:5499d0d59291985dd1f3f4f0f183f91080b2cd8a08d4587a11570d2503a58b56",
+    "scope": {
+      "kind": "schema",
+      "name": "public"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  },
+  "undecided": {
+    "features": [
+      {
+        "kind": "ptah.run/pgpublication/publication",
+        "subject": {
+          "kind": "ptah.run/pgpublication/publication",
+          "name": {
+            "source": "differs_notes_pub",
+            "normalized": "differs_notes_pub"
+          }
+        },
+        "reason": "whether the publication exists was not established: the read covers some of the database's schemas and not differs_outside, and a publication belongs to the whole database",
+        "label": "PostgreSQL publication"
+      }
+    ]
+  }
+}
