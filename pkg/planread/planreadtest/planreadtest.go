@@ -300,19 +300,21 @@ const UnreadValue = "value-of-a-field-this-build-does-not-read"
 // UnreadFieldNames are the names a display read gives the fields
 // DocumentWithUnreadFields adds.
 func UnreadFieldNames() []string {
-	return []string{"annotations", "statements[].inputs"}
+	return []string{"provider_options", "statements[].inputs"}
 }
 
 // DocumentWithUnreadFields is Document as a newer Ptah could write it: a field
-// added to the plan and to each statement, at the same format version. They are
-// the two fields the strict decoder keeps out of an Apply.
+// added to the plan and to each statement, at the same format version. The
+// statement's is inputs, which the strict decoder keeps out of an Apply; the
+// plan's is a name no Ptah writes, since the notes Ptah v0.30.0 writes on a
+// plan are declared.
 func DocumentWithUnreadFields(t testing.TB, statements []string) []byte {
 	t.Helper()
 	var decoded map[string]any
 	if err := json.Unmarshal(Document(t, statements), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	decoded["annotations"] = map[string]any{"provider": UnreadValue}
+	decoded["provider_options"] = map[string]any{"provider": UnreadValue}
 	for _, statement := range decoded["statements"].([]any) {
 		statement.(map[string]any)["inputs"] = []any{UnreadValue}
 	}

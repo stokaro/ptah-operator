@@ -47,7 +47,7 @@
       "column_names": "exact"
     },
     "tables_added": [
-      "differs_owned"
+      "public.differs_owned"
     ],
     "tables_removed": null,
     "tables_modified": null,
@@ -87,7 +87,7 @@
         "role": "harness_grantee_b",
         "privilege": "SELECT",
         "object_type": "TABLE",
-        "object_name": "differs_owned",
+        "object_name": "public.differs_owned",
         "with_option": false
       }
     ],

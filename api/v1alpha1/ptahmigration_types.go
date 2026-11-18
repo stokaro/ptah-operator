@@ -1064,6 +1064,12 @@ const (
 	// shadow, a selector in policy.driftCheck.exclude was refused, or the
 	// comparison covers an object it cannot describe. The Apply ran nothing.
 	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
+	// ReasonRepeatableMigrationsUnsupported means the history read lists
+	// repeatable migrations: R__<identity>.sql files in the artifact, or rows
+	// the database's record of them holds. Ptah v0.30.0 runs them again
+	// whenever their content changes, and this operator approves and runs a
+	// versioned sequence only, so no plan is published.
+	ReasonRepeatableMigrationsUnsupported ConditionReason = "RepeatableMigrationsUnsupported"
 	// ReasonShadowDatabaseUnavailable means the shadow database could not be
 	// used. A history read that cannot name it, because its Secret key holds
 	// no URL, a URL the runner cannot identify, or the target's server and

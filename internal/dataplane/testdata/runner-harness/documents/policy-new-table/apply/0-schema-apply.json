@@ -2,17 +2,17 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_b9946d469348",
-  "plan_digest": "sha256:be6ee6812a08d5d9cd33c2c0b51918705a1d3e732888692f47a3e74266cad853",
+  "plan_name": "plan_424570616508",
+  "plan_digest": "sha256:92f17d66feeb457afae1ca6145070e48994e9fe70998086cb3e3e2be9b94b93d",
   "units": [
     {
-      "sql": "CREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)"
+      "sql": "CREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)"
     },
     {
-      "sql": "ALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY"
+      "sql": "ALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY"
     },
     {
-      "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)"
+      "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user)"
     }
   ],
   "apply_log": {

@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_a0d9a209bd8d",
-  "plan_digest": "sha256:6973682420173fccdc60806dadd6fbdbc147cc5fb3f9d557be615eba2727582c",
+  "plan_name": "plan_d947192c3c09",
+  "plan_digest": "sha256:b96926d221565574a15d1eb2f6d5b09817b4910b170ee5b66c8ef13a451f38ba",
   "units": [
     {
-      "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)"
+      "sql": "CREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n)"
     }
   ]
 }

@@ -2,14 +2,14 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_7485d7ee47ef",
-  "plan_digest": "sha256:cfb60670bca1f5da18ecbf1ded8e9b66c43fab8a12bf536c8a5587f840489309",
+  "plan_name": "plan_7300ccb0e945",
+  "plan_digest": "sha256:d9ec186241850e35d53e53168c02ad5874444c359f567566f8c797f1de92a3c0",
   "units": [
     {
-      "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\""
+      "sql": "DROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\""
     },
     {
-      "sql": "DROP VIEW \"differs_member_names\"",
+      "sql": "DROP VIEW \"public\".\"differs_member_names\"",
       "effects": [
         {
           "version": 1,
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "sql": "DROP VIEW \"differs_member_ids\"",
+      "sql": "DROP VIEW \"public\".\"differs_member_ids\"",
       "effects": [
         {
           "version": 1,
@@ -87,7 +87,7 @@
       ]
     },
     {
-      "sql": "CREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members",
+      "sql": "CREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members",
       "effects": [
         {
           "version": 1,
@@ -126,7 +126,7 @@
       ]
     },
     {
-      "sql": "CREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids",
+      "sql": "CREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids",
       "effects": [
         {
           "version": 1,
@@ -165,7 +165,7 @@
       ]
     },
     {
-      "sql": "DROP TABLE \"differs_docs\""
+      "sql": "DROP TABLE \"public\".\"differs_docs\""
     }
   ]
 }

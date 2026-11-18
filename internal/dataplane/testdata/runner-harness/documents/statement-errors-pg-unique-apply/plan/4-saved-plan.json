@@ -1,16 +1,17 @@
 {
   "format_version": 1,
-  "name": "plan_743afc5d1ca2",
+  "name": "plan_3e943b74b57d",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:854bf48070db6d4c0947ad71dd22df6d01be57f16d7f2f8af3489b7420f94c4b",
-  "to_fingerprint": "sha256:df4a3e29d300e329c9f113ee73936e8c3e2ed85c814592fa5b4c8d37545d70b7",
+  "from_fingerprint": "sha256:f7aae08adb1107f496cd48ee811aa99b5cf2832dcb40858025a7d3f913bcca34",
+  "to_fingerprint": "sha256:92216c3a0a08acca2d3faea0713f5aa6d13dbddc7c4a09d488857e3f88f3e4ea",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")",
+      "sql": "CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\")",
       "severity": "warning",
       "reason": "CREATE UNIQUE INDEX can fail on existing duplicate values"
     }

@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_e4f16649c97f",
-  "plan_digest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+  "plan_name": "plan_bf1e4cb96b85",
+  "plan_digest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
   "units": [
     {
-      "sql": "CREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
+      "sql": "CREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
     }
   ]
 }

@@ -43,6 +43,7 @@
   "managed_data": {
     "tables": [
       {
+        "schema": "public",
         "table": "regions",
         "inserts": 1,
         "updates": 1,

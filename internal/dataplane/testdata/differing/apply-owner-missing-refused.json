@@ -1,0 +1,23 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "refused",
+  "plan_name": "plan_f114d8124569",
+  "plan_digest": "sha256:309843fe1578342121aa11bfbded46ab74d266b423fac440b9f1d414e875a8e9",
+  "units": [
+    {
+      "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\""
+    }
+  ],
+  "refusal": {
+    "code": "missing-owner-role",
+    "owner": {
+      "statement": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\"",
+      "kind": "VIEW",
+      "role": "harness_view_nobody"
+    }
+  },
+  "error": {
+    "message": "apply schema changes: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\" gives the object to role \"harness_view_nobody\", which the server does not hold and no statement before it creates; a role belongs to the server, not to a database, so create the role on the server or declare it in the desired schema"
+  }
+}

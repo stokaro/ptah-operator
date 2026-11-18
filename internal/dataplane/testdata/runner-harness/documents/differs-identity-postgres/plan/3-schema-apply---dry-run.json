@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_f4e62c0c0a2d",
-  "plan_digest": "sha256:894f07b38ae83161ee922447be247d39629a9d5eba8e5c692315df4bee29aa68",
+  "plan_name": "plan_3c9952642d6f",
+  "plan_digest": "sha256:b946fa0312280298feab2cf6ecdc91e44bc658a840689287d3277868df570c01",
   "units": [
     {
-      "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY"
+      "sql": "ALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY"
     }
   ]
 }

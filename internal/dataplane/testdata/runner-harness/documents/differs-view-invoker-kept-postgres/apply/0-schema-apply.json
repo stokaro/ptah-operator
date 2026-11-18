@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_20b3145daf60",
-  "plan_digest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
+  "plan_name": "plan_8c1b22c01547",
+  "plan_digest": "sha256:e5c002759a73b2efee5dc075af8bca287d8c096062b40dd9f577af15af1871ce",
   "units": [
     {
-      "sql": "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
+      "sql": "CREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
       "effects": [
         {
           "version": 1,

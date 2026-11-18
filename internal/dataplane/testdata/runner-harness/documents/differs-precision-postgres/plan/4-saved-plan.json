@@ -1,16 +1,17 @@
 {
   "format_version": 1,
-  "name": "plan_243e3f9062e7",
+  "name": "plan_eb1a4016d05a",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:6d140dde7af1175f050895007053e3720956a9e462832ae16e7425de35634351",
-  "to_fingerprint": "sha256:b60dd8afa715d794475b702e380d52aa29e3b97994ce08e46e3bf2bc35f409e8",
+  "from_fingerprint": "sha256:b42afc8f97e6eeefb62aa9b2d9248b1442c6b8baadd3751f8310f3546201a6fb",
+  "to_fingerprint": "sha256:1fce62f8d299d56cbf607b217258396143316905b6b04630d6990609d1c9dacd",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": true,
   "statements": [
     {
-      "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)",
+      "sql": "ALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)",
       "severity": "destructive",
       "reason": "column type narrows from timestamp to timestamp(0)"
     }

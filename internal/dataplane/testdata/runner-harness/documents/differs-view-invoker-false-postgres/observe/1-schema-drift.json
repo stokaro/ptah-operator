@@ -65,7 +65,7 @@
     "views_removed": null,
     "views_modified": [
       {
-        "view_name": "differs_notes_view",
+        "view_name": "public.differs_notes_view",
         "changes": {
           "options": "security_invoker=true -\u003e security_invoker=false"
         },

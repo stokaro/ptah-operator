@@ -2,21 +2,22 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
-  "plan_path": "/work/ptah-plan-output-1486775624/first.plan.json",
+  "plan_digest": "sha256:e5c002759a73b2efee5dc075af8bca287d8c096062b40dd9f577af15af1871ce",
+  "plan_path": "/work/ptah-plan-output-511697653/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_20b3145daf60",
+    "name": "plan_8c1b22c01547",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:832049ff6c6b246be1808105a85ffe9d8fd11c4ac15ed576332fa8662c825354",
-    "to_fingerprint": "sha256:0d4e4c768a08ba2080b6a15184febdb6e49743eeb66d9382fd9a1fbd4686035a",
+    "from_fingerprint": "sha256:11861acfc0b8725c662ed8d7030a1ea28a99f6c75292fd969716d11d44aa8da4",
+    "to_fingerprint": "sha256:cd568ffa8c908a08bff55c12e9772523550f90c123514d60822406bc5650d3d2",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "CREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
+        "sql": "CREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id \u003e 0",
         "severity": "warning",
         "reason": "CREATE OR REPLACE VIEW changes the view in place, and what every query that reads it gets",
         "effects": [

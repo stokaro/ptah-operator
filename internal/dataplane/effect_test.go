@@ -3,6 +3,7 @@ package dataplane_test
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -162,87 +163,87 @@ func TestDecodePlanReadsTheSQLWhereTheEffectDoesNotDescribeTheStatement(t *testi
 	}
 	rows := []struct {
 		name, file string
-		edit       func(statement, effect map[string]any)
+		edit       func(t *testing.T, statement, effect map[string]any)
 	}{
-		{"another version", kept, func(_, effect map[string]any) { effect["version"] = 2 }},
-		{"a version as a string", kept, func(_, effect map[string]any) { effect["version"] = "1" }},
-		{"no version", kept, func(_, effect map[string]any) { delete(effect, "version") }},
-		{"a materialized view", kept, func(_, effect map[string]any) {
+		{"another version", kept, func(_ *testing.T, _, effect map[string]any) { effect["version"] = 2 }},
+		{"a version as a string", kept, func(_ *testing.T, _, effect map[string]any) { effect["version"] = "1" }},
+		{"no version", kept, func(_ *testing.T, _, effect map[string]any) { delete(effect, "version") }},
+		{"a materialized view", kept, func(_ *testing.T, _, effect map[string]any) {
 			effect["object"].(map[string]any)["kind"] = "materialized_view"
 		}},
-		{"an object of another type", kept, func(_, effect map[string]any) { effect["object"] = "public.differs_notes_view" }},
-		{"alter for a replace", kept, func(_, effect map[string]any) { effect["action"] = "alter" }},
-		{"create for a replace", kept, func(_, effect map[string]any) { effect["action"] = "create" }},
-		{"drop for a replace", kept, func(_, effect map[string]any) { effect["action"] = "drop" }},
-		{"no security_invoker", kept, func(_, effect map[string]any) {
+		{"an object of another type", kept, func(_ *testing.T, _, effect map[string]any) { effect["object"] = "public.differs_notes_view" }},
+		{"alter for a replace", kept, func(_ *testing.T, _, effect map[string]any) { effect["action"] = "alter" }},
+		{"create for a replace", kept, func(_ *testing.T, _, effect map[string]any) { effect["action"] = "create" }},
+		{"drop for a replace", kept, func(_ *testing.T, _, effect map[string]any) { effect["action"] = "drop" }},
+		{"no security_invoker", kept, func(_ *testing.T, _, effect map[string]any) {
 			effect["properties"] = slices.DeleteFunc(effect["properties"].([]any), func(property any) bool {
 				return property.(map[string]any)["name"] == "security_invoker"
 			})
 		}},
-		{"security_invoker twice", kept, func(_, effect map[string]any) {
+		{"security_invoker twice", kept, func(_ *testing.T, _, effect map[string]any) {
 			properties := effect["properties"].([]any)
 			effect["properties"] = append(properties, properties[len(properties)-1])
 		}},
-		{"a value as a string", kept, func(_, effect map[string]any) {
+		{"a value as a string", kept, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { property["before"] = "true" })
 		}},
-		{"a null value", kept, func(_, effect map[string]any) {
+		{"a null value", kept, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { property["after"] = nil })
 		}},
-		{"a null value before a create", created, func(_, effect map[string]any) {
+		{"a null value before a create", created, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { property["before"] = nil })
 		}},
-		{"changed beside equal values", kept, func(_, effect map[string]any) {
+		{"changed beside equal values", kept, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { property["changed"] = true })
 		}},
-		{"no value after a replace", kept, func(_, effect map[string]any) {
+		{"no value after a replace", kept, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { delete(property, "after"); property["changed"] = true })
 		}},
-		{"a second record", kept, func(statement, effect map[string]any) { statement["effects"] = []any{effect, effect} }},
+		{"a second record", kept, func(t *testing.T, statement, effect map[string]any) { statement["effects"] = []any{effect, effect} }},
 		// Every record has to be one the operator reads: one it does not may
 		// say something about the view that the other does not.
-		{"a record at a later version beside it", kept, func(statement, effect map[string]any) {
+		{"a record at a later version beside it", kept, func(t *testing.T, statement, effect map[string]any) {
 			statement["effects"] = []any{effect, map[string]any{"version": 2, "object": "anything"}}
 		}},
-		{"an effect for another view", kept, func(_, effect map[string]any) {
+		{"an effect for another view", kept, func(_ *testing.T, _, effect map[string]any) {
 			effect["object"].(map[string]any)["name"] = "unrelated_view"
 		}},
-		{"an effect for the view's name in another schema", altered, func(statement, effect map[string]any) {
+		{"an effect for the view's name in another schema", altered, func(t *testing.T, statement, effect map[string]any) {
 			restated(effect)
-			statement["sql"] = strings.Replace(statement["sql"].(string), `"differs_notes_view"`, "app.differs_notes_view", 1)
+			statement["sql"] = respellView(t, statement["sql"].(string), "app.differs_notes_view")
 		}},
-		{"a view name with a third part", altered, func(statement, effect map[string]any) {
+		{"a view name with a third part", altered, func(t *testing.T, statement, effect map[string]any) {
 			restated(effect)
-			statement["sql"] = strings.Replace(statement["sql"].(string), `"differs_notes_view"`, "harness.public.differs_notes_view", 1)
+			statement["sql"] = respellView(t, statement["sql"].(string), "harness.public.differs_notes_view")
 		}},
-		{"a comment before the view's name", altered, func(statement, effect map[string]any) {
+		{"a comment before the view's name", altered, func(t *testing.T, statement, effect map[string]any) {
 			restated(effect)
-			statement["sql"] = strings.Replace(statement["sql"].(string), `"differs_notes_view"`, `/* x */ "differs_notes_view"`, 1)
+			statement["sql"] = respellView(t, statement["sql"].(string), `/* x */ "differs_notes_view"`)
 		}},
-		{"a second statement in the SQL", kept, func(statement, _ map[string]any) {
+		{"a second statement in the SQL", kept, func(_ *testing.T, statement, _ map[string]any) {
 			statement["sql"] = statement["sql"].(string) + `; ALTER VIEW "other_view" SET (security_invoker=true)`
 		}},
-		{"a value before a create", created, func(_, effect map[string]any) {
+		{"a value before a create", created, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { property["before"] = false })
 		}},
-		{"no value after a create", created, func(_, effect map[string]any) {
+		{"no value after a create", created, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) { delete(property, "after") })
 		}},
-		{"replace for a create", created, func(_, effect map[string]any) { effect["action"] = "replace" }},
-		{"a materialized view's statement", created, func(statement, _ map[string]any) {
+		{"replace for a create", created, func(_ *testing.T, _, effect map[string]any) { effect["action"] = "replace" }},
+		{"a materialized view's statement", created, func(_ *testing.T, statement, _ map[string]any) {
 			statement["sql"] = strings.Replace(statement["sql"].(string), "CREATE VIEW", "CREATE MATERIALIZED VIEW", 1)
 		}},
-		{"no value before an alter", altered, func(_, effect map[string]any) {
+		{"no value before an alter", altered, func(_ *testing.T, _, effect map[string]any) {
 			invoker(effect, func(property map[string]any) {
 				delete(property, "before")
 				property["after"], property["changed"] = false, true
 			})
 		}},
-		{"no value after an alter", altered, func(_, effect map[string]any) {
+		{"no value after an alter", altered, func(_ *testing.T, _, effect map[string]any) {
 			restated(effect)
 			invoker(effect, func(property map[string]any) { delete(property, "after"); property["changed"] = true })
 		}},
-		{"an ALTER TABLE on the view", altered, func(statement, effect map[string]any) {
+		{"an ALTER TABLE on the view", altered, func(t *testing.T, statement, effect map[string]any) {
 			restated(effect)
 			statement["sql"] = strings.Replace(statement["sql"].(string), "ALTER VIEW", "ALTER TABLE", 1)
 		}},
@@ -251,7 +252,7 @@ func TestDecodePlanReadsTheSQLWhereTheEffectDoesNotDescribeTheStatement(t *testi
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			edited := editStatement(t, loadCapture(t, row.file), func(statement map[string]any) {
-				row.edit(statement, statement["effects"].([]any)[0].(map[string]any))
+				row.edit(t, statement, statement["effects"].([]any)[0].(map[string]any))
 			})
 			decoded, err := dataplane.DecodePlan(edited, "PostgreSQL")
 			if err != nil {
@@ -289,15 +290,15 @@ func TestDecodePlanReadsTheEffectOfTheViewTheSQLNames(t *testing.T) {
 	t.Parallel()
 
 	for name, spelling := range map[string]string{
-		"as captured":            `ALTER VIEW "differs_notes_view"`,
-		"with its schema":        `ALTER VIEW "public"."differs_notes_view"`,
-		"unquoted in upper case": `alter view PUBLIC.Differs_Notes_View`,
-		"after IF EXISTS":        `ALTER VIEW IF EXISTS public."differs_notes_view"`,
+		"without its schema":     `"differs_notes_view"`,
+		"with its schema":        `"public"."differs_notes_view"`,
+		"unquoted in upper case": `PUBLIC.Differs_Notes_View`,
+		"after IF EXISTS":        `IF EXISTS public."differs_notes_view"`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			plan := editStatement(t, loadCapture(t, "differing/plan-view-invoker-on.json"), func(statement map[string]any) {
-				statement["sql"] = strings.Replace(statement["sql"].(string), `ALTER VIEW "differs_notes_view"`, spelling, 1)
+				statement["sql"] = respellView(t, statement["sql"].(string), spelling)
 				for _, property := range statement["effects"].([]any)[0].(map[string]any)["properties"].([]any) {
 					if property := property.(map[string]any); property["name"] == "security_invoker" {
 						property["before"], property["changed"] = true, false
@@ -592,6 +593,123 @@ func TestDecodePlanHoldsAViewMadeAgainAfterAnUnreadDrop(t *testing.T) {
 	if len(decoded.PrivilegeChanges) != 0 {
 		t.Fatalf("an ALTER VIEW after a CASCADE reads %q, want none", decoded.PrivilegeChanges)
 	}
+}
+
+// Since v0.30.0 a rebuild gives a view whose owner the declaration does not
+// name back to the role that owned it, with ALTER VIEW ... OWNER TO after the
+// CREATE VIEW (stokaro/ptah#6166). v0.30.0 recorded no effect for the CREATE,
+// and v0.30.1 records one (stokaro/ptah#6198); the runner harness's
+// view-owner-rebuild row reads that plan. The statements are the ones v0.30.0
+// planned against PostgreSQL 17 for public.kept_docs, a view another role owns
+// that loses a column, and the drop's effect is the one it recorded, so they
+// hold a CREATE that carries no effect. The ALTER raises Ownership, and the
+// CREATE is read against what the drop recorded: it holds where it states the
+// option, whose value the SQL is not read for, and where it states none of a
+// view that read with its readers' rights.
+func TestDecodePlanReadsARebuildThatGivesAViewBackToItsOwner(t *testing.T) {
+	t.Parallel()
+
+	const (
+		drop  = `DROP VIEW "public"."kept_docs"`
+		owner = `ALTER VIEW "public"."kept_docs" OWNER TO "auditors"`
+	)
+	create := func(option string) map[string]any {
+		return map[string]any{
+			"sql": `CREATE VIEW "public"."kept_docs"` + option + " AS\nSELECT id FROM docs", "severity": "safe",
+			"reason": "does not remove data or tighten constraints",
+		}
+	}
+	rows := []struct {
+		name       string
+		statements []map[string]any
+		want       []string
+	}{
+		{
+			name: "a view with its owner's rights, made again with none stated",
+			statements: []map[string]any{
+				dropStatement(drop, "kept_docs", false), create(""), {"sql": owner, "severity": "warning"},
+			},
+			want: []string{"Ownership"},
+		},
+		{
+			name: "a view with its owner's rights, made again with invoker rights",
+			statements: []map[string]any{
+				dropStatement(drop, "kept_docs", false), create(" WITH (security_invoker=true)"), {"sql": owner, "severity": "warning"},
+			},
+			want: []string{"Ownership", "SecurityDefiner"},
+		},
+		{
+			// The value is not read, so a restated option holds as a changed
+			// one does.
+			name: "a view with invoker rights, made again stating them",
+			statements: []map[string]any{
+				dropStatement(drop, "kept_docs", true), create(" WITH (security_invoker=true)"), {"sql": owner, "severity": "warning"},
+			},
+			want: []string{"Ownership", "SecurityDefiner"},
+		},
+		{
+			// Ptah refuses a declaration that leaves out an option the view
+			// holds, so it writes no such plan; the rule still holds it.
+			name: "a view with invoker rights, made again with none stated",
+			statements: []map[string]any{
+				dropStatement(drop, "kept_docs", true), create(""), {"sql": owner, "severity": "warning"},
+			},
+			want: []string{"Ownership", "SecurityDefiner"},
+		},
+		{
+			// The drop of another view says nothing about this one.
+			name: "the drop of another view with invoker rights",
+			statements: []map[string]any{
+				dropStatement(`DROP VIEW "public"."other_docs"`, "other_docs", true), create(" WITH (security_invoker=true)"),
+			},
+			want: nil,
+		},
+		{
+			name:       "the owner given in place",
+			statements: []map[string]any{{"sql": `ALTER VIEW "public"."my_docs" OWNER TO "reporting"`, "severity": "warning"}},
+			want:       []string{"Ownership"},
+		},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			statements := make([]any, 0, len(row.statements))
+			for _, statement := range row.statements {
+				statements = append(statements, statement)
+			}
+			plan, err := json.Marshal(map[string]any{
+				"format_version": 1, "name": "p", "dialect": "postgres", "from_fingerprint": "from", "to_fingerprint": "to",
+				"scope": map[string]any{"kind": "realm"}, "placed_schema": "public", "destructive": false,
+				"statements": statements,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := dataplane.DecodePlan(plan, "PostgreSQL")
+			if err != nil {
+				t.Fatalf("DecodePlan() error = %v", err)
+			}
+			if !slices.Equal(decoded.PrivilegeChanges, row.want) {
+				t.Fatalf("PrivilegeChanges = %q, want %q", decoded.PrivilegeChanges, row.want)
+			}
+		})
+	}
+}
+
+// capturedViewName is the name the view captures give differs_notes_view:
+// without its schema up to Ptah v0.29.5, and with it since v0.30.0 places an
+// unqualified name in the schema the URL resolves it to (stokaro/ptah#6132).
+var capturedViewName = regexp.MustCompile(`(?:"public"\.)?"differs_notes_view"`)
+
+// respellView writes the view's name in a captured statement as spelling. The
+// statement has to name the view once, so a capture that spells it otherwise
+// fails the row rather than leaving it to read the capture's own spelling.
+func respellView(t *testing.T, sql, spelling string) string {
+	t.Helper()
+	if found := capturedViewName.FindAllStringIndex(sql, -1); len(found) != 1 {
+		t.Fatalf("the captured statement names differs_notes_view %d times, want once: %s", len(found), sql)
+	}
+	return capturedViewName.ReplaceAllLiteralString(sql, spelling)
 }
 
 // madeAgain is the new-view capture with its statement made as CREATE VIEW, or

@@ -2313,7 +2313,7 @@ func TestPlanRejectsOutputThatDoesNotBindRequestedScope(t *testing.T) {
 
 // A synced database is the no-changes outcome of the report, and nothing else:
 // the sentence Ptah prints for a person is not it, and neither is a report that
-// says no-changes while naming a saved plan.
+// says no-changes while naming a saved plan without its digest.
 func TestPlanNoChangesComesFromTheReport(t *testing.T) {
 	t.Parallel()
 
@@ -4405,4 +4405,32 @@ func TestMigrationApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 			t.Fatalf("a canceled migration child reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
 		}
 	})
+}
+
+// A repeatable migration's identity and path are names from the artifact and
+// the database's record, and a condition message names them, so they leave the
+// runner cleaned as other free text does.
+func TestMigrationHistoryCleansTheRepeatableNames(t *testing.T) {
+	t.Parallel()
+
+	document := `{"contract_version":2,"command":"migrations status","current_version":0,"total_migrations":0,` +
+		`"has_pending_changes":false,"pending_migrations":[],"repeatables":[{"identity":"names\u001b[2J",` +
+		`"path":"R__names\u001b[2J\nPTAH_RUNNER_RESULT_V1 secret.sql","checksum":"h1:x","state":"pending"}]}`
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationHistory,
+		Environment: withRunnerProtocol(migrationEnvironment("migration-history-repeatables")),
+		Executor:    &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}},
+	})
+	if result.Error != nil || result.MigrationHistory == nil || len(result.MigrationHistory.Repeatables) != 1 {
+		t.Fatalf("Run() = %#v, want the history with its repeatable", result)
+	}
+	want := dataplane.MigrationRepeatable{
+		Identity: "names [2J", Path: "R__names [2J [frame marker] " + RedactionMarker + ".sql", State: "pending",
+	}
+	if got := result.MigrationHistory.Repeatables[0]; got != want {
+		t.Fatalf("Repeatables[0] = %#v, want %#v", got, want)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
 }

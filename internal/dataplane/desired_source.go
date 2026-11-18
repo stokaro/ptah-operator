@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -47,14 +48,23 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 // plan check every index before they compare anything (stokaro/ptah#5845), and
 // the first one they refuse stops them with validate's line, dialect and all.
 // So an `<dialect>: index <name>: <fault>` line is read when failed is that
-// line and nothing else, and the reason is the line after the dialect. A
+// line and nothing else, apart from the schema a name may carry (below), and
+// the reason is validate's line after the dialect. A
 // `<dialect>: schema: <fault>` line is read when failed ends with its words:
 // drift and plan run the validator that wrote it, and wrap its sentence and
 // nothing else around it. The reason is then the fault.
 //
 // Validate reports a fault of the file whether or not it stopped anything, and
 // the command that failed may have stopped on the database or on another fault
-// validate does not know. Comparing the words is what ties the two.
+// validate does not know. Comparing the words is what ties the two. On a
+// PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0
+// (stokaro/ptah#6132) and drift since v0.30.1 (stokaro/ptah#6204) place every
+// name the file writes without a schema in the schema the database resolves it
+// to, and a sentence can name a table that way, as "public.parent", where
+// validate, which has no database, prints "parent". At v0.30.1 drift does in
+// both kinds of line and plan in a schema fault only. So a quoted name validate
+// prints without a schema matches the same name with one schema in front of
+// it, in both kinds of line (see faultPattern).
 //
 // failed is compared and never returned. Its command had a connection, so it
 // could quote the database. What is returned comes from a run that had none.
@@ -65,11 +75,11 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 		dialect, rest, found := strings.Cut(line, ": ")
 		switch {
 		case !found || !dialectMatches(engine, dialect):
-		case strings.HasPrefix(rest, indexKind) && line == failed:
+		case strings.HasPrefix(rest, indexKind) && faultIs(failed, line):
 			return rest, true
 		case strings.HasPrefix(rest, wholeSchemaKind):
 			fault := text[offset+len(dialect)+len(": ")+len(wholeSchemaKind):]
-			if !strings.HasSuffix(failed, ": "+fault) {
+			if !faultEnds(failed, fault) {
 				return "", false
 			}
 			return fault, true
@@ -77,6 +87,47 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 		offset += len(line) + len("\n")
 	}
 	return "", false
+}
+
+// quotedName is a name Ptah prints with %q, escapes and all.
+var quotedName = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// faultEnds reports whether failed ends with ": " and then fault, as
+// faultPattern matches it.
+func faultEnds(failed, fault string) bool {
+	return strings.HasSuffix(failed, ": "+fault) || matchesWhole(failed, `: `+faultPattern(fault)+`\z`)
+}
+
+// faultIs reports whether failed is line and nothing else, as faultPattern
+// matches it.
+func faultIs(failed, line string) bool {
+	return failed == line || matchesWhole(failed, `\A`+faultPattern(line)+`\z`)
+}
+
+// faultPattern is the expression for fault in which each quoted name that
+// names no schema may name one: the schema a plan or a drift placed the name
+// in. A name validate prints with a schema has to come back as it is, and
+// nothing else in the words may differ.
+func faultPattern(fault string) string {
+	var pattern strings.Builder
+	last := 0
+	for _, found := range quotedName.FindAllStringIndex(fault, -1) {
+		pattern.WriteString(regexp.QuoteMeta(fault[last:found[0]]))
+		name := fault[found[0]+1 : found[1]-1]
+		if strings.Contains(name, ".") {
+			pattern.WriteString(regexp.QuoteMeta(fault[found[0]:found[1]]))
+		} else {
+			pattern.WriteString(`"(?:[^"\\.]+\.)?` + regexp.QuoteMeta(name) + `"`)
+		}
+		last = found[1]
+	}
+	pattern.WriteString(regexp.QuoteMeta(fault[last:]))
+	return pattern.String()
+}
+
+func matchesWhole(failed, pattern string) bool {
+	matched, err := regexp.MatchString(pattern, failed)
+	return err == nil && matched
 }
 
 // MigrationFilesProblem reads the failure document `migrations status --json`

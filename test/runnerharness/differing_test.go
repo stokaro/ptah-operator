@@ -104,6 +104,11 @@ type differingReading struct {
 	// views and options the document lists. They are what tell one
 	// plan_refused from another.
 	planRefusalCode, planRefusalMessage string
+	// dryRunRefusal is what the Plan's dry run, `schema apply --plan
+	// --dry-run`, says when Ptah refuses the plan it was given. planCode,
+	// planRefusalCode and planRefusalMessage then read that run's document
+	// and the frame, and no plan is published.
+	dryRunRefusal string
 	// applyRefusal is what `schema apply` says when the database refuses it.
 	applyRefusal string
 	// applyFrame is the code of an Apply the runner refused before it started
@@ -201,7 +206,7 @@ func differingRows() []differingRow {
 			seed: []string{"CREATE TABLE differs_items (id bigserial PRIMARY KEY, name text NOT NULL)", item},
 			want: differingReading{
 				findings:    []string{"columns_modified", "sequences_removed"},
-				statements:  []string{`ALTER COLUMN "id" DROP DEFAULT`, `DROP SEQUENCE "differs_items_id_seq"`},
+				statements:  []string{`ALTER COLUMN "id" DROP DEFAULT`, `DROP SEQUENCE "public"."differs_items_id_seq"`},
 				destructive: true,
 			},
 		},
@@ -249,7 +254,7 @@ func differingRows() []differingRow {
 				planRefusal:        "holds security_invoker=true and the schema does not state it",
 				planCode:           "plan_refused",
 				planRefusalCode:    "view-security-option",
-				planRefusalMessage: "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)",
+				planRefusalMessage: "ptah refused to plan the change (view-security-option: public.differs_notes_view security_invoker)",
 			},
 		},
 		{
@@ -258,7 +263,7 @@ func differingRows() []differingRow {
 			seed:   []string{notes, invoker},
 			want: differingReading{
 				findings:   []string{"views_modified"},
-				statements: []string{`ALTER VIEW "differs_notes_view" SET (security_invoker=false)`},
+				statements: []string{`ALTER VIEW "public"."differs_notes_view" SET (security_invoker=false)`},
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
@@ -271,7 +276,7 @@ func differingRows() []differingRow {
 			seed:   []string{notes, plain},
 			want: differingReading{
 				findings:   []string{"views_modified"},
-				statements: []string{`ALTER VIEW "differs_notes_view" SET (security_invoker=true)`},
+				statements: []string{`ALTER VIEW "public"."differs_notes_view" SET (security_invoker=true)`},
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
@@ -286,7 +291,7 @@ func differingRows() []differingRow {
 			seed:   []string{notes, invoker},
 			want: differingReading{
 				findings:   []string{"views_modified"},
-				statements: []string{`CREATE OR REPLACE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+				statements: []string{`CREATE OR REPLACE VIEW "public"."differs_notes_view" WITH (security_invoker=true)`},
 			},
 		},
 		// The same statement over a view that held no option turns it on, and
@@ -297,7 +302,7 @@ func differingRows() []differingRow {
 			seed:   []string{notes, plain},
 			want: differingReading{
 				findings:   []string{"views_modified"},
-				statements: []string{`CREATE OR REPLACE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+				statements: []string{`CREATE OR REPLACE VIEW "public"."differs_notes_view" WITH (security_invoker=true)`},
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
@@ -312,7 +317,7 @@ func differingRows() []differingRow {
 			seed:   []string{notes},
 			want: differingReading{
 				findings:   []string{"views_added"},
-				statements: []string{`CREATE VIEW "differs_notes_view" WITH (security_invoker=true)`},
+				statements: []string{`CREATE VIEW "public"."differs_notes_view" WITH (security_invoker=true)`},
 				privileges: []string{"SecurityDefiner"},
 			},
 		},
@@ -329,6 +334,82 @@ func differingRows() []differingRow {
 		// states, so the kept row fails on a plan that goes back to one.
 		cascadeRebuild("view-invoker-cascade-kept", "true", nil),
 		cascadeRebuild("view-invoker-cascade-changed", "false", []string{"SecurityDefiner"}),
+		// Since Ptah v0.30.0 a plan that drops and makes again a view another
+		// role owns gives it back to that role at its end (stokaro/ptah#6166).
+		// The manager raises every OWNER TO as Ownership, so the plan waits for
+		// an approval under apply: Always. The login may give the view back: it
+		// holds SET on the role, and the role CREATE on public. Since v0.30.1 the
+		// CREATE records the security_invoker it makes (stokaro/ptah#6198), so
+		// the view made again with the value it had raises nothing more; the
+		// manager holds a create with no effect after such a drop as
+		// SecurityDefiner, which is what v0.30.0's plan read as.
+		{
+			name: "view-owner-rebuild", engine: enginePostgres, declared: "view-owner-rebuild-postgresql.sql", git: true,
+			server: []string{
+				"CREATE ROLE harness_view_rebuilder LOGIN PASSWORD '{password}'",
+				"CREATE ROLE harness_view_keeper",
+				"GRANT harness_view_keeper TO harness_view_rebuilder WITH SET TRUE",
+				"ALTER DATABASE {db} OWNER TO harness_view_rebuilder",
+			},
+			login: "harness_view_rebuilder",
+			seed: []string{
+				"GRANT CREATE ON SCHEMA public TO harness_view_keeper",
+				"SET ROLE harness_view_rebuilder; " + notes + "; " +
+					"CREATE VIEW differs_notes_view WITH (security_invoker = true) AS SELECT id, owner_name FROM differs_notes; " +
+					"ALTER VIEW differs_notes_view OWNER TO harness_view_keeper",
+			},
+			want: differingReading{
+				findings: []string{"views_modified"},
+				statements: []string{
+					`DROP VIEW "public"."differs_notes_view"`,
+					`CREATE VIEW "public"."differs_notes_view" WITH (security_invoker=true)`,
+					`ALTER VIEW "public"."differs_notes_view" OWNER TO "harness_view_keeper"`,
+				},
+				destructive: true,
+				privileges:  []string{"Ownership"},
+			},
+		},
+		// A declared owner the login may not give the view to. The plan read
+		// reads no role, so the plan is made; the Plan's dry run reads them and
+		// Ptah refuses it before any statement, since v0.30.1 with the owner
+		// statement and what the login lacks (stokaro/ptah#6196). The frame
+		// names them after the code, and no plan is published.
+		{
+			name: "view-owner-transfer", engine: enginePostgres, declared: "view-owner-transfer-postgresql.sql", git: true,
+			server: []string{
+				"CREATE ROLE harness_view_transferer LOGIN PASSWORD '{password}'",
+				"CREATE ROLE harness_view_outsider",
+				"ALTER DATABASE {db} OWNER TO harness_view_transferer",
+			},
+			login: "harness_view_transferer",
+			seed: []string{
+				"GRANT CREATE ON SCHEMA public TO harness_view_outsider",
+				"SET ROLE harness_view_transferer; " + notes + "; " + plain,
+			},
+			stored: map[string]string{"plan/schema apply --dry-run": "differing/apply-owner-transfer-refused.json"},
+			want: differingReading{
+				findings:        []string{"views_modified"},
+				dryRunRefusal:   `which connected role "harness_view_transferer" may not give an object to`,
+				planCode:        "plan_refused",
+				planRefusalCode: dataplane.SchemaRefusalOwnerTransfer,
+				planRefusalMessage: `ptah refused to plan the change (owner-transfer: ALTER VIEW "public"."differs_notes_view" ` +
+					`OWNER TO "harness_view_outsider" role harness_view_outsider connected harness_view_transferer lacks SET)`,
+			},
+		},
+		// A declared owner the server does not hold, refused the same way.
+		{
+			name: "view-owner-missing", engine: enginePostgres, declared: "view-owner-missing-postgresql.sql", git: true,
+			seed:   []string{notes, plain},
+			stored: map[string]string{"plan/schema apply --dry-run": "differing/apply-owner-missing-refused.json"},
+			want: differingReading{
+				findings:        []string{"views_modified"},
+				dryRunRefusal:   `which the server does not hold and no statement before it creates`,
+				planCode:        "plan_refused",
+				planRefusalCode: dataplane.SchemaRefusalMissingOwnerRole,
+				planRefusalMessage: `ptah refused to plan the change (missing-owner-role: ALTER VIEW "public"."differs_notes_view" ` +
+					`OWNER TO "harness_view_nobody" role harness_view_nobody does not exist)`,
+			},
+		},
 		// Since Ptah v0.26.0 MySQL reads a view's SQL SECURITY, and a view held as
 		// INVOKER that the declaration leaves without a mode reads as changed.
 		// Up to v0.29.2 the plan replaced it with no mode, which the server
@@ -494,12 +575,12 @@ func cascadeRebuild(name, invoker string, defined []string) differingRow {
 		want: differingReading{
 			findings: []string{"constraints_removed", "tables_removed", "views_modified"},
 			statements: []string{
-				`DROP POLICY "differs_docs_member" ON "differs_docs"`,
-				`DROP VIEW "differs_member_names"`,
-				`DROP VIEW "differs_member_ids"`,
-				`CREATE VIEW "differs_member_ids" WITH (security_invoker=` + invoker + `)`,
-				`CREATE VIEW "differs_member_names" WITH (security_invoker=true)`,
-				`DROP TABLE "differs_docs"`,
+				`DROP POLICY "differs_docs_member" ON "public"."differs_docs"`,
+				`DROP VIEW "public"."differs_member_names"`,
+				`DROP VIEW "public"."differs_member_ids"`,
+				`CREATE VIEW "public"."differs_member_ids" WITH (security_invoker=` + invoker + `)`,
+				`CREATE VIEW "public"."differs_member_names" WITH (security_invoker=true)`,
+				`DROP TABLE "public"."differs_docs"`,
 			},
 			destructive: true,
 			privileges:  append([]string{"RowSecurityPolicy"}, defined...),
@@ -522,7 +603,7 @@ func partitionRows() []differingRow {
 	}
 	const (
 		moved  = "feature_changes:ptah.run/postgres/table-partition-member-change"
-		detach = `ALTER TABLE "differs_events" DETACH PARTITION "differs_e1"`
+		detach = `ALTER TABLE "public"."differs_events" DETACH PARTITION "public"."differs_e1"`
 	)
 	row := func(name string, want differingReading) differingRow {
 		return differingRow{
@@ -535,7 +616,7 @@ func partitionRows() []differingRow {
 		row("partition-bound", differingReading{
 			findings: []string{moved},
 			statements: []string{detach,
-				`ALTER TABLE "differs_events" ATTACH PARTITION "differs_e1" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')`},
+				`ALTER TABLE "public"."differs_events" ATTACH PARTITION "public"."differs_e1" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')`},
 		}),
 		row("partition-detach", differingReading{
 			findings:    []string{moved},
@@ -545,12 +626,12 @@ func partitionRows() []differingRow {
 		row("partition-parent", differingReading{
 			findings: []string{moved},
 			statements: []string{detach,
-				`ALTER TABLE "differs_other" ATTACH PARTITION "differs_e1" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')`},
+				`ALTER TABLE "public"."differs_other" ATTACH PARTITION "public"."differs_e1" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')`},
 			destructive: true,
 		}),
 		row("partition-attach", differingReading{
 			findings:   []string{moved},
-			statements: []string{`ALTER TABLE "differs_events" ATTACH PARTITION "differs_loose" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')`},
+			statements: []string{`ALTER TABLE "public"."differs_events" ATTACH PARTITION "public"."differs_loose" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')`},
 		}),
 		// What `pg_dump --schema-only --no-owner --no-privileges` of PostgreSQL 17
 		// writes for a partitioned table with a key and an index: each partition
@@ -573,7 +654,7 @@ func partitionRows() []differingRow {
 		row("partition-bound-excludes-row", differingReading{
 			findings: []string{moved},
 			statements: []string{detach,
-				`ALTER TABLE "differs_events" ATTACH PARTITION "differs_e1" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')`},
+				`ALTER TABLE "public"."differs_events" ATTACH PARTITION "public"."differs_e1" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')`},
 			applyRefusal:     `partition constraint of relation "differs_e1" is violated by some row (SQLSTATE 23514)`,
 			driftsAfterApply: true,
 		}),
@@ -785,7 +866,7 @@ func authorityRows() []differingRow {
 			server: owner("b"), login: "harness_owner_b",
 			want: differingReading{
 				findings:   []string{"grants_added", "tables_added"},
-				statements: []string{`CREATE TABLE "differs_owned"`, `GRANT SELECT ON TABLE "differs_owned" TO "harness_grantee_b"`},
+				statements: []string{`CREATE TABLE "public"."differs_owned"`, `GRANT SELECT ON TABLE "public"."differs_owned" TO "harness_grantee_b"`},
 				privileges: []string{"Grant"},
 			},
 		},
@@ -996,6 +1077,9 @@ func (row differingRow) checkPlan(captures runnerharness.Captures) error {
 	if err != nil {
 		return err
 	}
+	if row.want.dryRunRefusal != "" {
+		return row.checkDryRunRefusal(name, captures, record)
+	}
 	if row.want.planRefusal != "" {
 		child, err := capturedChild(captures, name, "schema plan")
 		if err != nil {
@@ -1173,6 +1257,40 @@ func (row differingRow) checkRefusalCode(name string, document []byte, record ru
 	failure, _ := frame["error"].(map[string]any)
 	message, _ := failure["message"].(string)
 	if message != row.want.planRefusalMessage {
+		problems = append(problems, fmt.Errorf("%s: the frame's message is %q, want %q", name, message, row.want.planRefusalMessage))
+	}
+	return errors.Join(problems...)
+}
+
+// checkDryRunRefusal holds a Plan whose dry run Ptah refused to the sentence,
+// the code and the frame the row names. The plan itself was made, so the
+// refusal is the dry run's: Ptah reads there what the plan read does not, such
+// as the roles an owner statement needs.
+func (row differingRow) checkDryRunRefusal(name string, captures runnerharness.Captures, record runnerharness.Row) error {
+	child, err := capturedChild(captures, name, "schema apply --dry-run")
+	if err != nil {
+		return err
+	}
+	var problems []error
+	if row.want.planCode == "" || row.want.planRefusalCode == "" {
+		problems = append(problems, fmt.Errorf("%s: the row names a refusal and no code for it", name))
+	}
+	if !strings.Contains(child.Stderr, row.want.dryRunRefusal) {
+		problems = append(problems, fmt.Errorf("%s: the dry run says %q, want the refusal %q", name, child.Stderr, row.want.dryRunRefusal))
+	}
+	if code := frameCode(record); code != row.want.planCode {
+		problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", name, code, row.want.planCode))
+	}
+	report, err := dataplane.DecodeSchemaApply(captures.Documents[child.Stdout])
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Errorf("%s: the dry run: %w", name, err))
+	case report.Refusal == nil || report.Refusal.Code != row.want.planRefusalCode:
+		problems = append(problems, fmt.Errorf("%s: the dry run refuses with %+v, want the code %s", name, report.Refusal, row.want.planRefusalCode))
+	}
+	frame, _ := record.Result.(map[string]any)
+	failure, _ := frame["error"].(map[string]any)
+	if message, _ := failure["message"].(string); message != row.want.planRefusalMessage {
 		problems = append(problems, fmt.Errorf("%s: the frame's message is %q, want %q", name, message, row.want.planRefusalMessage))
 	}
 	return errors.Join(problems...)
@@ -1416,6 +1534,49 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 			edit: func(captures *runnerharness.Captures) {
 				editRow(captures, "differs-view-definer-other-mysql/plan", func(row *runnerharness.Row) {
 					row.Result = map[string]any{"error": map[string]any{"code": "plan_refused", "message": "ptah refused to plan the change (view-definer: differs_notes_view)"}}
+				})
+			},
+		},
+		{
+			// An owner refusal belongs to the Plan's dry run: the plan read
+			// reads no role.
+			name: "an owner refusal whose dry run Ptah let through", row: "differs-view-owner-transfer-postgres", want: "the dry run",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-view-owner-transfer-postgres/plan", "schema apply --dry-run", func(document map[string]any) {
+					delete(document, "refusal")
+				})
+			},
+		},
+		{
+			name: "an owner refusal under another code", row: "differs-view-owner-transfer-postgres", want: "want the code owner-transfer",
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-view-owner-transfer-postgres/plan", "schema apply --dry-run", func(document map[string]any) {
+					document["refusal"].(map[string]any)["code"] = "owner-schema-privilege"
+				})
+			},
+		},
+		{
+			name: "an owner refusal whose sentence names another role", row: "differs-view-owner-transfer-postgres", want: "want the refusal",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-owner-transfer-postgres/plan", func(row *runnerharness.Row) {
+					index := slices.IndexFunc(row.Children, func(child runnerharness.Child) bool { return child.Command == "schema apply --dry-run" })
+					row.Children[index].Stderr = strings.ReplaceAll(row.Children[index].Stderr, "harness_view_transferer", "harness_view_other")
+				})
+			},
+		},
+		{
+			name: "an owner refusal whose frame names the code alone", row: "differs-view-owner-missing-postgres", want: "the frame's message is",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-owner-missing-postgres/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "plan_refused", "message": "ptah refused to plan the change (missing-owner-role)"}}
+				})
+			},
+		},
+		{
+			name: "an owner refusal the Plan read as its own fault", row: "differs-view-owner-missing-postgres", want: "want plan_refused",
+			edit: func(captures *runnerharness.Captures) {
+				editRow(captures, "differs-view-owner-missing-postgres/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": "invalid_plan_output", "message": "plan validation reported refused (missing-owner-role) rather than a dry run"}}
 				})
 			},
 		},

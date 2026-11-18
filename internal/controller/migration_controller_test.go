@@ -1381,6 +1381,15 @@ func TestAnUnresolvedMigrationRunOutlivesEveryOtherRefusal(t *testing.T) {
 			),
 		},
 		{
+			name: "a repeatable migration the artifact holds",
+			refuse: refuseMigrationHistory(
+				operatorv1alpha1.ReasonRepeatableMigrationsUnsupported,
+				func(report *dataplane.MigrationStatusReport) {
+					report.Repeatables = []dataplane.MigrationRepeatable{{Identity: "names", Path: "R__names.sql", State: "pending"}}
+				},
+			),
+		},
+		{
 			name: "a migration that arrived below the applied version",
 			refuse: refuseMigrationHistory(
 				operatorv1alpha1.ReasonHistoryOutOfOrder,

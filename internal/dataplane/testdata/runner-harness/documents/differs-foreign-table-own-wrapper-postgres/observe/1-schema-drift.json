@@ -26,6 +26,7 @@
   "not_compared": [
     {
       "kind": "foreign table",
+      "schema": "public",
       "name": "differs_remote_items",
       "reason": "Ptah does not compare this object kind"
     }

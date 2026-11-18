@@ -40,7 +40,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "differs_loose",
+        "table_name": "public.differs_loose",
         "columns_added": null,
         "columns_removed": null,
         "columns_modified": null,
@@ -52,8 +52,7 @@
               "kind": "table",
               "schema": {
                 "source": "public",
-                "normalized": "public",
-                "defaulted": true
+                "normalized": "public"
               },
               "name": {
                 "source": "differs_loose",
@@ -74,7 +73,8 @@
                     "key": "5:\"for\"5:\"values\"5:\"from\"6:\"(\"1:\"'2030-01-01'\"6:\")\"5:\"to\"6:\"(\"1:\"'2031-01-01'\"6:\")\"",
                     "source_key": "5:\"for\"5:\"values\"5:\"from\"6:\"(\"1:\"'2030-01-01'\"6:\")\"5:\"to\"6:\"(\"1:\"'2031-01-01'\"6:\")\""
                   },
-                  "parent": "differs_events"
+                  "parent": "differs_events",
+                  "parent_schema": "public"
                 },
                 "before": null
               }

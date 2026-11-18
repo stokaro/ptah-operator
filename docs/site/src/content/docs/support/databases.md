@@ -72,11 +72,29 @@ Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
 Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
-[schema apply log](https://github.com/stokaro/ptah/blob/8a634c0574427e313392f1131382cf4346d05b0d/docs/site/src/content/docs/direct/apply-log.md),
+[schema apply log](https://github.com/stokaro/ptah/blob/c5fba763a6fb346fc8a35d2f336d75a91385e3b9/docs/site/src/content/docs/direct/apply-log.md),
 the table `ptah_schema_apply_log`: one row before its first statement and one
 after it. The first such Apply creates the table in `public`, and the `CREATE`
 above is all it needs, so the login owns the table. Ptah refuses a table of that
 name another role owns, and the Apply then goes on without its rows.
+
+A view the schema gives to another role, by declaring its owner, needs more.
+So does a view of another role that a plan drops and makes again, which since
+Ptah v0.30.0 ends with `ALTER VIEW ... OWNER TO` that role. The login has to be
+allowed to give the view to that role: since PostgreSQL 16 it needs `SET` on
+the role, granted by `GRANT reporting TO ptah WITH SET TRUE`, and before 16 it
+needs membership in the role. The role needs `CREATE` on the view's schema.
+Since Ptah v0.30.1 `schema apply` refuses a plan that misses either before any
+statement runs, with the code `owner-transfer` or `owner-schema-privilege`, and
+one that names a role the server lacks with `missing-owner-role`. `schema plan`
+does not check owners, so a Plan meets the refusal in the `schema apply` dry run
+it runs on the saved plan, and the operator reads the code from that dry run.
+An approved plan's Apply meets the same check before its first statement, and
+then sends nothing and writes no schema apply log entry, so a database that
+never held the log does not gain the table
+([stokaro/ptah#6201](https://github.com/stokaro/ptah/pull/6201)).
+[A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+lists them. Every such plan waits for an approval as `Ownership`.
 
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the
@@ -205,12 +223,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.29.5, the executor this operator build pins
+This section describes Ptah v0.30.1, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4 and v0.29.5. The acceptance rows that
+v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5 and v0.30.1. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only

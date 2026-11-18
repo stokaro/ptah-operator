@@ -2,21 +2,22 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:2621da4313e1132982f6fcec571f7b781df9401d92f3abe026f2137a88ea90ef",
-  "plan_path": "/work/ptah-plan-output-2317934895/second.plan.json",
+  "plan_digest": "sha256:31c61e0945f8d07bc60057055e884df19a18c390c7e75de6ceb92580ba2c19be",
+  "plan_path": "/work/ptah-plan-output-1152449392/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_2f87b6661355",
+    "name": "plan_d8bdb12499e8",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
-    "to_fingerprint": "sha256:d2a1d640aaee32c1d484d6e0ed12c1f3d6cab1fea5c42cdb3be1c59a3d7a8917",
+    "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
+    "to_fingerprint": "sha256:f5edb438c10f08b6c89d6655174ba232d9a304dabce4422104ba295f0cd610f0",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "CREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
+        "sql": "CREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

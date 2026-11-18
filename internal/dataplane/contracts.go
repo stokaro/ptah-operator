@@ -311,13 +311,13 @@ type PlanStatement struct {
 // PlanFile is the plan document `schema plan --output` saves. It is decoded
 // strictly: a field it does not declare refuses the plan.
 //
-// A plan's annotations and a statement's inputs, which Ptah v0.17.0 writes
-// only for an engine an executable provider serves, stay undeclared on
-// purpose. An input names an environment variable that Ptah reads with
-// os.LookupEnv in its own process at Apply and hands to the provider, and in
-// an Apply Pod that environment holds the database credential, so an approved
-// plan could name it. The operator runs PostgreSQL and MySQL, which Ptah plans
-// without a provider, and refuses a plan that carries either field.
+// A statement's inputs, which Ptah v0.17.0 writes only for an engine an
+// executable provider serves, stay undeclared on purpose. An input names an
+// environment variable that Ptah reads with os.LookupEnv in its own process at
+// Apply and hands to the provider, and in an Apply Pod that environment holds
+// the database credential, so an approved plan could name it. The operator
+// runs PostgreSQL and MySQL, which Ptah plans without a provider, and refuses
+// a plan that carries the field.
 type PlanFile struct {
 	FormatVersion   int      `json:"format_version"`
 	Name            string   `json:"name"`
@@ -338,6 +338,15 @@ type PlanFile struct {
 	// nothing from it either; it is declared so the strict decoder accepts every
 	// plan Ptah saves since then.
 	Scope *PlanScope `json:"scope,omitempty"`
+	// PlacedSchema is the schema Ptah v0.30.0 placed every name the desired
+	// state writes without a schema in, on a PostgreSQL URL that pins no
+	// search_path (stokaro/ptah#6132). Every statement then names that
+	// schema, and the Apply's rehearsal and its check after the statements
+	// place the names there again, whatever dev database the Apply has, which
+	// is none. The operator reads nothing from it and carries the plan bytes
+	// as they are; it is declared so the strict decoder accepts every such
+	// plan.
+	PlacedSchema string `json:"placed_schema,omitempty"`
 	// ManagedRows and RowsFingerprint describe the declared row sets this plan
 	// read, and the state it read them in. A plan that changes declared rows
 	// carries both, and a plan that changes only structure carries neither.
@@ -351,6 +360,14 @@ type PlanFile struct {
 	RowsFingerprint string          `json:"rows_fingerprint,omitempty"`
 	Destructive     bool            `json:"destructive"`
 	Statements      []PlanStatement `json:"statements"`
+	// Annotations are the notes Ptah writes beside the statements, each before
+	// the statement its position names, or after the last at the count of
+	// them. Since Ptah v0.30.0 a built-in engine's plan carries them too: a
+	// change Ptah cannot plan, such as a generated column's new expression on
+	// a PostgreSQL before 17, is a note and no statement (stokaro/ptah#6165).
+	// A note runs nothing, and the plan's digest covers it as it covers the
+	// statements. The operator shows a note and executes nothing from it.
+	Annotations []PlanAnnotation `json:"annotations,omitempty"`
 
 	// PrivilegeChanges are the kinds of authority the statements change, read
 	// by the operator from the SQL: grants, role membership, ownership,
@@ -360,6 +377,13 @@ type PlanFile struct {
 	// decoded strictly; the list is the operator's own, in the order
 	// PrivilegeChangeKinds gives.
 	PrivilegeChanges []string `json:"-"`
+}
+
+// PlanAnnotation is one note of a plan: Text, written before the statement at
+// index Before, or after the last statement where Before is their count.
+type PlanAnnotation struct {
+	Before int    `json:"before"`
+	Text   string `json:"text"`
 }
 
 // PlanScope is what the URL of a saved plan covered: "realm" for every schema of
@@ -602,19 +626,9 @@ func StatementsSQL(plan PlanFile) string {
 }
 
 func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
-	var plan PlanFile
-	if err := decodeJSON(data, &plan, true); err != nil {
-		return PlanFile{}, fmt.Errorf("decode plan document: %w", err)
-	}
-	if plan.FormatVersion != PlanFormatVersion {
-		return PlanFile{}, fmt.Errorf("unsupported plan format_version %d", plan.FormatVersion)
-	}
-	if strings.TrimSpace(plan.Name) == "" || strings.TrimSpace(plan.FromFingerprint) == "" ||
-		strings.TrimSpace(plan.ToFingerprint) == "" {
-		return PlanFile{}, fmt.Errorf("plan is missing its name or state fingerprints")
-	}
-	if !dialectMatches(expectedDialect, plan.Dialect) {
-		return PlanFile{}, fmt.Errorf("plan dialect %q does not match target engine %q", plan.Dialect, expectedDialect)
+	plan, err := decodePlanDocument(data, expectedDialect)
+	if err != nil {
+		return PlanFile{}, err
 	}
 	if len(plan.Statements) == 0 {
 		return PlanFile{}, fmt.Errorf("plan contains no statements")
@@ -659,6 +673,58 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 		if privileges[kind] {
 			plan.PrivilegeChanges = append(plan.PrivilegeChanges, kind)
 		}
+	}
+	return plan, nil
+}
+
+// DecodeNotePlan reads the plan Ptah v0.30.0 saves when the only difference it
+// found is one it cannot plan: no statement, and the notes that say what
+// differs and why it was not planned (stokaro/ptah#6165). The plan runs
+// nothing, so it is not one to publish, approve or apply, and the notes are
+// what a reader needs. It is decoded as strictly as an executable plan, and a
+// plan with any statement, or with no note, is not one.
+func DecodeNotePlan(data []byte, expectedDialect string) (PlanFile, error) {
+	plan, err := decodePlanDocument(data, expectedDialect)
+	if err != nil {
+		return PlanFile{}, err
+	}
+	if len(plan.Statements) != 0 {
+		return PlanFile{}, fmt.Errorf("a plan of notes holds %d statements", len(plan.Statements))
+	}
+	if len(plan.Annotations) == 0 {
+		return PlanFile{}, fmt.Errorf("plan contains no statements and no notes")
+	}
+	if len(plan.ManagedRows) != 0 || plan.RowsFingerprint != "" || plan.Destructive {
+		return PlanFile{}, fmt.Errorf("a plan of notes describes a change")
+	}
+	return plan, nil
+}
+
+// decodePlanDocument decodes a saved plan strictly and checks what every plan
+// holds, whether it has statements or only notes.
+func decodePlanDocument(data []byte, expectedDialect string) (PlanFile, error) {
+	var plan PlanFile
+	if err := decodeJSON(data, &plan, true); err != nil {
+		return PlanFile{}, fmt.Errorf("decode plan document: %w", err)
+	}
+	if plan.FormatVersion != PlanFormatVersion {
+		return PlanFile{}, fmt.Errorf("unsupported plan format_version %d", plan.FormatVersion)
+	}
+	if strings.TrimSpace(plan.Name) == "" || strings.TrimSpace(plan.FromFingerprint) == "" ||
+		strings.TrimSpace(plan.ToFingerprint) == "" {
+		return PlanFile{}, fmt.Errorf("plan is missing its name or state fingerprints")
+	}
+	if !dialectMatches(expectedDialect, plan.Dialect) {
+		return PlanFile{}, fmt.Errorf("plan dialect %q does not match target engine %q", plan.Dialect, expectedDialect)
+	}
+	// Ptah writes the notes in order, each at a statement or after the last,
+	// and each says something.
+	previous := 0
+	for i, note := range plan.Annotations {
+		if note.Before < previous || note.Before > len(plan.Statements) || strings.TrimSpace(note.Text) == "" {
+			return PlanFile{}, fmt.Errorf("plan note %d is empty or out of place", i)
+		}
+		previous = note.Before
 	}
 	return plan, nil
 }

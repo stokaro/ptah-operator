@@ -3,6 +3,7 @@ package planview_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestRenderTextNamesUnreadFieldsAndPrintsNoValue(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"Unread fields:  annotations, statements[].inputs (",
+		"Unread fields:  provider_options, statements[].inputs (",
 		"read this plan with a plugin at the operator's version before you approve it",
 		"Statement 1 of 1: safe\nCREATE TABLE customers (id BIGINT PRIMARY KEY);\n",
 	} {
@@ -274,5 +275,65 @@ func TestRenderTextNamesThePrivilegeChanges(t *testing.T) {
 				t.Fatalf("the text output does not carry %q:\n%s", test.want, rendered.String())
 			}
 		})
+	}
+}
+
+// Since Ptah v0.30.0 a plan can carry notes beside its statements, each before
+// the statement it names or after the last. The text output prints each where
+// Ptah placed it, cleaned as a reason is, and -o sql prints none: a note runs
+// nothing and is not SQL.
+func TestRenderTextPrintsEachNoteWhereThePlanPlacesIt(t *testing.T) {
+	t.Parallel()
+	var decoded map[string]any
+	if err := json.Unmarshal(planreadtest.Document(t, []string{
+		"CREATE TABLE customers (id BIGINT PRIMARY KEY)",
+		"CREATE TABLE orders (id BIGINT PRIMARY KEY)",
+	}), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded["annotations"] = []any{
+		map[string]any{"before": 0, "text": "first note"},
+		map[string]any{"before": 1, "text": "between\x1b[2J the two"},
+		map[string]any{"before": 2, "text": "last note"},
+	}
+	document, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lab := planreadtest.NewLab(t, "storefront")
+	lab.SetCurrent(t, lab.PublishDocument(t, document, "v1"))
+	view := load(t, lab, planread.Current)
+	if len(view.Notes) != 3 {
+		t.Fatalf("Notes = %#v, want the three the plan holds", view.Notes)
+	}
+
+	var rendered bytes.Buffer
+	if err := planview.Render(&rendered, view, planview.Text); err != nil {
+		t.Fatalf("Render(text) error = %v", err)
+	}
+	text := rendered.String()
+	order := []string{
+		"Notes:          3",
+		"Note: first note\n",
+		"Statement 1 of 2",
+		`Note: between\x1b[2J the two` + "\n",
+		"Statement 2 of 2",
+		"Note: last note\n",
+	}
+	at := 0
+	for _, want := range order {
+		found := strings.Index(text[at:], want)
+		if found < 0 {
+			t.Fatalf("the text output does not carry %q after byte %d:\n%s", want, at, text)
+		}
+		at += found + len(want)
+	}
+
+	rendered.Reset()
+	if err := planview.Render(&rendered, view, planview.SQL); err != nil {
+		t.Fatalf("Render(sql) error = %v", err)
+	}
+	if strings.Contains(rendered.String(), "note") {
+		t.Fatalf("-o sql prints a note:\n%s", rendered.String())
 	}
 }

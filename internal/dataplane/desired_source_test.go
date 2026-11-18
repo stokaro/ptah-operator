@@ -158,6 +158,79 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 	}
 }
 
+// On a PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0 and
+// drift since v0.30.1 can name the table they placed in public with that
+// schema, and validate does not. The sentences are the ones v0.30.1 wrote for
+// not-unique.sql and key-and-index.sql, and variations of them; the fault
+// returned is validate's.
+func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) {
+	t.Parallel()
+
+	const want = `postgres requires referenced columns code on table "parent" to be declared unique`
+	for name, failed := range map[string]string{
+		"in public":         `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique`,
+		"in another schema": `compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`,
+		"in no schema":      `compare database schema: ` + want,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-not-unique.txt"), "PostgreSQL", failed)
+			if !found || got != want {
+				t.Fatalf("SchemaStructuralProblem() = %q, %v, want %q", got, found, want)
+			}
+		})
+	}
+	for name, failed := range map[string]string{
+		"another table":                `compare database schema: postgres requires referenced columns code on table "public.other" to be declared unique`,
+		"another column":               `compare database schema: postgres requires referenced columns name on table "public.parent" to be declared unique`,
+		"an empty schema":              `compare database schema: postgres requires referenced columns code on table ".parent" to be declared unique`,
+		"two schemas":                  `compare database schema: postgres requires referenced columns code on table "x.public.parent" to be declared unique`,
+		"a schema outside the quotes":  `compare database schema: postgres requires referenced columns code on table public."parent" to be declared unique`,
+		"more words after the fault":   `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique: held`,
+		"the words with no boundary":   `compare database schema:postgres requires referenced columns code on table "public.parent" to be declared unique`,
+		"the words inside a long word": `compare database schema: xpostgres requires referenced columns code on table "public.parent" to be declared unique`,
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			t.Parallel()
+			if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-not-unique.txt"), "PostgreSQL", failed); found {
+				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
+			}
+		})
+	}
+	// A name validate prints with its schema comes back only as it is.
+	const qualified = "postgres: schema: postgres requires referenced columns code on table \"app.parent\" to be declared unique\n"
+	for failed, want := range map[string]bool{
+		`compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`:        true,
+		`compare database schema: postgres requires referenced columns code on table "public.app.parent" to be declared unique`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(qualified), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+
+	// An index line is the whole sentence, so the placed name is the only
+	// difference it may carry.
+	const indexWant = `index "i": names column "missing_column", which table "t" does not declare`
+	for failed, want := range map[string]bool{
+		`postgres: index "i": names column "missing_column", which table "public.t" does not declare`: true,
+		`postgres: index "i": names column "missing_column", which table "app.t" does not declare`:    true,
+		`postgres: ` + indexWant: true,
+		`postgres: index "public.i": names column "missing_column", which table "public.t" does not declare`:                   true,
+		`postgres: index "i": names column "missing_column", which table "public.u" does not declare`:                          false,
+		`postgres: index "i": names column "other_column", which table "public.t" does not declare`:                            false,
+		`postgres: index "i": names column "missing_column", which table ".t" does not declare`:                                false,
+		`postgres: index "i": names column "missing_column", which table "x.public.t" does not declare`:                        false,
+		`postgres: index "i": names column "missing_column", which table "public.t" does not declare: held`:                    false,
+		`error comparing schemas: postgres: index "i": names column "missing_column", which table "public.t" does not declare`: false,
+		`index "i": names column "missing_column", which table "public.t" does not declare`:                                    false,
+	} {
+		got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-key-and-index.txt"), "PostgreSQL", failed)
+		if found != want || (found && got != indexWant) {
+			t.Errorf("SchemaStructuralProblem(%q) = %q, %v, want found %v", failed, got, found, want)
+		}
+	}
+}
+
 // TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn holds the filter
 // to the measured near miss first. On a database that holds a schema the file
 // declares nothing of, drift and plan stop on a key into that schema, which
@@ -203,7 +276,8 @@ func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) 
 		{"a load failure", string(desiredSourceFixture(t, "validate-sql.txt")), "PostgreSQL", failedSentence(t, "drift-sql.json")},
 		{"a file with no problem", string(desiredSourceFixture(t, "validate-good.txt")), "PostgreSQL", wrapped},
 		{"a line after the fault that the command did not say", line + `postgres: index "i": names nothing`, "PostgreSQL", wrapped},
-		// An index line is read only as the whole sentence, dialect and all.
+		// An index line is read only as the whole sentence, dialect and all,
+		// with no word but a placed schema changed.
 		{"an index line under a wrapper", indexLine, "PostgreSQL", "error comparing schemas: " + index},
 		{"an index line with more words", indexLine, "PostgreSQL", index + `: the database holds table "nowhere"`},
 		{"another index's line", indexLine, "PostgreSQL", strings.Replace(index, `"i"`, `"j"`, 1)},

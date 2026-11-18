@@ -1516,7 +1516,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:2550d1151d6a9c18f622ac02e50484d9a599dab63dedc489acac66a92724d7ba",
-      "planContentDigest": "sha256:c76a614852722a95866cf755d3e5d171969a0f96f2d068517cd2ef60a5f5a090",
+      "planContentDigest": "sha256:26dd829269df3c18b2a313cecb9d815b48e84e186f905cbd2d25ded31d224ad7",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:d1d25431ca30088265a6d7b7b7ee558cea79dedb72593edc255257c75e14173d",
@@ -1739,7 +1739,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:865a9834ce01cb9978f05ef4885e4dfcb9e074527f4dfc9214d1e274cfc6f442",
-      "planContentDigest": "sha256:c76a614852722a95866cf755d3e5d171969a0f96f2d068517cd2ef60a5f5a090",
+      "planContentDigest": "sha256:26dd829269df3c18b2a313cecb9d815b48e84e186f905cbd2d25ded31d224ad7",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -2179,7 +2179,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:f96b70515237d14e1f4d8dd2abb64ea498b662de4e01a6c131b6dd5bbd297e34",
-      "planContentDigest": "sha256:c76a614852722a95866cf755d3e5d171969a0f96f2d068517cd2ef60a5f5a090",
+      "planContentDigest": "sha256:26dd829269df3c18b2a313cecb9d815b48e84e186f905cbd2d25ded31d224ad7",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:453b77dcc790ad308556e0598b6d6495008d16a2471e85ba499e4674717716dc",
@@ -2402,7 +2402,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d63e4c2b3d4809c63855952c444f5e60724a7c61cb074164c348686d5bfb30dd",
-      "planContentDigest": "sha256:c76a614852722a95866cf755d3e5d171969a0f96f2d068517cd2ef60a5f5a090",
+      "planContentDigest": "sha256:26dd829269df3c18b2a313cecb9d815b48e84e186f905cbd2d25ded31d224ad7",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -2899,7 +2899,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Schema is synced, no changes to be made.\nwarning: foreign table \"differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
+        "stderr": "Schema is synced, no changes to be made.\nwarning: foreign table \"public.differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
         "stdout": "runner-harness/documents/differs-foreign-table-own-wrapper-postgres/plan/1-schema-plan.json"
       },
       {
@@ -2912,7 +2912,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Schema is synced, no changes to be made.\nwarning: foreign table \"differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
+        "stderr": "Schema is synced, no changes to be made.\nwarning: foreign table \"public.differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
         "stdout": "runner-harness/documents/differs-foreign-table-own-wrapper-postgres/plan/2-schema-plan.json"
       }
     ],
@@ -3107,7 +3107,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: generate schema apply operations: cannot drop extension \"postgres_fdw\": foreign table \"public.differs_remote_items\" depends on it; drop the foreign table first\nwarning: foreign table \"differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
+        "stderr": "error: generate schema apply operations: cannot drop extension \"postgres_fdw\": foreign table \"public.differs_remote_items\" depends on it; drop the foreign table first\nwarning: foreign table \"public.differs_remote_items\" in the database is left out: Ptah does not compare this object kind\n",
         "stdout": "runner-harness/documents/differs-foreign-table-postgres/plan/1-schema-plan.json"
       },
       {
@@ -3228,7 +3228,7 @@
           "--run-reference=sha256:b6c70edb1a0bbe4a77bea8703e9cdc31ab9ab811a2b7647db0d9d25b605321ea"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-identity-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -3238,7 +3238,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b6c70edb1a0bbe4a77bea8703e9cdc31ab9ab811a2b7647db0d9d25b605321ea",
-      "planContentDigest": "sha256:894f07b38ae83161ee922447be247d39629a9d5eba8e5c692315df4bee29aa68",
+      "planContentDigest": "sha256:b946fa0312280298feab2cf6ecdc91e44bc658a840689287d3277868df570c01",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:09f83cfef36b4566ada025e21d90381302bbde52e3423344c1713573ffb1ded9"
@@ -3308,7 +3308,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:88e8e85ffe18a6f6091ad1ae00fa590505aa229e69297e4814e5eff872dac200",
+      "driftReportDigest": "sha256:e56adaa2ddb4dedd26fe8611c78b20ed607bc5d97416327d356e29962672a49c",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -3408,7 +3408,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-identity-postgres/plan/1-schema-plan.json"
       },
       {
@@ -3421,7 +3421,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-identity-postgres/plan/2-schema-plan.json"
       },
       {
@@ -3436,7 +3436,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP IDENTITY;\n",
         "stdout": "runner-harness/documents/differs-identity-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -3445,7 +3445,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:6cc0f26903c2d052d1de8c65165a7df5a9903af8313ff7dbc4720e588ac2e617",
-      "planContentDigest": "sha256:894f07b38ae83161ee922447be247d39629a9d5eba8e5c692315df4bee29aa68",
+      "planContentDigest": "sha256:b946fa0312280298feab2cf6ecdc91e44bc658a840689287d3277868df570c01",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -5139,7 +5139,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b78f359fb5861baad68f3534bbbb9b5bfd2b594e24f36aed7959519e780ab054",
-      "planContentDigest": "sha256:f9572d1ebec1af997375200da5fa56103e16413fce42d4bfa528392e7fa9699a",
+      "planContentDigest": "sha256:91560326b447e8ab931fb4d774f08ec242aca79ffdfbe26b1ae56df43e89c085",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6d52d7f417bf2ae85610f061a3dbf5d7b2d588e7880b943f8835ccd5ccbc9465"
@@ -5341,7 +5341,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:2f64de993ce1e30aebaa7676534d856357f6eadf91ddde106b948f1d2620e6d5",
-      "planContentDigest": "sha256:f9572d1ebec1af997375200da5fa56103e16413fce42d4bfa528392e7fa9699a",
+      "planContentDigest": "sha256:91560326b447e8ab931fb4d774f08ec242aca79ffdfbe26b1ae56df43e89c085",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -5453,7 +5453,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:58efcbe9c64f2e8f054e4ac7d69d05e7cad2f6daefad1fb711ac24400b2c3101",
-      "planContentDigest": "sha256:00d07c29d492afcf66696d398003c66d6a2bc01edbccccd93bb7f151d3c46d73",
+      "planContentDigest": "sha256:ddd1b8d5fdc9e00b11e047a41b1848435545ec3dc1b8b37fc6f45af6d970419d",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:b28a81efec4c73992daa5de9988cd6d46031b6fd2e50121726779310fe8555e1"
@@ -5655,7 +5655,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:844b1db4bf431f51a1955e2f39c06ba7c4f5b6d6666c19ae498222113d2e6143",
-      "planContentDigest": "sha256:00d07c29d492afcf66696d398003c66d6a2bc01edbccccd93bb7f151d3c46d73",
+      "planContentDigest": "sha256:ddd1b8d5fdc9e00b11e047a41b1848435545ec3dc1b8b37fc6f45af6d970419d",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -5757,7 +5757,7 @@
           "--run-reference=sha256:368671549b5f1b28d62716c59014cf2fce8358160c1aa6cf9747ada5a9ded2d5"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-owner-empty-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -5767,7 +5767,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:368671549b5f1b28d62716c59014cf2fce8358160c1aa6cf9747ada5a9ded2d5",
-      "planContentDigest": "sha256:2a514ea24b25f2dcc348edd50643e03679d4b7dcc27d9469812ef5cafb52199d",
+      "planContentDigest": "sha256:8479ce9cb1b049ac5962c60c35be14341a76decc7cfb3b4619fff93326a5ce48",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:5670218ba56e2c7b9f19f7288dbfd3c9f469c0b3b0bcec4422251faf734cb8fc"
@@ -5837,7 +5837,7 @@
           "observed": 0
         }
       ],
-      "driftReportDigest": "sha256:1194719f779873a8fa17ac0cab76f16a555504dfa03754aebe76839da45a9426",
+      "driftReportDigest": "sha256:df8a20eecaa45b86791f1315092f53295d0845c1e5b25c1ca33a55bc994ced92",
       "highestDriftSeverity": "safe",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -5947,7 +5947,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/1-schema-plan.json"
       },
       {
@@ -5960,7 +5960,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/2-schema-plan.json"
       },
       {
@@ -5975,7 +5975,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\";\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n);\nGRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\";\n",
         "stdout": "runner-harness/documents/differs-owner-empty-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -5984,7 +5984,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:16e2a0f9610aa09035f9e178ea299e9fe55df43befa84598c8ffaf092add5dde",
-      "planContentDigest": "sha256:2a514ea24b25f2dcc348edd50643e03679d4b7dcc27d9469812ef5cafb52199d",
+      "planContentDigest": "sha256:8479ce9cb1b049ac5962c60c35be14341a76decc7cfb3b4619fff93326a5ce48",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6440,7 +6440,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "UNMANAGED: table differs_owned: owner harness_owner_c lacks DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE, which PostgreSQL gives an owner by default; the schema does not manage them, so nothing is planned\nSchema is synced, no changes to be made.\n",
+        "stderr": "UNMANAGED: table public.differs_owned: owner harness_owner_c lacks DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE, which PostgreSQL gives an owner by default; the schema does not manage them, so nothing is planned\nSchema is synced, no changes to be made.\n",
         "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan/1-schema-plan.json"
       },
       {
@@ -6453,7 +6453,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "UNMANAGED: table differs_owned: owner harness_owner_c lacks DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE, which PostgreSQL gives an owner by default; the schema does not manage them, so nothing is planned\nSchema is synced, no changes to be made.\n",
+        "stderr": "UNMANAGED: table public.differs_owned: owner harness_owner_c lacks DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE, which PostgreSQL gives an owner by default; the schema does not manage them, so nothing is planned\nSchema is synced, no changes to be made.\n",
         "stdout": "runner-harness/documents/differs-owner-revoked-postgres/plan/2-schema-plan.json"
       }
     ],
@@ -6619,7 +6619,7 @@
           "--run-reference=sha256:dcf947df3199a1df74208f04ef83f7876b33b73389b0d5841205ced89aef62a8"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-partition-attach-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -6629,7 +6629,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:dcf947df3199a1df74208f04ef83f7876b33b73389b0d5841205ced89aef62a8",
-      "planContentDigest": "sha256:d7443a15a170246750207471c3794cc716c52df28c77815752f9304751f76dbb",
+      "planContentDigest": "sha256:651c9d371e272f190343fb4925a5c14cfcb98ab49164dd601c9a918cb7626e95",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6f49826aae4835af4d0aacbafa4cdca53688a7e270d046e9ee8fed0779ea0306"
@@ -6676,7 +6676,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:29e372b4f18df7efcbe3c3857f8efbe0467958bcbc4aba3c8b476a473a46f62f",
+      "driftReportDigest": "sha256:cd3959dbce95852c4059e06d5d7b225a9f7c98e462e2180aaa7411cc5ea9ed10",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -6745,7 +6745,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/0-schema-plan.json"
       },
       {
@@ -6758,7 +6758,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/1-schema-plan.json"
       },
       {
@@ -6773,7 +6773,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01');\n",
         "stdout": "runner-harness/documents/differs-partition-attach-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -6782,7 +6782,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:c7307b7d694d660a61a3e7357efd192724c0b1c0ed937916d517802740fbf5bf",
-      "planContentDigest": "sha256:d7443a15a170246750207471c3794cc716c52df28c77815752f9304751f76dbb",
+      "planContentDigest": "sha256:651c9d371e272f190343fb4925a5c14cfcb98ab49164dd601c9a918cb7626e95",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -6808,7 +6808,7 @@
           "--run-reference=sha256:776e068dcbeb2eb5c871bdc5ab1553006725664933da2109b33daabf361c10e5"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: partition constraint of relation \"differs_e1\" is violated by some row (SQLSTATE 23514)\nSQL: ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: partition constraint of relation \"differs_e1\" is violated by some row (SQLSTATE 23514)\nSQL: ALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')\n",
         "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -6827,7 +6827,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:776e068dcbeb2eb5c871bdc5ab1553006725664933da2109b33daabf361c10e5",
-      "planContentDigest": "sha256:fee8a5a036aa4e1867c177cb2aafe01d20f15d9455e31df4dcaf0248ac494d3a",
+      "planContentDigest": "sha256:52c5a00474931b4d6dbb866beb80b71b4a1126e3e59f22bbf7242374fcd94ba7",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8f312675bedd79c78879d1ff45ed8f6b426a5032215886e4b626d1e5ce7011e7",
@@ -6875,7 +6875,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:117b459323ff487de68c8b601b11c24542e2102f9be93cb4732cffca57b416f1",
+      "driftReportDigest": "sha256:4983882f8c71769522640114f21345bba0a422345d85cbf90c80fc6e7a8a991f",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -6927,7 +6927,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:117b459323ff487de68c8b601b11c24542e2102f9be93cb4732cffca57b416f1",
+      "driftReportDigest": "sha256:4983882f8c71769522640114f21345bba0a422345d85cbf90c80fc6e7a8a991f",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -6954,7 +6954,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/0-schema-plan.json"
       },
       {
@@ -6967,7 +6967,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/1-schema-plan.json"
       },
       {
@@ -6982,7 +6982,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01');\n",
         "stdout": "runner-harness/documents/differs-partition-bound-excludes-row-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -6991,7 +6991,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:aa418e727ad9314b4b715d93072751507881fcf4455ec1930d898941881b33a0",
-      "planContentDigest": "sha256:fee8a5a036aa4e1867c177cb2aafe01d20f15d9455e31df4dcaf0248ac494d3a",
+      "planContentDigest": "sha256:52c5a00474931b4d6dbb866beb80b71b4a1126e3e59f22bbf7242374fcd94ba7",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7017,7 +7017,7 @@
           "--run-reference=sha256:4b90096ca709df97f10feb498da8ce82d9c8d384e65f2f7d782fbf5e5b74eb20"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-partition-bound-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -7027,7 +7027,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4b90096ca709df97f10feb498da8ce82d9c8d384e65f2f7d782fbf5e5b74eb20",
-      "planContentDigest": "sha256:5674ffa2bddb353c9c2a43d2dc36d3d8c6fc874ef052f8aad103b533705998fa",
+      "planContentDigest": "sha256:a6637d7a9a9b6c396186d4a569734f883102bb16552ef6bab46a690705ffd3ae",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:b98faed4d0d99f57fc124838e4be301a51c6442bdf058af9d081e4be086904b5"
@@ -7074,7 +7074,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:8edb1b39ea8515698fcca3094fa0ce5adfd17b117dece5ec43a5fb02b70750d6",
+      "driftReportDigest": "sha256:62b8c4c7cf55aa5201563d1f55aa709234a2131fa0cc4fbbae4e682d8ec8bbee",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -7143,7 +7143,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/0-schema-plan.json"
       },
       {
@@ -7156,7 +7156,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/1-schema-plan.json"
       },
       {
@@ -7171,7 +7171,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01');\n",
         "stdout": "runner-harness/documents/differs-partition-bound-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -7180,7 +7180,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:3edbf5249c2220f8408e16bb65c54c08f5ee1014b59aeecbe17026de8d2b5082",
-      "planContentDigest": "sha256:5674ffa2bddb353c9c2a43d2dc36d3d8c6fc874ef052f8aad103b533705998fa",
+      "planContentDigest": "sha256:a6637d7a9a9b6c396186d4a569734f883102bb16552ef6bab46a690705ffd3ae",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7206,7 +7206,7 @@
           "--run-reference=sha256:f4d1a4422caf8b5130bb932195944ac70f8bc2f7e126c97ac4aa686db32e64d9"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-partition-detach-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -7216,7 +7216,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:f4d1a4422caf8b5130bb932195944ac70f8bc2f7e126c97ac4aa686db32e64d9",
-      "planContentDigest": "sha256:48cb2ea1e4db154221fdac896bb4be9e3e97fe804e11647f1916622bb813ac89",
+      "planContentDigest": "sha256:b17b92646cd7360c6e5a2f5011fb80c07715aa31686927bd4e362cf4b2f0dd77",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:b7dda18f9e5422d0cd3ae0584f8fdb2a789dee05889be9578b5630ffec79c052"
@@ -7263,7 +7263,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:acc75db994f21b7f8f6cc46397120569d305fc94038377a74c6808a51fdb0883",
+      "driftReportDigest": "sha256:06074040a1a6ef49f1b0c892575d38630eba0f98f41066ea1634c5758b7c2aa7",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -7332,7 +7332,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/0-schema-plan.json"
       },
       {
@@ -7345,7 +7345,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/1-schema-plan.json"
       },
       {
@@ -7360,7 +7360,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\n",
         "stdout": "runner-harness/documents/differs-partition-detach-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -7369,7 +7369,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:9a7a33ce4f43ae2c9e53f9dee1c05153d0b77492f9236e3f521cdbbc23e0b580",
-      "planContentDigest": "sha256:48cb2ea1e4db154221fdac896bb4be9e3e97fe804e11647f1916622bb813ac89",
+      "planContentDigest": "sha256:b17b92646cd7360c6e5a2f5011fb80c07715aa31686927bd4e362cf4b2f0dd77",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7491,7 +7491,7 @@
           "--run-reference=sha256:6040240dd7dee5b37f94b7eb9168dc71e91fdda8236235128106764847fa637a"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_other\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-partition-parent-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -7501,7 +7501,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:6040240dd7dee5b37f94b7eb9168dc71e91fdda8236235128106764847fa637a",
-      "planContentDigest": "sha256:713d0dea5b882847dff9234973c862c0cc742fedbe1b0d5e2c39cfc0213437f2",
+      "planContentDigest": "sha256:fe8ae5ed4d643f1776a581ad1cdc115078086d5f757683d6fe0d4e2684330c07",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:b17d3bbdb47188415d4a1af1f8d71dc68f112b048adcf6d54fd4cc90f6c3f02f"
@@ -7548,7 +7548,7 @@
           "observed": 4
         }
       ],
-      "driftReportDigest": "sha256:680f62ea3f8b8ae38fc03a797f26fadbdeb5c8a74586a05ba1b62eb5c7c0283e",
+      "driftReportDigest": "sha256:594839915b93ecfadda19337393d0ca11be8d996656b8fae253a0cb2894131e0",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -7617,7 +7617,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_other\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/0-schema-plan.json"
       },
       {
@@ -7630,7 +7630,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_other\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/1-schema-plan.json"
       },
       {
@@ -7645,7 +7645,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\";\nALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\";\nALTER TABLE \"public\".\"differs_other\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');\n",
         "stdout": "runner-harness/documents/differs-partition-parent-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -7654,7 +7654,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:871cefa98f70e5cdc2d535aee628554e9097bf925c7404fd16b788f81d607c06",
-      "planContentDigest": "sha256:713d0dea5b882847dff9234973c862c0cc742fedbe1b0d5e2c39cfc0213437f2",
+      "planContentDigest": "sha256:fe8ae5ed4d643f1776a581ad1cdc115078086d5f757683d6fe0d4e2684330c07",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -7999,7 +7999,7 @@
           "--run-reference=sha256:42b052257b139be7c61e0775aef03a95da9a10cd3cea51b666fa45403981d24b"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-precision-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -8009,7 +8009,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:42b052257b139be7c61e0775aef03a95da9a10cd3cea51b666fa45403981d24b",
-      "planContentDigest": "sha256:a9f4d9464e85d8f131baa478ba6d72e888129e5e61d603a425f073b01fe025c5",
+      "planContentDigest": "sha256:0752d00e2869e7aa72a11aa7399cf0b97718d32cb681134fd01c6c6f1dd0222b",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:afbcbdb9fadf6fa8d3158bdcda51f9dee8d57d86c33664fc4b9a9d5bd766c141"
@@ -8079,7 +8079,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:b40a8ed853f4bf0083c5fce22023875fa1a88ffc07883df9237ec32c5d3927a7",
+      "driftReportDigest": "sha256:1d5a996276242fe7a9cd83a7825f0d10af131c630eb2737feb9276d9dd65b162",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -8179,7 +8179,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-precision-postgres/plan/1-schema-plan.json"
       },
       {
@@ -8192,7 +8192,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-precision-postgres/plan/2-schema-plan.json"
       },
       {
@@ -8207,7 +8207,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0);\n",
         "stdout": "runner-harness/documents/differs-precision-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -8216,7 +8216,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:fe0135b3d5afe0cc1be923b28009fbc454ee7eccb8d166f7398fd466675d0312",
-      "planContentDigest": "sha256:a9f4d9464e85d8f131baa478ba6d72e888129e5e61d603a425f073b01fe025c5",
+      "planContentDigest": "sha256:0752d00e2869e7aa72a11aa7399cf0b97718d32cb681134fd01c6c6f1dd0222b",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -8318,7 +8318,7 @@
           "--run-reference=sha256:b75adbc8f7860b16c37baada34f5bcf87516612a9c281c4f3208dbb59b23cc84"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"differs_items_id_seq\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"public\".\"differs_items_id_seq\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-serial-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -8328,7 +8328,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b75adbc8f7860b16c37baada34f5bcf87516612a9c281c4f3208dbb59b23cc84",
-      "planContentDigest": "sha256:f5323e856e08cb679c9fe6600ffe5dc0d2e797301297a6174ecf330d46a02e60",
+      "planContentDigest": "sha256:1c12bbdbab0172c2635d4f9cba945aaba978e573899c15c2a57de567baa49325",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cb6a37f9e0c85daea97ea4c294c7d360618568bfdce9899ac1bcfaaf2fe7e445"
@@ -8403,7 +8403,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:cfeae4c6b18363e236e9858657870d8f1dcbd8a8a75c50f4ee49cae8ea56246a",
+      "driftReportDigest": "sha256:941a36b2ad5b8dbf1f67c697c9df1ed09b540926e0f63453355e68dd91a6fe86",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -8503,7 +8503,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"differs_items_id_seq\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"public\".\"differs_items_id_seq\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-serial-postgres/plan/1-schema-plan.json"
       },
       {
@@ -8516,7 +8516,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"differs_items_id_seq\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"public\".\"differs_items_id_seq\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-serial-postgres/plan/2-schema-plan.json"
       },
       {
@@ -8531,7 +8531,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"differs_items_id_seq\";\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT;\nDROP SEQUENCE \"public\".\"differs_items_id_seq\";\n",
         "stdout": "runner-harness/documents/differs-serial-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -8540,7 +8540,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:2e3298969c557f3382c2f96deb5334216d6cfc0b4bcf5607c1bd490b8e08be24",
-      "planContentDigest": "sha256:f5323e856e08cb679c9fe6600ffe5dc0d2e797301297a6174ecf330d46a02e60",
+      "planContentDigest": "sha256:1c12bbdbab0172c2635d4f9cba945aaba978e573899c15c2a57de567baa49325",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9484,7 +9484,7 @@
           "--run-reference=sha256:384e79d77ac7692c0b9e49c1846887306bab8ca871812f17b3ce74b6f34e134d"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -9494,7 +9494,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:384e79d77ac7692c0b9e49c1846887306bab8ca871812f17b3ce74b6f34e134d",
-      "planContentDigest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
+      "planContentDigest": "sha256:ac2ec5e9740bf06906ca3b25abc918c44760eca94faa9671bb84cc48403de887",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:de66faaacbbecb8754099b03453790c557be9839da9dce06605777c43e82d0ea"
@@ -9561,7 +9561,7 @@
           "observed": 2
         }
       ],
-      "driftReportDigest": "sha256:c501e7e0c23decfbc5db6a1e943de183c199b378043d7309c22327ad734ab7f8",
+      "driftReportDigest": "sha256:bb82338e850569b5e91166024c1634bd23593f8312d909d2591e24a9c3c0cdf4",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -9635,7 +9635,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/0-schema-plan.json"
       },
       {
@@ -9648,7 +9648,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/1-schema-plan.json"
       },
       {
@@ -9663,7 +9663,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-changed-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -9672,7 +9672,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d61866e9fdb79ac98bb0206b6180d254e5655bc702e9137750e032743a58b0ce",
-      "planContentDigest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
+      "planContentDigest": "sha256:ac2ec5e9740bf06906ca3b25abc918c44760eca94faa9671bb84cc48403de887",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -9698,7 +9698,7 @@
           "--run-reference=sha256:d82495bef2ddf11a7ff2397c4fb7e03c4cbfc8720ab9f21440d414a14bbce5c9"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -9708,7 +9708,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d82495bef2ddf11a7ff2397c4fb7e03c4cbfc8720ab9f21440d414a14bbce5c9",
-      "planContentDigest": "sha256:cfb60670bca1f5da18ecbf1ded8e9b66c43fab8a12bf536c8a5587f840489309",
+      "planContentDigest": "sha256:d9ec186241850e35d53e53168c02ad5874444c359f567566f8c797f1de92a3c0",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:9a5d6cc5ebd6501322378727cccbe01d448b287ab9b58ee9427e304fab48be2d"
@@ -9775,7 +9775,7 @@
           "observed": 2
         }
       ],
-      "driftReportDigest": "sha256:7f49ee726a5833874684c0a58ef1810722de8c331a7bf3c80ad7ece2a0869d23",
+      "driftReportDigest": "sha256:4eb167ebb95ef13e81d7b2dfa39b7c6b3ba0cd94ed388074a83c7e4c405d20eb",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -9849,7 +9849,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/0-schema-plan.json"
       },
       {
@@ -9862,7 +9862,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/1-schema-plan.json"
       },
       {
@@ -9877,7 +9877,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"differs_docs\";\nDROP VIEW \"differs_member_names\";\nDROP VIEW \"differs_member_ids\";\nCREATE VIEW \"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"differs_docs\";\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\";\nDROP VIEW \"public\".\"differs_member_names\";\nDROP VIEW \"public\".\"differs_member_ids\";\nCREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=true) AS\nSELECT id FROM differs_members;\nCREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids;\nDROP TABLE \"public\".\"differs_docs\";\n",
         "stdout": "runner-harness/documents/differs-view-invoker-cascade-kept-postgres/plan/2-schema-apply---dry-run.json"
       }
     ],
@@ -9886,7 +9886,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:c2a34f267d2625bd3b8839d465a34612374e523724a13672f18feb11e5dab1fa",
-      "planContentDigest": "sha256:cfb60670bca1f5da18ecbf1ded8e9b66c43fab8a12bf536c8a5587f840489309",
+      "planContentDigest": "sha256:d9ec186241850e35d53e53168c02ad5874444c359f567566f8c797f1de92a3c0",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10236,7 +10236,7 @@
           "--run-reference=sha256:4114ba6eca5d1eb7580a19531edba2188f4ea259ca993ccb512d71a01a335449"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=false);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -10246,7 +10246,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4114ba6eca5d1eb7580a19531edba2188f4ea259ca993ccb512d71a01a335449",
-      "planContentDigest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
+      "planContentDigest": "sha256:1d0bd5634e5a42f2157983612321dda8115fd8a72e49c65a2a7096c26376e30b",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7fe0cb2bc3f973c0077d7dec9b8f0978a5776b69d32af02e01b338f9d6eea55b"
@@ -10316,7 +10316,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:757b8e1e702064a32a6ca5f3c706482bc83e9b44684e1f80ccef2a4d43f8a159",
+      "driftReportDigest": "sha256:c499288794dc887bf04abf3eb86f6c8f22e9c6290ef1527697fb87380ccf64b4",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -10421,7 +10421,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=false);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/plan/1-schema-plan.json"
       },
       {
@@ -10434,7 +10434,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=false);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/plan/2-schema-plan.json"
       },
       {
@@ -10449,7 +10449,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=false);\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false);\n",
         "stdout": "runner-harness/documents/differs-view-invoker-false-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -10458,7 +10458,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:d69fe2f1f4dc64ff9cda70a036439aa5bf4335896af92b54d0e049f2ec5e3f44",
-      "planContentDigest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
+      "planContentDigest": "sha256:1d0bd5634e5a42f2157983612321dda8115fd8a72e49c65a2a7096c26376e30b",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10560,7 +10560,7 @@
           "--run-reference=sha256:813d37e52ae926d1dd6d7a5d91e6244949044cad7df3ef7fac8efe85bbcbd180"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-kept-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -10570,7 +10570,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:813d37e52ae926d1dd6d7a5d91e6244949044cad7df3ef7fac8efe85bbcbd180",
-      "planContentDigest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
+      "planContentDigest": "sha256:e5c002759a73b2efee5dc075af8bca287d8c096062b40dd9f577af15af1871ce",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:cc9f526a9f4d476d5ad30e0d742482dd5acca572f8b3d26f60a3d293f64fc902"
@@ -10640,7 +10640,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:f2c086b46d4259c9216e085289bfde9aa5361a406508bdf9d90314933102d88c",
+      "driftReportDigest": "sha256:3f19c602a12755422c84ebaefeec79630ea21b9e9a5e747f5e371ae794089983",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -10745,7 +10745,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-kept-postgres/plan/1-schema-plan.json"
       },
       {
@@ -10758,7 +10758,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-kept-postgres/plan/2-schema-plan.json"
       },
       {
@@ -10773,7 +10773,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\n",
         "stdout": "runner-harness/documents/differs-view-invoker-kept-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -10782,7 +10782,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:4b48337a46aa04cd8fab7c9822e4f5cbc99b714df8bda6e3fba7cede92a155be",
-      "planContentDigest": "sha256:40058a0b61f66b9018a8083fbfa1ffa100bbc0cdc5c74774a6862a9f9439cb4e",
+      "planContentDigest": "sha256:e5c002759a73b2efee5dc075af8bca287d8c096062b40dd9f577af15af1871ce",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -10884,7 +10884,7 @@
           "--run-reference=sha256:2d60a967b00a9733bf1c6d00d0d17e24d73cad5edf338ba64c759511be20e0cc"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-new-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -10894,7 +10894,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:2d60a967b00a9733bf1c6d00d0d17e24d73cad5edf338ba64c759511be20e0cc",
-      "planContentDigest": "sha256:a64a43acfc259e2f84e059e039ba033df03f52d24f18a754bfc4ebef3df71887",
+      "planContentDigest": "sha256:f303b4dc8977a9a2f9937c92552e9e4b92837d5ba2c9879f16642b15657725fa",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:decf946c09085e5f948b8686cb4bc0303cf85ae90c5882162996d1dbafd62a32"
@@ -10964,7 +10964,7 @@
           "observed": 0
         }
       ],
-      "driftReportDigest": "sha256:daf875e8569a66162a6366574bc7c38a43ee839f398da9a566dc55e4db6b61d3",
+      "driftReportDigest": "sha256:17dd35bc5e29e54bf39b2130a30509fd277386c971e0c66773e88dbf7a68dc16",
       "highestDriftSeverity": "safe",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -11069,7 +11069,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-new-postgres/plan/1-schema-plan.json"
       },
       {
@@ -11082,7 +11082,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-new-postgres/plan/2-schema-plan.json"
       },
       {
@@ -11097,7 +11097,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\n",
+        "stderr": "Planned schema changes:\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes;\n",
         "stdout": "runner-harness/documents/differs-view-invoker-new-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -11106,7 +11106,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:9b68037a4a75e0c4ab63c61781967e060afe511bac231e6c603af4384208688f",
-      "planContentDigest": "sha256:a64a43acfc259e2f84e059e039ba033df03f52d24f18a754bfc4ebef3df71887",
+      "planContentDigest": "sha256:f303b4dc8977a9a2f9937c92552e9e4b92837d5ba2c9879f16642b15657725fa",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -11208,7 +11208,7 @@
           "--run-reference=sha256:e281ef9818d2be5da83afd2d1703418c11749d83564beae2556cd138cd7be34a"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-on-with-body-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -11218,7 +11218,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e281ef9818d2be5da83afd2d1703418c11749d83564beae2556cd138cd7be34a",
-      "planContentDigest": "sha256:90b525bb2714c67cdb64eab114086d5e4147f25e240ccd044ae860946d277e64",
+      "planContentDigest": "sha256:5b19a444e8daeeb99fd8e8f64d594bd3908e87dc710789cbc8491f807c6f4e4f",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8a8c90c4cad921f4e734c169f6713bf292e8990cc0e3860cac57c0959286e707"
@@ -11288,7 +11288,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:7eccd493f74ad6a81f07c2c4903bad8d86abb593218cd222f136568bc1bef5a5",
+      "driftReportDigest": "sha256:63f77cd30ae181c87e2de99554b809ce1f20113159617f8321c4ede13bb7bc09",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -11393,7 +11393,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-on-with-body-postgres/plan/1-schema-plan.json"
       },
       {
@@ -11406,7 +11406,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-on-with-body-postgres/plan/2-schema-plan.json"
       },
       {
@@ -11421,7 +11421,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\n",
+        "stderr": "Planned schema changes:\nCREATE OR REPLACE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes WHERE id > 0;\n",
         "stdout": "runner-harness/documents/differs-view-invoker-on-with-body-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -11430,7 +11430,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:11b5fc30a372fb07dc8aab1fc68dc0fe4ce020c65f77b0a14dcea9a2f1e1aa0b",
-      "planContentDigest": "sha256:90b525bb2714c67cdb64eab114086d5e4147f25e240ccd044ae860946d277e64",
+      "planContentDigest": "sha256:5b19a444e8daeeb99fd8e8f64d594bd3908e87dc710789cbc8491f807c6f4e4f",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -11730,7 +11730,7 @@
           "--run-reference=sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=true);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=true);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -11740,7 +11740,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:652ea471e94b701443ab90e40cfb20a75a45785f02eaa4bb40fcd3a5858d7a3d",
-      "planContentDigest": "sha256:3dbf150ab4daf29ca96d79464459baf297b3ebf09baca491caa8614143bf5128",
+      "planContentDigest": "sha256:d5fedf36b2b6abe3d467a706a8ccd321d6fb5edacf3f1f2cc6de990f4a994d85",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8c10f8530a53100380f371664823b3b18abab78d627542be6bcd6812eb0f139e"
@@ -11810,7 +11810,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:c8be7df082eec1dd2dd7738e8d6b69750ca0b16dfc93b66d1fa7c9cb64994b38",
+      "driftReportDigest": "sha256:03524926cfd986c09c96445ee72b2baf888c6be9cd156fc82dde4346fc831590",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -11915,7 +11915,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=true);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=true);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/plan/1-schema-plan.json"
       },
       {
@@ -11928,7 +11928,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=true);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=true);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/plan/2-schema-plan.json"
       },
       {
@@ -11943,7 +11943,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER VIEW \"differs_notes_view\" SET (security_invoker=true);\n",
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=true);\n",
         "stdout": "runner-harness/documents/differs-view-invoker-true-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -11952,7 +11952,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:ecdfd9250861f5f60477f0d28e8f83828e24b64964b4f8a6979c96d4272449c2",
-      "planContentDigest": "sha256:3dbf150ab4daf29ca96d79464459baf297b3ebf09baca491caa8614143bf5128",
+      "planContentDigest": "sha256:d5fedf36b2b6abe3d467a706a8ccd321d6fb5edacf3f1f2cc6de990f4a994d85",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -12298,7 +12298,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:22f00a0099113ddb8a1ddc4aaf533f5f6ac321ff32dd2dd4af98cdcff1d65779",
+      "driftReportDigest": "sha256:c0f052f4d84723740bf02f956cf8371688664191e3f048ac891d1700a4af041f",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -12338,7 +12338,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: generate schema apply operations: unsupported feature: view differs_notes_view holds security_invoker=true and the schema does not state it. Without it the view runs with its owner's rights, not the rights of the user who queries it. Declare security_invoker=true to keep it, or security_invoker=false to remove it. An HCL schema states these options in the view's security block, as invoker and barrier\n",
+        "stderr": "error: generate schema apply operations: unsupported feature: view public.differs_notes_view holds security_invoker=true and the schema does not state it. Without it the view runs with its owner's rights, not the rights of the user who queries it. Declare security_invoker=true to keep it, or security_invoker=false to remove it. An HCL schema states these options in the view's security block, as invoker and barrier\n",
         "stdout": "runner-harness/documents/differs-view-invoker-unstated-postgres/plan/1-schema-plan.json"
       }
     ],
@@ -12347,7 +12347,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
         "code": "plan_refused",
-        "message": "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)"
+        "message": "ptah refused to plan the change (view-security-option: public.differs_notes_view security_invoker)"
       },
       "operation": "plan",
       "operationId": "sha256:f41ba30ad0f393ef84cdb2c3dbfd2257fb67926fd95e166ee8f1218814aa9fe1",
@@ -12433,6 +12433,443 @@
     }
   },
   {
+    "name": "differs-view-owner-missing-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-view-owner-missing-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "views_modified",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:b25b824001cb247f1aff6f60d63649131fcae2bcaf8adf2a139f5dd11db355dc",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:b6d0f6b9b59fab3f490f431f0674814f36a8151480ab3ea5f217c571a53edfb1",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e86d7b47e2ae7d62fd47bb08ebf4e8b91c2d9fcd5104e46cb07e2f160755722c"
+    }
+  },
+  {
+    "name": "differs-view-owner-missing-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-missing-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-missing-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\";\nerror: apply schema changes: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\" gives the object to role \"harness_view_nobody\", which the server does not hold and no statement before it creates; a role belongs to the server, not to a database, so create the role on the server or declare it in the desired schema\n",
+        "stdout": "differing/apply-owner-missing-refused.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (missing-owner-role: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\" role harness_view_nobody does not exist)"
+      },
+      "operation": "plan",
+      "operationId": "sha256:919fd634e0a7cfc8610aaaa390dc86fb14139c254f78313bd04069ac965b1fbc",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:e86d7b47e2ae7d62fd47bb08ebf4e8b91c2d9fcd5104e46cb07e2f160755722c"
+    }
+  },
+  {
+    "name": "differs-view-owner-rebuild-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:86b1252ccb15aa235a56197a6844e26fffaf98b5726a4779f26fd21e55899afd"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP VIEW \"public\".\"differs_notes_view\";\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes;\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\";\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:86b1252ccb15aa235a56197a6844e26fffaf98b5726a4779f26fd21e55899afd",
+      "planContentDigest": "sha256:67058ee617e11aa5f51fe759505b44a235444aece7d929601c838338c7abf8e7",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:a2aaf552449626cd3d714414f3500ece86ca6574a5caeacce0504212628a91b7"
+    }
+  },
+  {
+    "name": "differs-view-owner-rebuild-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "views_modified",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:8b527ad594368621f32b50454f0e1e1b0b8c5a2c12a46c577b5b9e35a6ac13bb",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:09b48f35c7b67d45efbd8fa8499b46be874421018c3cf5eabe556f4426e2c3a8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:a2aaf552449626cd3d714414f3500ece86ca6574a5caeacce0504212628a91b7"
+    }
+  },
+  {
+    "name": "differs-view-owner-rebuild-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:be04e999af72b78b886cc62b0391efe19a24718739cad39ea1ec2163dba31c37",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:a2aaf552449626cd3d714414f3500ece86ca6574a5caeacce0504212628a91b7"
+    }
+  },
+  {
+    "name": "differs-view-owner-rebuild-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP VIEW \"public\".\"differs_notes_view\";\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes;\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP VIEW \"public\".\"differs_notes_view\";\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes;\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nDROP VIEW \"public\".\"differs_notes_view\";\nCREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes;\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\";\n",
+        "stdout": "runner-harness/documents/differs-view-owner-rebuild-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:46d202b98d91f85abf7388dc5345bef2aeb17ca9b047101f4ad53ef06531ff8d",
+      "planContentDigest": "sha256:67058ee617e11aa5f51fe759505b44a235444aece7d929601c838338c7abf8e7",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:a2aaf552449626cd3d714414f3500ece86ca6574a5caeacce0504212628a91b7"
+    },
+    "savedPlan": "runner-harness/documents/differs-view-owner-rebuild-postgres/plan/3-saved-plan.json"
+  },
+  {
+    "name": "differs-view-owner-transfer-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-view-owner-transfer-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "views_modified",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "views",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dbeba724fe666de9bd9ddab7f65465148517c8fc559bfa50119b53c8b61a9faa",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:bc71a68d2071bc15e0d8314f7d3e520a85b06be43fc120f54ba94173268320a5",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:11cb405f7a785260e3be9ee0cf9c67968d28dbd7b136fc39981eec532c0a45be"
+    }
+  },
+  {
+    "name": "differs-view-owner-transfer-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-transfer-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-view-owner-transfer-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 2,
+        "stderr": "Planned schema changes:\nALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\";\nerror: apply schema changes: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\" gives the view to role \"harness_view_outsider\", which connected role \"harness_view_transferer\" may not give an object to: the server requires the SET privilege on the new owner, and \"harness_view_transferer\" lacks it; run GRANT \"harness_view_outsider\" TO \"harness_view_transferer\" WITH SET TRUE, or declare the owner the view should have, one \"harness_view_transferer\" may give it to\n",
+        "stdout": "differing/apply-owner-transfer-refused.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (owner-transfer: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\" role harness_view_outsider connected harness_view_transferer lacks SET)"
+      },
+      "operation": "plan",
+      "operationId": "sha256:02cd484745c4494705bdbf3a76f10699f833b94aa5ee7320ce2d9d23bdd18815",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:11cb405f7a785260e3be9ee0cf9c67968d28dbd7b136fc39981eec532c0a45be"
+    }
+  },
+  {
     "name": "extension/apply",
     "operation": "apply",
     "source": "none",
@@ -12450,7 +12887,7 @@
           "--run-reference=sha256:4cc539ba36b8dbc6d3e942e31d0815ae4738292d4d38776715cb03c8c80ec849"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"public\".\"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/extension/apply/0-schema-apply.json"
       }
     ],
@@ -12460,7 +12897,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:4cc539ba36b8dbc6d3e942e31d0815ae4738292d4d38776715cb03c8c80ec849",
-      "planContentDigest": "sha256:a3ec51e1385db3c41c16cf0a277c57ee24909dded8aa5ed3ac2aa7f1a00bab1c",
+      "planContentDigest": "sha256:e2b98cf148c07c02ca9e7e2c5b3f30e6b16f81eaa063150328683180efef208a",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:94195566117e11d16de007f766e199c401b0032c62e0f65d8bb261ec938f2f44"
@@ -12570,7 +13007,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"public\".\"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/extension/plan/1-schema-plan.json"
       },
       {
@@ -12583,7 +13020,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"public\".\"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/extension/plan/2-schema-plan.json"
       },
       {
@@ -12598,7 +13035,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
+        "stderr": "Planned schema changes:\nCREATE EXTENSION IF NOT EXISTS \"pg_trgm\";\nCREATE TABLE \"public\".\"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
         "stdout": "runner-harness/documents/extension/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -12607,7 +13044,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:0b4091197a5864343b8c96a638c3c4cca91d86a8d67145046449758a0b2cbfa8",
-      "planContentDigest": "sha256:a3ec51e1385db3c41c16cf0a277c57ee24909dded8aa5ed3ac2aa7f1a00bab1c",
+      "planContentDigest": "sha256:e2b98cf148c07c02ca9e7e2c5b3f30e6b16f81eaa063150328683180efef208a",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -14061,7 +14498,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb212313f8bff875f4abe80a9a0bab99afc7f39c5a42d52c0f0618bd06811c9a",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -14101,7 +14538,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:b4d7ce23b0df16bcee6a0abb74e3237bee2a37dbff9d132d32eec04887bc6896",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:80d608f5e6ce7aeb55e65281edb48af6d87d5ee261d3090cd5f648133c1ae85c",
@@ -14284,7 +14721,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:288ac55de79fe4f00abcc6679b5ffb0777fa186939a66b49a126d563a5edb750",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -14324,7 +14761,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb1c11d0f2f608257a84c15a04cf9d8f49d3c985f37cd9514c7d282d0409dde8",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:a52a0fbbbf6c88117ad74f4b41d6d95737d620d7653232c1c8f08fc69187ad4a",
@@ -14507,7 +14944,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e2f51a9196bd64dae017bd9446b1a41d8466a7a93ac37eda39f455904425140d",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -14547,7 +14984,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:915e8c54ec9f79d0ed5394921d0085c12faee0795815ce42c8b5a531cf158a52",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7261457b875a32e59a05663eac15dfe40891f5e069938dc6d1e41b676ec46671",
@@ -14730,7 +15167,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d545d3ac60533a8cce3bbcf9ad1bbb209aefac88e06a7e8dd02250164de68388",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -14770,7 +15207,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d0fa0dceb0e88c143f6cac71dbf195673d63e1981ed129c0c0aa0aa0849aa509",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:8312c84553d31d366a1a82da7234a1750278845a291a7a4d6e60e0303f098221",
@@ -14953,7 +15390,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:29ba757fa21dd815ebd444226631e1b76b84eb8a661b8987dcec3220a74e6a58",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -14993,7 +15430,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:9f0bfd77b540ebf8a19b20ab381dfb7f804898fba4038faf3043436a9ddc371b",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:7be7c2ce7a4a18e4e2b1cde241904323ff56875659d102f04117f5144c637565",
@@ -15176,7 +15613,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a4c69d56a0b72a0970378e7bfe1c23b92eee7d42b56f6d2fa58e2e0855c23783",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -15216,7 +15653,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:d3c037310c7dbc7d8957b8124926ea4aeab09cadf1b4641522ab86ff23ba14c8",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:fa3fdfc91a40f961bcd0148467bbf46f178d87d633b75f2cbdbc443848704aff",
@@ -15399,7 +15836,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:cb56e47bc2901c51e3e37b45ca0baae63ce2cea7313fff8a5ec5a1907491a48e",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -15439,7 +15876,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:7d5299f84da0a27dc27028f70209d8428de8f17791eb548bff6cb6e24acf17ca",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:eaae4c045da4ab444d9dc20fcb18bf3f805e409b0ca63a5956176ef3b4434e58",
@@ -21647,7 +22084,7 @@
           "--run-reference=sha256:84865a66751db1d566376d92101b23f0b0ca1b9e4a7b6d9805a325748973266c"
         ],
         "exit": 0,
-        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_log_lost_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error, run_reference, actor_origin)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
+        "stderr": "=== MIGRATE UP ===\nDatabase: mysql://root:***@harness-mysql:3306/harness_log_lost_mysql\nDialect: mysql\nMigrations directory: /source/migrations\nMigration directory format: auto\nTransaction mode: file\n\nCurrent version: 0\nTotal migrations: 3\nPending migrations: 3\n\ntime=<time> level=INFO msg=\"Migrating up\" correlation_id=<random> command=migrations.up currentVersion=0 totalMigrations=3\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 repeatable=\"\" operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=1 description=\"Create Widgets\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=1 repeatable=\"\" operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 repeatable=\"\" operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=2 description=\"Add Widget Color\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=2 repeatable=\"\" operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 repeatable=\"\" operation=up state=started error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"Applying migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=INFO msg=\"Applied migration\" correlation_id=<random> command=migrations.up version=3 description=\"Recolor First Widget\"\ntime=<time> level=WARN msg=\"Could not append to the migration log\" correlation_id=<random> command=migrations.up version=3 repeatable=\"\" operation=up state=applied error=\"SQL execution failed: Error 1406 (22001): Data too long for column 'actor' at row 1\\nSQL: INSERT /*+ SET_VAR(sql_mode='STRICT_ALL_TABLES') */ INTO `harness_log_lost_mysql`.`schema_migrations_log` (run_id, seq, operation, version, state, actor, actor_source, checksum, logged_at, error,\\n    run_reference, actor_origin, repeatable)\\nVALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\"\ntime=<time> level=INFO msg=\"All migrations applied successfully\" correlation_id=<random> command=migrations.up\n",
         "stdout": "migrations-up-log-lost-mysql.json"
       }
     ],
@@ -23260,6 +23697,103 @@
     }
   },
   {
+    "name": "migrations-repeatable-postgres/history-pending",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/migrations-repeatable-postgres@<digest>",
+          "--out",
+          "/source/migrations"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-repeatable-postgres/history-pending/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "migrations-status-repeatable-postgres.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+            "description": "Create Items",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "repeatables": [
+          {
+            "identity": "item_names",
+            "path": "R__item_names.sql",
+            "state": "pending"
+          }
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:5d3186ec80904de2d4ff3162a4c712cdc3de15e31a2126b155b75c27cd4fe291",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:175f0868aa9c666fd6306bc49a928651a2d3caf5694c8f9c6c26491d2a81cdd7"
+    }
+  },
+  {
+    "name": "migrations-repeatable-postgres/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/migrations-repeatable-postgres:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/migrations-repeatable-postgres/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:6bda8a8db6a6f16ee2c161d878ec5c56bdb4e1cfab9f506cd7c24b865b9cc46d",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/migrations-repeatable-postgres@<digest>",
+      "resolvedSize": 1313,
+      "stdout": ""
+    }
+  },
+  {
     "name": "policy-existing-table/apply",
     "operation": "apply",
     "source": "none",
@@ -23277,7 +23811,7 @@
           "--run-reference=sha256:e238787c6e103842d8153275747dc4c12139e3c8730398edf350b411c42a9eed"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/policy-existing-table/apply/0-schema-apply.json"
       }
     ],
@@ -23287,7 +23821,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:e238787c6e103842d8153275747dc4c12139e3c8730398edf350b411c42a9eed",
-      "planContentDigest": "sha256:aaf026f2dd903bbbbddc5e73c581c64fbc3736f72217c2a95152f13996f66f65",
+      "planContentDigest": "sha256:2cc46b4ab3831623cc551873243f94834ae6b946080d5a528ff898e175d48176",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:2dccb54e938085ead09e112c6a4fdb717595ab8f5340be1592f9aaf353dc1dc2"
@@ -23367,7 +23901,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:e871173310d59ef2d92917f25c68de833b4957e1b449723b3a1ffceb9eb4ea68",
+      "driftReportDigest": "sha256:214372daa697617a364ec825d8db9b5ce4242a17558b63458afa2bd825fcb7a0",
       "highestDriftSeverity": "destructive",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -23407,7 +23941,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/policy-existing-table/plan/1-schema-plan.json"
       },
       {
@@ -23420,7 +23954,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/policy-existing-table/plan/2-schema-plan.json"
       },
       {
@@ -23435,7 +23969,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\n",
+        "stderr": "Planned schema changes:\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\n",
         "stdout": "runner-harness/documents/policy-existing-table/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -23444,7 +23978,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:695dc0c4396898edf8da9d83af2503823019a01d03bbb44da09696243cb052a9",
-      "planContentDigest": "sha256:aaf026f2dd903bbbbddc5e73c581c64fbc3736f72217c2a95152f13996f66f65",
+      "planContentDigest": "sha256:2cc46b4ab3831623cc551873243f94834ae6b946080d5a528ff898e175d48176",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -23546,7 +24080,7 @@
           "--run-reference=sha256:a9021452fd7311fba0e45cffc339db39a6d2b471d4aaa6b4b4743d14e227cf3d"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/policy-new-table/apply/0-schema-apply.json"
       }
     ],
@@ -23556,7 +24090,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9021452fd7311fba0e45cffc339db39a6d2b471d4aaa6b4b4743d14e227cf3d",
-      "planContentDigest": "sha256:be6ee6812a08d5d9cd33c2c0b51918705a1d3e732888692f47a3e74266cad853",
+      "planContentDigest": "sha256:92f17d66feeb457afae1ca6145070e48994e9fe70998086cb3e3e2be9b94b93d",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:1922c2ccf1ea8fe4075657954ce0e3c710e2fd059b83cf4e5d41152ed6f52960"
@@ -23661,7 +24195,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/policy-new-table/plan/1-schema-plan.json"
       },
       {
@@ -23674,7 +24208,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/policy-new-table/plan/2-schema-plan.json"
       },
       {
@@ -23689,7 +24223,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user);\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n);\nALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user);\n",
         "stdout": "runner-harness/documents/policy-new-table/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -23698,7 +24232,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:76695c3a4cad8737354239ff68526f9c780f309c08af6c1d1c70aac7c4578c52",
-      "planContentDigest": "sha256:be6ee6812a08d5d9cd33c2c0b51918705a1d3e732888692f47a3e74266cad853",
+      "planContentDigest": "sha256:92f17d66feeb457afae1ca6145070e48994e9fe70998086cb3e3e2be9b94b93d",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -23812,7 +24346,7 @@
           "--exclude=public.e2e_policy_notes_owner[type=policy]"
         ],
         "exit": 0,
-        "stderr": "Warning: the --exclude selection matched no objects: \"public.e2e_policy_notes_owner[type=policy]\".\nPlanned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Warning: the --exclude selection matched no objects: \"public.e2e_policy_notes_owner[type=policy]\".\nPlanned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\";\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/policy-selector/plan-by-schema/1-schema-plan.json"
       },
       {
@@ -23826,7 +24360,7 @@
           "--exclude=public.e2e_policy_notes_owner[type=policy]"
         ],
         "exit": 0,
-        "stderr": "Warning: the --exclude selection matched no objects: \"public.e2e_policy_notes_owner[type=policy]\".\nPlanned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Warning: the --exclude selection matched no objects: \"public.e2e_policy_notes_owner[type=policy]\".\nPlanned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\";\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/policy-selector/plan-by-schema/2-schema-plan.json"
       },
       {
@@ -23841,7 +24375,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\";\n",
+        "stderr": "Planned schema changes:\nDROP POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\";\n",
         "stdout": "runner-harness/documents/policy-selector/plan-by-schema/3-schema-apply---dry-run.json"
       }
     ],
@@ -23850,7 +24384,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:3c84359d1f0ee5c88b6976a20ebeaeefef6d118c6ed3874c918cfd2fe6572d86",
-      "planContentDigest": "sha256:7cc9d9e281c0d8f722348af7eb95da277db81d40bcf21766454e4e42cafab529",
+      "planContentDigest": "sha256:dcd009dae278031ea32c7d67f4f1963e77dc1fea091abf2623b82e7b300fe1fc",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -24397,7 +24931,7 @@
           "--run-reference=sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\");\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"public\".\"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"public\".\"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"public\".\"regions\"(\"code\");\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/rows-postgres/apply/0-schema-apply.json"
       }
     ],
@@ -24407,7 +24941,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:92cf0cfa5b735a043fe6c1e52134263f7bfca3d0b68d2ac08558053dcd270378",
-      "planContentDigest": "sha256:a284e9f36ceae3468bf200e5673cb1d1aa9c459bf22329e1bb6ce04faa127517",
+      "planContentDigest": "sha256:683b8e2819b6f6dcaaeb86981674dd33cb6c788fafbc60500f96fd46962f9fb6",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:24ec3e794a34e79469f1c3f51917c79c8e4400d061a6d2cadaa8e8d8efcc565f"
@@ -24522,7 +25056,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\");\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"public\".\"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"public\".\"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"public\".\"regions\"(\"code\");\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/rows-postgres/plan/1-schema-plan.json"
       },
       {
@@ -24535,7 +25069,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\");\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"public\".\"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"public\".\"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"public\".\"regions\"(\"code\");\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/rows-postgres/plan/2-schema-plan.json"
       },
       {
@@ -24550,7 +25084,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\");\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n);\nCREATE TABLE \"public\".\"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n);\nALTER TABLE \"public\".\"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"public\".\"regions\"(\"code\");\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');\n",
         "stdout": "runner-harness/documents/rows-postgres/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -24559,7 +25093,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:99c6bdbf7e31acde15cd5602b377eed4c9e13eccf41cb55236184c466825b5d9",
-      "planContentDigest": "sha256:a284e9f36ceae3468bf200e5673cb1d1aa9c459bf22329e1bb6ce04faa127517",
+      "planContentDigest": "sha256:683b8e2819b6f6dcaaeb86981674dd33cb6c788fafbc60500f96fd46962f9fb6",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -24596,7 +25130,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"regions\" WHERE \"code\" = 'apac';\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"public\".\"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"public\".\"regions\" WHERE \"code\" = 'apac';\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/rows-postgres/plan-edited/1-schema-plan.json"
       },
       {
@@ -24609,7 +25143,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"regions\" WHERE \"code\" = 'apac';\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"public\".\"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"public\".\"regions\" WHERE \"code\" = 'apac';\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/rows-postgres/plan-edited/2-schema-plan.json"
       },
       {
@@ -24624,7 +25158,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nINSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"regions\" WHERE \"code\" = 'apac';\n",
+        "stderr": "Planned schema changes:\nINSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');\nUPDATE \"public\".\"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';\nDELETE FROM \"public\".\"regions\" WHERE \"code\" = 'apac';\n",
         "stdout": "runner-harness/documents/rows-postgres/plan-edited/3-schema-apply---dry-run.json"
       }
     ],
@@ -24633,7 +25167,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:e6eedc4397731172935e4a0742efd748fb3c7ca7ce81bd954d6eb30efe91b701",
-      "planContentDigest": "sha256:aff64052f4acdfc24bf3a909d8f02f55c87b1f801e039151e2950ec21a80fee2",
+      "planContentDigest": "sha256:8b5c0ea478dc7d581143700b116156b86ed5e37a0090bdb1c2b8aa262ff9438d",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -24671,7 +25205,7 @@
           "--protected-table=regions"
         ],
         "exit": 2,
-        "stderr": "error: refusing to change protected table(s) regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`\n",
+        "stderr": "error: refusing to change protected table(s) public.regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`\n",
         "stdout": "runner-harness/documents/rows-postgres/plan-fenced/1-schema-plan.json"
       }
     ],
@@ -24680,7 +25214,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
         "code": "protected_table",
-        "message": "refusing to change protected table(s) regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`"
+        "message": "refusing to change protected table(s) public.regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`"
       },
       "operation": "plan",
       "operationId": "sha256:4edface2d5198906912dc8f5f79c53410dffe0271da6ee444fa8205d1c812dfc",
@@ -24783,7 +25317,7 @@
           "--run-reference=sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-git-https/apply/0-schema-apply.json"
       }
     ],
@@ -24793,7 +25327,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:67d2ba2cbe52acb7ebb6e0d8c3acff1650e804666b86de4b607ae00b063dc8d5",
-      "planContentDigest": "sha256:6973682420173fccdc60806dadd6fbdbc147cc5fb3f9d557be615eba2727582c",
+      "planContentDigest": "sha256:b96926d221565574a15d1eb2f6d5b09817b4910b170ee5b66c8ef13a451f38ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6afcc36a43a5e163556bba7a2ad5a600cc6148c556477a6a1e8ba6521d93d0eb"
@@ -24923,7 +25457,7 @@
           "observed": 0
         }
       ],
-      "driftReportDigest": "sha256:c8756738b54efe38013399a0421186ba1b717eb5cdd40a4b204cf70c9d18f666",
+      "driftReportDigest": "sha256:2cc62d1a50fb895a1b11bdbd07b824c2a8a149082a0e14e7faa9739ef26cff5a",
       "highestDriftSeverity": "safe",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -24973,7 +25507,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/schema-git-https/plan/1-schema-plan.json"
       },
       {
@@ -24986,7 +25520,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-git-https/plan/2-schema-plan.json"
       },
       {
@@ -25001,7 +25535,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL,\n  \"sku\" text\n);\n",
         "stdout": "runner-harness/documents/schema-git-https/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -25010,7 +25544,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:5857ccdd77f7a3e1df43cc3f27bd4c332c3e5be39602e0592219a6103c3f3026",
-      "planContentDigest": "sha256:6973682420173fccdc60806dadd6fbdbc147cc5fb3f9d557be615eba2727582c",
+      "planContentDigest": "sha256:b96926d221565574a15d1eb2f6d5b09817b4910b170ee5b66c8ef13a451f38ba",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -25218,7 +25752,7 @@
           "--run-reference=sha256:fb67e4f5224ce06b5aff0949623d6da39ecb0e9b6921fc9a87a8006c1d7959a4"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-git-ssh/apply/0-schema-apply.json"
       }
     ],
@@ -25228,7 +25762,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:fb67e4f5224ce06b5aff0949623d6da39ecb0e9b6921fc9a87a8006c1d7959a4",
-      "planContentDigest": "sha256:2621da4313e1132982f6fcec571f7b781df9401d92f3abe026f2137a88ea90ef",
+      "planContentDigest": "sha256:31c61e0945f8d07bc60057055e884df19a18c390c7e75de6ceb92580ba2c19be",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0aa23be78bda77755ed69cf3dc30a05bac818b41f6403d494cb41e4592bd9218"
@@ -25293,7 +25827,7 @@
           "observed": 0
         }
       ],
-      "driftReportDigest": "sha256:c8756738b54efe38013399a0421186ba1b717eb5cdd40a4b204cf70c9d18f666",
+      "driftReportDigest": "sha256:2cc62d1a50fb895a1b11bdbd07b824c2a8a149082a0e14e7faa9739ef26cff5a",
       "highestDriftSeverity": "safe",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -25343,7 +25877,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/schema-git-ssh/plan/1-schema-plan.json"
       },
       {
@@ -25356,7 +25890,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-git-ssh/plan/2-schema-plan.json"
       },
       {
@@ -25371,7 +25905,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_git_items\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
         "stdout": "runner-harness/documents/schema-git-ssh/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -25380,7 +25914,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:3492c5098da26a4c003180db751d6af329e9bb7dabe3b7f87147aafd32dee26b",
-      "planContentDigest": "sha256:2621da4313e1132982f6fcec571f7b781df9401d92f3abe026f2137a88ea90ef",
+      "planContentDigest": "sha256:31c61e0945f8d07bc60057055e884df19a18c390c7e75de6ceb92580ba2c19be",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -26117,7 +26651,7 @@
           "--run-reference=sha256:420dfc966f0c4faf513a9801736f7581e1cc343ffa8d08d4731fbb36857c28ad"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-postgres/apply-column/0-schema-apply.json"
       }
     ],
@@ -26127,7 +26661,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:420dfc966f0c4faf513a9801736f7581e1cc343ffa8d08d4731fbb36857c28ad",
-      "planContentDigest": "sha256:60cbe85f2758890b872df55696f8f5af40e3497903c0c54760e6f14e524a555c",
+      "planContentDigest": "sha256:f99dcf9307aa838e5baec7c152926809bc5d27e6091954777cd89331ba8a61be",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -26151,7 +26685,7 @@
           "--run-reference=sha256:a9b48b550116d3bba765b81933285a94622ddcfd3a009db36b574f907f5dd59d"
         ],
         "exit": 2,
-        "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:cac0e4e6111ffac6691afda29e0af0df5124bb595a8f0870efcc0530031a6fd2, database sha256:028a109c50a15e1ab3b7c7760993162f6e87a5501196b6aca4334ab728148a39); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
+        "stderr": "error: pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:c364956fda83ad270107b7914d3bd2c8a15ddeccb539c55ec69f1259c7d38805, database sha256:6a8905bd0cc6ef09fd125f3bb8091e9a87bf51462dcc5a348f7efaa8d89b8e03); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan\n",
         "stdout": "runner-harness/documents/schema-postgres/apply-stale/0-schema-apply.json"
       }
     ],
@@ -26165,7 +26699,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:a9b48b550116d3bba765b81933285a94622ddcfd3a009db36b574f907f5dd59d",
-      "planContentDigest": "sha256:60cbe85f2758890b872df55696f8f5af40e3497903c0c54760e6f14e524a555c",
+      "planContentDigest": "sha256:f99dcf9307aa838e5baec7c152926809bc5d27e6091954777cd89331ba8a61be",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181",
@@ -26190,7 +26724,7 @@
           "--run-reference=sha256:bf09f6a9c67be0d070be66ef450704abc061b300f7fc64b53152f8e1a3f452f8"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
         "stdout": "runner-harness/documents/schema-postgres/apply-v1/0-schema-apply.json"
       }
     ],
@@ -26200,7 +26734,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:bf09f6a9c67be0d070be66ef450704abc061b300f7fc64b53152f8e1a3f452f8",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:0370562d361c3ed89e7a9333144ab50223cc3e15411d70de92259f3febb0d181"
@@ -26265,7 +26799,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:413f4912f72bc699bad9840df27d4ffcf0588ee924152d5da59c2d7fa0cb8772",
+      "driftReportDigest": "sha256:f391602a2f93cd561afa2438870c3e2efdc220fea966ee09544aa0a9ea66d9b2",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -26385,7 +26919,7 @@
           "observed": 0
         }
       ],
-      "driftReportDigest": "sha256:72dc8133e6bba7a6b9447054a63f4f6f9be25929579c00d2a695f4ae1c5be7c9",
+      "driftReportDigest": "sha256:70a845c1f03802893a5d1e9354469ed568a008459dbd01d1fc1b9b90591e861c",
       "highestDriftSeverity": "safe",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -26425,7 +26959,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "schema-plan-report.json"
       },
       {
@@ -26438,7 +26972,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-postgres/plan-column/2-schema-plan.json"
       },
       {
@@ -26453,7 +26987,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text;\n",
+        "stderr": "Planned schema changes:\nALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text;\n",
         "stdout": "schema-apply-dry-run-report.json"
       }
     ],
@@ -26462,7 +26996,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a720e527aa287c781368bd8face5668214e5f626f48e15dff2161a6c61918b68",
-      "planContentDigest": "sha256:60cbe85f2758890b872df55696f8f5af40e3497903c0c54760e6f14e524a555c",
+      "planContentDigest": "sha256:f99dcf9307aa838e5baec7c152926809bc5d27e6091954777cd89331ba8a61be",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -26556,7 +27090,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/schema-postgres/plan-v1/1-schema-plan.json"
       },
       {
@@ -26569,7 +27103,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/schema-postgres/plan-v1/2-schema-plan.json"
       },
       {
@@ -26584,7 +27118,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE TABLE \"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
+        "stderr": "Planned schema changes:\nCREATE TABLE \"public\".\"e2e_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n);\n",
         "stdout": "runner-harness/documents/schema-postgres/plan-v1/3-schema-apply---dry-run.json"
       }
     ],
@@ -26593,7 +27127,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a3824fcf7333fd272602957b530dbdbf9477084f6ac36f119809d3ed3f6f3bb4",
-      "planContentDigest": "sha256:3b39193fcdb234a28e824501ebee9b3f8b9d5d543a3ee10ae01cd8d8b9d2df27",
+      "planContentDigest": "sha256:bc96eb3bf988f074af326457c677f5c0502a8f4c5636f1cad8ad335dbe8367ba",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -28958,7 +29492,7 @@
           "--run-reference=sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61"
         ],
         "exit": 2,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\");\nAuto-approval enabled; applying schema changes.\nerror: apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\")\n",
         "stdout": "statement-errors/pg-unique-apply.json"
       }
     ],
@@ -28977,7 +29511,7 @@
       "mutationStarted": true,
       "operation": "apply",
       "operationId": "sha256:c1a99cbcc0db807b9233dc9c299d5b0f0935658aa1aa3e153a11f05f1cb78f61",
-      "planContentDigest": "sha256:cc0ed1054f58420c29cabf9b6aad25511f77a37fd415f60b869954fd1050d623",
+      "planContentDigest": "sha256:94ea38385ddf60b293981e894048ac975f95c32c2658da96bbaae0fa89605e99",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:84bc3f41a1da37f178ab17555c21a47c18eeb53429180faee85603f114644842",
@@ -29048,7 +29582,7 @@
           "observed": 1
         }
       ],
-      "driftReportDigest": "sha256:1e9e2451f0a63e43d2679d558f68cb5336b4c3300d3c5de656c25e50f59df52a",
+      "driftReportDigest": "sha256:a714e7a90aab8777c10dbbed21b183c4b32d83c25f33715dfb03c8aa668d5091",
       "highestDriftSeverity": "warning",
       "observedDialect": "postgres",
       "observedDrift": true,
@@ -29088,7 +29622,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/1-schema-plan.json"
       },
       {
@@ -29101,7 +29635,7 @@
           "--json"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\");\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/2-schema-plan.json"
       },
       {
@@ -29116,7 +29650,7 @@
           "--dry-run"
         ],
         "exit": 0,
-        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\");\n",
+        "stderr": "Planned schema changes:\nCREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\");\n",
         "stdout": "runner-harness/documents/statement-errors-pg-unique-apply/plan/3-schema-apply---dry-run.json"
       }
     ],
@@ -29125,7 +29659,7 @@
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "operation": "plan",
       "operationId": "sha256:a5ea4e54b515c5128026744c7db7ac5db4978f48865cb8f088196f7db076fc6f",
-      "planContentDigest": "sha256:cc0ed1054f58420c29cabf9b6aad25511f77a37fd415f60b869954fd1050d623",
+      "planContentDigest": "sha256:94ea38385ddf60b293981e894048ac975f95c32c2658da96bbaae0fa89605e99",
       "planOutcome": "Changes",
       "protocolVersion": 1,
       "stdout": "<sealed plan>",
@@ -29584,7 +30118,7 @@
           "json"
         ],
         "exit": 2,
-        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare\n",
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
         "stdout": "desired-source/drift-key-and-index.json"
       },
       {
@@ -29762,7 +30296,7 @@
           "json"
         ],
         "exit": 2,
-        "stderr": "error: error comparing schemas: postgres requires referenced columns code on table \"parent\" to be declared unique\n",
+        "stderr": "error: error comparing schemas: postgres requires referenced columns code on table \"public.parent\" to be declared unique\n",
         "stdout": "desired-source/drift-not-unique.json"
       },
       {
@@ -29807,7 +30341,7 @@
           "--json"
         ],
         "exit": 2,
-        "stderr": "error: compare database schema: postgres requires referenced columns code on table \"parent\" to be declared unique\n",
+        "stderr": "error: compare database schema: postgres requires referenced columns code on table \"public.parent\" to be declared unique\n",
         "stdout": "desired-source/plan-not-unique.json"
       },
       {
@@ -29851,7 +30385,7 @@
           "json"
         ],
         "exit": 2,
-        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare\n",
+        "stderr": "error: postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare\n",
         "stdout": "desired-source/drift-other-and-index.json"
       },
       {

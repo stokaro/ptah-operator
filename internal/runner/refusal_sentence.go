@@ -87,17 +87,26 @@ func joinRefusalEntries(entries []refusalEntry) string {
 //   - each view of view_definers (view-definer), with the account it runs as
 //     and the account the plan's read ran as, as
 //     `orders_view definer app@% account deploy@%`, leaving out an account the
-//     read did not record.
+//     read did not record;
+//   - the statement of owner (missing-owner-role, owner-transfer and
+//     owner-schema-privilege), with the role it gives the object to and what
+//     the server lacks for it, as
+//     `ALTER VIEW "public"."v" OWNER TO "r" role r connected ptah lacks SET`.
+//     A missing role reads `does not exist`, a schema privilege
+//     `lacks CREATE on schema public`, and a role that owns the object now,
+//     which the plan gives it back to, adds `, and the role owns it now`.
 //
 // A definer-privilege refusal lists the statements whose definer the login may
 // not name, and this does not read that list, so it reads by its code alone
 // (dataplane.SchemaRefusal says when an Apply meets it). The Pod log carries
 // Ptah's sentence for it.
 //
-// A view and an account come from a schema or a database, so each goes through
+// A view, an account, a statement, a role and a schema come from a schema or a
+// database, so each goes through
 // freeText, which redacts it, puts a space where a control or format character
 // was and keeps it on one line. An option has to be an identifier, which the
-// dataplane reader holds it to.
+// dataplane reader holds it to, and so is a privilege, which has to be a word
+// of Ptah's.
 //
 // It reports false when the refusal lists nothing, when a list it carries is in
 // a form the readers refuse, and when nothing readable is left of a value that
@@ -152,6 +161,39 @@ func refusalEntries(refusal *dataplane.SchemaRefusal, redactor Redactor) ([]refu
 			}
 			entries = append(entries, refusalEntry{named: text})
 		}
+	}
+	if len(refusal.Owner) != 0 {
+		owner, ok := refusal.NamedOwner()
+		if !ok {
+			return nil, false
+		}
+		statement, ok := clean(owner.Statement)
+		if !ok {
+			return nil, false
+		}
+		text, ok := labeled(statement, "role", owner.Role, "connected", owner.Connected)
+		if !ok {
+			return nil, false
+		}
+		var lacks string
+		switch refusal.Code {
+		case dataplane.SchemaRefusalMissingOwnerRole:
+			lacks = " does not exist"
+		case dataplane.SchemaRefusalOwnerTransfer:
+			lacks = " lacks " + owner.Privilege
+		case dataplane.SchemaRefusalOwnerSchemaPrivilege:
+			// The schema comes from the database, so it is named with the
+			// role, where a cut may shorten it.
+			schema, ok := clean(owner.Schema)
+			if !ok {
+				return nil, false
+			}
+			text += " lacks CREATE on schema " + schema
+		}
+		if owner.Holds {
+			lacks += ", and the role owns it now"
+		}
+		entries = append(entries, refusalEntry{named: text, own: lacks})
 	}
 	return entries, len(entries) > 0
 }

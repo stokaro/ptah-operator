@@ -33,6 +33,7 @@ decision.
 | `DatabaseUnreachable` | `DatabaseReachable` is false because the host did not resolve, refused the connection, or did not answer in time. |
 | `DesiredStateChanged` | New desired inputs arrived after older work completed. |
 | `DestructiveChangesDisabled` | A destructive plan is blocked by policy. |
+| `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
@@ -77,6 +78,7 @@ decision.
 | `RefreshFailed` | A previously resolved source could not be refreshed. |
 | `Refreshing` | The requested source is being resolved again. |
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |
+| `RepeatableMigrationsUnsupported` | The migration history lists repeatable migrations: `R__<identity>.sql` files in the artifact, or rows of the database's record of them. The operator runs a versioned sequence only, so no plan is published. See [Repeatable migrations](#repeatable-migrations). |
 | `Requested` | The spec requests suspension. |
 | `ResolveFailed` | No immutable source resolution is available. |
 | `RunAcknowledged` | A person's `PtahMigrationRunAcknowledgment` settled the run a migration recorded as unresolved. On the acknowledgment it is `Consumed=True`; on the migration it is `Blocked=False` until the database has been read again, and `status.resolvedRun` names who acknowledged. |
@@ -124,6 +126,28 @@ how a dirty row ends.
 
 [Run versioned migrations](../../use/migrations/#what-the-history-says) carries
 what each state means and which Ptah commands end it.
+
+## Repeatable migrations
+
+Since v0.30.0 Ptah reads an `R__<identity>.sql` file in a migration directory
+as a repeatable migration, which `ptah migrations up` runs after the versioned
+ones and again whenever its content changes. Ptah v0.29.2, which 0.2.14 ran,
+did not read such a file at all, so it never ran.
+
+The operator approves and runs a versioned sequence and nothing else. A history
+read that lists a repeatable migration sets `Blocked=True` with
+`RepeatableMigrationsUnsupported`, leaves `Ready` false, publishes no plan, and
+reads again at `spec.interval`. The message names each file, or, for a row the
+database's record keeps after its file went, the identity:
+
+```
+The history lists 1 repeatable migration, which this operator does not run: R__account_names.sql. Remove the R__ files from the artifact and write what they do as versioned migrations; a row of the database's record goes with `ptah migrations repair`
+```
+
+Remove the files from the artifact and publish what they did as versioned
+migrations. Where the database already records a repeatable migration, because
+someone ran Ptah by hand, `ptah migrations repair --repeatable <identity>`
+deletes its row.
 
 ## A migration that failed and committed nothing
 
@@ -650,10 +674,12 @@ schema plan` yourself, at the digest the operator pins, prints it.
 
 Where Ptah's report lists the views and options it refused, as it does for
 `view-security-option` since v0.29.3, the message names them after the code,
-each as the view, spelled as the schema spells it, and the option:
+each as the view and the option. Since v0.30.0 a PostgreSQL view is named with
+its schema; a MySQL or MariaDB view is spelled as the schema spells it:
 
 ```
 plan_refused: ptah refused to plan the change (view-security-option: orders_view sql_security, notes_view sql_security)
+plan_refused: ptah refused to plan the change (view-security-option: public.notes_view security_invoker)
 ```
 
 Since v0.29.4 a MySQL or MariaDB refusal with the code `view-definer` lists
@@ -666,6 +692,27 @@ plan_refused: ptah refused to plan the change (view-definer: orders_view definer
 
 An account the read did not record is left out, and Ptah refuses then too.
 
+Since v0.30.1 Ptah's `schema apply` refuses a PostgreSQL plan that would give
+a view or a materialized view to an owner the server would refuse, before any
+statement runs, under one of three codes
+([stokaro/ptah#6196](https://github.com/stokaro/ptah/pull/6196)). `schema plan`
+does not check owners, since the login that plans is often not the one that
+applies. A Plan meets the refusal in the `schema apply` dry run it runs on the
+saved plan, and the operator reads the code from that dry run; an approved
+plan's Apply meets it in the run itself. The message names the statement, the
+role, and what is missing:
+
+```
+plan_refused: ptah refused to plan the change (missing-owner-role: ALTER VIEW "public"."my_docs" OWNER TO "reporting" role reporting does not exist)
+plan_refused: ptah refused to plan the change (owner-transfer: ALTER VIEW "public"."my_docs" OWNER TO "reporting" role reporting connected ptah lacks SET)
+plan_refused: ptah refused to plan the change (owner-schema-privilege: ALTER VIEW "public"."my_docs" OWNER TO "reporting" role reporting lacks CREATE on schema public)
+```
+
+`SET` is the privilege PostgreSQL 16 and later ask for, and `MEMBER` the one
+earlier servers ask for. Where the role already owns the view, as when a plan
+rebuilds the view and gives it back to its owner, the message adds `, and the
+role owns it now`. Ptah's sentence in the Pod log says what to grant.
+
 It names the first eight that fit in the 512 bytes an Event keeps, then counts
 the rest, as in `, and 3 more`. A view name too long to fit is cut and ends in
 `...`, and a control character in a view or an account reads as a space. A
@@ -677,6 +724,9 @@ gives the code alone.
 | A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
 | A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and `sql_security`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
 | A MySQL or MariaDB view runs as its definer, under `SQL SECURITY DEFINER` before and after the change, and its definer is another account than the schema's login, since Ptah v0.29.4. A replacement without a `DEFINER` clause would make the login its definer, so the view would run with the login's privileges ([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-definer`, naming each view, its definer and the login. | Point the schema's Secret at the definer, so the plan names that definer and the view keeps it. Or declare the view `SQL SECURITY INVOKER` if it should run with its reader's privileges, and the login becomes its definer. Or list the view in `spec.policy.exclude`. |
+| The plan gives a PostgreSQL view or materialized view to a role that does not exist, since Ptah v0.30.1. | The Plan, or an approved plan's Apply, fails with the code `missing-owner-role`, naming the statement and the role. | Create the role, or declare the owner the view should have. |
+| The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, or declare an owner the login may give the view to. |
+| The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>`, or declare another owner. |
 | The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
 
@@ -691,6 +741,29 @@ Two things end it, both of them spec edits by a person: take the table out of
 `spec.policy.protectedTables`, or express the change as a versioned migration
 instead. [Protecting a table](../../use/reference-data/#protecting-a-table)
 says which to choose.
+
+## A difference Ptah cannot plan
+
+Since v0.30.0 Ptah writes a note, and no statement, for a difference it finds
+and cannot plan, such as a generated column whose expression changed on
+PostgreSQL before 17, which has no `ALTER COLUMN ... SET EXPRESSION`
+([stokaro/ptah#6165](https://github.com/stokaro/ptah/pull/6165)). Ptah v0.29.2
+planned nothing for it either, and the resource read as in sync.
+
+A Plan whose plan holds only notes sets `DifferenceNotPlannable` on
+`DriftDetected`, which is true, and on `PlanReady`, `InSync` and `Ready`, which
+are false. The resource is `Blocked`, nothing is published, approved or
+applied, and no failure is reported. `Ready` and a Warning Event carry the
+notes:
+
+```
+ptah found a difference it cannot plan: WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); manual migration required. Nothing is planned: make the change by hand or with a migration, or change the artifact
+```
+
+The operator reads again at `spec.interval`, so a database changed by hand, or
+an artifact that matches the database, converges with no other step. A plan
+with statements and notes is published and approved as any other plan, and
+`kubectl ptah plan` prints each note where Ptah placed it.
 
 ## Unsupported engines
 

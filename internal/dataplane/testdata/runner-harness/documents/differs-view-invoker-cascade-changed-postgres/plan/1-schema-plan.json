@@ -2,24 +2,25 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:9a283e6ee39c883a56343a60fafbe23efb885f4e3ddeccd2cb22b9c9280f4573",
-  "plan_path": "/work/ptah-plan-output-2257529377/second.plan.json",
+  "plan_digest": "sha256:ac2ec5e9740bf06906ca3b25abc918c44760eca94faa9671bb84cc48403de887",
+  "plan_path": "/work/ptah-plan-output-1496241194/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_c3181afa6f22",
+    "name": "plan_a10413912581",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:0c171175e33cd073aab2b03723f58b66f7aec269aeb20d4a63839a65c0fb07ea",
-    "to_fingerprint": "sha256:9a3bc6eb409b6b88dccee491775c9ca687aa375a76e67f2bfef66e02f074a857",
+    "from_fingerprint": "sha256:a4fc06a3abf3fb680d177be5c81e177eb1a75ec401717733ce118749e1fbe061",
+    "to_fingerprint": "sha256:9803bbfe73617fa25a94e4e11d7eecc346a32d6280f498b3aae0361842a034ac",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": true,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "DROP POLICY \"differs_docs_member\" ON \"differs_docs\"",
+        "sql": "DROP POLICY \"differs_docs_member\" ON \"public\".\"differs_docs\"",
         "severity": "destructive",
         "reason": "DROP POLICY removes an access-control protection",
         "owned": true,
@@ -27,7 +28,7 @@
         "access_reason": "removing a permissive policy can hide the rows it admitted"
       },
       {
-        "sql": "DROP VIEW \"differs_member_names\"",
+        "sql": "DROP VIEW \"public\".\"differs_member_names\"",
         "severity": "warning",
         "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it",
         "effects": [
@@ -68,7 +69,7 @@
         ]
       },
       {
-        "sql": "DROP VIEW \"differs_member_ids\"",
+        "sql": "DROP VIEW \"public\".\"differs_member_ids\"",
         "severity": "warning",
         "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it",
         "effects": [
@@ -109,7 +110,7 @@
         ]
       },
       {
-        "sql": "CREATE VIEW \"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members",
+        "sql": "CREATE VIEW \"public\".\"differs_member_ids\" WITH (security_invoker=false) AS\nSELECT id FROM differs_members",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints",
         "effects": [
@@ -150,7 +151,7 @@
         ]
       },
       {
-        "sql": "CREATE VIEW \"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids",
+        "sql": "CREATE VIEW \"public\".\"differs_member_names\" WITH (security_invoker=true) AS\nSELECT id FROM differs_member_ids",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints",
         "effects": [
@@ -191,7 +192,7 @@
         ]
       },
       {
-        "sql": "DROP TABLE \"differs_docs\"",
+        "sql": "DROP TABLE \"public\".\"differs_docs\"",
         "severity": "destructive",
         "reason": "DROP TABLE removes the table and all rows"
       }

@@ -282,7 +282,7 @@ func TestPlanShowsAPlanItCannotReadWholeAsTextAlone(t *testing.T) {
 		if code != exitOK || stderr != "" {
 			t.Fatalf("plan = %d, want %d; stderr %q", code, exitOK, stderr)
 		}
-		for _, want := range []string{"Unread fields:  annotations, statements[].inputs (", "ALTER TABLE orders DROP COLUMN legacy_note;"} {
+		for _, want := range []string{"Unread fields:  provider_options, statements[].inputs (", "ALTER TABLE orders DROP COLUMN legacy_note;"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("stdout does not carry %q:\n%s", want, stdout)
 			}
@@ -300,7 +300,7 @@ func TestPlanShowsAPlanItCannotReadWholeAsTextAlone(t *testing.T) {
 			if code != exitFailed || stdout != "" {
 				t.Fatalf("plan = %d, want %d; stdout %q", code, exitFailed, stdout)
 			}
-			for _, want := range []string{"annotations, statements[].inputs", "-o " + format + " prints the whole plan"} {
+			for _, want := range []string{"provider_options, statements[].inputs", "-o " + format + " prints the whole plan"} {
 				if !strings.Contains(stderr, want) {
 					t.Fatalf("stderr does not carry %q: %q", want, stderr)
 				}

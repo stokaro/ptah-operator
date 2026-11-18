@@ -32,7 +32,7 @@
       "column_names": "exact"
     },
     "tables_added": [
-      "e2e_widgets"
+      "public.e2e_widgets"
     ],
     "tables_removed": null,
     "tables_modified": null,

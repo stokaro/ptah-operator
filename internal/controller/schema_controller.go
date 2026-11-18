@@ -1371,6 +1371,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == "protected_table" {
 			return r.refuseProtectedTable(ctx, schema, job, result.Error.Message)
 		}
+		// A plan of notes is not a fault either: Ptah found a difference it
+		// cannot plan, said why, and planned nothing to approve or run.
+		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == runner.CodeDifferenceNotPlannable {
+			return r.refuseUnplannableDifference(ctx, schema, job, result.Error.Message)
+		}
 		if schemaOperation(operation).Mutating || result.Uncertain {
 			// A terminal result belongs to only one Pod attempt. Kubernetes may
 			// start a Job workload more than once, so no child-side pre-mutation
@@ -1711,6 +1716,69 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	job *batchv1.Job,
 	message string,
 ) (ctrl.Result, error) {
+	result, err := r.endPlanWithoutPlan(ctx, schema, job, planEnd{
+		reason:    operatorv1alpha1.ReasonProtectedTable,
+		planReady: "No plan may change a table spec.policy.protectedTables fences off",
+		inSync:    "The artifact asks for a change to a protected table, so the managed scope cannot converge",
+		ready:     "Remove the protectedTables entry to plan the change, or write the rows as a migration",
+	})
+	if err != nil {
+		return result, err
+	}
+	r.event(schema, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
+	return result, nil
+}
+
+// refuseUnplannableDifference records a plan Ptah saved with notes and no
+// statement: since Ptah v0.30.0 that is what a difference Ptah cannot plan
+// produces, such as a generated column whose expression changed on a
+// PostgreSQL before 17 (stokaro/ptah#6165). The database differs, so the
+// resource is not in sync, and there is nothing to approve or apply.
+//
+// It ends the operation the way a fence refusal does, for the same reason: a
+// re-plan would find the same difference within the second. The notes go to
+// Ready and to an Event, and the next read at the interval picks up a person's
+// change to the database or the artifact.
+func (r *SchemaReconciler) refuseUnplannableDifference(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	message string,
+) (ctrl.Result, error) {
+	result, err := r.endPlanWithoutPlan(ctx, schema, job, planEnd{
+		reason:    operatorv1alpha1.ReasonDifferenceNotPlannable,
+		drift:     "The managed scope differs from the artifact in a way Ptah cannot plan",
+		planReady: "Ptah found a difference it cannot plan and planned no statement",
+		inSync:    "The managed scope differs from the artifact in a way Ptah cannot plan",
+		ready: strings.TrimSuffix(bounded(message, 512), ".") +
+			". Nothing is planned: make the change by hand or with a migration, or change the artifact",
+	})
+	if err != nil {
+		return result, err
+	}
+	r.event(schema, corev1.EventTypeWarning, "DifferenceNotPlannable", "%s", bounded(message, 512))
+	return result, nil
+}
+
+// planEnd is how a Plan that ends with no plan to publish reads: the reason
+// every condition it sets carries, and their messages. The caller records the
+// Event once the status is written.
+type planEnd struct {
+	reason operatorv1alpha1.ConditionReason
+	// drift, when set, is DriftDetected's message, and the condition becomes
+	// true: the plan found a difference.
+	drift, planReady, inSync, ready string
+}
+
+// endPlanWithoutPlan records a Plan that ended with nothing to publish and is
+// no failure of the run: the conditions name why, the resource reads as
+// blocked, and the operator reads again at the interval.
+func (r *SchemaReconciler) endPlanWithoutPlan(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	end planEnd,
+) (ctrl.Result, error) {
 	if err := r.harvestJob(ctx, schema, job); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1728,17 +1796,14 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	schema.Status.NextReconciliationTime = &next
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	clearFailure(schema)
-	// The fence compared the plan with the target, so the target answered.
+	// The plan compared the artifact with the target, so the target answered.
 	setSchemaTargetObserved(schema)
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonProtectedTable,
-		"No plan may change a table spec.policy.protectedTables fences off")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonProtectedTable,
-		"The artifact asks for a change to a protected table, so the managed scope cannot converge")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
-		operatorv1alpha1.ReasonProtectedTable,
-		"Remove the protectedTables entry to plan the change, or write the rows as a migration")
+	if end.drift != "" {
+		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
+	}
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, end.reason, end.inSync)
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, end.reason, end.ready)
 	if err := r.retireClaim(ctx, before, schema, mutationlifecycle.DispositionAccounted); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1748,7 +1813,6 @@ func (r *SchemaReconciler) refuseProtectedTable(
 			return ctrl.Result{}, err
 		}
 	}
-	r.event(schema, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
 	return requeueAtDeadline(&next, r.now()), nil
 }
 

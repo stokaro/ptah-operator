@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:309843fe1578342121aa11bfbded46ab74d266b423fac440b9f1d414e875a8e9",
+  "plan_path": "/work/ptah-plan-output-1275783045/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_f114d8124569",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:34077819f869cc9eb6d4035543d5141eb3e452aced904c716166624b97c027ac",
+    "to_fingerprint": "sha256:de172e2631f15a73ce1ce81411e4194a3f0d0a0ed79f2fbb4fb4c796ff794185",
+    "scope": {
+      "kind": "realm"
+    },
+    "placed_schema": "public",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_nobody\"",
+        "severity": "warning",
+        "reason": "OWNER TO gives the object to another role: the role that owned it loses an owner's privileges, and a view then reads its tables with the new owner's privileges"
+      }
+    ]
+  }
+}

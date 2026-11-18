@@ -2,21 +2,22 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
-  "plan_path": "/work/ptah-plan-output-1766424188/first.plan.json",
+  "plan_digest": "sha256:1d0bd5634e5a42f2157983612321dda8115fd8a72e49c65a2a7096c26376e30b",
+  "plan_path": "/work/ptah-plan-output-664485566/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_d5e05a296f0d",
+    "name": "plan_528af45c89c8",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:832049ff6c6b246be1808105a85ffe9d8fd11c4ac15ed576332fa8662c825354",
-    "to_fingerprint": "sha256:1841d8b3bb50fe494f13fe26fc2b8e272dda9cda4c7c59287ec3905373d052a5",
+    "from_fingerprint": "sha256:11861acfc0b8725c662ed8d7030a1ea28a99f6c75292fd969716d11d44aa8da4",
+    "to_fingerprint": "sha256:585fde7f95038d2e69444e1be1b3840b6adb702314218cb4b9406587fc38c170",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
+        "sql": "ALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints",
         "effects": [

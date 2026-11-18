@@ -111,23 +111,24 @@ Stored:         2026-09-13T08:04:05Z
 Applied:        2026-09-13T08:04:24Z
 
 Statement 1 of 1: safe (does not remove data or tighten constraints)
-CREATE TABLE "customers" (
+CREATE TABLE "public"."customers" (
   "id" bigint PRIMARY KEY NOT NULL,
   "email" text NOT NULL
 );
 ```
 
-The statements come out as the planner wrote them. The line above each one is
-not SQL. It gives the statement's severity, which
+The statements come out as the planner wrote them. Since v0.30.0 Ptah names a
+PostgreSQL object with its schema, as `"public"."customers"`, where earlier
+releases wrote the name alone. The line above each one is not SQL. It gives the statement's severity, which
 `Destructive` summarizes for the whole plan, and the reason Ptah gave for it.
 Statements that do different things read differently:
 
 ```text
 Statement 1 of 2: safe (does not remove data or tighten constraints)
-ALTER TABLE "e2e_widgets" ADD COLUMN "fault_token" text;
+ALTER TABLE "public"."e2e_widgets" ADD COLUMN "fault_token" text;
 
 Statement 2 of 2: destructive (DROP TABLE removes the table and all rows)
-DROP TABLE "e2e_excluded_policy_keep";
+DROP TABLE "public"."e2e_excluded_policy_keep";
 ```
 
 The plugin also reads each statement, by the rules the manager reads a plan
@@ -154,8 +155,25 @@ plugin and the manager that published the plan are separate builds.
 
 ```text
 Statement 1 of 1: destructive as this plugin reads it; Ptah rated it safe (does not remove data or tighten constraints)
-ALTER TABLE "customers" ALTER COLUMN "email" DROP NOT NULL;
+ALTER TABLE "public"."customers" ALTER COLUMN "email" DROP NOT NULL;
 ```
+
+Since v0.30.0 Ptah can write a note into a plan, about something it found and
+did not plan, such as a change it leaves to a person
+([stokaro/ptah#6165](https://github.com/stokaro/ptah/pull/6165)). A plan with
+notes adds a `Notes:` line that counts them, and prints each one on a line of
+its own, before the statement Ptah placed it in front of, or after the last.
+A note is not SQL, and `-o sql` leaves it out; it is part of the plan's bytes,
+which the content digest and an approval cover.
+
+```text
+Note: WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); manual migration required.
+```
+
+A plan of notes and no statement is never published: the schema reads
+`DifferenceNotPlannable`, as
+[A difference Ptah cannot plan](../../troubleshoot/condition-reasons/#a-difference-ptah-cannot-plan)
+says.
 
 `Privileges` names the kinds of authority the plan records, or says `none`. A
 plan that records any waited for an approval even under `apply: Always`, and
@@ -183,7 +201,7 @@ ptah plan` still shows it, under a line that names them, and prints no value of
 theirs:
 
 ```text
-Unread fields:  annotations, statements[].inputs (a newer Ptah wrote them and this plugin does not read them; read this plan with a plugin at the operator's version before you approve it)
+Unread fields:  provider_options, statements[].inputs (a newer Ptah wrote them and this plugin does not read them; read this plan with a plugin at the operator's version before you approve it)
 ```
 
 `-o sql` and `-o json` exit `1` on such a plan and print nothing. A program takes

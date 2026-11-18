@@ -2,27 +2,28 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:7cc9d9e281c0d8f722348af7eb95da277db81d40bcf21766454e4e42cafab529",
-  "plan_path": "/work/ptah-plan-output-1909611545/second.plan.json",
+  "plan_digest": "sha256:dcd009dae278031ea32c7d67f4f1963e77dc1fea091abf2623b82e7b300fe1fc",
+  "plan_path": "/work/ptah-plan-output-2986042759/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_bb2fbe78f1e3",
+    "name": "plan_40d308711b5f",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:4c5364c9119bd372d96d25bf539cadbc689561adf4d99f2bbc011ee5acd6e27a",
-    "to_fingerprint": "sha256:2ea1be1f82c1f25e70cd0c6dca60d036d925524c4ab03bd8d869240ef2768912",
+    "from_fingerprint": "sha256:b3a17105c90bb9e5d16621e8fd95108b92f2dea8254fee789fc40aaf2a740212",
+    "to_fingerprint": "sha256:4aba472f2e388a0ad6a08dda880b9c594934f41014b7a971409ea0531222ef7f",
     "exclude": [
       "public.e2e_policy_notes_owner[type=policy]"
     ],
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": true,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "DROP POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"",
+        "sql": "DROP POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"",
         "severity": "destructive",
         "reason": "DROP POLICY removes an access-control protection",
         "owned": true,

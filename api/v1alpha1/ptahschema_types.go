@@ -1748,6 +1748,7 @@ const (
 	ReasonCurrentPlan                  ConditionReason = "CurrentPlan"
 	ReasonDesiredStateChanged          ConditionReason = "DesiredStateChanged"
 	ReasonDestructiveChangesDisabled   ConditionReason = "DestructiveChangesDisabled"
+	ReasonDifferenceNotPlannable       ConditionReason = "DifferenceNotPlannable"
 	ReasonDigestPinned                 ConditionReason = "DigestPinned"
 	ReasonDispatchCommitted            ConditionReason = "DispatchCommitted"
 	ReasonDownloadVerified             ConditionReason = "DownloadVerified"

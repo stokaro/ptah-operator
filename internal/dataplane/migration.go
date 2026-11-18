@@ -140,7 +140,30 @@ type MigrationStatusReport struct {
 	PendingMigrations []int64           `json:"pending_migrations"`
 	Migrations        []MigrationRecord `json:"migrations,omitempty"`
 	DirtyRevision     *MigrationDirty   `json:"dirty_revision,omitempty"`
+	// Repeatables are the repeatable migrations Ptah v0.30.0 lists: each
+	// R__<identity>.sql file of the directory, and each row of the record
+	// table no file carries any more (stokaro/ptah#6156). This operator
+	// runs none of them, so a history that lists one stops before a plan.
+	// The list carries names and states only; what a record says about a
+	// failed attempt stays out of it.
+	Repeatables []MigrationRepeatable `json:"repeatables,omitempty"`
 }
+
+// MigrationRepeatable is one repeatable migration a status lists: its
+// identity, the file that holds it, empty for a record row no file carries,
+// and its state.
+type MigrationRepeatable struct {
+	Identity string `json:"identity"`
+	Path     string `json:"path,omitempty"`
+	State    string `json:"state"`
+}
+
+// Bounds on what a repeatable migration names: an identity is part of a file
+// name, and a path is a file's place in the directory.
+const (
+	MaxMigrationRepeatableIdentityBytes = 255
+	MaxMigrationRepeatablePathBytes     = 1024
+)
 
 // MigrationDirty is the revision row a failed or interrupted run left behind.
 type MigrationDirty struct {
@@ -387,6 +410,12 @@ func (r MigrationStatusReport) validate() error {
 	}
 	if r.DirtyRevision != nil && r.DirtyRevision.Version <= 0 {
 		return fmt.Errorf("migration status reports a dirty revision with no version")
+	}
+	for _, repeatable := range r.Repeatables {
+		if repeatable.Identity == "" || len(repeatable.Identity) > MaxMigrationRepeatableIdentityBytes ||
+			len(repeatable.Path) > MaxMigrationRepeatablePathBytes {
+			return fmt.Errorf("migration status lists a repeatable migration with no identity, or with a name longer than a file name holds")
+		}
 	}
 	return nil
 }

@@ -2,21 +2,22 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:60cbe85f2758890b872df55696f8f5af40e3497903c0c54760e6f14e524a555c",
-  "plan_path": "/work/ptah-plan-output-3792524519/first.plan.json",
+  "plan_digest": "sha256:f99dcf9307aa838e5baec7c152926809bc5d27e6091954777cd89331ba8a61be",
+  "plan_path": "/work/ptah-plan-output-3727410905/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_31736137ab59",
+    "name": "plan_dbd1c838f3a0",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:cac0e4e6111ffac6691afda29e0af0df5124bb595a8f0870efcc0530031a6fd2",
-    "to_fingerprint": "sha256:ae2145cbe5d971f87568cb15e5dc421444a0abb2757cdc6c3e3b9e2a19d69320",
+    "from_fingerprint": "sha256:c364956fda83ad270107b7914d3bd2c8a15ddeccb539c55ec69f1259c7d38805",
+    "to_fingerprint": "sha256:51459d135b040c0e4b8402d1acf8c64fc89af0fc97abbd5514a5cb3a5dd20c1b",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text",
+        "sql": "ALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       }

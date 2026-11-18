@@ -2,14 +2,14 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_f961b6faef48",
-  "plan_digest": "sha256:f5323e856e08cb679c9fe6600ffe5dc0d2e797301297a6174ecf330d46a02e60",
+  "plan_name": "plan_a504346ec96c",
+  "plan_digest": "sha256:1c12bbdbab0172c2635d4f9cba945aaba978e573899c15c2a57de567baa49325",
   "units": [
     {
-      "sql": "ALTER TABLE \"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT"
+      "sql": "ALTER TABLE \"public\".\"differs_items\" ALTER COLUMN \"id\" DROP DEFAULT"
     },
     {
-      "sql": "DROP SEQUENCE \"differs_items_id_seq\""
+      "sql": "DROP SEQUENCE \"public\".\"differs_items_id_seq\""
     }
   ]
 }

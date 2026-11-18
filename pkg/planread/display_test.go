@@ -208,9 +208,9 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 		{
 			name: "a field on the plan",
 			document: func(t *testing.T) []byte {
-				return edited(t, oneStatement, func(d map[string]any) { d["annotations"] = map[string]any{"provider": unreadValue} })
+				return edited(t, oneStatement, func(d map[string]any) { d["provider_options"] = map[string]any{"provider": unreadValue} })
 			},
-			unread: []string{"annotations"},
+			unread: []string{"provider_options"},
 		},
 		{
 			name: "a field on a statement",
@@ -252,10 +252,10 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 			name: "what a field holds is not walked",
 			document: func(t *testing.T) []byte {
 				return edited(t, oneStatement, func(d map[string]any) {
-					d["annotations"] = map[string]any{"inputs": map[string]any{"statements": []any{map[string]any{"sql": unreadValue}}}}
+					d["provider_options"] = map[string]any{"inputs": map[string]any{"statements": []any{map[string]any{"sql": unreadValue}}}}
 				})
 			},
-			unread: []string{"annotations"},
+			unread: []string{"provider_options"},
 		},
 		{
 			name: "several fields come back sorted",
@@ -304,11 +304,11 @@ func TestLoadForDisplayNamesWhatItDoesNotRead(t *testing.T) {
 			name: "a field on the plan beside a field Ptah added to an effect",
 			document: func(t *testing.T) []byte {
 				return edited(t, oneView, func(d map[string]any) {
-					d["annotations"] = unreadValue
+					d["provider_options"] = unreadValue
 					statementOf(d, 0)["effects"] = viewEffect(unreadValue)
 				})
 			},
-			unread: []string{"annotations"},
+			unread: []string{"provider_options"},
 		},
 		{
 			name:     "a document as it was published",
@@ -412,7 +412,7 @@ func TestLoadForDisplayKeepsTheOrderOfARepeatedKey(t *testing.T) {
 	written := bytes.TrimSuffix(planreadtest.Document(t, []string{"DROP TABLE first_one_written"}), []byte("}"))
 	again := `,"Statements":[{"sql":"` + read + `","severity":"safe","reason":""}]`
 	bare := append(slices.Clone(written), []byte(again+"}")...)
-	withField := append(slices.Clone(written), []byte(again+`,"annotations":"`+unreadValue+`"}`)...)
+	withField := append(slices.Clone(written), []byte(again+`,"provider_options":"`+unreadValue+`"}`)...)
 
 	whole, err := strict(stored(t, bare), planread.Current)
 	if err != nil {
@@ -570,7 +570,7 @@ func TestLoadForDisplayRefusesWhatTheDecoderRefuses(t *testing.T) {
 	withUnread := func(edit func(map[string]any)) func(t *testing.T) []byte {
 		return func(t *testing.T) []byte {
 			return edited(t, oneStatement, func(d map[string]any) {
-				d["annotations"] = unreadValue
+				d["provider_options"] = unreadValue
 				edit(d)
 			})
 		}
@@ -600,10 +600,10 @@ func TestLoadForDisplayRefusesWhatTheDecoderRefuses(t *testing.T) {
 		{
 			"a second JSON value",
 			func(t *testing.T) []byte {
-				return append(edited(t, oneStatement, func(d map[string]any) { d["annotations"] = unreadValue }), []byte(" {}")...)
+				return append(edited(t, oneStatement, func(d map[string]any) { d["provider_options"] = unreadValue }), []byte(" {}")...)
 			},
 		},
-		{"not JSON after the first member", func(t *testing.T) []byte { return []byte(`{"annotations":"` + unreadValue + `",`) }},
+		{"not JSON after the first member", func(t *testing.T) []byte { return []byte(`{"provider_options":"` + unreadValue + `",`) }},
 		{"more fields than a list prints", func(t *testing.T) []byte {
 			return edited(t, oneStatement, func(d map[string]any) {
 				for index := range 65 {

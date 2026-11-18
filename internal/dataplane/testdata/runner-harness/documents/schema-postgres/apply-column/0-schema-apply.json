@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_31736137ab59",
-  "plan_digest": "sha256:60cbe85f2758890b872df55696f8f5af40e3497903c0c54760e6f14e524a555c",
+  "plan_name": "plan_dbd1c838f3a0",
+  "plan_digest": "sha256:f99dcf9307aa838e5baec7c152926809bc5d27e6091954777cd89331ba8a61be",
   "units": [
     {
-      "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"note\" text"
+      "sql": "ALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"note\" text"
     }
   ],
   "apply_log": {

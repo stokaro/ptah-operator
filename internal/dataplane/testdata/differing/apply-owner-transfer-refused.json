@@ -1,0 +1,25 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "refused",
+  "plan_name": "plan_207fed48544c",
+  "plan_digest": "sha256:8b21e920017f88144d5f2036d6335fa1f861baebfc37c4d0f4e104179e2bf5db",
+  "units": [
+    {
+      "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\""
+    }
+  ],
+  "refusal": {
+    "code": "owner-transfer",
+    "owner": {
+      "statement": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\"",
+      "kind": "VIEW",
+      "role": "harness_view_outsider",
+      "connected": "harness_view_transferer",
+      "privilege": "SET"
+    }
+  },
+  "error": {
+    "message": "apply schema changes: ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_outsider\" gives the view to role \"harness_view_outsider\", which connected role \"harness_view_transferer\" may not give an object to: the server requires the SET privilege on the new owner, and \"harness_view_transferer\" lacks it; run GRANT \"harness_view_outsider\" TO \"harness_view_transferer\" WITH SET TRUE, or declare the owner the view should have, one \"harness_view_transferer\" may give it to"
+  }
+}

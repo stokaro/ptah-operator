@@ -62,7 +62,7 @@
     "sequences_removed": null,
     "sequences_modified": null,
     "views_added": [
-      "differs_notes_view"
+      "public.differs_notes_view"
     ],
     "views_removed": null,
     "views_modified": null,

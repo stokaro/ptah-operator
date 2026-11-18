@@ -140,7 +140,13 @@ func (e *PlanEffect) UnmarshalJSON(data []byte) error {
 // effect the operator reads, which is how Ptah writes a CREATE OR REPLACE VIEW
 // of a view whose state a CASCADE left uncertain. Until Ptah records what such
 // a statement drops (stokaro/ptah#6023), the hold cannot tell a view it took
-// from one it left or one that never existed. A view nothing dropped holds when
+// from one it left or one that never existed. A view a drop with a read effect
+// took, made again by a statement with no effect the operator reads, holds
+// where the statement states the option, whose value its SQL is not read for,
+// and where it states none and the dropped view read with its readers' rights.
+// Ptah v0.30.1 records an effect on the CREATE VIEW of every such rebuild it
+// plans (stokaro/ptah#6198), so the hold is for a plan that carries none. A
+// view nothing dropped holds when
 // it reads with its readers' rights. Every new view records the option as changed, from
 // absent to its value, so changed alone would hold every new view; one with its
 // owner's rights is held no more than a new view that states no option.
@@ -159,7 +165,8 @@ func securityInvokerHold(statement PlanStatement, dialect string, drops *viewDro
 		drops.drop(view.name, invoker, read)
 		return false, false
 	case !read:
-		taken := view.action != PlanEffectActionAlter && drops.mayHaveTaken(view.name)
+		taken := view.action != PlanEffectActionAlter &&
+			(drops.mayHaveTaken(view.name) || drops.remadeUnread(view.name, statesSecurityInvoker(statement.SQL, dialect)))
 		drops.forgetNamed(view.name)
 		return taken, false
 	}
@@ -295,6 +302,27 @@ func (d *viewDrops) recreate(object PlanEffectObject, name string) (replaced, kn
 // view and whose own effect the operator does not read.
 func (d *viewDrops) mayHaveTaken(name string) bool {
 	return d.unnamed || slices.ContainsFunc(d.unread, func(unread string) bool { return sameViewName(unread, name) })
+}
+
+// remadeUnread reports whether a view a drop's effect recorded under a name
+// name may name can read with other rights once a statement whose own effect
+// the operator does not read makes it again. The value the statement gives the
+// option is not read from its SQL, so a statement that states the option may
+// give it any value and holds. One that states none gives the view its owner's
+// rights, which holds only where the dropped view read with its readers'.
+func (d *viewDrops) remadeUnread(name string, statesOption bool) bool {
+	for object, invoker := range d.held {
+		if viewNamed(object, name) && (invoker || statesOption) {
+			return true
+		}
+	}
+	return false
+}
+
+// statesSecurityInvoker reports whether a statement names security_invoker,
+// in any reading of its strings.
+func statesSecurityInvoker(sql, dialect string) bool {
+	return hasSQLToken(sqlKeywordTokens(sql, dialect), "SECURITY_INVOKER")
 }
 
 // forgetNamed forgets what a drop's effect recorded for any view name may

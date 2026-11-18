@@ -258,7 +258,7 @@ func TestAPlanRefusalNamesTheViewsTheCapturedDocumentLists(t *testing.T) {
 		{
 			row:         "differs-view-invoker-unstated-postgres/plan",
 			environment: databaseEnvironment("captured-view-refusal"),
-			want:        "ptah refused to plan the change (view-security-option: differs_notes_view security_invoker)",
+			want:        "ptah refused to plan the change (view-security-option: public.differs_notes_view security_invoker)",
 		},
 		{
 			// Since Ptah v0.29.4 (stokaro/ptah#6109), as an account that did
@@ -351,6 +351,16 @@ func TestAnApplyRefusalNamesTheViewsItLists(t *testing.T) {
 			listed: `,"definer_privileges":[{"object":"view app.orders_view","definer":"app@%",` +
 				`"account":"deploy@%","privilege":"SET_ANY_DEFINER"}]`,
 			want: "ptah refused the approved plan (definer-privilege)",
+		},
+		{
+			// Since Ptah v0.30.1, where the roles moved after the Plan's dry
+			// run passed.
+			name: "a refusal that names an owner",
+			refusal: ownerRefusal(t, dataplane.SchemaRefusalOwnerSchemaPrivilege, dataplane.SchemaRefusalOwner{
+				Statement: `ALTER VIEW "public"."my_docs" OWNER TO "nocreate"`, Kind: "VIEW", Role: "nocreate", Schema: "public",
+			}),
+			want: `ptah refused the approved plan (owner-schema-privilege: ALTER VIEW "public"."my_docs" OWNER TO "nocreate" ` +
+				`role nocreate lacks CREATE on schema public)`,
 		},
 		{
 			name:    "a refusal that lists none",

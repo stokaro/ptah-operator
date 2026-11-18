@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_a13a15010545",
-  "plan_digest": "sha256:d7443a15a170246750207471c3794cc716c52df28c77815752f9304751f76dbb",
+  "plan_name": "plan_4c6eee3ac996",
+  "plan_digest": "sha256:651c9d371e272f190343fb4925a5c14cfcb98ab49164dd601c9a918cb7626e95",
   "units": [
     {
-      "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')"
+      "sql": "ALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')"
     }
   ],
   "apply_log": {

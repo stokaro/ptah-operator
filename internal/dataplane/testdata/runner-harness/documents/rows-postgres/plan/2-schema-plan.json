@@ -2,43 +2,44 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:a284e9f36ceae3468bf200e5673cb1d1aa9c459bf22329e1bb6ce04faa127517",
-  "plan_path": "/work/ptah-plan-output-2661579834/second.plan.json",
+  "plan_digest": "sha256:683b8e2819b6f6dcaaeb86981674dd33cb6c788fafbc60500f96fd46962f9fb6",
+  "plan_path": "/work/ptah-plan-output-3243822465/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_e46af08efebb",
+    "name": "plan_d62053588fdf",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
-    "to_fingerprint": "sha256:852cbfc2186a48d41d2174b55a0d235688717b025e01165aeac3fdaf12fe60e6",
+    "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
+    "to_fingerprint": "sha256:4095d9cc94b89b93c331249294e6c31900719e50488b714fb4491683c6964087",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "CREATE TABLE \"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n)",
+        "sql": "CREATE TABLE \"public\".\"regions\" (\n  \"code\" VARCHAR(8) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL\n)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       },
       {
-        "sql": "CREATE TABLE \"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n)",
+        "sql": "CREATE TABLE \"public\".\"countries\" (\n  \"code\" VARCHAR(2) PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(64) NOT NULL,\n  \"region_code\" VARCHAR(8) NOT NULL\n)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       },
       {
-        "sql": "ALTER TABLE \"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"regions\"(\"code\")",
+        "sql": "ALTER TABLE \"public\".\"countries\" ADD CONSTRAINT \"fk_countries_region\" FOREIGN KEY (\"region_code\") REFERENCES \"public\".\"regions\"(\"code\")",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       },
       {
-        "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');",
+        "sql": "INSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');",
         "severity": "safe",
-        "reason": "inserts declared rows into regions"
+        "reason": "inserts declared rows into public.regions"
       },
       {
-        "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');",
+        "sql": "INSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('emea', 'Europe, Middle East and Africa');",
         "severity": "safe",
-        "reason": "inserts declared rows into regions"
+        "reason": "inserts declared rows into public.regions"
       }
     ]
   }
