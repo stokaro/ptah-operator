@@ -452,6 +452,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a2b016f00e862187791f9f925bf4e3505bb4998c70a92257352f6f36ea240512",
       "reason": "Since Ptah v0.29.4 a refusal may carry view_definers, each view with the account it runs as and the account the plan's read ran as. The runner reads it apart from the rest of the report, as it reads view_options, and a plan_refused or apply_refused message names the entries after the code within the same bounds: ptah refused to plan the change (view-definer: orders_view definer root@% account deploy@%). An account the read did not record is left out, and each account is redacted and cleaned as other free text is. definer_privileges is not read, so that refusal reads by its code. A refused Apply also writes Ptah's error message to the Pod log, bounded and redacted, and LeavesReportedError counts apply_refused; an apply failure in a frame still belongs to apply_failed and apply_outcome_unknown alone. Codes, fields and the frame shape are unchanged. No release built an earlier digest of this change. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f58e547a9b6834a704775db00da6008876819aea01bb12b6cf029a801d363953",
+      "reason": "Read Ptah v0.30's documents. The plan decoder accepts placed_schema, and annotations as notes nothing runs: in order, within the statements, never empty. A no-changes report that names a saved plan of notes and no statement is difference_not_plannable, with the notes redacted and cleaned within 512 bytes, and no dry run runs. A refusal's owner names its statement and role, with the login and privilege or the schema, after missing-owner-role, owner-transfer or owner-schema-privilege, and a dry run that refuses an owner is plan_refused where it was invalid_plan_output; other dry-run refusals are unchanged. On PostgreSQL a validate fault naming a table without its schema matches it placed in one schema, as plan or drift prints it. Migration status repeatables are read, bounded and cleaned. Fields and the frame shape are unchanged. An older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }

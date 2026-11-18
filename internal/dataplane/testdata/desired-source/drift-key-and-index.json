@@ -2,6 +2,6 @@
   "contract_version": 1,
   "command": "schema drift",
   "error": {
-    "message": "postgres: index \"i\": names column \"missing_column\", which table \"t\" does not declare"
+    "message": "postgres: index \"i\": names column \"missing_column\", which table \"public.t\" does not declare"
   }
 }

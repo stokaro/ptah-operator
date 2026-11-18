@@ -2,13 +2,13 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:00d07c29d492afcf66696d398003c66d6a2bc01edbccccd93bb7f151d3c46d73",
-  "plan_path": "/work/ptah-plan-output-2812273532/second.plan.json",
+  "plan_digest": "sha256:ddd1b8d5fdc9e00b11e047a41b1848435545ec3dc1b8b37fc6f45af6d970419d",
+  "plan_path": "/work/ptah-plan-output-28862577/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_1d0502fa17dc",
+    "name": "plan_4b12d5ead816",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
+    "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
     "to_fingerprint": "sha256:30c2e55f90bf866504532b86117af2dcaa69bcdec82bff1d12ba45d7a28449ae",
     "schemas_beyond_url": [
       "differs_app"

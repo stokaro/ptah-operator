@@ -2,24 +2,25 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:5674ffa2bddb353c9c2a43d2dc36d3d8c6fc874ef052f8aad103b533705998fa",
-  "plan_path": "/work/ptah-plan-output-4201651090/first.plan.json",
+  "plan_digest": "sha256:a6637d7a9a9b6c396186d4a569734f883102bb16552ef6bab46a690705ffd3ae",
+  "plan_path": "/work/ptah-plan-output-2350771131/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_9df9df534bad",
+    "name": "plan_6b07f49096cf",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:06426050a55c5dee6bddeb2d5699a53ec711c40a7ae7165baf6cade8f62b7c6e",
-    "to_fingerprint": "sha256:e70eb6c306453ed77dbfb7a810c128d7677eb05c329456c362bcd8ffbf9fcb9a",
+    "from_fingerprint": "sha256:852d514fceb9c3962f4a9be6f90af8a0c3a7d5d451cfacc166d5f9709830f32f",
+    "to_fingerprint": "sha256:179ad272066e36258cc0e64416cdc2154f372c6beef112cb88092d400a421b24",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\"",
+        "sql": "ALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\"",
         "severity": "warning",
         "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
         "owned": true
@@ -28,7 +29,7 @@
         "transactions": [
           "allowed"
         ],
-        "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')",
+        "sql": "ALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2028-01-01')",
         "severity": "warning",
         "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
         "owned": true

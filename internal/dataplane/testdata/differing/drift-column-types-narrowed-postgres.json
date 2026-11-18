@@ -50,7 +50,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "differs_events",
+        "table_name": "public.differs_events",
         "columns_added": null,
         "columns_removed": null,
         "columns_modified": [

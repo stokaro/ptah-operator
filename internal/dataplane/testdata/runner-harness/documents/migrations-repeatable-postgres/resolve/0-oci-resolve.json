@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/migrations-repeatable-postgres:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-repeatable-postgres@sha256:549d0543c36e7e81ed6646a831a1e17d033a9b6d7b1d85e4d351c5533c852b8c",
+  "digest": "sha256:549d0543c36e7e81ed6646a831a1e17d033a9b6d7b1d85e4d351c5533c852b8c",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1313
+}

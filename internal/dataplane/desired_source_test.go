@@ -158,6 +158,132 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 	}
 }
 
+// On a PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0 and
+// drift since v0.30.1 can name the table they placed in public with that
+// schema, and validate does not. The sentences are the ones v0.30.1 wrote for
+// not-unique.sql and key-and-index.sql, and variations of them; the fault
+// returned is validate's.
+func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) {
+	t.Parallel()
+
+	const want = `postgres requires referenced columns code on table "parent" to be declared unique`
+	for name, failed := range map[string]string{
+		"in public":         `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique`,
+		"in another schema": `compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`,
+		"in no schema":      `compare database schema: ` + want,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-not-unique.txt"), "PostgreSQL", failed)
+			if !found || got != want {
+				t.Fatalf("SchemaStructuralProblem() = %q, %v, want %q", got, found, want)
+			}
+		})
+	}
+	for name, failed := range map[string]string{
+		"another table":                `compare database schema: postgres requires referenced columns code on table "public.other" to be declared unique`,
+		"another column":               `compare database schema: postgres requires referenced columns name on table "public.parent" to be declared unique`,
+		"an empty schema":              `compare database schema: postgres requires referenced columns code on table ".parent" to be declared unique`,
+		"two schemas":                  `compare database schema: postgres requires referenced columns code on table "x.public.parent" to be declared unique`,
+		"a schema outside the quotes":  `compare database schema: postgres requires referenced columns code on table public."parent" to be declared unique`,
+		"more words after the fault":   `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique: held`,
+		"the words with no boundary":   `compare database schema:postgres requires referenced columns code on table "public.parent" to be declared unique`,
+		"the words inside a long word": `compare database schema: xpostgres requires referenced columns code on table "public.parent" to be declared unique`,
+	} {
+		t.Run("refuses "+name, func(t *testing.T) {
+			t.Parallel()
+			if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-not-unique.txt"), "PostgreSQL", failed); found {
+				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
+			}
+		})
+	}
+	// A name validate prints with its schema comes back only as it is.
+	const qualified = "postgres: schema: postgres requires referenced columns code on table \"app.parent\" to be declared unique\n"
+	for failed, want := range map[string]bool{
+		`compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`:        true,
+		`compare database schema: postgres requires referenced columns code on table "public.app.parent" to be declared unique`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(qualified), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+
+	// An index line is the whole sentence, so the placed table is the only
+	// difference it may carry: Ptah places neither the index nor the column.
+	const indexWant = `index "i": names column "missing_column", which table "t" does not declare`
+	for failed, want := range map[string]bool{
+		`postgres: index "i": names column "missing_column", which table "public.t" does not declare`: true,
+		`postgres: index "i": names column "missing_column", which table "app.t" does not declare`:    true,
+		`postgres: ` + indexWant: true,
+		`postgres: index "public.i": names column "missing_column", which table "public.t" does not declare`:                   false,
+		`postgres: index "public.i": names column "missing_column", which table "t" does not declare`:                          false,
+		`postgres: index "i": names column "public.missing_column", which table "public.t" does not declare`:                   false,
+		`postgres: index "x.i": names column "y.missing_column", which table "z.t" does not declare`:                           false,
+		`postgres: index "i": names column "missing_column", which table "public.u" does not declare`:                          false,
+		`postgres: index "i": names column "other_column", which table "public.t" does not declare`:                            false,
+		`postgres: index "i": names column "missing_column", which table ".t" does not declare`:                                false,
+		`postgres: index "i": names column "missing_column", which table "x.public.t" does not declare`:                        false,
+		`postgres: index "i": names column "missing_column", which table "public.t" does not declare: held`:                    false,
+		`error comparing schemas: postgres: index "i": names column "missing_column", which table "public.t" does not declare`: false,
+		`index "i": names column "missing_column", which table "public.t" does not declare`:                                    false,
+	} {
+		got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-key-and-index.txt"), "PostgreSQL", failed)
+		if found != want || (found && got != indexWant) {
+			t.Errorf("SchemaStructuralProblem(%q) = %q, %v, want found %v", failed, got, found, want)
+		}
+	}
+
+	// The tables one sentence places share one schema, and only a table, named
+	// after the word table, is placed.
+	const tables = "postgres: schema: invalid foreign key: table \"child\" references table \"parent\"\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: invalid foreign key: table "public.child" references table "public.parent"`: true,
+		`error comparing schemas: invalid foreign key: table "child" references table "public.parent"`:        true,
+		`error comparing schemas: invalid foreign key: table "public.child" references table "app.parent"`:    false,
+		`error comparing schemas: invalid foreign key: table "app.child" references table "public.parent"`:    false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(tables), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+	const fieldKey = "postgres: schema: invalid foreign key: field \"id\" references unknown table \"nope\"\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: invalid foreign key: field "id" references unknown table "public.nope"`:        true,
+		`error comparing schemas: invalid foreign key: field "public.id" references unknown table "nope"`:        false,
+		`error comparing schemas: invalid foreign key: field "public.id" references unknown table "public.nope"`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(fieldKey), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+	const subtable = "postgres: schema: a subtable \"parent\" is declared twice\n"
+	if got, found := dataplane.SchemaStructuralProblem([]byte(subtable), "PostgreSQL",
+		`error comparing schemas: a subtable "public.parent" is declared twice`); found {
+		t.Errorf("SchemaStructuralProblem() = %q, want no reason for a name after a longer word", got)
+	}
+
+	// Ptah places no name on MySQL, so there the words are validate's.
+	const mysqlKey = "mysql: schema: invalid foreign key: field \"id\" references unknown table \"nope\"\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: invalid foreign key: field "id" references unknown table "nope"`:                 true,
+		`error comparing schemas: invalid foreign key: field "id" references unknown table "otherdb.nope"`:         false,
+		`error comparing schemas: invalid foreign key: field "otherdb.id" references unknown table "otherdb.nope"`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(mysqlKey), "MySQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) on MySQL found = %v, want %v", failed, found, want)
+		}
+	}
+	const mysqlIndex = "mysql: index \"i\": names column \"missing_column\", which table \"t\" does not declare\n"
+	for failed, want := range map[string]bool{
+		`mysql: index "i": names column "missing_column", which table "t" does not declare`:         true,
+		`mysql: index "i": names column "missing_column", which table "otherdb.t" does not declare`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(mysqlIndex), "MySQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) on MySQL found = %v, want %v", failed, found, want)
+		}
+	}
+}
+
 // TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn holds the filter
 // to the measured near miss first. On a database that holds a schema the file
 // declares nothing of, drift and plan stop on a key into that schema, which
@@ -203,7 +329,8 @@ func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) 
 		{"a load failure", string(desiredSourceFixture(t, "validate-sql.txt")), "PostgreSQL", failedSentence(t, "drift-sql.json")},
 		{"a file with no problem", string(desiredSourceFixture(t, "validate-good.txt")), "PostgreSQL", wrapped},
 		{"a line after the fault that the command did not say", line + `postgres: index "i": names nothing`, "PostgreSQL", wrapped},
-		// An index line is read only as the whole sentence, dialect and all.
+		// An index line is read only as the whole sentence, dialect and all,
+		// with no word but a placed schema changed.
 		{"an index line under a wrapper", indexLine, "PostgreSQL", "error comparing schemas: " + index},
 		{"an index line with more words", indexLine, "PostgreSQL", index + `: the database holds table "nowhere"`},
 		{"another index's line", indexLine, "PostgreSQL", strings.Replace(index, `"i"`, `"j"`, 1)},

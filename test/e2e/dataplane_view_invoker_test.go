@@ -119,8 +119,15 @@ func TestViewInvokerPlannedReadsEachStepOfTheRow(t *testing.T) {
 		}), viewCreatedWithOwnerRights, "security_invoker absent to true"},
 		{"a view created that names the option", editedViewPlan(t, created, func(statements []any) {
 			statement, _ := statements[0].(map[string]any)
-			statement["sql"] = `CREATE VIEW "e2e_widget_names" AS SELECT 1 -- security_invoker=false`
+			statement["sql"] = `CREATE VIEW ` + plannedView + ` AS SELECT 1 -- security_invoker=false`
 		}), viewCreatedWithOwnerRights, "names security_invoker"},
+		// Since v0.30.0 the statement names the view's schema; one that does
+		// not was planned against a URL that pins a search_path, which the
+		// row's does not.
+		{"a view named without its schema", editedViewPlan(t, created, func(statements []any) {
+			statement, _ := statements[0].(map[string]any)
+			statement["sql"] = strings.Replace(statement["sql"].(string), plannedView, `"`+externalView+`"`, 1)
+		}), viewCreatedWithOwnerRights, "opens"},
 		{"a replace that does not restate the option", editedViewPlan(t, kept, func(statements []any) {
 			statement, _ := statements[0].(map[string]any)
 			statement["sql"] = strings.Replace(statement["sql"].(string), "WITH (security_invoker=true) ", "", 1)

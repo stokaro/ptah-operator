@@ -91,7 +91,9 @@ func privilegesLine(plan planread.DisplayPlan) string {
 // The statements come out as `-o sql` prints them, one at a time, each under a
 // line that is not SQL: its place in the plan, its severity, and the reason
 // Ptah gave. Those lines are for review, which is why `-o sql`,
-// the format a script reads or a reviewer diffs, carries none of them.
+// the format a script reads or a reviewer diffs, carries none of them. The
+// plan's notes are review lines too, each where Ptah placed it, cleaned as
+// the reasons are.
 func RenderDisplay(out io.Writer, plan planread.DisplayPlan) error {
 	var text strings.Builder
 	field := func(name, value string) {
@@ -106,6 +108,9 @@ func RenderDisplay(out io.Writer, plan planread.DisplayPlan) error {
 	field("Content digest", plan.ContentDigest)
 	field("Dialect", plan.Dialect)
 	field("Statements", fmt.Sprintf("%d", len(plan.Statements)))
+	if len(plan.Notes) > 0 {
+		field("Notes", fmt.Sprintf("%d", len(plan.Notes)))
+	}
 	field("Destructive", fmt.Sprintf("%t", plan.Destructive))
 	field("Privileges", privilegesLine(plan))
 	if len(plan.UnreadFields) > 0 {
@@ -129,8 +134,18 @@ func RenderDisplay(out io.Writer, plan planread.DisplayPlan) error {
 // rendered by the same code as `-o sql`, so the SQL under the lines is the SQL
 // that format prints, and a statement it skips is skipped here too.
 func writeStatements(text *strings.Builder, plan planread.DisplayPlan) {
-	written := 0
+	written, noted := 0, 0
+	writeNotes := func(before int) {
+		for ; noted < len(plan.Notes) && plan.Notes[noted].Before <= before; noted++ {
+			if written > 0 {
+				text.WriteString("\n")
+			}
+			written++
+			fmt.Fprintf(text, "Note: %s\n", statusview.Clean(strings.TrimSpace(plan.Notes[noted].Text)))
+		}
+	}
 	for index, statement := range plan.Statements {
+		writeNotes(index)
 		sql := planread.Plan{Statements: []planread.Statement{statement}}.SQL()
 		if sql == "" {
 			continue
@@ -142,6 +157,7 @@ func writeStatements(text *strings.Builder, plan planread.DisplayPlan) {
 		fmt.Fprintf(text, "Statement %d of %d: %s\n", index+1, len(plan.Statements), classification(statement))
 		text.WriteString(sql)
 	}
+	writeNotes(len(plan.Statements))
 }
 
 // classification is a statement's severity and the reason Ptah gave for it.

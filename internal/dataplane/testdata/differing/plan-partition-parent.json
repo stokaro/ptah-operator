@@ -1,28 +1,29 @@
 {
   "format_version": 1,
-  "name": "plan_1b0eb2f31d5b",
+  "name": "plan_e955721f984c",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:06426050a55c5dee6bddeb2d5699a53ec711c40a7ae7165baf6cade8f62b7c6e",
-  "to_fingerprint": "sha256:2d2dc564e154fd35cb86926724871c3d4c4e58f30dabc9ee4dedb9e7b5b3abfa",
+  "from_fingerprint": "sha256:852d514fceb9c3962f4a9be6f90af8a0c3a7d5d451cfacc166d5f9709830f32f",
+  "to_fingerprint": "sha256:c15aaaecb200a56094b02904781486710ecb44ca610e2d5c80896a0d56d39d94",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": true,
   "statements": [
     {
       "transactions": [
         "allowed"
       ],
-      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\"",
+      "sql": "ALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\"",
       "severity": "destructive",
-      "reason": "DETACH PARTITION takes the partition's rows out of what differs_events returns; they stay in the table",
+      "reason": "DETACH PARTITION takes the partition's rows out of what public.differs_events returns; they stay in the table",
       "owned": true
     },
     {
       "transactions": [
         "allowed"
       ],
-      "sql": "ALTER TABLE \"differs_other\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')",
+      "sql": "ALTER TABLE \"public\".\"differs_other\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')",
       "severity": "warning",
       "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
       "owned": true

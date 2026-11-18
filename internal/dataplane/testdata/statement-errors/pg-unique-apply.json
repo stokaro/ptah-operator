@@ -2,15 +2,15 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_743afc5d1ca2",
-  "plan_digest": "sha256:cc0ed1054f58420c29cabf9b6aad25511f77a37fd415f60b869954fd1050d623",
+  "plan_name": "plan_3e943b74b57d",
+  "plan_digest": "sha256:94ea38385ddf60b293981e894048ac975f95c32c2658da96bbaae0fa89605e99",
   "units": [
     {
-      "sql": "CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")"
+      "sql": "CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\")"
     }
   ],
   "error": {
-    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"orders\" (\"customer_id\")"
+    "message": "apply schema changes: failed to execute SQL statement: SQL execution failed: ERROR: could not create unique index \"orders_one_per_customer\" (SQLSTATE 23505)\nSQL: CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\")"
   },
   "failure": {
     "statement": 1,

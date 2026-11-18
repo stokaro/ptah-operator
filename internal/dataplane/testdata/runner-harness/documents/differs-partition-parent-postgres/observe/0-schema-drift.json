@@ -40,7 +40,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "differs_e1",
+        "table_name": "public.differs_e1",
         "columns_added": null,
         "columns_removed": null,
         "columns_modified": null,
@@ -52,8 +52,7 @@
               "kind": "table",
               "schema": {
                 "source": "public",
-                "normalized": "public",
-                "defaulted": true
+                "normalized": "public"
               },
               "name": {
                 "source": "differs_e1",
@@ -74,11 +73,13 @@
                     "key": "5:\"for\"5:\"values\"5:\"from\"6:\"(\"1:\"'2026-01-01'\"6:\")\"5:\"to\"6:\"(\"1:\"'2027-01-01'\"6:\")\"",
                     "source_key": "5:\"for\"5:\"values\"5:\"from\"6:\"(\"1:\"'2026-01-01'\"6:\")\"5:\"to\"6:\"(\"1:\"'2027-01-01'\"6:\")\""
                   },
-                  "parent": "differs_other"
+                  "parent": "differs_other",
+                  "parent_schema": "public"
                 },
                 "before": {
                   "bound": "FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')",
-                  "parent": "differs_events"
+                  "parent": "differs_events",
+                  "parent_schema": "public"
                 }
               }
             }

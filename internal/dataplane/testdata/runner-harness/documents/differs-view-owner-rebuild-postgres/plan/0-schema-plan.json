@@ -1,0 +1,108 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:67058ee617e11aa5f51fe759505b44a235444aece7d929601c838338c7abf8e7",
+  "plan_path": "/work/ptah-plan-output-1726368274/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_826f1d1ab47e",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:fb03245e6f4ddc3ed505258a6b44328d423900de434f3879e12a174e0c25f5b3",
+    "to_fingerprint": "sha256:82d032e407c54aae6c83e392c9d12bf280729fc9fbc43c5d4b0d736bb1bce70c",
+    "scope": {
+      "kind": "realm"
+    },
+    "placed_schema": "public",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "DROP VIEW \"public\".\"differs_notes_view\"",
+        "severity": "warning",
+        "reason": "DROP VIEW is followed by CREATE VIEW of the same view: the plan replaces the view rather than removing it",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "public",
+              "name": "differs_notes_view"
+            },
+            "action": "drop",
+            "properties": [
+              {
+                "name": "security_barrier",
+                "before": false,
+                "changed": true
+              },
+              {
+                "name": "security_invoker",
+                "before": true,
+                "changed": true
+              }
+            ],
+            "before_plan": {
+              "exists": true,
+              "properties": [
+                {
+                  "name": "security_barrier",
+                  "value": false
+                },
+                {
+                  "name": "security_invoker",
+                  "value": true
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "sql": "CREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints",
+        "effects": [
+          {
+            "version": 1,
+            "object": {
+              "kind": "view",
+              "schema": "public",
+              "name": "differs_notes_view"
+            },
+            "action": "create",
+            "properties": [
+              {
+                "name": "security_barrier",
+                "after": false,
+                "changed": true
+              },
+              {
+                "name": "security_invoker",
+                "after": true,
+                "changed": true
+              }
+            ],
+            "before_plan": {
+              "exists": true,
+              "properties": [
+                {
+                  "name": "security_barrier",
+                  "value": false
+                },
+                {
+                  "name": "security_invoker",
+                  "value": true
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\"",
+        "severity": "warning",
+        "reason": "OWNER TO gives the view the plan creates again back to the role that owned it before the drop, which the declaration does not name: the view reads its tables with that role's privileges, as it did before"
+      }
+    ]
+  }
+}

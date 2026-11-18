@@ -542,6 +542,7 @@ func decodeMigrationReport(
 			return
 		}
 		redactMigrationHistoryError(&report)
+		cleanListedRepeatables(&report, redactor)
 		result.MigrationHistory = &report
 		return
 	}
@@ -589,6 +590,7 @@ func decodeMigrationReport(
 	report.DriftSummary = report.DriftCheck.Summary()
 	report.DriftCheck = nil
 	redactMigrationHistoryError(report.Status)
+	cleanListedRepeatables(report.Status, redactor)
 	// A lost log entry's message can quote part of the value the database
 	// refused, such as the actor. What the frame keeps of it is the entry and
 	// the code the database answered with.
@@ -641,6 +643,22 @@ func migrationStatusFailureKind(outcome commandOutcome) (dataplane.TargetFailure
 func redactMigrationHistoryError(report *dataplane.MigrationStatusReport) {
 	if report != nil && report.DirtyRevision != nil {
 		report.DirtyRevision.Error = ""
+	}
+}
+
+// cleanListedRepeatables cleans the names of the repeatable migrations a status
+// lists, as other free text that reaches a frame is cleaned: they are file names
+// from the artifact and identities from the database's record, and a
+// condition message names them.
+func cleanListedRepeatables(report *dataplane.MigrationStatusReport, redactor Redactor) {
+	if report == nil {
+		return
+	}
+	for index := range report.Repeatables {
+		repeatable := &report.Repeatables[index]
+		repeatable.Identity = freeText(repeatable.Identity, redactor, dataplane.MaxMigrationRepeatableIdentityBytes)
+		repeatable.Path = freeText(repeatable.Path, redactor, dataplane.MaxMigrationRepeatablePathBytes)
+		repeatable.State = freeText(repeatable.State, redactor, 32)
 	}
 }
 
@@ -767,9 +785,13 @@ func runPlan(
 		setResultError(&result, "unstable_plan", errors.New("consecutive plan reads did not return identical bytes"), redactor, config.Diagnostics)
 		return result
 	}
-	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges {
+	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges && reads[0].document == nil {
 		result.ChildExitCode = 0
 		result.PlanOutcome = PlanOutcomeNoChanges
+		return result
+	}
+	if reads[0].outcome == dataplane.SchemaPlanOutcomeNoChanges {
+		reportNotePlan(&result, reads[0].document, inputs.ExpectedDatabaseEngine, planExcludes, redactor, config.Diagnostics)
 		return result
 	}
 
@@ -837,7 +859,7 @@ func runPlan(
 }
 
 // nativePlan is what one `schema plan --json` read produced: how it ended, and
-// for a plan with changes the exact bytes it saved.
+// for a plan with changes or with notes alone the exact bytes it saved.
 type nativePlan struct {
 	outcome  string
 	document []byte
@@ -914,7 +936,7 @@ func readNativePlan(
 		return nativePlan{}, false
 	}
 	noteReportedSuccess(outcome.exitCode, config.Diagnostics)
-	if report.Outcome == dataplane.SchemaPlanOutcomeNoChanges {
+	if report.Outcome == dataplane.SchemaPlanOutcomeNoChanges && report.PlanPath == "" {
 		return nativePlan{outcome: report.Outcome}, true
 	}
 	if report.PlanPath != outputPath {
@@ -968,6 +990,22 @@ func validatePlanDryRun(
 		return false
 	}
 	switch {
+	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && report.Refusal.RefusesOwner():
+		// Since Ptah v0.30.1 the dry run refuses an owner the server would
+		// refuse, as the Apply would, before any statement (stokaro/ptah#6196):
+		// it reads the roles a plan never reads. That is a refusal of the plan
+		// as it stands, named the way a plan's own refusal is. Ptah's sentence
+		// says what to grant, and names roles and objects of the database, so
+		// it goes to the Pod log.
+		//
+		// Every other refusal of the dry run stays the failed validation it was
+		// before: a stale plan is one the database moved under between the two
+		// reads, and a lock timeout can come from another schema's Apply, since
+		// MySQL's GET_LOCK name is server-wide. Neither says the plan is wrong.
+		logReportedError(report.Error, redactor, config.Diagnostics)
+		setResultError(result, codePlanRefused,
+			errors.New(refusalSentence("ptah refused to plan the change", report.Refusal, redactor)), redactor, config.Diagnostics)
+		return false
 	case report.Outcome != dataplane.SchemaApplyOutcomeDryRun:
 		reason := report.Outcome
 		if report.Refusal != nil {
@@ -996,6 +1034,67 @@ func planStatements(plan dataplane.PlanFile) []string {
 		statements = append(statements, statement.SQL)
 	}
 	return statements
+}
+
+// CodeDifferenceNotPlannable reports a plan of notes alone: Ptah found a
+// difference it cannot plan, wrote why, and planned no statement. Its message
+// is the notes.
+const CodeDifferenceNotPlannable = "difference_not_plannable"
+
+// maxNotePlanSentenceBytes is what of the notes fits an Event with the code in
+// front, as maxRefusalSentenceBytes is for a refusal.
+const maxNotePlanSentenceBytes = 512 - len(CodeDifferenceNotPlannable) - len(": ")
+
+// notePlanLead opens the sentence a plan of notes is reported with.
+const notePlanLead = "ptah found a difference it cannot plan: "
+
+// reportNotePlan reports the plan Ptah saves since v0.30.0 when every
+// difference it found is one it cannot plan (stokaro/ptah#6165): a plan of
+// notes, with no statement to approve or run. A plan of notes is checked as
+// an executable plan is, strictly decoded, bound to the requested exclusions
+// and free of the credential, and is then reported as
+// difference_not_plannable with the notes, cleaned as other free text is and
+// cut to what an Event keeps. Nothing of it is published.
+func reportNotePlan(result *Result, rawPlan []byte, engine string, excludes []string, redactor Redactor, diagnostics io.Writer) {
+	if !utf8.Valid(rawPlan) {
+		setResultError(result, "invalid_plan_output", errors.New("plan output is not valid UTF-8"), redactor, diagnostics)
+		return
+	}
+	plan, err := dataplane.DecodeNotePlan(rawPlan, engine)
+	if err != nil {
+		setResultError(result, "invalid_plan_output", errors.New("a plan of notes failed strict validation for the configured database engine"), redactor, diagnostics)
+		return
+	}
+	if !slices.Equal(normalizedSelectors(plan.Exclude), excludes) {
+		setResultError(result, "invalid_plan_output", errors.New("plan output does not bind the requested exclusion scope"), redactor, diagnostics)
+		return
+	}
+	if redactor.Redact(string(rawPlan)) != string(rawPlan) {
+		setResultError(result, "credential_leak", errors.New("plan output contains a protected credential or URL password"), redactor, diagnostics)
+		return
+	}
+	setResultError(result, CodeDifferenceNotPlannable, errors.New(notePlanSentence(plan.Annotations, redactor)), redactor, diagnostics)
+}
+
+// notePlanSentence is the notes of a plan, after notePlanLead, each cleaned as
+// free text and joined by a space. Notes too long to fit are cut, and the cut
+// ends in "...". A plan whose notes leave nothing readable reads as the lead
+// alone, without its colon.
+func notePlanSentence(notes []dataplane.PlanAnnotation, redactor Redactor) string {
+	texts := make([]string, 0, len(notes))
+	for _, note := range notes {
+		if text := freeText(note.Text, redactor, maxNotePlanSentenceBytes); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	if len(texts) == 0 {
+		return strings.TrimSuffix(notePlanLead, ": ")
+	}
+	sentence := notePlanLead + strings.Join(texts, " ")
+	if len(sentence) <= maxNotePlanSentenceBytes {
+		return sentence
+	}
+	return cutLine(sentence, maxNotePlanSentenceBytes-len("...")) + "..."
 }
 
 // fenceRefusalMessage is the sentence a fence refusal is reported with: the

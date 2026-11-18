@@ -2,26 +2,27 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:be6ee6812a08d5d9cd33c2c0b51918705a1d3e732888692f47a3e74266cad853",
-  "plan_path": "/work/ptah-plan-output-3054895134/second.plan.json",
+  "plan_digest": "sha256:92f17d66feeb457afae1ca6145070e48994e9fe70998086cb3e3e2be9b94b93d",
+  "plan_path": "/work/ptah-plan-output-2376695232/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_b9946d469348",
+    "name": "plan_424570616508",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
-    "to_fingerprint": "sha256:5ee5cc5dde4ce87c2218bfa31cf7b9c406df7a6571ca057b27b7465cb1561ad1",
+    "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
+    "to_fingerprint": "sha256:8541818fa67417ce7f5c8cc54fbfecd2f82dfa2d70fb00625baac98c4c19aa37",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
-        "sql": "CREATE TABLE \"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)",
+        "sql": "CREATE TABLE \"public\".\"e2e_policy_notes\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"owner_name\" text NOT NULL\n)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       },
       {
-        "sql": "ALTER TABLE \"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY",
+        "sql": "ALTER TABLE \"public\".\"e2e_policy_notes\" ENABLE ROW LEVEL SECURITY",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints"
       },
@@ -29,7 +30,7 @@
         "transactions": [
           "allowed"
         ],
-        "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)",
+        "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user)",
         "severity": "safe",
         "reason": "does not remove data or tighten constraints",
         "owned": true,

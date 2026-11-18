@@ -200,6 +200,20 @@ string-escaping modes the server might be in, and reads dollar-quoted bodies,
 `E''` strings and nested comments the way PostgreSQL does, so a quote cannot
 hide a clause from it.
 
+Every `OWNER TO` raises `Ownership`, the one a declaration asks for and the
+one Ptah writes itself. Since v0.30.0 a PostgreSQL plan that drops and makes
+again a view or a materialized view another role owns ends with
+`ALTER VIEW ... OWNER TO` or `ALTER MATERIALIZED VIEW ... OWNER TO` that role,
+since the `CREATE` makes the login its owner. Ptah v0.29.2 left the login
+the owner. The two statements read alike, and the operator does not read Ptah's
+reason, so a rebuild of a view another role owns waits for an approval as
+`Ownership` under `Always` too. Ptah v0.30.1's `schema apply` refuses such a plan,
+before any statement runs, when the login may not give the view to that role;
+`schema plan` does not check owners, so the Plan meets the refusal in the
+`schema apply` dry run it runs on the saved plan.
+[A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+lists the codes.
+
 MySQL and MariaDB run a stored routine with its definer's rights unless it says
 `SQL SECURITY INVOKER`, so a routine that names no mode is raised as
 `SecurityDefiner` whether or not the statement says so. Anyone with `EXECUTE`
@@ -245,6 +259,12 @@ and not from the SQL:
   does not read it yet, so the hold cannot tell a view the statement took from
   one it left or one that never existed, and covers them all. A `CREATE VIEW`
   with no such statement before it is read as below.
+- A view a drop with an effect took, made again by a statement with no effect,
+  is raised when the statement states `security_invoker` or the dropped view
+  read with invoker rights. Ptah v0.30.1 records an effect on the `CREATE VIEW`
+  of a rebuild that gives the view back to its owner
+  ([stokaro/ptah#6198](https://github.com/stokaro/ptah/pull/6198)), so the
+  view made again with the value it had raises nothing more.
 - Any other view the statement creates is raised when it reads with invoker
   rights. One with its owner's rights is raised no more than a view that
   states no option.

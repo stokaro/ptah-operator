@@ -301,7 +301,18 @@ migrations were never merged, all arrive here. The operator will not roll a
 database back to match an older artifact, and which of the two is wrong is not
 a question it can answer, so it stops and names both versions.
 
-None of the four resolves by waiting. The operator keeps reading the history at
+**Repeatable migrations.** Since v0.30.0 Ptah reads an `R__<identity>.sql`
+file as a repeatable migration, which it runs after the versioned ones and
+again whenever the file changes, and keeps a record of them in
+`schema_migrations_repeatable`. The operator approves a versioned sequence
+only, so a history that lists one, from a file of the artifact or from a row of
+that record, is `Blocked` with `RepeatableMigrationsUnsupported` and publishes
+no plan. Ptah v0.29.2, which 0.2.14 ran, did not read such a file at all, and
+the operator ran the versioned files beside it.
+[Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
+says how to move what the files do into versioned migrations.
+
+None of the five resolves by waiting. The operator keeps reading the history at
 `spec.interval`, so fixing the database or the artifact is enough to unblock it;
 nothing else is required. For the last of them that usually means restoring the
 artifact the database was migrated with, rather than touching the database at
@@ -755,8 +766,10 @@ The outcome stays what the revision table says.
 says what to check.
 
 Ptah v0.28.0 added the `run_reference` and `actor_origin` columns, which the
-operator fills from 0.2.13; rows an earlier release wrote hold neither. Before
-a run writes its first row, Ptah adds whichever of the two a log an earlier
+operator fills from 0.2.13; rows an earlier release wrote hold neither. Ptah
+v0.30.0 added `repeatable`, which names the repeatable migration a row is
+about. The operator runs none, so every row it writes leaves it empty. Before
+a run writes its first row, Ptah adds whichever of the three a log an earlier
 build created lacks,
 as nullable columns, and the rows already there keep their values. On
 PostgreSQL Ptah writes the log only as the table's owner, who may alter it. On
@@ -766,7 +779,7 @@ without it on the table loses every row of every run, reported as above, until
 the columns are there. A login that may alter the table can add them first:
 
 ```sql
-ALTER TABLE schema_migrations_log ADD COLUMN run_reference VARCHAR(255) NULL, ADD COLUMN actor_origin VARCHAR(64) NULL;
+ALTER TABLE schema_migrations_log ADD COLUMN run_reference VARCHAR(255) NULL, ADD COLUMN actor_origin VARCHAR(64) NULL, ADD COLUMN repeatable VARCHAR(255) NULL;
 ```
 
 The value is personal data, and `provided` means Ptah took the name on trust.

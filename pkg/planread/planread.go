@@ -113,6 +113,15 @@ type Statement struct {
 	Reason string
 }
 
+// Note is one note Ptah wrote beside a plan's statements: Text, before the
+// statement at index Before, or after the last where Before is their count.
+// A note runs nothing. Since Ptah v0.30.0 one says what Ptah found and did not
+// plan, such as a change the server cannot make in place.
+type Note struct {
+	Before int
+	Text   string
+}
+
 // RowSet is one declared row set a plan read: names and no values.
 type RowSet struct {
 	Schema  string
@@ -154,7 +163,9 @@ type Plan struct {
 	// where the reader and the manager are different builds.
 	UnrecordedPrivilegeChanges []string
 
-	Statements  []Statement
+	Statements []Statement
+	// Notes are the plan's notes, in order.
+	Notes       []Note
 	ManagedRows []RowSet
 	Chunks      []Chunk
 
@@ -194,6 +205,7 @@ type DisplayPlan struct {
 	UnrecordedPrivilegeChanges []string
 
 	Statements  []Statement
+	Notes       []Note
 	ManagedRows []RowSet
 	Chunks      []Chunk
 
@@ -222,6 +234,7 @@ func (p Plan) Display() DisplayPlan {
 		PrivilegeChanges:           p.PrivilegeChanges,
 		UnrecordedPrivilegeChanges: p.UnrecordedPrivilegeChanges,
 		Statements:                 p.Statements,
+		Notes:                      p.Notes,
 		ManagedRows:                p.ManagedRows,
 		Chunks:                     p.Chunks,
 		CreatedAt:                  p.CreatedAt,
@@ -393,6 +406,7 @@ func (s storedPlan) read(decoded dataplane.PlanFile) Plan {
 		PrivilegeChanges:           recorded(s.plan),
 		UnrecordedPrivilegeChanges: unrecorded(s.plan, decoded),
 		Statements:                 statements(decoded, storedSeverities(s.document, len(decoded.Statements))),
+		Notes:                      notes(decoded),
 		ManagedRows:                rowSets(decoded),
 		Chunks:                     chunks(s.plan),
 		CreatedAt:                  s.plan.CreationTimestamp,
@@ -434,6 +448,17 @@ func statements(decoded dataplane.PlanFile, stored []string) []Statement {
 		out = append(out, Statement{
 			SQL: statement.SQL, Severity: statement.Severity, StoredSeverity: stored[index], Reason: statement.Reason,
 		})
+	}
+	return out
+}
+
+func notes(decoded dataplane.PlanFile) []Note {
+	if len(decoded.Annotations) == 0 {
+		return nil
+	}
+	out := make([]Note, 0, len(decoded.Annotations))
+	for _, annotation := range decoded.Annotations {
+		out = append(out, Note{Before: annotation.Before, Text: annotation.Text})
 	}
 	return out
 }

@@ -94,11 +94,13 @@ func executablePlanAtLimit(plan *ptahv1alpha1.PtahSchemaPlan, document []byte, d
 		// dialect quotes it. Ptah up to v0.16.0 wrote a "-- POSTGRES TABLE:
 		// <name> --" line ahead of it and v0.17.0 writes none, so the predicate
 		// holds the statement itself rather than a comment the planner owns.
-		quote := `"`
-		if dialect == "mysql" {
-			quote = "`"
+		// The PostgreSQL URL pins no search_path, so since v0.30.0 the table
+		// is named in the schema the database placed it in
+		// (stokaro/ptah#6132).
+		opening := "CREATE TABLE `" + name + "` ("
+		if dialect != "mysql" {
+			opening = `CREATE TABLE "public"."` + name + `" (`
 		}
-		opening := "CREATE TABLE " + quote + name + quote + " ("
 		matches := 0
 		for _, statement := range parsed.Statements {
 			if strings.HasPrefix(statement.SQL, opening) && strings.Count(statement.SQL, "<") == count &&

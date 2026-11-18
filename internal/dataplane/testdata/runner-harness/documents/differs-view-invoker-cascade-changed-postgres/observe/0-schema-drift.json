@@ -58,7 +58,7 @@
     },
     "tables_added": null,
     "tables_removed": [
-      "differs_docs"
+      "public.differs_docs"
     ],
     "tables_modified": null,
     "enums_added": null,
@@ -77,7 +77,7 @@
     "views_removed": null,
     "views_modified": [
       {
-        "view_name": "differs_member_ids",
+        "view_name": "public.differs_member_ids",
         "changes": {
           "body": "SELECT id,\n    who\n   FROM differs_members; -\u003e SELECT id FROM differs_members",
           "options": "security_invoker=true -\u003e security_invoker=false"
@@ -85,7 +85,7 @@
         "previous_body": "SELECT id,\n    who\n   FROM differs_members;"
       },
       {
-        "view_name": "differs_member_names",
+        "view_name": "public.differs_member_names",
         "changes": {
           "body": "SELECT id,\n    who\n   FROM differs_member_ids; -\u003e SELECT id FROM differs_member_ids"
         },
@@ -116,7 +116,7 @@
     "constraints_removed": [
       {
         "name": "differs_docs_pkey",
-        "table_name": "differs_docs",
+        "table_name": "public.differs_docs",
         "type": "PRIMARY KEY",
         "identity": {
           "schema": "public",

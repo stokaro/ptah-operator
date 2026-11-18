@@ -55,7 +55,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "differs_items",
+        "table_name": "public.differs_items",
         "columns_added": null,
         "columns_removed": null,
         "columns_modified": [
@@ -81,7 +81,7 @@
     "functions_modified": null,
     "sequences_added": null,
     "sequences_removed": [
-      "differs_items_id_seq"
+      "public.differs_items_id_seq"
     ],
     "sequences_modified": null,
     "views_added": null,

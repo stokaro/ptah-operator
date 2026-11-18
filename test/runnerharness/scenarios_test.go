@@ -374,6 +374,26 @@ func migrationFailures(t *testing.T, l *lab) {
 		run.applyPlanned("apply", pending(t, family, before), storedAs("migrations up", "migrations-up-refused-postgres.json"), wantCode("child_exit"))
 		run.history("history-still-pending")
 	})
+	// Since v0.30.0 Ptah reads an R__ file as a repeatable migration and lists
+	// it in the status beside the versioned ones (stokaro/ptah#6156), where
+	// v0.29.2 read no such file. The artifact carries it, since a push packs
+	// every file of the directory. The History frame lists it, and the
+	// manager refuses a history that lists one; the row stops there, since an
+	// Apply that names no repeatable is refused by Ptah before anything runs.
+	t.Run("repeatable-postgres", func(t *testing.T) {
+		t.Parallel()
+		family, database := "migrations-repeatable-postgres", "harness_repeatable_postgres"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publish(t, "migrations", "migrations/"+family, "v1", "--migrations-dir", "/fixtures/migrations-repeatable-postgresql")
+		run := l.newMigration(t, family, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		history := run.history("history-pending", storedAs("migrations status", "migrations-status-repeatable-postgres.json"))
+		listed := history.result.MigrationHistory
+		if listed == nil || len(listed.Repeatables) != 1 || listed.Repeatables[0].Path != "R__item_names.sql" ||
+			listed.Repeatables[0].State != "pending" {
+			t.Errorf("%s: the history lists the repeatables %+v, want R__item_names.sql pending", family, listed)
+		}
+	})
 	// A checkpoint is the floor a fresh database starts from, and the history
 	// reports it. No other row reads checkpoint_version.
 	t.Run("checkpoint-postgres", func(t *testing.T) {

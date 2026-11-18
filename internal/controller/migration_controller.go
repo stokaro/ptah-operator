@@ -1925,6 +1925,19 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			operatorv1alpha1.ReasonHistoryDirty, "The revision table holds a dirty row")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryDirty, "Nothing runs while a revision is recorded dirty")
+	// Ptah v0.30.0 runs a repeatable migration after the versioned ones, and
+	// again whenever its content changes. The approval this operator binds
+	// names a versioned sequence and no repeatable, so Ptah would refuse every
+	// run of a plan published here, and a plan that ran the repeatables would
+	// run SQL nobody approved. No plan is published for either.
+	case len(report.Repeatables) > 0:
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, repeatablesRefusal(report.Repeatables))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, "The artifact or the database holds repeatable migrations")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, "Nothing runs while the history lists repeatable migrations")
 	case len(modified) > 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
@@ -2037,6 +2050,35 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("A plan for %d pending %s is being published", len(pending), byCount(len(pending), "migration", "migrations")))
 	}
 	return nil
+}
+
+// namedRepeatables is how many repeatable migrations a refusal names before it
+// counts the rest.
+const namedRepeatables = 8
+
+// repeatablesRefusal names the repeatable migrations a history lists: the file
+// of each, or for a record row no file carries, its identity and where it is.
+func repeatablesRefusal(repeatables []dataplane.MigrationRepeatable) string {
+	names := make([]string, 0, min(len(repeatables), namedRepeatables))
+	for _, repeatable := range repeatables[:min(len(repeatables), namedRepeatables)] {
+		switch {
+		case repeatable.Path != "":
+			names = append(names, repeatable.Path)
+		case repeatable.Identity != "":
+			names = append(names, repeatable.Identity+" (recorded by the database, in no file of the artifact)")
+		default:
+			names = append(names, "a repeatable migration with no readable name")
+		}
+	}
+	listed := strings.Join(names, ", ")
+	if more := len(repeatables) - len(names); more > 0 {
+		listed += fmt.Sprintf(", and %d more", more)
+	}
+	return bounded(fmt.Sprintf(
+		"The history lists %d repeatable %s, which this operator does not run: %s. Remove the R__ files from the artifact "+
+			"and write what they do as versioned migrations; `ptah migrations repair --repeatable <identity>` deletes a row "+
+			"of the database's record, with --force while its file is still in the migration directory",
+		len(repeatables), byCount(len(repeatables), "migration", "migrations"), listed), 1024)
 }
 
 // publishMigrationPlan writes the immutable manifest of the pending sequence

@@ -5,10 +5,10 @@
   "refusal": {
     "code": "protected-table",
     "tables": [
-      "regions"
+      "public.regions"
     ]
   },
   "error": {
-    "message": "refusing to change protected table(s) regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`"
+    "message": "refusing to change protected table(s) public.regions: a protected table is fenced off from the declarative path, which has no override; drop the entry to plan the change, or write the rows as a migration with `ptah migrations data --allow-prod`"
   }
 }

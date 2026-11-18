@@ -2,14 +2,14 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_2a0e2a1cd781",
-  "plan_digest": "sha256:2a514ea24b25f2dcc348edd50643e03679d4b7dcc27d9469812ef5cafb52199d",
+  "plan_name": "plan_e74be62ae6a2",
+  "plan_digest": "sha256:8479ce9cb1b049ac5962c60c35be14341a76decc7cfb3b4619fff93326a5ce48",
   "units": [
     {
-      "sql": "CREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)"
+      "sql": "CREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)"
     },
     {
-      "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\""
+      "sql": "GRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\""
     }
   ],
   "apply_log": {

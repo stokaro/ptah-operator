@@ -68,6 +68,23 @@ const (
 	SchemaRefusalDeclarationRefused = "declaration-refused"
 )
 
+// The refusals of an owner the server would refuse, which `schema apply`
+// raises on PostgreSQL before its first statement since Ptah v0.30.1, a dry
+// run included (stokaro/ptah#6196). Each names one statement in its owner
+// object: the first the server would refuse.
+const (
+	// SchemaRefusalMissingOwnerRole names an owner role the server does not
+	// hold and no statement before it creates.
+	SchemaRefusalMissingOwnerRole = "missing-owner-role"
+	// SchemaRefusalOwnerTransfer names an owner the connected role may not
+	// give the object to: it lacks SET on the role on PostgreSQL 16 and
+	// later, and membership in it before 16 and on CockroachDB.
+	SchemaRefusalOwnerTransfer = "owner-transfer"
+	// SchemaRefusalOwnerSchemaPrivilege names an owner that holds no CREATE
+	// on the object's schema, which the server requires of a new owner.
+	SchemaRefusalOwnerSchemaPrivilege = "owner-schema-privilege"
+)
+
 var (
 	schemaPlanOutcomes = []string{
 		SchemaPlanOutcomeChanges,
@@ -112,6 +129,11 @@ type SchemaRefusal struct {
 	// read ran as, which a replacement would make its definer, since Ptah
 	// v0.29.4 (stokaro/ptah#6109). They are read by NamedViewDefiners.
 	ViewDefiners json.RawMessage `json:"view_definers,omitempty"`
+	// Owner is the statement an owner refusal names, with the owner it gives
+	// the object to, since Ptah v0.30.1 (stokaro/ptah#6196). It is read by
+	// NamedOwner.
+	Owner json.RawMessage `json:"owner,omitempty"`
+
 	// Since Ptah v0.29.4 a definer-privilege refusal of a schema apply also
 	// lists the statements whose definer the connected account may not name,
 	// as definer_privileges (stokaro/ptah#6124). The operator does not read
@@ -122,6 +144,72 @@ type SchemaRefusal struct {
 	// 'ptah'@'%' and 'ptah'@'10.244.1.%' can from Pods on different nodes.
 	// It reads by its code alone, and Ptah's sentence, which names the
 	// privilege, goes to the Pod log.
+}
+
+// RefusesOwner reports whether the refusal is one of an owner the server would
+// refuse: missing-owner-role, owner-transfer or owner-schema-privilege.
+func (r SchemaRefusal) RefusesOwner() bool {
+	switch r.Code {
+	case SchemaRefusalMissingOwnerRole, SchemaRefusalOwnerTransfer, SchemaRefusalOwnerSchemaPrivilege:
+		return true
+	default:
+		return false
+	}
+}
+
+// SchemaRefusalOwner is the statement an owner refusal names. Statement is the
+// plan's SQL, Kind the object's kind in Ptah's words and Role the owner the
+// statement gives it to. Connected and Privilege are set for owner-transfer:
+// the role the Apply connected as and the privilege on Role it lacks, SET or
+// MEMBER. Schema is set for owner-schema-privilege: the schema Role holds no
+// CREATE on. Holds says Role owns the object now and the plan gives it back
+// to it, as a rebuild does.
+type SchemaRefusalOwner struct {
+	Statement string `json:"statement"`
+	Kind      string `json:"kind"`
+	Role      string `json:"role"`
+	Connected string `json:"connected,omitempty"`
+	Privilege string `json:"privilege,omitempty"`
+	Schema    string `json:"schema,omitempty"`
+	Holds     bool   `json:"holds,omitempty"`
+}
+
+// schemaRefusalPrivilegePattern is the shape of the privilege an owner-transfer
+// refusal names: a word of Ptah's, such as SET or MEMBER.
+var schemaRefusalPrivilegePattern = regexp.MustCompile(`^[A-Z][A-Z_]{0,31}$`)
+
+// NamedOwner reads the statement an owner refusal names. It reports false when
+// the refusal names none, and when it names one in a form this operator does
+// not read: anything but an object with a statement, a kind and a role, and
+// with what the code names beside them, a connected role and a privilege for
+// owner-transfer and a schema for owner-schema-privilege.
+//
+// Every value but the privilege is returned as written. A statement comes from
+// the plan and a role or a schema from the database, so a caller that shows
+// one cleans it first.
+func (r SchemaRefusal) NamedOwner() (SchemaRefusalOwner, bool) {
+	if len(r.Owner) == 0 {
+		return SchemaRefusalOwner{}, false
+	}
+	var owner SchemaRefusalOwner
+	if err := json.Unmarshal(r.Owner, &owner); err != nil ||
+		owner.Statement == "" || owner.Kind == "" || owner.Role == "" {
+		return SchemaRefusalOwner{}, false
+	}
+	switch r.Code {
+	case SchemaRefusalMissingOwnerRole:
+	case SchemaRefusalOwnerTransfer:
+		if owner.Connected == "" || !schemaRefusalPrivilegePattern.MatchString(owner.Privilege) {
+			return SchemaRefusalOwner{}, false
+		}
+	case SchemaRefusalOwnerSchemaPrivilege:
+		if owner.Schema == "" {
+			return SchemaRefusalOwner{}, false
+		}
+	default:
+		return SchemaRefusalOwner{}, false
+	}
+	return owner, true
 }
 
 // SchemaRefusalViewDefiner is one view a view-definer refusal names. View is
@@ -320,6 +408,11 @@ func (r SchemaApplyReport) SQLStatements() ([]string, error) {
 // account for: another contract version, an outcome it does not know, a
 // second JSON value, and an outcome whose fields contradict it.
 //
+// Since Ptah v0.30.0 a no-changes report may name a saved plan: one of notes
+// alone, which say what differs and why Ptah did not plan it
+// (stokaro/ptah#6165). It names the plan's digest and path together, as a
+// plan with changes does, and DecodeNotePlan reads the plan.
+//
 // Fields it does not declare are ignored, because Ptah adds fields without
 // raising the version.
 func DecodeSchemaPlan(data []byte) (SchemaPlanReport, error) {
@@ -346,6 +439,10 @@ func DecodeSchemaPlan(data []byte) (SchemaPlanReport, error) {
 	case SchemaPlanOutcomeChanges:
 		if !validDigest(report.PlanDigest) || report.PlanPath == "" {
 			return SchemaPlanReport{}, fmt.Errorf("schema plan reports changes without the digest and path of the plan it saved")
+		}
+	case SchemaPlanOutcomeNoChanges:
+		if (report.PlanDigest != "" || report.PlanPath != "") && (!validDigest(report.PlanDigest) || report.PlanPath == "") {
+			return SchemaPlanReport{}, fmt.Errorf("schema plan reports no changes and names a saved plan without its digest and path")
 		}
 	default:
 		if report.PlanDigest != "" || report.PlanPath != "" {

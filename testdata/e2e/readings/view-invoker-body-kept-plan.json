@@ -1,16 +1,17 @@
 {
   "format_version": 1,
-  "name": "plan_6d974a5d50e2",
+  "name": "plan_22cf86982ec3",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:31100d49ec679d33f28b00ef0a6df700270e0015ee5c08b8505438289d6f2e1c",
-  "to_fingerprint": "sha256:efb59b9623f971a08eb7f763b1b3a78569f21b52f4c52185bdd74dd62ed57cca",
+  "from_fingerprint": "sha256:bdd52bce3de062ebf6c5de682e8a721c012b8c54d63dd2a71938f8a260c76cee",
+  "to_fingerprint": "sha256:7e74b26a2668a2cbbcb5996c0d87a06ed7b45811957a01268b7e5e2af2ceb692",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "CREATE OR REPLACE VIEW \"e2e_widget_names\" WITH (security_invoker=true) AS\nSELECT id, name FROM e2e_widgets WHERE id \u003e 0",
+      "sql": "CREATE OR REPLACE VIEW \"public\".\"e2e_widget_names\" WITH (security_invoker=true) AS\nSELECT id, name FROM e2e_widgets WHERE id \u003e 0",
       "severity": "warning",
       "reason": "CREATE OR REPLACE VIEW changes the view in place, and what every query that reads it gets",
       "effects": [

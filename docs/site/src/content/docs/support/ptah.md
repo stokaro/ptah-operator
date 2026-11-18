@@ -25,7 +25,7 @@ things, and [the next section](#three-states-kept-apart) says what.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.29.5` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.30.1` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.14` | No range | `v0.29.2` | [v0.2.14](https://operator.ptah.run/v0.2.14/) |
 | `v0.2.13` | No range | `v0.29.0` | [v0.2.13](https://operator.ptah.run/v0.2.13/) |
 | `v0.2.12` | No range | `v0.26.0` | [v0.2.12](https://operator.ptah.run/v0.2.12/) |
@@ -50,7 +50,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.29.5`. Commit [`8a634c0574427e313392f1131382cf4346d05b0d`](https://github.com/stokaro/ptah/commit/8a634c0574427e313392f1131382cf4346d05b0d), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.30.1`. Commit [`c5fba763a6fb346fc8a35d2f336d75a91385e3b9`](https://github.com/stokaro/ptah/commit/c5fba763a6fb346fc8a35d2f336d75a91385e3b9), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
@@ -73,6 +73,10 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - The verified build contains stokaro/ptah#6070: an exclude selector names a PostgreSQL row-level security policy through its table, as notes.notes_owner[type=policy], and one that names it by its schema and its own name, such as public.notes_owner[type=policy], names nothing, so a PtahSchema plans that policy, and a drift check compares it, as if no selector named it. An executor without #6070, v0.29.0 included, reads the second spelling as the policy and the first as nothing. Since stokaro/ptah#6069 a drift check warns on standard error about a selector that matched nothing. The runner reads no standard error of a migration Apply, so the warning reaches neither the resource nor the Pod log, as Ptah's warning about a schema plan's selector never has.
 - The verified build contains stokaro/ptah#6097: on a PostgreSQL URL that pins no search_path, a plan that would create a table the declaration names without a schema in a current schema other than public, and drop the table of that name from another schema, is refused as declaration-refused, which the Plan reports as plan_refused. An executor without #6097, v0.29.2 included, plans the move and drops the other table with its rows.
 - The verified build contains stokaro/ptah#6095: a PostgreSQL dev database's user mappings are listed through pg_user_mappings, so a Plan whose spec.dev connects as an ordinary role compares rather than failing with permission denied for table pg_user_mapping, as an executor without #6095, v0.29.2 included, does. The acceptance suites run no dev database, so this is Ptah's measurement.
+- The verified build contains stokaro/ptah#6132, #6189 and #6204: on a PostgreSQL URL every statement of a plan names the schema it places each object in, and the saved plan records that schema as placed_schema, which the operator's plan decoder declares. A drift report names objects the same way, and the operator reads only its kinds of difference. The operator reports a fault of the schema file in the words of schema validate, which name a table without its schema. An executor before v0.30.0 writes the name alone, and an operator before 0.2.15 refuses a plan that carries placed_schema as a field it does not declare.
+- The verified build contains stokaro/ptah#6166, #6196, #6198, #6199 and #6201: a PostgreSQL view or materialized view may declare its owner, and a plan that drops and makes again a view or materialized view another role owns gives it back with ALTER VIEW or ALTER MATERIALIZED VIEW ... OWNER TO, which the operator raises as Ownership. schema apply, its dry run included, refuses a plan that gives a view to a role the server lacks, one the login may not give it to, or one with no CREATE on the view's schema before any statement, with missing-owner-role, owner-transfer or owner-schema-privilege, and writes no schema apply log entry. schema plan does not check owners, so the Plan reads the code from the schema apply dry run it runs on the saved plan, and names the statement and the role. v0.30.0 reports such a refusal with no code, and writes the CREATE of a rebuild that gives a view back with no effect, which the operator holds as SecurityDefiner.
+- The verified build contains stokaro/ptah#6165 and #6175: a plan that finds a difference it cannot plan, such as a generated column's new expression before PostgreSQL 17, saves notes and no statement and reports no-changes with the plan's digest and path. The Plan reads it as DifferenceNotPlannable and publishes nothing. A plan's annotations are read as notes its digest covers.
+- The verified build reads an R__<identity>.sql file of a migration directory as a repeatable migration and lists it in the status (stokaro/ptah#6156, #6170 and #6181). The operator runs a versioned sequence only, and refuses a history that lists a repeatable migration as RepeatableMigrationsUnsupported before any plan. An executor before v0.30.0 reads no such file.
 - The migration machine contracts -- `migrations status --json` carrying contract_version and a per-migration record, and `migrations up --json` carrying an outcome -- reached Ptah after v0.3.0-201, and `migrations up --expect-sequence`, which the operator passes on every migration Apply, reached it in v0.9.0. A build older than v0.9.0 resolves and verifies a migration artifact and then fails at its own history document or at the flag every migration Apply passes, so the versioned workflow needs at least v0.9.0 rather than any build that has the commands.
 - The verified scope is the operator's database support window, the release lines on that version's databases page. Other engines Ptah addresses are unverified here, whatever the Ptah build.
 - PostgreSQL 18.x is evidenced by the Added database lines workflow rather than by the lifecycle matrix every push runs: run 42440618274 passed on every supported Kubernetes minor at Ptah v0.23.0.
@@ -92,7 +96,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.14/](https:/
 
 - Ptah `v0.29.2`. Commit [`ba500e11b2536ad7dad1720e5cbd9bf7292dba8b`](https://github.com/stokaro/ptah/commit/ba500e11b2536ad7dad1720e5cbd9bf7292dba8b), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, eighteenth and nineteenth limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second and twenty-third limitations.
 
 ### v0.2.13
 
@@ -104,7 +108,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.13/](https:/
 
 - Ptah `v0.29.0`. Commit [`75fa9991177e9049b66fe2e37abec0db40f47568`](https://github.com/stokaro/ptah/commit/75fa9991177e9049b66fe2e37abec0db40f47568), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, seventeenth, eighteenth, nineteenth and twenty-sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third and thirtieth limitations.
 
 ### v0.2.12
 
@@ -116,7 +120,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.12/](https:/
 
 - Ptah `v0.26.0`. Commit [`1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`](https://github.com/stokaro/ptah/commit/1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twenty-fifth and twenty-sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its sixth, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-ninth and thirtieth limitations.
 
 ### v0.2.11
 
@@ -128,7 +132,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.11/](https:/
 
 - Ptah `v0.23.0`. Commit [`f47b2bfa3b696c93730e7d25397987ed0a4a2562`](https://github.com/stokaro/ptah/commit/f47b2bfa3b696c93730e7d25397987ed0a4a2562), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twenty-fourth, twenty-fifth and twenty-sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-eighth, twenty-ninth and thirtieth limitations.
 
 ### v0.2.10
 
@@ -138,7 +142,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.10/](https:/
 
 **Verified:** the same as [`v0.2.11`](#v0211).
 
-**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twenty-third, twenty-fourth, twenty-fifth and twenty-sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-seventh, twenty-eighth, twenty-ninth and thirtieth limitations.
 
 ### v0.2.9
 
@@ -150,7 +154,7 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.9/](https://
 
 - Ptah `v0.17.0`. Commit [`38bd6e91cfe3a70543046da9c3ada05a0460a103`](https://github.com/stokaro/ptah/commit/38bd6e91cfe3a70543046da9c3ada05a0460a103), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
-**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twenty-second, twenty-third, twenty-fourth, twenty-fifth and twenty-sixth limitations.
+**Limitations:** the same as [`edge`](#edge) without its second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth, eleventh, twelfth, thirteenth, fourteenth, fifteenth, sixteenth, seventeenth, eighteenth, nineteenth, twentieth, twenty-first, twenty-second, twenty-third, twenty-sixth, twenty-seventh, twenty-eighth, twenty-ninth and thirtieth limitations.
 
 ### v0.2.8
 

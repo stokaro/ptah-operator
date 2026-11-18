@@ -1,21 +1,22 @@
 {
   "format_version": 1,
-  "name": "plan_2a0e2a1cd781",
+  "name": "plan_e74be62ae6a2",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
-  "to_fingerprint": "sha256:5350d1cd59124fd386f8b317a0676f42368b5367a82708468fb561e5935e28b1",
+  "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
+  "to_fingerprint": "sha256:78eb81cb98134e595b6ac18752685a9177e708a3d91bc181db034bff2320fbe0",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "CREATE TABLE \"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)",
+      "sql": "CREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     },
     {
-      "sql": "GRANT SELECT ON TABLE \"differs_owned\" TO \"harness_grantee_b\"",
+      "sql": "GRANT SELECT ON TABLE \"public\".\"differs_owned\" TO \"harness_grantee_b\"",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

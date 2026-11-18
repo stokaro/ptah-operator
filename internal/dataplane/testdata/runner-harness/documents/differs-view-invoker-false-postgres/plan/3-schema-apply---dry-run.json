@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_d5e05a296f0d",
-  "plan_digest": "sha256:d79becc3ef366eb0ae69405c218327f6456746977a60db2e0758100759f90111",
+  "plan_name": "plan_528af45c89c8",
+  "plan_digest": "sha256:1d0bd5634e5a42f2157983612321dda8115fd8a72e49c65a2a7096c26376e30b",
   "units": [
     {
-      "sql": "ALTER VIEW \"differs_notes_view\" SET (security_invoker=false)",
+      "sql": "ALTER VIEW \"public\".\"differs_notes_view\" SET (security_invoker=false)",
       "effects": [
         {
           "version": 1,

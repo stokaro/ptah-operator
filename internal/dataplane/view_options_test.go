@@ -24,7 +24,8 @@ func TestNamedViewOptionsReadTheCapturedRefusals(t *testing.T) {
 		},
 		{
 			capture: "runner-harness/documents/differs-view-invoker-unstated-postgres/plan/1-schema-plan.json",
-			want:    []dataplane.SchemaRefusalViewOption{{View: "differs_notes_view", Option: "security_invoker"}},
+			// Since v0.30.0 a PostgreSQL view is named with its schema.
+			want: []dataplane.SchemaRefusalViewOption{{View: "public.differs_notes_view", Option: "security_invoker"}},
 		},
 	} {
 		t.Run(test.capture, func(t *testing.T) {

@@ -31,7 +31,7 @@ func TestPostgresMigrationSQLAuditAcceptsOnlyTheHistoryContract(t *testing.T) {
 	const database, host = "ptah_e2e_retarget", "10.244.3.97"
 	clients := map[string]operationSQLClient{host: {jobUID: "job", podUID: "pod", operation: "history"}}
 	counts, err := postgresMigrationRefusalSQL(raw, database, clients)
-	if err != nil || counts[host] != 10 || len(counts) != 1 {
+	if err != nil || counts[host] != 11 || len(counts) != 1 {
 		t.Fatalf("actual History reading: counts=%v error=%v", counts, err)
 	}
 	for name, statement := range map[string]string{
@@ -79,6 +79,23 @@ func TestPostgresMigrationSQLAuditAcceptsOnlyTheHistoryContract(t *testing.T) {
 			}
 		})
 	}
+	// Since Ptah v0.30.0 History asks whether two tables exist: the revision
+	// table and the repeatable migration record. No other name passes.
+	for _, table := range []string{"schema_migrations", "schema_migrations_repeatable"} {
+		if !postgresMigrationHistoryStatement(postgresHistoryExists, "Parameters: $1 = '"+table+"'") {
+			t.Errorf("the existence check of %s was refused", table)
+		}
+	}
+	for _, table := range []string{"schema_migrations_log", "schema_migrations_repeatable_x", "widgets", "schema_migrations_repeatable' OR '1'='1"} {
+		if postgresMigrationHistoryStatement(postgresHistoryExists, "Parameters: $1 = '"+table+"'") {
+			t.Errorf("the existence check of %s was accepted", table)
+		}
+	}
+	// The record is only asked for, never read in the columns the revision
+	// table is.
+	if postgresMigrationHistoryStatement(postgresHistoryOwner, "Parameters: $1 = '', $2 = 'schema_migrations_repeatable'") {
+		t.Error("the owner read of the repeatable record was accepted")
+	}
 }
 
 // PostgreSQL 16 logs the same History statements with the parameter detail
@@ -94,7 +111,7 @@ func TestPostgresMigrationSQLAuditReadsPostgreSQL16Parameters(t *testing.T) {
 		t.Fatal("the History reading carries no parameter detail to respell")
 	}
 	counts, err := postgresMigrationRefusalSQL([]byte(lowered), database, clients)
-	if err != nil || counts[host] != 10 || len(counts) != 1 {
+	if err != nil || counts[host] != 11 || len(counts) != 1 {
 		t.Fatalf("History reading as PostgreSQL 16 logs it: counts=%v error=%v", counts, err)
 	}
 	for name, detail := range map[string]string{
@@ -172,7 +189,7 @@ func TestPostgresMigrationSQLAuditBoundsHarnessReads(t *testing.T) {
 	clients := map[string]operationSQLClient{"10.244.3.97": {jobUID: "job", podUID: "pod", operation: "history"}}
 	const row = `{"dbname":"ptah_e2e_retarget","remote_host":"127.0.0.1","message":"statement: SELECT count(*) FROM schema_migrations"}`
 	counts, err := postgresMigrationRefusalSQL(append(append([]byte{}, raw...), row...), "ptah_e2e_retarget", clients)
-	if err != nil || counts["127.0.0.1"] != 1 || counts["10.244.3.97"] != 10 {
+	if err != nil || counts["127.0.0.1"] != 1 || counts["10.244.3.97"] != 11 {
 		t.Fatalf("harness diagnostic control: %v %v", counts, err)
 	}
 	for _, bad := range []string{

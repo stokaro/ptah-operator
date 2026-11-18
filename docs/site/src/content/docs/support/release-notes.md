@@ -19,15 +19,65 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.29.5,
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.30.1,
 which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.29.5 and planned. Measured on
+the resource has read its database with v0.30.1 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.29.5 made.
+is for a plan v0.30.1 made.
+
+A `PtahMigration` whose artifact holds an `R__<identity>.sql` file now stops at
+its history read. Since v0.30.0 Ptah reads such a file as a repeatable
+migration, and the operator runs a versioned sequence only, so the resource is
+`Blocked` with `RepeatableMigrationsUnsupported`, names the files, and
+publishes no plan. Under v0.29.2 Ptah did not read the files at all: the
+versioned migrations beside them ran, and the files never did. List them in the
+directory each artifact is built from before you upgrade:
+
+```sh
+find migrations -name 'R__*.sql'
+```
+
+Remove them, and write what they did as versioned migrations.
+[Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
+says what the refusal names.
+
+A PostgreSQL plan that drops and makes again a view or a materialized view
+another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or
+`ALTER MATERIALIZED VIEW ... OWNER TO` for a materialized view
+([stokaro/ptah#6166](https://github.com/stokaro/ptah/pull/6166)), and waits
+for an approval as `Ownership`, under `apply: Always` too. Under v0.29.2 the
+rebuild left the login as the view's owner. Ptah v0.30.1's `schema apply`
+refuses such a plan before any statement runs when the login may not give the
+view back: it needs `SET` on the role on PostgreSQL 16 and later, membership in
+it before 16, and the role needs `CREATE` on the view's schema
+([stokaro/ptah#6196](https://github.com/stokaro/ptah/pull/6196)). `schema plan`
+does not check owners, so the Plan meets the refusal in the `schema apply` dry
+run it runs on the saved plan, and fails with `plan_refused: ptah refused to
+plan the change (owner-transfer: ...)` or `(owner-schema-privilege: ...)`,
+naming the statement and the role. To list
+the views a rebuild would give back, run as the schema's login:
+
+```sql
+SELECT c.oid::regclass AS view, pg_get_userbyid(c.relowner) AS owner
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('v', 'm') AND n.nspname = 'public'
+  AND c.relowner <> (SELECT oid FROM pg_roles WHERE rolname = current_user);
+```
+
+[PostgreSQL authority](../databases/#postgresql-authority) gives the grants.
+
+A PostgreSQL schema before 17 whose generated column has a new expression now
+reads `DifferenceNotPlannable`, with `InSync` and `Ready` false and Ptah's note
+in `Ready`, where under v0.29.2 it read `InSync` with the old expression in
+place. Such a server cannot change the expression in place, and Ptah plans no
+statement for it ([stokaro/ptah#6165](https://github.com/stokaro/ptah/pull/6165)).
+Make the change by hand or with a migration, or change the artifact back.
+[A difference Ptah cannot plan](../../troubleshoot/condition-reasons/#a-difference-ptah-cannot-plan)
+says what the resource does meanwhile.
 
 A MySQL or MariaDB view the database holds as `SQL SECURITY INVOKER` and the
 schema declares with no mode now stops the schema's Plan
@@ -73,9 +123,13 @@ A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.29.5, and the runner
+- **Executor.** The verified executor is now Ptah v0.30.1, and the runner
   harness, the schema SQL readings, both History readings and the capacity
-  calibration were measured with it. Since v0.29.3 each view statement of a
+  calibration were measured with it. A migration's status and run now ask
+  whether `schema_migrations_repeatable` exists, with the query that asks for
+  `schema_migrations`, and a run adds the nullable `repeatable` column to
+  `schema_migrations_log` where the log lacks it, as it added `run_reference`
+  and `actor_origin`. Since v0.29.3 each view statement of a
   saved plan also records what the view held when the plan started, as
   `before_plan` ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)),
   and each MySQL view statement its `SQL SECURITY` mode before and after, as
@@ -97,7 +151,49 @@ propagation is refused from this release: have it name
   that fit in 512 bytes and counts the rest. A refusal whose report lists no
   view reads as before.
   [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
-  says what the message carries.
+  says what the message carries. Since v0.30.0 a PostgreSQL view is named with
+  its schema, as `public.orders_view security_invoker`.
+- **A view owner the server would refuse.** Since v0.30.1 Ptah's `schema apply`
+  refuses a PostgreSQL plan that gives a view or a materialized view to a role
+  the server lacks, to one the login may not give it to, or to one without
+  `CREATE` on the view's schema, before any statement runs
+  ([stokaro/ptah#6196](https://github.com/stokaro/ptah/pull/6196),
+  [stokaro/ptah#6199](https://github.com/stokaro/ptah/pull/6199)). `schema plan`
+  does not check owners: the operator reads the code from the `schema apply` dry
+  run its Plan runs on the saved plan, and an approved plan's Apply meets the
+  same check before its first statement. The message
+  names the code, the statement, the role and what is missing, as in
+  `plan_refused: ptah refused to plan the change (owner-transfer: ALTER VIEW
+  "public"."my_docs" OWNER TO "reporting" role reporting connected ptah lacks
+  SET)`. A schema can now declare a view's owner
+  ([stokaro/ptah#6166](https://github.com/stokaro/ptah/pull/6166)), and every
+  `OWNER TO` raises `Ownership`.
+  [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  lists the codes.
+- **PostgreSQL names carry their schema.** On a PostgreSQL URL every statement
+  of a plan now names the object's schema, as `CREATE TABLE
+  "public"."customers"`, where v0.29.2 wrote the name alone
+  ([stokaro/ptah#6132](https://github.com/stokaro/ptah/pull/6132)). A name the
+  schema writes without one is placed where the dev database resolves it, or,
+  with no dev database, in the login's current schema, and the saved plan records that
+  schema as `placed_schema`, which the operator reads. A review that compares a
+  plan's SQL across the upgrade sees every PostgreSQL statement change. Since
+  v0.30.1 `schema drift` names objects the same way
+  ([stokaro/ptah#6204](https://github.com/stokaro/ptah/pull/6204)).
+  `driftFindings` counts kinds of difference and does not change, and a fault
+  of the schema file that an Observe or a Plan stops on still reads as `schema
+  validate` prints it, without the schema.
+- **A plan can carry notes.** Since v0.30.0 Ptah can write a note into a plan
+  about a change it found and did not plan. `kubectl ptah plan` prints each note
+  where Ptah placed it, and `-o sql` leaves them out. A plan of notes and no
+  statement is not published, and the schema reads `DifferenceNotPlannable`, as
+  above. For a program that reads plans through `pkg/planread`, `Plan` and
+  `DisplayPlan` gain `Notes`, and `annotations` is no longer an unread field.
+- **New columns keep their declared order.** A plan that adds columns to a
+  table now adds them in the order the schema declares them, where v0.29.2
+  sorted them by name
+  ([stokaro/ptah#6158](https://github.com/stokaro/ptah/pull/6158)), so a table
+  that gains columns holds them in the order one created from the schema does.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on

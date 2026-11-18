@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "name": "plan_c293f78ac36c",
+  "dialect": "postgres",
+  "from_fingerprint": "sha256:55e4fd6cbaddcfc5456b4c2a81554ddade8cbf84e5735df0e6c789eb6e96a2e4",
+  "to_fingerprint": "sha256:e85d104a68343d4a9f874b056f3580c32e39e77c1eb5bea7bb7ef1c968d87dc5",
+  "scope": {
+    "kind": "realm"
+  },
+  "placed_schema": "public",
+  "destructive": false,
+  "statements": [],
+  "annotations": [
+    {
+      "before": 0,
+      "text": "WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); manual migration required."
+    }
+  ]
+}

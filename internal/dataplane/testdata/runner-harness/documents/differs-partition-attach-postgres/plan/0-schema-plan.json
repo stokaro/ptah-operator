@@ -2,24 +2,25 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:d7443a15a170246750207471c3794cc716c52df28c77815752f9304751f76dbb",
-  "plan_path": "/work/ptah-plan-output-144292138/first.plan.json",
+  "plan_digest": "sha256:651c9d371e272f190343fb4925a5c14cfcb98ab49164dd601c9a918cb7626e95",
+  "plan_path": "/work/ptah-plan-output-2600980221/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_a13a15010545",
+    "name": "plan_4c6eee3ac996",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:06426050a55c5dee6bddeb2d5699a53ec711c40a7ae7165baf6cade8f62b7c6e",
-    "to_fingerprint": "sha256:0c88eca05d07c13f7ec9f61485850882808ef6c9f1499c2343e337e81857c4f8",
+    "from_fingerprint": "sha256:852d514fceb9c3962f4a9be6f90af8a0c3a7d5d451cfacc166d5f9709830f32f",
+    "to_fingerprint": "sha256:19c01a1d9e397416a713ebe1141124052f340405662fd985d9a517e99016ed92",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": false,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')",
+        "sql": "ALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_loose\" FOR VALUES FROM ('2030-01-01') TO ('2031-01-01')",
         "severity": "warning",
         "reason": "DETACH and ATTACH PARTITION lock the parent table, ATTACH reads every row of the partition, and of a default partition, to check the bound",
         "owned": true

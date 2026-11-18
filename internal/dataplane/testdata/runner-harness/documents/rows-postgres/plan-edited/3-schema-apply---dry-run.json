@@ -2,17 +2,17 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_9a30166de438",
-  "plan_digest": "sha256:aff64052f4acdfc24bf3a909d8f02f55c87b1f801e039151e2950ec21a80fee2",
+  "plan_name": "plan_2bbbf3602a3a",
+  "plan_digest": "sha256:8b5c0ea478dc7d581143700b116156b86ed5e37a0090bdb1c2b8aa262ff9438d",
   "units": [
     {
-      "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');"
+      "sql": "INSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');"
     },
     {
-      "sql": "UPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';"
+      "sql": "UPDATE \"public\".\"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';"
     },
     {
-      "sql": "DELETE FROM \"regions\" WHERE \"code\" = 'apac';"
+      "sql": "DELETE FROM \"public\".\"regions\" WHERE \"code\" = 'apac';"
     }
   ]
 }

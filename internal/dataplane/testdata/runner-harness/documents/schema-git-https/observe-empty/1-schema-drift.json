@@ -32,7 +32,7 @@
       "column_names": "exact"
     },
     "tables_added": [
-      "e2e_git_items"
+      "public.e2e_git_items"
     ],
     "tables_removed": null,
     "tables_modified": null,

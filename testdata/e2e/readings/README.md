@@ -283,18 +283,28 @@ field each mistake would change. They name the lab namespace, the Job and the
 Pod, and hold no credentials or SQL.
 
 `view-invoker-created-plan.json`, `view-invoker-turned-on-plan.json` and
-`view-invoker-body-kept-plan.json` are the plans the Ptah v0.29.3 release image
-`ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`
-(commit `dfbda1b29a7e4591a41334c6949dddac3a6bd69d`) saved on November 16, 2026
+`view-invoker-body-kept-plan.json` are the plans the Ptah v0.30.1 release image
+`ghcr.io/stokaro/ptah@sha256:dad67242b23d6ffbd0c0ec43b91aefab5a43cbdea1dca3e6361df6ebca631e3f`
+(commit `c5fba763a6fb346fc8a35d2f336d75a91385e3b9`) saved on November 18, 2026
 for `testdata/e2e/postgresql-external-v4-view.sql`, `-v5-view-invoker.sql` and
 `-v6-view-body.sql`, in that order, through the lab of
 `support/qualification/probes/schema_sql_readings.py`, against one PostgreSQL 17
 database that a plan of `postgresql-external-v3-grant.sql` had been applied to.
 Each was applied with `ptah schema apply --plan` before the next was planned,
 and each Apply wrote its two schema apply log entries. They are stored as Ptah
-wrote them, and hold no credentials. Against the plans they replace, each
-effect gains `before_plan`, which says whether the view existed when the plan
-started and the options it held then
+wrote them, and hold no credentials. Against the plans they replace, which
+v0.29.3 saved and v0.29.5 reproduced, each statement names the view's schema,
+as `CREATE VIEW "public"."e2e_widget_names"`, and each plan records that schema
+as `placed_schema`
+([stokaro/ptah#6132](https://github.com/stokaro/ptah/pull/6132)). Nothing else
+moved but the plan name and the fingerprints.
+
+Before them the plans were the ones the Ptah v0.29.3 release image
+`ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`
+(commit `dfbda1b29a7e4591a41334c6949dddac3a6bd69d`) saved on November 16, 2026
+the same way. Against the plans those replaced, each effect gains
+`before_plan`, which says whether the view existed when the plan started and
+the options it held then
 ([stokaro/ptah#6099](https://github.com/stokaro/ptah/pull/6099)), and nothing
 else moved but the plan name and the `from_fingerprint`, which identify the
 database the plan read. The predicate does not read `before_plan`. On November
@@ -302,11 +312,11 @@ database the plan read. The predicate does not read `before_plan`. On November
 `ghcr.io/stokaro/ptah@sha256:3b9f644a08221cdcde9062c6d23c55b6fbcccaaa9d4edc2aec10dd80f0f448f1`
 (commit `1f1ff93c5ac8fe34f80845bb1600ac6a3bcee788`), run through the same lab,
 saved the three plans byte for byte, and each Apply wrote its two schema apply
-log entries, so they stay. On November 17, 2026 the v0.29.5 release image
+log entries, so they stayed. On November 17, 2026 the v0.29.5 release image
 `ghcr.io/stokaro/ptah@sha256:98874de7994f2314d3acb699430ca5b21025792c44ff8c17086a222226ae1aae`
 (commit `8a634c0574427e313392f1131382cf4346d05b0d`) did the same again.
 
-The plans they replace were the ones the Ptah v0.26.0 release image
+The plans the v0.29.3 ones replaced were the ones the Ptah v0.26.0 release image
 `ghcr.io/stokaro/ptah@sha256:247d115a9062ed785501ae05620acea1a176e72776f71b175a244fb056d2174f`
 (commit `1cf0563c0951fbf67f13f9b4ca7f9b49bbe2f3a3`) saved on November 13, 2026
 the same way, in another setup, against a PostgreSQL 17.12 database. On November 14, 2026 the v0.28.0 release

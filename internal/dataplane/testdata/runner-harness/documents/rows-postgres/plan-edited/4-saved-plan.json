@@ -1,14 +1,16 @@
 {
   "format_version": 1,
-  "name": "plan_9a30166de438",
+  "name": "plan_2bbbf3602a3a",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:17a8047da1be8cd247779b1b174735731651af82885fe1d64a583a5aff8ccf26",
-  "to_fingerprint": "sha256:852cbfc2186a48d41d2174b55a0d235688717b025e01165aeac3fdaf12fe60e6",
+  "from_fingerprint": "sha256:41678cca4e8c336f0be656b7d0904379d24de3d2b0e786c2634f0f99ccf2d09a",
+  "to_fingerprint": "sha256:4095d9cc94b89b93c331249294e6c31900719e50488b714fb4491683c6964087",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "managed_rows": [
     {
+      "schema": "public",
       "table": "regions",
       "keys": [
         "code"
@@ -19,23 +21,23 @@
       ]
     }
   ],
-  "rows_fingerprint": "sha256:55eef1beb585b1b80787e60197813dcc35c74f6f52be37ffee8401e3a443c3f2",
+  "rows_fingerprint": "sha256:85382f9e2cd1f85128842585b8bad20186d53e820f7c770e994588d3198cd296",
   "destructive": true,
   "statements": [
     {
-      "sql": "INSERT INTO \"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');",
+      "sql": "INSERT INTO \"public\".\"regions\" (\"code\", \"name\") VALUES ('amer', 'Americas');",
       "severity": "safe",
-      "reason": "inserts declared rows into regions"
+      "reason": "inserts declared rows into public.regions"
     },
     {
-      "sql": "UPDATE \"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';",
+      "sql": "UPDATE \"public\".\"regions\" SET \"name\" = 'Europe, Middle East and Africa' WHERE \"code\" = 'emea';",
       "severity": "warning",
-      "reason": "overwrites managed columns of a row in regions"
+      "reason": "overwrites managed columns of a row in public.regions"
     },
     {
-      "sql": "DELETE FROM \"regions\" WHERE \"code\" = 'apac';",
+      "sql": "DELETE FROM \"public\".\"regions\" WHERE \"code\" = 'apac';",
       "severity": "destructive",
-      "reason": "removes a row from regions that the declaration no longer holds"
+      "reason": "removes a row from public.regions that the declaration no longer holds"
     }
   ]
 }

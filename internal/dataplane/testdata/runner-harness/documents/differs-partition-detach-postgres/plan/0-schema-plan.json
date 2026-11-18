@@ -2,26 +2,27 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:48cb2ea1e4db154221fdac896bb4be9e3e97fe804e11647f1916622bb813ac89",
-  "plan_path": "/work/ptah-plan-output-3885457818/first.plan.json",
+  "plan_digest": "sha256:b17b92646cd7360c6e5a2f5011fb80c07715aa31686927bd4e362cf4b2f0dd77",
+  "plan_path": "/work/ptah-plan-output-3864799763/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_77a2dc2aee8f",
+    "name": "plan_c9091b25ecb1",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:06426050a55c5dee6bddeb2d5699a53ec711c40a7ae7165baf6cade8f62b7c6e",
-    "to_fingerprint": "sha256:1d33921bc6d8919c7d96b644f59315fe9ea8b5236a118269b4236a60c294ab75",
+    "from_fingerprint": "sha256:852d514fceb9c3962f4a9be6f90af8a0c3a7d5d451cfacc166d5f9709830f32f",
+    "to_fingerprint": "sha256:71c1cef1295b28a5308a59d98d678eee7159a6fc218bffd85e0e7c19ab8f3845",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": true,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\"",
+        "sql": "ALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\"",
         "severity": "destructive",
-        "reason": "DETACH PARTITION takes the partition's rows out of what differs_events returns; they stay in the table",
+        "reason": "DETACH PARTITION takes the partition's rows out of what public.differs_events returns; they stay in the table",
         "owned": true
       }
     ]

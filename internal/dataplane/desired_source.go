@@ -1,6 +1,7 @@
 package dataplane
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -47,14 +48,26 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 // plan check every index before they compare anything (stokaro/ptah#5845), and
 // the first one they refuse stops them with validate's line, dialect and all.
 // So an `<dialect>: index <name>: <fault>` line is read when failed is that
-// line and nothing else, and the reason is the line after the dialect. A
+// line and nothing else, apart from the schema a name may carry (below), and
+// the reason is validate's line after the dialect. A
 // `<dialect>: schema: <fault>` line is read when failed ends with its words:
 // drift and plan run the validator that wrote it, and wrap its sentence and
 // nothing else around it. The reason is then the fault.
 //
 // Validate reports a fault of the file whether or not it stopped anything, and
 // the command that failed may have stopped on the database or on another fault
-// validate does not know. Comparing the words is what ties the two.
+// validate does not know. Comparing the words is what ties the two. On a
+// PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0
+// (stokaro/ptah#6132) and drift since v0.30.1 (stokaro/ptah#6204) place every
+// name the file writes without a schema in the schema the database resolves it
+// to, and a sentence can name a table that way, as "public.parent", where
+// validate, which has no database, prints "parent". At v0.30.1 drift does in
+// both kinds of line and plan in a schema fault only, and both place a table
+// and nothing else: an index, a column or a constraint keeps the name validate
+// prints. So on PostgreSQL a table validate names without a schema matches the
+// same table with a schema in front of it, in both kinds of line, and the
+// tables one sentence places share one schema (see placedFault). On MySQL the
+// words have to be validate's.
 //
 // failed is compared and never returned. Its command had a connection, so it
 // could quote the database. What is returned comes from a run that had none.
@@ -65,11 +78,11 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 		dialect, rest, found := strings.Cut(line, ": ")
 		switch {
 		case !found || !dialectMatches(engine, dialect):
-		case strings.HasPrefix(rest, indexKind) && line == failed:
+		case strings.HasPrefix(rest, indexKind) && faultIs(failed, line, engine):
 			return rest, true
 		case strings.HasPrefix(rest, wholeSchemaKind):
 			fault := text[offset+len(dialect)+len(": ")+len(wholeSchemaKind):]
-			if !strings.HasSuffix(failed, ": "+fault) {
+			if !faultEnds(failed, fault, engine) {
 				return "", false
 			}
 			return fault, true
@@ -77,6 +90,102 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 		offset += len(line) + len("\n")
 	}
 	return "", false
+}
+
+// quotedName is a name Ptah prints with %q, escapes and all.
+var quotedName = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+
+// placedTableLead is the word before a quoted name Ptah may place in a
+// schema, a table's, as in `on table "parent"`. It is a word of its own, at
+// the start of the words or after a space.
+const placedTableLead = "table "
+
+// faultEnds reports whether failed ends with ": " and then fault, with the
+// tables it names placed as placedFault allows.
+func faultEnds(failed, fault, engine string) bool {
+	if strings.HasSuffix(failed, ": "+fault) {
+		return true
+	}
+	expression, placed := placedFault(fault, engine)
+	if !placed {
+		return false
+	}
+	for offset := strings.Index(failed, ": "); offset >= 0; {
+		if placedAs(expression, failed[offset+len(": "):]) {
+			return true
+		}
+		next := strings.Index(failed[offset+1:], ": ")
+		if next < 0 {
+			break
+		}
+		offset += 1 + next
+	}
+	return false
+}
+
+// faultIs reports whether failed is line and nothing else, with the tables it
+// names placed as placedFault allows.
+func faultIs(failed, line, engine string) bool {
+	if failed == line {
+		return true
+	}
+	expression, placed := placedFault(line, engine)
+	return placed && placedAs(expression, failed)
+}
+
+// placedFault is the expression for the whole of fault in which each quoted
+// name that follows placedTableLead and names no schema may name one, the
+// schema a plan or a drift placed the table in, as a group of its own. A name
+// validate prints with a schema has to come back as it is, and nothing else in
+// the words may differ. It reports false where Ptah places no name, on every
+// engine but PostgreSQL, and where fault names no table it could place.
+func placedFault(fault, engine string) (*regexp.Regexp, bool) {
+	if !dialectMatches(engine, "postgres") {
+		return nil, false
+	}
+	var pattern strings.Builder
+	pattern.WriteString(`\A`)
+	last, tables := 0, 0
+	for _, found := range quotedName.FindAllStringIndex(fault, -1) {
+		pattern.WriteString(regexp.QuoteMeta(fault[last:found[0]]))
+		name := fault[found[0]+1 : found[1]-1]
+		before := fault[:found[0]]
+		names := before == placedTableLead || strings.HasSuffix(before, " "+placedTableLead)
+		if names && !strings.Contains(name, ".") {
+			pattern.WriteString(`"(?:([^"\\.]+)\.)?` + regexp.QuoteMeta(name) + `"`)
+			tables++
+		} else {
+			pattern.WriteString(regexp.QuoteMeta(fault[found[0]:found[1]]))
+		}
+		last = found[1]
+	}
+	pattern.WriteString(regexp.QuoteMeta(fault[last:]) + `\z`)
+	if tables == 0 {
+		return nil, false
+	}
+	expression, err := regexp.Compile(pattern.String())
+	return expression, err == nil
+}
+
+// placedAs reports whether text is the fault expression matches, with every
+// table that names a schema naming the same one. RE2 has no backreference, so
+// the schemas are compared here.
+func placedAs(expression *regexp.Regexp, text string) bool {
+	match := expression.FindStringSubmatch(text)
+	if match == nil {
+		return false
+	}
+	schema := ""
+	for _, placed := range match[1:] {
+		switch {
+		case placed == "":
+		case schema == "":
+			schema = placed
+		case placed != schema:
+			return false
+		}
+	}
+	return true
 }
 
 // MigrationFilesProblem reads the failure document `migrations status --json`

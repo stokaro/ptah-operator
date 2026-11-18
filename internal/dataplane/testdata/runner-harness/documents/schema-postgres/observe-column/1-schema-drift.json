@@ -45,7 +45,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "e2e_widgets",
+        "table_name": "public.e2e_widgets",
         "columns_added": [
           "note"
         ],

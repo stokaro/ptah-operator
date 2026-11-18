@@ -2,11 +2,11 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_243e3f9062e7",
-  "plan_digest": "sha256:a9f4d9464e85d8f131baa478ba6d72e888129e5e61d603a425f073b01fe025c5",
+  "plan_name": "plan_eb1a4016d05a",
+  "plan_digest": "sha256:0752d00e2869e7aa72a11aa7399cf0b97718d32cb681134fd01c6c6f1dd0222b",
   "units": [
     {
-      "sql": "ALTER TABLE \"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)"
+      "sql": "ALTER TABLE \"public\".\"differs_events\" ALTER COLUMN \"happened_at\" TYPE timestamp(0)"
     }
   ],
   "apply_log": {

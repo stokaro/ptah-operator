@@ -1,19 +1,20 @@
 {
   "format_version": 1,
-  "name": "plan_89e0fda4eb9b",
+  "name": "plan_9fe8671a5e3d",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:d0bac58ac6251bfe5773372bab7178a1af00960a84e7f4219e439b935f9e6257",
-  "to_fingerprint": "sha256:760c190ed0f472897cb7a62a7bbb1c49752a5d479737d214cc1cb0f07cbc9eb7",
+  "from_fingerprint": "sha256:d63ed0a925c80e437add57e8ba67038c56bc213ee940e55a1da9e54b0bfbe279",
+  "to_fingerprint": "sha256:71a4d31a5399cd1ad583654079aed828cb462eb6e3600103eb7ee4367057dab5",
   "exclude": [
     "e2e_excluded_policy_keep"
   ],
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "ALTER TABLE \"e2e_widgets\" ADD COLUMN \"fault_token\" text",
+      "sql": "ALTER TABLE \"public\".\"e2e_widgets\" ADD COLUMN \"fault_token\" text",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

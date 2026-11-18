@@ -12,8 +12,13 @@ import (
 )
 
 // externalView is the view the security_invoker row adds to the external
-// schema.
-const externalView = "e2e_widget_names"
+// schema, and plannedView how its statements name it. The external URL pins no
+// search_path, so since Ptah v0.30.0 every statement names the schema the
+// database placed the view in (stokaro/ptah#6132).
+const (
+	externalView = "e2e_widget_names"
+	plannedView  = `"public"."` + externalView + `"`
+)
 
 // viewInvokerChange is what one step of the security_invoker row plans: how the
 // one statement opens, whether it may name security_invoker at all, and the
@@ -33,12 +38,12 @@ var (
 	// reads with its owner's rights. Ptah records every property of a new view
 	// as changed, from absent to its value.
 	viewCreatedWithOwnerRights = viewInvokerChange{
-		opens: `CREATE VIEW "` + externalView + `" AS`, unstated: true, action: "create", after: boolValue(false),
+		opens: `CREATE VIEW ` + plannedView + ` AS`, unstated: true, action: "create", after: boolValue(false),
 		describeChange: "a view created with its owner's rights",
 	}
 	// viewInvokerTurnedOn is the existing view switched to its readers' rights.
 	viewInvokerTurnedOn = viewInvokerChange{
-		opens:  `ALTER VIEW "` + externalView + `" SET (security_invoker=true)`,
+		opens:  `ALTER VIEW ` + plannedView + ` SET (security_invoker=true)`,
 		action: "alter", before: boolValue(false), after: boolValue(true),
 		describeChange: "security_invoker turned on",
 	}
@@ -47,7 +52,7 @@ var (
 	// keeps, so its SQL states security_invoker=true; only the effect says the
 	// value did not move.
 	viewBodyKeptInvoker = viewInvokerChange{
-		opens:  `CREATE OR REPLACE VIEW "` + externalView + `" WITH (security_invoker=true) AS`,
+		opens:  `CREATE OR REPLACE VIEW ` + plannedView + ` WITH (security_invoker=true) AS`,
 		action: "replace", before: boolValue(true), after: boolValue(true),
 		describeChange: "a body change that keeps security_invoker on",
 	}

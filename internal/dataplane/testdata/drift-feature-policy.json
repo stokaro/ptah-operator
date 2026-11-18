@@ -60,7 +60,7 @@
     "tables_removed": null,
     "tables_modified": [
       {
-        "table_name": "e2e_policy_notes",
+        "table_name": "public.e2e_policy_notes",
         "columns_added": null,
         "columns_removed": null,
         "columns_modified": null,
@@ -72,8 +72,7 @@
               "kind": "ptah.run/pgpolicy/policy",
               "schema": {
                 "source": "public",
-                "normalized": "public",
-                "defaulted": true
+                "normalized": "public"
               },
               "parent": {
                 "source": "e2e_policy_notes",

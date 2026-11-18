@@ -1,0 +1,90 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_826f1d1ab47e",
+  "plan_digest": "sha256:67058ee617e11aa5f51fe759505b44a235444aece7d929601c838338c7abf8e7",
+  "units": [
+    {
+      "sql": "DROP VIEW \"public\".\"differs_notes_view\"",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_notes_view"
+          },
+          "action": "drop",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "before": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "before": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sql": "CREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id FROM differs_notes",
+      "effects": [
+        {
+          "version": 1,
+          "object": {
+            "kind": "view",
+            "schema": "public",
+            "name": "differs_notes_view"
+          },
+          "action": "create",
+          "properties": [
+            {
+              "name": "security_barrier",
+              "after": false,
+              "changed": true
+            },
+            {
+              "name": "security_invoker",
+              "after": true,
+              "changed": true
+            }
+          ],
+          "before_plan": {
+            "exists": true,
+            "properties": [
+              {
+                "name": "security_barrier",
+                "value": false
+              },
+              {
+                "name": "security_invoker",
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sql": "ALTER VIEW \"public\".\"differs_notes_view\" OWNER TO \"harness_view_keeper\""
+    }
+  ]
+}

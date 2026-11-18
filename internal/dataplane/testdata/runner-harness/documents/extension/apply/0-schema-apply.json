@@ -2,14 +2,14 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_0a146ddcdd89",
-  "plan_digest": "sha256:a3ec51e1385db3c41c16cf0a277c57ee24909dded8aa5ed3ac2aa7f1a00bab1c",
+  "plan_name": "plan_4f1a7f710a72",
+  "plan_digest": "sha256:e2b98cf148c07c02ca9e7e2c5b3f30e6b16f81eaa063150328683180efef208a",
   "units": [
     {
       "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\""
     },
     {
-      "sql": "CREATE TABLE \"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
+      "sql": "CREATE TABLE \"public\".\"e2e_extension_widgets\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" text NOT NULL\n)"
     }
   ],
   "apply_log": {

@@ -1,6 +1,8 @@
 package dataplane_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -282,10 +284,15 @@ func TestDecodePlanFailsClosed(t *testing.T) {
 	}
 }
 
-// Ptah v0.17.0 writes annotations on a plan and inputs on a statement for an
-// engine an executable provider serves. The operator plans neither kind, so
-// both stay undeclared and refuse the plan: declaring one is a decision about
-// what an Apply Pod can run, not a field to add so that a decode passes.
+// Ptah v0.17.0 writes inputs on a statement for an engine an executable
+// provider serves. The operator plans no such engine, so the field stays
+// undeclared and refuses the plan: declaring it is a decision about what an
+// Apply Pod can run, not a field to add so that a decode passes.
+//
+// Annotations are notes, and since Ptah v0.30.0 a built-in engine's plan
+// carries them (stokaro/ptah#6165). A note runs nothing and the plan's digest
+// covers it, so a plan with one decodes and carries it, in order, and a note
+// out of place or with nothing to say refuses the plan.
 func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	t.Parallel()
 	base := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from","to_fingerprint":"to",` +
@@ -293,16 +300,108 @@ func TestDecodePlanRefusesProviderExecutionFields(t *testing.T) {
 	if _, err := dataplane.DecodePlan([]byte(base), "PostgreSQL"); err != nil {
 		t.Fatalf("DecodePlan() refused the plan without provider fields: %v", err)
 	}
-	for field, document := range map[string]string{
-		"annotations": strings.Replace(base, `"destructive":false`,
-			`"destructive":false,"annotations":[{"before":0,"text":"note"}]`, 1),
-		"inputs": strings.Replace(base, `"reason":"new table"`,
-			`"reason":"new table","inputs":[{"source":"environment","name":"TOKEN"}]`, 1),
+	inputs := strings.Replace(base, `"reason":"new table"`,
+		`"reason":"new table","inputs":[{"source":"environment","name":"TOKEN"}]`, 1)
+	if _, err := dataplane.DecodePlan([]byte(inputs), "PostgreSQL"); err == nil || !strings.Contains(err.Error(), "inputs") {
+		t.Fatalf("DecodePlan() error = %v, want the inputs field refused", err)
+	}
+
+	annotated := func(notes string) string {
+		return strings.Replace(base, `"destructive":false`, `"destructive":false,"annotations":`+notes, 1)
+	}
+	decoded, err := dataplane.DecodePlan([]byte(annotated(`[{"before":0,"text":"first"},{"before":1,"text":"last"}]`)), "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodePlan() refused a plan with notes: %v", err)
+	}
+	if want := []dataplane.PlanAnnotation{{Before: 0, Text: "first"}, {Before: 1, Text: "last"}}; !reflect.DeepEqual(decoded.Annotations, want) {
+		t.Fatalf("Annotations = %#v, want %#v", decoded.Annotations, want)
+	}
+	for name, notes := range map[string]string{
+		"a note past the last statement": `[{"before":2,"text":"note"}]`,
+		"a note before the first":        `[{"before":-1,"text":"note"}]`,
+		"notes out of order":             `[{"before":1,"text":"last"},{"before":0,"text":"first"}]`,
+		"an empty note":                  `[{"before":0,"text":" "}]`,
+		"a note that is not text":        `[{"before":0,"text":7}]`,
+		"a note field it does not know":  `[{"before":0,"text":"note","run":"DROP TABLE t"}]`,
 	} {
-		t.Run(field, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := dataplane.DecodePlan([]byte(document), "PostgreSQL"); err == nil || !strings.Contains(err.Error(), field) {
-				t.Fatalf("DecodePlan() error = %v, want the %s field refused", err, field)
+			if _, err := dataplane.DecodePlan([]byte(annotated(notes)), "PostgreSQL"); err == nil {
+				t.Fatal("DecodePlan() accepted the notes")
+			}
+		})
+	}
+}
+
+func noteCapture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "runner", "testdata", "note-plan", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// A plan of notes is what Ptah saves since v0.30.0 when every difference it
+// found is one it cannot plan, such as a generated column's new expression on
+// PostgreSQL 16 (stokaro/ptah#6165). It reads only as notes: a statement, a
+// declared row, a destructive mark or no note at all makes it something else.
+func TestDecodeNotePlanReadsOnlyNotes(t *testing.T) {
+	t.Parallel()
+
+	// The fixtures are what the image support/ptah.json pins printed and
+	// saved with `schema plan --output --json` against postgres:16-alpine, for
+	// a table whose generated column the schema file gives another
+	// expression. The report says no changes and names the plan it saved.
+	// internal/runner/testdata/note-plan holds them, outside the runner
+	// harness's captures, since the harness runs PostgreSQL 17 only.
+	saved := noteCapture(t, "saved-plan-postgres-16.json")
+	captured, err := dataplane.DecodeNotePlan(saved, "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodeNotePlan() refused the captured plan: %v", err)
+	}
+	if len(captured.Statements) != 0 || len(captured.Annotations) != 1 || captured.Annotations[0].Before != 0 ||
+		!strings.HasPrefix(captured.Annotations[0].Text, "WARNING: Generated column public.tasks.code changed") ||
+		captured.PlacedSchema != "public" {
+		t.Fatalf("DecodeNotePlan() = %#v, want one note before no statement", captured)
+	}
+	if _, err := dataplane.DecodePlan(saved, "PostgreSQL"); err == nil {
+		t.Fatal("DecodePlan() accepted the captured plan of notes as one to apply")
+	}
+	report, err := dataplane.DecodeSchemaPlan(noteCapture(t, "schema-plan-postgres-16.json"))
+	if err != nil {
+		t.Fatalf("DecodeSchemaPlan() error = %v", err)
+	}
+	sum := sha256.Sum256(saved)
+	if report.Outcome != dataplane.SchemaPlanOutcomeNoChanges || report.PlanPath == "" ||
+		report.PlanDigest != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("report = %#v, want no changes naming the saved plan", report)
+	}
+
+	base := `{"format_version":1,"name":"plan_c293f78ac36c","dialect":"postgres","from_fingerprint":"from","to_fingerprint":"to",` +
+		`"scope":{"kind":"realm"},"placed_schema":"public","destructive":false,"statements":[],` +
+		`"annotations":[{"before":0,"text":"WARNING: Generated column public.tasks.code changed"}]}`
+	plan, err := dataplane.DecodeNotePlan([]byte(base), "PostgreSQL")
+	if err != nil || len(plan.Annotations) != 1 || plan.Annotations[0].Text != "WARNING: Generated column public.tasks.code changed" {
+		t.Fatalf("DecodeNotePlan() = %#v, %v", plan, err)
+	}
+	if _, err := dataplane.DecodePlan([]byte(base), "PostgreSQL"); err == nil {
+		t.Fatal("DecodePlan() accepted a plan of notes as one to apply")
+	}
+	for name, document := range map[string]string{
+		"a statement": strings.Replace(base, `"statements":[]`,
+			`"statements":[{"sql":"CREATE TABLE t (id bigint)","severity":"safe","reason":"new table"}]`, 1),
+		"no note":          strings.Replace(base, `[{"before":0,"text":"WARNING: Generated column public.tasks.code changed"}]`, `[]`, 1),
+		"destructive":      strings.Replace(base, `"destructive":false`, `"destructive":true`, 1),
+		"a declared row":   strings.Replace(base, `"destructive":false`, `"rows_fingerprint":"sha256:x","destructive":false`, 1),
+		"another engine":   strings.Replace(base, `"dialect":"postgres"`, `"dialect":"mysql"`, 1),
+		"an unknown field": strings.Replace(base, `"destructive":false`, `"destructive":false,"future":1`, 1),
+		"no fingerprint":   strings.Replace(base, `"from_fingerprint":"from"`, `"from_fingerprint":""`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := dataplane.DecodeNotePlan([]byte(document), "PostgreSQL"); err == nil {
+				t.Fatal("DecodeNotePlan() accepted the plan")
 			}
 		})
 	}
@@ -441,6 +540,30 @@ func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
 	}
 	if _, err := dataplane.DecodePlan(plan(`{"kind":"realm","schemas":["shop"]}`), "PostgreSQL"); err == nil {
 		t.Fatal("a scope carrying a field the operator does not declare was accepted")
+	}
+}
+
+// Ptah v0.30.0 records the schema it placed unqualified names in on every
+// plan of a PostgreSQL URL that pins no search_path, so a decoder that does
+// not declare it refuses every such plan. The statement and the fields around
+// it are what the pinned v0.30.1 saved against PostgreSQL 17 for a generated
+// column whose expression changes, as v0.30.0 did; the fingerprints are
+// shortened.
+func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {
+	t.Parallel()
+	document := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +
+		`"to_fingerprint":"to","scope":{"kind":"realm"},"placed_schema":"public","destructive":false,` +
+		`"statements":[{"sql":"ALTER TABLE \"public\".\"tasks\" ALTER COLUMN \"code\" SET EXPRESSION AS (lower(title))",` +
+		`"severity":"safe","reason":"does not remove data or tighten constraints"}]}`
+	decoded, err := dataplane.DecodePlan([]byte(document), "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodePlan() error = %v", err)
+	}
+	if decoded.PlacedSchema != "public" {
+		t.Fatalf("placed schema = %q, want public", decoded.PlacedSchema)
+	}
+	if _, err := dataplane.DecodePlan([]byte(strings.Replace(document, `"placed_schema":"public"`, `"placed_schema":["public"]`, 1)), "PostgreSQL"); err == nil {
+		t.Fatal("a placed schema that is not a string was accepted")
 	}
 }
 

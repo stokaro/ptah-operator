@@ -1,16 +1,17 @@
 {
   "format_version": 1,
-  "name": "plan_24484d2e3f1e",
+  "name": "plan_99c54fe6a04e",
   "dialect": "postgres",
-  "from_fingerprint": "sha256:b93aede9600717b0e086b316e4aa5a475e846d283fbf5abd4c8122dbf06c751c",
-  "to_fingerprint": "sha256:f18357017f42389198e255f507284b5d7228f649f17746ca9d8552d9a8554b16",
+  "from_fingerprint": "sha256:ad52ecc7313a7885ca6815975c4b708c2c1d730a662b665ec265b066a58412f7",
+  "to_fingerprint": "sha256:a1955a29335516f6dda77eaa59e93c42329de73353dd04104ca9bc4415efd7f4",
   "scope": {
     "kind": "realm"
   },
+  "placed_schema": "public",
   "destructive": false,
   "statements": [
     {
-      "sql": "CREATE TABLE \"e2e_plan_size_limit\" (\n  \"id\" BIGINT PRIMARY KEY NOT NULL,\n  \"payload\" TEXT DEFAULT '\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c'\n)",
+      "sql": "CREATE TABLE \"public\".\"e2e_plan_size_limit\" (\n  \"id\" BIGINT PRIMARY KEY NOT NULL,\n  \"payload\" TEXT DEFAULT '\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c\u003c'\n)",
       "severity": "safe",
       "reason": "does not remove data or tighten constraints"
     }

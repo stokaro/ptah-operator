@@ -55,7 +55,7 @@
     "indexes_added": [
       {
         "name": "orders_one_per_customer",
-        "table_name": "orders"
+        "table_name": "public.orders"
       }
     ],
     "indexes_removed": null,

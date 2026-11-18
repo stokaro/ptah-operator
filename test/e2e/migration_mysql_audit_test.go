@@ -41,11 +41,11 @@ func mysqlAuditClients() map[string]operationSQLClient {
 func TestMySQLMigrationSQLAuditAcceptsActualHistory(t *testing.T) {
 	t.Parallel()
 	rows, before := mysqlMigrationAuditReading(t), mysqlAuditBaseline()
-	if len(rows) != 13 {
-		t.Fatalf("expected the complete 13-record reading, got %d", len(rows))
+	if len(rows) != 18 {
+		t.Fatalf("expected the complete 18-record reading, got %d", len(rows))
 	}
 	counts, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, mysqlAuditClients())
-	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 7 {
+	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 8 {
 		t.Fatalf("actual History: counts=%v error=%v", counts, err)
 	}
 	// Before this window an unrelated Pod can have used the same IP. Its old
@@ -58,6 +58,11 @@ func TestMySQLMigrationSQLAuditAcceptsActualHistory(t *testing.T) {
 
 func TestMySQLMigrationSQLAuditRejectsChangedSQL(t *testing.T) {
 	t.Parallel()
+	repeatable := strings.Replace(strings.Replace(mysqlHistoryExists, "?", "'"+mysqlAuditDatabase+"'", 1),
+		"?", "'schema_migrations_repeatable'", 1)
+	if !mysqlMigrationHistoryStatement("Execute", repeatable, mysqlAuditDatabase) {
+		t.Fatal("the existence check of the repeatable migration record was refused")
+	}
 	rows, before := mysqlMigrationAuditReading(t), mysqlAuditBaseline()
 	for name, statement := range map[string]string{
 		"DDL":                 "ALTER TABLE widgets ADD COLUMN rogue TEXT",
@@ -71,6 +76,14 @@ func TestMySQLMigrationSQLAuditRejectsChangedSQL(t *testing.T) {
 		"changed engine":      strings.ReplaceAll(mysqlHistoryCreate, "InnoDB", "MyISAM"),
 		"changed database":    "SHOW CREATE TABLE `other`.`schema_migrations`",
 		"parameter injection": strings.ReplaceAll(mysqlHistoryEngine, "?", "'ptah_audit_history' OR 1=1"),
+		// Since Ptah v0.30.0 History asks whether the repeatable migration
+		// record exists; it reads nothing else of it.
+		"the record's engine": strings.Replace(strings.Replace(mysqlHistoryEngine, "?", "'"+mysqlAuditDatabase+"'", 1),
+			"?", "'schema_migrations_repeatable'", 1),
+		"another record": strings.Replace(strings.Replace(mysqlHistoryExists, "?", "'"+mysqlAuditDatabase+"'", 1),
+			"?", "'schema_migrations_log'", 1),
+		"the record in another database": strings.Replace(strings.Replace(mysqlHistoryExists, "?", "'other'", 1),
+			"?", "'schema_migrations_repeatable'", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, command := range []string{"Query", "Prepare", "Execute"} {

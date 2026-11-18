@@ -61,6 +61,19 @@ func TestDecodeSchemaPlanReadsEachOutcome(t *testing.T) {
 			},
 		},
 		{
+			// Since Ptah v0.30.0 a no-changes report may name a plan of notes,
+			// by its digest and path together.
+			name: "no changes naming a plan of notes",
+			document: `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_digest":"` + digest +
+				`","plan_path":"/tmp/ptah-plan-output-1/first.plan.json"}`,
+			check: func(t *testing.T, report dataplane.SchemaPlanReport) {
+				if report.Outcome != dataplane.SchemaPlanOutcomeNoChanges || report.PlanDigest != digest ||
+					report.PlanPath != "/tmp/ptah-plan-output-1/first.plan.json" {
+					t.Fatalf("report = %#v", report)
+				}
+			},
+		},
+		{
 			name: "a fence refusal",
 			document: `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{"code":"protected-table",` +
 				`"tables":["countries","ref.regions"]},"error":{"message":"refusing to change protected table(s) countries, ref.regions"}}`,
@@ -128,8 +141,10 @@ func TestDecodeSchemaPlanRefusesWhatItCannotAccountFor(t *testing.T) {
 			`"plan_digest": "`+digest+`"`, `"plan_digest": "sha256:ABC"`, 1),
 		"changes without a path": strings.Replace(schemaPlanChanges,
 			`"plan_path": "/tmp/ptah-plan-output-1/first.plan.json",`, ``, 1),
-		"no changes naming a saved plan":    `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_digest":"` + digest + `"}`,
-		"no changes naming a path":          `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_path":"/tmp/x"}`,
+		"no changes naming a saved plan": `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_digest":"` + digest + `"}`,
+		"no changes naming a path":       `{"contract_version":3,"command":"schema plan","outcome":"no-changes","plan_path":"/tmp/x"}`,
+		"no changes naming a plan by a digest that is not one": `{"contract_version":3,"command":"schema plan","outcome":"no-changes",` +
+			`"plan_digest":"sha256:ABC","plan_path":"/tmp/x"}`,
 		"a refusal without its reason":      `{"contract_version":3,"command":"schema plan","outcome":"refused","error":{"message":"refused"}}`,
 		"a refusal with no code":            `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{}}`,
 		"a refusal code that is not a word": `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":{"code":"stale plan; DROP"}}`,

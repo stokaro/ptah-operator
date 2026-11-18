@@ -2,24 +2,25 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:aaf026f2dd903bbbbddc5e73c581c64fbc3736f72217c2a95152f13996f66f65",
-  "plan_path": "/work/ptah-plan-output-1191154178/first.plan.json",
+  "plan_digest": "sha256:2cc46b4ab3831623cc551873243f94834ae6b946080d5a528ff898e175d48176",
+  "plan_path": "/work/ptah-plan-output-3893797814/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_f93d19d2cb96",
+    "name": "plan_15ad6f0fabca",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:cd353da6a475074b4aa5f855750148f6999fa9ff6c465e7adebc670c0d740fc0",
-    "to_fingerprint": "sha256:5ee5cc5dde4ce87c2218bfa31cf7b9c406df7a6571ca057b27b7465cb1561ad1",
+    "from_fingerprint": "sha256:da99e291ef0e577296b4e00ab33eeac11e4cbe0aa442fad0a35d8585cca5a0d9",
+    "to_fingerprint": "sha256:8541818fa67417ce7f5c8cc54fbfecd2f82dfa2d70fb00625baac98c4c19aa37",
     "scope": {
       "kind": "realm"
     },
+    "placed_schema": "public",
     "destructive": true,
     "statements": [
       {
         "transactions": [
           "allowed"
         ],
-        "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"e2e_policy_notes\"\n    USING (owner_name = current_user)",
+        "sql": "CREATE POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\"\n    USING (owner_name = current_user)",
         "severity": "destructive",
         "reason": "can widen access: a permissive policy can admit rows to the roles it names",
         "owned": true,

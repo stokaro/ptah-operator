@@ -2,14 +2,14 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_03afc93b5d0a",
-  "plan_digest": "sha256:fee8a5a036aa4e1867c177cb2aafe01d20f15d9455e31df4dcaf0248ac494d3a",
+  "plan_name": "plan_86d3f95a4597",
+  "plan_digest": "sha256:52c5a00474931b4d6dbb866beb80b71b4a1126e3e59f22bbf7242374fcd94ba7",
   "units": [
     {
-      "sql": "ALTER TABLE \"differs_events\" DETACH PARTITION \"differs_e1\""
+      "sql": "ALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\""
     },
     {
-      "sql": "ALTER TABLE \"differs_events\" ATTACH PARTITION \"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')"
+      "sql": "ALTER TABLE \"public\".\"differs_events\" ATTACH PARTITION \"public\".\"differs_e1\" FOR VALUES FROM ('2027-01-01') TO ('2028-01-01')"
     }
   ]
 }
