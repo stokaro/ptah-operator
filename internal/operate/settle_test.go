@@ -594,6 +594,7 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 	}{
 		{"the first target proved the Apply", ended(operatorv1alpha1.JournalInSync), operate.StopProofEnded, "Verified InSync"},
 		{"the first target still drifts", ended(operatorv1alpha1.JournalDriftRemains), operate.StopProofEnded, "Verified DriftRemains"},
+		{"the first target could not decide", ended(operatorv1alpha1.JournalUndecided), operate.StopProofEnded, "Verified Undecided: Ptah could not decide"},
 		{"a newer generation", ended(operatorv1alpha1.JournalSuperseded), operate.StopProofEnded, "Verified Superseded"},
 		{"the annotation came off", withdrawn, operate.StopStatementWithdrawn, "no longer holds " + settleValue(movedTarget)},
 	} {

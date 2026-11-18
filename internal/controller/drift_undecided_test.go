@@ -362,9 +362,9 @@ func TestReadsThatCouldNotDecideAPublicationReachDriftUndecided(t *testing.T) {
 }
 
 // The read after an Apply is the proof that it converged. A plan that could
-// not decide a declared object proves nothing, so the proof ends there, as a
-// plan with changes ends it: no Applied record, the Lease released, the
-// resource not in sync and the next read an interval away. Before, the
+// not decide a declared object proves nothing, so the proof ends there: no
+// Applied record, the Lease released, the resource not in sync, the next read
+// an interval away, and the journal's Verified entry Undecided. Before, the
 // undecided-only drift report this proof reads was refused as malformed at
 // every attempt.
 func TestAProofThatCouldNotDecideEndsWithoutApplied(t *testing.T) {
@@ -399,7 +399,26 @@ func TestAProofThatCouldNotDecideEndsWithoutApplied(t *testing.T) {
 		t.Fatalf("phase %s, %#v, want Blocked and InSync False with %s", actual.Status.Phase, actual.Status.Conditions,
 			operatorv1alpha1.ReasonDriftUndecided)
 	}
+	if next := actual.Status.NextReconciliationTime; next == nil || next.Sub(reconciler.now()) < interval(actual)-time.Second {
+		t.Fatalf("the next read is at %v, want %v after %v", next, interval(actual), reconciler.now())
+	}
 	if holder := proofLeaseHolder(t, reconciler, api); holder != "" {
 		t.Fatalf("the ended proof still holds the Lease as %q", holder)
+	}
+	// The journal says how the proof ended, and it is neither in sync nor a
+	// newer generation's.
+	var verified []operatorv1alpha1.JournalEntry
+	if actual.Status.Journal != nil {
+		for _, entry := range actual.Status.Journal.Entries {
+			if entry.Type == operatorv1alpha1.JournalVerified {
+				verified = append(verified, entry)
+			}
+		}
+	}
+	pending := schema.Status.PendingObservation
+	if len(verified) != 1 || verified[0].Outcome != operatorv1alpha1.JournalUndecided ||
+		verified[0].Plan != pending.Plan.Name || verified[0].OperationID != pending.ApplyOperationID {
+		t.Fatalf("the journal records %#v, want one Verified Undecided for plan %s and Apply %s",
+			verified, pending.Plan.Name, pending.ApplyOperationID)
 	}
 }

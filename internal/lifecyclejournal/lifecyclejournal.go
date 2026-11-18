@@ -184,6 +184,10 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 			// A person gave the proof up, so nothing established what the Apply did.
 			outcome = operatorv1alpha1.JournalUnknown
 		case after.Phase == operatorv1alpha1.PhasePending || after.Phase == operatorv1alpha1.PhaseVerifying:
+		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonDriftUndecided):
+			// The plan changed nothing because Ptah could not decide some
+			// declared objects, so nothing showed the Apply converged.
+			outcome = operatorv1alpha1.JournalUndecided
 		case meta.IsStatusConditionTrue(after.Conditions, operatorv1alpha1.ConditionDriftDetected):
 			outcome = operatorv1alpha1.JournalDriftRemains
 		}

@@ -1163,6 +1163,9 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalDriftRemains:
 			return w.stop(s, StopNotConverged, fmt.Sprintf("after the Apply of plan %s the database still differs "+
 				"from the desired schema", entry.Plan))
+		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalUndecided:
+			return w.stop(s, StopNotConverged, fmt.Sprintf("after the Apply of plan %s Ptah could not decide some "+
+				"declared objects, so nothing shows the database converged", entry.Plan))
 		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalSuperseded:
 			return w.stop(s, StopNotConverged, fmt.Sprintf("the proof after the Apply of plan %s settled under a "+
 				"newer generation, policy or execution binding", entry.Plan))

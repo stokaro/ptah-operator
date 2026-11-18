@@ -640,6 +640,31 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// Blocked, with DriftDetected unknown: neither in sync nor drift.
+			name:   "a proof whose plan could not decide a declared object",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhaseBlocked, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionUnknown, Reason: string(operatorv1alpha1.ReasonDriftUndecided)},
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonDriftUndecided)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalUndecided,
+			}},
+		},
+		{
+			// A newer generation decides what follows, whatever the plan
+			// could not decide.
+			name:   "a proof that could not decide under a newer generation",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhasePending, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionUnknown, Reason: string(operatorv1alpha1.ReasonDriftUndecided)},
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonDesiredStateChanged)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalSuperseded,
+			}},
+		},
+		{
 			name:   "a proof a newer generation took over",
 			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
 			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhasePending, Conditions: []metav1.Condition{

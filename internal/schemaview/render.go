@@ -134,7 +134,17 @@ func renderObservation(field func(name, value string), text *strings.Builder, ob
 	}
 	field("Observed", when)
 	if !observation.Drift {
-		field("Drift", "none")
+		if len(observation.Findings) == 0 {
+			field("Drift", "none")
+			return
+		}
+		// Ptah found no difference and could not decide some declared
+		// objects. A read that did not look is not one that matched, so the
+		// findings are listed.
+		field("Drift", "none found; "+undecidedObjects(observation.Findings))
+		for _, finding := range observation.Findings {
+			fmt.Fprintf(text, "  %-34s %6d  %s\n", finding.Category, finding.Count, finding.Severity)
+		}
 		return
 	}
 	if observation.FindingCount == 0 && len(observation.Findings) == 0 {
@@ -152,6 +162,25 @@ func renderObservation(field func(name, value string), text *strings.Builder, ob
 	}
 	for _, finding := range observation.Findings {
 		fmt.Fprintf(text, "  %-34s %6d  %s\n", finding.Category, finding.Count, finding.Severity)
+	}
+}
+
+// undecidedObjects counts the declared objects a read without drift could not
+// decide, which the report counts under the category undecided.
+func undecidedObjects(findings []FindingView) string {
+	var count int32
+	for _, finding := range findings {
+		if finding.Category == "undecided" {
+			count += finding.Count
+		}
+	}
+	switch count {
+	case 0:
+		return "the read lists findings without drift"
+	case 1:
+		return "1 declared object undecided"
+	default:
+		return fmt.Sprintf("%d declared objects undecided", count)
 	}
 }
 

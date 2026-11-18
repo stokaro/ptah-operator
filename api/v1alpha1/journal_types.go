@@ -60,7 +60,7 @@ const (
 )
 
 // JournalOutcome is how an Apply, a proof or a run ended.
-// +kubebuilder:validation:Enum=Succeeded;Failed;Partial;Unknown;UpToDate;InSync;DriftRemains;Superseded;Pending;Blocked
+// +kubebuilder:validation:Enum=Succeeded;Failed;Partial;Unknown;UpToDate;InSync;DriftRemains;Superseded;Pending;Blocked;Undecided
 type JournalOutcome string
 
 const (
@@ -89,6 +89,10 @@ const (
 	// JournalBlocked is a reading after a migration run of a history nothing may
 	// run against.
 	JournalBlocked JournalOutcome = "Blocked"
+	// JournalUndecided is a proof whose plan changed nothing because Ptah could
+	// not decide whether some declared objects exist, so nothing established
+	// whether the Apply converged.
+	JournalUndecided JournalOutcome = "Undecided"
 )
 
 // JournalEntry is one event. Which fields it carries depends on its type, and

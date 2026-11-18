@@ -2086,10 +2086,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			// The plan changes nothing, and that proves nothing: Ptah could not
 			// decide some declared objects, so it neither created them nor showed
 			// they exist. Drift is unknown, the resource is not in sync, and
-			// there is nothing to approve. A proof ends here as it ends on a plan
-			// with changes, without an Applied record, which only convergence
-			// writes. The next read is a whole interval away: the same read
-			// would decide nothing new within the second.
+			// there is nothing to approve. A proof ends here without an Applied
+			// record, which only convergence writes, and the journal records it
+			// Verified Undecided. The next read is a whole interval away: the
+			// same read would decide nothing new within the second.
 			if result.Stdout != "" || result.PlanContentDigest != "" || result.Undecided == "" {
 				return r.retryOperation(ctx, schema, nil, fmt.Errorf("undecided plan result carries executable content or names nothing"))
 			}

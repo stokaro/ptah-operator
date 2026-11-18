@@ -19,9 +19,13 @@ out of silence.
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.31.0,
-which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.31.0 and planned. Measured on
+on the upgrade. The journal of a schema and a migration gains the outcome
+`Undecided`, so the CRD schema version moves from 21 to 22. Once this
+release's hook has updated the CRDs, 0.2.14's CRD hook refuses
+[a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
+refuses CRD schemas newer than the release reads. The executor moves to Ptah
+v0.31.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.31.0 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
@@ -219,7 +223,9 @@ propagation is refused from this release: have it name
   reason. Such a plan used to read as in sync where an exclusion removed the
   rest of the drift, and the read after an Apply that left an undecided object
   failed at every attempt; it now ends the proof without recording the Apply as
-  converged.
+  converged, and the journal records `Verified` with the new outcome
+  `Undecided`. `kubectl ptah wait --for applied` and `settle --wait` stop on it
+  and say that Ptah could not decide some declared objects.
 - **A plan stays valid while rows are written.** A saved plan's fingerprint now
   records only whether each table holds rows
   ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). Measured on

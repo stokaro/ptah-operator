@@ -147,6 +147,40 @@ func TestLoadReportsDriftInNoCategory(t *testing.T) {
 	}
 }
 
+// A read that found no drift and could not decide a declared object carries
+// the undecided finding and no severity. The view says no drift was found and
+// that the object is undecided, rather than "none", which reads as converged.
+func TestLoadReportsUndecidedObjectsWithoutDrift(t *testing.T) {
+	t.Parallel()
+
+	schema := fixture()
+	schema.Status.Target.DriftFindings = []operatorv1alpha1.DriftFindingStatus{{Category: "undecided", Count: 1, Severity: "warning"}}
+	schema.Status.Target.DriftFindingCount = 1
+	schema.Status.Target.HighestDriftSeverity = ""
+	view, err := schemaview.Load(context.Background(), readerWith(t, schema), "team-a", "storefront")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Observation == nil || view.Observation.Drift || len(view.Observation.Findings) != 1 {
+		t.Fatalf("observation = %#v, want no drift and the undecided finding", view.Observation)
+	}
+	var text bytes.Buffer
+	if err := schemaview.Render(&text, view, schemaview.Text); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Drift:                none found; 1 declared object undecided\n",
+		"  undecided                               1  warning\n",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("text view is missing %q:\n%s", want, text.String())
+		}
+	}
+	if strings.Contains(text.String(), "Drift:                none\n") {
+		t.Fatalf("text view reads the undecided object as converged:\n%s", text.String())
+	}
+}
+
 func TestLoadFailurePath(t *testing.T) {
 	t.Parallel()
 
