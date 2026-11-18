@@ -207,7 +207,7 @@ again a view or a materialized view another role owns ends with
 since the `CREATE` makes the login its owner. Ptah v0.29.2 left the login
 the owner. The two statements read alike, and the operator does not read Ptah's
 reason, so a rebuild of a view another role owns waits for an approval as
-`Ownership` under `Always` too. Ptah v0.30.1's `schema apply` refuses such a plan,
+`Ownership` under `Always` too. Since v0.30.1 Ptah's `schema apply` refuses such a plan,
 before any statement runs, when the login may not give the view to that role;
 `schema plan` does not check owners, so the Plan meets the refusal in the
 `schema apply` dry run it runs on the saved plan.

@@ -72,7 +72,7 @@ Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
 Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
-[schema apply log](https://github.com/stokaro/ptah/blob/c5fba763a6fb346fc8a35d2f336d75a91385e3b9/docs/site/src/content/docs/direct/apply-log.md),
+[schema apply log](https://github.com/stokaro/ptah/blob/dc2decdee2617a350475d0f17347c7fb09dbce97/docs/site/src/content/docs/direct/apply-log.md),
 the table `ptah_schema_apply_log`: one row before its first statement and one
 after it. The first such Apply creates the table in `public`, and the `CREATE`
 above is all it needs, so the login owns the table. Ptah refuses a table of that
@@ -96,6 +96,22 @@ never held the log does not gain the table
 ([stokaro/ptah#6201](https://github.com/stokaro/ptah/pull/6201)).
 [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
 lists them. Every such plan waits for an approval as `Ownership`.
+
+Since Ptah v0.31.0 the schema may declare a logical replication publication
+([stokaro/ptah#6216](https://github.com/stokaro/ptah/pull/6216)). To create
+one, PostgreSQL requires `CREATE` on the database and ownership of each table
+it lists, and a superuser for `FOR ALL TABLES` or `FOR TABLES IN SCHEMA`. A
+schema that declares no publication leaves every one the database holds alone.
+Once it declares one, its plan drops each publication it does not declare,
+which makes the plan destructive. A publication grants no role anything, so
+the operator raises no privilege change for one.
+
+Ptah reads publications only when the read covers every schema the database
+holds. Under a URL that pins `search_path` in a database with another schema,
+a declared publication is never created: the plan leaves it out, and the drift
+report counts it as `undecided` and fails without finding drift. This operator
+refuses such a report, so every Observe fails with `invalid_observed_state`.
+Declare a publication only for a URL that reads the whole database.
 
 That authority plans and applies what the login owns. It is enough to report what
 another role added to the database, and not enough to change it. Owning the
@@ -224,12 +240,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.30.1, the executor this operator build pins
+This section describes Ptah v0.31.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5 and v0.30.1. The acceptance rows that
+v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5, v0.30.1 and v0.31.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only
@@ -245,8 +261,9 @@ MySQL refuses the read
 
 The executor reads a schema from `pg_catalog`, which lists every object to every
 role, so the report does not depend on what the login holds. Since Ptah v0.30.0
-it also reads the settings of each role from `pg_db_role_setting`, which every
-role can read as well. The login this page
+it also reads the settings of each role from `pg_db_role_setting`, and since
+v0.31.0 the publications from `pg_publication`, `pg_publication_rel` and
+`pg_publication_namespace`, which every role can read as well. The login this page
 describes gets the report a superuser gets, and a login that owns through a
 no-login owner role reads the same:
 
