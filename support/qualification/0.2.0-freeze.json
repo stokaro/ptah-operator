@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-18T07:02:34.359277+00:00",
+  "frozenAt": "2026-11-18T09:37:33.725407+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "d2a00aabb954a0a5a27207d66a69017e5db7e3d9d9e30a08247ef8117e2a7af4"
+      "sha256": "ab1973003e8e1e3b39286876edcd871ecc7685df9a882ac0c88ecdf62207b316"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "f125ccf4422e6eca598c76df7ab8c3408aefd20449fe5757fb6afb02ad751f9b"
+      "sha256": "c5aa639cb8b189a0a5b9b22fc04a2cf5241f7f8cb1872278c969f9fe1f0e2c9f"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "b08521778e87030074f59fee5da80b051b98c6aff9c691aff5d5cc4c7438b148",
+    "sha256": "5e9a63965e869aea17159b71bfdd44fadadef58604812e673271b6ad4e989e6d",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 117,
+  "revision": 118,
   "supersedes": {
-    "freezeCommit": "9f730b6b9b6f1e9c568fad0f22258f6a9038f469",
-    "sha256": "46580103886a6541af2316b26acd70e09b221dd2ffa3ab5e62b93412f1a97020"
+    "freezeCommit": "2e19eeb2ab36e9174a9539dfd83f9e6d776f80c4",
+    "sha256": "21847db48a4792311f4425b96eedcaf6d72b88555946f1dd09788bdca86ef6e5"
   },
-  "revisionReason": "Replace the publication limitation in the edge row of support/ptah.json and on the databases page with what the operator now does: a plan that changes nothing because Ptah could not decide a declared object, such as a publication under a URL that pins search_path, sets DriftUndecided, where every Observe failed with invalid_observed_state. The Ptah build under test, phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.31.0 to the v0.32.0 release image, and record in the edge row what v0.32 changes: a PostgreSQL plan names the table of an index fault with its schema, and a migration file that starts with a byte order mark runs without the mark and records the checksum of the text without it. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

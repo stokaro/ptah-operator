@@ -591,6 +591,14 @@ it, and the second run does not have that database. An Observe keeps
 `child_exit`, a Plan reads as the next paragraph says, and a fault the second run
 finds elsewhere in the same file is not why the command stopped.
 
+Listing the table of a faulty index in `spec.policy.exclude` does not hide the
+fault. An Observe passes no selector to `schema drift`, and the Plan passes the
+entry to `schema plan`, which checks every index of the file before it selects
+anything. Since Ptah v0.32.0 the plan names the table with its schema, as
+`table "public.t"`, where validate prints `table "t"`
+([stokaro/ptah#6219](https://github.com/stokaro/ptah/pull/6219)); the reason
+still reads as validate prints it.
+
 `schema plan` refuses such a file with the refusal code `declaration-refused`,
 and the operator asks the second run about that refusal as it asks about a
 failure. A declaration refusal the second run does not explain, such as the
