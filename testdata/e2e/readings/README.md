@@ -302,6 +302,10 @@ release image
 `ghcr.io/stokaro/ptah@sha256:ffd3bdc6e81e3875df4b7784eaf6cf6732834c70eeef2776edec47caea97a7e2`
 (commit `dc2decdee2617a350475d0f17347c7fb09dbce97`) saved all three the same way
 with nothing moved but the plan name and the fingerprints again, so they stay.
+The same day the v0.32.0 release image
+`ghcr.io/stokaro/ptah@sha256:0d4ae16df66558f7710ce968d930c1e7b337f9ac93309e36412841cbdf1bc8fc`
+(commit `da2df4a5e7088e3efcdec6b8f08110c23572bb74`) saved all three byte for
+byte as v0.31.0 did.
 
 Before them the plans were the ones the Ptah v0.29.3 release image
 `ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`

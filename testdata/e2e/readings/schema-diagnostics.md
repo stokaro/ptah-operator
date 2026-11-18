@@ -42,6 +42,12 @@ that day the v0.31.0 release image, commit
 MySQL saved plans and every migration reading, and moved every PostgreSQL schema
 reading, as the comparison with v0.30.1 below says. The PostgreSQL schema readings
 and saved plans here are v0.31.0's, and the contract names the new statements.
+The same day the v0.32.0 release image, commit
+`da2df4a5e7088e3efcdec6b8f08110c23572bb74`, reproduced every reading record for
+record, the PostgreSQL 18 and 16 witnesses and the migration readings included,
+apart from the two apply log values every run draws anew, and all four saved
+exclusion plans byte for byte. No reading or saved plan changed; the contract
+and [`schema-sql-capture.json`](schema-sql-capture.json) name the new commit.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -429,7 +435,7 @@ below were taken again with the v0.22.0 image on November 6, 2026, at 50, 89 and
 records as on PostgreSQL 17, with the v0.23.0 image on November 7, 2026, at 53,
 95 and 50, with the v0.26.0 image on November 13, 2026, at 56, 101 and 53, and
 with the v0.30.1 image on November 18, 2026, at 57, 103 and 54, and with the
-v0.31.0 image the same day, at 61, 111 and 58. Each time they
+v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58. Each time they
 still differ from 17 in that one statement. Since v0.22.0
 Ptah reads the columns from `pg_catalog`, so the two statements are the same read
 with that name selected or left empty.
@@ -461,7 +467,7 @@ Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
 are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 53, 95 and 50 records, again with the v0.26.0 image on November 13, 2026, at
 56, 101 and 53, with the v0.30.1 image on November 18, 2026, at 57, 103 and
-54, and with the v0.31.0 image the same day, at 61, 111 and 58, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
+54, and with the v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 

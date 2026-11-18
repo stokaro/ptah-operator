@@ -38,7 +38,11 @@ release image
 `ghcr.io/stokaro/ptah@sha256:ffd3bdc6e81e3875df4b7784eaf6cf6732834c70eeef2776edec47caea97a7e2`
 (commit `dc2decdee2617a350475d0f17347c7fb09dbce97`), run through the same lab,
 wrote both documents with only the plan name and the fingerprints changed, both
-of them on PostgreSQL and the `from_fingerprint` on MySQL, so both stay. Each run was
+of them on PostgreSQL and the `from_fingerprint` on MySQL, so both stay. The
+same day the v0.32.0 release image
+`ghcr.io/stokaro/ptah@sha256:0d4ae16df66558f7710ce968d930c1e7b337f9ac93309e36412841cbdf1bc8fc`
+(commit `da2df4a5e7088e3efcdec6b8f08110c23572bb74`) wrote both byte for byte as
+v0.31.0 did. Each run was
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what
