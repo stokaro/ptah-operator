@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_8963e2749ff2",
-  "plan_digest": "sha256:f2627a38789a25e9499b975c9a26bb75f388df83c5515c8aec499b3b19886afc",
+  "plan_name": "plan_9d95206e8e28",
+  "plan_digest": "sha256:6d712cc91aaba813bae6af2db93c4d82f3335195da293920975420eae80dd3e9",
   "units": [
     {
       "sql": "ALTER TABLE `e2e_widgets` ADD COLUMN `note` varchar(255)"

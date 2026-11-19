@@ -117,7 +117,8 @@ func TestInvalidSchemaSaysHoldsTheClaim(t *testing.T) {
 		"the code with no fault":      code + "schema.sql: the file",
 		"another file":                code + "other.sql: " + fault,
 		"a file that does not load":   runner.CodeDesiredSourceUnreadable + ": schema.sql: " + fault,
-		"another fault":               code + `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
+		"another fault": code + `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique: ` +
+			`a primary key, UNIQUE constraint or unique index must key exactly those columns`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

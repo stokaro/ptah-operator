@@ -1,8 +1,8 @@
 {
   "format_version": 1,
-  "name": "plan_69b52dde81f9",
+  "name": "plan_0a038afa577f",
   "dialect": "mysql",
-  "from_fingerprint": "sha256:e26f69a9acdb675e938b4ead8e4a81f959db77ea9cfd60c7972a96e35aee55ab",
+  "from_fingerprint": "sha256:08123cc77adacebc024f7b9e20a3d0b76ab04b28dc91570faaa8f90b993f219b",
   "to_fingerprint": "sha256:cc7fb156b2088ad9123f2504162136a7cfa2cf509275be0875c3fd1285d89f34",
   "scope": {
     "kind": "schema",

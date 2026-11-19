@@ -6,6 +6,6 @@
     "code": "declaration-refused"
   },
   "error": {
-    "message": "compare database schema: postgres requires referenced columns code on table \"public.parent\" to be declared unique"
+    "message": "compare database schema: postgres requires referenced columns code on table \"public.parent\" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns"
   }
 }

@@ -1,1 +1,1 @@
-postgres: schema: postgres requires referenced columns code on table "parent" to be declared unique
+postgres: schema: postgres requires referenced columns code on table "parent" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns

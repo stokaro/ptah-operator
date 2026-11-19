@@ -2,6 +2,6 @@
   "contract_version": 1,
   "command": "schema drift",
   "error": {
-    "message": "error comparing schemas: postgres requires referenced columns code on table \"public.parent\" to be declared unique"
+    "message": "error comparing schemas: postgres requires referenced columns code on table \"public.parent\" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns"
   }
 }

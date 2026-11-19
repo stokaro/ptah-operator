@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_af33e41d1ff5",
-  "plan_digest": "sha256:cb3bd334c5568406adbb8c89f255b7660414cc87a8b47e647262b7656a6462f9",
+  "plan_name": "plan_00c675de07da",
+  "plan_digest": "sha256:a288c9f9d8fc484fb8ed81cb7b0d752f5dc71a8535de65db77989dacea61604b",
   "units": [
     {
       "sql": "DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`"

@@ -2,13 +2,13 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:ef3c983faa8ddb7db2c5b1a18e1e8e62422337282788245a0d1e9770d67bfbfe",
-  "plan_path": "/work/ptah-plan-output-2812342932/first.plan.json",
+  "plan_digest": "sha256:8145101c4de567cd34e15484a477f63b2095779fc45093d45306800c885aa6f7",
+  "plan_path": "/work/ptah-plan-output-2982562047/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_91078a5cc333",
+    "name": "plan_ab3e5dc71252",
     "dialect": "mysql",
-    "from_fingerprint": "sha256:47aaba02b62bb8624cecaf7d631709809c212944c041e87780b2303f76d15f19",
+    "from_fingerprint": "sha256:14cbc73aed455aee0350bc44bb4ebd5b6dbf5e5b0a9250cee2f26bcc78a2305d",
     "to_fingerprint": "sha256:cc7fb156b2088ad9123f2504162136a7cfa2cf509275be0875c3fd1285d89f34",
     "scope": {
       "kind": "schema",
