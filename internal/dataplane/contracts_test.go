@@ -546,7 +546,7 @@ func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
 // Ptah v0.30.0 records the schema it placed unqualified names in on every
 // plan of a PostgreSQL URL that pins no search_path, so a decoder that does
 // not declare it refuses every such plan. The statement and the fields around
-// it are what the pinned v0.33.0 saved against PostgreSQL 17 for a generated
+// it are what the pinned v0.33.1 saved against PostgreSQL 17 for a generated
 // column whose expression changes, as v0.30.0 did; the fingerprints are
 // shortened.
 func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {

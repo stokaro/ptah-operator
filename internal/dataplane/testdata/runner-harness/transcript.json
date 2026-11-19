@@ -392,6 +392,98 @@
     }
   },
   {
+    "name": "desired-source-migration-atlas-repeatable/history",
+    "operation": "migration-history",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "runner-harness/documents/desired-source-migration-atlas-repeatable/history/0-migrations-status.json"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "runner-harness/documents/desired-source-migration-atlas-repeatable/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah"
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:b6ba888b58102b49f1282bd2471b56c9a7a08b60f1be6b7a12ecf03245e47d3a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-migration-unread/history",
+    "operation": "migration-history",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/desired-source-migration-unread/history/0-migrations-status.json"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/desired-source-migration-unread/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory"
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:0d2f4f6679d474f954ece1c9c1a0b5801581460e5eebc6a7f62221bbeccafb0a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
     "name": "desired-source-migration/history",
     "operation": "migration-history",
     "source": "git",
@@ -432,6 +524,51 @@
       },
       "operation": "migration-history",
       "operationId": "sha256:a5fc4d3acd5300540c775fac8515a306b13bc264ebe991bd418bdb246587bce8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-schema-relative-time/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+      },
+      "operation": "plan",
+      "operationId": "sha256:c26494a8797ecb4ca946edbf8c4f663ec886e5556f0c6aeec747139fea1b605b",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
@@ -562,6 +699,23 @@
     ]
   },
   {
+    "name": "desired-source/scratch-atlas-repeatable",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "desired-source/scratch-atlas-repeatable.json"
+      }
+    ]
+  },
+  {
     "name": "desired-source/scratch-control-bytes",
     "children": [
       {
@@ -642,6 +796,23 @@
         "exit": 2,
         "stderr": "error: error registering migrations: no migration files matched format \"auto\"; unrecognized SQL files: init.sql, not-a-migration.down.sql\n",
         "stdout": "desired-source/scratch-name.json"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/scratch-unread",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "desired-source/scratch-unread.json"
       }
     ]
   },
@@ -737,6 +908,22 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-missing.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time.txt"
       }
     ]
   },

@@ -1,16 +1,16 @@
 {
-  "reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:ef8ac4f20948550aed2c2f5b69890d4736e2be029bdab71ec71a69741adac291",
-  "pinned_reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:ef8ac4f20948550aed2c2f5b69890d4736e2be029bdab71ec71a69741adac291",
-  "digest": "sha256:ef8ac4f20948550aed2c2f5b69890d4736e2be029bdab71ec71a69741adac291",
+  "reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:b014eccb8963c5c47bfc9bebc3642c7dbd9822b9c51c2506aa503711e4359518",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-missing-schema-scoped-postgres@sha256:b014eccb8963c5c47bfc9bebc3642c7dbd9822b9c51c2506aa503711e4359518",
+  "digest": "sha256:b014eccb8963c5c47bfc9bebc3642c7dbd9822b9c51c2506aa503711e4359518",
   "media_type": "application/vnd.oci.image.manifest.v1+json",
   "size": 813,
   "artifact_type": "application/vnd.stokaro.ptah.schema.v1",
   "annotations": {
     "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.schema.v1",
     "io.stokaro.ptah.schema-format": "hcl",
-    "io.stokaro.ptah.version": "0.33.0",
-    "org.opencontainers.image.created": "2026-11-19T08:22:09Z",
-    "org.opencontainers.image.revision": "37c98b0024b136dd5079f42dd705d49ab24aeb52"
+    "io.stokaro.ptah.version": "0.33.1",
+    "org.opencontainers.image.created": "2026-11-19T18:52:29Z",
+    "org.opencontainers.image.revision": "f7c85bdc579c9e5939108a892f11e3d6d0974248"
   },
   "layers": [
     {

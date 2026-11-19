@@ -11,6 +11,19 @@ import (
 // after the prefix is its sentence.
 const migrationRegistrationPrefix = "error registering migrations: "
 
+// The one refusal of the directory `migrations status` makes after it loaded
+// the files: an Atlas migration whose version Ptah's revision table, which
+// records numbers, cannot keep, such as R__x.sql (stokaro/ptah#6313). The
+// migrator makes it while it reads the revision table, so it arrives under
+// that read's prefix, which also carries what a database answered. Only the
+// sentence that opens with the file and says why the table cannot keep it is
+// the directory's.
+const (
+	migrationRevisionsPrefix = "error getting migration status: failed to get migration revisions: "
+	numericVersionLead       = "Atlas migration "
+	numericVersionRefusal    = ", which a revision table that records numbers cannot keep; "
+)
+
 // wholeSchemaKind opens what `schema validate` says of a schema as a whole,
 // after the dialect. A fault of one declaration names its kind and the object,
 // and indexKind opens the fault of one index.
@@ -199,10 +212,26 @@ func MigrationFilesProblem(stdout []byte) (string, bool) {
 	}
 	reason, loading := strings.CutPrefix(failure.Message, migrationRegistrationPrefix)
 	if !loading {
+		reason, loading = numericVersionProblem(failure.Message)
+	}
+	if !loading {
 		return "", false
 	}
 	reason = strings.TrimSpace(reason)
 	return reason, reason != ""
+}
+
+// numericVersionProblem reads the migrator's refusal of an Atlas migration
+// whose version the numeric revision table cannot keep, and returns it without
+// the read's prefix:
+//
+//	Atlas migration R__x.sql has version "R", which a revision table that records numbers cannot keep; use ...
+func numericVersionProblem(message string) (string, bool) {
+	refusal, found := strings.CutPrefix(message, migrationRevisionsPrefix)
+	if !found || !strings.HasPrefix(refusal, numericVersionLead) || !strings.Contains(refusal, numericVersionRefusal) {
+		return "", false
+	}
+	return refusal, true
 }
 
 // The words Ptah's row-file guard writes (stokaro/ptah#5560), and the one
