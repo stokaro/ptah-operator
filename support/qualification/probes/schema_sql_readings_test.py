@@ -539,17 +539,36 @@ class SignalTest(unittest.TestCase):
         (bin_dir / 'docker').chmod(0o755)
         environment = {**os.environ, 'PATH': f"{bin_dir}{os.pathsep}{os.environ['PATH']}", 'TMPDIR': str(temporary),
                        'PTAH_FAKE_DOCKER_LOG': str(log)}
-        process = subprocess.Popen([sys.executable, schema_sql_readings.__file__, '--context', 'ctx', '--executor-image', 'executor',
-                                    '--engine', 'postgresql', '--part', 'schema', '--out', str(out)],
-                                   env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # stderr goes to a file, so the polling below cannot fill a pipe and
+        # stall the run it is waiting for.
+        errors = root / 'stderr'
+        with errors.open('wb') as stderr:
+            process = subprocess.Popen([sys.executable, schema_sql_readings.__file__, '--context', 'ctx', '--executor-image', 'executor',
+                                        '--engine', 'postgresql', '--part', 'schema', '--out', str(out)],
+                                       env=environment, stdout=subprocess.DEVNULL, stderr=stderr)
+        # Cleanups run last in, first out: kill, then reap.
+        self.addCleanup(process.wait)
         self.addCleanup(process.kill)
-        deadline = time.monotonic() + 30
+        # The bound is on a stall, not on the run: it restarts at every docker
+        # call the run makes. A host slow to start each call still makes
+        # progress, and a run that hangs stops making calls. What this test
+        # measures is what the signal leaves behind, not how fast it got there.
+        progress = {'calls': -1, 'deadline': 0.0}
+
+        def stalled():
+            calls = len(log.read_text().splitlines())
+            if calls != progress['calls']:
+                progress['calls'], progress['deadline'] = calls, time.monotonic() + 30
+            return time.monotonic() >= progress['deadline']
+
         while not any(line.split()[2:3] == ['start'] for line in log.read_text().splitlines()):
-            self.assertIsNone(process.poll(), process.stderr.read().decode()[-400:] if process.poll() is not None else '')
-            self.assertLess(time.monotonic(), deadline, 'the run never started the executor')
+            self.assertIsNone(process.poll(), errors.read_text()[-400:])
+            self.assertFalse(stalled(), 'the run never started the executor: no docker call for 30 seconds')
             time.sleep(0.05)
         process.send_signal(number)
-        process.communicate(timeout=30)
+        while process.poll() is None:
+            self.assertFalse(stalled(), 'the run did not end after the signal: no docker call for 30 seconds')
+            time.sleep(0.05)
         calls = [line.split()[2:] for line in log.read_text().splitlines()]
         made = [call[call.index('--name') + 1] for call in calls if call[:2] == ['run', '-d'] or call[:1] == ['create']]
         networks = [call[2] for call in calls if call[:2] == ['network', 'create']]
