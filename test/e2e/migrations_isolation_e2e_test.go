@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -833,9 +832,10 @@ func (m *migrationRun) unknownLayerProof() {
 }
 
 // unreadableOCIFiles publishes a directory with a directive the loader refuses,
-// which `ptah migrations push` accepts, and reads the reason where a person reads
-// it. The fetch writes the files and the operation container reads them, so the
-// reason comes from that container, as it does from a ConfigMap or Git.
+// which `ptah migrations push` and `ptah migrations pull` accept, and reads the
+// reason where a person reads it. The fetch writes the files and the operation
+// container reads them, so the reason comes from that container, and the
+// migration stops at Blocked as it does from a ConfigMap or Git.
 func (m *migrationRun) unreadableOCIFiles() {
 	m.t.Helper()
 	name := "e2e-unreadable-oci-" + m.engine.name
@@ -850,25 +850,23 @@ func (m *migrationRun) unreadableOCIFiles() {
 	var message string
 	var last error
 	if !m.miUntil(migrationPoll, func() bool {
-		progressing := meta.FindStatusCondition(m.migration(name).Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
-		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			last = fmt.Errorf("Progressing is %+v", progressing)
-			return false
+		message, last = migrationDirectoryRefused(m.migration(name))
+		if last == nil {
+			last = unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
 		}
-		message = progressing.Message
-		last = unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
 		return last == nil
 	}) {
-		m.fatalf("%s never said why its files could not be loaded within %s: %v", name, waitTimeout, last)
+		m.fatalf("%s never stopped and said why its files could not be loaded within %s: %v", name, waitTimeout, last)
 	}
 	uid := m.migration(name).UID
 	if !m.miUntil(migrationPoll, func() bool {
 		events := &corev1.EventList{}
 		m.check(m.list(events), "read the Events of %s", name)
-		last = unreadableSourceEvent(events.Items, uid, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+		last = unreadableSourceEvent(events.Items, uid, string(ptahv1alpha1.ReasonMigrationDirectoryUnreadable),
+			unreadableMigrationFile, unreadableMigrationReason)
 		return last == nil
 	}) {
-		m.fatalf("the OperationRetried Event of %s never said why: %v", name, last)
+		m.fatalf("the MigrationDirectoryUnreadable Event of %s never said why: %v", name, last)
 	}
 	m.finishFixture(name)
 	m.logf("PASS a %s migration from a registry said why its files could not be loaded: %s", m.engine.kind, message)
