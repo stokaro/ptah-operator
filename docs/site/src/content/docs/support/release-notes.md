@@ -24,14 +24,14 @@ on the upgrade. The journal of a schema and a migration gains the outcome
 release's hook has updated the CRDs, 0.2.14's CRD hook refuses
 [a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
 refuses CRD schemas newer than the release reads. The executor moves to Ptah
-v0.33.0, which retires the execution binding: approve again whatever was
-waiting, after the resource has read its database with v0.33.0 and planned. Measured on
+v0.33.1, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.33.1 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.33.0 made.
+is for a plan v0.33.1 made.
 
 A `PtahMigration` whose artifact holds an `R__<identity>.sql` file now stops at
 its history read. Since v0.30.0 Ptah reads such a file as a repeatable
@@ -47,7 +47,56 @@ find migrations -name 'R__*.sql'
 
 Remove them, and write what they did as versioned migrations.
 [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
-says what the refusal names.
+says what the refusal names. In a directory Ptah reads as Atlas migrations, the
+next paragraph applies instead: v0.29.2 ran such a file as the next versioned
+migration, and v0.33.1 refuses the directory.
+
+Any other SQL file in a migration directory that Ptah does not read as a
+migration now stops the history read as well
+([stokaro/ptah#6313](https://github.com/stokaro/ptah/pull/6313)). Under v0.29.2
+Ptah left such a file out and ran the migrations beside it, so the file never
+ran. Now Ptah refuses the whole directory and names the file, and the
+`PtahMigration` is `Blocked` with
+[`MigrationDirectoryUnreadable`](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read),
+publishes no plan, and reads the directory again at its interval, at once when a
+ConfigMap source changes, or when `kubectl ptah refresh` asks. Before, the
+operator retried a history read that failed this way at every failure retry. In
+a directory of Ptah's `NNNNNNNNNN_<name>.up.sql` and `.down.sql` files, the new
+refusal covers every other `.sql` file at its top level: a `seed.sql` or
+`notes.sql`, a name written with `.UP.sql`, `.DOWN.sql` or `.SQL`, a version of
+fewer than ten digits, and the `._` files macOS `tar` adds to an archive. In a
+directory Ptah reads as Atlas migrations it covers a `.sql` file whose name
+starts with no version, and an `R__` file. A file that does not end in `.sql`,
+such as a `README.md`, and a file in a subdirectory are still left out, and a
+down file without its up file is refused as before. Measured with the v0.29.2,
+v0.33.0 and v0.33.1 images on twenty directories, v0.33.1 refused exactly these.
+For a directory of Ptah's files, this lists what it refuses:
+
+```sh
+find migrations -maxdepth 1 -type f -iname '*.sql' | grep -Ev '/[0-9]{10}_[^/]*\.(up|down)\.sql$|/R__[^/]+\.sql$'
+```
+
+For a directory of Atlas files, or to be sure, have the v0.33.1 image read the
+directory the way a history read does, against an in-memory database, and name
+what it refuses:
+
+```sh
+docker run --rm -v "$PWD/migrations:/m:ro" ghcr.io/stokaro/ptah:0.33.1 migrations status --db-url=sqlite:///:memory: --migrations-dir /m
+```
+
+Move a file that is not a migration out of the directory. To run it as one,
+rename it to the next free version, as `NNNNNNNNNN_<name>.up.sql` with a
+`.down.sql` beside it: the file never ran, so it is pending under its new name,
+and the next Apply the migration's approval allows runs it. Then rebuild the
+source. An OCI artifact pushed with an earlier Ptah can hold such a file, and
+v0.33.1 refuses it before the history read: `ptah migrations pull`, which the
+Job's `fetch-migrations` step runs, validates the artifact, so the operation
+fails with `the fetch-migrations step exited 2, so the run never started` and is
+tried again at each failure retry. Only `kubectl logs job/<job> -c
+fetch-migrations` names the file, since the operator does not carry that step's
+output, which can hold registry credentials. Check each directory and push the
+artifact again with v0.33.1, whose `ptah migrations push` refuses such a
+directory, before you upgrade.
 
 A migration file whose first bytes are a UTF-8 byte order mark now runs, and
 its revision row records the checksum of the file without the mark
@@ -59,7 +108,7 @@ dirty after the upgrade; remove it as
 someone ran such a file by hand and recorded it with `ptah migrations repair
 --version N --force`, the row holds the checksum with the mark, and after the
 upgrade the resource stops `Blocked` with `HistoryModified`. Run the same repair
-once more with v0.33.0 to record the checksum without the mark. List the files
+once more with v0.33.1 to record the checksum without the mark. List the files
 in the directory each artifact is built from:
 
 ```sh
@@ -70,8 +119,8 @@ A PostgreSQL schema that gives a column a collation, as `name text COLLATE "C"`,
 now reads drift and plans that collation
 ([stokaro/ptah#6266](https://github.com/stokaro/ptah/pull/6266)). Every earlier
 executor created such a column without its collation and read no difference.
-Measured on PostgreSQL 17 against a schema v0.32.0 applied, v0.33.0 reports
-`columns_modified` and plans `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE`,
+Measured on PostgreSQL 17 against a schema v0.32.0 applied, v0.33.0 and
+v0.33.1 report `columns_modified` and plans `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE`,
 which rebuilds the indexes on the column. A column that holds a collation the
 schema does not state is planned back to the database default the same way. The
 operator rates `ALTER COLUMN ... TYPE` destructive, so the resource stops
@@ -136,6 +185,44 @@ Make the change by hand or with a migration, or change the artifact back.
 [A difference Ptah cannot plan](../../troubleshoot/condition-reasons/#a-difference-ptah-cannot-plan)
 says what the resource does meanwhile.
 
+A PostgreSQL generated column whose expression the server stores in its own
+spelling, with parentheses or casts the schema does not write, now reads in sync
+([stokaro/ptah#6312](https://github.com/stokaro/ptah/pull/6312)). Measured on
+PostgreSQL 17, v0.29.2 read a stored generated column it had created from
+`qty * price + 1` or `lower('L-' || id::text)` as drift and planned `ALTER
+COLUMN ... SET EXPRESSION` at every Plan, which rewrites the table. The
+operator does not rate that statement destructive, so under `apply: Always` the
+schema applied it again every interval. v0.33.1 plans nothing for such a column
+on PostgreSQL 16, 17 and 18. On PostgreSQL 18 a schema may now declare a
+`VIRTUAL` generated column
+([stokaro/ptah#6341](https://github.com/stokaro/ptah/pull/6341)). Ptah reads a
+generated column the schema declares without a kind as `STORED`, and PostgreSQL
+18 makes a `VIRTUAL` one of `GENERATED ALWAYS AS (...)` without `STORED`, so a
+column created that way by hand or by a migration fails the Plan with
+`child_exit` until the schema declares it `VIRTUAL`.
+
+A PostgreSQL schema file that gives a date or time column a relative time
+literal for its default, as `created_at timestamptz DEFAULT 'now'`, or
+`'today'`, `'tomorrow'` or `'yesterday'`, is now refused as a fault of the file
+([stokaro/ptah#6299](https://github.com/stokaro/ptah/pull/6299),
+[stokaro/ptah#6345](https://github.com/stokaro/ptah/pull/6345)). PostgreSQL
+reads such a literal once, when it creates the table, so every row got that
+moment. Measured on PostgreSQL 17, v0.29.2 created the column that way, read
+drift on it, and planned `ALTER COLUMN ... SET DEFAULT 'now'` at every Plan,
+which under `apply: Always` the schema applied again every interval. Under
+v0.33.1 every Observe and Plan fails with `desired_source_unreadable` and Ptah's
+sentence, which names the line and the column, and is tried again. Write a
+function the server calls for each row, as `DEFAULT now()` or `DEFAULT
+CURRENT_DATE`: the next Plan sets that default, and the schema then reads in
+sync. To find them in the schema files:
+
+```sh
+grep -rniE "default[[:space:]]*\(?[[:space:]]*'(now|today|tomorrow|yesterday)'" schema/
+```
+
+The search also lists a text or enum column with such a default, which Ptah
+accepts: only a date or time column, or a domain over one, is refused.
+
 A MySQL or MariaDB view the database holds as `SQL SECURITY INVOKER` and the
 schema declares with no mode now stops the schema's Plan
 ([stokaro/ptah#6105](https://github.com/stokaro/ptah/pull/6105)). An Observe
@@ -176,11 +263,35 @@ mysqldump `/*!50013 DEFINER=... */` comment stops the run the same way
 ([stokaro/ptah#6126](https://github.com/stokaro/ptah/pull/6126)). Grant the
 privilege the Pod log names, or have the file name the login.
 
+A MySQL column comment with a backslash now reads in sync. Measured on MySQL
+8.4, v0.29.2 wrote a comment the schema gives as `COMMENT 'a\\b'` with one
+backslash, which MySQL reads as an escape, so the column held another comment
+and read as drift at every Plan. v0.33.1 writes the backslash as declared
+([stokaro/ptah#6356](https://github.com/stokaro/ptah/pull/6356)), so its first
+plan against such a column is a `MODIFY COLUMN`, which the operator rates
+destructive: the schema stops `Blocked` with `DestructiveChangesDisabled`
+unless `spec.policy.allowDestructive` is set, and then waits for an approval.
+After that Apply the column reads in sync.
+
+On a MySQL server whose global `sql_mode` names `NO_BACKSLASH_ESCAPES`, a schema
+with a backslash in a default, a comment or an enum value now fails every Plan
+([stokaro/ptah#6342](https://github.com/stokaro/ptah/pull/6342),
+[stokaro/ptah#6370](https://github.com/stokaro/ptah/pull/6370)). A saved plan
+is written for the default `sql_mode`, and `schema apply --plan` refuses it on
+such a session before any statement. Ptah reads the session's `sql_mode` and
+does not set it, and the operator refuses a `sql_mode` parameter in the URL, so
+the Plan's dry run fails with `invalid_plan_output: plan validation reported
+failed rather than a dry run` at every retry, and neither the condition nor the
+Pod log says why. Measured on MySQL 8.4, v0.29.2 stored `DEFAULT 'C:\\temp'` on such a
+server with its backslash doubled. `SELECT @@GLOBAL.sql_mode` shows the
+setting. Take `NO_BACKSLASH_ESCAPES` out of it, or keep backslashes out of the
+schema's literals.
+
 A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.33.0, and the runner
+- **Executor.** The verified executor is now Ptah v0.33.1, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. A migration's status and run now ask
   whether `schema_migrations_repeatable` exists, with the query that asks for

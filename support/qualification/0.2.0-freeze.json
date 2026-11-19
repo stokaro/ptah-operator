@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-19T09:03:33.819611+00:00",
+  "frozenAt": "2026-11-19T19:48:30.676460+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "c396177a1edefc3d3634b5503fba92889c558970fdea3ec756e14f822ee0b265"
+      "sha256": "97194ff2c8d9bcdc7a0f36ae31873936a7156c2163d1c65f2c8129f5c10b37a1"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "58808619242bfe27d5381cf91c44a980a92288a20252a07abfb319cd07a85cc0"
+      "sha256": "418e823e804d314ab8e337f556ee0ced929517a678c37d1f6f64b8c895b579e0"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "2f7f65b9e23486ab3e5d1c7f12c59fe451c1b1c5f602f8b0a692b533dc6c75e7",
+    "sha256": "8d909359a93e2bc28d7e3e53f79f87b3c68bf50af87e94bb29143ea19d822a72",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 119,
+  "revision": 120,
   "supersedes": {
-    "freezeCommit": "fdc12bbc202d25e76bb9a5692d876d6d08afede5",
-    "sha256": "3477cb30648c88f9dd98e02880bd7e6857721b53885fbe68599c184b0e6542fb"
+    "freezeCommit": "b5b0a59635611c6ffc8f5138976c269b6b9abc23",
+    "sha256": "15cd6b3df80c328c98acddbf2d634c6b614a550fe52513dd61941170a88c71e3"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.32.0 to the v0.33.0 release image, and record in the edge row what v0.33 changes: a PostgreSQL column's collation is written and compared, an exclude selector that names a constraint keeps it, the retry names the forced repair, parenthesized and MySQL expression defaults are read, a type change under a generated column rebuilds it, the sentence for a foreign key to columns no key covers is longer, and a migration Apply creates the revision table only when it is missing. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.33.0 to the v0.33.1 release image, and record in the edge row what v0.33.1 changes: a migration directory is read whole, so a SQL file Ptah does not read as a migration is refused by name; a relative time literal as a PostgreSQL date or time default is a fault of the schema file; MySQL literals follow the session's NO_BACKSLASH_ESCAPES and a saved plan refuses a session that sets it; and a PostgreSQL generated column reads in sync in the server's spelling, with VIRTUAL columns on PostgreSQL 18. A history read of a directory Ptah refuses now stops Blocked with MigrationDirectoryUnreadable instead of retrying, and the scenarios configmap-unreadable-source and git-source-unreadable expect that. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }
