@@ -5,6 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
+        Write a short title in plain English that names the problem or intended
+        result. Avoid internal names and unexplained acronyms.
+
         The safety model is the reason for most of the current shape, so a
         request that names the guarantee it needs is easier to place than one
         that names a field.
@@ -13,7 +16,11 @@ body:
     id: task
     attributes:
       label: What are you trying to do
-      description: The task, and why the outcome matters.
+      description: >-
+        In a short paragraph, usually two to four sentences, explain what you
+        need to do, what is missing or difficult today, and why that matters.
+        Use plain English. Put architecture and implementation details after
+        this introduction.
     validations:
       required: true
 
