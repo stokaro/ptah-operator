@@ -28,7 +28,12 @@ it sent `CREATE TABLE IF NOT EXISTS` for it, and creates it only when the catalo
 does not show it ([stokaro/ptah#6234](https://github.com/stokaro/ptah/pull/6234)).
 The question is the one History already asks, so both contracts admitted it.
 On MySQL it is a prepared statement, which adds two records. No other record
-moved. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+moved. Later that day the v0.33.1 release image (`f7c85bdc`) reproduced the
+PostgreSQL reading record for record. On MySQL each of its six sessions reads
+`SELECT @@SESSION.sql_mode` first
+([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), which the
+History contract admits, so the MySQL reading here is v0.33.1's, six records
+more; no other record moved. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`
@@ -47,14 +52,16 @@ fixture. MySQL also used its explicit `--tx-mode none`.
   permits, so the MySQL reading here is v0.16.0's. The v0.17.0 image adds one
   PostgreSQL record: it reads the session's search path when it connects,
   which the History contract now permits too.
-- Executor image: `ghcr.io/stokaro/ptah@sha256:dad67242b23d6ffbd0c0ec43b91aefab5a43cbdea1dca3e6361df6ebca631e3f`
-  for both engines
+- Executor image: `ghcr.io/stokaro/ptah@sha256:933cc38f93375e0a83ff49db0cfdcee301ab328e95d13496fb2b2be82be1f906`
+  (v0.33.0) for PostgreSQL and
+  `ghcr.io/stokaro/ptah@sha256:37c16165f4184ddfd80cf61da9a366fe13ab950830b095f401e91de2c2f4383c`
+  (v0.33.1) for MySQL
 - Database: `ptah_audit_restore`; account: `ptah_audit`
 - Executor client address in each isolated network: `172.19.0.3`
 
 The PostgreSQL reading retains all 35 received SQL records from the refused
-executor's address. The MySQL reading retains all 90 protocol records from
-that account, including 37 Query/Execute records and the connection boundaries.
+executor's address. The MySQL reading retains all 96 protocol records from
+that account, including 43 Query/Execute records and the connection boundaries.
 SQL, parameters and hex-encoded MySQL argument bytes are unchanged. Administrator
 traffic and account setup are excluded. The probe containers, volumes and
 networks were removed; the borrowed images were preserved.

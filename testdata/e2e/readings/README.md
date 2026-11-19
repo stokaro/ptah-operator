@@ -309,7 +309,11 @@ byte as v0.31.0 did. On November 19, 2026 the v0.33.0 release image
 `ghcr.io/stokaro/ptah@sha256:933cc38f93375e0a83ff49db0cfdcee301ab328e95d13496fb2b2be82be1f906`
 (commit `37c98b0024b136dd5079f42dd705d49ab24aeb52`) saved all three with the
 same statements and length, and only the plan name and both fingerprints moved,
-so they stay.
+so they stay. Later that day the v0.33.1 release image
+`ghcr.io/stokaro/ptah@sha256:37c16165f4184ddfd80cf61da9a366fe13ab950830b095f401e91de2c2f4383c`
+(commit `f7c85bdc579c9e5939108a892f11e3d6d0974248`) saved all three, and the
+plan of `postgresql-external-v3-grant.sql` they follow, byte for byte as v0.33.0
+did.
 
 Before them the plans were the ones the Ptah v0.29.3 release image
 `ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`
