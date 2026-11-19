@@ -72,6 +72,8 @@ spec:
           path: 0000000001_create_items.down.sql
         - key: 0000000002-up
           path: 0000000002_add_item_sku.up.sql
+        - key: 0000000002-down
+          path: 0000000002_add_item_sku.down.sql
 ```
 
 ### From a tag of a Git repository, over SSH
