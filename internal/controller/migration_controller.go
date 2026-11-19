@@ -1111,6 +1111,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if operation.Type == operatorv1alpha1.MigrationOperationVerify && result.Error.Code == verificationRefusedCode {
 			return r.refuseMigrationArtifact(ctx, migration, job, result)
 		}
+		if operation.Type == operatorv1alpha1.MigrationOperationHistory && result.Error.Code == runner.CodeDesiredSourceUnreadable {
+			return r.refuseMigrationDirectory(ctx, migration, job, result)
+		}
 		if operation.Type == operatorv1alpha1.MigrationOperationHistory && migration.Spec.Policy.DriftCheck != nil &&
 			slices.Contains(historyShadowRefusalCodes, result.Error.Code) {
 			return r.retryMigrationOperationAs(ctx, migration, job, operatorv1alpha1.ReasonShadowDatabaseUnavailable,
@@ -1721,6 +1724,51 @@ func (r *MigrationReconciler) refuseMigrationArtifact(
 	}
 	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
 	r.event(migration, corev1.EventTypeWarning, "ArtifactVerificationRefused", "%s", message)
+	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// refuseMigrationDirectory records a history read that could not read the
+// migration directory: the runner asked Ptah again, in a child that holds no
+// credential, and Ptah named a file it cannot load or does not read. Another
+// attempt reads the same files and gives the same answer, so the resource stops
+// at Blocked with Ptah's words rather than dispatching a Job at every failure
+// retry. The read-only chain starts again from resolution at the interval, when
+// a moved tag or a new commit can carry other files, and at once when a
+// ConfigMap source changes, which reconcile checks before anything else. No plan
+// outlives the refusal, and no decision does, as after any history read that
+// leaves nothing to plan.
+func (r *MigrationReconciler) refuseMigrationDirectory(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+	result runner.Result,
+) (ctrl.Result, error) {
+	if err := r.harvestMigrationJob(ctx, migration, job); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.markMigrationApprovalsStale(ctx, migration, nil, operatorv1alpha1.ReasonPlanNoLongerCurrent, migrationPlanLeftMessage); err != nil {
+		return ctrl.Result{}, err
+	}
+	operation := migration.Status.ActiveOperation
+	before := migration.DeepCopy()
+	next := cycleDeadline(migration.Status.NextReconciliationTime, r.now(), migrationInterval(migration))
+	migration.Status.NextReconciliationTime = &next
+	migration.Status.ObservedGeneration = migration.Generation
+	migration.Status.Plan = nil
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+	message := resultCodeMessage(result.Error.Code, result.Error.Message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonMigrationDirectoryUnreadable, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonMigrationDirectoryUnreadable, "Ptah could not read the migration directory")
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonMigrationDirectoryUnreadable, "Nothing runs until the migration directory can be read")
+	endMigrationApprovalRequirement(migration)
+	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.observeMigrationOperation(operation, telemetry.OperationSucceeded)
+	r.event(migration, corev1.EventTypeWarning, "MigrationDirectoryUnreadable", "%s", bounded(message, 512))
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 }
 

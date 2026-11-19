@@ -51,6 +51,7 @@ decision.
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
 | `LogEntriesLost` | `RunLogged` is false because the database refused entries the last run wrote to `schema_migrations_log`, so its own record of that run is incomplete. The run's outcome is unchanged. See [A run whose log entries the database refused](#a-run-whose-log-entries-the-database-refused). |
 | `LogWritten` | `RunLogged` is true because the database accepted every entry the last run wrote to `schema_migrations_log`. |
+| `MigrationDirectoryUnreadable` | A history read could not read the migration directory: a file Ptah cannot load, a migration without its up or down file, or a SQL file the directory's format does not read. `Blocked` is true, nothing is published, and the directory is read again at `spec.interval`, or at once when a ConfigMap source changes. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. On `ApprovalRequired` it says the database converged while a plan was outstanding, so nothing is left to approve. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
@@ -512,9 +513,26 @@ it names the file Ptah stopped at, or the version when a file is missing:
 ```
 desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql:2:29: unsupported table option: INHERITS
 desired_source_unreadable: schema.yaml: error parsing schema file: parse YAML schema: yaml: line 1: did not find expected '-' indicator
+desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE
 desired_source_unreadable: failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false
 desired_source_unreadable: incomplete migrations found (missing up or down files): [1]
 ```
+
+Since Ptah v0.33.1 a migration directory is read whole
+([stokaro/ptah#6313](https://github.com/stokaro/ptah/pull/6313)). A SQL file at
+the top of the directory that its format does not read refuses the directory,
+where v0.33.0 left the file out and ran the migrations beside it. So does an
+`R__<name>.sql` file in a directory of Atlas files, whose version Ptah's revision
+table cannot record:
+
+```
+desired_source_unreadable: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory
+desired_source_unreadable: migration file format detection does not read: v2_b.sql. The directory reads as Atlas migrations, and Atlas runs every SQL file at the top level of the directory, so Ptah refuses the directory rather than leave this file unapplied; read the directory with --dir-format atlas, or move the file out of the directory
+desired_source_unreadable: Atlas migration R__seed.sql has version "R", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah
+```
+
+A file that is not SQL, such as a `README.md`, and a file in a subdirectory are
+still left out.
 
 The path is where the file sits in the operation Pod: `/source/schema/` and the
 path a ConfigMap item names or the last part of a Git path. SQL names the line
@@ -542,13 +560,13 @@ declaration and reads no row file, as
 | Stage | Where the reason appears, and what follows |
 | --- | --- |
 | `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. |
-| `PtahMigration` history read | `Progressing=True` with reason `OperationFailed`, and an `OperationRetried` Warning Event. |
+| `PtahMigration` history read | `Blocked=True` with reason `MigrationDirectoryUnreadable`, phase `Blocked`, and a `MigrationDirectoryUnreadable` Warning Event. |
 
-The operation runs again after `spec.execution.failureRetryInterval`, on the same
-files. Repairing the source ends that with no edit to the resource. An edit to a
-ConfigMap is read at once. A new commit or a moved tag is read when the retry
-delay ends after `spec.interval` has passed since the source was last read, or
-sooner if you ask:
+A schema's operation runs again after `spec.execution.failureRetryInterval`, on
+the same files. Repairing the source ends that with no edit to the resource. An
+edit to a ConfigMap is read at once. A new commit or a moved tag is read when the
+retry delay ends after `spec.interval` has passed since the source was last read,
+or sooner if you ask:
 
 ```bash
 kubectl ptah refresh schema/storefront -n application --wait
@@ -556,6 +574,15 @@ kubectl ptah refresh schema/storefront -n application --wait
 
 A `ReadRestarted` Event says the failed operation gave way and why, and
 `status.activeOperation` starts again at attempt 1.
+
+A migration does not try the same files again: another read would give the same
+answer. It publishes no plan, marks any approval stale, and reads the source
+again at `spec.interval`. An edit to a ConfigMap source is read at once, and a
+new commit or a moved tag at the interval, or sooner if you ask:
+
+```bash
+kubectl ptah refresh migration/orders -n application --wait
+```
 
 The reason comes from a second run of Ptah that holds no database URL and no
 credential, so it cannot quote the database. It can quote a fragment of the file,

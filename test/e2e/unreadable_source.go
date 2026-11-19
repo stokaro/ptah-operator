@@ -64,13 +64,23 @@ func schemaReadRetried(schema *ptahv1alpha1.PtahSchema, previous string) bool {
 		meta.IsStatusConditionTrue(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
 }
 
-// migrationReadRetried is schemaReadRetried for a migration, which reports a
-// failed attempt on Progressing.
-func migrationReadRetried(migration *ptahv1alpha1.PtahMigration, previous string) bool {
-	operation := migration.Status.ActiveOperation
-	progressing := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
-	return operation != nil && operation.Attempt > 1 && operation.ID != previous &&
-		progressing != nil && progressing.Reason == string(ptahv1alpha1.ReasonOperationFailed)
+// migrationDirectoryRefused returns what a migration says when it stopped on a
+// directory Ptah could not read: Blocked with MigrationDirectoryUnreadable, in
+// phase Blocked, with no claim standing. Another read of the same files gives
+// the same answer, so the operator does not retry it the way a schema's read is
+// retried.
+func migrationDirectoryRefused(migration *ptahv1alpha1.PtahMigration) (string, error) {
+	blocked := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked)
+	switch {
+	case blocked == nil || blocked.Status != metav1.ConditionTrue ||
+		blocked.Reason != string(ptahv1alpha1.ReasonMigrationDirectoryUnreadable):
+		return "", fmt.Errorf("phase %s, Blocked %+v", migration.Status.Phase, blocked)
+	case migration.Status.Phase != ptahv1alpha1.MigrationPhaseBlocked:
+		return "", fmt.Errorf("phase %s beside Blocked %+v", migration.Status.Phase, blocked)
+	case migration.Status.ActiveOperation != nil:
+		return "", fmt.Errorf("claim %+v stands beside the refusal", migration.Status.ActiveOperation)
+	}
+	return blocked.Message, nil
 }
 
 // readRequestTakenWhileFailing is a request the operator answered beside a failure

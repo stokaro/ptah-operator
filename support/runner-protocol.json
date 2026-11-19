@@ -467,6 +467,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:bd04d25818ca0887e286eb7de619b57739fdce3e3107b45b49373a7a7042fcd1",
       "reason": "Say in the comment of SchemaStructuralProblem that since Ptah v0.32.0 the plan names the table of an index fault with its schema, as drift did, which the matching already admitted. Only that comment changes: the code, the commands, the fields and the frame shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:c18608b17259b21cb229bf59493668ef97bba40c5b11f771eb282d59c092f337",
+      "reason": "Read the refusal Ptah v0.33.1 writes under the revision read for an R__ file in a directory of Atlas migrations, whose version a revision table that records numbers cannot keep, as desired_source_unreadable with Ptah's sentence, as a refusal to register a file already was; the runner reported child_exit for it. The api package the runner builds against gains the reason MigrationDirectoryUnreadable, which no frame carries. The commands, the codes and the frame shape are as they were. Protocol 1 stays."
     }
   ]
 }
