@@ -72,7 +72,7 @@ Set its password with `\password ptah` in `psql`. The client hashes the
 password, so the server log never holds it.
 
 Since Ptah v0.28.0 an Apply that sends a statement also writes Ptah's
-[schema apply log](https://github.com/stokaro/ptah/blob/da2df4a5e7088e3efcdec6b8f08110c23572bb74/docs/site/src/content/docs/direct/apply-log.md),
+[schema apply log](https://github.com/stokaro/ptah/blob/37c98b0024b136dd5079f42dd705d49ab24aeb52/docs/site/src/content/docs/direct/apply-log.md),
 the table `ptah_schema_apply_log`: one row before its first statement and one
 after it. The first such Apply creates the table in `public`, and the `CREATE`
 above is all it needs, so the login owns the table. Ptah refuses a table of that
@@ -242,12 +242,12 @@ The executor reads the database as the login in the target URL, and a comparison
 reads what that login cannot see as not there. An empty `driftFindings` list
 says the login found no difference. It does not say that nobody added anything.
 
-This section describes Ptah v0.32.0, the executor this operator build pins
+This section describes Ptah v0.33.0, the executor this operator build pins
 ([Ptah compatibility](../ptah/)), measured with `schema drift` and `schema plan`,
 the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 8.4.11. The PostgreSQL table was measured at v0.22.0 and the MySQL one at
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
-v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5, v0.30.1, v0.31.0 and v0.32.0. The acceptance rows that
+v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5, v0.30.1, v0.31.0, v0.32.0 and v0.33.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
 the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only
@@ -316,7 +316,15 @@ a new column reads `[ADD COLUMN, DROP TABLE]`, and the whole plan stops. Choose 
 - A table that should stay, such as a monitoring agent's: list it in
   `spec.policy.exclude`. It takes a table, a view, a function or a sequence by name,
   a table in another schema as `other.t`, and a whole schema as `other.*`. The plan
-  leaves it alone and the rest of the schema converges. `status.target.driftFindings`
+  leaves it alone and the rest of the schema converges. Since Ptah v0.33.0 an entry
+  also keeps a constraint the desired schema leaves out, named through its table:
+  `t.c` or `t.c[type=constraint]`, `t.c[type=index]` for a primary key or a `UNIQUE`
+  constraint, and `t.c[type=check]` for a `CHECK`
+  ([stokaro/ptah#6256](https://github.com/stokaro/ptah/pull/6256)), and on PostgreSQL
+  an `EXCLUDE` constraint ([stokaro/ptah#6247](https://github.com/stokaro/ptah/pull/6247)).
+  v0.32.0 planned to drop a primary key or a `UNIQUE` constraint under `[type=index]`,
+  the index of a `UNIQUE` constraint under `[type=constraint]`, a `CHECK` under
+  `[type=check]`, and an `EXCLUDE` constraint under every selector. `status.target.driftFindings`
   still counts it, because an Observe reads without exclusions.
 - A table that should not exist: have its owner drop it.
 - A table this schema should manage: suspend the resource, hand the table to the login

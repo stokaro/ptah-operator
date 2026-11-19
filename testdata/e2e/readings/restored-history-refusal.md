@@ -22,7 +22,13 @@ taken on 2026-11-18. Each History read of the refused Apply also asks whether
 more and the MySQL one eleven, since MySQL asks in a session of its own. No
 other record moved. Later that day the v0.31.0 release image (`dc2decde`) and
 the v0.32.0 release image (`da2df4a5`) reproduced both readings record for
-record. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+record. The readings here are the v0.33.0 release image's (`37c98b00`), taken
+on 2026-11-19. The refused Apply asks whether the revision table exists where
+it sent `CREATE TABLE IF NOT EXISTS` for it, and creates it only when the catalog
+does not show it ([stokaro/ptah#6234](https://github.com/stokaro/ptah/pull/6234)).
+The question is the one History already asks, so both contracts admitted it.
+On MySQL it is a prepared statement, which adds two records. No other record
+moved. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`
@@ -47,7 +53,7 @@ fixture. MySQL also used its explicit `--tx-mode none`.
 - Executor client address in each isolated network: `172.19.0.3`
 
 The PostgreSQL reading retains all 35 received SQL records from the refused
-executor's address. The MySQL reading retains all 88 protocol records from
+executor's address. The MySQL reading retains all 90 protocol records from
 that account, including 37 Query/Execute records and the connection boundaries.
 SQL, parameters and hex-encoded MySQL argument bytes are unchanged. Administrator
 traffic and account setup are excluded. The probe containers, volumes and
@@ -57,13 +63,13 @@ networks were removed; the borrowed images were preserved.
 
 - Reading: [postgresql-restored-history-refusal.jsonl](postgresql-restored-history-refusal.jsonl)
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
-- Reading SHA-256: `162e0a7fec5959f340e475b5627cda92c41ef713eb977371298c4003be03fa01`
+- Reading SHA-256: `d812020f10d1ee6366883ccbaf4107e05453e51c3b48634a5967ea77d9e8cab2`
 
 ## Mysql
 
 - Reading: [mysql-restored-history-refusal.jsonl](mysql-restored-history-refusal.jsonl)
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Reading SHA-256: `77bc006b07c5070dd37a9ef6213fe793bc3a4b19d5ccc37c25d87ac63304b342`
+- Reading SHA-256: `f087153d833359d8989cf741ef0b5e77707141e51d3edaeb25f7f7b1443834a6`
 
 ## Permitted diagnostic contract
 

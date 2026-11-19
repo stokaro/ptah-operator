@@ -2,13 +2,13 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "no-changes",
-  "plan_digest": "sha256:83bd6b2f7643a49594b83955fde041c88690b9d7a83eac82b78c4e02759a2585",
+  "plan_digest": "sha256:049d85e2ae0db3f76c308357ec140d205b1b83c68b36be3c2a45755bd1ad6ec8",
   "plan_path": "/tmp/plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_1dae795adc43",
+    "name": "plan_d48d711d2706",
     "dialect": "postgres",
-    "from_fingerprint": "sha256:338448fed82c409c0d0a9d5245fc40581c8e3674b63d2b2ce0a26f23527b5313",
+    "from_fingerprint": "sha256:f9b1e374fbce29625419ad89ce5a00eb2ad548940d3a5ec285fac5f27f9d9198",
     "to_fingerprint": "sha256:351f3a868789e18e620e59cdc5fb0ef2cb833735a6c3e2c6098eaf7b3e63345d",
     "scope": {
       "kind": "realm"

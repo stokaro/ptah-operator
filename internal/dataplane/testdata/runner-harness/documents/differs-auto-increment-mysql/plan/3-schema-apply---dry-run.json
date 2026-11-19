@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_6aa342392726",
-  "plan_digest": "sha256:6f8a46786025a5270f6f6b48d3f3d14ff8de10c2082984afb3ebb68babdb33ef",
+  "plan_name": "plan_ba5a254dcad2",
+  "plan_digest": "sha256:fc9ac662922d79294659bd4c5222cc4b90fd5d1436c3fd3856555c60cd02dd4c",
   "units": [
     {
       "sql": "ALTER TABLE `differs_items` MODIFY COLUMN `id` bigint NOT NULL"

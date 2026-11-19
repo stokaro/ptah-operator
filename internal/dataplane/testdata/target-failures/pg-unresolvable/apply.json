@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_a58a27d92d20",
-  "plan_digest": "sha256:099ea240f2b5cdf1a3c1d2e2c022e5e41d49e11eed360857a460df441444b5b5",
+  "plan_name": "plan_447062eaa428",
+  "plan_digest": "sha256:1c5813a3a7fea69deb5e81ae00125fa75acb62bb48c54c4a10d4725bb40b001e",
   "error": {
     "kind": "database_unreachable",
     "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: hostname resolving error: lookup harness-no-such-host.invalid on 127.0.0.11:53: server misbehaving"

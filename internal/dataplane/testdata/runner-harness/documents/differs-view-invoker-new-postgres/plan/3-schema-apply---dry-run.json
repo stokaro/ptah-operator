@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_d607f6f2b5cf",
-  "plan_digest": "sha256:d307c00597488515eb8be2411dfbfb958dab6f346d0705c5cc0c0e7222a16838",
+  "plan_name": "plan_3d1a61e14061",
+  "plan_digest": "sha256:d3f84d799dca59dfc2bd29bb7f34756cc53f628dee2d14154f7aee0d2c9c6e7f",
   "units": [
     {
       "sql": "CREATE VIEW \"public\".\"differs_notes_view\" WITH (security_invoker=true) AS\nSELECT id, owner_name FROM differs_notes",

@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_77d07af6ffd4",
-  "plan_digest": "sha256:378584a3368d0dc57a7eba7c09dfd0e5711c977abb227e47e70e4f7324b2ea3b",
+  "plan_name": "plan_743325234254",
+  "plan_digest": "sha256:3a3db9a14661acb75d6e47a37fb488b280613b7ae9921cb95ba3c5cbf7b80b9c",
   "units": [
     {
       "sql": "CREATE TABLE \"public\".\"differs_owned\" (\n  \"id\" integer PRIMARY KEY NOT NULL\n)"

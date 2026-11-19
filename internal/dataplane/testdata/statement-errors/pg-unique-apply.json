@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_97970e64e321",
-  "plan_digest": "sha256:f6abd134426ec782adf78ba60a000087796ee5191575d35b633fc4c8ebf59da1",
+  "plan_name": "plan_16863d15f139",
+  "plan_digest": "sha256:b658dccb059cd808bf4cee46480b4493786c291e5b52a5333714dd7d5232a08c",
   "units": [
     {
       "sql": "CREATE UNIQUE INDEX \"orders_one_per_customer\" ON \"public\".\"orders\" (\"customer_id\")"

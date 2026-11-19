@@ -24,14 +24,14 @@ on the upgrade. The journal of a schema and a migration gains the outcome
 release's hook has updated the CRDs, 0.2.14's CRD hook refuses
 [a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
 refuses CRD schemas newer than the release reads. The executor moves to Ptah
-v0.32.0, which retires the execution binding: approve again whatever was
-waiting, after the resource has read its database with v0.32.0 and planned. Measured on
+v0.33.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.33.0 and planned. Measured on
 PostgreSQL 17, v0.29.4 reports a plan v0.29.3 saved against a table with rows
 as stale, with nothing written in between, because the fingerprint keeps less
 of a table's rows
 ([stokaro/ptah#6119](https://github.com/stokaro/ptah/pull/6119)). The binding
 retires every such plan before an Apply could use it, so the approval you give
-is for a plan v0.32.0 made.
+is for a plan v0.33.0 made.
 
 A `PtahMigration` whose artifact holds an `R__<identity>.sql` file now stops at
 its history read. Since v0.30.0 Ptah reads such a file as a repeatable
@@ -59,12 +59,48 @@ dirty after the upgrade; remove it as
 someone ran such a file by hand and recorded it with `ptah migrations repair
 --version N --force`, the row holds the checksum with the mark, and after the
 upgrade the resource stops `Blocked` with `HistoryModified`. Run the same repair
-once more with v0.32.0 to record the checksum without the mark. List the files
+once more with v0.33.0 to record the checksum without the mark. List the files
 in the directory each artifact is built from:
 
 ```sh
 find migrations -name '*.sql' -exec sh -c 'for f; do [ "$(head -c 3 "$f" | od -An -tx1 | tr -d " \n")" = efbbbf ] && printf "%s\n" "$f"; done' sh {} +
 ```
+
+A PostgreSQL schema that gives a column a collation, as `name text COLLATE "C"`,
+now reads drift and plans that collation
+([stokaro/ptah#6266](https://github.com/stokaro/ptah/pull/6266)). Every earlier
+executor created such a column without its collation and read no difference.
+Measured on PostgreSQL 17 against a schema v0.32.0 applied, v0.33.0 reports
+`columns_modified` and plans `ALTER TABLE ... ALTER COLUMN ... TYPE ... COLLATE`,
+which rebuilds the indexes on the column. A column that holds a collation the
+schema does not state is planned back to the database default the same way. The
+operator rates `ALTER COLUMN ... TYPE` destructive, so the resource stops
+`Blocked` with `DestructiveChangesDisabled` until `spec.policy.allowDestructive`
+is set, and then waits for an approval, under `apply: Always` too. A MySQL
+column Ptah created already had the collation it declares, and reads no new
+drift. One whose collation differs from the declared one, because the column
+was changed by hand or the schema gained a `COLLATE` later, now reads drift and
+plans `MODIFY COLUMN`, which the operator rates destructive as well
+([stokaro/ptah#6277](https://github.com/stokaro/ptah/pull/6277)). A database or
+table whose default collation differs from the server's reads no drift on
+either engine. To find the columns before you upgrade, search the schema files for
+`COLLATE` and run this as the schema's login, with `public` replaced by each
+schema the resource manages:
+
+```sql
+SELECT c.oid::regclass AS table_name, a.attname AS column_name, co.collname AS collation
+FROM pg_attribute a
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_collation co ON co.oid = a.attcollation
+WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND a.attnum > 0
+  AND NOT a.attisdropped AND co.collname <> 'default';
+```
+
+A column the query lists that the schema writes without `COLLATE` is planned
+back to the default, and a column the schema gives a `COLLATE` that the query
+does not list is planned to it. Write the collation the column should keep into
+the schema, or plan the rebuild for a quiet hour.
 
 A PostgreSQL plan that drops and makes again a view or a materialized view
 another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or
@@ -144,7 +180,7 @@ A client other than `kubectl` that deletes a Job the operator runs and names no
 propagation is refused from this release: have it name
 `propagationPolicy: Background`, as `kubectl delete` does. Nothing else.
 
-- **Executor.** The verified executor is now Ptah v0.32.0, and the runner
+- **Executor.** The verified executor is now Ptah v0.33.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. A migration's status and run now ask
   whether `schema_migrations_repeatable` exists, with the query that asks for
@@ -162,6 +198,59 @@ propagation is refused from this release: have it name
   describes. A MySQL view the login defines is now replaced with
   ``CREATE OR REPLACE DEFINER=`<login>`@`<host>` VIEW``, which also raises
   `Definer`.
+- **An exclude entry keeps the constraint it names.** Since v0.33.0 a
+  `spec.policy.exclude` entry that names a constraint through its table keeps
+  it out of the plan under every spelling: `t.c` or `t.c[type=constraint]`,
+  `t.c[type=index]` for a primary key or a `UNIQUE` constraint, and
+  `t.c[type=check]` for a `CHECK`
+  ([stokaro/ptah#6256](https://github.com/stokaro/ptah/pull/6256),
+  [stokaro/ptah#6264](https://github.com/stokaro/ptah/pull/6264)), and on
+  PostgreSQL an `EXCLUDE` constraint
+  ([stokaro/ptah#6247](https://github.com/stokaro/ptah/pull/6247)). Measured on
+  PostgreSQL 17 and MySQL 8.4, v0.32.0 planned to drop a primary key or a
+  `UNIQUE` constraint under `[type=index]`, the index of a `UNIQUE` constraint
+  under `[type=constraint]`, a `CHECK` under `[type=check]` and an `EXCLUDE`
+  constraint under every selector, and on MySQL a `MODIFY COLUMN` on the
+  columns of an excluded key. Each of those plans was destructive, so it
+  stopped the resource unless `allowDestructive` was set. A database a plan
+  like that was applied to has lost the constraint; check it.
+- **A MySQL temporal default converges.** Measured on MySQL 8.4, v0.32.0 read a
+  `datetime` column it created with `DEFAULT CURRENT_TIMESTAMP` or `DEFAULT
+  now()` as drift and planned `MODIFY COLUMN` at every Plan, which the operator
+  rates destructive. v0.33.0 compares expression defaults by the server's
+  operator precedence
+  ([stokaro/ptah#6284](https://github.com/stokaro/ptah/pull/6284)) and reads
+  the same table as in sync. A default in parentheses, as `DEFAULT (1 + 2)`,
+  which v0.32.0 refused as a fault of the schema file on either engine, is now
+  read ([stokaro/ptah#6248](https://github.com/stokaro/ptah/pull/6248)).
+- **A type change under a generated column.** A PostgreSQL plan that changes
+  the type of a column a stored generated column reads now drops the generated
+  column, changes the type and adds the column back with its indexes, after a
+  check that fails when the drop would take something the plan does not
+  restate ([stokaro/ptah#6250](https://github.com/stokaro/ptah/pull/6250)).
+  Measured on PostgreSQL 17, v0.32.0 planned the type change alone, and the
+  server refused it with SQLSTATE 0A000. The `DROP COLUMN` makes the plan
+  destructive.
+- **The retry names the forced repair.** `ptah migrations up --allow-dirty`
+  refuses a revision whose statement outcome is unknown, or whose file has
+  another statement count than the run recorded, and since v0.33.0 its message
+  names `ptah migrations repair --version N --force`, where it named the
+  repair without the flag, which refuses that row
+  ([stokaro/ptah#6232](https://github.com/stokaro/ptah/pull/6232)).
+  [A row in `state=pending`](../../use/recovery/#failed-pending-row) quotes it.
+- **The revision table is created only when it is missing.** A migration
+  Apply now asks whether `schema_migrations` exists and sends `CREATE TABLE IF
+  NOT EXISTS` only for a table the catalog does not show
+  ([stokaro/ptah#6234](https://github.com/stokaro/ptah/pull/6234)). PostgreSQL
+  and MySQL check the privilege to create before the name, so a login with
+  only DML on a revision table someone else created was refused before. The
+  restored-history readings show the question where the `CREATE` was, and the
+  acceptance audits already admitted it, since History asks the same.
+- **A foreign key to columns no key covers.** Ptah's sentence for it now goes
+  on to say that a primary key, `UNIQUE` constraint or unique index must key
+  exactly those columns
+  ([stokaro/ptah#6233](https://github.com/stokaro/ptah/pull/6233)), and the
+  `desired_schema_invalid` message carries the longer sentence.
 - **A refused view is named.** When Ptah refuses a plan with
   `view-security-option` or `view-definer`, the `ReconciliationFailed` message
   now names each view Ptah's report lists, with the option, or with its definer

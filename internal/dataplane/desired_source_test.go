@@ -138,7 +138,7 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 	}{
 		{"a key into a table nothing declares", "foreign-key", "PostgreSQL", `invalid foreign key: field "id" references unknown table "nope"`},
 		{"the key on MySQL", "key-mysql", "MySQL", constraintKey},
-		{"a fault that does not open with the key", "not-unique", "PostgreSQL", `postgres requires referenced columns code on table "parent" to be declared unique`},
+		{"a fault that does not open with the key", "not-unique", "PostgreSQL", `postgres requires referenced columns code on table "parent" to be declared unique` + notUniqueTail},
 		// Since Ptah v0.26.0 drift and plan check the indexes first, and stop
 		// on the first one they refuse with validate's line.
 		{"an index on a table nothing declares", "index-table", "PostgreSQL", `index "i": names table "nowhere", which no declaration defines`},
@@ -161,19 +161,23 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 	}
 }
 
+// notUniqueTail is how Ptah v0.33.0 goes on after the not-unique fault it
+// wrote alone before (stokaro/ptah#6233).
+const notUniqueTail = ": a primary key, UNIQUE constraint or unique index must key exactly those columns"
+
 // On a PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0 and
 // drift since v0.30.1 can name the table they placed in public with that
 // schema, and validate does not. The sentences are the ones v0.30.1 wrote for
-// not-unique.sql and key-and-index.sql, and variations of them; the fault
-// returned is validate's. Since v0.32.0 the plan's index line names the table
+// not-unique.sql, with the tail v0.33.0 adds, and key-and-index.sql, and
+// variations of them; the fault returned is validate's. Since v0.32.0 the plan's index line names the table
 // that way too, which the captures of key-and-index.sql hold.
 func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) {
 	t.Parallel()
 
-	const want = `postgres requires referenced columns code on table "parent" to be declared unique`
+	const want = `postgres requires referenced columns code on table "parent" to be declared unique` + notUniqueTail
 	for name, failed := range map[string]string{
-		"in public":         `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique`,
-		"in another schema": `compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`,
+		"in public":         `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique` + notUniqueTail,
+		"in another schema": `compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique` + notUniqueTail,
 		"in no schema":      `compare database schema: ` + want,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -185,14 +189,14 @@ func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) 
 		})
 	}
 	for name, failed := range map[string]string{
-		"another table":                `compare database schema: postgres requires referenced columns code on table "public.other" to be declared unique`,
-		"another column":               `compare database schema: postgres requires referenced columns name on table "public.parent" to be declared unique`,
-		"an empty schema":              `compare database schema: postgres requires referenced columns code on table ".parent" to be declared unique`,
-		"two schemas":                  `compare database schema: postgres requires referenced columns code on table "x.public.parent" to be declared unique`,
-		"a schema outside the quotes":  `compare database schema: postgres requires referenced columns code on table public."parent" to be declared unique`,
-		"more words after the fault":   `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique: held`,
-		"the words with no boundary":   `compare database schema:postgres requires referenced columns code on table "public.parent" to be declared unique`,
-		"the words inside a long word": `compare database schema: xpostgres requires referenced columns code on table "public.parent" to be declared unique`,
+		"another table":                `compare database schema: postgres requires referenced columns code on table "public.other" to be declared unique` + notUniqueTail,
+		"another column":               `compare database schema: postgres requires referenced columns name on table "public.parent" to be declared unique` + notUniqueTail,
+		"an empty schema":              `compare database schema: postgres requires referenced columns code on table ".parent" to be declared unique` + notUniqueTail,
+		"two schemas":                  `compare database schema: postgres requires referenced columns code on table "x.public.parent" to be declared unique` + notUniqueTail,
+		"a schema outside the quotes":  `compare database schema: postgres requires referenced columns code on table public."parent" to be declared unique` + notUniqueTail,
+		"more words after the fault":   `compare database schema: postgres requires referenced columns code on table "public.parent" to be declared unique` + notUniqueTail + `: held`,
+		"the words with no boundary":   `compare database schema:postgres requires referenced columns code on table "public.parent" to be declared unique` + notUniqueTail,
+		"the words inside a long word": `compare database schema: xpostgres requires referenced columns code on table "public.parent" to be declared unique` + notUniqueTail,
 	} {
 		t.Run("refuses "+name, func(t *testing.T) {
 			t.Parallel()
@@ -202,10 +206,10 @@ func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) 
 		})
 	}
 	// A name validate prints with its schema comes back only as it is.
-	const qualified = "postgres: schema: postgres requires referenced columns code on table \"app.parent\" to be declared unique\n"
+	const qualified = "postgres: schema: postgres requires referenced columns code on table \"app.parent\" to be declared unique" + notUniqueTail + "\n"
 	for failed, want := range map[string]bool{
-		`compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique`:        true,
-		`compare database schema: postgres requires referenced columns code on table "public.app.parent" to be declared unique`: false,
+		`compare database schema: postgres requires referenced columns code on table "app.parent" to be declared unique` + notUniqueTail:        true,
+		`compare database schema: postgres requires referenced columns code on table "public.app.parent" to be declared unique` + notUniqueTail: false,
 	} {
 		if _, found := dataplane.SchemaStructuralProblem([]byte(qualified), "PostgreSQL", failed); found != want {
 			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)

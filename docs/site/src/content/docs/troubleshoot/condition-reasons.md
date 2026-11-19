@@ -578,7 +578,7 @@ anything, and stop on the first one they refuse
 
 ```
 desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
-desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique
+desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns
 desired_schema_invalid: schema.sql: index "i": names table "nowhere", which no declaration defines
 ```
 

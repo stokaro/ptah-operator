@@ -1204,6 +1204,10 @@ func structuralFaults(t *testing.T, l *lab) {
 		foreignKey = `invalid foreign key: constraint "t_nope" references unknown table "nope"`
 		indexTable = `index "i": names table "nowhere", which no declaration defines`
 		indexKey   = `index "i": names column "missing_column", which table "t" does not declare`
+		// Since Ptah v0.33.0 the sentence goes on to say what would satisfy
+		// it (stokaro/ptah#6233).
+		notUnique = `postgres requires referenced columns code on table "parent" to be declared unique: ` +
+			`a primary key, UNIQUE constraint or unique index must key exactly those columns`
 		// Since Ptah v0.23.0 the plan refuses what it cannot compare as
 		// declaration-refused, and the runner asks the desired-source check
 		// why. Where validate finds the fault in the file, the Plan says that;
@@ -1250,8 +1254,7 @@ func structuralFaults(t *testing.T, l *lab) {
 		{
 			name: "not-unique", engine: enginePostgres, file: "not-unique.sql",
 			observeCode: invalid, planCode: invalid,
-			observeWords: `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
-			planWords:    `schema.sql: postgres requires referenced columns code on table "parent" to be declared unique`,
+			observeWords: "schema.sql: " + notUnique, planWords: "schema.sql: " + notUnique,
 		},
 		{
 			name: "index-table", engine: enginePostgres, file: "index-table.sql",

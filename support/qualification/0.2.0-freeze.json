@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-18T09:37:33.725407+00:00",
+  "frozenAt": "2026-11-19T09:03:33.819611+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "ab1973003e8e1e3b39286876edcd871ecc7685df9a882ac0c88ecdf62207b316"
+      "sha256": "c396177a1edefc3d3634b5503fba92889c558970fdea3ec756e14f822ee0b265"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "c5aa639cb8b189a0a5b9b22fc04a2cf5241f7f8cb1872278c969f9fe1f0e2c9f"
+      "sha256": "58808619242bfe27d5381cf91c44a980a92288a20252a07abfb319cd07a85cc0"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "5e9a63965e869aea17159b71bfdd44fadadef58604812e673271b6ad4e989e6d",
+    "sha256": "2f7f65b9e23486ab3e5d1c7f12c59fe451c1b1c5f602f8b0a692b533dc6c75e7",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 118,
+  "revision": 119,
   "supersedes": {
-    "freezeCommit": "2e19eeb2ab36e9174a9539dfd83f9e6d776f80c4",
-    "sha256": "21847db48a4792311f4425b96eedcaf6d72b88555946f1dd09788bdca86ef6e5"
+    "freezeCommit": "fdc12bbc202d25e76bb9a5692d876d6d08afede5",
+    "sha256": "3477cb30648c88f9dd98e02880bd7e6857721b53885fbe68599c184b0e6542fb"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.31.0 to the v0.32.0 release image, and record in the edge row what v0.32 changes: a PostgreSQL plan names the table of an index fault with its schema, and a migration file that starts with a byte order mark runs without the mark and records the checksum of the text without it. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.32.0 to the v0.33.0 release image, and record in the edge row what v0.33 changes: a PostgreSQL column's collation is written and compared, an exclude selector that names a constraint keeps it, the retry names the forced repair, parenthesized and MySQL expression defaults are read, a type change under a generated column rebuilds it, the sentence for a foreign key to columns no key covers is longer, and a migration Apply creates the revision table only when it is missing. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

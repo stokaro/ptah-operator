@@ -2,15 +2,15 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "refused",
-  "plan_name": "plan_84803f542a53",
-  "plan_digest": "sha256:308234f8e066ae324fd9dd704b243102ab4226512a264d9c2a3e831e098a7a98",
+  "plan_name": "plan_eeb163a2f3d8",
+  "plan_digest": "sha256:962fe76c65b86e5fbcfc40f59868a26ff45df3d91e96a05c893f8067caff3377",
   "refusal": {
     "code": "stale-plan",
     "changed": "schema",
-    "plan_fingerprint": "sha256:b98a818b4878dd079f0fc42478d2b7ba4fa9e13cf8150019501657021fea33bf",
-    "database_fingerprint": "sha256:437580c3018a461acf545b572e6a93685fecf1aa828d8bdedf646bc7479cc57b"
+    "plan_fingerprint": "sha256:48ade7322e9ac7628f01af87b5bd724426a352aff4af144ebc5ea5e50427cc8d",
+    "database_fingerprint": "sha256:5d1c6681ec740440d3175adf528c0231f760d7dfc735046e5ddbd55e71ef2111"
   },
   "error": {
-    "message": "pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:b98a818b4878dd079f0fc42478d2b7ba4fa9e13cf8150019501657021fea33bf, database sha256:437580c3018a461acf545b572e6a93685fecf1aa828d8bdedf646bc7479cc57b); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan"
+    "message": "pre-planned migration is stale: the target database schema does not match the plan's source fingerprint (plan sha256:48ade7322e9ac7628f01af87b5bd724426a352aff4af144ebc5ea5e50427cc8d, database sha256:5d1c6681ec740440d3175adf528c0231f760d7dfc735046e5ddbd55e71ef2111); the database changed since the plan was computed, so re-run `schema plan` against the current database and review the fresh plan"
   }
 }

@@ -674,11 +674,12 @@ and still leaves `state=failed` and the run `Failed`.
 missing by hand and then run `ptah migrations repair --version 2 --force`. Do that only
 if you do apply it by hand: [that repair](#what-repair-records) records the migration
 applied and runs nothing. Without `--force` the repair refuses the row, and so does
-`ptah migrations up --allow-dirty`, although its refusal names the repair without the
-flag:
+`ptah migrations up --allow-dirty`. Since Ptah v0.33.0 that refusal names the same
+forced repair ([stokaro/ptah#6232](https://github.com/stokaro/ptah/pull/6232)); before,
+it named the repair without the flag, which refuses:
 
 ```text
-error: error running migrations: migration 2 cannot resume automatically: the outcome of statement 1 is unknown after an interrupted run; inspect the database, then use 'ptah migrations repair --version 2'
+error: error running migrations: migration 2 cannot resume automatically: the outcome of statement 1 is unknown after an interrupted run; inspect the database, then use 'ptah migrations repair --version 2 --force'
 ```
 
 Look in the database for what the statement would have changed, and where it changed
@@ -703,6 +704,14 @@ error: error running migrations: migration 2 cannot resume automatically: the al
 error: migration 2 cannot resume the migration: the already committed statement prefix changed after 1 of 2 statements committed; inspect the database before choosing a repair point
 ```
 
+A file that gained or lost a statement since the run stops the retry before it runs
+anything, because the recorded count no longer says which statement comes next. Since
+v0.33.0 that refusal also names the forced repair:
+
+```text
+error: error running migrations: migration 2 cannot resume automatically: the previous attempt applied 1 of 2 statements but the file now has 3; inspect the database, then use 'ptah migrations repair --version 2 --force'
+```
+
 Do not remove the row here unless you have also undone what committed. Without that,
 the resource holds `status.unresolvedRun` until you acknowledge the run, and the next
 run starts from the first statement. On MySQL it stopped at
@@ -716,7 +725,7 @@ Do not use `ptah migrations repair --force` for a statement that did not run. It
 records the migration as applied, and nothing runs it afterwards.
 :::
 
-Measured with the Ptah v0.32.0 release image against PostgreSQL 17.11 and MySQL
+Measured with the Ptah v0.33.0 release image against PostgreSQL 17.11 and MySQL
 8.4.13. The resource states are what the operator makes of the status documents those
 commands left.
 

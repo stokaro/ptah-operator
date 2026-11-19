@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "unknown",
-  "plan_name": "plan_ddd426bb8d23",
-  "plan_digest": "sha256:3fc9f0b2e7b6ddf8d6e1a13cbb5e60d4b3dc6d5b714ac40f709bf6b240b5bd35",
+  "plan_name": "plan_d70572994518",
+  "plan_digest": "sha256:74a314d178296452b05d52d4c669718909393dd0f8395cea2a9db891b370bac1",
   "units": [
     {
       "sql": "CREATE UNIQUE INDEX `orders_one_per_customer` ON `orders` (`customer_email`)"
