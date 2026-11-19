@@ -2,6 +2,24 @@ name: Documentation
 description: A page is wrong, missing, out of date, or hard to follow.
 labels: ["documentation"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Write a short title in plain English that names the problem or intended
+        result. Avoid internal names and unexplained acronyms.
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: Problem summary
+      description: >-
+        In a short paragraph, usually two to four sentences, explain what is
+        wrong, missing, or hard to follow and how it affects the reader.
+        Use plain English. After the introduction, quote the relevant sentence
+        where you can. If you measured the behavior, say what you ran and got.
+    validations:
+      required: true
+
   - type: input
     id: page
     attributes:
@@ -21,15 +39,5 @@ body:
         - It is missing something a reader needs
         - It is accurate but hard to follow
         - A link, an example, or a command does not work
-    validations:
-      required: true
-
-  - type: textarea
-    id: detail
-    attributes:
-      label: What you found
-      description: >-
-        Quote the sentence where you can. If you measured the real behavior, say
-        what you ran and what you got.
     validations:
       required: true

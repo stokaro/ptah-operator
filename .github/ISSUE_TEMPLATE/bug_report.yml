@@ -5,6 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
+        Write a short title in plain English that names the problem or intended
+        result. Avoid internal names and unexplained acronyms.
+
         Read the condition first. Conditions are the operator's stable machine
         interface, and
         [Condition reasons](https://operator.ptah.run/troubleshoot/condition-reasons/)
@@ -13,6 +16,18 @@ body:
 
         **Redact credentials.** Database URLs, registry secrets, and anything
         else the Secrets hold.
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Problem and expected result
+      description: >-
+        In a short paragraph, usually two to four sentences, explain what is
+        wrong or missing, who or what is affected, why it matters, and what you
+        expected instead. Use plain English. Put architecture and implementation
+        details after this introduction.
+    validations:
+      required: true
 
   - type: input
     id: operator-version
@@ -68,13 +83,6 @@ body:
       label: The PtahSchema
       description: With credentials removed.
       render: yaml
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: What you expected
     validations:
       required: true
 

@@ -9,6 +9,10 @@ a change to the API owes, what a change to a controller owes, and which gate
 measures what. This page does not restate it, because a second copy drifts the
 moment the first one moves.
 
+For PR and issue titles and opening paragraphs, follow
+[PR and issue writing](AGENTS.md#pr-and-issue-writing). Explain the problem
+and why it matters in plain English before giving technical details.
+
 ## This is not the Ptah CLI
 
 The operator is a separate project from [Ptah](https://github.com/stokaro/ptah),
