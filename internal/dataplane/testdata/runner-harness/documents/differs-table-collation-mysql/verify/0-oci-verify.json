@@ -1,0 +1,9 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-table-collation-mysql@sha256:da814bb409d6556ee443192873025ffc70b1ec6ad841a3aa07853565f988d4a2",
+  "digest": "sha256:da814bb409d6556ee443192873025ffc70b1ec6ad841a3aa07853565f988d4a2",
+  "satisfied": [
+    "require_digest_pin",
+    "artifact_types"
+  ],
+  "findings": []
+}

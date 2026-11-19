@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-table-charset-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-table-charset-mysql@sha256:1717b3503669783f8d94fd3e96c9adc5035307118c4c8be32f3b8bf41ccf3047",
+  "digest": "sha256:1717b3503669783f8d94fd3e96c9adc5035307118c4c8be32f3b8bf41ccf3047",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

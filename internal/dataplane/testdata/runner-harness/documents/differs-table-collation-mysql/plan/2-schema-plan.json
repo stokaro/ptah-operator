@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:c92bd9225634c0ae47bbfccb8833494fa4e0b823d3113694fb5559e02f573ab9",
+  "plan_path": "/work/ptah-plan-output-983129625/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_385ac03d3a3f",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:f9e0119d82e81fe5eff38560fa8ebde76cb93de0ef1ddff7224a260d631813dc",
+    "to_fingerprint": "sha256:aca871e6c61fccc04f64de6d879e1094c6647b58d5b4df7de80a0997b1c2b28a",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_table_collation_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL",
+        "severity": "warning",
+        "reason": "MODIFY or CHANGE ... NOT NULL fails when a row holds NULL; outside strict SQL mode MySQL and MariaDB rewrite the NULL to the type's zero value instead"
+      }
+    ]
+  }
+}

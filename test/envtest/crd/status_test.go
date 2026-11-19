@@ -55,6 +55,16 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 			want:   cause{"status.target.driftFindings[0].category", "should match"},
 		},
 		{
+			name:   "a near miss of a Ptah v0.33.1 category",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("table_collation_changed")}},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
+			name:   "a Ptah v0.33.1 category with a kind",
+			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("column_charsets_converted:ptah.run/mysql/column")}},
+			want:   cause{"status.target.driftFindings[0].category", "should match"},
+		},
+		{
 			name:   "a feature category whose kind has no path",
 			target: map[string]any{"driftFindingCount": int64(1), "driftFindings": []any{finding("feature_changes:ptah.run")}},
 			want:   cause{"status.target.driftFindings[0].category", "should match"},
@@ -119,6 +129,26 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		}, "status", "target")
 		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
 			t.Fatalf("the API server refused feature, undecided and earlier categories on PtahSchema %s: %v", schema.GetName(), err)
+		}
+	})
+
+	// Ptah v0.33.1 reports a table whose default collation changes and a
+	// column whose character set converts under categories of their own, at
+	// the severities it gives them. The row names them, so a vocabulary that
+	// lost them would not pass here by publishing a shorter list.
+	t.Run("Ptah v0.33.1's categories are published", func(t *testing.T) {
+		t.Parallel()
+		observed := reread(t, schema)
+		set(t, observed, map[string]any{
+			"driftFindingCount": int64(3),
+			"driftFindings": []any{
+				merged(finding("column_charsets_converted"), map[string]any{"severity": "destructive"}),
+				merged(finding("columns_modified"), map[string]any{"severity": "warning"}),
+				merged(finding("table_collations_changed"), map[string]any{"severity": "warning"}),
+			},
+		}, "status", "target")
+		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+			t.Fatalf("the API server refused Ptah v0.33.1's categories on PtahSchema %s: %v", schema.GetName(), err)
 		}
 	})
 

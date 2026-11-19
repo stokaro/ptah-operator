@@ -20,7 +20,8 @@ out of silence.
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
 on the upgrade. The journal of a schema and a migration gains the outcome
-`Undecided`, so the CRD schema version moves from 21 to 22. Once this
+`Undecided`, and a schema's drift summary takes the two categories Ptah
+v0.33.1 adds, so the CRD schema version moves from 21 to 23. Once this
 release's hook has updated the CRDs, 0.2.14's CRD hook refuses
 [a rollback](../../use/operations/#rollback) to 0.2.14: a release's hook
 refuses CRD schemas newer than the release reads. The executor moves to Ptah
@@ -150,6 +151,19 @@ A column the query lists that the schema writes without `COLLATE` is planned
 back to the default, and a column the schema gives a `COLLATE` that the query
 does not list is planned to it. Write the collation the column should keep into
 the schema, or plan the rebuild for a quiet hour.
+
+On MySQL, v0.33.1 also compares a table's default character set and collation
+where the schema declares them, and reports two new drift categories
+([stokaro/ptah#6291](https://github.com/stokaro/ptah/pull/6291)):
+`table_collations_changed` for a table whose default collation differs from the
+declared one, and `column_charsets_converted` for a column whose character set
+would convert. Both appear in `status.target.driftFindings`. Measured on MySQL
+8.4, a plan that changes only a table's default, where every column states its
+own collation, is `ALTER TABLE ... COLLATE` and converts no stored value: Ptah
+rates it a warning, and the operator lets it run under `apply: Always`. Where a
+column takes the table's collation, the same plan also resets the column with
+`MODIFY COLUMN`, and a character set change converts the column's values; the
+operator rates both destructive.
 
 A PostgreSQL plan that drops and makes again a view or a materialized view
 another role owns now ends with `ALTER VIEW ... OWNER TO` that role, or

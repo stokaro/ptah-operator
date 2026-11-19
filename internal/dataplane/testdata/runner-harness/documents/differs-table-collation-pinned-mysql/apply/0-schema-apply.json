@@ -1,0 +1,16 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_192f2cfc6c92",
+  "plan_digest": "sha256:8188286c9e8c4834fd16b46862cc5f21ff249278cae8795d656556e5af2f419e",
+  "units": [
+    {
+      "sql": "ALTER TABLE `differs_notes` COLLATE utf8mb4_bin"
+    }
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:169274df0dcd53fa813720a6c483e0816e8e3579ccf4c757c4b542dd8e931708"
+  }
+}

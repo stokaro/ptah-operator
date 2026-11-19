@@ -669,14 +669,20 @@ func (l *lab) sql(t *testing.T, engine, database string, statements ...string) {
 	}
 }
 
-// query runs one PostgreSQL query as the server's superuser and returns its
-// unaligned answer, for a row to say what its seed left.
+// query runs one query as the server's superuser and returns its answer
+// without column names or alignment, for a row to say what its seed left.
 func (l *lab) query(t *testing.T, engine, database, statement string) string {
 	t.Helper()
-	if engine != enginePostgres {
-		t.Fatalf("query reads PostgreSQL, not %q", engine)
+	switch engine {
+	case enginePostgres:
+		return l.docker.must(t, nil, "exec", l.name("postgres"), "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-c", statement)
+	case engineMySQL:
+		return l.docker.must(t, []string{"MYSQL_PWD=" + l.databasePassword}, "exec", "--env", "MYSQL_PWD", l.name("mysql"),
+			"mysql", "-uroot", "--database", database, "--batch", "--skip-column-names", "-e", statement)
+	default:
+		t.Fatalf("no engine %q", engine)
+		return ""
 	}
-	return l.docker.must(t, nil, "exec", l.name("postgres"), "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-c", statement)
 }
 
 func (l *lab) createDatabase(t *testing.T, engine, database string) {

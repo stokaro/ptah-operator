@@ -1,0 +1,16 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "applied",
+  "plan_name": "plan_385ac03d3a3f",
+  "plan_digest": "sha256:c92bd9225634c0ae47bbfccb8833494fa4e0b823d3113694fb5559e02f573ab9",
+  "units": [
+    {
+      "sql": "ALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL"
+    }
+  ],
+  "apply_log": {
+    "written": 2,
+    "run_reference": "sha256:57f6fa8c9f47d27d7d767779b15cf48cef7e903ec86e9d0dca1bd4a7f9e0a517"
+  }
+}

@@ -39,7 +39,11 @@ const (
 	// sequences, triggers, views and validated constraints.
 	// Version 4 is Ptah v0.23.0's: a column whose type narrows and a column
 	// that loses its identity get categories of their own beside
-	// columns_modified.
+	// columns_modified. Ptah v0.33.1 adds a table whose default collation
+	// changes and a column whose character set converts, on MySQL and
+	// MariaDB, under the same number: a manager that predates them refuses a
+	// report or a frame that carries one, which is the refusal a version
+	// mismatch would give.
 	DriftFindingVocabularyVersion = 4
 
 	// SupportedDriftContract is the version of the document `ptah schema
@@ -61,6 +65,7 @@ var (
 	mediaTypePattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$`)
 	verificationRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	driftFindingCategories         = []string{
+		"column_charsets_converted",
 		"column_identities_removed",
 		"column_types_narrowed",
 		"columns_added",
@@ -109,6 +114,7 @@ var (
 		"sequences_added",
 		"sequences_modified",
 		"sequences_removed",
+		"table_collations_changed",
 		"table_constraints_added",
 		"table_constraints_removed",
 		"tables_added",
@@ -163,10 +169,10 @@ const DriftFindingKindPattern = `[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-
 // An unknown category is refused rather than published or dropped. The status pattern could not store it, and leaving it out would
 // understate the report's count and its highest severity.
 //
-// Changing the list moves DriftFindingVocabularyVersion, the PtahSchema
-// status pattern and the CRD schema version together. The frame version stays:
-// a controller that predates a category refuses a frame carrying it, which is
-// the refusal a version mismatch would give.
+// Changing the list moves the PtahSchema status pattern and the CRD schema
+// version together. DriftFindingVocabularyVersion and the frame version stay
+// for a category added: a controller that predates it refuses a frame
+// carrying it, which is the refusal a version mismatch would give.
 func DriftFindingCategories() []string {
 	return append([]string(nil), driftFindingCategories...)
 }
