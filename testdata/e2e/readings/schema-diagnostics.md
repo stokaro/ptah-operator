@@ -48,6 +48,12 @@ record, the PostgreSQL 18 and 16 witnesses and the migration readings included,
 apart from the two apply log values every run draws anew, and all four saved
 exclusion plans byte for byte. No reading or saved plan changed; the contract
 and [`schema-sql-capture.json`](schema-sql-capture.json) name the new commit.
+On November 19, 2026 the v0.33.0 release image, commit
+`37c98b0024b136dd5079f42dd705d49ab24aeb52`, reproduced every MySQL schema
+reading but the allowed Apply and both History readings, and moved every
+PostgreSQL schema reading and both restored-history refusals, as the comparison
+with v0.32.0 below says. The moved readings here are v0.33.0's, all four saved
+exclusion plans stay, and the contract names the new statements.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -94,6 +100,27 @@ then checked in byte for byte, and the probe's unit test holds the checked-in
 contract to the checked-in readings. The v0.28.0 contract is the one it wrote
 from the v0.28.0 readings, and the v0.29.0 contract differs from it only in the
 Ptah commit it names.
+
+Against v0.32.0, v0.33.0 changed two PostgreSQL reads. Ptah now writes and
+compares a column's collation
+([stokaro/ptah#6266](https://github.com/stokaro/ptah/pull/6266)), so the column
+read also selects the collation a column declares, read from `pg_attribute`
+against its type's collation through `pg_type`, `pg_collation` and
+`pg_namespace`, beside the one it compares with, and the domain read selects
+each domain's collation from `pg_collation`. Both are still catalog reads, and
+the name of the prepared statement that carries each moved with it. Each of the
+34 PostgreSQL schema readings, the 18 and 16 witnesses included, keeps its
+record count and exit status. The allowed Apply's two schema apply log entries
+name a new plan on both engines, because the plan's source fingerprint moved;
+every other MySQL schema reading matched record for record. Each refused
+restored-history Apply asks whether the revision table exists where it sent
+`CREATE TABLE IF NOT EXISTS`
+([stokaro/ptah#6234](https://github.com/stokaro/ptah/pull/6234)), as
+[the refusal record](restored-history-refusal.md) says, and both History
+readings matched. All four saved exclusion plans hold the same statements and
+target fingerprint under a new source fingerprint and name. The contract keeps
+102 statements: the two column reads, PostgreSQL 18's included, and the domain
+read are replaced.
 
 Against v0.30.1, v0.31.0 changed the PostgreSQL schema readings and nothing
 else. Ptah now manages logical replication publications
@@ -434,8 +461,9 @@ their source fingerprint and name and hold the same statements. The three witnes
 below were taken again with the v0.22.0 image on November 6, 2026, at 50, 89 and 47
 records as on PostgreSQL 17, with the v0.23.0 image on November 7, 2026, at 53,
 95 and 50, with the v0.26.0 image on November 13, 2026, at 56, 101 and 53, and
-with the v0.30.1 image on November 18, 2026, at 57, 103 and 54, and with the
-v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58. Each time they
+with the v0.30.1 image on November 18, 2026, at 57, 103 and 54, with the
+v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, and with the
+v0.33.0 image on November 19, 2026, at the same counts. Each time they
 still differ from 17 in that one statement. Since v0.22.0
 Ptah reads the columns from `pg_catalog`, so the two statements are the same read
 with that name selected or left empty.
@@ -467,7 +495,7 @@ Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
 are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 53, 95 and 50 records, again with the v0.26.0 image on November 13, 2026, at
 56, 101 and 53, with the v0.30.1 image on November 18, 2026, at 57, 103 and
-54, and with the v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
+54, with the v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, and with the v0.33.0 image on November 19, 2026, at the same counts, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 

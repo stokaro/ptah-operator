@@ -500,8 +500,8 @@ read from writing is the command the runner runs, one fixed command line for
 each operation, and the audit below measures what those commands send. The
 runner opens no database connection of its own; it starts Ptah with the target
 URL in its environment. The behavior below was read from the source of the Ptah
-build [`support/ptah.json`](../../support/ptah/) pins, v0.32.0 at commit
-`da2df4a5`.
+build [`support/ptah.json`](../../support/ptah/) pins, v0.33.0 at commit
+`37c98b00`.
 
 | Operation | Runner command | What reaches the database |
 | --- | --- | --- |
@@ -542,10 +542,10 @@ isolated database, on PostgreSQL and on MySQL, and hold each one byte for byte
 to an exact list. For a `PtahSchema` the list is
 `test/e2e/schema-sql-contract.json`, matched by `test/e2e/schema_sql_audit.go`:
 the statements Observe, Plan and a stale Apply send for the acceptance schemas,
-captured from Ptah `da2df4a5`, each with the operations that may send it. For
+captured from Ptah `37c98b00`, each with the operations that may send it. For
 History the lists are in `test/e2e/migration_sql_audit.go` and
 `test/e2e/migration_mysql_audit.go`, and what History sent at `c5fba763`, and
-again at `dc2decde` and `da2df4a5`, is
+again at `dc2decde`, `da2df4a5` and `37c98b00`, is
 recorded in `testdata/e2e/readings/postgresql-migration-history-audit.md` and
 `mysql-migration-history-audit.md`: reads only, no table created. A statement
 from a read's Pod that its list does not hold fails the suite.
@@ -559,6 +559,9 @@ lists also admit the `CREATE TABLE IF NOT EXISTS` of the revision table
 (`postgresHistoryCreate`, `mysqlHistoryCreate`), because each list governs
 History and the migration Apply that sends it, so that History does not send it
 rests on the recorded readings and on Ptah's source, not on the acceptance run.
+Since Ptah v0.33.0 the Apply first asks whether the table exists, with the
+question History asks, and sends the `CREATE` only for a table the catalog does
+not show ([stokaro/ptah#6234](https://github.com/stokaro/ptah/pull/6234)).
 A revision table under another name or schema is outside both.
 
 ### What a read can still hold
