@@ -176,6 +176,28 @@ func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1a
 	}, Spec: batchv1.JobSpec{Template: template}}, nil
 }
 
+// BuildUnderBinding builds what Build builds: the fake writes no executor or
+// Ptah version into its Jobs, so there is nothing to rebind.
+func (jobs fakeJobs) BuildUnderBinding(
+	_ *operatorv1alpha1.ExecutionBindingStatus,
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	return jobs.Build(schema, operation, plan)
+}
+
+// BuildMigrationUnderBinding builds what BuildMigration builds, for the same
+// reason.
+func (jobs fakeJobs) BuildMigrationUnderBinding(
+	_ *operatorv1alpha1.ExecutionBindingStatus,
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+) (*batchv1.Job, error) {
+	return jobs.BuildMigration(migration, operation, plan)
+}
+
 func (fakeJobs) ExecutionBinding() (int32, string, string, int32) {
 	return testControllerStateVersion, "v0.3.0", "example.invalid/ptah@" + testDigest, int32(runner.ProtocolVersion)
 }
@@ -210,6 +232,24 @@ func (jobs executionBindingJobs) Build(
 		return nil, errors.New("plan execution binding does not match the Job builder")
 	}
 	return (fakeJobs{}).Build(schema, operation, plan)
+}
+
+// BuildUnderBinding refuses what the real builder refuses under binding: a
+// binding of another controller-state version or runner protocol, and a plan
+// of another binding.
+func (jobs executionBindingJobs) BuildUnderBinding(
+	binding *operatorv1alpha1.ExecutionBindingStatus,
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	if binding == nil || binding.ControllerStateVersion != stateVersionOrDefault(jobs.controllerStateVersion) ||
+		binding.RunnerProtocolVersion != jobs.protocol {
+		return nil, errors.New("execution binding is not one the Job builder can rebuild under")
+	}
+	rebound := jobs
+	rebound.ptahVersion, rebound.executorImage = binding.PtahVersion, binding.ExecutorImage
+	return rebound.Build(schema, operation, plan)
 }
 
 func controllerImageOrDefault(image string) string {

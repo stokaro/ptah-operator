@@ -249,14 +249,17 @@ func (m *migrationRun) runningExecutorImageChange() {
 	}
 	lease := heldLeases[0]
 	rolloutExecutorManagers(m.t, m.ctx, m.cluster, manager, original, replacement, m.scan)
-	held := m.waitForMigration(name, "Unknown with the original running claim retained", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
+	// The replacement manager holds the binding back while the original
+	// executor runs: the claim stays as the original manager wrote it, and
+	// Progressing carries the words only the replacement writes.
+	waiting := m.waitForMigration(name, "the replacement manager waiting for the original running Apply under its binding", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
 		for _, recorder := range recorders {
 			m.check(recorder.alive(), "the running migration watch stopped")
 		}
-		return migrationExecutorHeld(before, resource) == nil
+		return migrationExecutorWaiting(before, resource) == nil
 	})
-	migrationExecutorWatchBarrier(m, migrations, held)
-	m.check(migrationExecutorHeldWindow(migrations.snapshot(), before, held.ResourceVersion), "protect the complete running-migration window")
+	migrationExecutorWatchBarrier(m, migrations, waiting)
+	m.check(migrationExecutorWaitWindow(migrations.snapshot(), before, waiting.ResourceVersion), "protect the complete running-migration window")
 	heldLease := &coordinationv1.Lease{}
 	heldLease.Name, heldLease.Namespace = lease.name, manager.Namespace
 	migrationExecutorWatchBarrier(m, leases, heldLease)
@@ -297,8 +300,11 @@ func (m *migrationRun) runningExecutorImageChange() {
 	})
 	audit.assertRecords(sqlBefore, audit.snapshot(), audit.terminalPod(map[string]string{"job-name": job.Name}, jobUID), true)
 	audit.close()
-	current := m.waitForMigration(name, "fresh History accounting for Unknown under the replacement executor", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
-		return migrationExecutorHistoryRecovery(before, held, resource, replacement) == nil
+	// The run is recorded as its own result under the binding that authorized
+	// it, the binding moves after, and the first History read under the
+	// replacement executor confirms what the run applied.
+	current := m.waitForMigration(name, "the original run recorded under its binding, then History under the replacement executor", time.Second, func(resource *ptahv1alpha1.PtahMigration) bool {
+		return migrationExecutorSettledThenRotated(before, resource, replacement) == nil
 	})
 	// Read the successful new-epoch History result itself, not only the status
 	// the manager derived from it. Repeated diagnostics may produce more than
@@ -335,10 +341,21 @@ func (m *migrationRun) runningExecutorImageChange() {
 		m.query("SELECT color FROM e2e_migration_widgets WHERE id=1", database) != "blue" {
 		m.fatalf("the original Apply and fresh History did not match the actual schema, rows and revisions")
 	}
-	rolloutExecutorManagers(m.t, m.ctx, m.cluster, manager, replacement, original, m.scan)
 	migrationExecutorWatchBarrier(m, migrations, current)
+	m.check(migrationExecutorReadWindow(migrations.snapshot(), before, replacement, current.ResourceVersion),
+		"record the run under its binding before the binding moves, and claim nothing under the retired one")
+	// A run read as its own result keeps the five minutes every finished Job
+	// keeps, so the original Job and Pod are barriers only before the
+	// rollback. After it, the database Pod and the realm stand in for them.
 	migrationExecutorWatchBarrier(m, jobs, liveJob)
 	migrationExecutorPodWatchBarrier(m, pods, livePod)
+	rolloutExecutorManagers(m.t, m.ctx, m.cluster, manager, replacement, original, m.scan)
+	databases := &corev1.PodList{}
+	m.check(m.list(databases, client.MatchingLabels{"app.kubernetes.io/name": m.engine.service},
+		client.MatchingFields{"status.phase": string(corev1.PodRunning)}), "find the %s database watch sentinel", m.engine.kind)
+	sentinel, err := migrationExecutorPodBarrierSource(databases.Items, m.in.TestNamespace, m.engine.service)
+	m.check(err, "bind the Pod watch sentinel after the rollback")
+	migrationExecutorWatchBarrier(m, pods, sentinel)
 	migrationExecutorWatchBarrier(m, leases, heldLease)
 	for _, r := range recorders {
 		r.requestStop()
@@ -358,7 +375,7 @@ func (m *migrationRun) runningExecutorImageChange() {
 	}
 	m.check(leaseHeldUntilRelease(leases.snapshot(), lease), "retain the original migration realm through its safe release")
 	m.finishFixture(name)
-	m.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; fresh History settled Unknown without replay", m.engine.kind, jobUID, pod.UID)
+	m.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; its result was recorded under its binding before the binding moved, without replay", m.engine.kind, jobUID, pod.UID)
 }
 
 func plannedMigrationVersions(plan *ptahv1alpha1.PtahMigrationPlan) []int64 {

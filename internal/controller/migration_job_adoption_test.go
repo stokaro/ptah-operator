@@ -49,6 +49,10 @@ type runShape struct {
 	// policy is the apply policy the resource was claimed under, when it is not
 	// the fixture's own. The claim's input fingerprint and the plan both bind it.
 	policy operatorv1alpha1.ApplyPolicy
+	// replan is the plan an Apply is claimed under, when it is not the
+	// fixture's own, published for the resource as the history read that
+	// planned it would have published it.
+	replan func(*testing.T, *operatorv1alpha1.PtahMigration) *operatorv1alpha1.PtahMigrationPlan
 	// claim changes the claim the Job is built from, before the Job is built,
 	// the way a dispatching release's claim would have read.
 	claim func(*operatorv1alpha1.MigrationOperationStatus)
@@ -90,6 +94,10 @@ func runDispatchedBy(
 		if shape.policy != "" {
 			migration.Spec.Policy.Apply = shape.policy
 			repolicyPlan(t, migration, plan)
+		}
+		if shape.replan != nil {
+			plan = shape.replan(t, migration)
+			migration.Status.Plan.Name, migration.Status.Plan.UID = plan.Name, plan.UID
 		}
 		applyClaimFor(t, migration, plan)
 	case operatorv1alpha1.MigrationOperationHistory:

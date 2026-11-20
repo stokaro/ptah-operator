@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -181,6 +182,17 @@ func TestAMigrationApplyWhoseJobWentKeepsWhyItsPodNeverStarted(t *testing.T) {
 	}
 }
 
+// componentsMovedUnderIt leaves status recording the executor and the runner
+// protocol of another release than this manager, as after a rollout that moved
+// both under a dispatched Apply. A rotation does not wait through a moved
+// protocol (rotationMayWaitFor), since this manager reads no frame of the one
+// the Apply was dispatched under, so the Apply ends outcome unknown whatever
+// its Job is doing.
+func componentsMovedUnderIt(binding *operatorv1alpha1.ExecutionBindingStatus) {
+	binding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+	binding.RunnerProtocolVersion = int32(runner.ProtocolVersion) + 1
+}
+
 func TestAMigrationApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *testing.T) {
 	t.Parallel()
 
@@ -189,7 +201,7 @@ func TestAMigrationApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *test
 
 	// A release moved the executor while the Pod waited for its Secret.
 	moved := readMigration(t, api, migration)
-	moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+	componentsMovedUnderIt(moved.Status.ExecutionBinding)
 	if err := api.Status().Update(ctx, moved); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +445,7 @@ func TestAMigrationApplyWhosePodRanToTheEndRepeatsNoStaleReport(t *testing.T) {
 			name: "an execution component changed", ended: "an execution component changed while the Apply was dispatched", passes: 1,
 			end: func(t *testing.T, _ *MigrationReconciler, api client.Client, migration *operatorv1alpha1.PtahMigration, _ *batchv1.Job) {
 				moved := readMigration(t, api, migration)
-				moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+				componentsMovedUnderIt(moved.Status.ExecutionBinding)
 				if err := api.Status().Update(context.Background(), moved); err != nil {
 					t.Fatal(err)
 				}
@@ -800,7 +812,7 @@ func TestASchemaApplyOutlivingItsComponentsKeepsWhyItsPodNeverStarted(t *testing
 			}
 			// A release moved the executor before the next look.
 			moved := safetyGetSchema(t, run.api, run.schema)
-			moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+			componentsMovedUnderIt(moved.Status.ExecutionBinding)
 			if err := run.api.Status().Update(ctx, moved); err != nil {
 				t.Fatal(err)
 			}
@@ -852,7 +864,7 @@ func TestASchemaApplyWhosePodRanToTheEndRepeatsNoStaleReport(t *testing.T) {
 			name: "an execution component changed", ended: "execution binding changed after Apply dispatch", passes: 1,
 			end: func(t *testing.T, run unstartedSchema) {
 				moved := safetyGetSchema(t, run.api, run.schema)
-				moved.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+				componentsMovedUnderIt(moved.Status.ExecutionBinding)
 				if err := run.api.Status().Update(context.Background(), moved); err != nil {
 					t.Fatal(err)
 				}

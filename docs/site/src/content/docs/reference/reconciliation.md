@@ -319,6 +319,11 @@ where a discarded claim leaves a resource for one pass, not where it begins.
 
 A finished Apply Job never reaches `Failed`, whatever it reported. Every Apply
 error is an outcome nobody established, so the read-only proof comes next.
+An upgrade that moves only the executor image or the Ptah version while an
+Apply runs leaves the resource in `Applying` until that Apply's result is read
+under the binding it was dispatched under; the binding moves after, and the
+proof runs under the new one
+([Retire an execution binding](../mutation-lifecycle/#retire-an-execution-binding)).
 `AwaitingApproval` goes straight to `Applying`: `ReadyToApply` is only for a plan
 that needs no approval. With an approval the controller recorded for the
 current plan, the resource goes to `Applying` even once the interval has ended,

@@ -23,20 +23,25 @@ reports `OperationFailed` and no longer counts in `ptah_operator_failures_total`
 an alert or a script that watched for either sees `Blocked` with
 `SchemaSourceUnreadable` instead. The executor moves to Ptah v0.34.0, which
 retires the execution binding: approve again whatever was waiting, after the
-resource has read its database with v0.34.0 and planned. The retirement
-reaches work in flight too. A read still running when the new manager starts
-runs again. An Apply whose Job 0.2.15 had created is recorded with outcome
-`Unknown`, whatever it did: a `PtahSchema` reads its database before anything
-else runs, and a `PtahMigration` claims no further Apply until a history read or
-a `PtahMigrationRunAcknowledgment` accounts for
-[the run](../../use/operations/#a-migration-run-nobody-accounted-for). To upgrade
-with no Apply in flight, let each running Apply end first, until
-`status.activeOperation` names none, and then keep a new one from starting until
-the new manager runs: set `spec.suspend` on the resource, or leave
-`spec.policy.apply` at `OnApproval` with no approval waiting. Suspending a
-resource, or changing its policy, while its Apply runs records that Apply as
-`Unknown` as well, since the spec is one of the inputs the Apply was claimed
-from. Resume after the upgrade.
+resource has read its database with v0.34.0 and planned. A read still running
+when the new manager starts runs again. An Apply whose Job 0.2.15 created is
+waited for rather than retired: the new manager reads its result under the
+v0.33.1 binding it was dispatched under, records the outcome it reported, and
+moves the binding on the next pass, so the upgrade needs no pause for Applies to
+end. The runner protocol and the controller-state version stay at 1, and
+0.2.16 passes `--skip-validation` only to a Ptah that has it, so the Job it
+rebuilds under the v0.33.1 binding is the one 0.2.15 created. The Apply is still
+recorded with outcome `Unknown`, whatever it did, when its resource is
+suspended or its spec changes while it runs, since the spec is one of the inputs
+it was claimed from; when its Job is still running at the end of the claim's
+database Lease term; and when its Job is gone, or the Job, its Pod or its result
+is not what the claim dispatched. A `PtahSchema` then reads its database before
+anything else runs, and a `PtahMigration` claims no further Apply until a
+history read or a `PtahMigrationRunAcknowledgment` accounts for
+[the run](../../use/operations/#a-migration-run-nobody-accounted-for). So do not
+suspend a resource or edit its spec while its Apply runs to hold work back
+across the upgrade. Suspending a resource with no Apply in flight, as for the
+repeatable migrations below, records nothing.
 
 A migration directory of Ptah's `NNNNNNNNNN_<name>.up.sql` and `.down.sql`
 files that holds two files for one direction of a version now stops the history
@@ -126,6 +131,7 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   the desired schema.
 - **An OCI migration artifact Ptah cannot read stops at the history read.** The
   `fetch-migrations` step now runs `ptah migrations pull --skip-validation`
+  under Ptah v0.34.0 or later, the first release that has it
   ([stokaro/ptah#6406](https://github.com/stokaro/ptah/pull/6406)), which checks
   the artifact and each file's name and path and writes the directory without
   reading it as migrations. An artifact that holds a file Ptah refuses, such as
@@ -139,7 +145,9 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   started` and is tried again, and only `kubectl logs job/<job> -c
   fetch-migrations` says `migration artifact contains no migration files`. That
   container holds the registry credentials, so nothing it writes reaches status
-  or an Event.
+  or an Event. The argument follows the Ptah version a Job is built for: a
+  manager installed with an earlier Ptah fetches as 0.2.15 did, and so does the
+  Job it rebuilds for an Apply a claim dispatched under such a version.
 - **A Plan on a server with `NO_BACKSLASH_ESCAPES` says why it stops.** Since
   Ptah v0.34.0 `schema apply --plan` names its refusal of a plan with a
   backslash in a literal, on a session whose `sql_mode` names
@@ -185,6 +193,21 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   path, `.spec.migrations.length()`, is not one the API server's JSONPath can
   evaluate, so it printed `<none>` for every plan. `kubectl ptah migration`
   lists the planned versions and repeatable migrations.
+- **An upgrade that moves the executor no longer makes a running Apply
+  unknown.** A release that moved the executor image or the Ptah version while
+  an Apply's Job ran recorded that Apply `Unknown` at once, and a migration
+  then waited for a person to establish what it did. The execution binding now
+  waits for the Apply: its result is read under the binding it was dispatched
+  under, the run is recorded with the outcome it reported, and the binding
+  moves on the next pass. A Job that has stopped is read however late it is
+  seen; a running one is waited for until the claim's database Lease term
+  ends. A Job still running then, a Job that is gone, a Job, Pod or result
+  that is not what the claim dispatched under the old binding, or a release
+  that also moves the runner protocol or the controller-state version still
+  records the Apply `Unknown`. While the binding waits, a migration's
+  `Progressing` and a schema's `Applying` say it moves once the Apply's
+  result is read. The upgrade to 0.2.16 is the first that waits, for an Apply
+  whose Job matches the Job its recorded binding builds.
 - **Executor.** The verified executor is now Ptah v0.34.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. Each MySQL schema read also asks

@@ -69,6 +69,16 @@ type MigrationJobBuilder interface {
 		operation operatorv1alpha1.MigrationOperationStatus,
 		plan *operatorv1alpha1.PtahMigrationPlan,
 	) (*batchv1.Job, error)
+	// BuildMigrationUnderBinding is BuildMigration under the executor image
+	// and Ptah version binding names rather than this manager's own. It
+	// rebuilds the Job of a dispatched Apply a rollout's rotation waits for,
+	// under the binding the claim was made under.
+	BuildMigrationUnderBinding(
+		binding *operatorv1alpha1.ExecutionBindingStatus,
+		migration *operatorv1alpha1.PtahMigration,
+		operation operatorv1alpha1.MigrationOperationStatus,
+		plan *operatorv1alpha1.PtahMigrationPlan,
+	) (*batchv1.Job, error)
 	// ExecutionBinding is what this manager executes with: the components a
 	// plan and an approval bind, and whose change starts a new epoch.
 	ExecutionBinding() (
@@ -589,6 +599,12 @@ func (r *MigrationReconciler) dispatchedMigrationApplyJob(
 // (holdMigrationJobToItsClaim); a release that also changed the Job or its Pod
 // template records a dispatched Apply as outcome unknown and runs a read-only
 // claim again.
+//
+// A dispatched Apply holds the rotation back while it can still be read under
+// the binding its claim was made under (dispatchedMigrationApplyHoldsRotation):
+// the pass goes on to supervise and consume it as any Apply, and the binding
+// moves on the first pass with no claim in flight. One that cannot be read
+// that way is recorded outcome unknown first.
 func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -616,7 +632,16 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		// The evidence is written first, under the binding that authorized the
 		// run, and the binding moves on the next pass once no claim is in
 		// flight. Two writes in that order, rather than one that would report a
-		// run against components it never had.
+		// run against components it never had. The evidence is the run's own
+		// result while its Job can still give one under that binding, and
+		// outcome unknown once it cannot.
+		holds, err := r.dispatchedMigrationApplyHoldsRotation(ctx, migration, configured)
+		if err != nil {
+			return ctrl.Result{}, true, err
+		}
+		if holds {
+			return r.waitForMigrationApplyUnderRotation(ctx, migration)
+		}
 		return r.applyUncertainUnderBindingChange(ctx, migration)
 	}
 	if result, held, err := r.letGoOfRetiredReadOnlyMigrationJob(ctx, migration); held || err != nil {
@@ -639,9 +664,9 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 	migration.Status.Phase = operatorv1alpha1.MigrationPhasePending
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonExecutionBindingChanged, "The operation was retired because an execution component changed")
-	// Nothing this claim dispatched can be running: a dispatched Apply became
-	// an unresolved run above instead. So an undispatched Apply's Lease goes
-	// back in the same write.
+	// Nothing this claim dispatched can be running: a dispatched Apply held
+	// the rotation or became an unresolved run above instead. So an
+	// undispatched Apply's Lease goes back in the same write.
 	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionDiscard, false); err != nil {
 		return ctrl.Result{}, true, err
 	}
@@ -651,9 +676,12 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 }
 
 // applyUncertainUnderBindingChange records that a dispatched Apply outlived the
-// components that authorized it. It is the same answer as any other Apply the
-// controller cannot read: the run's evidence is unknown, the resource is
-// blocked, and nothing dispatches again until a person has looked.
+// components that authorized it and cannot be read under them: its Job is gone
+// or not the claim's, it is still running at the end of its claim's term, or
+// the rollout moved the controller-state version or the runner protocol. It is
+// the same answer as any other Apply the controller cannot read: the run's
+// evidence is unknown, the resource is blocked, and nothing dispatches again
+// until a person has looked.
 func (r *MigrationReconciler) applyUncertainUnderBindingChange(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -803,8 +831,9 @@ func (r *MigrationReconciler) claimMigration(
 	}
 	if migration.Status.ExecutionBinding == nil {
 		// Unreachable for the same reason: reconcileMigrationExecutionBinding
-		// runs first and only reports itself unhandled once the binding is
-		// current, which requires it to be non-nil.
+		// runs first and reports itself unhandled only with a non-nil binding,
+		// and with a claim in flight only while it waits for that claim, which
+		// the ActiveOperation check above sends elsewhere.
 		return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
 	}
 	if operationType == operatorv1alpha1.MigrationOperationResolve && migration.Spec.Artifact.ConfigMap != nil {
@@ -1166,7 +1195,10 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 //
 // A release that changes the Job or its Pod template therefore cannot adopt a
 // run its predecessor dispatched: a running Apply is recorded unknown, and a
-// read-only claim is run again.
+// read-only claim is run again. A release that also moved the executor image
+// or the Ptah version rebuilds the Job under the binding status still records
+// while the rotation waits for the Apply (expectedMigrationJob), so the same
+// rule holds across that rollout.
 func (r *MigrationReconciler) holdMigrationJobToItsClaim(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -1433,6 +1465,17 @@ func (r *MigrationReconciler) expectedMigrationJob(
 	plan, err := r.migrationPlanForJob(ctx, migration, operation)
 	if err != nil {
 		return nil, err
+	}
+	// A claim meets another configured binding here only while a rotation
+	// waits for its Apply, and its Job is the one built under the binding it
+	// was made under. This manager would build another executor into a new
+	// Job, and refuses to build one under the recorded binding for dispatch.
+	rotating, err := r.migrationBindingRotating(migration)
+	if err != nil {
+		return nil, err
+	}
+	if rotating {
+		return r.Jobs.BuildMigrationUnderBinding(migration.Status.ExecutionBinding, migration, *operation, plan)
 	}
 	return r.Jobs.BuildMigration(migration, *operation, plan)
 }
