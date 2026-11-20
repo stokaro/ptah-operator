@@ -505,13 +505,8 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:57bf2cf00805bc595702778bc1aa6dcd8092b8cba15a8e78e34c6db8795e287b",
+      "sourceDigest": "sha256:f65851f71e72db815f652483b6e7ce62926e44608f9ebf7394e85e774d9eed8a",
       "reason": "Read a fault of the whole desired schema that names a domain as Ptah v0.34.0's schema drift and schema plan name it (stokaro/ptah#6386): in the schema they placed it in, as domain \"public.moment\" where schema validate names domain \"moment\", and the type of a column the domain types by the domain's schema, as on a public.moment column where validate prints on a moment column. The runner allowed for a placed table alone, so a domain's relative time default read as child_exit from an Observe and as plan_refused from a Plan; it now reads as desired_schema_invalid with validate's sentence, as a foreign key into an undeclared table does. The api package the runner builds against gains the reason SchemaInvalid, which a schema's conditions and a Verified journal entry carry and no frame carries. desired_schema_invalid is a code every manager of protocol 1 reads, and the runner's commands, fields and frame shape are as they were. Protocol 1 stays."
-    },
-    {
-      "protocolVersion": 1,
-      "sourceDigest": "sha256:12d5fa0693038b3d593243df0e28593bbc14a6384a70fb4a657a5ad2f76d9669",
-      "reason": "The doc comment of the reason SchemaInvalid in the api package the runner builds against now says another read of the same schema gives the same answer against the same server, and that the interval or a read request reads it again after a server change. No frame carries a condition reason, and no type, field or validation moved. The runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
     }
   ]
 }
