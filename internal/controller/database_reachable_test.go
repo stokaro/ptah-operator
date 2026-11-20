@@ -326,9 +326,19 @@ func TestASchemaFailureWithNoKindLeavesDatabaseReachable(t *testing.T) {
 					if len(writes.writes) == 0 {
 						t.Fatal("the pass wrote no status, so it did not read the failure")
 					}
-					failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-					if failed == nil || failed.Status != metav1.ConditionTrue {
-						t.Fatalf("ReconciliationFailed = %#v, want the failure recorded", failed)
+					// A read of a file Ptah cannot read ends the claim
+					// rather than retrying it, and records no failure:
+					// schema_source_unreadable_test.go holds what it records.
+					// An Apply never reads the file this way.
+					if failure.Code == runner.CodeDesiredSourceUnreadable && path.operation != runner.OperationApply {
+						if actual.Status.ActiveOperation != nil || meta.IsStatusConditionTrue(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed) {
+							t.Fatalf("the read kept its claim %+v or recorded a failure: %#v", actual.Status.ActiveOperation, actual.Status.Conditions)
+						}
+					} else {
+						failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+						if failed == nil || failed.Status != metav1.ConditionTrue {
+							t.Fatalf("ReconciliationFailed = %#v, want the failure recorded", failed)
+						}
 					}
 					assertReachabilityKept(t, actual.Status.Conditions, previous)
 				})

@@ -686,6 +686,34 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// Blocked with DriftDetected unknown, as an undecided plan leaves
+			// it: the reason tells the two apart, and the entry keeps it, since
+			// the next pass can rewrite Ready.
+			name:   "a proof whose read could not read the desired schema",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhaseBlocked, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionUnknown, Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable)},
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+				Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable),
+			}},
+		},
+		{
+			// A newer generation decides what follows, and the reason Ready
+			// carries then is that one.
+			name:   "a proof whose read could not read the desired schema under a newer generation",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhasePending, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionUnknown, Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable)},
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonDesiredStateChanged)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalSuperseded,
+			}},
+		},
+		{
 			name:   "a failure",
 			before: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: resolve},
 			after:  operatorv1alpha1.PtahSchemaStatus{ActiveOperation: retried, Conditions: failed("ObservationFailed")},

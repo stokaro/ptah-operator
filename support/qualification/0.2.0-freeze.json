@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-20T03:23:11.673623+00:00",
+  "frozenAt": "2026-11-20T03:50:33.236161+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "ee7301c01a223644b02b53acb335267c4b9901740ea6062d7c845c402e8cee28"
+      "sha256": "d1ca35ac3c33994bac813dd664aa47522885095d1eeb350c0bb5b1c31aa5233d"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.15 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 122,
+  "revision": 123,
   "supersedes": {
-    "freezeCommit": "7d043f37adb93f90dc8016fa8021b053c257eab3",
-    "sha256": "dc7da25eddc5339a6baddd5d021af988f04713615a2272f982c0a0a07e70bb93"
+    "freezeCommit": "4bf812c2613f2d40e668068b149e2c6615f4cbd4",
+    "sha256": "5fa33d7da62fcce30e2809104e0c06ef94779379c471d7e54e5fab620ac6c0e5"
   },
-  "revisionReason": "Declare the published v0.2.15 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.15 as the published predecessor of the next candidate. The profile, its targets and every other input are unchanged."
+  "revisionReason": "The edge and v0.2.15 rows of support/ptah.json say that from 0.2.16 a schema whose file Ptah reports as desired_source_unreadable stops Blocked with SchemaSourceUnreadable and is read again at its interval, and that 0.2.15 tries the Observe or Plan again. The profile, its targets and every other input are unchanged."
 }

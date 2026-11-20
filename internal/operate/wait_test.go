@@ -1002,6 +1002,81 @@ func TestWaitTargets(t *testing.T) {
 			wantStop: operate.StopUnresolved, wantMessage: "gave up the proof",
 		},
 		{
+			name: "applied: a schema Apply whose proof could not read the desired schema stops the wait", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{
+						phase: "Blocked", observedAt: at(0),
+						conditions: []metav1.Condition{{
+							Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+							Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable), Message: "desired_source_unreadable: postgres: source: error parsing schema file",
+						}},
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalSucceeded},
+							{
+								Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown,
+								Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable),
+							},
+						},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "Ptah could not read the desired schema the Apply ran from",
+		},
+		{
+			// The pass after the proof ended answered a read request, or read an
+			// edited ConfigMap source, and rewrote Ready before this poll. The
+			// journal's entry still says why the proof ended.
+			name: "applied: the same, read after the next pass rewrote Ready", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{
+						phase: "Resolving", operation: "Resolve", observedAt: at(0),
+						conditions: []metav1.Condition{{
+							Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+							Reason: string(operatorv1alpha1.ReasonOperationInProgress), Message: "Resolve operation is in progress",
+						}},
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalSucceeded},
+							{
+								Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown,
+								Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable),
+							},
+						},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "Ptah could not read the desired schema the Apply ran from",
+		},
+		{
+			// A person gave the proof up, and the read the next pass started
+			// stopped on the desired schema before this poll: Ready names the
+			// file, and the proof's entry is the settlement's.
+			name: "applied: a proof a person gave up, read after the next read stopped on the file", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{
+						phase: "Blocked", observedAt: at(0),
+						conditions: []metav1.Condition{{
+							Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+							Reason: string(operatorv1alpha1.ReasonSchemaSourceUnreadable), Message: "desired_source_unreadable: postgres: source: error parsing schema file",
+						}},
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalSucceeded},
+							{Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown},
+						},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "a person gave up the proof",
+		},
+		{
 			name: "applied: outcomes the journal held before the wait began do not stop it", target: operate.TargetApplied,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {

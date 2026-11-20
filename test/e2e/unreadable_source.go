@@ -55,20 +55,70 @@ var unreadableMigrationFiles = []struct{ key, path, body string }{
 	{"0001-down", "0000000001_create_events.down.sql", "DROP TABLE e2e_unreadable_events;\n"},
 }
 
-// schemaReadRetried is a schema whose read failed and runs again under the same
-// claim. previous is a claim the read has to have left behind, or empty for
-// none: it tells the read a request started from the one it was asked to end.
-func schemaReadRetried(schema *ptahv1alpha1.PtahSchema, previous string) bool {
-	operation := schema.Status.ActiveOperation
-	return operation != nil && operation.Attempt > 1 && operation.ID != previous &&
-		meta.IsStatusConditionTrue(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
+// schemaSourceRefused returns what a schema says when it stopped on a desired
+// file Ptah could not read: Ready False with SchemaSourceUnreadable, in phase
+// Blocked, with no claim, no plan and no failure standing. Another read of the
+// same file gives the same answer, so the operator reads it again at the
+// interval, when the source changes or on a read request, and never at the
+// failure retry.
+func schemaSourceRefused(schema *ptahv1alpha1.PtahSchema) (string, error) {
+	ready := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReady)
+	switch {
+	case ready == nil || ready.Status != metav1.ConditionFalse ||
+		ready.Reason != string(ptahv1alpha1.ReasonSchemaSourceUnreadable):
+		return "", fmt.Errorf("phase %s, Ready %+v", schema.Status.Phase, ready)
+	case schema.Status.Phase != ptahv1alpha1.PhaseBlocked:
+		return "", fmt.Errorf("phase %s beside Ready %+v", schema.Status.Phase, ready)
+	case schema.Status.ActiveOperation != nil:
+		return "", fmt.Errorf("claim %+v stands beside the refusal", schema.Status.ActiveOperation)
+	case schema.Status.Plan != nil:
+		return "", fmt.Errorf("plan %s stands beside the refusal", schema.Status.Plan.Name)
+	case meta.IsStatusConditionTrue(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed):
+		return "", fmt.Errorf("the refusal is reported as a failure: %+v",
+			meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed))
+	}
+	return ready.Message, nil
+}
+
+// schemaRefusalStands holds a refused schema to the attempt that refused it. A
+// retry starts another read under a claim, and a read that ends stamps another
+// attempt, so a hold past the failure retry that reads this throughout shows
+// that no read ran.
+func schemaRefusalStands(schema *ptahv1alpha1.PtahSchema, attempt *metav1.Time) error {
+	if _, err := schemaSourceRefused(schema); err != nil {
+		return err
+	}
+	last := schema.Status.LastAttemptTime
+	if attempt == nil || last == nil || !last.Equal(attempt) {
+		return fmt.Errorf("the last attempt is %v, not the refused one at %v", last, attempt)
+	}
+	return nil
+}
+
+// readRequestRefusedAgain is a refused schema that answered request, and whose
+// read the request started was refused in its turn: by an attempt later than
+// the refusal at attempt. The file is still the one Ptah cannot read, and the
+// row repairs it only after this, so nothing else could have let the request
+// through.
+func readRequestRefusedAgain(schema *ptahv1alpha1.PtahSchema, request string, attempt *metav1.Time) error {
+	if _, err := schemaSourceRefused(schema); err != nil {
+		return err
+	}
+	last := schema.Status.LastAttemptTime
+	switch {
+	case request == "" || schema.Status.LastReadRequest != request:
+		return fmt.Errorf("lastReadRequest %q, want %q", schema.Status.LastReadRequest, request)
+	case attempt == nil || last == nil || !last.After(attempt.Time):
+		return fmt.Errorf("the last attempt %v is not after the refusal at %v", last, attempt)
+	}
+	return nil
 }
 
 // migrationDirectoryRefused returns what a migration says when it stopped on a
 // directory Ptah could not read: Blocked with MigrationDirectoryUnreadable, in
 // phase Blocked, with no claim standing. Another read of the same files gives
-// the same answer, so the operator does not retry it the way a schema's read is
-// retried.
+// the same answer, so the operator does not retry it, as it does not retry a
+// schema's read of a file Ptah cannot read (schemaSourceRefused).
 func migrationDirectoryRefused(migration *ptahv1alpha1.PtahMigration) (string, error) {
 	blocked := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked)
 	switch {
@@ -83,20 +133,11 @@ func migrationDirectoryRefused(migration *ptahv1alpha1.PtahMigration) (string, e
 	return blocked.Message, nil
 }
 
-// readRequestTakenWhileFailing is a request the operator answered beside a failure
-// it reports: the file is still the one it cannot read, so the read the request
-// started either has not ended or failed too. The row repairs the file only after
-// this, so nothing else could have let the request through.
-func readRequestTakenWhileFailing(schema *ptahv1alpha1.PtahSchema, request string) bool {
-	return request != "" && schema.Status.LastReadRequest == request &&
-		meta.IsStatusConditionTrue(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-}
-
 // schemaReadTheRepair says what is missing from a schema that read a repaired
-// source by itself: its spec is the one the failure was reported under, the
-// failure is gone, and a plan is published from a source other than the one
-// that failed. The generation is what separates this from a repair a spec edit
-// carried, which the operator always read.
+// source by itself: its spec is the one the refusal was reported under, no
+// failure stands, and a plan is published from a source other than the one
+// Ptah could not read. The generation is what separates this from a repair a
+// spec edit carried, which the operator always read.
 func schemaReadTheRepair(schema *ptahv1alpha1.PtahSchema, generation int64, failedSource string) error {
 	failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
 	switch {

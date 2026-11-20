@@ -41,59 +41,6 @@ func readOnlySchemaClaim(t *testing.T, operation operatorv1alpha1.OperationType)
 	return schema
 }
 
-// TestASchemaSaysWhyItsDesiredFileCouldNotBeRead reads the reason where a person
-// reads it, and holds the failure to the path every other read-only failure
-// takes: the next attempt of the same claim after the retry interval.
-func TestASchemaSaysWhyItsDesiredFileCouldNotBeRead(t *testing.T) {
-	t.Parallel()
-
-	for name, operation := range map[string]struct {
-		claim  operatorv1alpha1.OperationType
-		runner runner.Operation
-	}{
-		"Observe": {operatorv1alpha1.OperationObserve, runner.OperationObserve},
-		"Plan":    {operatorv1alpha1.OperationPlan, runner.OperationPlan},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			schema := readOnlySchemaClaim(t, operation.claim)
-			attempt := schema.Status.ActiveOperation.Attempt
-			job, pod := terminalWorkload(schema, batchv1.JobComplete)
-			frame := safetyRunnerFrame(t, runner.Result{
-				ProtocolVersion: runner.ProtocolVersion, Operation: operation.runner, OperationID: "read-operation",
-				ChildExitCode:      2,
-				CoordinationDigest: schema.Status.ActiveOperation.CoordinationDigest,
-				Error:              &runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: unreadableReason},
-			})
-			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod)
-			reconciler.Locks = targetlock.New(api, api, nil)
-			recorder := record.NewFakeRecorder(32)
-			reconciler.Recorder = recorder
-
-			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
-			if err != nil {
-				t.Fatalf("Reconcile() error = %v", err)
-			}
-			actual := safetyGetSchema(t, api, schema)
-			want := runner.CodeDesiredSourceUnreadable + ": " + unreadableReason
-			failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-			if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
-				failed.Message != want {
-				t.Fatalf("ReconciliationFailed = %#v, want OperationFailed with %q", failed, want)
-			}
-			if event := findEvent(recorder, "Warning OperationFailed"); event != "Warning OperationFailed "+want {
-				t.Fatalf("OperationFailed event = %q, want %q", event, want)
-			}
-			if actual.Status.Phase != operatorv1alpha1.PhaseFailed || actual.Status.ActiveOperation == nil ||
-				actual.Status.ActiveOperation.Type != operation.claim || actual.Status.ActiveOperation.Attempt != attempt+1 ||
-				result.RequeueAfter <= 0 {
-				t.Fatalf("the failure did not retry the claim: phase %s, operation %+v, result %+v",
-					actual.Status.Phase, actual.Status.ActiveOperation, result)
-			}
-		})
-	}
-}
-
 // TestAFailedFetchIsNamedAsItsStep covers the schema an OCI artifact delivers,
 // which `schema pull --skip-parse` checks in an init container: an artifact it
 // refuses, such as a layer of another media type, ends the Pod there, before

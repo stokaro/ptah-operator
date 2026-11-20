@@ -790,9 +790,10 @@ type ConfigMapSourceInputs struct {
 // key planning nothing; a line on the manager's log for each journal entry
 // both resources store, equal to it, and no other line for either; a snapshot
 // replaced after approval refused by the Pod
-// before the operation container starts; a desired file Ptah cannot read named
-// in the condition and the Event, for a schema and a migration, and the fault
-// of a schema it read and refuses; and a statement
+// before the operation container starts; a desired file Ptah cannot read
+// stopping a schema and a migration at Blocked, named in the condition and the
+// Event, and the schema read again on a request and on an edit but not at the
+// failure retry; the fault of a schema Ptah read and refuses; and a statement
 // the database refuses, whose answer is in the Pod log and nowhere else, read by
 // running the command the status and the Event print, as the diagnostic reader
 // examples/diagnostic-reader-role.yaml is written for. The Job carries the 24 hour
@@ -846,8 +847,8 @@ type GitSourceInputs struct {
 // no CA, refused by the runner before Ptah runs, and planned once the source
 // selects that CA; and a submodule, an LFS pointer and a host key the known
 // hosts do not pin, each refused at its Resolve; and a schema file and a
-// migration directory Ptah cannot read, each named in the condition and the
-// Event.
+// migration directory Ptah cannot read, each stopping its resource at Blocked
+// and named in the condition and the Event.
 var GitSources = define[GitSourceInputs](Phase{
 	Name:    "git-sources",
 	Test:    "TestGitSources",

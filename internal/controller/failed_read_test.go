@@ -21,8 +21,9 @@ import (
 
 // errFailedRead is what the attempt these fixtures failed said. The controller
 // writes the retry the test then reads, so a fixture cannot describe a state
-// the controller never stores.
-var errFailedRead = errors.New("desired_source_unreadable: expected '(' after table name")
+// the controller never stores. It is a failure the controller retries: a file
+// Ptah cannot read stops the read at Blocked instead (schemaSourceUnreadable).
+var errFailedRead = errors.New("child_exit: ptah exited with code 2")
 
 // retryDelay is the retry delay every fixture here waits out, and refreshPeriod
 // the interval: far enough apart that a test can stand on either side of one

@@ -1182,6 +1182,7 @@ func (c *gitRun) unreadableMigration() {
 // unreadableSchema selects a file of the branch that Ptah fetches and cannot
 // parse. The fetch succeeds, so the reason comes from the operation container,
 // as a ConfigMap's does, and it names the file at its path in the source volume.
+// The schema stops at Blocked with that reason rather than retrying.
 func (c *gitRun) unreadableSchema() {
 	c.t.Helper()
 	c.createDatabase(gitUnreadableDatabase, gitUnreadableSecret)
@@ -1189,46 +1190,41 @@ func (c *gitRun) unreadableSchema() {
 		c.httpsSource(gitUnreadablePath, gitTokenCredential))), "create PtahSchema %s", gitUnreadableSchema)
 	schema := &ptahv1alpha1.PtahSchema{}
 	var message string
-	c.wait("the schema to say why it could not read its file", func() (bool, string) {
+	c.wait("the schema to stop and say why it could not read its file", func() (bool, string) {
 		if err := c.get(gitUnreadableSchema, schema); err != nil {
 			return false, err.Error()
 		}
-		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
+		said, err := schemaSourceRefused(schema)
+		if err != nil {
+			return false, err.Error()
 		}
-		message = failed.Message
-		err := unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
+		message = said
+		err = unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	if strings.Contains(message, gitUnreadableDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.Token) {
 		c.fatalf("the reason names the target or the source's credential: %s", message)
 	}
-	c.wait("the OperationFailed Event to say why", func() (bool, string) {
+	reason := string(ptahv1alpha1.ReasonSchemaSourceUnreadable)
+	c.wait("the "+reason+" Event to say why", func() (bool, string) {
 		events := &corev1.EventList{}
 		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
 			return false, err.Error()
 		}
-		err := unreadableSourceEvent(events.Items, schema.UID, "OperationFailed", unreadableSchemaFile, unreadableInheritsReason)
+		err := unreadableSourceEvent(events.Items, schema.UID, reason, unreadableSchemaFile, unreadableInheritsReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.repairedCommitIsRead(schema)
 	c.deleteAndWait(schema)
-	c.logf("PASS a schema from Git said why its file could not be read: %s", message)
+	c.logf("PASS a schema from Git stopped and said why its file could not be read: %s", message)
 }
 
-// repairedCommitIsRead pushes a fix to the branch the failing read is on and asks
-// for a read. The interval is an hour, so a request is the only thing that can
-// show the new commit before the row times out, and the failed claim is what used
-// to keep the request from being taken. The spec does not change.
+// repairedCommitIsRead pushes a fix to the branch the refused read came from and
+// asks for a read. The interval is an hour, so a request is the only thing that
+// can show the new commit before the row times out, and a Blocked schema answers
+// it on the pass that sees it. The spec does not change.
 func (c *gitRun) repairedCommitIsRead(schema *ptahv1alpha1.PtahSchema) {
 	c.t.Helper()
-	c.wait("the read to fail again under its claim", func() (bool, string) {
-		if err := c.get(gitUnreadableSchema, schema); err != nil {
-			return false, err.Error()
-		}
-		return schemaReadRetried(schema, ""), fmt.Sprintf("%s, operation %+v", schema.Status.Phase, schema.Status.ActiveOperation)
-	})
 	generation, failedSource := schema.Generation, schemaSourceIdentity(schema)
 	repaired := gitRepairedSpec()
 	c.serve(repaired, len(repaired.Commits)-1)

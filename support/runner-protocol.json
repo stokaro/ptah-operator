@@ -477,6 +477,16 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:bc1082f240a410333f2d3031285be1e59a4dba8398dfd1064c3575cd3d437db0",
       "reason": "Accept the two drift finding categories Ptah v0.33.1 adds on MySQL and MariaDB, table_collations_changed for a table whose default collation differs and column_charsets_converted for a column whose character set converts, in a drift report and in a result frame. A manager that predates them refuses a report or a frame that carries one, which is the refusal a version mismatch would give, so protocol 1 stays. The commands, the fields and the frame shape are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:4f05914b9846d6cc378c042ef9882a5e7d97fdcf657063a1e93ec99c4ac101ba",
+      "reason": "The api package the runner builds against gains the reason SchemaSourceUnreadable, which a schema's conditions carry when an Observe or a Plan ends in desired_source_unreadable and which no frame carries. The runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a449ddfc5aaae1d85dab0e268cf6af312d65bd425d9e26a5c874173e12d52a22",
+      "reason": "The doc comment of a journal entry's reason in the api package the runner builds against now says a schema's Verified entry carries SchemaSourceUnreadable for a proof that could not read the desired schema. No frame carries a journal entry, and no type, field or validation moved. The runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
     }
   ]
 }

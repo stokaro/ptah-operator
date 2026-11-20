@@ -1788,6 +1788,15 @@ const (
 	ReasonResolveFailed                ConditionReason = "ResolveFailed"
 	ReasonRunnerProtocolMismatch       ConditionReason = "RunnerProtocolMismatch"
 	ReasonSatisfied                    ConditionReason = "Satisfied"
+	// ReasonSchemaSourceUnreadable says an Observe or a Plan could not read
+	// the desired schema: a file Ptah cannot parse, which since Ptah v0.33.1
+	// includes a date or time column whose default is a relative time string
+	// such as 'now', or a row file outside Ptah's working directory. Another
+	// read of the same file gives the same answer, so no plan is published and
+	// the schema is read again at the interval, at once when a ConfigMap
+	// source changes, or on a read request. A read after an Apply that ends
+	// this way ends the proof, and records no Apply as converged.
+	ReasonSchemaSourceUnreadable ConditionReason = "SchemaSourceUnreadable"
 	// ReasonSnapshotTaken says a ConfigMap source was read and its selected
 	// files copied into the snapshot every later operation reads.
 	ReasonSnapshotTaken           ConditionReason = "SnapshotTaken"

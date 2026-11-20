@@ -398,9 +398,9 @@ const TargetSettled Target = "settled"
 
 const (
 	// StopProofEnded is a proof that ended without the statement: a read of the
-	// target the plan was made for proved the Apply or found changes still to
-	// make, or the proof settled under a newer generation, policy or execution
-	// binding.
+	// target the plan was made for proved the Apply, found changes still to
+	// make or could not read the desired schema, or the proof settled under a
+	// newer generation, policy or execution binding.
 	StopProofEnded StopReason = "ProofEnded"
 	// StopStatementWithdrawn is a settled-apply annotation that no longer holds
 	// the value the wait is for while the proof is still owed: nothing settles it.
@@ -459,6 +459,15 @@ func (w *waiter) proofEnded(s snapshot, schema *operatorv1alpha1.PtahSchema) ver
 	}
 	switch ended.Outcome {
 	case operatorv1alpha1.JournalUnknown:
+		// A proof whose read could not read the desired schema ends Unknown
+		// too, without the statement, and its entry carries the reason. Ready
+		// is no witness: the pass after the proof ends answers a read request
+		// or reads an edited ConfigMap source, and rewrites it.
+		if ended.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) {
+			return w.stop(s, StopProofEnded, fmt.Sprintf("a read of the target plan %s was made for ended the proof "+
+				"because Ptah could not read the desired schema the Apply ran from, so the statement was not taken",
+				plan))
+		}
 		return verdict{done: true}
 	case operatorv1alpha1.JournalInSync:
 		return w.stop(s, StopProofEnded, fmt.Sprintf("a read of the target plan %s was made for proved the Apply, and the "+
