@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-20T20:39:12.854241+00:00",
+  "frozenAt": "2026-11-20T22:16:47.014044+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "4b93a67af82258f7ec52921279cd8ed74ed43a9730f85113b6a1c550c2b1c7ca"
+      "sha256": "4703dbf660fecbcd53c167e9146de4877cce084c48fcc5ebdbd21874a4238f88"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.15 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 126,
+  "revision": 127,
   "supersedes": {
-    "freezeCommit": "099c37b8e5e7111ec32218a7d55c8ef6ac343456",
-    "sha256": "c9522e07a48550dbed9337d1d103b4d4dab923d949278a36f91372a879829681"
+    "freezeCommit": "708391a55eb52f9379d0d4c96a54049bf1fa98a7",
+    "sha256": "0c7263c6a1cfd5a9942a9f3908168e35af99fd284332f1f049d96ef3f783aab7"
   },
-  "revisionReason": "The edge row of support/ptah.json says that a domain's relative time default, which Ptah v0.34.0 refuses as a fault of the schema, reads as desired_schema_invalid with schema validate's sentence, which from 0.2.16 stops the PtahSchema Blocked with SchemaInvalid and reads the file again at its interval, where revision 125 said an Observe reports child_exit and a Plan plan_refused. The edge and v0.2.15 rows gain one shared limitation: Ptah v0.33.1 and v0.34.0 refuse a relative time default on a column a declared domain types (stokaro/ptah#6345), measured on PostgreSQL 17.12 with both release images, which 0.2.16 stops Blocked with SchemaInvalid and 0.2.15 reads as child_exit or plan_refused and retries. Their shared #6233 entry adds that 0.2.16 stops such a schema Blocked and 0.2.15 retries it. The profile, its targets, phases, scenarios, suites, cells, platforms, the functional matrix and every other input are unchanged."
+  "revisionReason": "The generated column limitation in the edge and v0.2.15 rows of support/ptah.json now says that a Plan of a schema declaring with no kind a column PostgreSQL 18 holds as VIRTUAL reads as invalid_plan_output and is tried again at every failure retry, measured on PostgreSQL 18.6 with the v0.33.1 and v0.34.0 images, where revision 126 said the runner reports child_exit, and that only a column created by hand or by a migration meets it. The profile, its targets, phases, scenarios, suites, cells, platforms, the functional matrix and every other input are unchanged."
 }
