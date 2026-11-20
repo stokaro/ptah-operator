@@ -33,7 +33,8 @@ PostgreSQL reading record for record. On MySQL each of its six sessions reads
 `SELECT @@SESSION.sql_mode` first
 ([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), which the
 History contract admits, so the MySQL reading here is v0.33.1's, six records
-more; no other record moved. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+more; no other record moved. On 2026-11-20 the v0.34.0 release image (`90e98f6c`)
+reproduced both readings record for record. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

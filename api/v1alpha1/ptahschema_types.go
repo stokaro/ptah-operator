@@ -1791,7 +1791,8 @@ const (
 	// ReasonSchemaSourceUnreadable says an Observe or a Plan could not read
 	// the desired schema: a file Ptah cannot parse, which since Ptah v0.33.1
 	// includes a date or time column whose default is a relative time string
-	// such as 'now', or a row file outside Ptah's working directory. Another
+	// such as 'now' and since v0.34.0 a MySQL table partitioned with PARTITION
+	// BY, or a row file outside Ptah's working directory. Another
 	// read of the same file gives the same answer, so no plan is published and
 	// the schema is read again at the interval, at once when a ConfigMap
 	// source changes, or on a read request. A read after an Apply that ends

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-20T03:50:33.236161+00:00",
+  "frozenAt": "2026-11-20T09:18:52.955426+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "d1ca35ac3c33994bac813dd664aa47522885095d1eeb350c0bb5b1c31aa5233d"
+      "sha256": "296b6daf8210e1de8bc7f64ceacb6a81d65f3792cc0eeabfa777a4f34a46cb74"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "418e823e804d314ab8e337f556ee0ced929517a678c37d1f6f64b8c895b579e0"
+      "sha256": "153efecfc88f173aae019a3f7e11abc49aa76288749778d673950466bdfc39cb"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "8d909359a93e2bc28d7e3e53f79f87b3c68bf50af87e94bb29143ea19d822a72",
+    "sha256": "c19cfb7de63b355b5fd59b94a46cd6200d5267fcbf5234b79429d5adda6bce61",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.15 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 123,
+  "revision": 124,
   "supersedes": {
-    "freezeCommit": "4bf812c2613f2d40e668068b149e2c6615f4cbd4",
-    "sha256": "5fa33d7da62fcce30e2809104e0c06ef94779379c471d7e54e5fab620ac6c0e5"
+    "freezeCommit": "7203208c6e1d6400d3f6c44e7dc40d5b707d7337",
+    "sha256": "e83da2be5f9a8c257c4cc60fb4c32dbce7639159dc59bc782351787c15661c2c"
   },
-  "revisionReason": "The edge and v0.2.15 rows of support/ptah.json say that from 0.2.16 a schema whose file Ptah reports as desired_source_unreadable stops Blocked with SchemaSourceUnreadable and is read again at its interval, and that 0.2.15 tries the Observe or Plan again. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.33.1 to the v0.34.0 release image, and record in the edge row what v0.34.0 changes: a migration directory with two files for one direction of a version is refused by name; a MySQL table partitioned with PARTITION BY, three more PostgreSQL relative time defaults and two MySQL CHECK constraints of one name are faults of the schema file; a saved plan records the declarations its statements leave out; schema apply names its refusal of a plan with a backslash on a NO_BACKSLASH_ESCAPES session backslash-mode, which a Plan now reports as plan_refused; migrations pull writes an artifact unread under --skip-validation, which the fetch now passes, so a stray file in an OCI artifact stops the history read Blocked with MigrationDirectoryUnreadable. A MySQL or MariaDB view an applied migration created reads as drift to a migration drift check, which the edge row now says. The v0.2.15 row says what that release does with the backslash and stray-file cases. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

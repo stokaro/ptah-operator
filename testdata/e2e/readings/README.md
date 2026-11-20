@@ -313,7 +313,13 @@ so they stay. Later that day the v0.33.1 release image
 `ghcr.io/stokaro/ptah@sha256:37c16165f4184ddfd80cf61da9a366fe13ab950830b095f401e91de2c2f4383c`
 (commit `f7c85bdc579c9e5939108a892f11e3d6d0974248`) saved all three, and the
 plan of `postgresql-external-v3-grant.sql` they follow, byte for byte as v0.33.0
-did.
+did. On November 20, 2026 the v0.34.0 release image
+`ghcr.io/stokaro/ptah@sha256:8be4bebe660fcc427028ce854f815f5e5ae24854134d80d6ed9f00ab3aaaa1dc`
+(commit `90e98f6ca0b3d77e66b0d5e72a6a9e22da20653a`) saved all three with the same statements and length, in the
+same order and each applied before the next, against a disposable PostgreSQL
+17.11 server as its superuser rather than through the probe's lab. Only the plan
+name and both fingerprints moved, which identify the database the plan read, so
+they stay.
 
 Before them the plans were the ones the Ptah v0.29.3 release image
 `ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`

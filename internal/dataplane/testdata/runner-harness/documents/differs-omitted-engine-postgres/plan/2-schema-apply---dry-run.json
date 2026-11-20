@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_a19e3b5ada4f",
+  "plan_digest": "sha256:7b13b2611b76b402c693fbb973e94cb5368c223cb0fef7400d9304a9e3ac71f8",
+  "units": [
+    {
+      "sql": "-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n)"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/statement-errors-my-control-up@sha256:829297b31c04c615054de919abbe9e6ba9302a865d718192435b98b036ae8c7a to /source/migrations
-Digest: sha256:829297b31c04c615054de919abbe9e6ba9302a865d718192435b98b036ae8c7a
+Pulled oci://harness-registry:5000/migrations/statement-errors-my-control-up@sha256:6abbb28248a0be31a29c72d645036a9a0cae94ec063f993b00e8578dc242a4b0 to /source/migrations
+Digest: sha256:6abbb28248a0be31a29c72d645036a9a0cae94ec063f993b00e8578dc242a4b0
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

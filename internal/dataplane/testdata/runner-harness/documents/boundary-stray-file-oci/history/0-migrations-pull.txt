@@ -1,0 +1,4 @@
+Pulled oci://harness-registry:5000/migrations/boundary-stray-file-oci@sha256:94593cd718216669f38bfa4246d307b303a4592d34746a99382e11a7fb0a31b5 to /source/migrations
+Digest: sha256:94593cd718216669f38bfa4246d307b303a4592d34746a99382e11a7fb0a31b5
+Format: ptah
+Not validated: the next command that reads the directory reports what it cannot read.

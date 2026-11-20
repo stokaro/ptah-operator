@@ -2,6 +2,7 @@ package runnerharness_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,14 @@ type differingRow struct {
 	// the schema's Secret named another login by the time its plan was
 	// approved.
 	applyLogin string
+	// host is the server the row's database lives on, empty for the engine's
+	// shared one. The rows on mysqlModeHost run one at a time, in the order
+	// declared, since each sets the server's global sql_mode.
+	host string
+	// sqlMode is the global sql_mode the row sets on its server before the
+	// first read, and applySQLMode the one it sets before the Apply: the
+	// server's configuration changed between the approval and the run.
+	sqlMode, applySQLMode string
 	// git reads the declaration from a Git-shaped source rather than an OCI
 	// artifact. An artifact carries HCL, which drops what a SQL file can say
 	// and HCL cannot, such as which table a partition belongs to.
@@ -121,6 +130,13 @@ type differingReading struct {
 	dryRunRefusal string
 	// applyRefusal is what `schema apply` says when the database refuses it.
 	applyRefusal string
+	// applyRefusalCode is the code Ptah's apply document gives a refusal of the
+	// approved plan, which the runner frames as apply_refused. Empty, a refusal
+	// is a statement the database failed.
+	applyRefusalCode string
+	// omissions are what the saved plan records Ptah left out of it, as
+	// "<kind> <name>: <property>", in order.
+	omissions []string
 	// applyFrame is the code of an Apply the runner refused before it started
 	// Ptah, which then ran no `schema apply`.
 	applyFrame string
@@ -157,12 +173,30 @@ func (row differingRow) applyURL(l *lab) string {
 
 func (row differingRow) urlAs(l *lab, login string) string {
 	switch {
-	case login == "":
+	case login == "" && row.host == "":
 		return l.databaseURL(row.engine, row.database()) + row.urlParameters
 	case row.engine == engineMySQL:
-		return "mysql://" + login + ":" + l.databasePassword + "@" + mysqlHost + ":3306/" + row.database() + row.urlParameters
+		host := cmp.Or(row.host, mysqlHost)
+		return "mysql://" + cmp.Or(login, "root") + ":" + l.databasePassword + "@" + host + ":3306/" + row.database() + row.urlParameters
 	default:
-		return "postgres://" + login + ":" + l.databasePassword + "@" + postgresHost + ":5432/" + row.database() + "?sslmode=disable" + row.urlParameters
+		host := cmp.Or(row.host, postgresHost)
+		return "postgres://" + cmp.Or(login, "postgres") + ":" + l.databasePassword + "@" + host + ":5432/" + row.database() + "?sslmode=disable" + row.urlParameters
+	}
+}
+
+// setSQLMode makes mode the global sql_mode of the row's server, which every
+// session Ptah opens from then on starts with, and reads it back. MySQL
+// writes the modes in an order of its own.
+func (row differingRow) setSQLMode(t *testing.T, l *lab, mode string) {
+	t.Helper()
+	l.sqlOn(t, row.host, row.engine, "mysql", "SET GLOBAL sql_mode = '"+mode+"'")
+	modes := func(list string) []string {
+		names := strings.Split(strings.TrimSpace(list), ",")
+		slices.Sort(names)
+		return names
+	}
+	if got := l.queryOn(t, row.host, row.engine, "mysql", "SELECT @@GLOBAL.sql_mode"); !slices.Equal(modes(got), modes(mode)) {
+		t.Fatalf("%s: the server's sql_mode reads %q, want %q", row.family(), got, mode)
 	}
 }
 
@@ -715,7 +749,80 @@ func differingRows() []differingRow {
 			},
 		},
 	}
-	return append(rows, append(partitionRows(), authorityRows()...)...)
+	return append(rows, slices.Concat(partitionRows(), authorityRows(), sqlModeRows(), omissionRows())...)
+}
+
+// sqlModeRows read a declaration whose string literals hold backslashes on a
+// server whose global sql_mode names NO_BACKSLASH_ESCAPES, under which MySQL
+// reads a backslash as a character rather than an escape. Ptah writes a saved
+// plan for the default mode, and since v0.34.0 `schema apply --plan` refuses
+// it on such a session with the code backslash-mode (stokaro/ptah#6400): the
+// plan's statements would store other values than the ones it shows. The
+// declaration reaches Ptah as the SQL file states it, from Git.
+//
+// The first row reads and plans under that mode, so the Plan's dry run is
+// refused, and the frame is plan_refused with the code. The second plans under
+// the server's default mode, and the server gains NO_BACKSLASH_ESCAPES before
+// the Apply, so the Apply is refused, and the frame is apply_refused with the
+// code. Ptah v0.33.1 ran the first plan's dry run and failed the second Apply
+// with no code.
+func sqlModeRows() []differingRow {
+	// The defaults of the lab's MySQL 8.4, which the second row reads under
+	// whatever ran on the server before it.
+	const defaults = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
+	const backslashes = defaults + ",NO_BACKSLASH_ESCAPES"
+	const refusal = "the session's sql_mode names NO_BACKSLASH_ESCAPES, and a statement holds a backslash"
+	return []differingRow{
+		{
+			name: "backslash-plan", engine: engineMySQL, declared: "backslash-mysql.sql", git: true,
+			host: mysqlModeHost, sqlMode: backslashes,
+			want: differingReading{
+				findings:           []string{"tables_added"},
+				dryRunRefusal:      refusal,
+				planCode:           "plan_refused",
+				planRefusalCode:    "backslash-mode",
+				planRefusalMessage: "ptah refused to plan the change (backslash-mode)",
+			},
+		},
+		{
+			name: "backslash-apply", engine: engineMySQL, declared: "backslash-mysql.sql", git: true,
+			host: mysqlModeHost, sqlMode: defaults, applySQLMode: backslashes,
+			want: differingReading{
+				findings:         []string{"tables_added"},
+				statements:       []string{"CREATE TABLE `differs_paths`"},
+				applyRefusal:     refusal,
+				applyRefusalCode: "backslash-mode",
+				driftsAfterApply: true,
+			},
+		},
+	}
+}
+
+// omissionRows declare what the target engine cannot hold. Since v0.34.0 Ptah
+// leaves it out of the plan, warns, and records each omission in the plan's
+// omissions (stokaro/ptah#6395), which the plan's digest covers. A statement
+// whose property was dropped on PostgreSQL opens with a comment that says so.
+// The manager has to read such a plan, publish it and apply it, and nothing
+// left out reads as a change of authority.
+func omissionRows() []differingRow {
+	return []differingRow{
+		{
+			name: "omitted-engine", engine: enginePostgres, declared: "omitted-engine-postgresql.sql", git: true,
+			want: differingReading{
+				findings:   []string{"tables_added"},
+				statements: []string{`CREATE TABLE "public"."differs_omitted"`},
+				omissions:  []string{"table public.differs_omitted: table option ENGINE"},
+			},
+		},
+		{
+			name: "omitted-fillfactor", engine: engineMySQL, declared: "omitted-fillfactor-mysql.sql", git: true,
+			want: differingReading{
+				findings:   []string{"indexes_added", "tables_added"},
+				statements: []string{"CREATE TABLE `differs_omitted`", "CREATE INDEX `differs_omitted_name`"},
+				omissions:  []string{"index differs_omitted_name: index storage parameter fillfactor"},
+			},
+		},
+	}
 }
 
 // cascadeRebuild is a row whose plan rebuilds the view differs_member_ids with
@@ -1046,25 +1153,38 @@ func prepareDifferingServer(t *testing.T, l *lab) {
 		if len(row.server) == 0 {
 			continue
 		}
-		l.createDatabase(t, row.engine, row.database())
+		l.createDatabaseOn(t, row.host, row.engine, row.database())
 		administrative := "postgres"
 		if row.engine == engineMySQL {
 			administrative = "mysql"
 		}
 		for _, statement := range row.server {
-			l.sql(t, row.engine, administrative, strings.NewReplacer("{db}", row.database(), "{password}", l.databasePassword).Replace(statement))
+			l.sqlOn(t, row.host, row.engine, administrative, strings.NewReplacer("{db}", row.database(), "{password}", l.databasePassword).Replace(statement))
 		}
 	}
 }
 
 func differingDatabases(t *testing.T, l *lab) {
 	t.Helper()
+	var modes []differingRow
 	for _, row := range differingRows() {
+		if row.host == mysqlModeHost {
+			modes = append(modes, row)
+			continue
+		}
 		t.Run(row.family(), func(t *testing.T) {
 			t.Parallel()
 			runDifferingRow(t, l, row)
 		})
 	}
+	// A global sql_mode reaches every session the server opens after it, so
+	// the rows that set one take the server in turn.
+	t.Run("sql-modes", func(t *testing.T) {
+		t.Parallel()
+		for _, row := range modes {
+			t.Run(row.family(), func(t *testing.T) { runDifferingRow(t, l, row) })
+		}
+	})
 }
 
 // runDifferingRow reads the database, plans, and applies the plan if there is one,
@@ -1074,9 +1194,12 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 	t.Helper()
 	family, database := row.family(), row.database()
 	if len(row.server) == 0 {
-		l.createDatabase(t, row.engine, database)
+		l.createDatabaseOn(t, row.host, row.engine, database)
 	}
-	l.sql(t, row.engine, database, row.seed...)
+	l.sqlOn(t, row.host, row.engine, database, row.seed...)
+	if row.sqlMode != "" {
+		row.setSQLMode(t, l, row.sqlMode)
+	}
 	var run *schemaRun
 	source := func(*rowSpec) {}
 	if row.git {
@@ -1120,7 +1243,7 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 		if len(row.fix) == 0 {
 			return
 		}
-		l.sql(t, row.engine, database, row.fix...)
+		l.sqlOn(t, row.host, row.engine, database, row.fix...)
 		row.hold(t, l, "after the fix", func(query heldQuery) string { return query.fixed })
 		run.observe("observe-fixed", recordAny, source, keep("observe-fixed"))
 		run.plan("plan-fixed", nil, recordAny, source, keep("plan-fixed"))
@@ -1128,6 +1251,9 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 	}
 	run.publishPlan("plan", planned.plan)
 	run.url = row.applyURL(l)
+	if row.applySQLMode != "" {
+		row.setSQLMode(t, l, row.applySQLMode)
+	}
 	run.apply("apply", recordAny, keep("apply"))
 	run.observe("observe-applied", recordAny, source, keep("observe-applied"))
 }
@@ -1136,7 +1262,7 @@ func runDifferingRow(t *testing.T, l *lab, row differingRow) {
 func (row differingRow) hold(t *testing.T, l *lab, when string, want func(heldQuery) string) {
 	t.Helper()
 	for _, query := range row.held {
-		if got, expected := l.query(t, row.engine, row.database(), query.query), want(query); got != expected {
+		if got, expected := l.queryOn(t, row.host, row.engine, row.database(), query.query), want(query); got != expected {
 			t.Errorf("%s: %s reads %q %s, want %q", row.family(), query.name, got, when, expected)
 		}
 	}
@@ -1318,6 +1444,13 @@ func (row differingRow) checkPlan(captures runnerharness.Captures) error {
 	if !slices.Equal(plan.SchemasBeyondURL, row.want.beyondURL) {
 		problems = append(problems, fmt.Errorf("%s: the plan reaches past the URL to %q, want %q", name, plan.SchemasBeyondURL, row.want.beyondURL))
 	}
+	var omitted []string
+	for _, omission := range plan.Omissions {
+		omitted = append(omitted, omission.Kind+" "+omission.Name+": "+omission.Property)
+	}
+	if !slices.Equal(omitted, row.want.omissions) {
+		problems = append(problems, fmt.Errorf("%s: the plan records it left out %q, want %q", name, omitted, row.want.omissions))
+	}
 	return errors.Join(problems...)
 }
 
@@ -1353,7 +1486,10 @@ func (row differingRow) checkApply(captures runnerharness.Captures) error {
 	// the report says so (stokaro/ptah#5737). MySQL commits each DDL statement
 	// on its own, so how far a refused Apply got stays unknown there.
 	refused := "apply_outcome_unknown"
-	if row.engine == enginePostgres {
+	switch {
+	case row.want.applyRefusalCode != "":
+		refused = "apply_refused"
+	case row.engine == enginePostgres:
 		refused = "apply_failed"
 	}
 	var problems []error
@@ -1364,6 +1500,14 @@ func (row differingRow) checkApply(captures runnerharness.Captures) error {
 		problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", apply, code, refused))
 	case !strings.Contains(child.Stderr, row.want.applyRefusal):
 		problems = append(problems, fmt.Errorf("%s: `schema apply` says %q, want the refusal %q", apply, child.Stderr, row.want.applyRefusal))
+	}
+	if row.want.applyRefusalCode != "" {
+		switch report, err := dataplane.DecodeSchemaApply(captures.Documents[child.Stdout]); {
+		case err != nil:
+			problems = append(problems, fmt.Errorf("%s: %w", apply, err))
+		case report.Refusal == nil || report.Refusal.Code != row.want.applyRefusalCode:
+			problems = append(problems, fmt.Errorf("%s: the apply document refuses with %+v, want the code %s", apply, report.Refusal, row.want.applyRefusalCode))
+		}
 	}
 	return errors.Join(append(problems, row.checkReadAfterApply(captures))...)
 }

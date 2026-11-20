@@ -1,5 +1,57 @@
 [
   {
+    "name": "boundary-no-sql-oci/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/boundary-no-sql-oci@<digest>",
+          "--out",
+          "/source/migrations",
+          "--skip-validation"
+        ],
+        "exit": 2,
+        "stderr": "error: migration artifact contains no migration files\n"
+      }
+    ]
+  },
+  {
+    "name": "boundary-no-sql-oci/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/boundary-no-sql-oci:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-no-sql-oci/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:023f5795aea03f257dbb5ef480b9ae68723bef070a2a3c3383713fc31dbac258",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/boundary-no-sql-oci@<digest>",
+      "resolvedSize": 645,
+      "stdout": ""
+    }
+  },
+  {
     "name": "boundary-row-file-beside/observe",
     "operation": "observe",
     "source": "git",
@@ -198,6 +250,96 @@
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:c894385a78ac67c7014e12298cda4b734928e9354ce4803f512de1ce97ed2819"
+    }
+  },
+  {
+    "name": "boundary-stray-file-oci/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/boundary-stray-file-oci@<digest>",
+          "--out",
+          "/source/migrations",
+          "--skip-validation"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-stray-file-oci/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/boundary-stray-file-oci/history/1-migrations-status.json"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/boundary-stray-file-oci/history/2-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory"
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:fec5f5a8349c236be8817b4892c36f6e2bfcc5e4ee20663da22819c3382d50da",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:f93e2bf809abaca260c374b97a8220b5ea8b5220d02030a0db5fee3c7d404539"
+    }
+  },
+  {
+    "name": "boundary-stray-file-oci/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/boundary-stray-file-oci:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-stray-file-oci/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:ab247a91c6a933956a9d2e2b12a54b6f8aac94261c710d0c1f944d1c4cdf3b31",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/boundary-stray-file-oci@<digest>",
+      "resolvedSize": 1124,
+      "stdout": ""
     }
   },
   {
@@ -767,6 +909,23 @@
     ]
   },
   {
+    "name": "desired-source/scratch-duplicate",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: duplicate up migration for version 2: 0000000002_add_b.up.sql and 0000000002_add_c.up.sql\n",
+        "stdout": "desired-source/scratch-duplicate.json"
+      }
+    ]
+  },
+  {
     "name": "desired-source/scratch-good",
     "children": [
       {
@@ -908,6 +1067,22 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-missing.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-partition-mysql",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=MySQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-partition-mysql.txt"
       }
     ]
   },
@@ -1319,6 +1494,309 @@
       "resolvedDigest": "<volatile>",
       "stdout": "",
       "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-backslash-apply-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:d8430e23bba6399c10b8ea18a235b1aedad840e073ef45db2c4549cf222478ba"
+        ],
+        "exit": 2,
+        "stderr": "error: unsupported feature: the plan is written for a session whose sql_mode does not name NO_BACKSLASH_ESCAPES, the session's sql_mode names NO_BACKSLASH_ESCAPES, and a statement holds a backslash, which the two read differently; apply the desired schema without --plan, or connect with a sql_mode without NO_BACKSLASH_ESCAPES\n",
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "apply_refused",
+        "message": "ptah refused the approved plan (backslash-mode)"
+      },
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:d8430e23bba6399c10b8ea18a235b1aedad840e073ef45db2c4549cf222478ba",
+      "planContentDigest": "sha256:8743ef8cb9c61fb80ec3bae614d8e8f401e95478ff1ee52f7666406ecee90c8b",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:4c891f2fa0b02f268f5b88a8cc4440b0ea06f7e5cb4740eff47c6b78baebe41e",
+      "uncertain": true
+    }
+  },
+  {
+    "name": "differs-backslash-apply-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:0ac6a099ea37e372a44d7a02100387988c88a79035374eb81ccd16e9366b6e4c",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:e534fb6f5c8f1bf6dd955cfbcd4aa53585a82c9e75403f90aed89a6974aeaff1",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:4c891f2fa0b02f268f5b88a8cc4440b0ea06f7e5cb4740eff47c6b78baebe41e"
+    }
+  },
+  {
+    "name": "differs-backslash-apply-mysql/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:0ac6a099ea37e372a44d7a02100387988c88a79035374eb81ccd16e9366b6e4c",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:a4b02c2fa1a510d7f62a0c7382168c6fe52e335fe0064a6517a17e3b91298cdd",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:4c891f2fa0b02f268f5b88a8cc4440b0ea06f7e5cb4740eff47c6b78baebe41e"
+    }
+  },
+  {
+    "name": "differs-backslash-apply-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n);\n",
+        "stdout": "runner-harness/documents/differs-backslash-apply-mysql/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:f88c0202bf179e1e3dc2d225b88f76a1c40fc0dc829e8382c1b1fefda894b188",
+      "planContentDigest": "sha256:8743ef8cb9c61fb80ec3bae614d8e8f401e95478ff1ee52f7666406ecee90c8b",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:4c891f2fa0b02f268f5b88a8cc4440b0ea06f7e5cb4740eff47c6b78baebe41e"
+    },
+    "savedPlan": "runner-harness/documents/differs-backslash-apply-mysql/plan/3-saved-plan.json"
+  },
+  {
+    "name": "differs-backslash-plan-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-backslash-plan-mysql/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:41c358944a00f4bf26b0e6023d1ddb19cb6e415df4d3240d6bee641f19367c5a",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:2c460fe88f3a6aee2e005a00376b1bbc19da7fe19382963f85cd2fc0c661f0bc",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:aed0f538c036ccbbe8449aaf228e733826b02cd3776cc1ea944d81a9ba746365"
+    }
+  },
+  {
+    "name": "differs-backslash-plan-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-backslash-plan-mysql/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nCREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-backslash-plan-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 2,
+        "stderr": "error: unsupported feature: the plan is written for a session whose sql_mode does not name NO_BACKSLASH_ESCAPES, the session's sql_mode names NO_BACKSLASH_ESCAPES, and a statement holds a backslash, which the two read differently; apply the desired schema without --plan, or connect with a sql_mode without NO_BACKSLASH_ESCAPES\n",
+        "stdout": "runner-harness/documents/differs-backslash-plan-mysql/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "error": {
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (backslash-mode)"
+      },
+      "operation": "plan",
+      "operationId": "sha256:ea1c6ac86b219d42376c52eb8e6a69802cb36c853bd14c4a0b88f923455420ef",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:aed0f538c036ccbbe8449aaf228e733826b02cd3776cc1ea944d81a9ba746365"
     }
   },
   {
@@ -6119,6 +6597,389 @@
       "stdout": "",
       "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
     }
+  },
+  {
+    "name": "differs-omitted-engine-postgres/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:ed926db6037edcdd5b2275d5eb8dc06ed53483614fc31c9195fa2cc59a7926dd"
+        ],
+        "exit": 0,
+        "stderr": "warning: postgres: table public.differs_omitted: table option ENGINE=InnoDB was skipped (unsupported)\nPlanned schema changes:\n-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:ed926db6037edcdd5b2275d5eb8dc06ed53483614fc31c9195fa2cc59a7926dd",
+      "planContentDigest": "sha256:7b13b2611b76b402c693fbb973e94cb5368c223cb0fef7400d9304a9e3ac71f8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:280f693f4de8736032a0746ef13e2143045a7e0a7ab1240100ca4216cd81e76c"
+    }
+  },
+  {
+    "name": "differs-omitted-engine-postgres/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:a682e80c1e37bbd5328b3bb558cc7aaba7f8f9cbcc36aeaf8b6ee5f90297db44",
+      "highestDriftSeverity": "safe",
+      "observedDialect": "postgres",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:f77afbc6d15bd598b73150fb0fee1e55fad6952f96ab38169374da8fb643c22c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:280f693f4de8736032a0746ef13e2143045a7e0a7ab1240100ca4216cd81e76c"
+    }
+  },
+  {
+    "name": "differs-omitted-engine-postgres/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:dfde61480ed38c7050fe21d163ce62579b3531e7bf010b6a97094f084a815a52",
+      "observedDialect": "postgres",
+      "operation": "observe",
+      "operationId": "sha256:274b6de29339be038e1bffc73c7c430110fdbd27a1c73509d44cbb0fcbd182ef",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:280f693f4de8736032a0746ef13e2143045a7e0a7ab1240100ca4216cd81e76c"
+    }
+  },
+  {
+    "name": "differs-omitted-engine-postgres/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: postgres: table public.differs_omitted: table option ENGINE=InnoDB was skipped (unsupported)\nPlanned schema changes:\n-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: postgres: table public.differs_omitted: table option ENGINE=InnoDB was skipped (unsupported)\nPlanned schema changes:\n-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "warning: postgres: table public.differs_omitted: table option ENGINE=InnoDB was skipped (unsupported)\nPlanned schema changes:\n-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n);\n",
+        "stdout": "runner-harness/documents/differs-omitted-engine-postgres/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "operation": "plan",
+      "operationId": "sha256:b72006920f06991381b493552421e84c3fe5c78884eceeebb526e81f49ba3cf2",
+      "planContentDigest": "sha256:7b13b2611b76b402c693fbb973e94cb5368c223cb0fef7400d9304a9e3ac71f8",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:280f693f4de8736032a0746ef13e2143045a7e0a7ab1240100ca4216cd81e76c"
+    },
+    "savedPlan": "runner-harness/documents/differs-omitted-engine-postgres/plan/3-saved-plan.json"
+  },
+  {
+    "name": "differs-omitted-fillfactor-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:265da2839a2ef81021743374c8218a6ed87e522cf0bf07519fcc2577b33a86d3"
+        ],
+        "exit": 0,
+        "stderr": "warning: mysql: index differs_omitted_name: index storage parameter fillfactor=70 was skipped (unsupported)\nPlanned schema changes:\nCREATE TABLE `differs_omitted` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(20)\n);\nCREATE INDEX `differs_omitted_name` ON `differs_omitted` (`name`);\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:265da2839a2ef81021743374c8218a6ed87e522cf0bf07519fcc2577b33a86d3",
+      "planContentDigest": "sha256:4eac7a74cbed7478c52f07a3e22d72391ae5ff61203fccfda2a9f068b704ac6a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:72998c9aa29dbf6d3db6a807836ac4007580d0aa3f4c0e50b6fb04025d6cd5f9"
+    }
+  },
+  {
+    "name": "differs-omitted-fillfactor-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "indexes_added",
+          "count": 1,
+          "severity": "warning"
+        },
+        {
+          "category": "tables_added",
+          "count": 1,
+          "severity": "safe"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 1,
+          "kind": "indexes",
+          "observed": 0
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 0
+        }
+      ],
+      "driftReportDigest": "sha256:238e54ca3e9ef70e9c791edbaeeb372f058fb037eb12912fb82e53b6f676347c",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:e170788df5d140c433d0da8e1ea49cf28c45d54f3627a695d079f66803b3a197",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:72998c9aa29dbf6d3db6a807836ac4007580d0aa3f4c0e50b6fb04025d6cd5f9"
+    }
+  },
+  {
+    "name": "differs-omitted-fillfactor-mysql/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "indexes",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:4d4bcde2d44e4b0d4a3634b9f4c085612191d2b2050fbccad847dd33a6699fb6",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:932df7042243c787b5109625930285afdfbe10c72e285db54b09ea42c5ae4543",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:72998c9aa29dbf6d3db6a807836ac4007580d0aa3f4c0e50b6fb04025d6cd5f9"
+    }
+  },
+  {
+    "name": "differs-omitted-fillfactor-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: mysql: index differs_omitted_name: index storage parameter fillfactor=70 was skipped (unsupported)\nPlanned schema changes:\nCREATE TABLE `differs_omitted` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(20)\n);\nCREATE INDEX `differs_omitted_name` ON `differs_omitted` (`name`);\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "warning: mysql: index differs_omitted_name: index storage parameter fillfactor=70 was skipped (unsupported)\nPlanned schema changes:\nCREATE TABLE `differs_omitted` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(20)\n);\nCREATE INDEX `differs_omitted_name` ON `differs_omitted` (`name`);\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "warning: mysql: index differs_omitted_name: index storage parameter fillfactor=70 was skipped (unsupported)\nPlanned schema changes:\nCREATE TABLE `differs_omitted` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(20)\n);\nCREATE INDEX `differs_omitted_name` ON `differs_omitted` (`name`);\n",
+        "stdout": "runner-harness/documents/differs-omitted-fillfactor-mysql/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:34c7fd2702dcfa5a395a63ee6bcb5b065511fc6fe7fe7061b699d267d06a2622",
+      "planContentDigest": "sha256:4eac7a74cbed7478c52f07a3e22d72391ae5ff61203fccfda2a9f068b704ac6a",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:72998c9aa29dbf6d3db6a807836ac4007580d0aa3f4c0e50b6fb04025d6cd5f9"
+    },
+    "savedPlan": "runner-harness/documents/differs-omitted-fillfactor-mysql/plan/3-saved-plan.json"
   },
   {
     "name": "differs-owner-empty-postgres/apply",
@@ -18033,7 +18894,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-checkpoint-postgres/apply/0-migrations-pull.txt"
@@ -18140,7 +19002,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-checkpoint-postgres/history-applied/0-migrations-pull.txt"
@@ -18226,7 +19089,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-checkpoint-postgres/history-pending/0-migrations-pull.txt"
@@ -18340,7 +19204,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-postgres/apply/0-migrations-pull.txt"
@@ -18433,7 +19298,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-postgres/history-dirty/0-migrations-pull.txt"
@@ -18499,7 +19365,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-postgres/history-pending/0-migrations-pull.txt"
@@ -18589,7 +19456,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-second-postgres/apply/0-migrations-pull.txt"
@@ -18696,7 +19564,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-dirty/0-migrations-pull.txt"
@@ -18772,7 +19641,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-commit-second-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-commit-second-postgres/history-pending/0-migrations-pull.txt"
@@ -18870,7 +19740,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply/0-migrations-pull.txt"
@@ -18974,7 +19845,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-clean-postgres/apply-v1/0-migrations-pull.txt"
@@ -19065,7 +19937,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-after/0-migrations-pull.txt"
@@ -19146,7 +20019,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-pending/0-migrations-pull.txt"
@@ -19226,7 +20100,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-clean-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-clean-postgres/history-v1/0-migrations-pull.txt"
@@ -19355,7 +20230,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/apply/0-migrations-pull.txt"
@@ -19460,7 +20336,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/apply-v1/0-migrations-pull.txt"
@@ -19551,7 +20428,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-after/0-migrations-pull.txt"
@@ -19631,7 +20509,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-pending/0-migrations-pull.txt"
@@ -19711,7 +20590,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-drifted-postgres/history-v1/0-migrations-pull.txt"
@@ -19840,7 +20720,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-exclude-refused-postgres/apply/0-migrations-pull.txt"
@@ -19947,7 +20828,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-exclude-refused-postgres/apply-v1/0-migrations-pull.txt"
@@ -20038,7 +20920,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-exclude-refused-postgres/history-after/0-migrations-pull.txt"
@@ -20118,7 +21001,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-exclude-refused-postgres/history-pending/0-migrations-pull.txt"
@@ -20198,7 +21082,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-exclude-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-exclude-refused-postgres/history-v1/0-migrations-pull.txt"
@@ -20327,7 +21212,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-drifted-postgres/apply/0-migrations-pull.txt"
@@ -20434,7 +21320,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-drifted-postgres/apply-v1/0-migrations-pull.txt"
@@ -20525,7 +21412,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-drifted-postgres/history-after/0-migrations-pull.txt"
@@ -20605,7 +21493,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-drifted-postgres/history-pending/0-migrations-pull.txt"
@@ -20685,7 +21574,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-drifted-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-drifted-postgres/history-v1/0-migrations-pull.txt"
@@ -20814,7 +21704,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-postgres/apply/0-migrations-pull.txt"
@@ -20920,7 +21811,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-postgres/apply-v1/0-migrations-pull.txt"
@@ -21011,7 +21903,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-postgres/history-after/0-migrations-pull.txt"
@@ -21092,7 +21985,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-postgres/history-pending/0-migrations-pull.txt"
@@ -21172,7 +22066,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-excluded-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-excluded-postgres/history-v1/0-migrations-pull.txt"
@@ -21301,7 +22196,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-by-schema-postgres/apply/0-migrations-pull.txt"
@@ -21407,7 +22303,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-by-schema-postgres/apply-v1/0-migrations-pull.txt"
@@ -21498,7 +22395,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-by-schema-postgres/history-after/0-migrations-pull.txt"
@@ -21578,7 +22476,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-by-schema-postgres/history-pending/0-migrations-pull.txt"
@@ -21658,7 +22557,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-by-schema-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-by-schema-postgres/history-v1/0-migrations-pull.txt"
@@ -21787,7 +22687,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-through-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-through-table-postgres/apply/0-migrations-pull.txt"
@@ -21892,7 +22793,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-through-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-through-table-postgres/apply-v1/0-migrations-pull.txt"
@@ -21983,7 +22885,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-through-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-through-table-postgres/history-after/0-migrations-pull.txt"
@@ -22064,7 +22967,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-through-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-through-table-postgres/history-pending/0-migrations-pull.txt"
@@ -22144,7 +23048,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-policy-through-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-policy-through-table-postgres/history-v1/0-migrations-pull.txt"
@@ -22273,7 +23178,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/apply/0-migrations-pull.txt"
@@ -22379,7 +23285,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/apply-v1/0-migrations-pull.txt"
@@ -22470,7 +23377,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-after/0-migrations-pull.txt"
@@ -22550,7 +23458,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-pending/0-migrations-pull.txt"
@@ -22630,7 +23539,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-shadow-not-empty-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-shadow-not-empty-postgres/history-v1/0-migrations-pull.txt"
@@ -22759,7 +23669,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-unmigrated-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-unmigrated-table-postgres/apply/0-migrations-pull.txt"
@@ -22864,7 +23775,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-unmigrated-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-unmigrated-table-postgres/apply-v1/0-migrations-pull.txt"
@@ -22955,7 +23867,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-unmigrated-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-unmigrated-table-postgres/history-after/0-migrations-pull.txt"
@@ -23035,7 +23948,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-unmigrated-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-unmigrated-table-postgres/history-pending/0-migrations-pull.txt"
@@ -23115,7 +24029,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-drift-unmigrated-table-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-drift-unmigrated-table-postgres/history-v1/0-migrations-pull.txt"
@@ -23244,7 +24159,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-failed-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-failed-postgres/apply/0-migrations-pull.txt"
@@ -23350,7 +24266,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-failed-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-failed-postgres/history-dirty/0-migrations-pull.txt"
@@ -23426,7 +24343,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-failed-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-failed-postgres/history-pending/0-migrations-pull.txt"
@@ -23989,7 +24907,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-log-lost-mysql/apply/0-migrations-pull.txt"
@@ -24142,7 +25061,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-applied/0-migrations-pull.txt"
@@ -24222,7 +25142,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-log-lost-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-log-lost-mysql/history-pending/0-migrations-pull.txt"
@@ -24328,7 +25249,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-mysql/apply/0-migrations-pull.txt"
@@ -24431,7 +25353,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-mysql/history-applied/0-migrations-pull.txt"
@@ -24511,7 +25434,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-mysql/history-pending/0-migrations-pull.txt"
@@ -24662,7 +25586,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-no-transaction-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-no-transaction-postgres/history-pending/0-migrations-pull.txt"
@@ -24761,7 +25686,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-partial-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-partial-mysql/apply/0-migrations-pull.txt"
@@ -24871,7 +25797,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-partial-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-partial-mysql/history-dirty/0-migrations-pull.txt"
@@ -24947,7 +25874,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-partial-mysql@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-partial-mysql/history-pending/0-migrations-pull.txt"
@@ -25045,7 +25973,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-postgres/apply/0-migrations-pull.txt"
@@ -25148,7 +26077,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-postgres/history-applied/0-migrations-pull.txt"
@@ -25228,7 +26158,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-postgres/history-pending/0-migrations-pull.txt"
@@ -25379,7 +26310,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-refused-postgres/apply/0-migrations-pull.txt"
@@ -25467,7 +26399,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-refused-postgres/history-pending/0-migrations-pull.txt"
@@ -25534,7 +26467,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-refused-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-refused-postgres/history-still-pending/0-migrations-pull.txt"
@@ -25632,7 +26566,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/migrations-repeatable-postgres@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/migrations-repeatable-postgres/history-pending/0-migrations-pull.txt"
@@ -29676,7 +30611,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-control-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-control-up/apply/0-migrations-pull.txt"
@@ -29769,7 +30705,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-control-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-control-up/history/0-migrations-pull.txt"
@@ -29859,7 +30796,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-definer-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-definer-up/apply/0-migrations-pull.txt"
@@ -29947,7 +30885,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-definer-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-definer-up/history/0-migrations-pull.txt"
@@ -30045,7 +30984,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-literal-up/apply/0-migrations-pull.txt"
@@ -30138,7 +31078,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-literal-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-literal-up/history/0-migrations-pull.txt"
@@ -30228,7 +31169,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-syntax-up/apply/0-migrations-pull.txt"
@@ -30321,7 +31263,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-syntax-up/history/0-migrations-pull.txt"
@@ -30681,7 +31624,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-unique-up/apply/0-migrations-pull.txt"
@@ -30774,7 +31718,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-my-unique-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-my-unique-up/history/0-migrations-pull.txt"
@@ -30864,7 +31809,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-insert-up/apply/0-migrations-pull.txt"
@@ -30956,7 +31902,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-insert-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-insert-up/history/0-migrations-pull.txt"
@@ -31046,7 +31993,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-literal-up/apply/0-migrations-pull.txt"
@@ -31138,7 +32086,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-literal-up/history/0-migrations-pull.txt"
@@ -31228,7 +32177,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/apply/0-migrations-pull.txt"
@@ -31320,7 +32270,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-rowcast-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-rowcast-up/history/0-migrations-pull.txt"
@@ -31679,7 +32630,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-unique-up/apply/0-migrations-pull.txt"
@@ -31771,7 +32723,8 @@
           "pull",
           "oci://harness-registry:5000/migrations/statement-errors-pg-unique-up@<digest>",
           "--out",
-          "/source/migrations"
+          "/source/migrations",
+          "--skip-validation"
         ],
         "exit": 0,
         "stdout": "runner-harness/documents/statement-errors-pg-unique-up/history/0-migrations-pull.txt"

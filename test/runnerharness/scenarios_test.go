@@ -81,6 +81,10 @@ func wantRefusal(word string) func(*rowSpec) {
 	return func(row *rowSpec) { row.wantRefusal = word }
 }
 
+func wantStopped(word string) func(*rowSpec) {
+	return func(row *rowSpec) { row.wantStopped = word }
+}
+
 // schemaLifecycle runs a declared schema through every operation on one engine,
 // from an OCI artifact: a table, a converged reading, a column added to it, and
 // an Apply refused because the database moved under its plan.
@@ -918,6 +922,10 @@ func desiredSourceRows() []directRow {
 		// does not load (stokaro/ptah#6299, #6345): PostgreSQL reads 'now'
 		// once, when it creates the table.
 		validate("validate-relative-time", "PostgreSQL", "relative-time.sql", true),
+		// Since Ptah v0.34.0 a MySQL table that declares PARTITION BY does
+		// not load (stokaro/ptah#6375), where v0.33.1 planned the table
+		// without its partitions.
+		validate("validate-partition-mysql", "MySQL", "partition-mysql.sql", true),
 		scratch("scratch-directive", "migrations-directive", true),
 		scratch("scratch-name", "migrations-name", true),
 		scratch("scratch-down", "migrations-down", true),
@@ -926,6 +934,10 @@ func desiredSourceRows() []directRow {
 		// a SQL file the Ptah format does not read refuses it, and so does an
 		// Atlas R__ file, whose version the revision table cannot keep.
 		scratch("scratch-unread", "migrations-unread", true),
+		// Since Ptah v0.34.0 a second file for one direction of a version
+		// refuses the directory (stokaro/ptah#6388), where v0.33.1 ran
+		// whichever file it read last.
+		scratch("scratch-duplicate", "migrations-duplicate", true),
 		scratch("scratch-atlas-repeatable", "migrations-atlas-repeatable", true),
 		scratch("scratch-control-bytes", controlBytesDirectory, true),
 		drift("drift-sql", "schema.sql"),

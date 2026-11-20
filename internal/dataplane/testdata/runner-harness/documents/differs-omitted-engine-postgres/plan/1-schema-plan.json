@@ -1,0 +1,37 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:7b13b2611b76b402c693fbb973e94cb5368c223cb0fef7400d9304a9e3ac71f8",
+  "plan_path": "/work/ptah-plan-output-2497872961/second.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_a19e3b5ada4f",
+    "dialect": "postgres",
+    "from_fingerprint": "sha256:ae640f94b76fa957fbc81cc967f352a365a1b032f0f76d9fead7dd9ab770ad84",
+    "to_fingerprint": "sha256:0d731d75e91f4af5f3634d14e7ee273fc3559a46d3d7a30ed9600a2a7b2de664",
+    "scope": {
+      "kind": "realm"
+    },
+    "placed_schema": "public",
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ],
+    "omissions": [
+      {
+        "dialect": "postgres",
+        "reason": "unsupported",
+        "kind": "table",
+        "name": "public.differs_omitted",
+        "property": "table option ENGINE",
+        "detail": "InnoDB",
+        "commented": true
+      }
+    ]
+  }
+}

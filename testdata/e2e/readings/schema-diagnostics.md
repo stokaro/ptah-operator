@@ -60,7 +60,13 @@ and both PostgreSQL migration readings included, and moved every MySQL schema
 reading, the MySQL History reading and the MySQL restored-history refusal, as
 the comparison with v0.33.0 below says. The MySQL readings here are v0.33.1's,
 all four saved exclusion plans came out byte for byte as v0.33.0 saved them,
-and the contract names the new statements.
+and the contract names the new statements. On November 20, 2026 the v0.34.0
+release image, commit `90e98f6ca0b3d77e66b0d5e72a6a9e22da20653a`, reproduced
+every PostgreSQL reading record for record, the 18 and 16 witnesses included,
+and every migration reading of both engines, and moved every MySQL schema
+reading, as the comparison with v0.33.1 below says. The MySQL schema readings
+here are v0.34.0's, the four saved exclusion plans are v0.34.0's, and the
+contract names the new statements.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -107,6 +113,20 @@ then checked in byte for byte, and the probe's unit test holds the checked-in
 contract to the checked-in readings. The v0.28.0 contract is the one it wrote
 from the v0.28.0 readings, and the v0.29.0 contract differs from it only in the
 Ptah commit it names.
+
+Against v0.33.1, v0.34.0 changed the MySQL schema readings and nothing else.
+Ptah does not model MySQL or MariaDB partitioning, and each schema read now asks
+which tables of the database are partitioned, with a prepared
+`SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS`, so that it can
+report them as not compared instead of reading them without their partitions
+([stokaro/ptah#6375](https://github.com/stokaro/ptah/pull/6375)). The read is
+a Prepare, an Execute and a statement close, three records. Each of the 30 MySQL
+schema readings keeps its exit status and gains only those: an Observe, a plan
+validation, a refused stale Apply and the allowed Apply three, a plan six, and
+each lock reading fifteen. The contract has 108 statements where it had 106:
+the Prepare and the Execute are new, and no statement is dropped or changed.
+The four saved exclusion plans hold the same statements; only their name and
+`from_fingerprint` moved, on both engines.
 
 Against v0.33.0, v0.33.1 changed the MySQL readings and nothing else. Ptah
 reads `SELECT @@SESSION.sql_mode` when it connects and again on a pinned
@@ -488,7 +508,8 @@ records as on PostgreSQL 17, with the v0.23.0 image on November 7, 2026, at 53,
 95 and 50, with the v0.26.0 image on November 13, 2026, at 56, 101 and 53, and
 with the v0.30.1 image on November 18, 2026, at 57, 103 and 54, with the
 v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, and with the
-v0.33.0 and v0.33.1 images on November 19, 2026, at the same counts. Each time they
+v0.33.0 and v0.33.1 images on November 19, 2026, and the v0.34.0 image on
+November 20, 2026, at the same counts. Each time they
 still differ from 17 in that one statement. Since v0.22.0
 Ptah reads the columns from `pg_catalog`, so the two statements are the same read
 with that name selected or left empty.
@@ -520,7 +541,7 @@ Ptah resolves 16 to its `Postgres16` preset, which differs from 17's only in
 are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 53, 95 and 50 records, again with the v0.26.0 image on November 13, 2026, at
 56, 101 and 53, with the v0.30.1 image on November 18, 2026, at 57, 103 and
-54, with the v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, and with the v0.33.0 and v0.33.1 images on November 19, 2026, at the same counts, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
+54, with the v0.31.0 and v0.32.0 images the same day, at 61, 111 and 58, with the v0.33.0 and v0.33.1 images on November 19, 2026, and with the v0.34.0 image on November 20, 2026, at the same counts, with every statement and parameter value of the PostgreSQL 17 readings. They witness the declarations the PostgreSQL 17 readings
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 

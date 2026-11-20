@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:42da45c1a367bf802894662b8b157d9d0cbd443362a467eaf8f5f3fb60eaf7c9",
+  "plan_path": "/work/ptah-plan-output-559746915/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_24639d0fbfc0",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:58747d936f5f2b2c82f40a2746d41e4ccb3cf1b1870800902bc644076b1a6d05",
+    "to_fingerprint": "sha256:495e9abeb18bd85ec48d939fa242641bc7bafdb2430578ac4c5c460a955d1735",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_backslash_plan_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "CREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n)",
+        "severity": "safe",
+        "reason": "does not remove data or tighten constraints"
+      }
+    ]
+  }
+}

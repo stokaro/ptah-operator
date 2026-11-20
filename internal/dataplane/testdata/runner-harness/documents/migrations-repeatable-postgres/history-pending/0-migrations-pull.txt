@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/migrations-repeatable-postgres@sha256:549d0543c36e7e81ed6646a831a1e17d033a9b6d7b1d85e4d351c5533c852b8c to /source/migrations
-Digest: sha256:549d0543c36e7e81ed6646a831a1e17d033a9b6d7b1d85e4d351c5533c852b8c
+Pulled oci://harness-registry:5000/migrations/migrations-repeatable-postgres@sha256:20210af05f3a51d693489fc8311f4d34c794f3f6f4619fdcef13feb55c61b268 to /source/migrations
+Digest: sha256:20210af05f3a51d693489fc8311f4d34c794f3f6f4619fdcef13feb55c61b268
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

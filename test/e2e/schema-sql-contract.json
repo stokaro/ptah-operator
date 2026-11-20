@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "f7c85bdc579c9e5939108a892f11e3d6d0974248",
+  "ptahCommit": "90e98f6ca0b3d77e66b0d5e72a6a9e22da20653a",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -1059,6 +1059,28 @@
       ],
       "command": "Execute",
       "statement": "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = '{{database}}' ORDER BY EVENT_NAME",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Prepare",
+      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE TABLE_SCHEMA = ? AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Execute",
+      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE TABLE_SCHEMA = '{{database}}' AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
       "parameters": ""
     },
     {

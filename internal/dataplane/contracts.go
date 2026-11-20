@@ -396,6 +396,14 @@ type PlanFile struct {
 	// A note runs nothing, and the plan's digest covers it as it covers the
 	// statements. The operator shows a note and executes nothing from it.
 	Annotations []PlanAnnotation `json:"annotations,omitempty"`
+	// Omissions are the declarations of the desired state that the statements
+	// leave out, because the target cannot carry them, such as a MySQL table
+	// option in a schema planned for PostgreSQL. Ptah v0.34.0 records them in
+	// the plan (stokaro/ptah#6395), where the plan's digest covers them, and
+	// `schema apply --plan` warns about each again on its standard error. The
+	// operator carries the plan bytes as they are and decides nothing from
+	// them; they are declared so the strict decoder accepts every such plan.
+	Omissions []PlanOmission `json:"omissions,omitempty"`
 
 	// PrivilegeChanges are the kinds of authority the statements change, read
 	// by the operator from the SQL: grants, role membership, ownership,
@@ -412,6 +420,23 @@ type PlanFile struct {
 type PlanAnnotation struct {
 	Before int    `json:"before"`
 	Text   string `json:"text"`
+}
+
+// PlanOmission is one declaration a plan's statements leave out, as Ptah
+// v0.34.0 records it: the target, a stable reason, the kind and name of the
+// object that owns the declaration, and the property it lost, empty when the
+// whole object was lost. Detail is the declared value, Remedy how to keep the
+// declaration on this target where one exists, and Commented says the
+// statements already carry a comment that says the same.
+type PlanOmission struct {
+	Dialect   string `json:"dialect"`
+	Reason    string `json:"reason"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Property  string `json:"property,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	Remedy    string `json:"remedy,omitempty"`
+	Commented bool   `json:"commented,omitempty"`
 }
 
 // PlanScope is what the URL of a saved plan covered: "realm" for every schema of

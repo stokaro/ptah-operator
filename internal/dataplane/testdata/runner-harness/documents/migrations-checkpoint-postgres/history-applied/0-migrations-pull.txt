@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@sha256:641b3201a08221cf6e1f197b820bb9c6d5789357daa531d679badad0266dafdf to /source/migrations
-Digest: sha256:641b3201a08221cf6e1f197b820bb9c6d5789357daa531d679badad0266dafdf
+Pulled oci://harness-registry:5000/migrations/migrations-checkpoint-postgres@sha256:959b21884c6afeece4035a02ecbda4682926c5cb809a5b92f1b66d0bcda12af9 to /source/migrations
+Digest: sha256:959b21884c6afeece4035a02ecbda4682926c5cb809a5b92f1b66d0bcda12af9
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

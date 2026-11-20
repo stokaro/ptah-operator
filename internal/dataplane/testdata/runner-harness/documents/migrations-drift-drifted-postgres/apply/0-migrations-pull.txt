@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@sha256:cd14e5ef55399251c19a9a82b16f158e682fdef093ac551aa74b792a3091f3f2 to /source/migrations
-Digest: sha256:cd14e5ef55399251c19a9a82b16f158e682fdef093ac551aa74b792a3091f3f2
+Pulled oci://harness-registry:5000/migrations/migrations-drift-drifted-postgres@sha256:a2bd8cfe50b8804edd5619d3e57c206c1f14d4813a15181cf059d2763bc8f59a to /source/migrations
+Digest: sha256:a2bd8cfe50b8804edd5619d3e57c206c1f14d4813a15181cf059d2763bc8f59a
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

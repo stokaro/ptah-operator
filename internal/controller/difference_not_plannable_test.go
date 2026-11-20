@@ -35,7 +35,7 @@ import (
 )
 
 // The sentence the runner reports for the plan of notes Ptah v0.33.0 saved, and
-// the pinned v0.33.1 saves again, against PostgreSQL 16 for a generated column
+// v0.33.1 and the pinned v0.34.0 save again, against PostgreSQL 16 for a generated column
 // whose expression changed, which internal/runner/testdata/note-plan holds. The runner's
 // TestAPlanOfNotesIsADifferenceNotPlannable reads that capture to this
 // sentence.

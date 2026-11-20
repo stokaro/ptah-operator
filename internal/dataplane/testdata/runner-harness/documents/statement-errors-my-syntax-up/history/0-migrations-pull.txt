@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@sha256:b9f17bf5bdb205da9c430c64e5a38c00d9ce6722e19e9b177d71f48e1f30b607 to /source/migrations
-Digest: sha256:b9f17bf5bdb205da9c430c64e5a38c00d9ce6722e19e9b177d71f48e1f30b607
+Pulled oci://harness-registry:5000/migrations/statement-errors-my-syntax-up@sha256:9ee4c6441a0ce6ced98c7dc883c8af3e037b175d58f1c9347ecc41b5bd2e925d to /source/migrations
+Digest: sha256:9ee4c6441a0ce6ced98c7dc883c8af3e037b175d58f1c9347ecc41b5bd2e925d
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

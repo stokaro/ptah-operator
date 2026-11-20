@@ -1,0 +1,7 @@
+{
+  "contract_version": 2,
+  "command": "migrations status",
+  "error": {
+    "message": "error registering migrations: duplicate up migration for version 2: 0000000002_add_b.up.sql and 0000000002_add_c.up.sql"
+  }
+}

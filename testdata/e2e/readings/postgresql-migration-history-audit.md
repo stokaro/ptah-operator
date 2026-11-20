@@ -23,7 +23,7 @@ after asking whether the table exists.
   `schema_migrations_repeatable` below, and changes no other. On 2026-11-18 the v0.31.0 release
   image (`dc2decde`) and the v0.32.0 release image (`da2df4a5`) reproduced it record for
   record, and on 2026-11-19 so did the v0.33.0 release image (`37c98b00`) and the v0.33.1
-  release image (`f7c85bdc`)
+  release image (`f7c85bdc`), and on 2026-11-20 the v0.34.0 release image (`90e98f6c`)
 - Server image: `postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`
 - Client address: `10.244.3.97`
 - Isolated database: `ptah_e2e_retarget`

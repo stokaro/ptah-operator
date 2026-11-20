@@ -70,6 +70,14 @@ func TestSchemaSourceProblemReadsALoadFailure(t *testing.T) {
 				"moment and every plan changes the column again; write a function the server calls for each row, " +
 				"such as now() or CURRENT_DATE",
 		},
+		{
+			// Since Ptah v0.34.0 MySQL partitioning is a fault of the file,
+			// where v0.33.1 planned the table without its partitions.
+			name: "a partitioned MySQL table", fixture: "validate-partition-mysql.txt", engine: "MySQL",
+			want: "error parsing schema file: read SQL schema file /work/partition-mysql.sql:5:3: unsupported feature: " +
+				"PARTITION BY on table events: Ptah does not model MySQL or MariaDB partitioning (stokaro/ptah#6357); " +
+				"leave it out of the desired schema and manage the partitions outside Ptah",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -377,6 +385,9 @@ func TestMigrationFilesProblemReadsALoadFailure(t *testing.T) {
 		"scratch-unread.json": "migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, " +
 			"so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, " +
 			"NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory",
+		// Since Ptah v0.34.0 a second file for one direction of a version
+		// refuses the directory, where v0.33.1 read whichever came last.
+		"scratch-duplicate.json": "duplicate up migration for version 2: 0000000002_add_b.up.sql and 0000000002_add_c.up.sql",
 		// An Atlas directory with an R__ file is refused when the revisions are
 		// read, under another prefix.
 		"scratch-atlas-repeatable.json": `Atlas migration R__seed.sql has version "R", which a revision table that records numbers ` +
