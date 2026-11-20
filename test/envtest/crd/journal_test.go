@@ -88,6 +88,10 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 		{"an apply failure error number two bytes cannot hold", journal(journalEntry(map[string]any{"type": "ApplyFinished", "outcome": "Unknown",
 			"applyFailure": map[string]any{"statement": int64(1), "statements": int64(1), "errorNumber": int64(65536)}})),
 			cause{"status.journal.entries[0].applyFailure.errorNumber", "less than or equal to 65535"}},
+		{"a negative count of repeatable migrations", journal(journalEntry(map[string]any{"type": "RunFinished", "appliedRepeatables": int64(-1)})),
+			cause{"status.journal.entries[0].appliedRepeatables", "greater than or equal to 0"}},
+		{"more repeatable migrations than a plan holds", journal(journalEntry(map[string]any{"type": "RunFinished", "appliedRepeatables": int64(257)})),
+			cause{"status.journal.entries[0].appliedRepeatables", "less than or equal to 256"}},
 		{"a 65th entry", journal(tooMany...),
 			cause{"status.journal.entries", "must have at most 64 items"}},
 	} {
@@ -123,8 +127,9 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			}),
 			journalEntry(map[string]any{"type": "Verified", "outcome": "DriftRemains", "operationID": "sha256:" + strings.Repeat("c", 64)}),
 			journalEntry(map[string]any{
-				"type": "RunFinished", "outcome": "Failed", "appliedVersions": int64(2), "startedAt": "2026-10-24T07:41:53Z",
-				"failure": map[string]any{"version": int64(16), "statement": int64(2), "statements": int64(3), "sqlState": "42P01"},
+				"type": "RunFinished", "outcome": "Failed", "appliedVersions": int64(2), "appliedRepeatables": int64(256),
+				"startedAt": "2026-10-24T07:41:53Z",
+				"failure":   map[string]any{"version": int64(16), "statement": int64(2), "statements": int64(3), "sqlState": "42P01"},
 			}),
 			journalEntry(map[string]any{
 				"type": "RunFinished", "outcome": "Succeeded", "operationID": "sha256:" + strings.Repeat("a", 64),
@@ -155,6 +160,9 @@ func TestStatusRefusesAMalformedJournal(t *testing.T) {
 			first, _ := kept[0].(map[string]any)
 			if first["approvalRequired"] != true || first["replaced"] != "ptah-plan-z" {
 				t.Fatalf("the first entry of %s %s came back as %v, want approvalRequired and replaced kept", object.GetKind(), object.GetName(), first)
+			}
+			if run, _ := kept[8].(map[string]any); run["type"] != "RunFinished" || run["appliedRepeatables"] != int64(256) {
+				t.Fatalf("the finished run of %s %s came back as %v, want appliedRepeatables kept", object.GetKind(), object.GetName(), run)
 			}
 			stopped, _ := kept[6].(map[string]any)
 			if failure, _ := stopped["applyFailure"].(map[string]any); stopped["type"] != "ApplyFinished" ||

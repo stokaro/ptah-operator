@@ -1381,11 +1381,14 @@ func TestAnUnresolvedMigrationRunOutlivesEveryOtherRefusal(t *testing.T) {
 			),
 		},
 		{
-			name: "a repeatable migration the artifact holds",
+			name: "a repeatable migration whose last attempt failed",
 			refuse: refuseMigrationHistory(
-				operatorv1alpha1.ReasonRepeatableMigrationsUnsupported,
+				operatorv1alpha1.ReasonRepeatableMigrationUnfinished,
 				func(report *dataplane.MigrationStatusReport) {
-					report.Repeatables = []dataplane.MigrationRepeatable{{Identity: "names", Path: "R__names.sql", State: "pending"}}
+					report.Repeatables = []dataplane.MigrationRepeatable{{
+						Identity: "names", Path: "R__names.sql", Checksum: "h1:" + strings.Repeat("A", 43) + "=",
+						State: dataplane.RepeatableStateFailed,
+					}}
 				},
 			),
 		},

@@ -489,7 +489,10 @@ actually terminated.
 
 The frame's own report of which database it opened is compared against the
 claim before the account is accepted. A run that reached a database other than
-the one it was planned for is uncertain, not failed.
+the one it was planned for is uncertain, not failed. A migration run whose
+account still reads `Partial` or `Unknown` is accepted whatever database it
+names, since a reading of the database settles it either way, while a `Failed`
+run is held to the database the claim named.
 
 A migration Apply whose log holds no frame, or is gone, is read from the
 summary its runner wrote into the Pod's termination message, when that summary names this attempt

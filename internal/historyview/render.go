@@ -176,6 +176,9 @@ func renderEntry(text *strings.Builder, view View, entry Entry) {
 	if entry.AppliedVersions > 0 {
 		field("Versions applied", fmt.Sprintf("%d", entry.AppliedVersions))
 	}
+	if entry.AppliedRepeatables > 0 {
+		field("Repeatables", fmt.Sprintf("%d applied", entry.AppliedRepeatables))
+	}
 	if failure := entry.Failure; failure != nil {
 		field("Stopped at", failureText(*failure))
 	}

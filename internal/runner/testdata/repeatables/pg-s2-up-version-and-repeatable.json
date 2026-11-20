@@ -1,0 +1,72 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "applied",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "applied": [
+    1
+  ],
+  "applied_keys": [
+    "1"
+  ],
+  "planned_repeatables": [
+    {
+      "identity": "item_names",
+      "path": "R__item_names.sql",
+      "checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
+      "reason": "new"
+    }
+  ],
+  "applied_repeatables": [
+    "item_names"
+  ],
+  "migration_log": {
+    "written": 4
+  },
+  "status": {
+    "current_version": 1,
+    "applied_migrations": [
+      1
+    ],
+    "applied_migration_keys": [
+      "1"
+    ],
+    "pending_migrations": [],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": false,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Items",
+        "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_at": "2026-11-20T16:13:59.495315Z",
+        "execution_time_ms": 2,
+        "state": "applied"
+      }
+    ],
+    "repeatables": [
+      {
+        "identity": "item_names",
+        "path": "R__item_names.sql",
+        "checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
+        "applied_checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
+        "state": "applied",
+        "attempt_checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
+        "attempt_order": 1,
+        "attempted_at": "2026-11-20T16:13:59.501919Z",
+        "applied_at": "2026-11-20T16:13:59.503723Z"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

@@ -301,16 +301,15 @@ migrations were never merged, all arrive here. The operator will not roll a
 database back to match an older artifact, and which of the two is wrong is not
 a question it can answer, so it stops and names both versions.
 
-**Repeatable migrations.** Since v0.30.0 Ptah reads an `R__<identity>.sql`
-file as a repeatable migration, which it runs after the versioned ones and
-again whenever the file changes, and keeps a record of them in
-`schema_migrations_repeatable`. The operator approves a versioned sequence
-only, so a history that lists one, from a file of the artifact or from a row of
-that record, is `Blocked` with `RepeatableMigrationsUnsupported` and publishes
-no plan. Ptah v0.29.2, which 0.2.14 ran, did not read such a file at all, and
-the operator ran the versioned files beside it.
+**Unfinished repeatable migration.** The record of
+[repeatable migrations](#repeatable-migrations) holds one whose last attempt
+failed or recorded no outcome. It is that record's dirty row: Ptah runs nothing
+while it exists, versioned migrations included, so the resource is `Blocked`
+with `RepeatableMigrationUnfinished`, publishes no plan, and names each one,
+what is known of its attempt, and Ptah's repair command for it.
 [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
-says how to move what the files do into versioned migrations.
+says how to clear it. An applied record no file carries stops nothing, as
+[Repeatable migrations](#repeatable-migrations) says.
 
 **Unreadable directory.** Ptah could not read the artifact's migration
 directory: a file it cannot load, a migration whose up or down file is missing,
@@ -377,6 +376,93 @@ privileges (MariaDB asks for `SHOW VIEW` in place of the last two): a grant on
 one schema cannot prove the user sees every object it is about to drop. Give
 the shadow database its own user, on a server that holds nothing else of value,
 and keep the target's user on its per-schema grants.
+
+## Repeatable migrations
+
+Ptah reads an `R__<identity>.sql` file of the migration directory as a
+repeatable migration: a file it runs again whenever its content changes, the
+usual home of a view, a function or reference rows that are replaced whole.
+The identity is the part between `R__` and `.sql`, letters, digits, `_` and `-`
+up to 255 characters. Ptah keeps one row per identity in
+`schema_migrations_repeatable`, with the content digest it last applied, and
+creates that table on the first run that applies one.
+
+Order is Ptah's. A run applies the pending versioned migrations first and then
+each repeatable migration that is new or whose content changed, in the order
+the history lists them. The operator plans the same run and changes nothing in
+it:
+
+- `status.history.pendingRepeatableCount` counts the repeatable migrations the
+  next run would execute, and `kubectl get ptahmigrations -o wide` prints it
+  as `PENDING REPEATABLE`, `<none>` when nothing is pending;
+- the plan lists them in `spec.repeatables` after `spec.migrations`, each with
+  the content digest Ptah reported and, for a changed one, the digest it last
+  applied. A plan may hold repeatable migrations and no version;
+- the plan's fingerprint covers that list, so a file that changes again before
+  the approval publishes another plan, and the waiting approval no longer
+  names the current one.
+
+A repeatable migration is work like a version. Under `OnApproval` it waits for
+an approval, under `Always` it runs as soon as the plan is published, and it
+gets no SQL review of its own: like a version, the plan records its digest and
+the statements stay in the source the plan binds. `kubectl ptah approve`
+prints each one under the versions:
+
+```text
+Then these repeatable migrations, in this order:
+  repeatable       item_names
+                   checksum h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=, changed from h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=
+```
+
+The Apply hands Ptah the approved repeatable migrations with their digests in
+`--expect-sequence`, beside the versions. Ptah compares them with what it
+selects under the migration lock, and a different selection, a different
+digest or a different order runs nothing: `status.lastRun.outcome` reads
+`Failed` and the message says the history moved after the approval. The
+digest a changed migration last applied, the "changed from" above, is part of
+the plan's fingerprint and of what the approver reads, but nothing checks it at
+run time: Ptah matches the identity and the content it runs, so a record
+another tool rewrote between the plan and the Apply does not stop the run.
+`status.lastRun.appliedRepeatables` names those the run applied, in the order
+it ran them.
+
+On PostgreSQL a repeatable migration runs in a transaction, so one that fails
+takes no effect. The run is `Failed` when it applied nothing before it, and
+`Partial` when it applied a version or another repeatable migration first. On
+MySQL, and in a file Ptah runs without a transaction, a failure can leave part
+of its work behind, and the run is `Unknown`. Either way the record now holds
+the attempt, and the next history read stops at it with
+`RepeatableMigrationUnfinished`, as [what the history says](#what-the-history-says)
+describes. Nothing retries it: correct the file, delete the record with
+`ptah migrations repair --repeatable <identity> --force`, and the next plan
+runs the file again. A `Partial` or `Unknown` run is also recorded in
+`status.unresolvedRun`, which stays until a person acknowledges it, as
+[A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
+says, since the file is pending again once the record is gone. A run that
+finds a record another run left unfinished selects nothing and runs nothing,
+which the operator records as `Failed` with no unresolved run, whatever outcome
+Ptah reported for it.
+
+A file deleted from the artifact, or renamed, leaves an applied record no file
+carries. Ptah leaves the record and what the migration created alone, and so
+does the operator: it plans nothing for the record, and the resource converges
+as it would without it. `status.history.orphanedRepeatables` names the record,
+`kubectl ptah migration` prints it, and the first history read that lists it
+sends one `Warning` Event, reason `RepeatableMigrationOrphaned`, that names
+the command which deletes the record, `ptah migrations repair --repeatable
+<identity>`, with no `--force` once the file is gone. The Event
+[can be lost](../../troubleshoot/events/#an-event-can-be-lost); the status list
+is the record. Run the command only if you want the record gone: it deletes the
+row and nothing the migration created. A renamed
+file is a new identity, so the next plan runs it as new. A file that carries the
+old identity again is held to the content the record holds: the same content
+runs nothing, and changed content is planned. A database ahead of its artifact
+lists no record as orphaned, since the artifact is older, not the file gone.
+
+A [drift check](#drift-check) replays the repeatable migrations the record
+holds as applied after the versions, a record no file carries included, from
+the content the record keeps, so the schema it compares is the one both
+produce.
 
 ## Adopting an existing database
 
@@ -490,14 +576,17 @@ arbitrary SQL, and no analyzer classifies arbitrary SQL as safe.
 An approval names the migration, the plan and the plan's fingerprint; the
 admission webhook fills in the rest from the plan itself and refuses any value
 that conflicts with it. `kubectl ptah approve` shows the versions and checksums
-the plan selected, asks for a decision, and creates the approval as you:
+the plan selected, and the [repeatable migrations](#repeatable-migrations) after
+them with their content digests, asks for a decision, and creates the approval
+as you:
 
 ```sh
 kubectl ptah approve migration/orders -n application
 ```
 
-It shows no SQL: a migration plan records versions and checksums, and the
-statements live in the source the plan binds, whose digest the review prints.
+It shows no SQL: a migration plan records versions, repeatable migrations and
+their checksums, and the statements live in the source the plan binds, whose
+digest the review prints.
 It reads the migration again before it sends anything, and approves nothing if
 the plan was replaced, the spec changed other than by a suspend or a resume,
 or the operator would not admit an approval now. An answer given while the
@@ -567,7 +656,8 @@ either family: read on the migration, its plans and approvals, and create on
 [Exact-plan approvals](../approvals/) says what it leaves out and why.
 
 The execution runs the approved sequence and nothing else. The Job hands Ptah
-the approved list, and `ptah migrations up --expect-sequence` compares it with
+the approved list, the versions and the repeatable migrations with their
+content digests, and `ptah migrations up --expect-sequence` compares it with
 what Ptah selects under the migration lock, after every check the operator can
 make and just before anything runs. If the database was restored to an earlier
 version after the approval, Ptah selects more than was approved and runs none
@@ -586,7 +676,7 @@ matters most:
 | `UpToDate` | The database already had every planned migration |
 | `Applied` | Every selected migration is recorded applied |
 | `Failed` | A migration failed and committed nothing, or the run stopped before it ran one, as on a database it could not open, under a [drift check](#drift-check) that refused it, or on a selected file Ptah refuses before the run applies any, such as a `CREATE INDEX CONCURRENTLY` the file's transaction cannot hold. The first leaves a [dirty revision row](#what-the-history-says), which a person has to [clear](../recovery/#retry-failed-migration) before anything else runs. After the second, fix the cause and the resource plans the run again |
-| `Partial` | A migration committed some of its statements and not the rest |
+| `Partial` | A migration committed some of its statements and not the rest, or a [repeatable migration](#repeatable-migrations) failed after the run applied other work |
 | `Unknown` | The evidence could not be read |
 
 `Partial` and `Unknown` stop the resource and are never retried. Re-running a
@@ -602,6 +692,9 @@ A run that stopped before it selected any migration ran nothing and read no
 history, so there is nothing to read back at once: the resource records it
 `Failed`, waits `spec.execution.failureRetryInterval`, and starts again from
 resolution, which reads the history before anything is planned or applied.
+Ptah reports such a run `unknown` when the history read after the failure
+failed too, as on a lost connection; it ran nothing all the same, and the
+resource records it the same way.
 Under `apply: Always` the new plan runs; under `OnApproval` it waits for an
 approval, because the run consumed the one it carried.
 [A database the operation could not open](../../troubleshoot/condition-reasons/#a-database-the-operation-could-not-open)
@@ -617,7 +710,7 @@ an operation is running, a plan is being published, an Apply is next under the
 `Always` policy, or a finished run is being confirmed against the history. It is
 false wherever the resource has stopped or is waiting for a person, and its
 reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
-`HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
+`RepeatableMigrationUnfinished`, `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
 `HistoryMatched`.
 
 ## Check the schema against its history {#drift-check}
@@ -638,7 +731,8 @@ spec:
 
 Every Apply then runs `ptah migrations up --check-drift`. Under the migration
 lock, before any pending migration, Ptah replays the migrations the revision
-table records as applied into the shadow database, compares the schema they
+table records as applied into the shadow database, then the repeatable
+migrations its record holds as applied, compares the schema they
 produce with the target's, and empties the shadow again. What a pending
 migration is about to create is not drift, since the baseline is the applied
 history. A clean target lets the run go on. A target that differs stops it with
@@ -798,7 +892,8 @@ says what to check.
 Ptah v0.28.0 added the `run_reference` and `actor_origin` columns, which the
 operator fills from 0.2.13; rows an earlier release wrote hold neither. Ptah
 v0.30.0 added `repeatable`, which names the repeatable migration a row is
-about. The operator runs none, so every row it writes leaves it empty. Before
+about; a row about one has no version. Operator releases before 0.2.16 ran
+none, so every row they wrote leaves it empty. Before
 a run writes its first row, Ptah adds whichever of the three a log an earlier
 build created lacks,
 as nullable columns, and the rows already there keep their values. On

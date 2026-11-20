@@ -1,0 +1,77 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigration",
+  "metadata": {
+    "generation": 1,
+    "name": "orders",
+    "namespace": "team-a"
+  },
+  "status": {
+    "observedGeneration": 1,
+    "phase": "Blocked",
+    "conditions": [
+      {
+        "type": "Blocked",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "RepeatableMigrationUnfinished",
+        "message": "Repeatable migration: item_names failed inside a transaction, which took no effect (repair: `ptah migrations repair --repeatable item_names --force`). Ptah runs nothing while one is unfinished. Establish what the attempt did and correct the file, then delete the record with the repair command; the next plan runs the file again"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "RepeatableMigrationUnfinished",
+        "message": "The repeatable migration record holds an attempt that did not finish"
+      },
+      {
+        "type": "Progressing",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "RepeatableMigrationUnfinished",
+        "message": "Nothing runs while a repeatable migration's last attempt is unfinished"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "The migration history was read"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://registry.example/team/migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "transport": {}
+    },
+    "executionBinding": {
+      "epoch": "v1-33333333333333333333333333333333",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.3.0",
+      "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runnerProtocolVersion": 1
+    },
+    "history": {
+      "observedAt": null,
+      "contractVersion": 2,
+      "currentVersion": 2,
+      "appliedCount": 1,
+      "pendingCount": 0,
+      "fingerprint": "sha256:6e23557df6624d8d3ce731350926f748da4745dfb54451a734c64c5efa0db87a",
+      "targetIdentityDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "unfinishedRepeatables": [
+        "item_names"
+      ],
+      "revisions": [
+        {
+          "version": 2,
+          "state": "applied"
+        }
+      ]
+    }
+  }
+}

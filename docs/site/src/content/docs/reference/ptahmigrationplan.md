@@ -189,6 +189,60 @@ spec:
   controllerStateVersion: 1
 ```
 
+### A version, then two repeatable migrations
+
+An `R__<identity>.sql` file is a repeatable migration. Ptah runs it again
+whenever its content differs from the content it last ran with, after the
+versions of the same run, so the plan lists it under `repeatables`, after
+`migrations`, in the order Ptah runs them. `checksum` is the content the plan
+runs. `appliedChecksum` is the content it last ran with, and a file that never
+ran has none. An approval of the plan approves both lists, and an edit to the
+file after it retires the plan the way a new version does. A plan may carry
+repeatable migrations alone, with no `migrations`.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigrationPlan
+metadata:
+  name: ptah-mplan-31d2a6e0c4b85f9e7a01d3c6
+  namespace: application
+spec:
+  migrationRef:
+    name: orders
+    uid: 8d3f6c2b-1a4e-4f90-b7c5-2e6a8d0b3f41
+  fingerprint: sha256:31d2a6e0c4b85f9e7a01d3c6b7e2f4a9d8c1b0e3f6a5d4c7b2e1f0a9d8c3b6e5
+  createdAt: "2026-11-20T09:30:02Z"
+  currentVersion: 15
+  historyFingerprint: sha256:5c2f8e1a9d4b7c6e3f0a2d5b8c1e4f7a0d3b6c9e2f5a8d1b4c7e0f3a6d9b2c5e
+  migrations:
+    - version: 16
+      versionKey: "0016"
+      description: add item name column
+      checksum: sha256:8f14e45fceea167a5a36dedd4bea2543d1d3b0e8b4e5f6a7c8d9e0f1a2b3c4d5
+      transactionMode: file
+  repeatables:
+    # R__item_names.sql has never run on this database.
+    - identity: item_names
+      checksum: h1:1NfVTZugkzEdI/ikpPK6+pKCWh3zLAJgxxggyD8osHI=
+    # R__order_totals.sql ran with other content, and runs again.
+    - identity: order_totals
+      checksum: h1:FU7p+6z+V3a0y+pZ6vfvyrDzbENut72b0BFOtjHZ/QE=
+      appliedChecksum: h1:4a4Ki6w7/BQvGcK9m10gvDDPC6Oq3pbC6ozeIXyoLRo=
+  contractVersion: 1
+  artifactDigest: sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35
+  verificationPolicyUID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+  verificationPolicyDigest: sha256:084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5
+  coordinationDigest: sha256:e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683
+  targetIdentityDigest: sha256:67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6
+  policyFingerprint: sha256:fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9
+  ptahVersion: v0.34.0
+  executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
+  runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
+  runnerProtocolVersion: 1
+  controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
+  controllerStateVersion: 1
+```
+
 ## spec
 
 | Field | Type | What it does |
@@ -208,7 +262,7 @@ spec:
 | `spec.migrationRef` | `object`, required | MigrationRef is the PtahMigration this plan was computed for. |
 | `spec.migrationRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `spec.migrationRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
-| `spec.migrations` | `[]object`, required | Migrations is the exact sequence, in execution order, and the order is the content: a plan that applies the same migrations in another order is a different plan. So the list is atomic rather than a map keyed by version -- a map declares the order insignificant, and it would also require the version to be unique, which is the thing VersionKey exists to say it is not. |
+| `spec.migrations` | `[]object` | This resource requires: a plan carries at least one migration or repeatable migration. Migrations is the exact sequence, in execution order, and the order is the content: a plan that applies the same migrations in another order is a different plan. So the list is atomic rather than a map keyed by version -- a map declares the order insignificant, and it would also require the version to be unique, which is the thing VersionKey exists to say it is not. It is absent from a plan of repeatable migrations alone. |
 | `spec.migrations[].checkpoint` | `boolean` | Checkpoint marks a migration whose up body is the cumulative schema at its version. |
 | `spec.migrations[].checksum` | `string`, required | Checksum is what the file hashes to under the rule that decides what a revision row records. It is what makes a plan refuse an artifact whose bytes changed after the plan was published. |
 | `spec.migrations[].description` | `string` | Description is the migration's own description, as the artifact spells it. |
@@ -217,6 +271,10 @@ spec:
 | `spec.migrations[].versionKey` | `string` | VersionKey is the exact revision identity. A version does not identify a row on its own: an Atlas repeatable migration carries an opaque token rather than a decimal spelling. |
 | `spec.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy the plan was computed under, so an edited policy retires a plan waiting for a person. |
 | `spec.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the sequence. |
+| `spec.repeatables` | `[]object` | This resource requires: a plan carries at least one migration or repeatable migration. Repeatables are the repeatable migrations the run executes after every migration above has applied, in the order Ptah runs them: the byte order of their identities. The order is the content, as it is for Migrations, so the list is atomic. It is absent when no repeatable migration is new or changed. |
+| `spec.repeatables[].appliedChecksum` | `string` | AppliedChecksum is the digest of the content that last applied. It is absent for a repeatable migration the database has never run, and present for one whose file changed since. The fingerprint binds it and the approver reads it, but no run checks it: Ptah compares only the identity and Checksum with what it selects. |
+| `spec.repeatables[].checksum` | `string`, required | Checksum is the h1 digest of the content the run executes, the value ptah.sum records for the file. Ptah runs nothing when the file it selects under the migration lock hashes to anything else. |
+| `spec.repeatables[].identity` | `string`, required | Identity names the repeatable migration: the part of its file name between R__ and .sql. The database records it under this name, so a renamed file is a different repeatable migration. |
 | `spec.runnerImage` | `string`, required | RunnerImage is the digest-pinned runner image of the manager that published this plan, recorded and not bound. |
 | `spec.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the runner protocol the plan binds: what the runner enforces inside the Pod and the result frame it returns. |
 | `spec.shadowIdentityDigest` | `string` | ShadowIdentityDigest identifies the shadow database the drift check replays into, when the policy asks for one. The Apply refuses to run against another. |

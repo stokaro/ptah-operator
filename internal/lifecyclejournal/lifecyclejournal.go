@@ -353,8 +353,10 @@ func runFinished(run *operatorv1alpha1.MigrationRunStatus) operatorv1alpha1.Jour
 	started := run.StartedAt
 	entry := operatorv1alpha1.JournalEntry{
 		Type: operatorv1alpha1.JournalRunFinished, At: *run.FinishedAt, StartedAt: &started,
-		// The API holds AppliedVersions to 256 entries.
+		// The API holds AppliedVersions to 256 entries, and AppliedRepeatables
+		// to MaxPlannedRepeatables.
 		Outcome: runOutcome(run.Outcome), AppliedVersions: int32(len(run.AppliedVersions)),
+		AppliedRepeatables: int32(len(run.AppliedRepeatables)),
 	}
 	if run.Failure != nil {
 		entry.Failure = run.Failure.DeepCopy()

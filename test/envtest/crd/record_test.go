@@ -1,6 +1,7 @@
 package crd_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -154,6 +155,10 @@ func realmSpec() map[string]any {
 		"sharing":    "Exclusive",
 	}
 }
+
+// repeatableStep is a repeatable migration a plan runs, by the identity its
+// file name carries and the h1 digest of its content.
+var repeatableStep = map[string]any{"identity": "item_names", "checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="}
 
 func basedOn(kind, namespace, name string, spec func() map[string]any) func() *unstructured.Unstructured {
 	return func() *unstructured.Unstructured { return resource(kind, namespace, name, spec()) }
@@ -435,6 +440,57 @@ func TestPtahMigrationPlanRefusals(t *testing.T) {
 			name:   "runnerProtocolVersion zero",
 			mutate: setting(int64(0), "spec", "runnerProtocolVersion"),
 			want:   []cause{{"spec.runnerProtocolVersion", "greater than or equal to 1"}},
+		},
+		refusal{
+			name:   "neither migrations nor repeatable migrations",
+			mutate: removing("spec", "migrations"),
+			want:   []cause{{"spec", "a plan carries at least one migration or repeatable migration"}},
+		},
+		refusal{
+			name:   "an empty list of repeatable migrations",
+			mutate: setting([]any{}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables", "should have at least 1 items"}},
+		},
+		refusal{
+			name: "257 repeatable migrations",
+			mutate: func(t *testing.T, object *unstructured.Unstructured) {
+				repeatables := make([]any, 257)
+				for index := range repeatables {
+					repeatables[index] = merged(repeatableStep, map[string]any{"identity": fmt.Sprintf("view_%03d", index)})
+				}
+				set(t, object, repeatables, "spec", "repeatables")
+			},
+			want: []cause{{"spec.repeatables", "Too many"}},
+		},
+		refusal{
+			name:   "a repeatable migration without an identity",
+			mutate: setting([]any{map[string]any{"checksum": repeatableStep["checksum"]}}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].identity", "Required value"}},
+		},
+		refusal{
+			name:   "a repeatable migration identity no file name carries",
+			mutate: setting([]any{merged(repeatableStep, map[string]any{"identity": "item names"})}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].identity", "should match"}},
+		},
+		refusal{
+			name:   "a repeatable migration identity past 255 bytes",
+			mutate: setting([]any{merged(repeatableStep, map[string]any{"identity": strings.Repeat("a", 256)})}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].identity", "Too long"}},
+		},
+		refusal{
+			name:   "a repeatable migration without a checksum",
+			mutate: setting([]any{map[string]any{"identity": "item_names"}}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].checksum", "Required value"}},
+		},
+		refusal{
+			name:   "a repeatable migration checksum that is not an h1 digest",
+			mutate: setting([]any{merged(repeatableStep, map[string]any{"checksum": "sha256:" + strings.Repeat("c", 64)})}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].checksum", "should match"}},
+		},
+		refusal{
+			name:   "a repeatable migration's applied checksum that is not an h1 digest",
+			mutate: setting([]any{merged(repeatableStep, map[string]any{"appliedChecksum": "h1:x"})}, "spec", "repeatables"),
+			want:   []cause{{"spec.repeatables[0].appliedChecksum", "should match"}},
 		},
 	)
 	rows = append(rows, planSourceRefusals()...)

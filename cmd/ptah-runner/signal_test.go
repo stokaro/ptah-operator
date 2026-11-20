@@ -312,7 +312,7 @@ func migrationApplyEnvironment(t *testing.T, operationID string, grace time.Dura
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequenceDigest, err := fingerprint.MigrationSequenceDigest(entries)
+	sequenceDigest, err := fingerprint.MigrationSequenceDigest(entries, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -204,7 +204,7 @@ would be.
 For a migration, read the record with SQL or with Ptah:
 
 ```sql
-SELECT logged_at, version, state, actor, actor_source, actor_origin, run_reference
+SELECT logged_at, version, repeatable, state, actor, actor_source, actor_origin, run_reference
 FROM schema_migrations_log
 ORDER BY logged_at, seq;
 ```

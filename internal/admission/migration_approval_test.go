@@ -460,7 +460,7 @@ func migrationApprovalFixture(
 		ExecutorImage: binding.ExecutorImage, RunnerProtocolVersion: binding.RunnerProtocolVersion,
 	}
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "checksum-3"}}
-	sequenceDigest, err := migrationplan.SequenceDigest(planned)
+	sequenceDigest, err := migrationplan.SequenceDigest(planned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,6 +38,10 @@ const (
 	// is published rather than after.
 	MaxMigrations = 256
 
+	// MaxRepeatables is the most repeatable migrations one plan may carry, by
+	// the same reasoning.
+	MaxRepeatables = operatorv1alpha1.MaxPlannedRepeatables
+
 	namePrefix = "ptah-mplan-"
 )
 
@@ -197,13 +201,56 @@ func HistoryFingerprint(report dataplane.MigrationStatusReport) (string, error) 
 			"total":   report.DirtyRevision.Total,
 		}
 	}
+	// What the record says of each repeatable migration is part of the
+	// premise: a file that changed, a record another run wrote, or an attempt
+	// that failed moves the fingerprint and retires a plan made before it. A
+	// history without them keeps the fingerprint it had before they existed,
+	// so a plan published then is not retired by an upgrade.
+	if len(report.Repeatables) > 0 {
+		repeatables := make([]map[string]any, 0, len(report.Repeatables))
+		for _, repeatable := range report.Repeatables {
+			repeatables = append(repeatables, map[string]any{
+				"identity":         repeatable.Identity,
+				"checksum":         repeatable.Checksum,
+				"applied_checksum": repeatable.AppliedChecksum,
+				"orphaned":         repeatable.Orphaned,
+				"state":            repeatable.State,
+				"no_transaction":   repeatable.NoTransaction,
+			})
+		}
+		document["repeatables"] = repeatables
+	}
 	return fingerprint.DigestCanonicalJSON(document)
 }
 
 // Sequence selects the migrations a plan executes, in the order the history
-// document listed them. The order is the content: a plan that applies the same
-// migrations in another order is a different plan.
-func Sequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.PlannedMigration, error) {
+// document listed them, and the repeatable migrations that run after them, in
+// the order Ptah lists them, which is the order it runs them. The order is the
+// content: a plan that applies the same migrations in another order is a
+// different plan.
+//
+// A history may have repeatable work and no pending version, or the reverse.
+// Only one with neither has nothing to plan.
+func Sequence(report dataplane.MigrationStatusReport) (
+	[]operatorv1alpha1.PlannedMigration, []operatorv1alpha1.PlannedRepeatableMigration, error,
+) {
+	planned, err := versionedSequence(report)
+	if err != nil {
+		return nil, nil, err
+	}
+	repeatables, err := repeatableSequence(report)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(planned) == 0 && len(repeatables) == 0 {
+		return nil, nil, errors.New("the history reports nothing pending")
+	}
+	return planned, repeatables, nil
+}
+
+// versionedSequence is the pending versioned migrations, as Sequence selects
+// them, or none.
+func versionedSequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.PlannedMigration, error) {
 	planned := make([]operatorv1alpha1.PlannedMigration, 0, len(report.Migrations))
 	for _, record := range report.Migrations {
 		if record.State != dataplane.MigrationStatePending && record.State != dataplane.MigrationStateOutOfOrder {
@@ -229,7 +276,7 @@ func Sequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.Planne
 		})
 	}
 	if len(planned) == 0 {
-		return nil, errors.New("the history reports nothing pending")
+		return nil, nil
 	}
 	if len(planned) > MaxMigrations {
 		return nil, fmt.Errorf("the pending sequence is %d migrations, over the %d a plan may carry", len(planned), MaxMigrations)
@@ -243,13 +290,45 @@ func Sequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.Planne
 	return planned, nil
 }
 
-// SequenceDigest binds the plan's fingerprint to the exact sequence it carries.
+// repeatableSequence is the repeatable migrations the next run executes: each
+// file the database has no record of, and each whose content changed since it
+// last applied, in the order the history lists them. A record whose attempt
+// did not finish is never planned, since Ptah runs nothing while one exists,
+// and the operator never asks it to retry one.
+func repeatableSequence(report dataplane.MigrationStatusReport) ([]operatorv1alpha1.PlannedRepeatableMigration, error) {
+	var planned []operatorv1alpha1.PlannedRepeatableMigration
+	for _, repeatable := range report.PendingRepeatables() {
+		if !dataplane.IsRepeatableIdentity(repeatable.Identity) || !dataplane.IsRepeatableChecksum(repeatable.Checksum) {
+			return nil, errors.New("a pending repeatable migration carries no identity a file name can carry, or no h1 digest")
+		}
+		planned = append(planned, operatorv1alpha1.PlannedRepeatableMigration{
+			Identity:        repeatable.Identity,
+			Checksum:        repeatable.Checksum,
+			AppliedChecksum: repeatable.AppliedChecksum,
+		})
+	}
+	if len(planned) > MaxRepeatables {
+		return nil, fmt.Errorf("%d repeatable migrations are pending, over the %d a plan may carry", len(planned), MaxRepeatables)
+	}
+	if len(planned) > 0 {
+		if _, err := workload.EncodeRepeatableSequence(planned); err != nil {
+			return nil, err
+		}
+	}
+	return planned, nil
+}
+
+// SequenceDigest binds the plan's fingerprint to the exact sequence it carries:
+// its versioned migrations and the repeatable migrations after them.
 //
 // The derivation itself lives in internal/workload, because the Apply Job has
 // to carry the same digest and that package is below this one. One rule, two
 // callers.
-func SequenceDigest(planned []operatorv1alpha1.PlannedMigration) (string, error) {
-	return workload.MigrationSequenceDigest(planned)
+func SequenceDigest(
+	planned []operatorv1alpha1.PlannedMigration,
+	repeatables []operatorv1alpha1.PlannedRepeatableMigration,
+) (string, error) {
+	return workload.MigrationSequenceDigest(planned, repeatables)
 }
 
 // Desired builds the object the controller publishes. Its metadata is exactly

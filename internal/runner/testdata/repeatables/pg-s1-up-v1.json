@@ -1,0 +1,48 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "applied",
+  "planned": [
+    1
+  ],
+  "planned_keys": [
+    "1"
+  ],
+  "applied": [
+    1
+  ],
+  "applied_keys": [
+    "1"
+  ],
+  "migration_log": {
+    "written": 2
+  },
+  "status": {
+    "current_version": 1,
+    "applied_migrations": [
+      1
+    ],
+    "applied_migration_keys": [
+      "1"
+    ],
+    "pending_migrations": [],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": false,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Items",
+        "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_at": "2026-11-20T16:13:29.825685Z",
+        "execution_time_ms": 2,
+        "state": "applied"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

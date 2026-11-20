@@ -83,7 +83,23 @@ A PostgreSQL column default whose cast changes its value, as `DEFAULT
 the database holds another default
 ([stokaro/ptah#6353](https://github.com/stokaro/ptah/pull/6353)). Measured on
 PostgreSQL 17, v0.33.1 read such a column in sync, so a schema that read
-`InSync` can report `columns_modified` after the upgrade. Nothing else.
+`InSync` can report `columns_modified` after the upgrade.
+
+A `PtahMigration` that 0.2.15 stopped with `RepeatableMigrationsUnsupported`
+plans its repeatable migrations on its first history read after the upgrade,
+and under `apply: Always` runs them without a person. Find such resources
+first, and suspend the ones whose plan you want to read before it runs:
+
+```sh
+kubectl get ptahmigrations -A \
+  -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,REASON:.status.conditions[?(@.type=="Blocked")].reason' \
+  | grep RepeatableMigrationsUnsupported
+```
+
+The CRD schema version moves from 23 to 24: a `PtahMigrationPlan` may carry
+repeatable migrations, and the migration status gains fields that name them.
+Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
+[a rollback](../../use/operations/#rollback) to 0.2.15. Nothing else.
 
 - **A schema file Ptah cannot read stops the schema at `Blocked`.** An Observe
   or a Plan that Ptah answers with `desired_source_unreadable` named a file it
@@ -136,6 +152,35 @@ PostgreSQL 17, v0.33.1 read such a column in sync, so a schema that read
   refused the approved plan (backslash-mode)` before any statement.
   [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
   says what to change.
+- **A `PtahMigration` runs repeatable migrations.** An `R__<identity>.sql` file
+  of the artifact that is new, or whose content changed since it last applied,
+  is planned after the pending versions, in Ptah's order, in the plan's
+  `spec.repeatables` with its content digest. The plan's fingerprint covers
+  them, so an approval names them as it names versions, `apply: Always` runs
+  them without one, and the Apply passes them to Ptah in `--expect-sequence`.
+  A plan may carry repeatable migrations and no version. The history counts
+  them in `pendingRepeatableCount`, which `kubectl get -o wide` prints, a run
+  names those it applied in `status.lastRun.appliedRepeatables` and the
+  journal counts them, a drift check replays the applied ones, and
+  `kubectl ptah approve` and `kubectl ptah migration` list them.
+  [Repeatable migrations](../../use/migrations/#repeatable-migrations) says
+  how a run reports one that failed.
+- **An unfinished repeatable migration stops the resource.** A record whose
+  last attempt failed or recorded no outcome reads `Blocked` with
+  `RepeatableMigrationUnfinished`, names the record and Ptah's repair command,
+  with `--force` where Ptah requires it, and publishes no plan. An Apply
+  that meets such a record ran nothing and reads `Failed`, with no unresolved
+  run, though Ptah may report it `unknown`.
+  [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
+  says how to clear it. `RepeatableMigrationsUnsupported` no longer exists.
+- **An applied record no file carries stops nothing.** A repeatable migration
+  whose file was deleted or renamed leaves its record, which Ptah leaves alone,
+  and the resource converges as it would without it.
+  `status.history.orphanedRepeatables` names the record, and the first history
+  read that lists it sends one `RepeatableMigrationOrphaned` Warning with the
+  command that deletes the record. The Warning
+  [can be lost](../../troubleshoot/events/#an-event-can-be-lost), so the status
+  list is the record.
 - **Executor.** The verified executor is now Ptah v0.34.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. Each MySQL schema read also asks

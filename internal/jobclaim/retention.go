@@ -56,20 +56,21 @@ func MigrationRunUnresolved(outcome operatorv1alpha1.MigrationRunOutcome) bool {
 
 // MigrationRunStops reports whether a run stops its resource, so that nothing runs
 // again until a reading or a person lets it. An unresolved run does. So does a Failed
-// run whose report holds the dirty revision it left: the History read that follows
-// refuses on that row until a person repairs it. Any other Failed run does not. One
-// that stopped before it selected a migration runs again after the failure interval,
-// and one Ptah refused because the history moved ran nothing and leaves no row, so the
-// next reading plans again.
-func MigrationRunStops(outcome operatorv1alpha1.MigrationRunOutcome, leftDirtyRevision bool) bool {
+// run whose report holds the dirty revision it left, or a repeatable migration whose
+// attempt it left failed: the History read that follows refuses on that record until
+// a person repairs it. Any other Failed run does not. One that stopped before it
+// selected a migration runs again after the failure interval, and one Ptah refused
+// because the history moved ran nothing and leaves no record, so the next reading
+// plans again.
+func MigrationRunStops(outcome operatorv1alpha1.MigrationRunOutcome, leftDirtyRecord bool) bool {
 	return MigrationRunUnresolved(outcome) ||
-		(outcome == operatorv1alpha1.MigrationRunOutcomeFailed && leftDirtyRevision)
+		(outcome == operatorv1alpha1.MigrationRunOutcomeFailed && leftDirtyRecord)
 }
 
 // MigrationRunKeepsLog reports whether a migration run that did not succeed keeps
 // FailedApplyRetentionTTLSeconds. Every other run keeps CleanupTTLSeconds.
-func MigrationRunKeepsLog(approved bool, outcome operatorv1alpha1.MigrationRunOutcome, leftDirtyRevision bool) bool {
-	return approved || MigrationRunStops(outcome, leftDirtyRevision)
+func MigrationRunKeepsLog(approved bool, outcome operatorv1alpha1.MigrationRunOutcome, leftDirtyRecord bool) bool {
+	return approved || MigrationRunStops(outcome, leftDirtyRecord)
 }
 
 // MigrationRunMayKeepLog is what admission can hold a run no approval names to: an

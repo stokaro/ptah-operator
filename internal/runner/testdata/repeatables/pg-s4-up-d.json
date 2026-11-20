@@ -1,0 +1,88 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "applied",
+  "planned": [
+    1,
+    2
+  ],
+  "planned_keys": [
+    "1",
+    "2"
+  ],
+  "applied": [
+    1,
+    2
+  ],
+  "applied_keys": [
+    "1",
+    "2"
+  ],
+  "planned_repeatables": [
+    {
+      "identity": "item_names",
+      "path": "R__item_names.sql",
+      "checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+      "reason": "new"
+    }
+  ],
+  "applied_repeatables": [
+    "item_names"
+  ],
+  "migration_log": {
+    "written": 6
+  },
+  "status": {
+    "current_version": 2,
+    "applied_migrations": [
+      1,
+      2
+    ],
+    "applied_migration_keys": [
+      "1",
+      "2"
+    ],
+    "pending_migrations": [],
+    "out_of_order_migrations": [],
+    "total_migrations": 2,
+    "has_pending_changes": false,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Items",
+        "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_at": "2026-11-20T16:14:34.312525Z",
+        "execution_time_ms": 2,
+        "state": "applied"
+      },
+      {
+        "version": 2,
+        "version_key": "2",
+        "description": "Add Color",
+        "checksum": "2c628ae375577bfe3487f9976c374c9a05fb39fe813cb485ad5bff50c3f70ced",
+        "applied_checksum": "2c628ae375577bfe3487f9976c374c9a05fb39fe813cb485ad5bff50c3f70ced",
+        "applied_at": "2026-11-20T16:14:34.318666Z",
+        "execution_time_ms": 1,
+        "state": "applied"
+      }
+    ],
+    "repeatables": [
+      {
+        "identity": "item_names",
+        "path": "R__item_names.sql",
+        "checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+        "applied_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+        "state": "applied",
+        "attempt_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+        "attempt_order": 1,
+        "attempted_at": "2026-11-20T16:14:34.325257Z",
+        "applied_at": "2026-11-20T16:14:34.327074Z"
+      }
+    ],
+    "current_version_key": "2"
+  }
+}

@@ -1638,6 +1638,9 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	if err := r.retireMigrationClaim(ctx, before, migration, mutationlifecycle.DispositionAccounted, false); err != nil {
 		return ctrl.Result{}, err
 	}
+	if operation.Type == operatorv1alpha1.MigrationOperationHistory {
+		r.reportOrphanedRepeatables(migration, before.Status.History)
+	}
 	if operation.Type == operatorv1alpha1.MigrationOperationResolve {
 		// A Git or OCI resolution names no snapshot, so one a ConfigMap
 		// source left goes now that the status no longer names it.
@@ -1897,12 +1900,21 @@ func unresolvedRunHoldMessage(unresolved *operatorv1alpha1.UnresolvedMigrationRu
 // of -- the documented recovery for a run that half-applied one -- from the
 // same gesture without the repair, because the revision table does not record
 // the half that was committed.
+//
+// A repeatable migration still pending keeps the record as a pending version
+// does. It is not work the run half-did: one the run started leaves a running
+// or failed record, which stops the resource on its own. The rule is that only
+// a reading with nothing of the artifact left to apply settles the record, and
+// a pending repeatable migration is something left to apply, so a person
+// acknowledges the run before the next plan runs it. That is the conservative
+// choice use/migrations.md documents; it costs an acknowledgment where a
+// reading might have been enough.
 func migrationUnresolvedRunSettledBy(
 	unresolved *operatorv1alpha1.UnresolvedMigrationRunStatus,
 	history *operatorv1alpha1.MigrationHistoryStatus,
-	pending []int64,
+	pendingWork int,
 ) bool {
-	if len(pending) > 0 {
+	if pendingWork > 0 {
 		return false
 	}
 	if unresolved == nil || unresolved.TargetIdentityDigest == "" {
@@ -1913,7 +1925,29 @@ func migrationUnresolvedRunSettledBy(
 
 // migrationsPending starts a sentence about the pending count.
 func migrationsPending(count int) string {
-	return fmt.Sprintf("%d %s pending", count, byCount(count, "migration is", "migrations are"))
+	return workPending(count, 0)
+}
+
+// workPending starts a sentence about pending versioned and repeatable
+// migrations. Without repeatable ones it reads as migrationsPending always
+// has.
+func workPending(migrations, repeatables int) string {
+	return work(migrations, repeatables, "") + " " + byCount(migrations+repeatables, "is", "are") + " pending"
+}
+
+// work counts versioned and repeatable migrations in one phrase, with an
+// adjective before each noun: "2 planned migrations", "1 planned migration and
+// 1 planned repeatable migration", "3 repeatable migrations". The versioned
+// count is named alone when there is nothing else to name.
+func work(migrations, repeatables int, adjective string) string {
+	var parts []string
+	if migrations > 0 || repeatables == 0 {
+		parts = append(parts, fmt.Sprintf("%d %s%s", migrations, adjective, byCount(migrations, "migration", "migrations")))
+	}
+	if repeatables > 0 {
+		parts = append(parts, fmt.Sprintf("%d %srepeatable %s", repeatables, adjective, byCount(repeatables, "migration", "migrations")))
+	}
+	return strings.Join(parts, " and ")
 }
 
 // recordMigrationHistory turns the database's own account into status. The
@@ -1930,9 +1964,21 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		return err
 	}
 	pending := report.Pending()
+	pendingRepeatables := report.PendingRepeatables()
+	unfinishedRepeatables := report.UnfinishedRepeatables()
+	pendingWork := len(pending) + len(pendingRepeatables)
 	modified := report.Modified()
 	outOfOrder := report.OutOfOrder()
 	artifactVersion := report.LastVersion()
+	// A database ahead of its artifact is the HistoryAhead refusal below, and
+	// an artifact behind its database lacks a newer file as surely as it
+	// lacks a newer version. A record that file would carry is not orphaned
+	// then, and naming it as orphaned would point a person at deleting a
+	// correct record, so the history lists none until the artifact catches up.
+	var orphanedRepeatables []dataplane.MigrationRepeatable
+	if report.CurrentVersion <= artifactVersion {
+		orphanedRepeatables = report.OrphanedRepeatables()
+	}
 	// The record of a run nobody accounted for decides whether a pending
 	// migration may be planned at all, and it is the only thing that decides
 	// it. The conditions below rewrite whatever reason the resource carried;
@@ -1948,6 +1994,12 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		ShadowIdentityDigest: shadowIdentityDigest,
 		PendingCount:         int32(len(pending)),
 		Dirty:                report.DirtyRevision != nil,
+		// Every pending repeatable migration is planned, so the count is the
+		// length of the next plan's repeatable list, which admission holds a
+		// plan to as it holds the versioned list to PendingCount.
+		PendingRepeatableCount: int32(len(pendingRepeatables)),
+		UnfinishedRepeatables:  repeatableIdentities(unfinishedRepeatables, maxListedRepeatables),
+		OrphanedRepeatables:    repeatableIdentities(orphanedRepeatables, maxListedRepeatables),
 	}
 	for _, record := range report.Migrations {
 		if record.State == dataplane.MigrationStateApplied || record.State == dataplane.MigrationStateCheckpointCovered {
@@ -1973,19 +2025,24 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			operatorv1alpha1.ReasonHistoryDirty, "The revision table holds a dirty row")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryDirty, "Nothing runs while a revision is recorded dirty")
-	// Ptah v0.30.0 runs a repeatable migration after the versioned ones, and
-	// again whenever its content changes. The approval this operator binds
-	// names a versioned sequence and no repeatable, so Ptah would refuse every
-	// run of a plan published here, and a plan that ran the repeatables would
-	// run SQL nobody approved. No plan is published for either.
-	case len(report.Repeatables) > 0:
+	// A repeatable migration whose last attempt failed or recorded no
+	// outcome is the dirty row of the repeatable record. Ptah refuses every
+	// run while one exists, and only a person can say what an attempt outside
+	// a transaction, or one that stopped, left behind.
+	case len(unfinishedRepeatables) > 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
-			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, repeatablesRefusal(report.Repeatables))
+			operatorv1alpha1.ReasonRepeatableMigrationUnfinished, unfinishedRepeatablesRefusal(unfinishedRepeatables))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, "The artifact or the database holds repeatable migrations")
+			operatorv1alpha1.ReasonRepeatableMigrationUnfinished, "The repeatable migration record holds an attempt that did not finish")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
-			operatorv1alpha1.ReasonRepeatableMigrationsUnsupported, "Nothing runs while the history lists repeatable migrations")
+			operatorv1alpha1.ReasonRepeatableMigrationUnfinished,
+			"Nothing runs while a repeatable migration's last attempt is unfinished")
+	// A record that applied and that no file carries is not a refusal. Ptah
+	// leaves it alone, runs the rest and reports a run with nothing else to do
+	// as up to date, and the drift check replays it from the body the record
+	// keeps, so the resource converges as it would without the record. The
+	// history lists it, and reportOrphanedRepeatables names each one once.
 	case len(modified) > 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
@@ -2035,11 +2092,11 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	// record. Anything else -- work still pending, or a reading of a database
 	// this run never addressed -- waits for a person, exactly as the run's own
 	// condition said it would.
-	case unresolved != nil && !migrationUnresolvedRunSettledBy(unresolved, history, pending):
+	case unresolved != nil && !migrationUnresolvedRunSettledBy(unresolved, history, pendingWork):
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		refusal := fmt.Sprintf("%s and the last run's outcome was %s, so %s run again",
-			migrationsPending(len(pending)), unresolved.Outcome, byCount(len(pending), "it may not", "none may"))
-		if len(pending) == 0 {
+			workPending(len(pending), len(pendingRepeatables)), unresolved.Outcome, byCount(pendingWork, "it may not", "none may"))
+		if pendingWork == 0 {
 			refusal = fmt.Sprintf(
 				"Nothing is pending here, but this is a different database from the one the %s run addressed, "+
 					"so it does not say what that run did",
@@ -2063,7 +2120,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			operatorv1alpha1.ReasonHistoryAhead, "The database records a migration this artifact does not carry")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "Nothing runs while the database is ahead of the artifact")
-	case len(pending) == 0:
+	case pendingWork == 0:
 		// The one reading that settles an unresolved run: this database has
 		// every migration the artifact carries, so nothing is left for that run
 		// to have half-done. It is the only place a reading removes the record,
@@ -2092,41 +2149,133 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			operatorv1alpha1.ReasonHistoryMatched, "The history continues this artifact")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonMigrationsPending,
-			migrationsPending(len(pending)))
+			workPending(len(pending), len(pendingRepeatables)))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonMigrationsPending,
-			fmt.Sprintf("A plan for %d pending %s is being published", len(pending), byCount(len(pending), "migration", "migrations")))
+			fmt.Sprintf("A plan for %s is being published", work(len(pending), len(pendingRepeatables), "pending ")))
 	}
 	return nil
+}
+
+// maxListedRepeatables bounds the identities a history status lists, as the
+// CRD bounds the lists that carry them.
+const maxListedRepeatables = 64
+
+// repeatableIdentities is the identities of repeatables, at most bound and
+// each once: the status lists are sets, and a record's identity was cleaned of
+// anything sensitive on its way here, so two records could read alike.
+func repeatableIdentities(repeatables []dataplane.MigrationRepeatable, bound int) []string {
+	var identities []string
+	for _, repeatable := range repeatables {
+		if len(identities) == bound {
+			break
+		}
+		if !slices.Contains(identities, repeatable.Identity) {
+			identities = append(identities, repeatable.Identity)
+		}
+	}
+	return identities
 }
 
 // namedRepeatables is how many repeatable migrations a refusal names before it
 // counts the rest.
 const namedRepeatables = 8
 
-// repeatablesRefusal names the repeatable migrations a history lists: the file
-// of each, or for a record row no file carries, its identity and where it is.
-func repeatablesRefusal(repeatables []dataplane.MigrationRepeatable) string {
-	names := make([]string, 0, min(len(repeatables), namedRepeatables))
-	for _, repeatable := range repeatables[:min(len(repeatables), namedRepeatables)] {
-		switch {
-		case repeatable.Path != "":
-			names = append(names, repeatable.Path)
-		case repeatable.Identity != "":
-			names = append(names, repeatable.Identity+" (recorded by the database, in no file of the artifact)")
-		default:
-			names = append(names, "a repeatable migration with no readable name")
-		}
+// repeatableRepair is the Ptah command that deletes a repeatable migration's
+// record. Ptah asks for --force while a file of the directory still carries
+// the identity, since the next run executes that file again. Ptah refuses an
+// identity no file name carries, so a caller names no command for one.
+func repeatableRepair(repeatable dataplane.MigrationRepeatable) string {
+	if repeatable.Orphaned {
+		return "`ptah migrations repair --repeatable " + repeatable.Identity + "`"
 	}
-	listed := strings.Join(names, ", ")
-	if more := len(repeatables) - len(names); more > 0 {
-		listed += fmt.Sprintf(", and %d more", more)
+	return "`ptah migrations repair --repeatable " + repeatable.Identity + " --force`"
+}
+
+// unfinishedRepeatablesRefusal says which repeatable migrations did not
+// finish, what each attempt is known to have done, and how Ptah's record is
+// repaired.
+func unfinishedRepeatablesRefusal(unfinished []dataplane.MigrationRepeatable) string {
+	described := make([]string, 0, min(len(unfinished), namedRepeatables))
+	for _, repeatable := range unfinished[:min(len(unfinished), namedRepeatables)] {
+		var what string
+		switch {
+		case repeatable.State == dataplane.RepeatableStateRunning:
+			what = "recorded its start and no outcome, so whether its statements took effect is not known"
+		case repeatable.NoTransaction:
+			what = "failed outside a transaction and may have left part of its work behind"
+		default:
+			what = "failed inside a transaction, which took no effect"
+		}
+		if repeatable.Orphaned {
+			what += "; no file of this artifact carries it"
+		}
+		// A record no file carries was read from the database and may hold
+		// any text. Ptah's repair refuses an identity no file name carries,
+		// so such a record gets no command a person could paste.
+		repair := "repair: " + repeatableRepair(repeatable)
+		if !dataplane.IsRepeatableIdentity(repeatable.Identity) {
+			repair = "Ptah's repair refuses this identity; only deleting its row from schema_migrations_repeatable removes it"
+		}
+		described = append(described, fmt.Sprintf("%s %s (%s)", repeatableName(repeatable.Identity), what, repair))
+	}
+	listed := strings.Join(described, "; ")
+	if more := len(unfinished) - len(described); more > 0 {
+		listed += fmt.Sprintf("; and %d more", more)
 	}
 	return bounded(fmt.Sprintf(
-		"The history lists %d repeatable %s, which this operator does not run: %s. Remove the R__ files from the artifact "+
-			"and write what they do as versioned migrations; `ptah migrations repair --repeatable <identity>` deletes a row "+
-			"of the database's record, with --force while its file is still in the migration directory",
-		len(repeatables), byCount(len(repeatables), "migration", "migrations"), listed), 1024)
+		"Repeatable %s: %s. Ptah runs nothing while one is unfinished. Establish what the attempt did and correct "+
+			"the file, then delete the record with the repair command; the next plan runs the file again",
+		byCount(len(unfinished), "migration", "migrations"), listed), 1024)
+}
+
+// newlyOrphanedRepeatables is the identities stored lists as orphaned that
+// previous did not. The stored history is the record of what an Event has
+// named: an identity is named once while reads keep listing it, and again only
+// after a read that no longer listed it.
+func newlyOrphanedRepeatables(previous, stored *operatorv1alpha1.MigrationHistoryStatus) []string {
+	if stored == nil {
+		return nil
+	}
+	var named []string
+	if previous != nil {
+		named = previous.OrphanedRepeatables
+	}
+	var fresh []string
+	for _, identity := range stored.OrphanedRepeatables {
+		if !slices.Contains(named, identity) {
+			fresh = append(fresh, identity)
+		}
+	}
+	return fresh
+}
+
+// reportOrphanedRepeatables emits one Warning Event for each identity the
+// stored history newly lists as orphaned, with the command that removes the
+// record for whoever wants it gone. It runs after the status write that
+// stored the history, from the object that write decoded, so a write that
+// failed names nothing and the next pass compares against what was stored. A
+// manager that stops between the two loses the Event; the history keeps the
+// identity.
+//
+// The record was read from the database, which may hold an identity no file
+// name carries. Ptah's repair refuses such an identity, so the Event names no
+// command for it, and quotes it, since it may hold any text.
+func (r *MigrationReconciler) reportOrphanedRepeatables(
+	migration *operatorv1alpha1.PtahMigration,
+	previous *operatorv1alpha1.MigrationHistoryStatus,
+) {
+	for _, identity := range newlyOrphanedRepeatables(previous, migration.Status.History) {
+		removal := "To remove the record, run " + repeatableRepair(dataplane.MigrationRepeatable{Identity: identity, Orphaned: true})
+		if !dataplane.IsRepeatableIdentity(identity) {
+			removal = "Its identity is not one a file name carries, which `ptah migrations repair --repeatable` refuses, " +
+				"so the record can only be removed by deleting its row from schema_migrations_repeatable"
+		}
+		r.event(migration, corev1.EventTypeWarning, "RepeatableMigrationOrphaned",
+			"The database records repeatable migration %s as applied, and no file of the artifact carries it. "+
+				"Ptah runs nothing for it and leaves what it created in place. %s",
+			repeatableName(identity), removal)
+	}
 }
 
 // publishMigrationPlan writes the immutable manifest of the pending sequence
@@ -2143,11 +2292,11 @@ func (r *MigrationReconciler) publishMigrationPlan(
 	if binding == nil || history == nil || migration.Status.Artifact == nil {
 		return errors.New("a plan needs a resolved artifact, a read history, and an execution binding")
 	}
-	planned, err := migrationplan.Sequence(report)
+	planned, repeatables, err := migrationplan.Sequence(report)
 	if err != nil {
 		return fmt.Errorf("select the pending sequence: %w", err)
 	}
-	sequenceDigest, err := migrationplan.SequenceDigest(planned)
+	sequenceDigest, err := migrationplan.SequenceDigest(planned, repeatables)
 	if err != nil {
 		return err
 	}
@@ -2201,6 +2350,7 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		MigrationRef:             operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
 		Fingerprint:              planFingerprint,
 		Migrations:               planned,
+		Repeatables:              repeatables,
 		HistoryFingerprint:       history.Fingerprint,
 		CurrentVersion:           history.CurrentVersion,
 		ArtifactDigest:           planBinding.ArtifactDigest,
@@ -2240,21 +2390,25 @@ func (r *MigrationReconciler) publishMigrationPlan(
 		published = existing
 	}
 	migration.Status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: published.Name, UID: published.UID}
-	r.applyMigrationPolicyPhase(migration, len(planned))
+	r.applyMigrationPolicyPhase(migration, len(planned), len(repeatables))
 	return nil
 }
 
 // applyMigrationPolicyPhase reports what the policy says happens next. Nothing
 // here executes: the phase and the conditions are what an operator reads, and
 // what the approval an operator writes is judged against.
-func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alpha1.PtahMigration, planned int) {
+//
+// A repeatable migration is work like a version: it is in the plan, and the
+// policy decides it the same way, with no review of its own.
+func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alpha1.PtahMigration, planned, repeatables int) {
+	total := planned + repeatables
 	switch migration.Spec.Policy.Apply {
 	case operatorv1alpha1.ApplyPolicyNever:
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonNotRequired, "The apply policy is Never, so no approval is consulted")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyDisabled,
-			migrationsPending(planned)+" and the apply policy is Never")
+			workPending(planned, repeatables)+" and the apply policy is Never")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyDisabled, "The apply policy is Never, so nothing runs from here")
 	case operatorv1alpha1.ApplyPolicyAlways:
@@ -2262,15 +2416,15 @@ func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alp
 			operatorv1alpha1.ReasonNotRequired, "The apply policy is Always, so no approval is required")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyPending,
-			fmt.Sprintf("%d %s planned", planned, byCount(planned, "migration is", "migrations are")))
+			fmt.Sprintf("%s %s planned", work(planned, repeatables, ""), byCount(total, "is", "are")))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonApplyPending,
-			fmt.Sprintf("An Apply of %d planned %s is what happens next", planned, byCount(planned, "migration", "migrations")))
+			fmt.Sprintf("An Apply of %s is what happens next", work(planned, repeatables, "planned ")))
 	default:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseAwaitingApproval
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonAwaitingApproval,
-			fmt.Sprintf("%d planned %s an approval naming this plan", planned, byCount(planned, "migration needs", "migrations need")))
+			fmt.Sprintf("%s %s an approval naming this plan", work(planned, repeatables, "planned "), byCount(total, "needs", "need")))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonAwaitingApproval, "The plan is waiting for the approval its policy requires")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
@@ -3284,6 +3438,14 @@ func boundedVersions(versions []int64, limit int) []int64 {
 		versions = versions[:limit]
 	}
 	return append([]int64(nil), versions...)
+}
+
+// boundedIdentities is boundedVersions for repeatable migration identities.
+func boundedIdentities(identities []string, limit int) []string {
+	if len(identities) > limit {
+		identities = identities[:limit]
+	}
+	return append([]string(nil), identities...)
 }
 
 // unaccountedMigrationJobReason and retriedMigrationJobReason word the same

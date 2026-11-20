@@ -952,6 +952,20 @@ func TestMigrationEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			// A plan may run repeatable migrations and no version, so the
+			// entry counts them apart from the versions.
+			name:   "a run that applied repeatable migrations alone",
+			before: operatorv1alpha1.PtahMigrationStatus{ActiveOperation: apply},
+			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{
+				Outcome: operatorv1alpha1.MigrationRunOutcomeApplied, JobUID: "job-2", StartedAt: run.StartedAt,
+				FinishedAt: run.FinishedAt, AppliedRepeatables: []string{"item_names", "order_totals"},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalRunFinished, At: at(-time.Minute), StartedAt: ptr(at(-3 * time.Minute)),
+				JobUID: "job-2", Outcome: operatorv1alpha1.JournalSucceeded, AppliedRepeatables: 2,
+			}},
+		},
+		{
 			name:   "a run that started the second its predecessor did, under another Job",
 			before: operatorv1alpha1.PtahMigrationStatus{LastRun: run, ActiveOperation: apply},
 			after: operatorv1alpha1.PtahMigrationStatus{LastRun: &operatorv1alpha1.MigrationRunStatus{

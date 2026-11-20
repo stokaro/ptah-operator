@@ -89,7 +89,15 @@ type HistoryView struct {
 	// Linear execution refuses them, so a reader of this view has to see which
 	// ones rather than a phase that says the history is blocked.
 	OutOfOrderVersions []int64 `json:"outOfOrderVersions,omitempty"`
-	Fingerprint        string  `json:"fingerprint,omitempty"`
+	// PendingRepeatableCount counts repeatable migrations whose file is new or
+	// changed since it last ran: they run after the pending versions.
+	PendingRepeatableCount int32 `json:"pendingRepeatableCount,omitempty"`
+	// UnfinishedRepeatables names the repeatable migrations that stop the
+	// resource until someone repairs the record. OrphanedRepeatables names
+	// the applied records no file carries, which stop nothing.
+	UnfinishedRepeatables []string `json:"unfinishedRepeatables,omitempty"`
+	OrphanedRepeatables   []string `json:"orphanedRepeatables,omitempty"`
+	Fingerprint           string   `json:"fingerprint,omitempty"`
 }
 
 // PlanView is the sequence the operator would run next. A migration plan holds
@@ -102,6 +110,16 @@ type PlanView struct {
 	CurrentVersion int64                  `json:"currentVersion"`
 	CreatedAt      metav1.Time            `json:"createdAt"`
 	Migrations     []PlannedMigrationView `json:"migrations"`
+	// Repeatables run after Migrations, in this order.
+	Repeatables []PlannedRepeatableView `json:"repeatables,omitempty"`
+}
+
+// PlannedRepeatableView is one repeatable migration the plan runs: its
+// content, and the content it last ran with where it ran before.
+type PlannedRepeatableView struct {
+	Identity        string `json:"identity"`
+	Checksum        string `json:"checksum"`
+	AppliedChecksum string `json:"appliedChecksum,omitempty"`
 }
 
 // PlannedMigrationView is one migration of the sequence.
@@ -124,7 +142,9 @@ type RunView struct {
 	StartedAt       metav1.Time  `json:"startedAt"`
 	FinishedAt      *metav1.Time `json:"finishedAt,omitempty"`
 	AppliedVersions []int64      `json:"appliedVersions,omitempty"`
-	Message         string       `json:"message,omitempty"`
+	// AppliedRepeatables names the repeatable migrations the run applied.
+	AppliedRepeatables []string `json:"appliedRepeatables,omitempty"`
+	Message            string   `json:"message,omitempty"`
 	// Failure is where a failed or partial run stopped, when a statement
 	// reached the database and failed there.
 	Failure *operatorv1alpha1.MigrationRunFailureStatus `json:"failure,omitempty"`
@@ -257,6 +277,10 @@ func load(ctx context.Context, reader client.Reader, namespace, name string, det
 			ModifiedVersions:   append([]int64(nil), history.ModifiedVersions...),
 			OutOfOrderVersions: append([]int64(nil), history.OutOfOrderVersions...),
 			Fingerprint:        history.Fingerprint,
+
+			PendingRepeatableCount: history.PendingRepeatableCount,
+			UnfinishedRepeatables:  append([]string(nil), history.UnfinishedRepeatables...),
+			OrphanedRepeatables:    append([]string(nil), history.OrphanedRepeatables...),
 		}
 	}
 	view.LastRun = runOf(migration.Status.LastRun)
@@ -307,12 +331,15 @@ func planOf(plan *operatorv1alpha1.PtahMigrationPlan) *PlanView {
 	if plan == nil {
 		return nil
 	}
+	// A plan may hold repeatable migrations and no version. The list is
+	// always present in JSON, empty for that plan, rather than null.
 	view := &PlanView{
 		Name:           plan.Name,
 		UID:            string(plan.UID),
 		Fingerprint:    plan.Spec.Fingerprint,
 		CurrentVersion: plan.Spec.CurrentVersion,
 		CreatedAt:      plan.Spec.CreatedAt,
+		Migrations:     make([]PlannedMigrationView, 0, len(plan.Spec.Migrations)),
 	}
 	for _, planned := range plan.Spec.Migrations {
 		view.Migrations = append(view.Migrations, PlannedMigrationView{
@@ -322,6 +349,13 @@ func planOf(plan *operatorv1alpha1.PtahMigrationPlan) *PlanView {
 			Checksum:        planned.Checksum,
 			Checkpoint:      planned.Checkpoint,
 			TransactionMode: planned.TransactionMode,
+		})
+	}
+	for _, planned := range plan.Spec.Repeatables {
+		view.Repeatables = append(view.Repeatables, PlannedRepeatableView{
+			Identity:        planned.Identity,
+			Checksum:        planned.Checksum,
+			AppliedChecksum: planned.AppliedChecksum,
 		})
 	}
 	return view
@@ -339,6 +373,8 @@ func runOf(run *operatorv1alpha1.MigrationRunStatus) *RunView {
 		FinishedAt:      run.FinishedAt,
 		AppliedVersions: append([]int64(nil), run.AppliedVersions...),
 		Message:         run.Message,
+
+		AppliedRepeatables: append([]string(nil), run.AppliedRepeatables...),
 
 		OperationID:          run.OperationID,
 		PlanRef:              run.PlanRef.DeepCopy(),

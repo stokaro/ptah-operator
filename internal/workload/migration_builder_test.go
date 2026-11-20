@@ -247,7 +247,7 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	}
 
 	plan := migrationPlanFixture()
-	sequenceDigest, err := MigrationSequenceDigest(plan.Spec.Migrations)
+	sequenceDigest, err := MigrationSequenceDigest(plan.Spec.Migrations, plan.Spec.Repeatables)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	if err := json.Unmarshal([]byte(requireEnv(t, job, runner.EnvExpectedMigrationSequence).Value), &carried); err != nil {
 		t.Fatalf("decode the carried sequence: %v", err)
 	}
-	if digest, err := fingerprint.MigrationSequenceDigest(carried); err != nil || digest != sequenceDigest {
+	if digest, err := fingerprint.MigrationSequenceDigest(carried, nil); err != nil || digest != sequenceDigest {
 		t.Fatalf("carried sequence digests to %q (%v), want %q", digest, err, sequenceDigest)
 	}
 
@@ -290,6 +290,69 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 		if strings.Contains(annotation, string(operation.PlanRef.UID)) {
 			t.Fatal("the Job carries a plan binding the sealed contract does not know")
 		}
+	}
+}
+
+// A plan's repeatable migrations travel in a variable of their own, under the
+// one digest, and a plan without them builds a Job with no such variable,
+// which is the Job it built before they existed. A plan of repeatable
+// migrations alone carries an empty versioned list beside them.
+func TestBuildMigrationApplyCarriesTheRepeatableMigrations(t *testing.T) {
+	t.Parallel()
+	builder := builderFixture()
+	operation := migrationOperationFixture(operatorv1alpha1.MigrationOperationApply)
+
+	without, err := builder.BuildMigration(migrationFixture(), operation, migrationPlanFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, variable := range without.Spec.Template.Spec.Containers[0].Env {
+		if variable.Name == runner.EnvExpectedRepeatableSequence {
+			t.Fatalf("a plan with no repeatable migration carries %s", variable.Name)
+		}
+	}
+
+	repeatables := []operatorv1alpha1.PlannedRepeatableMigration{
+		{Identity: "item_names", Checksum: "h1:" + strings.Repeat("A", 43) + "="},
+		{Identity: "order_totals", Checksum: "h1:" + strings.Repeat("B", 43) + "=", AppliedChecksum: "h1:" + strings.Repeat("C", 43) + "="},
+	}
+	for name, versions := range map[string][]operatorv1alpha1.PlannedMigration{
+		"after the versions": migrationPlanFixture().Spec.Migrations,
+		"alone":              nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			plan := migrationPlanFixture()
+			plan.Spec.Migrations = versions
+			plan.Spec.Repeatables = repeatables
+			job, err := builder.BuildMigration(migrationFixture(), operation, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var carriedVersions []fingerprint.SequenceEntry
+			if err := json.Unmarshal([]byte(requireEnv(t, job, runner.EnvExpectedMigrationSequence).Value), &carriedVersions); err != nil ||
+				carriedVersions == nil || len(carriedVersions) != len(versions) {
+				t.Fatalf("carried versions = %#v (%v), want the %d planned, as a list", carriedVersions, err, len(versions))
+			}
+			var carried []fingerprint.RepeatableEntry
+			if err := json.Unmarshal([]byte(requireEnv(t, job, runner.EnvExpectedRepeatableSequence).Value), &carried); err != nil {
+				t.Fatalf("decode the carried repeatable migrations: %v", err)
+			}
+			want := []fingerprint.RepeatableEntry{
+				{Identity: "item_names", Checksum: repeatables[0].Checksum},
+				{Identity: "order_totals", Checksum: repeatables[1].Checksum, AppliedChecksum: repeatables[1].AppliedChecksum},
+			}
+			if !reflect.DeepEqual(carried, want) {
+				t.Fatalf("carried repeatable migrations = %#v, want %#v", carried, want)
+			}
+			digest, err := fingerprint.MigrationSequenceDigest(carriedVersions, carried)
+			if err != nil || requireEnv(t, job, runner.EnvExpectedMigrationSequenceDigest).Value != digest {
+				t.Fatalf("the Job's digest is not the digest of what it carries (%v)", err)
+			}
+			if versionsOnly, _ := fingerprint.MigrationSequenceDigest(carriedVersions, nil); len(versions) > 0 && versionsOnly == digest {
+				t.Fatal("the repeatable migrations moved nothing in the digest")
+			}
+		})
 	}
 }
 

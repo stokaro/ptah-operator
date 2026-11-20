@@ -156,7 +156,7 @@ func sourceSchemaPlan(source *operatorv1alpha1.PlanSourceBinding) (*operatorv1al
 func sourceMigrationPlan(source *operatorv1alpha1.PlanSourceBinding) (*operatorv1alpha1.PtahMigrationPlan, error) {
 	builder := managerBuilder()
 	planned := []operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}
-	sequence, err := migrationplan.SequenceDigest(planned)
+	sequence, err := migrationplan.SequenceDigest(planned, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,62 @@
+{
+  "contract_version": 2,
+  "command": "migrations up",
+  "direction": "up",
+  "outcome": "failed",
+  "planned_repeatables": [
+    {
+      "identity": "item_names",
+      "path": "R__item_names.sql",
+      "checksum": "h1:8F0cN/hG5K2KOkra/jL4mZsDn7bDQfdvxDwzkOr0Sec=",
+      "applied_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+      "reason": "changed"
+    }
+  ],
+  "error": {
+    "message": "repeatable migration item_names failed and took no effect: failed to execute migration SQL: SQL execution failed: ERROR: column \"nosuch\" does not exist (SQLSTATE 42703)\nSQL: CREATE OR REPLACE VIEW item_names AS SELECT name, id, nosuch FROM items"
+  },
+  "migration_log": {
+    "written": 2
+  },
+  "status": {
+    "current_version": 1,
+    "applied_migrations": [
+      1
+    ],
+    "applied_migration_keys": [
+      "1"
+    ],
+    "pending_migrations": [],
+    "out_of_order_migrations": [],
+    "total_migrations": 1,
+    "has_pending_changes": true,
+    "contract_version": 2,
+    "migrations": [
+      {
+        "version": 1,
+        "version_key": "1",
+        "description": "Create Items",
+        "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+        "applied_at": "2026-11-20T16:13:29.825685Z",
+        "execution_time_ms": 2,
+        "state": "applied"
+      }
+    ],
+    "repeatables": [
+      {
+        "identity": "item_names",
+        "path": "R__item_names.sql",
+        "checksum": "h1:8F0cN/hG5K2KOkra/jL4mZsDn7bDQfdvxDwzkOr0Sec=",
+        "applied_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+        "state": "failed",
+        "attempt_checksum": "h1:8F0cN/hG5K2KOkra/jL4mZsDn7bDQfdvxDwzkOr0Sec=",
+        "attempt_order": 1,
+        "attempted_at": "2026-11-20T16:13:45.286246Z",
+        "applied_at": "2026-11-20T16:13:41.471672Z",
+        "error": "failed to execute migration SQL: SQL execution failed: ERROR: column \"nosuch\" does not exist (SQLSTATE 42703)\nSQL: CREATE OR REPLACE VIEW item_names AS SELECT name, id, nosuch FROM items"
+      }
+    ],
+    "current_version_key": "1"
+  }
+}

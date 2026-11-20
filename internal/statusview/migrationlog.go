@@ -18,6 +18,9 @@ func MigrationLog(log operatorv1alpha1.MigrationLogStatus) string {
 	lost := make([]string, 0, len(log.Losses))
 	for _, loss := range log.Losses {
 		entry := fmt.Sprintf("version %d %s", loss.Version, Clean(string(loss.State)))
+		if loss.Repeatable != "" {
+			entry = fmt.Sprintf("repeatable migration %s %s", Clean(loss.Repeatable), Clean(string(loss.State)))
+		}
 		var answer []string
 		if loss.SQLState != "" {
 			answer = append(answer, "SQLSTATE "+Clean(loss.SQLState))

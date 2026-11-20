@@ -456,7 +456,7 @@ func TestAMigrationDirectoryRefusalIsBlockedWithNoClaim(t *testing.T) {
 				ptahv1alpha1.ReasonOperationFailed)}
 		},
 		"another reason": func(m *ptahv1alpha1.PtahMigration) {
-			m.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonRepeatableMigrationsUnsupported)
+			m.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonRepeatableMigrationUnfinished)
 		},
 		"Blocked false": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions[0].Status = metav1.ConditionFalse },
 		"another phase": func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseReading },

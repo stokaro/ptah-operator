@@ -84,8 +84,9 @@ func migrationHistoryMatchesExecutorPlan(result runner.Result, plan *ptahv1alpha
 	if err != nil || fingerprint != plan.Spec.HistoryFingerprint {
 		return errors.New("executor History control did not produce the plan's history")
 	}
-	sequence, err := migrationplan.Sequence(*result.MigrationHistory)
-	if err != nil || !equality.Semantic.DeepEqual(sequence, plan.Spec.Migrations) {
+	sequence, repeatables, err := migrationplan.Sequence(*result.MigrationHistory)
+	if err != nil || !equality.Semantic.DeepEqual(sequence, plan.Spec.Migrations) ||
+		!equality.Semantic.DeepEqual(repeatables, plan.Spec.Repeatables) {
 		return errors.New("executor History control did not produce the plan's exact sequence")
 	}
 	return nil
@@ -123,17 +124,25 @@ func migrationExecutorApplyInputs(job *batchv1.Job, plan *ptahv1alpha1.PtahMigra
 	if err != nil {
 		return err
 	}
-	digest, err := workload.MigrationSequenceDigest(plan.Spec.Migrations)
+	digest, err := workload.MigrationSequenceDigest(plan.Spec.Migrations, plan.Spec.Repeatables)
 	if err != nil {
 		return err
 	}
-	for key, want := range map[string]string{
+	inputs := map[string]string{
 		runner.EnvExpectedTargetIdentityDigest:        plan.Spec.TargetIdentityDigest,
 		runner.EnvExpectedCoordinationDigest:          plan.Spec.CoordinationDigest,
 		runner.EnvExpectedMigrationHistoryFingerprint: plan.Spec.HistoryFingerprint,
 		runner.EnvExpectedMigrationSequence:           sequence,
 		runner.EnvExpectedMigrationSequenceDigest:     digest,
-	} {
+	}
+	if len(plan.Spec.Repeatables) > 0 {
+		repeatables, err := workload.EncodeRepeatableSequence(plan.Spec.Repeatables)
+		if err != nil {
+			return err
+		}
+		inputs[runner.EnvExpectedRepeatableSequence] = repeatables
+	}
+	for key, want := range inputs {
 		count := 0
 		for _, value := range job.Spec.Template.Spec.Containers[0].Env {
 			if value.Name == key {

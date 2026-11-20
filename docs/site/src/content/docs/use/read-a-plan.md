@@ -582,8 +582,8 @@ operation claimed and the revision rows among them: [Every status field the
 plugin knows](#details).
 
 What it never prints is SQL or a table row. A migration plan records versions,
-descriptions and checksums; reading the statements means reading the artifact,
-which this command does not fetch. The same is true of reference data: a row
+repeatable migrations, descriptions and checksums; reading the statements means
+reading the artifact, which this command does not fetch. The same is true of reference data: a row
 this operator writes is never printed back to you here, in the status, or in an
 Event.
 

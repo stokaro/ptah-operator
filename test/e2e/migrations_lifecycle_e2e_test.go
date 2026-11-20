@@ -622,7 +622,7 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 		"stray-oci", "no-sql-oci", "registry-refusal", "e2e-" + m.engine.name + "-registry-refusal-auth",
 		"egress", "late-dispatch", "isolated-node", "stopped", "lost-log", "apply-guard", "release-fault",
 		"restore", "deletion", "drill", "suspend", "retry", "retarget", "approval-policy", "approval-transaction-mode",
-		"hung-result", "result-progress", "refused-log",
+		"hung-result", "result-progress", "refused-log", "repeatable",
 	} {
 		name := secret
 		if !strings.HasPrefix(name, "e2e-") {
@@ -645,7 +645,8 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 	m.check(m.list(jobs), "list the Jobs an earlier run left behind")
 	for index := range jobs.Items {
 		name := jobs.Items[index].Name
-		if strings.HasPrefix(name, "e2e-push-migrations-"+m.engine.name+"-") || name == "e2e-adopt-baseline-"+m.engine.name {
+		if strings.HasPrefix(name, "e2e-push-migrations-"+m.engine.name+"-") || name == "e2e-adopt-baseline-"+m.engine.name ||
+			strings.HasPrefix(name, "e2e-repeatable-repair-"+m.engine.name+"-") {
 			m.deleteAndWait(&jobs.Items[index], "Job "+name)
 		}
 	}
@@ -656,7 +657,7 @@ func (m *migrationRun) resetAfterAnEarlierRun() {
 		"ptah_e2e_apply_guard", "ptah_e2e_release_fault", "ptah_e2e_restore", "ptah_e2e_deletion",
 		"ptah_e2e_drill", "ptah_e2e_suspend", "ptah_e2e_retarget", "ptah_e2e_retarget_other",
 		"ptah_e2e_approval_policy", "ptah_e2e_approval_transaction_mode", registryRefusalDatabase,
-		"ptah_e2e_hung_result", "ptah_e2e_result_progress", "ptah_e2e_refused_log",
+		"ptah_e2e_hung_result", "ptah_e2e_result_progress", "ptah_e2e_refused_log", "ptah_e2e_repeatable",
 	} {
 		m.dropDatabase(database)
 	}

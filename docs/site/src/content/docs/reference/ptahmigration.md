@@ -772,8 +772,10 @@ spec:
 | `status.history.fingerprint` | `string`, required | Fingerprint is this exact reading of the revision table. A plan names it as its premise, and a history that moved between planning and execution invalidates the plan rather than being applied to. |
 | `status.history.modifiedVersions` | `[]integer` | ModifiedVersions names applied migrations whose files no longer account for them. It is the refusal a versioned workflow exists to make, so the versions are published rather than summarized. |
 | `status.history.observedAt` | `string`, required | ObservedAt is when the history was read. |
+| `status.history.orphanedRepeatables` | `[]string` | OrphanedRepeatables names the repeatable migrations the database records as applied and no file of the artifact carries any more. Ptah leaves such a record alone and so does the operator: it plans and runs nothing for it, and the migration converges as it would without the record. A Warning Event names each identity the first time a read lists it. A file that carries the identity again is held to the content the record holds. A database ahead of its artifact lists none, since the artifact is older rather than the file gone. |
 | `status.history.outOfOrderVersions` | `[]integer` | OutOfOrderVersions names migrations the artifact carries below a version the database has already applied. Linear execution refuses them, so the versions are published rather than counted: what a person decides here depends on which migration arrived late. |
 | `status.history.pendingCount` | `integer`, required | PendingCount is how many the artifact still has to apply, as Ptah selects them rather than as a subtraction of the two counts. |
+| `status.history.pendingRepeatableCount` | `integer` | PendingRepeatableCount is how many repeatable migrations the next run would execute after the pending versioned ones: R__<identity>.sql files the database has no record of, and files whose content changed since they last applied. |
 | `status.history.revisions` | `[]object` | Revisions are the newest rows of the revision table, newest first: which migration each records, the checksum it recorded, when it was written and how long the migration ran. At most MaxMigrationRevisions are kept, so a list that long may leave older rows out. No SQL and no error text is read into them. |
 | `status.history.revisions[].appliedAt` | `string` | AppliedAt is when the row was written. |
 | `status.history.revisions[].checksum` | `string` | Checksum is what the row recorded when the migration ran. A dirty row records none. |
@@ -783,11 +785,13 @@ spec:
 | `status.history.revisions[].version` | `integer`, required | Version is the migration the row records. |
 | `status.history.shadowIdentityDigest` | `string` | ShadowIdentityDigest is the credential-free identity of the shadow database policy.driftCheck named when this history was read, as the executor derived it. It is empty when the policy asks for no check. A plan binds it, so an approval does not carry over to another shadow. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
+| `status.history.unfinishedRepeatables` | `[]string` | UnfinishedRepeatables names the repeatable migrations whose last attempt failed or recorded no outcome. Ptah runs nothing while one exists, and the operator never removes the record: whether the attempt left part of its work behind is a question for a person with the database in front of them. |
 | `status.journal` | `object` | Journal is the bounded record of this migration's significant lifecycle events. |
 | `status.journal.coveredSince` | `string`, required | CoveredSince is the instant from which the journal is complete: when a manager that keeps a journal first wrote this resource's status, moved forward past the newest entry a bound has since dropped. A reader states the period the journal covers from it and assumes nothing before, though the entries of a plan nothing has carried out yet can be older. |
 | `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest, apart from the plan nothing has carried out yet: the entry that published it and the newest approval of it stay until something carries it out or another plan is published. |
 | `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
+| `status.journal.entries[].appliedRepeatables` | `integer` | AppliedRepeatables is how many repeatable migrations a run recorded applied, as status.lastRun.appliedRepeatables named them. A run may apply repeatable migrations and no version. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
 | `status.journal.entries[].applyFailure` | `object` | ApplyFailure is where a PtahSchema's Apply stopped, as status.pendingObservation.applyFailure said. An Apply that ends Unknown carries it when the run named the statement it stopped at. |
 | `status.journal.entries[].applyFailure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
@@ -814,9 +818,10 @@ spec:
 | `status.journal.entries[].migrationLog` | `object` | MigrationLog is what a PtahMigration's run wrote to the database's own record of migrations, as status.lastRun.migrationLog said. A run whose lost count is not zero left that record incomplete. |
 | `status.journal.entries[].migrationLog.losses` | `[]object` | Losses are the first sixteen entries the database refused, in the order the run tried them. |
 | `status.journal.entries[].migrationLog.losses[].errorNumber` | `integer` | ErrorNumber is MySQL's own error number, such as 1406 for a value too long for its column, and zero on every other protocol. |
+| `status.journal.entries[].migrationLog.losses[].repeatable` | `string` | Repeatable is the repeatable migration the entry is about, and absent for an entry about a version. |
 | `status.journal.entries[].migrationLog.losses[].sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
 | `status.journal.entries[].migrationLog.losses[].state` | `string`, required, one of `Started`, `Applied`, `Failed` | State is what the entry would have recorded. |
-| `status.journal.entries[].migrationLog.losses[].version` | `integer`, required | Version is the migration the entry is about. |
+| `status.journal.entries[].migrationLog.losses[].version` | `integer` | Version is the versioned migration the entry is about, and absent for an entry about a repeatable migration. |
 | `status.journal.entries[].migrationLog.lost` | `integer`, required | Lost is how many it refused. The record of the run is incomplete when it is not zero. |
 | `status.journal.entries[].migrationLog.written` | `integer`, required | Written is how many of the run's entries the database accepted. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |
@@ -832,6 +837,7 @@ spec:
 | `status.journal.entries[].type` | `string`, required, one of `PlanPublished`, `ApprovalAccepted`, `ApplyFinished`, `Verified`, `RunFinished`, `RunAcknowledged`, `OperationFailed` | Type is the kind of event. |
 | `status.lastReadRequest` | `string` | LastReadRequest is the last value of the operator.ptah.run/read-requested-at annotation the controller answered, so an answered request is not answered again. A value longer than MaxReadRequestLength is recorded as its SHA-256 digest, and a value that is not an RFC 3339 instant is recorded with a Warning Event and starts nothing. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
+| `status.lastRun.appliedRepeatables` | `[]string` | AppliedRepeatables names the selected repeatable migrations whose record says the planned content applied, in the order they ran. It is absent for a run that selected none, and for one a release without this field recorded. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
 | `status.lastRun.artifactDigest` | `string` | ArtifactDigest is the OCI artifact the run read its files from. |
 | `status.lastRun.authorization` | `object` | Authorization is what allowed the run: a person's approval, or the resource's own policy. |
@@ -862,9 +868,10 @@ spec:
 | `status.lastRun.migrationLog` | `object` | MigrationLog is what the run's writes to the database's own record of migrations came to, when the run reported it. It is absent for a run that left no readable report, for one that stopped before it selected anything, and for one a release without this field recorded: none of them says whether the record is complete. |
 | `status.lastRun.migrationLog.losses` | `[]object` | Losses are the first sixteen entries the database refused, in the order the run tried them. |
 | `status.lastRun.migrationLog.losses[].errorNumber` | `integer` | ErrorNumber is MySQL's own error number, such as 1406 for a value too long for its column, and zero on every other protocol. |
+| `status.lastRun.migrationLog.losses[].repeatable` | `string` | Repeatable is the repeatable migration the entry is about, and absent for an entry about a version. |
 | `status.lastRun.migrationLog.losses[].sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
 | `status.lastRun.migrationLog.losses[].state` | `string`, required, one of `Started`, `Applied`, `Failed` | State is what the entry would have recorded. |
-| `status.lastRun.migrationLog.losses[].version` | `integer`, required | Version is the migration the entry is about. |
+| `status.lastRun.migrationLog.losses[].version` | `integer` | Version is the versioned migration the entry is about, and absent for an entry about a repeatable migration. |
 | `status.lastRun.migrationLog.lost` | `integer`, required | Lost is how many it refused. The record of the run is incomplete when it is not zero. |
 | `status.lastRun.migrationLog.written` | `integer`, required | Written is how many of the run's entries the database accepted. |
 | `status.lastRun.operationID` | `string` | OperationID is the Apply claim that ran. It is what makes two executions of a byte-identical plan two runs. A run a release without this field recorded has none, and neither that nor anything else below is guessed for it. |

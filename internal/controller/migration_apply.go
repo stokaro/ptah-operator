@@ -328,8 +328,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 	migration.Status.NextReconciliationTime = nil
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
-		operatorv1alpha1.ReasonApprovedPlan, fmt.Sprintf("Applying %d planned %s", len(plan.Spec.Migrations),
-			byCount(len(plan.Spec.Migrations), "migration", "migrations")))
+		operatorv1alpha1.ReasonApprovedPlan, "Applying "+work(len(plan.Spec.Migrations), len(plan.Spec.Repeatables), "planned "))
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonSatisfied, "The plan's approval requirements are satisfied")
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
@@ -452,7 +451,6 @@ type reportedMigrationApply struct {
 	run *migrationRunAccount
 	// failure is why there is no report, when there is none.
 	failure              error
-	uncertain            bool
 	coordinationDigest   string
 	targetIdentityDigest string
 }
@@ -463,24 +461,29 @@ type migrationRunAccount struct {
 	log     applyLogReading
 	outcome operatorv1alpha1.MigrationRunOutcome
 	applied []int64
-	message string
-	failure *operatorv1alpha1.MigrationRunFailureStatus
+	// appliedRepeatables are the repeatable migrations whose record says the
+	// run applied them, in the order it ran them.
+	appliedRepeatables []string
+	message            string
+	failure            *operatorv1alpha1.MigrationRunFailureStatus
 	// migrationLog is what the run's writes to schema_migrations_log came to,
 	// and nil when its report carried none. Only a frame's report can say; a
 	// termination summary carries no such fact.
 	migrationLog *operatorv1alpha1.MigrationLogStatus
-	// stoppedBeforeSelecting is a run that failed before Ptah selected any
-	// migration, so it ran nothing and read no history. Only a frame's report
-	// can say so; a termination summary cannot tell it from a first migration
-	// that failed.
+	// stoppedBeforeSelecting is a run that stopped before Ptah selected any
+	// migration, so it ran nothing and its report holds no history read after
+	// it, as the verdict found. Only a frame's report can say so; a
+	// termination summary cannot tell it from a first migration that failed.
 	stoppedBeforeSelecting bool
 	// targetFailure is why the run could not open its target, when it stopped
 	// before selecting and the frame named a kind.
 	targetFailure error
-	// leftDirtyRevision is a run whose report holds the revision row it left, on
-	// which the History read that follows refuses. Only a frame's report can say
-	// so: a termination summary carries no such fact.
-	leftDirtyRevision bool
+	// leftDirtyRecord is a run whose report holds the dirty revision row it
+	// left, a repeatable migration it selected and did not finish, or the
+	// unfinished one an earlier run left and Ptah refused this run over: the
+	// History read that follows refuses on that record. Only a frame's report
+	// can say so: a termination summary carries no such fact.
+	leftDirtyRecord bool
 	// openedTarget is a run whose report shows it reached the database. A
 	// termination summary cannot show that, so a run read from one leaves
 	// DatabaseReachable to the history read that follows.
@@ -498,7 +501,6 @@ func (r *MigrationReconciler) frameMigrationApply(
 	result runner.Result,
 ) reportedMigrationApply {
 	reported := reportedMigrationApply{
-		uncertain:            result.Uncertain,
 		coordinationDigest:   result.CoordinationDigest,
 		targetIdentityDigest: result.TargetIdentityDigest,
 	}
@@ -516,10 +518,14 @@ func (r *MigrationReconciler) frameMigrationApply(
 
 // settleMigrationApply decides a migration Apply from what its runner reported.
 //
-// A run with no report is one nobody accounted for. A run whose report the
-// database accounted for is taken only from the database the claim named; a
-// partial or unknown one is taken whatever it names, because it blocks the
-// resource either way and is settled only by a reading of the database.
+// A run with no report is one nobody accounted for. A run is taken only from
+// the database the claim named, unless the account still reads Partial or
+// Unknown: such a run blocks the resource whatever it names and is settled
+// only by a reading of the database. The account's outcome is the verdict's,
+// not the one Ptah gave, so a run Ptah reported unknown that ran nothing is
+// Failed and held to the claimed database; taken from another database, it
+// would put that database's record on this resource. The runner's uncertain
+// mark follows Ptah's outcome and is not read here for that reason.
 func (r *MigrationReconciler) settleMigrationApply(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -530,13 +536,19 @@ func (r *MigrationReconciler) settleMigrationApply(
 	if reported.run == nil {
 		return r.finishUncertainMigrationApply(ctx, migration, job, reported.failure, reported.targetIdentityDigest)
 	}
-	if !reported.uncertain && (reported.coordinationDigest != operation.CoordinationDigest ||
+	if !reported.run.takenFromAnyTarget() && (reported.coordinationDigest != operation.CoordinationDigest ||
 		operation.Target != nil && reported.targetIdentityDigest != migration.Status.History.TargetIdentityDigest) {
 		return r.finishUncertainMigrationApply(ctx, migration, job,
 			errors.New("the Apply ran against a database other than the one it was planned for"),
 			reported.targetIdentityDigest)
 	}
 	return r.recordMigrationRun(ctx, migration, job, *reported.run, reported.targetIdentityDigest)
+}
+
+// takenFromAnyTarget reports a run whose account is taken whatever database
+// its result names: one whose outcome is still Partial or Unknown.
+func (run migrationRunAccount) takenFromAnyTarget() bool {
+	return jobclaim.MigrationRunUnresolved(run.outcome)
 }
 
 // migrationURLSecret is the Secret key the active migration operation read
@@ -569,22 +581,21 @@ func (r *MigrationReconciler) reportedMigrationRun(
 			message: "The run produced no readable evidence",
 		}
 	}
+	verdict := classifyMigrationRun(*report)
 	run := migrationRunAccount{
-		log:     applyLogHoldsReport,
-		outcome: jobclaim.MigrationRunOutcome(report.Outcome),
-		applied: boundedVersions(report.Applied, 256),
-		message: migrationRunMessage(*report),
-		failure: migrationRunFailure(report.Failure),
+		log:                applyLogHoldsReport,
+		outcome:            verdict.outcome,
+		applied:            boundedVersions(report.Applied, 256),
+		appliedRepeatables: boundedIdentities(report.AppliedRepeatables, operatorv1alpha1.MaxPlannedRepeatables),
+		message:            verdict.message,
+		failure:            migrationRunFailure(report.Failure),
 		// Ptah reports no log for a run that stopped before it selected
 		// anything, so this is nil for each one that returns early below.
-		migrationLog: migrationLogStatus(report.MigrationLog),
-		// The run reads the revision table after it stops, so this is the row the
-		// next reading finds.
-		leftDirtyRevision: dirtyRevision(*report) != nil,
+		migrationLog:    migrationLogStatus(report.MigrationLog),
+		leftDirtyRecord: verdict.stopsAtRecord,
 	}
-	if report.StoppedBeforeSelecting() {
+	if verdict.stoppedBeforeSelecting {
 		run.stoppedBeforeSelecting = true
-		run.message = "The run stopped before it selected any migration, and ran none"
 		if failure != nil {
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 				run.targetFailure = &targetFailureError{kind: kind, url: migrationURLSecret(migration)}
@@ -595,7 +606,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		return run
 	}
 	run.openedTarget = true
-	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report); refused {
+	if refusal, refused := r.sequenceRefusal(ctx, migration, migration.Status.ActiveOperation, *report, verdict); refused {
 		run.message = refusal
 	}
 	if summary := report.DriftSummary; summary.Refused() {
@@ -629,10 +640,17 @@ func (r *MigrationReconciler) reportedMigrationRun(
 func driftRefusal(summary dataplane.MigrationDriftSummary) (operatorv1alpha1.ConditionReason, string) {
 	switch {
 	case summary.Outcome == dataplane.MigrationDriftDrifted:
+		// The check replays the applied repeatable migrations after the
+		// versions, so the schema it compared is what both produce. A summary
+		// that counts neither came from a runner that did not count them.
+		replayed := "applied migrations"
+		if summary.Replayed > 0 || summary.ReplayedRepeatables > 0 {
+			replayed = work(summary.Replayed, summary.ReplayedRepeatables, "applied ")
+		}
 		return operatorv1alpha1.ReasonSchemaDrifted, fmt.Sprintf(
-			"The drift check found %s between the database's schema and the one its applied migrations produce, "+
+			"The drift check found %s between the database's schema and the one its %s produce, "+
 				"so the run applied nothing: something changed the schema outside the migrations",
-			countOf(summary.Findings, "difference", "differences"))
+			countOf(summary.Findings, "difference", "differences"), replayed)
 	case slices.Contains(driftCheckStages, summary.Stage):
 		return operatorv1alpha1.ReasonDriftCheckUnsupported, fmt.Sprintf(
 			"The drift check could not decide (stage %s, reason %s), so the run applied nothing", summary.Stage, summary.Reason)
@@ -681,7 +699,7 @@ func (r *MigrationReconciler) recordMigrationRun(
 			return ctrl.Result{}, err
 		}
 	default:
-		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome, run.leftDirtyRevision)
+		keepLog := jobclaim.MigrationRunKeepsLog(operation.ApprovalRef != nil, outcome, run.leftDirtyRecord)
 		// The run was read from the Job's Pods, as a harvest's is, so a refused
 		// cleanup leaves the Job in place and the run is still recorded, pointing
 		// at the log for as long as the Job stays.
@@ -696,16 +714,17 @@ func (r *MigrationReconciler) recordMigrationRun(
 	finishedAt := metav1.NewTime(r.now())
 	before := migration.DeepCopy()
 	migration.Status.LastRun = &operatorv1alpha1.MigrationRunStatus{
-		Outcome:         outcome,
-		JobName:         job.Name,
-		JobUID:          job.UID,
-		StartedAt:       operation.StartedAt,
-		FinishedAt:      &finishedAt,
-		AppliedVersions: run.applied,
-		DispatchedBy:    dispatcherRecord(job),
-		Message:         bounded(message, 1024),
-		Failure:         run.failure,
-		MigrationLog:    run.migrationLog,
+		Outcome:            outcome,
+		JobName:            job.Name,
+		JobUID:             job.UID,
+		StartedAt:          operation.StartedAt,
+		FinishedAt:         &finishedAt,
+		AppliedVersions:    run.applied,
+		AppliedRepeatables: run.appliedRepeatables,
+		DispatchedBy:       dispatcherRecord(job),
+		Message:            bounded(message, 1024),
+		Failure:            run.failure,
+		MigrationLog:       run.migrationLog,
 	}
 	recordMigrationRunProvenance(migration.Status.LastRun, migration, operation, reportedTarget)
 	migration.Status.Plan = nil
@@ -793,9 +812,9 @@ func (r *MigrationReconciler) sequenceRefusal(
 	migration *operatorv1alpha1.PtahMigration,
 	operation *operatorv1alpha1.MigrationOperationStatus,
 	report dataplane.MigrationRunReport,
+	verdict migrationRunVerdict,
 ) (string, bool) {
-	if report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 ||
-		operation == nil || operation.PlanRef == nil {
+	if !verdict.comparesSelection || operation == nil || operation.PlanRef == nil {
 		return "", false
 	}
 	plan := &operatorv1alpha1.PtahMigrationPlan{}
@@ -807,11 +826,51 @@ func (r *MigrationReconciler) sequenceRefusal(
 	for _, planned := range plan.Spec.Migrations {
 		approved = append(approved, planned.Version)
 	}
-	if slices.Equal(approved, report.Planned) {
+	if !slices.Equal(approved, report.Planned) {
+		return fmt.Sprintf("Ptah selected %s under the migration lock and the plan approved %s, so it ran nothing: "+
+			"the history moved after the approval", versionList(report.Planned), versionList(approved)), true
+	}
+	// Ptah compares each repeatable migration by identity and by the digest
+	// of the content it would run, so a record another run wrote, or content
+	// that is not the approved content, refuses the run the same way.
+	approvedRepeatables := make([]string, 0, len(plan.Spec.Repeatables))
+	for _, planned := range plan.Spec.Repeatables {
+		approvedRepeatables = append(approvedRepeatables, planned.Identity+"@"+planned.Checksum)
+	}
+	selectedRepeatables := make([]string, 0, len(report.PlannedRepeatables))
+	for _, selected := range report.PlannedRepeatables {
+		selectedRepeatables = append(selectedRepeatables, selected.Identity+"@"+selected.Checksum)
+	}
+	if slices.Equal(approvedRepeatables, selectedRepeatables) {
 		return "", false
 	}
-	return fmt.Sprintf("Ptah selected %s under the migration lock and the plan approved %s, so it ran nothing: "+
-		"the history moved after the approval", versionList(report.Planned), versionList(approved)), true
+	approvedNames := make([]string, 0, len(plan.Spec.Repeatables))
+	for _, planned := range plan.Spec.Repeatables {
+		approvedNames = append(approvedNames, planned.Identity)
+	}
+	selectedNames := report.PlannedRepeatableIdentities()
+	if slices.Equal(approvedNames, selectedNames) {
+		return "Ptah selected other content for the repeatable migrations under the migration lock than the plan " +
+			"approved, so it ran nothing: the history moved after the approval", true
+	}
+	return fmt.Sprintf("Ptah selected repeatable migrations %s under the migration lock and the plan approved %s, "+
+		"so it ran nothing: the history moved after the approval",
+		identityList(selectedNames), identityList(approvedNames)), true
+}
+
+// identityList spells a list of repeatable migration identities for a status
+// message, as versionList spells versions.
+func identityList(identities []string) string {
+	const shown = 8
+	parts := make([]string, 0, shown+1)
+	for index, identity := range identities {
+		if index == shown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(identities)-shown))
+			break
+		}
+		parts = append(parts, identity)
+	}
+	return "[" + strings.Join(parts, " ") + "]"
 }
 
 // versionList spells a list of versions for a status message, naming the
@@ -2088,6 +2147,178 @@ func appliedBefore(count int) string {
 	return fmt.Sprintf("%d %s recorded applied", count, byCount(count, "migration before it is", "migrations before it are"))
 }
 
+// workBefore is the end of the sentence about a repeatable migration that did
+// not finish: what the run applied before it, versioned and repeatable.
+func workBefore(report dataplane.MigrationRunReport) string {
+	if len(report.AppliedRepeatables) == 0 {
+		return appliedBefore(len(report.Applied))
+	}
+	total := len(report.Applied) + len(report.AppliedRepeatables)
+	return fmt.Sprintf("%s before it %s recorded applied",
+		work(len(report.Applied), len(report.AppliedRepeatables), ""), byCount(total, "is", "are"))
+}
+
+// unfinishedRepeatable is the repeatable migration the run selected and did
+// not finish, as the record it read back after it stopped says. Ptah stops at
+// the first one, so there is at most one.
+func unfinishedRepeatable(report dataplane.MigrationRunReport) (dataplane.MigrationRepeatable, bool) {
+	if report.Status == nil {
+		return dataplane.MigrationRepeatable{}, false
+	}
+	for _, repeatable := range report.Status.UnfinishedRepeatables() {
+		if slices.Contains(report.PlannedRepeatableIdentities(), repeatable.Identity) {
+			return repeatable, true
+		}
+	}
+	return dataplane.MigrationRepeatable{}, false
+}
+
+// refusedOverUnfinishedRepeatable is the repeatable migration a run found
+// unfinished before it selected anything. Ptah refuses every run over one, and
+// reports the run by that record's state, so a run that ran nothing can read
+// as failed or unknown. The history read refuses on it before planning, so
+// only a record another run left between that read and this run reaches here.
+func refusedOverUnfinishedRepeatable(report dataplane.MigrationRunReport) (dataplane.MigrationRepeatable, bool) {
+	if report.Status == nil || len(report.Planned) != 0 || len(report.PlannedRepeatables) != 0 ||
+		report.Failure != nil || report.Status.DirtyRevision != nil {
+		return dataplane.MigrationRepeatable{}, false
+	}
+	unfinished := report.Status.UnfinishedRepeatables()
+	if len(unfinished) == 0 {
+		return dataplane.MigrationRepeatable{}, false
+	}
+	return unfinished[0], true
+}
+
+// migrationRunVerdict is what a run report says once it is read: the outcome
+// status records, the message that explains it, what the report says of the
+// history after the run, and whether its selection can be held against the
+// plan. classifyMigrationRun decides them together, so no run reads Unknown in
+// its outcome and "ran nothing" in its message, and no later step reads the
+// report again to decide one of them differently.
+type migrationRunVerdict struct {
+	outcome operatorv1alpha1.MigrationRunOutcome
+	message string
+	// stopsAtRecord is a run whose report holds a dirty revision row, a
+	// repeatable migration it selected and did not finish, or the unfinished
+	// one an earlier run left and Ptah refused this run over. A run that
+	// selected nothing beside such a record was refused over it, so its empty
+	// selection says nothing about the plan it was given.
+	stopsAtRecord bool
+	// stoppedBeforeSelecting is a run that selected nothing and whose report
+	// holds no reading of the history after it. Ptah reports a run that
+	// failed before it selected as failed, and as unknown when the history
+	// read after the failure failed too, as on a lost connection. Either way
+	// the history is as the plan read it, so reading it back at once would
+	// find the same plan, and nothing in the report tells a refused
+	// selection from a run that never selected.
+	stoppedBeforeSelecting bool
+	// comparesSelection is a run whose selection may be held against the plan
+	// to name a refusal: Ptah reported it failed, it applied nothing, it did
+	// not stop before selecting, and no record stopped it. Ptah's refusal of
+	// a selection that is not the approved one reads exactly so, and only the
+	// plan's list tells it from a first migration that failed and committed
+	// nothing. A run Ptah reported partial or unknown is never such a
+	// refusal, whatever outcome the verdict gives it.
+	comparesSelection bool
+}
+
+// classifyMigrationRun decides a run report's outcome, its message and the
+// record it stops at, in one place.
+//
+// A run that selected nothing and applied nothing ran nothing, whatever
+// outcome Ptah gave it. Ptah v0.33.1 reports a run by the state of an
+// unfinished repeatable record even when it refused the run before selecting
+// anything: over a record left running, and over one that failed outside a
+// transaction, the refusal reads unknown. Recorded as Unknown, such a run
+// would keep an unresolved run for work nobody did, and the history read
+// could not settle it once the repair makes the file pending again, so a
+// person would have to acknowledge a run that never started. It is Failed:
+// it changed nothing, and the record it was refused over stops the history
+// read that follows. A run that selected a repeatable migration and failed
+// outside a transaction stays Unknown, since it may have left work behind.
+//
+// Only an outcome Ptah gives a run that did not finish is read this way. One
+// this build does not know stays Unknown whatever the report lists, since
+// nothing says what such a report leaves out. DecodeMigrationRun refuses such
+// an outcome before a report gets here, so that branch is defense in depth for
+// a caller that builds a report another way.
+func classifyMigrationRun(report dataplane.MigrationRunReport) migrationRunVerdict {
+	verdict := migrationRunVerdict{outcome: jobclaim.MigrationRunOutcome(report.Outcome)}
+	var ranNothing bool
+	switch report.Outcome {
+	case dataplane.MigrationOutcomeFailed, dataplane.MigrationOutcomePartial, dataplane.MigrationOutcomeUnknown:
+		ranNothing = len(report.Planned) == 0 && len(report.PlannedRepeatables) == 0 &&
+			len(report.Applied) == 0 && len(report.AppliedRepeatables) == 0
+	}
+	if ranNothing {
+		verdict.outcome = operatorv1alpha1.MigrationRunOutcomeFailed
+	}
+	if ranNothing && report.Status == nil && report.Failure == nil {
+		verdict.stoppedBeforeSelecting = true
+		verdict.message = "Ptah stopped before it selected any migration and could not read the history after it, " +
+			"so it ran nothing"
+		if report.Outcome == dataplane.MigrationOutcomeFailed {
+			verdict.message = "The run stopped before it selected any migration, and ran none"
+		}
+		return verdict
+	}
+	if repeatable, refused := refusedOverUnfinishedRepeatable(report); refused && ranNothing {
+		verdict.message = fmt.Sprintf("Ptah ran nothing, because repeatable migration %s did not finish in an earlier run",
+			repeatableName(repeatable.Identity))
+		verdict.stopsAtRecord = true
+		return verdict
+	}
+	_, leftUnfinished := unfinishedRepeatable(report)
+	dirty := dirtyRevision(report)
+	verdict.stopsAtRecord = dirty != nil || leftUnfinished
+	verdict.comparesSelection = report.Outcome == dataplane.MigrationOutcomeFailed &&
+		len(report.Applied) == 0 && len(report.AppliedRepeatables) == 0 && !verdict.stopsAtRecord
+	switch {
+	case ranNothing && dirty != nil:
+		verdict.message = fmt.Sprintf("Ptah ran nothing, because revision %d is recorded dirty by an earlier run", dirty.Version)
+	case ranNothing && report.Outcome != dataplane.MigrationOutcomeFailed:
+		verdict.message = "Ptah selected no migration and ran nothing"
+	default:
+		verdict.message = migrationRunMessage(report)
+	}
+	return verdict
+}
+
+// repeatableName is a repeatable migration's identity as a message prints it.
+// A record read from the database may hold an identity no file name carries,
+// which may be any text, so that one is quoted.
+func repeatableName(identity string) string {
+	if dataplane.IsRepeatableIdentity(identity) {
+		return identity
+	}
+	return strconv.Quote(identity)
+}
+
+// repeatableRunMessage says what a run did when it stopped at a repeatable
+// migration it selected, and false when it did not.
+func repeatableRunMessage(report dataplane.MigrationRunReport) (string, bool) {
+	if report.Failure != nil || dirtyRevision(report) != nil {
+		return "", false
+	}
+	repeatable, found := unfinishedRepeatable(report)
+	if !found {
+		return "", false
+	}
+	name := repeatableName(repeatable.Identity)
+	switch {
+	case repeatable.State == dataplane.RepeatableStateRunning:
+		return fmt.Sprintf("Repeatable migration %s recorded its start and no outcome, so whether its statements "+
+			"took effect is not known; %s", name, workBefore(report)), true
+	case repeatable.NoTransaction:
+		return fmt.Sprintf("Repeatable migration %s failed outside a transaction and may have left part of its work "+
+			"behind; %s", name, workBefore(report)), true
+	default:
+		return fmt.Sprintf("Repeatable migration %s failed inside a transaction, which took no effect; %s",
+			name, workBefore(report)), true
+	}
+}
+
 // migrationRunMessage says what happened without carrying database rows or the
 // SQL a migration ran.
 func migrationRunMessage(report dataplane.MigrationRunReport) string {
@@ -2095,10 +2326,15 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 	case dataplane.MigrationOutcomeUpToDate:
 		return "The database already had every planned migration"
 	case dataplane.MigrationOutcomeApplied:
-		return fmt.Sprintf("%d %s recorded applied", len(report.Applied), byCount(len(report.Applied), "migration is", "migrations are"))
+		total := len(report.Applied) + len(report.AppliedRepeatables)
+		return fmt.Sprintf("%s %s recorded applied", work(len(report.Applied), len(report.AppliedRepeatables), ""),
+			byCount(total, "is", "are"))
 	case dataplane.MigrationOutcomeDryRun:
 		return "The run was a dry run and changed nothing"
 	case dataplane.MigrationOutcomeFailed:
+		if message, stopped := repeatableRunMessage(report); stopped {
+			return message
+		}
 		if failure := report.Failure; failure != nil && failure.Commit {
 			// Every statement ran and the commit that ends them failed, so no
 			// statement is to blame. The failure names the migration whose
@@ -2119,6 +2355,9 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 		return fmt.Sprintf("%s failed%s and committed nothing; %s",
 			migrationName(report, version), where, appliedBefore(len(report.Applied)))
 	case dataplane.MigrationOutcomePartial:
+		if message, stopped := repeatableRunMessage(report); stopped {
+			return message
+		}
 		if dirty := dirtyRevision(report); dirty != nil && dirty.Total > 0 {
 			// The statements before the failed one are what the dirty row
 			// counts, so only the database's answer is added.
@@ -2131,6 +2370,9 @@ func migrationRunMessage(report dataplane.MigrationRunReport) string {
 		}
 		return "A migration committed some of its statements and not the rest; retrying the file would run them twice"
 	case dataplane.MigrationOutcomeUnknown:
+		if message, stopped := repeatableRunMessage(report); stopped {
+			return message
+		}
 		if dirty, failure := statementInFlight(report); failure != nil {
 			return fmt.Sprintf("%s stopped at statement %d of %d%s, and whether it committed is not recorded",
 				migrationName(report, dirty.Version), failure.Statement, failure.Statements, databaseAnswer(*failure))

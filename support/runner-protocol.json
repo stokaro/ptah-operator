@@ -492,6 +492,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:f65d03dc765ffefcc9c2155f23589c04db7526e3d746326337adad12ec1dbeb4",
       "reason": "Read the refusal Ptah v0.34.0's schema apply dry run names backslash-mode, a plan with a backslash in a literal on a MySQL or MariaDB session whose sql_mode names NO_BACKSLASH_ESCAPES, as plan content, as the owner refusals are read: a Plan reports plan_refused with the code where it reported invalid_plan_output, and Ptah's sentence goes to the Pod log. The plan decoder accepts the omissions v0.34.0 records in a saved plan and decides nothing from them; the strict decoder refused every such plan. Doc comments in the api package the runner builds against say that MigrationDirectoryUnreadable also covers a second file for one direction of a version, and SchemaSourceUnreadable a partitioned MySQL table. plan_refused is a code every manager of protocol 1 reads, and the runner's commands, fields and frame shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e64d07d8f226ced12d92ba57813ebf51f049aeb33d1afb4394859bbffdae1b9c",
+      "reason": "The runner reads the approved repeatable migrations from PTAH_EXPECTED_REPEATABLE_SEQUENCE, which a Job sets only when its plan selects one, binds them into the sequence digest and writes them into the --expect-sequence file after the versions. A history frame's repeatable migrations gain their content digests and the orphaned and no-transaction marks, and a run frame carries the ones Ptah planned and applied and the count a drift check replayed. A plan with no repeatable migration gives the same environment, file and digest as before. Only a manager of this build sets the variable or reads the new fields, and the CRD schema version this release moves refuses the rollback to an older one. The api package also gains a journal count and doc comments that no frame carries. The commands, the codes and the frame's shape are as they were. Protocol 1 stays."
     }
   ]
 }

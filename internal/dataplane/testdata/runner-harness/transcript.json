@@ -20093,7 +20093,8 @@
         "contract_version": 2,
         "direction": "up",
         "driftSummary": {
-          "outcome": "clean"
+          "outcome": "clean",
+          "replayed": 2
         },
         "migration_log": {
           "written": 2
@@ -20585,7 +20586,8 @@
         "direction": "up",
         "driftSummary": {
           "findings": 1,
-          "outcome": "drifted"
+          "outcome": "drifted",
+          "replayed": 2
         },
         "migration_log": {
           "written": 0
@@ -21077,6 +21079,7 @@
         "driftSummary": {
           "outcome": "unable",
           "reason": "scope_error",
+          "replayed": 2,
           "stage": "scope"
         },
         "migration_log": {
@@ -21569,7 +21572,8 @@
         "direction": "up",
         "driftSummary": {
           "findings": 1,
-          "outcome": "drifted"
+          "outcome": "drifted",
+          "replayed": 2
         },
         "migration_log": {
           "written": 0
@@ -22059,7 +22063,8 @@
         "contract_version": 2,
         "direction": "up",
         "driftSummary": {
-          "outcome": "clean"
+          "outcome": "clean",
+          "replayed": 2
         },
         "migration_log": {
           "written": 2
@@ -22552,7 +22557,8 @@
         "direction": "up",
         "driftSummary": {
           "findings": 1,
-          "outcome": "drifted"
+          "outcome": "drifted",
+          "replayed": 2
         },
         "migration_log": {
           "written": 0
@@ -23041,7 +23047,8 @@
         "contract_version": 2,
         "direction": "up",
         "driftSummary": {
-          "outcome": "clean"
+          "outcome": "clean",
+          "replayed": 2
         },
         "migration_log": {
           "written": 2
@@ -23534,6 +23541,7 @@
         "driftSummary": {
           "outcome": "unable",
           "reason": "not_clean",
+          "replayed": 2,
           "stage": "claim"
         },
         "migration_log": {
@@ -24024,7 +24032,8 @@
         "direction": "up",
         "driftSummary": {
           "findings": 2,
-          "outcome": "drifted"
+          "outcome": "drifted",
+          "replayed": 2
         },
         "migration_log": {
           "written": 0
@@ -26925,6 +26934,7 @@
         ],
         "repeatables": [
           {
+            "checksum": "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
             "identity": "item_names",
             "path": "R__item_names.sql",
             "state": "pending"

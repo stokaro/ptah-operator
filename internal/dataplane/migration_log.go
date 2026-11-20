@@ -50,6 +50,10 @@ type MigrationLogLoss struct {
 	// always writes the key, because an empty string is itself an identity.
 	Version    int64  `json:"version"`
 	VersionKey string `json:"version_key"`
+	// Repeatable names the repeatable migration an entry is about instead,
+	// with Version zero and VersionKey empty. It is absent for an entry about
+	// a versioned migration.
+	Repeatable string `json:"repeatable,omitempty"`
 	// State is what the entry would have recorded.
 	State string `json:"state,omitempty"`
 	// SQLState is empty when the server gave no answer, and ErrorNumber is
@@ -83,27 +87,29 @@ func (r *MigrationLogReport) ClearMessages() {
 }
 
 // Validate holds a log report to the up run that wrote it, whose selection is
-// planned. A run writes at most two entries for each migration it selected,
-// and each lost entry names one of them with a state an up run records. The
-// code the database answered with is held to the forms a run's failure is:
-// a value that failed its form could be anything, so nothing here quotes it.
-func (r MigrationLogReport) Validate(planned []int64) error {
+// planned and plannedRepeatables. A run writes at most two entries for each
+// migration it selected, versioned or repeatable, and each lost entry names
+// one of them with a state an up run records. The code the database answered
+// with is held to the forms a run's failure is: a value that failed its form
+// could be anything, so nothing here quotes it.
+func (r MigrationLogReport) Validate(planned []int64, plannedRepeatables []string) error {
 	if r.Written < 0 {
 		return fmt.Errorf("migration run reports %d migration log entries written", r.Written)
 	}
-	if entries := int64(r.Written) + int64(len(r.Lost)); entries > 2*int64(len(planned)) {
+	selected := int64(len(planned)) + int64(len(plannedRepeatables))
+	if entries := int64(r.Written) + int64(len(r.Lost)); entries > 2*selected {
 		return fmt.Errorf("migration run reports %d migration log entries for %d selected migrations, "+
-			"and a run writes two for each", entries, len(planned))
+			"and a run writes two for each", entries, selected)
 	}
 	for _, loss := range r.Lost {
-		if err := loss.validate(planned); err != nil {
+		if err := loss.validate(planned, plannedRepeatables); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (l MigrationLogLoss) validate(planned []int64) error {
+func (l MigrationLogLoss) validate(planned []int64, plannedRepeatables []string) error {
 	switch {
 	case l.Operation != "up":
 		return fmt.Errorf("migration run reports a lost migration log entry of operation %q; "+
@@ -111,7 +117,10 @@ func (l MigrationLogLoss) validate(planned []int64) error {
 	case !slices.Contains(migrationLogStates, l.State):
 		return fmt.Errorf("migration run reports a lost migration log entry in state %q, "+
 			"which an up run does not write", l.State)
-	case l.Version <= 0 || !slices.Contains(planned, l.Version):
+	case l.Repeatable != "" && (l.Version != 0 || l.VersionKey != "" || !slices.Contains(plannedRepeatables, l.Repeatable)):
+		return fmt.Errorf("migration run reports a lost migration log entry of a repeatable migration " +
+			"it did not select, or that also names a version")
+	case l.Repeatable == "" && (l.Version <= 0 || !slices.Contains(planned, l.Version)):
 		return fmt.Errorf("migration run reports a lost migration log entry of version %d, "+
 			"which is not one it selected", l.Version)
 	case len(l.VersionKey) > MaxMigrationVersionKeyBytes:

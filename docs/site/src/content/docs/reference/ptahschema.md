@@ -735,6 +735,7 @@ spec:
 | `status.journal.entries` | `[]object` | Entries are the events, oldest first. There are at most 64, and none is more than 30 days older than the newest, apart from the plan nothing has carried out yet: the entry that published it and the newest approval of it stay until something carries it out or another plan is published. |
 | `status.journal.entries[].acknowledgedBy` | `string` | AcknowledgedBy is the user admission stamped on that acknowledgment, cut to the first 512 characters where the name is longer. |
 | `status.journal.entries[].acknowledgment` | `string` | Acknowledgment names the acknowledgment that settled an unresolved run. |
+| `status.journal.entries[].appliedRepeatables` | `integer` | AppliedRepeatables is how many repeatable migrations a run recorded applied, as status.lastRun.appliedRepeatables named them. A run may apply repeatable migrations and no version. |
 | `status.journal.entries[].appliedVersions` | `integer` | AppliedVersions is how many migrations a run recorded applied. |
 | `status.journal.entries[].applyFailure` | `object` | ApplyFailure is where a PtahSchema's Apply stopped, as status.pendingObservation.applyFailure said. An Apply that ends Unknown carries it when the run named the statement it stopped at. |
 | `status.journal.entries[].applyFailure.errorNumber` | `integer` | ErrorNumber is MySQL's own error number, zero on every other protocol. |
@@ -761,9 +762,10 @@ spec:
 | `status.journal.entries[].migrationLog` | `object` | MigrationLog is what a PtahMigration's run wrote to the database's own record of migrations, as status.lastRun.migrationLog said. A run whose lost count is not zero left that record incomplete. |
 | `status.journal.entries[].migrationLog.losses` | `[]object` | Losses are the first sixteen entries the database refused, in the order the run tried them. |
 | `status.journal.entries[].migrationLog.losses[].errorNumber` | `integer` | ErrorNumber is MySQL's own error number, such as 1406 for a value too long for its column, and zero on every other protocol. |
+| `status.journal.entries[].migrationLog.losses[].repeatable` | `string` | Repeatable is the repeatable migration the entry is about, and absent for an entry about a version. |
 | `status.journal.entries[].migrationLog.losses[].sqlState` | `string` | SQLState is the SQLSTATE the database answered with, empty when it gave none. |
 | `status.journal.entries[].migrationLog.losses[].state` | `string`, required, one of `Started`, `Applied`, `Failed` | State is what the entry would have recorded. |
-| `status.journal.entries[].migrationLog.losses[].version` | `integer`, required | Version is the migration the entry is about. |
+| `status.journal.entries[].migrationLog.losses[].version` | `integer` | Version is the versioned migration the entry is about, and absent for an entry about a repeatable migration. |
 | `status.journal.entries[].migrationLog.lost` | `integer`, required | Lost is how many it refused. The record of the run is incomplete when it is not zero. |
 | `status.journal.entries[].migrationLog.written` | `integer`, required | Written is how many of the run's entries the database accepted. |
 | `status.journal.entries[].operation` | `string`, one of `Resolve`, `Verify`, `Observe`, `Plan`, `History`, `Apply` | Operation is the operation that failed, when one was claimed. |

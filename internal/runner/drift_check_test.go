@@ -85,11 +85,11 @@ func TestAMigrationApplyBoundToAShadowRunsTheDriftCheck(t *testing.T) {
 		want     dataplane.MigrationDriftSummary
 	}{
 		{name: "drifted", document: refusedRunDocument(driftedCheck), exitCode: 1,
-			want: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 2}},
+			want: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 2, Replayed: 2}},
 		{name: "unable", document: refusedRunDocument(unableShadowCheck), exitCode: 2,
 			want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean"}},
 		{name: "clean", document: appliedCheckedDocument(cleanCheck),
-			want: dataplane.MigrationDriftSummary{Outcome: "clean"}},
+			want: dataplane.MigrationDriftSummary{Outcome: "clean", Replayed: 2}},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -484,21 +484,21 @@ func TestPtahsDriftSentenceReachesThePodLogAndNotTheFrame(t *testing.T) {
 			document: "migrations-up-drifted-postgres.json", exitCode: 1,
 			logged: "ptah-runner: ptah reported: the database schema differs from the schema its 2 applied migrations produce, " +
 				"in 1 place, so no pending migration was run; first: extra column e2e_migration_widgets.nickname\n",
-			named: "nickname", want: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 1},
+			named: "nickname", want: dataplane.MigrationDriftSummary{Outcome: "drifted", Findings: 1, Replayed: 2},
 		},
 		{
 			document: "migrations-up-drift-shadow-not-empty-postgres.json", exitCode: 2,
 			logged: "ptah-runner: ptah reported: the drift check could not compare the database with its applied history, " +
 				"so no pending migration was run: applied history shadow check failed: connected database is not clean: " +
 				"found table \"left_behind\" in schema \"public\"",
-			named: "left_behind", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean"},
+			named: "left_behind", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "claim", Reason: "not_clean", Replayed: 2},
 		},
 		{
 			document: "migrations-up-drift-exclude-refused-postgres.json", exitCode: 2,
 			logged: "ptah-runner: ptah reported: the drift check could not compare the database with its applied history, " +
 				"so no pending migration was run: applied history shadow check failed: select the objects to compare: " +
 				"apply exclude selectors to current schema: too many parts in pattern \"public.e2e_migration_widgets.nickname.extra\"",
-			named: "nickname.extra", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "scope", Reason: "scope_error"},
+			named: "nickname.extra", want: dataplane.MigrationDriftSummary{Outcome: "unable", Stage: "scope", Reason: "scope_error", Replayed: 2},
 		},
 	} {
 		t.Run(row.document, func(t *testing.T) {

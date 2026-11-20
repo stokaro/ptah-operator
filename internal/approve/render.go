@@ -46,7 +46,9 @@ func renderMigrationPlan(out io.Writer, review Review) error {
 		return fmt.Errorf("the review carries no migration plan")
 	}
 	var text strings.Builder
-	fmt.Fprintf(&text, "From version %d, in this order:\n", plan.Spec.CurrentVersion)
+	if len(plan.Spec.Migrations) > 0 || len(plan.Spec.Repeatables) == 0 {
+		fmt.Fprintf(&text, "From version %d, in this order:\n", plan.Spec.CurrentVersion)
+	}
 	for _, migration := range plan.Spec.Migrations {
 		version := strconv.FormatInt(migration.Version, 10)
 		if migration.VersionKey != "" {
@@ -61,6 +63,25 @@ func renderMigrationPlan(out io.Writer, review Review) error {
 			fmt.Fprintf(&text, ", transaction %s", statusview.Clean(migration.TransactionMode))
 		}
 		text.WriteString("\n")
+	}
+	if len(plan.Spec.Repeatables) > 0 {
+		// After the versions, as Ptah runs them, each with the content it runs
+		// and, for a file that ran before, the content it last ran with.
+		if len(plan.Spec.Migrations) > 0 {
+			text.WriteString("Then these repeatable migrations, in this order:\n")
+		} else {
+			fmt.Fprintf(&text, "At version %d no versioned migration is pending. These repeatable migrations run, in this order:\n",
+				plan.Spec.CurrentVersion)
+		}
+		for _, repeatable := range plan.Spec.Repeatables {
+			fmt.Fprintf(&text, "  %-16s %s\n", "repeatable", statusview.Clean(repeatable.Identity))
+			if repeatable.AppliedChecksum == "" {
+				fmt.Fprintf(&text, "  %-16s checksum %s, new\n", "", statusview.Clean(repeatable.Checksum))
+			} else {
+				fmt.Fprintf(&text, "  %-16s checksum %s, changed from %s\n", "",
+					statusview.Clean(repeatable.Checksum), statusview.Clean(repeatable.AppliedChecksum))
+			}
+		}
 	}
 	text.WriteString("\nA migration plan records versions and checksums. Its SQL is read from the\nsource the plan binds, and it is not shown here:\n")
 	for _, line := range planSource(plan.Spec) {
