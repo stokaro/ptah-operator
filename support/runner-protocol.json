@@ -502,6 +502,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a8b8f28f60fb5abbbf14aefcfb3dd32524bb1dddc36bcfcad3bffe3443ed706b",
       "reason": "The api package the runner builds against drops the PtahMigrationPlan Steps printer column, whose .spec.migrations.length() path the API server's JSONPath cannot evaluate, so it printed <none> for every plan. A printer column is a kubebuilder marker in a comment and reaches neither the runner's inputs nor its frames. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f65851f71e72db815f652483b6e7ce62926e44608f9ebf7394e85e774d9eed8a",
+      "reason": "Read a fault of the whole desired schema that names a domain as Ptah v0.34.0's schema drift and schema plan name it (stokaro/ptah#6386): in the schema they placed it in, as domain \"public.moment\" where schema validate names domain \"moment\", and the type of a column the domain types by the domain's schema, as on a public.moment column where validate prints on a moment column. The runner allowed for a placed table alone, so a domain's relative time default read as child_exit from an Observe and as plan_refused from a Plan; it now reads as desired_schema_invalid with validate's sentence, as a foreign key into an undeclared table does. The api package the runner builds against gains the reason SchemaInvalid, which a schema's conditions and a Verified journal entry carry and no frame carries. desired_schema_invalid is a code every manager of protocol 1 reads, and the runner's commands, fields and frame shape are as they were. Protocol 1 stays."
     }
   ]
 }

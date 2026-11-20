@@ -1172,9 +1172,9 @@ func (w *waiter) checkApplied(s snapshot) verdict {
 		case entry.Type == operatorv1alpha1.JournalVerified && entry.Outcome == operatorv1alpha1.JournalUnknown:
 			// The entry says why, not Ready: the next pass can rewrite Ready
 			// before this poll reads the document.
-			if entry.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) {
-				return w.stop(s, StopUnresolved, fmt.Sprintf("the proof after the Apply of plan %s ended because Ptah "+
-					"could not read the desired schema the Apply ran from, and no Apply is recorded for it", entry.Plan))
+			if because, refused := schemaRefusedBecause(entry.Reason); refused {
+				return w.stop(s, StopUnresolved, fmt.Sprintf("the proof after the Apply of plan %s ended because %s, "+
+					"and no Apply is recorded for it", entry.Plan, because))
 			}
 			return w.stop(s, StopUnresolved, fmt.Sprintf("a person gave up the proof after the Apply of plan %s, "+
 				"and no Apply is recorded for it", entry.Plan))
@@ -1631,4 +1631,17 @@ func instant(at time.Time) string {
 		return "never"
 	}
 	return at.UTC().Format(time.RFC3339)
+}
+
+// schemaRefusedBecause says why a proof ended whose read compared nothing with
+// the database, by the reason its Verified entry carries, and reports whether
+// the reason is one of those.
+func schemaRefusedBecause(reason string) (string, bool) {
+	switch reason {
+	case string(operatorv1alpha1.ReasonSchemaSourceUnreadable):
+		return "Ptah could not read the desired schema the Apply ran from", true
+	case string(operatorv1alpha1.ReasonSchemaInvalid):
+		return "Ptah refused the desired schema the Apply ran from", true
+	}
+	return "", false
 }

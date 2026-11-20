@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-20T10:50:32.826756+00:00",
+  "frozenAt": "2026-11-20T20:39:12.854241+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "33a71faed38352fce9919336c74b07ba8b639bd761db04c1ff4b964901cd00f2"
+      "sha256": "4b93a67af82258f7ec52921279cd8ed74ed43a9730f85113b6a1c550c2b1c7ca"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.15 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 125,
+  "revision": 126,
   "supersedes": {
-    "freezeCommit": "836e8c580fe4df0834594f151e43949936131899",
-    "sha256": "7688b3f5adde49bbd35891112274b4413cfc2e8019ff5e54893d5f3351c41e7e"
+    "freezeCommit": "099c37b8e5e7111ec32218a7d55c8ef6ac343456",
+    "sha256": "c9522e07a48550dbed9337d1d103b4d4dab923d949278a36f91372a879829681"
   },
-  "revisionReason": "Record in the edge and v0.2.15 rows of support/ptah.json, in sentences that name the operator release each part holds for, what 0.2.16 does with the repeatable migrations Ptah has read since v0.30.0: it plans a new or changed one after the pending versions, binds its content digest into the plan an approval names and passes it in --expect-sequence; a record whose last attempt failed or recorded no outcome stops the resource as RepeatableMigrationUnfinished; an applied record no file carries stops nothing, and the history names it; and operator releases before 0.2.16 refuse a history that lists one. The functional matrix adds the scenarios postgresql-repeatable-migrations and mysql-repeatable-migrations to the migrations phases of their engines. Phases, suites, cells, platforms, the executor, the profile, its targets and every other input are unchanged."
+  "revisionReason": "The edge row of support/ptah.json says that a domain's relative time default, which Ptah v0.34.0 refuses as a fault of the schema, reads as desired_schema_invalid with schema validate's sentence, which from 0.2.16 stops the PtahSchema Blocked with SchemaInvalid and reads the file again at its interval, where revision 125 said an Observe reports child_exit and a Plan plan_refused. The edge and v0.2.15 rows gain one shared limitation: Ptah v0.33.1 and v0.34.0 refuse a relative time default on a column a declared domain types (stokaro/ptah#6345), measured on PostgreSQL 17.12 with both release images, which 0.2.16 stops Blocked with SchemaInvalid and 0.2.15 reads as child_exit or plan_refused and retries. Their shared #6233 entry adds that 0.2.16 stops such a schema Blocked and 0.2.15 retries it. The profile, its targets, phases, scenarios, suites, cells, platforms, the functional matrix and every other input are unchanged."
 }

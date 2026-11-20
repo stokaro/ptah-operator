@@ -15,59 +15,75 @@ import (
 
 const (
 	// relativeTimeDomain is the schema row whose file gives a domain a
-	// relative time default, which Ptah v0.34.0 refuses (stokaro/ptah#6386).
-	relativeTimeDomain = "desired-source-schema-relative-time-domain"
+	// relative time default, which Ptah v0.34.0 refuses (stokaro/ptah#6386),
+	// and relativeTimeDomainColumn the row whose file gives a column a domain
+	// types a relative time default of its own, which v0.33.1 refuses.
+	relativeTimeDomain       = "desired-source-schema-relative-time-domain"
+	relativeTimeDomainColumn = "desired-source-schema-relative-time-domain-column"
 	// domainFault is how validate names that domain, and placedDomainFault
 	// how drift and plan name it, in the schema they placed it in.
 	domainFault       = `domain "moment": DEFAULT 'now' on a timestamp domain is read once`
 	placedDomainFault = `domain "public.moment": DEFAULT 'now' on a timestamp domain is read once`
-	// codeChildExit and codePlanRefused are the frame codes the runner
-	// writes for a failed command it cannot explain and for a plan Ptah
-	// refused, which it does not export.
-	codeChildExit   = "child_exit"
-	codePlanRefused = "plan_refused"
+	// columnFault is how validate names that column, its table and its type,
+	// and placedColumnFault how drift and plan name them: the table in the
+	// schema they placed it in, and the type by the domain's schema.
+	columnFault       = `column "created_at" of table "events": DEFAULT 'now' on a moment column is read once`
+	placedColumnFault = `column "created_at" of table "public.events": DEFAULT 'now' on a public.moment column is read once`
 )
 
 // checkRelativeTimeDomain says what the committed captures miss of the domain
-// row's reading. Validate reports the fault as one of the schema, not of the
+// rows' readings. Validate reports each fault as one of the schema, not of the
 // file, so the runner can only read it as desired_schema_invalid, and only
-// where the failed command's sentence ends with validate's words. Drift and
-// plan name the domain in the schema they placed it in, and the runner places
-// only a table's name, so the Observe keeps child_exit and the Plan reports
-// the declaration refusal as plan_refused. A release, or an operator change,
-// that moves either code moves this check.
+// where the failed command's sentence ends with validate's words once the
+// names drift and plan placed are allowed for: the domain's, the table's, and
+// the schema the column's type is written with. The reason is validate's, so
+// it names what the file names. A release, or an operator change, that moves
+// either code or either reason moves this check.
 func checkRelativeTimeDomain(captures runnerharness.Captures) error {
 	var problems []error
-	for _, step := range []struct{ name, command, code string }{
-		{"observe", "schema drift", codeChildExit},
-		{"plan", "schema plan", codePlanRefused},
+	for _, shape := range []struct{ row, fault, placed string }{
+		{relativeTimeDomain, domainFault, placedDomainFault},
+		{relativeTimeDomainColumn, columnFault, placedColumnFault},
 	} {
-		name := relativeTimeDomain + "/" + step.name
-		record, err := capturedRow(captures, name)
-		if err != nil {
-			problems = append(problems, err)
-			continue
-		}
-		if code := frameCode(record); code != step.code {
-			problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", name, code, step.code))
-		}
-		failed, err := capturedChild(captures, name, step.command)
-		switch {
-		case err != nil:
-			problems = append(problems, err)
-		case failed.Exit == 0 || !strings.Contains(failed.Stderr, placedDomainFault):
-			problems = append(problems, fmt.Errorf("%s: `ptah %s` exited %d and said %q, want it to stop on %q", name, step.command, failed.Exit, failed.Stderr, placedDomainFault))
-		}
-		validate, err := capturedChild(captures, name, "schema validate")
-		switch {
-		case err != nil:
-			problems = append(problems, err)
-		case validate.Exit != 1 || !strings.Contains(string(captures.Documents[validate.Stdout]), "postgres: schema: "+domainFault):
-			problems = append(problems, fmt.Errorf("%s: `ptah schema validate` exited %d and printed %q, want the structural line %q",
-				name, validate.Exit, captures.Documents[validate.Stdout], "postgres: schema: "+domainFault))
+		for _, step := range []struct{ name, command string }{{"observe", "schema drift"}, {"plan", "schema plan"}} {
+			name := shape.row + "/" + step.name
+			record, err := capturedRow(captures, name)
+			if err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			if code := frameCode(record); code != runner.CodeDesiredSchemaInvalid {
+				problems = append(problems, fmt.Errorf("%s: the frame says %q, want %s", name, code, runner.CodeDesiredSchemaInvalid))
+			}
+			if message := frameMessage(record); !strings.HasPrefix(message, "schema.sql: "+shape.fault) {
+				problems = append(problems, fmt.Errorf("%s: the frame says %q, want the reason %q, in validate's words", name, message, "schema.sql: "+shape.fault))
+			}
+			failed, err := capturedChild(captures, name, step.command)
+			switch {
+			case err != nil:
+				problems = append(problems, err)
+			case failed.Exit == 0 || !strings.Contains(failed.Stderr, shape.placed):
+				problems = append(problems, fmt.Errorf("%s: `ptah %s` exited %d and said %q, want it to stop on %q", name, step.command, failed.Exit, failed.Stderr, shape.placed))
+			}
+			validate, err := capturedChild(captures, name, "schema validate")
+			switch {
+			case err != nil:
+				problems = append(problems, err)
+			case validate.Exit != 1 || !strings.Contains(string(captures.Documents[validate.Stdout]), "postgres: schema: "+shape.fault):
+				problems = append(problems, fmt.Errorf("%s: `ptah schema validate` exited %d and printed %q, want the structural line %q",
+					name, validate.Exit, captures.Documents[validate.Stdout], "postgres: schema: "+shape.fault))
+			}
 		}
 	}
 	return errors.Join(problems...)
+}
+
+// frameMessage is the message of the error a captured frame carries.
+func frameMessage(row runnerharness.Row) string {
+	frame, _ := row.Result.(map[string]any)
+	failure, _ := frame["error"].(map[string]any)
+	message, _ := failure["message"].(string)
+	return message
 }
 
 // mismatchedFormatHistory is what checkMismatchedFormat reads of a History
@@ -187,18 +203,27 @@ func TestReadShapeChecksRefuseAMovedReading(t *testing.T) {
 		change     func(*runnerharness.Captures)
 	}{
 		{
-			name: "a domain fault read as one of the schema", want: "want child_exit", check: checkRelativeTimeDomain,
+			// What the Observe read as before the runner placed a domain.
+			name: "a domain fault the runner could not tie to the file", want: "want " + runner.CodeDesiredSchemaInvalid, check: checkRelativeTimeDomain,
 			change: func(captures *runnerharness.Captures) {
 				edit(captures, relativeTimeDomain+"/observe", func(row *runnerharness.Row) {
-					row.Result = map[string]any{"error": map[string]any{"code": runner.CodeDesiredSchemaInvalid, "message": "schema.sql: " + domainFault}}
+					row.Result = map[string]any{"error": map[string]any{"code": "child_exit", "message": "ptah exited with code 2"}}
 				})
 			},
 		},
 		{
-			name: "a domain fault read as one of the file", want: "want plan_refused", check: checkRelativeTimeDomain,
+			name: "a domain fault read as one of the file", want: "want " + runner.CodeDesiredSchemaInvalid, check: checkRelativeTimeDomain,
 			change: func(captures *runnerharness.Captures) {
 				edit(captures, relativeTimeDomain+"/plan", func(row *runnerharness.Row) {
 					row.Result = map[string]any{"error": map[string]any{"code": runner.CodeDesiredSourceUnreadable, "message": "schema.sql: " + domainFault}}
+				})
+			},
+		},
+		{
+			name: "a reason in the failed command's words", want: "in validate's words", check: checkRelativeTimeDomain,
+			change: func(captures *runnerharness.Captures) {
+				edit(captures, relativeTimeDomainColumn+"/plan", func(row *runnerharness.Row) {
+					row.Result = map[string]any{"error": map[string]any{"code": runner.CodeDesiredSchemaInvalid, "message": "schema.sql: " + placedColumnFault}}
 				})
 			},
 		},
@@ -207,6 +232,14 @@ func TestReadShapeChecksRefuseAMovedReading(t *testing.T) {
 			change: func(captures *runnerharness.Captures) {
 				edit(captures, relativeTimeDomain+"/observe", func(row *runnerharness.Row) {
 					row.Children[0].Stderr = strings.Replace(row.Children[0].Stderr, `"public.moment"`, `"moment"`, 1)
+				})
+			},
+		},
+		{
+			name: "a plan that names the column's type as validate does", want: "want it to stop on", check: checkRelativeTimeDomain,
+			change: func(captures *runnerharness.Captures) {
+				edit(captures, relativeTimeDomainColumn+"/plan", func(row *runnerharness.Row) {
+					row.Children[0].Stderr = strings.Replace(row.Children[0].Stderr, "on a public.moment column", "on a moment column", 1)
 				})
 			},
 		},

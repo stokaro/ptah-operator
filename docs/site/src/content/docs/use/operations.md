@@ -2605,6 +2605,8 @@ carry Ptah's words:
 - A desired schema Ptah read and refuses, as a whole or for one of its indexes,
   under `desired_schema_invalid`, when that fault is the one the failed command
   stopped on. The words come from the same second run and name what the file declares.
+  [A desired schema Ptah refuses](../../troubleshoot/condition-reasons/#a-desired-schema-ptah-refuses)
+  says what follows.
 - A plan that would change a protected table, under `protected_table`. The words
   are the sentence of the `schema plan` report, which names the fenced tables.
 - A Git source a Resolve cannot fetch, under `child_exit`. The words are the last

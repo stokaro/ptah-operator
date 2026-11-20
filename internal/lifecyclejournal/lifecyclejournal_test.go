@@ -701,6 +701,18 @@ func TestSchemaEntriesRecordEachTransitionOnce(t *testing.T) {
 			}},
 		},
 		{
+			name:   "a proof whose read met a schema Ptah refuses",
+			before: operatorv1alpha1.PtahSchemaStatus{PendingObservation: observing("apply-1", operatorv1alpha1.PendingObservationApplySucceeded)},
+			after: operatorv1alpha1.PtahSchemaStatus{Phase: operatorv1alpha1.PhaseBlocked, Conditions: []metav1.Condition{
+				{Type: operatorv1alpha1.ConditionDriftDetected, Status: metav1.ConditionUnknown, Reason: string(operatorv1alpha1.ReasonSchemaInvalid)},
+				{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(operatorv1alpha1.ReasonSchemaInvalid)},
+			}},
+			want: []operatorv1alpha1.JournalEntry{{
+				Type: operatorv1alpha1.JournalVerified, At: at(0), OperationID: "apply-1", Plan: "plan-a", Outcome: operatorv1alpha1.JournalUnknown,
+				Reason: string(operatorv1alpha1.ReasonSchemaInvalid),
+			}},
+		},
+		{
 			// A newer generation decides what follows, and the reason Ready
 			// carries then is that one.
 			name:   "a proof whose read could not read the desired schema under a newer generation",

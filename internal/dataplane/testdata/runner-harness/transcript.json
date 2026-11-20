@@ -763,6 +763,95 @@
     }
   },
   {
+    "name": "desired-source-schema-relative-time-domain-column/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: column \"created_at\" of table \"public.events\": DEFAULT 'now' on a public.moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "desired-source/drift-relative-time-domain-column.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time-domain-column/observe/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: column \"created_at\" of table \"events\": DEFAULT 'now' on a moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+      },
+      "operation": "observe",
+      "operationId": "sha256:d8921b2275472736d637467fb096a4d474ba3e95efea6b6d361fb7922236f11d",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-schema-relative-time-domain-column/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: column \"created_at\" of table \"public.events\": DEFAULT 'now' on a public.moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "desired-source/plan-relative-time-domain-column.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time-domain-column/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: column \"created_at\" of table \"events\": DEFAULT 'now' on a moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+      },
+      "operation": "plan",
+      "operationId": "sha256:a45ce15367211d871c62a3574a760efdd357b801bfda918c967b3a208886e5f7",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
     "name": "desired-source-schema-relative-time-domain/observe",
     "operation": "observe",
     "source": "git",
@@ -796,8 +885,8 @@
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "child_exit",
-        "message": "ptah exited with code 2"
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: domain \"moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE"
       },
       "operation": "observe",
       "operationId": "sha256:a5fa76029f0e4efe5c92d7542f16d26e2cffacae1d602d653724de485e3f5e42",
@@ -841,8 +930,8 @@
       "childExitCode": 2,
       "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
       "error": {
-        "code": "plan_refused",
-        "message": "ptah refused to plan the change (declaration-refused)"
+        "code": "desired_schema_invalid",
+        "message": "schema.sql: domain \"moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE"
       },
       "operation": "plan",
       "operationId": "sha256:275fa74f41ae8118ea7870edfa39cd8c624679baca1522d89b210ea6306e0063",
@@ -1311,6 +1400,22 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-relative-time-domain.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time-domain-column",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time-domain-column.txt"
       }
     ]
   },

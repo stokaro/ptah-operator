@@ -66,6 +66,19 @@ CREATE TABLE c (extra text) INHERITS (p);
 	invalidKeySchema = "CREATE TABLE e2e_invalid_orders (id bigint REFERENCES e2e_no_such_table (id));\n"
 	invalidKeyWords  = `invalid foreign key: field "id" references unknown table `
 	invalidKeyReason = invalidKeyWords + `"e2e_no_such_table"`
+
+	// invalidDomainSchema loads, and declares a timestamp domain whose own
+	// default is 'now', which Ptah v0.34.0 refuses as a fault of the schema
+	// (stokaro/ptah#6386). Drift and plan name the domain in the schema they
+	// placed it in, "public.e2e_moment", and validate names it as the file
+	// does. invalidDomainWords is how Ptah words the fault, which the capture
+	// of the runner harness's relative-time-domain.sql holds to, and
+	// invalidDomainReason the start of it for this file, with the name the
+	// runner reports: validate's.
+	invalidDomainSchema = "CREATE DOMAIN e2e_moment AS timestamp DEFAULT 'now';\n" +
+		"CREATE TABLE e2e_invalid_events (id bigint PRIMARY KEY, created_at e2e_moment NOT NULL);\n"
+	invalidDomainWords  = `: DEFAULT 'now' on a timestamp domain is read once, when the domain is created`
+	invalidDomainReason = `domain "e2e_moment"` + invalidDomainWords
 )
 
 // unreadableMigrationFiles is a migration directory the loader refuses: the
@@ -82,10 +95,32 @@ var unreadableMigrationFiles = []struct{ key, path, body string }{
 // interval, when the source changes or on a read request, and never at the
 // failure retry.
 func schemaSourceRefused(schema *ptahv1alpha1.PtahSchema) (string, error) {
+	return schemaRefused(schema, ptahv1alpha1.ReasonSchemaSourceUnreadable)
+}
+
+// schemaInvalidRefused is schemaSourceRefused for a desired schema Ptah read
+// and refuses as a whole: the same stop, with Ready's reason SchemaInvalid.
+// The read compared the schema with the database before it stopped, so
+// DatabaseReachable has to say the read opened it.
+func schemaInvalidRefused(schema *ptahv1alpha1.PtahSchema) (string, error) {
+	message, err := schemaRefused(schema, ptahv1alpha1.ReasonSchemaInvalid)
+	if err != nil {
+		return "", err
+	}
+	reachable := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionDatabaseReachable)
+	if reachable == nil || reachable.Status != metav1.ConditionTrue || reachable.Reason != string(ptahv1alpha1.ReasonObserved) {
+		return "", fmt.Errorf("DatabaseReachable %+v beside the refusal, which opened the database", reachable)
+	}
+	return message, nil
+}
+
+// schemaRefused is a schema stopped on its desired schema with reason: Ready
+// False with that reason, in phase Blocked, with no claim, no plan and no
+// failure standing. It returns Ready's message.
+func schemaRefused(schema *ptahv1alpha1.PtahSchema, reason ptahv1alpha1.ConditionReason) (string, error) {
 	ready := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReady)
 	switch {
-	case ready == nil || ready.Status != metav1.ConditionFalse ||
-		ready.Reason != string(ptahv1alpha1.ReasonSchemaSourceUnreadable):
+	case ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != string(reason):
 		return "", fmt.Errorf("phase %s, Ready %+v", schema.Status.Phase, ready)
 	case schema.Status.Phase != ptahv1alpha1.PhaseBlocked:
 		return "", fmt.Errorf("phase %s beside Ready %+v", schema.Status.Phase, ready)
@@ -100,12 +135,12 @@ func schemaSourceRefused(schema *ptahv1alpha1.PtahSchema) (string, error) {
 	return ready.Message, nil
 }
 
-// schemaRefusalStands holds a refused schema to the attempt that refused it. A
-// retry starts another read under a claim, and a read that ends stamps another
-// attempt, so a hold past the failure retry that reads this throughout shows
-// that no read ran.
-func schemaRefusalStands(schema *ptahv1alpha1.PtahSchema, attempt *metav1.Time) error {
-	if _, err := schemaSourceRefused(schema); err != nil {
+// schemaRefusalStands holds a schema refused as refused says to the attempt
+// that refused it. A retry starts another read under a claim, and a read that
+// ends stamps another attempt, so a hold past the failure retry that reads
+// this throughout shows that no read ran.
+func schemaRefusalStands(schema *ptahv1alpha1.PtahSchema, refused func(*ptahv1alpha1.PtahSchema) (string, error), attempt *metav1.Time) error {
+	if _, err := refused(schema); err != nil {
 		return err
 	}
 	last := schema.Status.LastAttemptTime
@@ -132,6 +167,28 @@ func readRequestRefusedAgain(schema *ptahv1alpha1.PtahSchema, request string, at
 		return fmt.Errorf("the last attempt %v is not after the refusal at %v", last, attempt)
 	}
 	return nil
+}
+
+// editRefusedAgain is a schema refused as invalid whose source edit, which
+// generation does not count, started a read that Ptah refused in its turn: by
+// an attempt later than the refusal at attempt, from a source other than
+// failedSource. The edit is the only thing that moves the source, so nothing
+// else could have started that read.
+func editRefusedAgain(schema *ptahv1alpha1.PtahSchema, generation int64, failedSource string, attempt *metav1.Time) (string, error) {
+	message, err := schemaInvalidRefused(schema)
+	if err != nil {
+		return "", err
+	}
+	last := schema.Status.LastAttemptTime
+	switch {
+	case schema.Generation != generation:
+		return "", fmt.Errorf("the spec moved from generation %d to %d, so an edit of the spec started the read", generation, schema.Generation)
+	case schemaSourceIdentity(schema) == "" || schemaSourceIdentity(schema) == failedSource:
+		return "", fmt.Errorf("the refusal comes from source %q, the one refused before", schemaSourceIdentity(schema))
+	case attempt == nil || last == nil || !last.After(attempt.Time):
+		return "", fmt.Errorf("the last attempt %v is not after the refusal at %v", last, attempt)
+	}
+	return message, nil
 }
 
 // migrationDirectoryRefused returns what a migration says when it stopped on a

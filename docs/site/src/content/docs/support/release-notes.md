@@ -18,10 +18,11 @@ out of silence.
 
 ## 0.2.16
 
-**Before you upgrade.** A schema whose desired file Ptah cannot read no longer
-reports `OperationFailed` and no longer counts in `ptah_operator_failures_total`:
-an alert or a script that watched for either sees `Blocked` with
-`SchemaSourceUnreadable` instead. The executor moves to Ptah v0.34.0, which
+**Before you upgrade.** A schema whose desired file Ptah cannot read, or whose
+desired schema Ptah refuses as a whole, no longer reports `OperationFailed` and
+no longer counts in `ptah_operator_failures_total`: an alert or a script that
+watched for either sees `Blocked` with `SchemaSourceUnreadable` or
+`SchemaInvalid` instead. The executor moves to Ptah v0.34.0, which
 retires the execution binding: approve again whatever was waiting, after the
 resource has read its database with v0.34.0 and planned. A read still running
 when the new manager starts runs again. An Apply whose Job 0.2.15 created is
@@ -76,12 +77,9 @@ array, as `date[] DEFAULT '{now}'`. So is a MySQL table that declares two
 `CHECK` constraints of one name
 ([stokaro/ptah#6390](https://github.com/stokaro/ptah/pull/6390)). Ptah also
 refuses a domain's own relative time default, as `CREATE DOMAIN moment AS
-timestamp DEFAULT 'now'`, but as a fault of the schema, and names the domain
-`public.moment` where `schema validate` names it `moment`, so the operator does
-not tie the refusal to the file. An Observe fails with `child_exit` at every
-failure retry, a Plan fails with `plan_refused` and the code
-`declaration-refused`, and only the Pod log holds Ptah's sentence. Measured with
-`schema validate`, v0.33.1 accepted all of them.
+timestamp DEFAULT 'now'`, as a fault of the schema rather than of the file, and
+such a schema stops at `Blocked` with `SchemaInvalid`, as the next list says.
+Measured with `schema validate`, v0.33.1 accepted all of them.
 
 A PostgreSQL column default whose cast changes its value, as `DEFAULT
 (1.5::integer)` on a `numeric` column, which stores 2, now reads as drift where
@@ -129,6 +127,27 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   the first `Verified` entry to carry a `reason`, and `kubectl ptah wait --for
   applied` and `kubectl ptah settle --wait` stop and say Ptah could not read
   the desired schema.
+- **A schema Ptah refuses as a whole stops at `Blocked` too.** An Observe or a
+  Plan that ends with `desired_schema_invalid` stopped on a fault of the schema
+  Ptah read: a foreign key into a table it does not declare, an index on a
+  column its table does not declare, or, since Ptah v0.34.0, a domain whose own
+  default is a relative time string. The operator retried it at every failure
+  retry, reported `OperationFailed`, and each attempt got the same answer. The
+  schema now stops at `Blocked` with
+  [`SchemaInvalid`](../../troubleshoot/condition-reasons/#a-desired-schema-ptah-refuses)
+  and the fault, and does everything else the stop on a file Ptah cannot read
+  does, the proof after an Apply included, whose `Verified` entry carries the
+  reason `SchemaInvalid`. `DatabaseReachable` is true, since Ptah opened the
+  database before it read the file. Drift and plan name a domain the file
+  declares without a schema in the schema they placed it in, as
+  `domain "public.moment"`, and a column it types by that schema, as
+  `on a public.moment column`, where `schema validate` names them as the file
+  does, and the runner allows for both as it does for a table. So the refusal
+  of a domain's relative time default names the domain and the file, and so
+  does the refusal of a relative time default on a column such a domain types,
+  which Ptah v0.33.1 already made and 0.2.15 read as `child_exit` from an
+  Observe and as `plan_refused` from a Plan, tried again at every failure
+  retry.
 - **An OCI migration artifact Ptah cannot read stops at the history read.** The
   `fetch-migrations` step now runs `ptah migrations pull --skip-validation`
   under Ptah v0.34.0 or later, the first release that has it

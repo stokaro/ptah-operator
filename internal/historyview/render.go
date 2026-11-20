@@ -237,8 +237,9 @@ func concernsAnApply(entryType operatorv1alpha1.JournalEntryType) bool {
 // or which operation failed and why. outcome means something different on
 // each type, and the type stays beside it. The operator writes an operation
 // only on OperationFailed, and a reason there and on a schema's Verified entry
-// whose proof could not read the desired schema, but whatever the entry holds
-// is printed, so a value is never in the status and missing from the text.
+// whose proof could not read the desired schema or met one Ptah refuses, but
+// whatever the entry holds is printed, so a value is never in the status and
+// missing from the text.
 func summaryOf(entry Entry) string {
 	parts := make([]string, 0, 3)
 	for _, part := range []string{string(entry.Outcome), entry.Operation, entry.Reason} {

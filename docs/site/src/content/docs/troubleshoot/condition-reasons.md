@@ -88,6 +88,7 @@ decision.
 | `RunNotUnresolved` | A `PtahMigrationRunAcknowledgment` named a run its migration was not waiting on, so it settled nothing. Read the migration's `status.unresolvedRun` for the run it does record, or `status.resolvedRun` for what settled the one you named. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
 | `SchemaDrifted` | A migration Apply ran nothing because `spec.policy.driftCheck` found the target's schema differing from the one its applied migrations produce. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `SchemaInvalid` | An Observe or a Plan stopped on a fault of the desired schema as a whole, which Ptah reads and refuses: a foreign key into a table the schema does not declare, an index on a column its table does not declare, or a domain whose own default is a relative time string. It stops the schema as `SchemaSourceUnreadable` does, and `DatabaseReachable` is true. See [A desired schema Ptah refuses](#a-desired-schema-ptah-refuses). |
 | `SchemaSourceUnreadable` | An Observe or a Plan could not read the desired schema: a file Ptah cannot parse, a relative time string as a date or time column's default, a MySQL table partitioned with `PARTITION BY`, or a row file outside Ptah's working directory. `Ready` is false with Ptah's reason, phase `Blocked`, nothing is published, and the schema is read again at `spec.interval`, at once when a ConfigMap source or the spec changes, or on a read request. After an Apply it ends the proof. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
@@ -542,7 +543,8 @@ operation Pod; running the same Ptah command against the database yourself
 prints it.
 
 Ptah classifies only the connection to the target. Any other failure keeps the
-code it had, unless [the desired file does not load](#a-desired-file-ptah-could-not-read):
+code it had, unless [the desired file does not load](#a-desired-file-ptah-could-not-read)
+or [Ptah refuses the schema it states](#a-desired-schema-ptah-refuses):
 `child_exit: ptah exited with code 2` from an observation or a
 migration history read, `invalid_plan_output` from a Plan, `apply_failed` from
 an Apply. A development database, a registry or a Git remote that cannot be
@@ -673,59 +675,10 @@ it, from the declaration and the paths in the Pod.
 
 Not everything that stops a desired file reaches this code. Ptah reads no SQL
 statement of a migration file until it runs it, so a statement that does not
-parse passes the history read and fails the Apply on the database.
-Since Ptah v0.34.0 neither does a domain's own relative time default, as
-`CREATE DOMAIN moment AS timestamp DEFAULT 'now'`
-([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)). Ptah refuses
-it as a fault of the schema, so it does not read as
-`desired_source_unreadable`, and it does not read as the
-`desired_schema_invalid` below either: drift and plan name the domain
-`public.moment` where validate names it `moment`, and the operator matches the
-two only where the name is a table's. An Observe fails with `child_exit` and a
-Plan with `plan_refused`, and only the Pod log holds Ptah's sentence.
-
-A desired schema that loads and that Ptah refuses as a whole, such as a foreign
-key to a table it does not declare, reads the same way under the code
-`desired_schema_invalid`. It is reported as a failed operation:
-`ReconciliationFailed=True` with reason `OperationFailed` and an
-`OperationFailed` Warning Event, and the operation runs again after
-`spec.execution.failureRetryInterval`. So does an
-index on a table no declaration defines, or on a column its table does not
-declare: since Ptah v0.26.0 drift and plan check every index before they compare
-anything, and stop on the first one they refuse
-([stokaro/ptah#5845](https://github.com/stokaro/ptah/pull/5845)):
-
-```
-desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
-desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns
-desired_schema_invalid: schema.sql: index "i": names table "nowhere", which no declaration defines
-```
-
-The fault comes from the same second run, and the operator reports it only when
-it is the one the failed command stopped on: the words have to end that command's
-own sentence, or be the whole of it for an index, and nothing of that sentence
-is copied. A foreign key into a schema the database holds and the file declares
-nothing of does not reach this code. The comparison with that database refuses
-it, and the second run does not have that database. An Observe keeps
-`child_exit`, a Plan reads as the next paragraph says, and a fault the second run
-finds elsewhere in the same file is not why the command stopped.
-
-Listing the table of a faulty index in `spec.policy.exclude` does not hide the
-fault. An Observe passes no selector to `schema drift`, and the Plan passes the
-entry to `schema plan`, which checks every index of the file before it selects
-anything. Since Ptah v0.32.0 the plan names the table with its schema, as
-`table "public.t"`, where validate prints `table "t"`
-([stokaro/ptah#6219](https://github.com/stokaro/ptah/pull/6219)); the reason
-still reads as validate prints it.
-
-`schema plan` refuses such a file with the refusal code `declaration-refused`,
-and the operator asks the second run about that refusal as it asks about a
-failure. A declaration refusal the second run does not explain, such as the
-foreign key into a schema only the database holds, reads `plan_refused: ptah
-refused to plan the change (declaration-refused)`.
-
-`ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
-file alone can be refused for, indexes included, with no database.
+parse passes the history read and fails the Apply on the database. A schema
+file that loads and that Ptah refuses as a whole, such as a domain's own
+relative time default since Ptah v0.34.0, reads as
+[A desired schema Ptah refuses](#a-desired-schema-ptah-refuses) describes.
 
 A schema published to an OCI registry reads the same way. The `fetch-schema`
 init container checks the manifest, the artifact type, and each layer's media
@@ -788,6 +741,87 @@ kubectl logs -n application job/<job> -c fetch-migrations
 
 `ptah migrations push` refuses both directories since Ptah v0.33.0, so such an
 artifact comes from an earlier Ptah or from another tool.
+
+## A desired schema Ptah refuses
+
+A desired schema that loads and that Ptah refuses as a whole, such as a foreign
+key to a table it does not declare, stops a `PtahSchema` the way
+[a file Ptah could not read](#a-desired-file-ptah-could-not-read) does, under
+the code `desired_schema_invalid` and the reason `SchemaInvalid`. So does an
+index on a table no declaration defines, or on a column its table does not
+declare: since Ptah v0.26.0 drift and plan check every index before they compare
+anything, and stop on the first one they refuse
+([stokaro/ptah#5845](https://github.com/stokaro/ptah/pull/5845)). Since Ptah
+v0.34.0 so does a domain whose own default is a relative time string, as
+`CREATE DOMAIN moment AS timestamp DEFAULT 'now'`
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)). So does a
+relative time default on a column typed by a domain over a date or time type,
+which Ptah refuses since v0.33.1
+([stokaro/ptah#6345](https://github.com/stokaro/ptah/pull/6345)):
+
+```
+desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
+desired_schema_invalid: schema.sql: postgres requires referenced columns code on table "parent" to be declared unique: a primary key, UNIQUE constraint or unique index must key exactly those columns
+desired_schema_invalid: schema.sql: index "i": names table "nowhere", which no declaration defines
+desired_schema_invalid: schema.sql: domain "moment": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE
+desired_schema_invalid: schema.sql: column "created_at" of table "events": DEFAULT 'now' on a moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE
+```
+
+| Stage | Where the reason appears, and what follows |
+| --- | --- |
+| `PtahSchema` Observe or Plan | `Ready=False` with reason `SchemaInvalid`, phase `Blocked`, and a `SchemaInvalid` Warning Event. `PlanReady` is false, `DriftDetected` and `InSync` are unknown, `ReconciliationFailed` is false, and `DatabaseReachable` is true: Ptah opened the database before it read the file. |
+
+The schema is not read again at the failure retry: another read of the same
+file against the same server gives the same answer. `schema validate` words the
+fault with the engine's defaults, but drift and plan decide it against the
+server, its version and its `sql_mode`, so a server change can move the
+verdict. No plan is published, any approval is marked stale, and the source is
+read again at `spec.interval`, at once when a ConfigMap source or the spec
+changes, or on `kubectl ptah refresh`, which is the way to read it again after
+the server changed. A proof after an Apply that meets such a schema ends as one
+that meets a file Ptah cannot read does. Under the binding the Apply ran under,
+the read after it meets a fault its Plan did not only where the server changed
+in between, such as an upgrade that moved what it supports or its `sql_mode`.
+The journal then records the proof `Verified` with outcome `Unknown` and reason
+`SchemaInvalid`, and `kubectl ptah wait --for applied` and
+`kubectl ptah settle --wait` stop and say Ptah refused the desired schema.
+Through 0.2.15 such a read was a failed operation instead,
+`ReconciliationFailed=True` with reason `OperationFailed` and an
+`OperationFailed` Warning Event, tried again after
+`spec.execution.failureRetryInterval`.
+
+The fault comes from the second run that names a file Ptah could not read, and
+the operator reports it only when it is the one the failed command stopped on:
+the words have to end that command's own sentence, or be the whole of it for an
+index, and nothing of that sentence is copied. On a PostgreSQL URL that pins no
+`search_path`, drift and plan name what the file declares without a schema in
+the schema the database resolves it to: a table as `table "public.parent"` and
+a domain as `domain "public.moment"`, where validate prints `table "parent"` and
+`domain "moment"`, and the type of a column a domain types as `public.moment`,
+where validate prints `moment`. The operator allows for those names, and the
+reason reads as validate prints it. A foreign key into a schema the database
+holds and the file declares nothing of does not reach this code. The comparison
+with that database refuses it, and the second run does not have that database.
+An Observe keeps `child_exit` and a Plan reads `plan_refused`, as below, each
+tried again at the failure retry, and a fault the second run finds elsewhere in
+the same file is not why the command stopped.
+
+Listing the table of a faulty index in `spec.policy.exclude` does not hide the
+fault. An Observe passes no selector to `schema drift`, and the Plan passes the
+entry to `schema plan`, which checks every index of the file before it selects
+anything. Since Ptah v0.32.0 the plan names the table with its schema, as
+`table "public.t"`, where validate prints `table "t"`
+([stokaro/ptah#6219](https://github.com/stokaro/ptah/pull/6219)); the reason
+still reads as validate prints it.
+
+`schema plan` refuses such a file with the refusal code `declaration-refused`,
+and the operator asks the second run about that refusal as it asks about a
+failure. A declaration refusal the second run does not explain, such as the
+foreign key into a schema only the database holds, reads `plan_refused: ptah
+refused to plan the change (declaration-refused)`.
+
+`ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
+file alone can be refused for, indexes included, with no database.
 
 ## A source access refused before the fetch
 
@@ -904,7 +938,7 @@ than a dry run`, and nothing said why.
 | The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>`, or declare another owner. |
 | A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan fails at every retry with the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode`, or declare the value without a backslash. |
 | The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
-| The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
+| The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which stops the schema `Blocked` with [`SchemaInvalid`](#a-desired-schema-ptah-refuses). | Read the sentence and change the declaration. |
 
 ## A change a policy fences off
 

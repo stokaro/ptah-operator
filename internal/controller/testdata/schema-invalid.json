@@ -1,0 +1,83 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "generation": 1,
+    "name": "app",
+    "namespace": "team-a"
+  },
+  "status": {
+    "activeOperation": null,
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Succeeded",
+        "message": "The latest operation completed"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "Database schema was observed"
+      },
+      {
+        "type": "ApprovalRequired",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanNoLongerCurrent",
+        "message": "No plan is waiting: the plan that was is no longer current, and Ptah planned none in its place"
+      },
+      {
+        "type": "DriftDetected",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SchemaInvalid",
+        "message": "Whether the database differs is unknown until Ptah accepts the desired schema"
+      },
+      {
+        "type": "PlanReady",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SchemaInvalid",
+        "message": "Nothing is planned from a desired schema Ptah refuses"
+      },
+      {
+        "type": "InSync",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SchemaInvalid",
+        "message": "Whether the database matches the desired schema is unknown until Ptah accepts it"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SchemaInvalid",
+        "message": "desired_schema_invalid: schema.sql: domain \"moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+      }
+    ],
+    "lastAttemptTime": "2026-08-30T12:00:00Z",
+    "nextReconciliationTime": "2026-08-30T12:37:00Z",
+    "observedGeneration": 1,
+    "phase": "Blocked",
+    "plan": null
+  }
+}

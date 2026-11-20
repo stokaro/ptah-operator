@@ -888,9 +888,30 @@ func planPaths(t *testing.T) []targetOpeningSchema {
 	return plans
 }
 
+// saysWhatTheReadCameTo picks out a status write that records failure: on
+// ReconciliationFailed for a read that is retried, and for a schema Ptah
+// refuses as a whole, which is not retried and records no failure, on
+// DriftDetected, the one condition the refusal words the same whether or not
+// the read served a proof (schema_source_unreadable_test.go holds the rest of
+// what it records).
+func saysWhatTheReadCameTo(failure *runner.ResultError) func([]metav1.Condition) bool {
+	if failure.Code == runner.CodeDesiredSchemaInvalid {
+		return func(conditions []metav1.Condition) bool {
+			return conditionMatches(conditions, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonSchemaInvalid) &&
+				!meta.IsStatusConditionTrue(conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		}
+	}
+	return func(conditions []metav1.Condition) bool {
+		failed := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReconciliationFailed)
+		return failed != nil && failed.Status == metav1.ConditionTrue && failed.Reason == string(operatorv1alpha1.ReasonOperationFailed) &&
+			strings.HasPrefix(failed.Message, failure.Code+": ")
+	}
+}
+
 // A Plan that came back from the target opened it, whatever came of the plan. The
 // retry runs another Plan rather than an Observe, so a refusal that repeats would
-// otherwise keep an old reason for as long as it repeats.
+// otherwise keep an old reason for as long as it repeats. A schema Ptah refuses
+// as a whole is not retried, and the read still opened the target.
 func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 	t.Parallel()
 	previous := previousReachability()["a target that refused"]
@@ -900,14 +921,10 @@ func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 				t.Parallel()
 				_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
 				assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
-				writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
-					failed := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReconciliationFailed)
-					return failed != nil && failed.Status == metav1.ConditionTrue && strings.HasPrefix(failed.Message, failure.Code+": ")
-				})
-				failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-				if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
-					!strings.HasPrefix(failed.Message, failure.Code+": ") {
-					t.Fatalf("ReconciliationFailed = %#v, want OperationFailed naming %s", failed, failure.Code)
+				says := saysWhatTheReadCameTo(failure)
+				writes.assertReachedBeside(t, says)
+				if !says(actual.Status.Conditions) {
+					t.Fatalf("the stored conditions do not record %s: %#v", failure.Code, actual.Status.Conditions)
 				}
 			})
 		}
@@ -954,7 +971,8 @@ func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 
 // An Observe compares the declaration with what it read, as a Plan does, so a
 // declaration that cannot be compared says the Observe read the target. It
-// usually stops there, before any Plan runs (#924).
+// usually stops there, before any Plan runs (#924), and the schema stops
+// Blocked (#1158).
 func TestAnObserveThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 	t.Parallel()
 	previous := previousReachability()["a target that refused"]
@@ -969,10 +987,11 @@ func TestAnObserveThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 			t.Parallel()
 			_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
 			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
-			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
-				failed := meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReconciliationFailed)
-				return failed != nil && failed.Status == metav1.ConditionTrue && strings.HasPrefix(failed.Message, failure.Code+": ")
-			})
+			says := saysWhatTheReadCameTo(failure)
+			writes.assertReachedBeside(t, says)
+			if !says(actual.Status.Conditions) {
+				t.Fatalf("the stored conditions do not record %s: %#v", failure.Code, actual.Status.Conditions)
+			}
 		})
 	}
 	if observed != 2 {

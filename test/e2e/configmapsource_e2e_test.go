@@ -798,7 +798,7 @@ func (c *configMapRun) unreadableSources() {
 		},
 	}), "create PtahSchema %s", configMapUnreadableSchema)
 	var message string
-	refused := c.waitForUnreadableSchema("the schema to stop and say why it could not read its file", func(s *ptahv1alpha1.PtahSchema) error {
+	refused := c.waitForStoppedSchema(configMapUnreadableSchema, "the schema to stop and say why it could not read its file", func(s *ptahv1alpha1.PtahSchema) error {
 		said, err := schemaSourceRefused(s)
 		if err != nil {
 			return err
@@ -808,14 +808,14 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.checkUnreadableText(message)
 	c.waitForUnreadableEvent(refused.UID, string(ptahv1alpha1.ReasonSchemaSourceUnreadable), unreadableSchemaFile, unreadableInheritsReason)
-	c.holdUnreadableRefusal(refused, failureRetry)
+	c.holdRefusal(configMapUnreadableSchema, refused, schemaSourceRefused)
 	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
 	request := c.requestUnreadableSchemaRead(refused)
-	c.waitForUnreadableSchema("the read the request started to be refused in its turn", func(s *ptahv1alpha1.PtahSchema) error {
+	c.waitForStoppedSchema(configMapUnreadableSchema, "the read the request started to be refused in its turn", func(s *ptahv1alpha1.PtahSchema) error {
 		return readRequestRefusedAgain(s, request, refused.Status.LastAttemptTime)
 	})
 	c.editSource(configMapUnreadableSchemaSource, "schema.sql", configMapSchemaRevisions[0])
-	c.waitForUnreadableSchema("the schema to plan from the edit alone", func(s *ptahv1alpha1.PtahSchema) error {
+	c.waitForStoppedSchema(configMapUnreadableSchema, "the schema to plan from the edit alone", func(s *ptahv1alpha1.PtahSchema) error {
 		return schemaReadTheRepair(s, generation, failedSource)
 	})
 	c.deleteAndWait(refused)
@@ -866,14 +866,22 @@ func (c *configMapRun) unreadableSources() {
 	c.logf("PASS a migration from a ConfigMap said why its file could not be loaded: %s", message)
 }
 
-// invalidSchema delivers a schema that loads and declares a foreign key into a
-// table it does not hold, and reads the fault where a person reads it. The file
-// is not repaired: a repair reaches the same read the row above proves. The
-// resource is removed afterward, so the target's Lease and database are as the
-// row above left them.
+// invalidSchema delivers a schema that loads and that Ptah refuses as a whole:
+// a timestamp domain whose own default is 'now' (stokaro/ptah-operator#1158).
+// Drift names the domain in the schema it placed it in, and the runner has to
+// place it too to tie the fault to validate's line. The schema stops at
+// Blocked with SchemaInvalid, the fault in the condition and in the Warning,
+// DatabaseReachable True, since the read compared the file with the database,
+// and it stays there past two failure retries without another read. An edit
+// of the ConfigMap to a foreign key into a table the file does not hold starts
+// the next read at once, which stops Blocked in its turn with that fault: the
+// edit is read, and each fault is named by the revision it is true of. A
+// repair reaches the same read the row above proves, so the file is not
+// repaired. The resource is removed afterward, so the target's Lease and
+// database are as the row above left them.
 func (c *configMapRun) invalidSchema(target, execution map[string]any) {
 	c.t.Helper()
-	c.check(c.apply(c.sourceDocument(configMapInvalidSchemaSource, map[string]string{"schema.sql": invalidKeySchema})),
+	c.check(c.apply(c.sourceDocument(configMapInvalidSchemaSource, map[string]string{"schema.sql": invalidDomainSchema})),
 		"apply ConfigMap %s", configMapInvalidSchemaSource)
 	c.check(c.create(map[string]any{
 		"apiVersion": ptahSchemaAPIVersion, "kind": "PtahSchema",
@@ -887,41 +895,61 @@ func (c *configMapRun) invalidSchema(target, execution map[string]any) {
 			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"}, "execution": execution,
 		},
 	}), "create PtahSchema %s", configMapInvalidSchema)
-	schema := &ptahv1alpha1.PtahSchema{}
 	var message string
-	c.wait("the schema to name the fault in its file", func() (bool, string) {
-		if err := c.get(configMapInvalidSchema, schema); err != nil {
-			return false, err.Error()
+	refused := c.waitForStoppedSchema(configMapInvalidSchema, "the schema to stop and name the fault in its file", func(s *ptahv1alpha1.PtahSchema) error {
+		said, err := schemaInvalidRefused(s)
+		if err != nil {
+			return err
 		}
-		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
-		}
-		message = failed.Message
-		err := invalidSchemaSays(message, unreadableSchemaFile, invalidKeyReason)
-		return err == nil, fmt.Sprint(err)
+		message = said
+		return invalidSchemaSays(message, unreadableSchemaFile, invalidDomainReason)
 	})
 	c.checkUnreadableText(message)
-	c.wait("the OperationFailed Event to name the fault", func() (bool, string) {
+	c.waitForInvalidSchemaEvent(refused.UID, invalidDomainReason)
+	c.holdRefusal(configMapInvalidSchema, refused, schemaInvalidRefused)
+
+	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
+	c.editSource(configMapInvalidSchemaSource, "schema.sql", invalidKeySchema)
+	var edited string
+	c.waitForStoppedSchema(configMapInvalidSchema, "the edit alone to start a read refused for the edited fault", func(s *ptahv1alpha1.PtahSchema) error {
+		said, err := editRefusedAgain(s, generation, failedSource, refused.Status.LastAttemptTime)
+		if err != nil {
+			return err
+		}
+		edited = said
+		return invalidSchemaSays(edited, unreadableSchemaFile, invalidKeyReason)
+	})
+	c.checkUnreadableText(edited)
+	c.waitForInvalidSchemaEvent(refused.UID, invalidKeyReason)
+	c.deleteAndWait(refused)
+	c.logf("PASS a schema from a ConfigMap Ptah refuses as a whole stopped and named the fault of each revision: %s; then %s", message, edited)
+}
+
+// waitForInvalidSchemaEvent waits for the SchemaInvalid Warning that repeats a
+// fault. Events are written after the status patch, so a reading of the
+// condition does not yet promise one.
+func (c *configMapRun) waitForInvalidSchemaEvent(owner types.UID, fault string) {
+	c.t.Helper()
+	reason := string(ptahv1alpha1.ReasonSchemaInvalid)
+	c.wait("the "+reason+" Event to name the fault", func() (bool, string) {
 		events := &corev1.EventList{}
 		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
 			return false, err.Error()
 		}
-		err := invalidSchemaEvent(events.Items, schema.UID, "OperationFailed", unreadableSchemaFile, invalidKeyReason)
+		err := invalidSchemaEvent(events.Items, owner, reason, unreadableSchemaFile, fault)
 		return err == nil, fmt.Sprint(err)
 	})
-	c.deleteAndWait(schema)
-	c.logf("PASS a schema from a ConfigMap named the fault in its file: %s", message)
 }
 
-// waitForUnreadableSchema returns the reading that satisfied holds, so a claim is
-// asserted against the document that matched. holds says what is missing.
-func (c *configMapRun) waitForUnreadableSchema(what string, holds func(*ptahv1alpha1.PtahSchema) error) *ptahv1alpha1.PtahSchema {
+// waitForStoppedSchema returns the reading of schema name that satisfied holds,
+// so a claim is asserted against the document that matched. holds says what is
+// missing.
+func (c *configMapRun) waitForStoppedSchema(name, what string, holds func(*ptahv1alpha1.PtahSchema) error) *ptahv1alpha1.PtahSchema {
 	c.t.Helper()
 	var matched *ptahv1alpha1.PtahSchema
 	c.wait(what, func() (bool, string) {
 		schema := &ptahv1alpha1.PtahSchema{}
-		if err := c.get(configMapUnreadableSchema, schema); err != nil {
+		if err := c.get(name, schema); err != nil {
 			return false, err.Error()
 		}
 		if err := holds(schema); err != nil {
@@ -933,25 +961,35 @@ func (c *configMapRun) waitForUnreadableSchema(what string, holds func(*ptahv1al
 	return matched
 }
 
-// holdUnreadableRefusal reads the refused schema until two failure retries have
-// passed since the attempt that refused it, counted from that attempt as the
-// controller counts its retry, and requires every reading to hold the same
-// refusal. A retry would start another read under a claim, and a read that
-// ends stamps another attempt.
-func (c *configMapRun) holdUnreadableRefusal(refused *ptahv1alpha1.PtahSchema, failureRetry time.Duration) {
+// holdRefusal reads schema name until two failure retries have passed since
+// the attempt that refused it, counted from that attempt as the controller
+// counts its retry, and requires every reading to hold the same refusal, as
+// refusedAs reads it. A retry would start another read under a claim, and a
+// read that ends stamps another attempt. The retry interval is the one the
+// refused document holds, which is what the controller waited by.
+func (c *configMapRun) holdRefusal(
+	name string, refused *ptahv1alpha1.PtahSchema,
+	refusedAs func(*ptahv1alpha1.PtahSchema) (string, error),
+) {
 	c.t.Helper()
 	attempt := refused.Status.LastAttemptTime
 	if attempt == nil {
 		c.fatalf("the refused schema records no attempt to hold from")
 	}
+	failureRetry := refused.Spec.Execution.FailureRetryInterval.Duration
+	if failureRetry <= 0 {
+		c.fatalf("the refused schema holds spec.execution.failureRetryInterval %s, so there is no retry to hold past",
+			refused.Spec.Execution.FailureRetryInterval.Duration)
+	}
 	until := attempt.Add(2 * failureRetry)
-	c.logf("holding %s, until two failure retries after the refusal at %s", time.Until(until).Round(time.Second), attempt.UTC().Format(time.RFC3339))
+	c.logf("holding %s, until two failure retries of %s after the refusal at %s",
+		time.Until(until).Round(time.Second), failureRetry, attempt.UTC().Format(time.RFC3339))
 	readings := 0
 	for {
 		schema := &ptahv1alpha1.PtahSchema{}
-		c.check(c.get(configMapUnreadableSchema, schema), "read PtahSchema %s during the hold", configMapUnreadableSchema)
-		c.check(schemaRefusalStands(schema, attempt), "the refusal of %s %s into the hold",
-			configMapUnreadableSchema, time.Since(attempt.Time).Round(time.Second))
+		c.check(c.get(name, schema), "read PtahSchema %s during the hold", name)
+		c.check(schemaRefusalStands(schema, refusedAs, attempt), "the refusal of %s %s into the hold",
+			name, time.Since(attempt.Time).Round(time.Second))
 		readings++
 		if !time.Now().Before(until) {
 			break

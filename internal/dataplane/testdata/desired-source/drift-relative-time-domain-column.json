@@ -1,0 +1,7 @@
+{
+  "contract_version": 1,
+  "command": "schema drift",
+  "error": {
+    "message": "error comparing schemas: column \"created_at\" of table \"public.events\": DEFAULT 'now' on a public.moment column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+  }
+}

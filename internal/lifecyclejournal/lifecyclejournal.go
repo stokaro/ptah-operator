@@ -188,11 +188,12 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 			// A person gave the proof up, so nothing established what the Apply did.
 			outcome = operatorv1alpha1.JournalUnknown
 		case after.Phase == operatorv1alpha1.PhasePending || after.Phase == operatorv1alpha1.PhaseVerifying:
-		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable):
-			// Ptah could not read the desired schema the Apply ran from, under
-			// the execution binding it ran under, so nothing compared the
-			// database with it. After a Ptah upgrade the proof settles under the
-			// new binding instead, Superseded, above.
+		case ready != nil && (ready.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) ||
+			ready.Reason == string(operatorv1alpha1.ReasonSchemaInvalid)):
+			// Ptah could not read the desired schema the Apply ran from, or
+			// refused it, under the execution binding it ran under, so nothing
+			// compared the database with it. After a Ptah upgrade the proof
+			// settles under the new binding instead, Superseded, above.
 			outcome, reason = operatorv1alpha1.JournalUnknown, ready.Reason
 		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonDriftUndecided):
 			// The plan changed nothing because Ptah could not decide some

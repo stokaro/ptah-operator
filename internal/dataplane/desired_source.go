@@ -76,12 +76,25 @@ func SchemaSourceProblem(stdout []byte, engine string) (string, bool) {
 // to, and a sentence can name a table that way, as "public.parent", where
 // validate, which has no database, prints "parent". Drift does in both kinds of
 // line, and plan does in a schema fault and, since v0.32.0, in an index line
-// as well (stokaro/ptah#6219). Both place a table and nothing else: an index, a
-// column or a constraint keeps the name validate prints. So on PostgreSQL a
-// table validate names without a schema matches the same table with a schema
-// in front of it, in both kinds of line, and the tables one sentence places
-// share one schema (see placedFault). On MySQL the words have to be
-// validate's.
+// as well (stokaro/ptah#6219). An index, a column or a constraint keeps the
+// name validate prints. So on PostgreSQL a table validate names without a
+// schema matches the same table with a schema in front of it, in both kinds of
+// line, and the tables one sentence places share one schema (see placedFault).
+// On MySQL the words have to be validate's.
+//
+// The same placement reaches two more names in a schema fault, both measured
+// with Ptah v0.34.0 on PostgreSQL 17. A domain is placed with the tables, so
+// the refusal of its own relative time default (stokaro/ptah#6386) names
+// domain "public.moment" where validate names domain "moment". A column typed
+// by a domain the file declares names that type with the domain's schema,
+// unquoted, so the refusal of the column's relative time default says on a
+// public.moment column where validate says on a moment column. Validate never
+// qualifies a column's type, and drift and plan do even where nothing is
+// placed, so that schema is the domain's and not the tables'. Nothing else
+// validate names in a schema fault on PostgreSQL is one drift and plan place:
+// a sequence, an enum, a function or a view appears there only in a view's
+// owner refusal, which every schema reader refuses while it parses, as a load
+// failure that needs no comparison.
 //
 // failed is compared and never returned. Its command had a connection, so it
 // could quote the database. What is returned comes from a run that had none.
@@ -109,13 +122,21 @@ func SchemaStructuralProblem(stdout []byte, engine, failed string) (string, bool
 // quotedName is a name Ptah prints with %q, escapes and all.
 var quotedName = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 
-// placedTableLead is the word before a quoted name Ptah may place in a
-// schema, a table's, as in `on table "parent"`. It is a word of its own, at
-// the start of the words or after a space.
-const placedTableLead = "table "
+// placedLeads are the words before a quoted name Ptah may place in a schema:
+// a table's, as in `on table "parent"`, and a domain's, as in
+// `domain "moment": DEFAULT 'now'`. Each is a word of its own, at the start of
+// the words or after a space.
+var placedLeads = []string{"table ", "domain "}
+
+// placedColumnType is a column's type as the refusal of a relative time
+// default names it, `on a moment column`, which drift and plan write with the
+// schema of the domain the type names. The type is unquoted: one name, with
+// the brackets of an array after it. A built-in type is never qualified, and a
+// quoted or qualified one comes back as validate prints it.
+var placedColumnType = regexp.MustCompile(`(?:\A| )on a ([A-Za-z_][A-Za-z0-9_$]*(?:\[[0-9]*\])*) column(?: |\z)`)
 
 // faultEnds reports whether failed ends with ": " and then fault, with the
-// tables it names placed as placedFault allows.
+// names it holds placed as placedFault allows.
 func faultEnds(failed, fault, engine string) bool {
 	if strings.HasSuffix(failed, ": "+fault) {
 		return true
@@ -137,8 +158,8 @@ func faultEnds(failed, fault, engine string) bool {
 	return false
 }
 
-// faultIs reports whether failed is line and nothing else, with the tables it
-// names placed as placedFault allows.
+// faultIs reports whether failed is line and nothing else, with the names it
+// holds placed as placedFault allows.
 func faultIs(failed, line, engine string) bool {
 	if failed == line {
 		return true
@@ -148,42 +169,69 @@ func faultIs(failed, line, engine string) bool {
 }
 
 // placedFault is the expression for the whole of fault in which each quoted
-// name that follows placedTableLead and names no schema may name one, the
-// schema a plan or a drift placed the table in, as a group of its own. A name
-// validate prints with a schema has to come back as it is, and nothing else in
-// the words may differ. It reports false where Ptah places no name, on every
-// engine but PostgreSQL, and where fault names no table it could place.
+// name that follows one of placedLeads and names no schema may name one, the
+// schema a plan or a drift placed it in, as a group of its own, and in which a
+// column type placedColumnType finds may name the schema of its domain, which
+// is no group: it need not be the tables'. A name validate prints with a
+// schema has to come back as it is, and nothing else in the words may differ.
+// It reports false where Ptah places no name, on every engine but PostgreSQL,
+// and where fault names nothing it could place.
 func placedFault(fault, engine string) (*regexp.Regexp, bool) {
 	if !dialectMatches(engine, "postgres") {
 		return nil, false
 	}
 	var pattern strings.Builder
 	pattern.WriteString(`\A`)
-	last, tables := 0, 0
+	last, placeable := 0, 0
 	for _, found := range quotedName.FindAllStringIndex(fault, -1) {
-		pattern.WriteString(regexp.QuoteMeta(fault[last:found[0]]))
+		placeable += writeWords(&pattern, fault[last:found[0]])
 		name := fault[found[0]+1 : found[1]-1]
-		before := fault[:found[0]]
-		names := before == placedTableLead || strings.HasSuffix(before, " "+placedTableLead)
-		if names && !strings.Contains(name, ".") {
+		if placedLead(fault[:found[0]]) && !strings.Contains(name, ".") {
 			pattern.WriteString(`"(?:([^"\\.]+)\.)?` + regexp.QuoteMeta(name) + `"`)
-			tables++
+			placeable++
 		} else {
 			pattern.WriteString(regexp.QuoteMeta(fault[found[0]:found[1]]))
 		}
 		last = found[1]
 	}
-	pattern.WriteString(regexp.QuoteMeta(fault[last:]) + `\z`)
-	if tables == 0 {
+	placeable += writeWords(&pattern, fault[last:])
+	pattern.WriteString(`\z`)
+	if placeable == 0 {
 		return nil, false
 	}
 	expression, err := regexp.Compile(pattern.String())
 	return expression, err == nil
 }
 
+// placedLead reports whether before, the words in front of a quoted name, ends
+// with one of placedLeads as a word of its own.
+func placedLead(before string) bool {
+	for _, lead := range placedLeads {
+		if before == lead || strings.HasSuffix(before, " "+lead) {
+			return true
+		}
+	}
+	return false
+}
+
+// writeWords writes the expression for words that hold no quoted name: the
+// words as they are, but for each column type placedColumnType finds, which may
+// come back with a schema in front of it. It returns how many it found.
+func writeWords(pattern *strings.Builder, words string) int {
+	last := 0
+	types := placedColumnType.FindAllStringSubmatchIndex(words, -1)
+	for _, found := range types {
+		pattern.WriteString(regexp.QuoteMeta(words[last:found[2]]))
+		pattern.WriteString(`(?:[^\s".\\]+\.)?` + regexp.QuoteMeta(words[found[2]:found[3]]))
+		last = found[3]
+	}
+	pattern.WriteString(regexp.QuoteMeta(words[last:]))
+	return len(types)
+}
+
 // placedAs reports whether text is the fault expression matches, with every
-// table that names a schema naming the same one. RE2 has no backreference, so
-// the schemas are compared here.
+// table or domain that names a schema naming the same one. RE2 has no
+// backreference, so the schemas are compared here.
 func placedAs(expression *regexp.Regexp, text string) bool {
 	match := expression.FindStringSubmatch(text)
 	if match == nil {

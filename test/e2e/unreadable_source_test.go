@@ -106,6 +106,28 @@ func TestInvalidSchemaSaysHoldsTheClaim(t *testing.T) {
 	if !strings.HasPrefix(fault, invalidKeyWords) {
 		t.Fatalf("the capture says %q, and the row waits for %q", fault, invalidKeyWords)
 	}
+	// The row's domain is the capture's under another name. The reason the
+	// runner reports names it as validate does, with no schema.
+	domain := capturedFault(t, "validate-relative-time-domain.txt", "drift-relative-time-domain.json")
+	if !strings.HasPrefix(domain, `domain "moment"`+invalidDomainWords) {
+		t.Fatalf("the capture says %q, and the row waits for %q", domain, `domain "moment"`+invalidDomainWords)
+	}
+	delivered := code + "schema.sql: " + strings.Replace(domain, `"moment"`, `"e2e_moment"`, 1)
+	if err := invalidSchemaSays(delivered, "schema.sql", invalidDomainReason); err != nil {
+		t.Errorf("the domain's fault: %v", err)
+	}
+	for name, message := range map[string]string{
+		"the domain named as drift names it": strings.Replace(delivered, `"e2e_moment"`, `"public.e2e_moment"`, 1),
+		"the capture's domain":               code + "schema.sql: " + domain,
+		"the code the domain read as before": "plan_refused: ptah refused to plan the change (declaration-refused)",
+	} {
+		t.Run("the domain/"+name, func(t *testing.T) {
+			t.Parallel()
+			if err := invalidSchemaSays(message, "schema.sql", invalidDomainReason); err == nil {
+				t.Fatalf("invalidSchemaSays(%q) accepted it", message)
+			}
+		})
+	}
 	said := code + "schema.sql: " + fault
 	if err := invalidSchemaSays(said, "schema.sql", invalidKeyWords); err != nil {
 		t.Errorf("the fault: %v", err)
@@ -139,19 +161,23 @@ func TestInvalidSchemaEventFindsTheEventOfTheResource(t *testing.T) {
 	event := func(uid types.UID, kind, reason, message string) corev1.Event {
 		return corev1.Event{InvolvedObject: corev1.ObjectReference{UID: uid}, Type: kind, Reason: reason, Message: message}
 	}
+	reason := string(ptahv1alpha1.ReasonSchemaInvalid)
 	check := func(events ...corev1.Event) error {
-		return invalidSchemaEvent(events, owner, "OperationFailed", "schema.sql", invalidKeyWords)
+		return invalidSchemaEvent(events, owner, reason, "schema.sql", invalidKeyWords)
 	}
-	if err := check(event(owner, corev1.EventTypeWarning, "OperationFailed", "child_exit: ptah exited with code 2"),
-		event(owner, corev1.EventTypeWarning, "OperationFailed", said)); err != nil {
+	if err := check(event(owner, corev1.EventTypeWarning, reason, "child_exit: ptah exited with code 2"),
+		event(owner, corev1.EventTypeWarning, reason, said)); err != nil {
 		t.Errorf("the Event among others: %v", err)
 	}
 	for name, events := range map[string][]corev1.Event{
-		"no Events":                      nil,
-		"another resource's Event":       {event("other-uid", corev1.EventTypeWarning, "OperationFailed", said)},
-		"another reason":                 {event(owner, corev1.EventTypeWarning, "OperationRetried", said)},
-		"a Normal Event":                 {event(owner, corev1.EventTypeNormal, "OperationFailed", said)},
-		"an Event that does not say why": {event(owner, corev1.EventTypeWarning, "OperationFailed", "child_exit: ptah exited with code 2")},
+		"no Events":                nil,
+		"another resource's Event": {event("other-uid", corev1.EventTypeWarning, reason, said)},
+		// The Event each failed attempt wrote before the refusal stopped the
+		// read.
+		"the reason it replaced":         {event(owner, corev1.EventTypeWarning, "OperationFailed", said)},
+		"the unreadable file's reason":   {event(owner, corev1.EventTypeWarning, string(ptahv1alpha1.ReasonSchemaSourceUnreadable), said)},
+		"a Normal Event":                 {event(owner, corev1.EventTypeNormal, reason, said)},
+		"an Event that does not say why": {event(owner, corev1.EventTypeWarning, reason, "child_exit: ptah exited with code 2")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -282,7 +308,19 @@ func TestTheRepairedGitCommitRepairsOnlyTheSchemaFile(t *testing.T) {
 // predicates below are tested against a state the controller produces.
 func refusalReading(t *testing.T) *ptahv1alpha1.PtahSchema {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "controller", "testdata", "schema-source-unreadable.json"))
+	return storedReading(t, "schema-source-unreadable.json")
+}
+
+// invalidReading is the schema the reconciler stores when an Observe met a
+// schema Ptah refuses as a whole, held to the reconciler the same way.
+func invalidReading(t *testing.T) *ptahv1alpha1.PtahSchema {
+	t.Helper()
+	return storedReading(t, "schema-invalid.json")
+}
+
+func storedReading(t *testing.T, file string) *ptahv1alpha1.PtahSchema {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "controller", "testdata", file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,42 +386,148 @@ func TestASchemaSourceRefusalIsBlockedWithNoClaim(t *testing.T) {
 	}
 }
 
+// schemaInvalidRefused takes the schema the reconciler stores for a schema
+// Ptah refuses, and refuses the retry it replaced, a file Ptah could not read,
+// and a refusal that does not say the read opened the database.
+func TestASchemaInvalidRefusalIsBlockedWithNoClaim(t *testing.T) {
+	t.Parallel()
+	message, err := schemaInvalidRefused(invalidReading(t))
+	if err != nil {
+		t.Fatalf("schemaInvalidRefused() refused the reconciler's reading: %v", err)
+	}
+	if err := invalidSchemaSays(message, "schema.sql", `domain "moment"`+invalidDomainWords); err != nil {
+		t.Fatalf("the reading's message: %v", err)
+	}
+	if said, err := schemaInvalidRefused(refusalReading(t)); err == nil {
+		t.Fatalf("accepted the reading of a file Ptah could not read: %q", said)
+	}
+	if said, err := schemaSourceRefused(invalidReading(t)); err == nil {
+		t.Fatalf("schemaSourceRefused() accepted the reading of a schema Ptah refuses: %q", said)
+	}
+	for name, edit := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"the retry it replaced": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.Phase = ptahv1alpha1.PhaseFailed
+			s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{Type: ptahv1alpha1.OperationObserve, ID: "read", Attempt: 2}
+			meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: ptahv1alpha1.ConditionReconciliationFailed, Status: metav1.ConditionTrue,
+				Reason: string(ptahv1alpha1.ReasonOperationFailed), Message: message})
+			readyReason(s, ptahv1alpha1.ReasonOperationFailed)
+		},
+		"a plan beside":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Plan = &ptahv1alpha1.CurrentPlanStatus{Name: "plan"} },
+		"another phase":  func(s *ptahv1alpha1.PtahSchema) { s.Status.Phase = ptahv1alpha1.PhaseObserving },
+		"another reason": func(s *ptahv1alpha1.PtahSchema) { readyReason(s, ptahv1alpha1.ReasonSchemaSourceUnreadable) },
+		"a database it did not open": func(s *ptahv1alpha1.PtahSchema) {
+			reachable := meta.FindStatusCondition(s.Status.Conditions, ptahv1alpha1.ConditionDatabaseReachable)
+			reachable.Status, reachable.Reason = metav1.ConditionFalse, string(ptahv1alpha1.ReasonDatabaseUnreachable)
+		},
+		"no DatabaseReachable": func(s *ptahv1alpha1.PtahSchema) {
+			meta.RemoveStatusCondition(&s.Status.Conditions, ptahv1alpha1.ConditionDatabaseReachable)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := invalidReading(t)
+			edit(schema)
+			if said, err := schemaInvalidRefused(schema); err == nil {
+				t.Fatalf("accepted it: %q", said)
+			}
+		})
+	}
+}
+
 func readyReason(schema *ptahv1alpha1.PtahSchema, reason ptahv1alpha1.ConditionReason) {
 	meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReady).Reason = string(reason)
 }
 
 // A refusal that stands is the one the hold began with: a later attempt, or a
 // read under way, is a read the operator ran, which is what the hold rules out.
+// Each refusal is held to its own reading, and refuses the other's.
 func TestASchemaRefusalStandsOnlyOnItsOwnAttempt(t *testing.T) {
 	t.Parallel()
-	refused := refusalReading(t)
-	attempt := refused.Status.LastAttemptTime.DeepCopy()
-	if err := schemaRefusalStands(refused, attempt); err != nil {
-		t.Fatalf("refused the refusal on its own attempt: %v", err)
-	}
-	later := metav1.NewTime(attempt.Add(15 * time.Second))
-	for name, edit := range map[string]func(*ptahv1alpha1.PtahSchema){
-		"a later refusal": func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = &later },
-		"a retry under way": func(s *ptahv1alpha1.PtahSchema) {
-			s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{ID: "retry", Attempt: 2}
-		},
-		"no attempt": func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = nil },
-		"the refusal gone": func(s *ptahv1alpha1.PtahSchema) {
-			s.Status.Phase = ptahv1alpha1.PhaseFailed
-			readyReason(s, ptahv1alpha1.ReasonOperationFailed)
-		},
+	for _, hold := range []struct {
+		name           string
+		reading, other func(*testing.T) *ptahv1alpha1.PtahSchema
+		refusedAs      func(*ptahv1alpha1.PtahSchema) (string, error)
+		gone           ptahv1alpha1.ConditionReason
+	}{
+		{"a file Ptah cannot read", refusalReading, invalidReading, schemaSourceRefused, ptahv1alpha1.ReasonOperationFailed},
+		{"a schema Ptah refuses", invalidReading, refusalReading, schemaInvalidRefused, ptahv1alpha1.ReasonOperationFailed},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(hold.name, func(t *testing.T) {
 			t.Parallel()
-			schema := refusalReading(t)
-			edit(schema)
-			if err := schemaRefusalStands(schema, attempt); err == nil {
-				t.Fatal("accepted it")
+			refused := hold.reading(t)
+			attempt := refused.Status.LastAttemptTime.DeepCopy()
+			if err := schemaRefusalStands(refused, hold.refusedAs, attempt); err != nil {
+				t.Fatalf("refused the refusal on its own attempt: %v", err)
+			}
+			later := metav1.NewTime(attempt.Add(15 * time.Second))
+			for name, edit := range map[string]func(*ptahv1alpha1.PtahSchema){
+				"a later refusal": func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = &later },
+				"a retry under way": func(s *ptahv1alpha1.PtahSchema) {
+					s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{ID: "retry", Attempt: 2}
+				},
+				"no attempt": func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = nil },
+				"the refusal gone": func(s *ptahv1alpha1.PtahSchema) {
+					s.Status.Phase = ptahv1alpha1.PhaseFailed
+					readyReason(s, hold.gone)
+				},
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+					schema := hold.reading(t)
+					edit(schema)
+					if err := schemaRefusalStands(schema, hold.refusedAs, attempt); err == nil {
+						t.Fatal("accepted it")
+					}
+				})
+			}
+			if err := schemaRefusalStands(refused, hold.refusedAs, nil); err == nil {
+				t.Error("accepted a hold that began with no attempt")
+			}
+			other := hold.other(t)
+			if err := schemaRefusalStands(other, hold.refusedAs, other.Status.LastAttemptTime); err == nil {
+				t.Error("accepted the other refusal's reading")
 			}
 		})
 	}
-	if err := schemaRefusalStands(refused, nil); err == nil {
-		t.Error("accepted a hold that began with no attempt")
+}
+
+// An edit refused again is a read the source edit started: a later attempt,
+// at the same generation, from another source, that Ptah refused in its turn.
+func TestAnEditRefusedAgainNeedsALaterRefusalOfTheEdit(t *testing.T) {
+	t.Parallel()
+	refused := invalidReading(t)
+	attempt := refused.Status.LastAttemptTime.DeepCopy()
+	later := metav1.NewTime(attempt.Add(40 * time.Second))
+	const failedSource, editedSource = "sha256:failed", "sha256:edited"
+	edited := func() *ptahv1alpha1.PtahSchema {
+		schema := invalidReading(t)
+		schema.Status.LastAttemptTime = later.DeepCopy()
+		schema.Status.Source.Snapshot = &ptahv1alpha1.SourceSnapshotBinding{Name: "snapshot", ContentDigest: editedSource}
+		return schema
+	}
+	if _, err := editRefusedAgain(edited(), refused.Generation, failedSource, attempt); err != nil {
+		t.Fatalf("refused an edit refused in its turn: %v", err)
+	}
+	for name, edit := range map[string]func(*ptahv1alpha1.PtahSchema){
+		"the first refusal":  func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = attempt.DeepCopy() },
+		"no attempt":         func(s *ptahv1alpha1.PtahSchema) { s.Status.LastAttemptTime = nil },
+		"the refused source": func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Snapshot.ContentDigest = failedSource },
+		"no source":          func(s *ptahv1alpha1.PtahSchema) { s.Status.Source.Snapshot = nil },
+		"a spec edit":        func(s *ptahv1alpha1.PtahSchema) { s.Generation++ },
+		"the read under way": func(s *ptahv1alpha1.PtahSchema) {
+			s.Status.Phase = ptahv1alpha1.PhaseObserving
+			s.Status.ActiveOperation = &ptahv1alpha1.ActiveOperationStatus{ID: "next"}
+		},
+		"a file Ptah could not read": func(s *ptahv1alpha1.PtahSchema) { readyReason(s, ptahv1alpha1.ReasonSchemaSourceUnreadable) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := edited()
+			edit(schema)
+			if said, err := editRefusedAgain(schema, refused.Generation, failedSource, attempt); err == nil {
+				t.Fatalf("accepted it: %q", said)
+			}
+		})
 	}
 }
 
