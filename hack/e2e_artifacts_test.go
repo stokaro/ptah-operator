@@ -75,9 +75,9 @@ var migrationArtifacts = e2eArtifactFamily{
 	receiver: "migrationRun",
 	builder:  "reference",
 	publishers: map[string]int{
-		"publish":                     2,
-		"publishWithCheck":            2,
-		"publishUnknownLayerArtifact": 0,
+		"publish":                2,
+		"publishWithCheck":       2,
+		"publishFixtureArtifact": 0,
 	},
 }
 
@@ -985,14 +985,14 @@ func TestTheArtifactCheckRefusesWhatItCannotCheck(t *testing.T) {
 		want    string
 	}{
 		"a publisher whose reference is another argument": {
-			family:  withPublishers(map[string]int{"publish": 1, "publishWithCheck": 2, "publishUnknownLayerArtifact": 0}),
+			family:  withPublishers(map[string]int{"publish": 1, "publishWithCheck": 2, "publishFixtureArtifact": 0}),
 			catalog: catalog,
 			want:    "(*migrationRun).publish takes no reference as argument 1",
 		},
 		"a publisher past its arguments": {
-			family:  withPublishers(map[string]int{"publish": 2, "publishWithCheck": 2, "publishUnknownLayerArtifact": 1}),
+			family:  withPublishers(map[string]int{"publish": 2, "publishWithCheck": 2, "publishFixtureArtifact": 4}),
 			catalog: catalog,
-			want:    "(*migrationRun).publishUnknownLayerArtifact takes no reference as argument 1",
+			want:    "(*migrationRun).publishFixtureArtifact takes no reference as argument 4",
 		},
 		"a family nothing publishes": {
 			family:  withPublishers(nil),

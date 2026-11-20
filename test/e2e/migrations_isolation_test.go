@@ -373,7 +373,7 @@ func TestHostReference(t *testing.T) {
 		registry = "ptah-e2e-registry.ptah-e2e.svc.cluster.local:5000"
 		host     = "127.0.0.1:43127"
 	)
-	// What publishUnknownLayerArtifact pushed to before it took the reference
+	// What publishFixtureArtifact pushed to before it took the reference
 	// the row reads: the host address, the phase's repository, and the
 	// engine's unknown-layer artifact.
 	got, err := hostReference("oci://"+registry+"/migrations-faults/postgresql-unknown:stable", registry, host)

@@ -771,7 +771,9 @@ func (m *migrationRun) unknownLayerProof() {
 	database, secret := "ptah_e2e_unknown_layer", "e2e-"+m.engine.name+"-unknown-layer-db"
 	m.isolatedDatabase(database, secret)
 	reference := m.reference("-unknown")
-	m.publishUnknownLayerArtifact(reference)
+	fixtures, err := filepath.Abs(m.fixtureDir(""))
+	m.check(err, "resolve the migration fixtures")
+	m.publishFixtureArtifact(reference, fixtures, unknownLayerMediaType, "a layer this executor cannot accept")
 	// The database server's own journal is the witness that nothing connected:
 	// a Pod of this resource that sent a statement shows up in it, whatever the
 	// statement did.
@@ -870,6 +872,101 @@ func (m *migrationRun) unreadableOCIFiles() {
 	}
 	m.finishFixture(name)
 	m.logf("PASS a %s migration from a registry said why its files could not be loaded: %s", m.engine.kind, message)
+}
+
+// unreadOCIFiles publishes artifacts `ptah migrations push` has refused since
+// Ptah v0.33.0 and earlier releases published, as a registry may still hold
+// them: the engine's migrations beside a seed.sql the Ptah format does not
+// read, and a directory with no migration file in it. The fetch writes an
+// artifact without reading it as migrations, so the stray file reaches the
+// History's own read, which names it, and the migration stops at Blocked as it
+// does from a ConfigMap or Git. An artifact with no migration file is still
+// refused by the fetch, the container that holds the registry credential, so
+// status names the step and its exit code and nothing the step printed
+// (stokaro/ptah-operator#1149).
+func (m *migrationRun) unreadOCIFiles() {
+	m.t.Helper()
+	fixtures, err := filepath.Abs(m.fixtureDir(""))
+	m.check(err, "resolve the migration fixtures")
+	stray := m.t.TempDir()
+	m.check(os.CopyFS(stray, os.DirFS(fixtures)), "copy the %s migrations", m.engine.kind)
+	m.check(os.WriteFile(filepath.Join(stray, strayMigrationFile), []byte("INSERT INTO e2e_seed VALUES (1);\n"), 0o600),
+		"write the stray file")
+	name := "e2e-stray-oci-" + m.engine.name
+	secret := "e2e-" + m.engine.name + "-stray-oci-db"
+	m.isolatedDatabase("ptah_e2e_stray_oci", secret)
+	reference := m.reference("-stray")
+	m.publishFixtureArtifact(reference, stray, "", "a file the Ptah format does not read")
+	m.mustCreate(m.migrationDocument(migrationSpec{
+		name: name, secret: secret, reference: reference,
+		coordinationKey: "e2e/stray-oci/" + m.engine.name, apply: "OnApproval", interval: "30s",
+	}))
+	var message string
+	var last error
+	if !m.miUntil(migrationPoll, func() bool {
+		message, last = migrationDirectoryRefused(m.migration(name))
+		if last == nil {
+			last = unreadableSourceSays(message, strayMigrationFile, strayMigrationReason)
+		}
+		return last == nil
+	}) {
+		m.fatalf("%s never stopped and named the file its format does not read within %s: %v", name, waitTimeout, last)
+	}
+	uid := m.migration(name).UID
+	if !m.miUntil(migrationPoll, func() bool {
+		events := &corev1.EventList{}
+		m.check(m.list(events), "read the Events of %s", name)
+		last = unreadableSourceEvent(events.Items, uid, string(ptahv1alpha1.ReasonMigrationDirectoryUnreadable),
+			strayMigrationFile, strayMigrationReason)
+		return last == nil
+	}) {
+		m.fatalf("the MigrationDirectoryUnreadable Event of %s never named the file: %v", name, last)
+	}
+	m.finishFixture(name)
+	m.logf("PASS a %s migration from a registry named the file its format does not read: %s", m.engine.kind, message)
+
+	empty := m.t.TempDir()
+	m.check(os.WriteFile(filepath.Join(empty, "README.md"), []byte("# Migrations\n\nThe files moved to another repository.\n"), 0o600),
+		"write the only file of the artifact")
+	name = "e2e-no-sql-oci-" + m.engine.name
+	secret = "e2e-" + m.engine.name + "-no-sql-oci-db"
+	m.isolatedDatabase("ptah_e2e_no_sql_oci", secret)
+	reference = m.reference("-no-sql")
+	credentials := m.publishFixtureArtifact(reference, empty, "", "no migration file")
+	m.mustCreate(m.migrationDocument(migrationSpec{
+		name: name, secret: secret, reference: reference,
+		coordinationKey: "e2e/no-sql-oci/" + m.engine.name, apply: "OnApproval", interval: "30s",
+	}))
+	var refused *ptahv1alpha1.PtahMigration
+	if !m.miUntil(migrationPoll, func() bool {
+		refused = m.migration(name)
+		last = fetchRefusalSaysOnly(refused.Status, migrationFetchStep)
+		return last == nil
+	}) {
+		m.fatalf("%s never named the step that refused an artifact with no migration file within %s: %v", name, waitTimeout, last)
+	}
+	events := &corev1.EventList{}
+	m.check(m.list(events), "read the Events of %s", name)
+	owned := slices.DeleteFunc(events.Items, func(event corev1.Event) bool { return event.InvolvedObject.UID != refused.UID })
+	status, err := json.Marshal(refused.Status)
+	m.check(err, "encode the status of %s", name)
+	said, err := json.Marshal(owned)
+	m.check(err, "encode the Events of %s", name)
+	if credentials.Username == "" || credentials.Password == "" {
+		m.fatalf("the registry credentials hold an empty field, so nothing could be scanned for them")
+	}
+	for _, text := range [][]byte{status, said} {
+		for _, secret := range []string{credentials.Username, credentials.Password} {
+			if bytes.Contains(text, []byte(secret)) {
+				m.fatalf("%s carries a registry credential", name)
+			}
+		}
+		if bytes.Contains(text, []byte(noMigrationFilesWords)) {
+			m.fatalf("%s carries what the fetch printed: %s", name, text)
+		}
+	}
+	m.finishFixture(name)
+	m.logf("PASS a %s migration whose artifact holds no migration file named the step and its exit code alone", m.engine.kind)
 }
 
 // nativePolicyRefusalProof reads the phase's artifact under a policy Ptah itself
@@ -992,40 +1089,39 @@ func (m *migrationRun) recordMigrationJobs(name string, jobs map[types.UID]batch
 	}
 }
 
-// publishUnknownLayerArtifact builds the artifact no product command builds:
-// the engine's migrations with a layer of the next version of the format. It
-// runs on the host, against the registry as the host reaches it, and pushes to
-// the reference the cluster reads it by.
-func (m *migrationRun) publishUnknownLayerArtifact(reference string) {
+// publishFixtureArtifact builds an artifact no product command of the pinned
+// Ptah builds: the top-level files of directory, an absolute path, one layer
+// each, and with unknownMediaType a layer of the next version of the format.
+// It runs on the host, against the registry as the host reaches it, and pushes
+// to the reference the cluster reads it by. It returns the registry
+// credentials it pushed with, for a row to hold status to.
+func (m *migrationRun) publishFixtureArtifact(reference, directory, unknownMediaType, what string) registryCredentials {
 	m.t.Helper()
 	if m.in.RegistryHostAddress == "" {
-		m.fatalf("the harness published no registry address, so the unknown-layer artifact cannot be built")
+		m.fatalf("the harness published no registry address, so the fixture artifact cannot be built")
 	}
 	host, err := hostReference(reference, m.registryHost, m.in.RegistryHostAddress)
-	m.check(err, "address the unknown-layer artifact from the host")
+	m.check(err, "address the fixture artifact from the host")
 	if info, err := os.Stat(m.in.RegistryCredentialsFile); m.in.RegistryCredentialsFile == "" || err != nil || info.Size() == 0 {
 		m.fatalf("the harness published no registry credentials file")
 	}
-	m.logf("publishing a %s artifact carrying a layer this executor cannot accept", m.engine.kind)
+	m.logf("publishing a %s artifact carrying %s", m.engine.kind, what)
 	content, err := os.ReadFile(m.in.RegistryCredentialsFile)
 	m.check(err, "read the registry credentials file")
 	credentials, err := parseRegistryCredentials(content)
 	m.check(err, "read the registry credentials")
 	root, err := filepath.Abs(repositoryRoot)
 	m.check(err, "resolve the repository root")
-	fixtures, err := filepath.Abs(m.fixtureDir(""))
-	m.check(err, "resolve the migration fixtures")
-	command := exec.CommandContext(m.ctx, "go", "-C", root, "run", "./hack/unknownlayerfixture", //nolint:gosec // Arguments, not a shell.
-		"--reference", host,
-		"--dir", fixtures,
-		"--unknown-media-type", unknownLayerMediaType,
-		"--username", credentials.Username,
-		"--password", credentials.Password,
-		"--plain-http")
+	arguments := []string{"-C", root, "run", "./hack/unknownlayerfixture", "--reference", host, "--dir", directory}
+	if unknownMediaType != "" {
+		arguments = append(arguments, "--unknown-media-type", unknownMediaType)
+	}
+	arguments = append(arguments, "--username", credentials.Username, "--password", credentials.Password, "--plain-http")
+	command := exec.CommandContext(m.ctx, "go", arguments...) //nolint:gosec // Arguments, not a shell.
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	err = command.Run()
-	m.scan(output.Bytes(), "the unknown-layer publisher")
+	m.scan(output.Bytes(), "the fixture publisher")
 	if err != nil {
 		// The publisher was handed the registry password, which the scanner
 		// does not know, so its words are printed only without it.
@@ -1036,8 +1132,9 @@ func (m *migrationRun) publishUnknownLayerArtifact(reference string) {
 				_, _ = fmt.Fprintf(os.Stderr, "e2e migrations:   %s\n", line)
 			}
 		}
-		m.fatalf("the unknown-layer artifact could not be published: %v", err)
+		m.fatalf("the fixture artifact could not be published: %v", err)
 	}
+	return credentials
 }
 
 // egressPolicyProof ports run_egress_policy_proof: the egress example,

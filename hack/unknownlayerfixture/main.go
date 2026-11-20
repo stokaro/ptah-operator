@@ -1,7 +1,9 @@
 // Command unknownlayerfixture publishes a migration artifact carrying one layer
-// whose media type the pinned executor does not accept.
+// whose media type the pinned executor does not accept, or, without
+// --unknown-media-type, a migration artifact holding a directory's files as
+// they are.
 //
-// It exists because no product command can produce this artifact. `ptah
+// It exists because no product command can produce these artifacts. `ptah
 // migrations push` writes the layers it knows, which is the point of it, so an
 // artifact built by a newer publisher than the executor installed here has to
 // be assembled directly. What the fixture is imitating is not corruption: it is
@@ -11,6 +13,12 @@
 // reader that meets a layer outside its accepted set refuses the whole artifact
 // on the layer descriptor, before the bytes are fetched, which is how it fails
 // closed rather than reading around what it cannot understand.
+//
+// Since Ptah v0.33.0 `ptah migrations push` also refuses a directory holding a
+// file the format does not read, such as a seed.sql beside the migrations, and
+// a directory holding no SQL file. An earlier Ptah published both, so a
+// registry can hold them, and the directory form imitates such an artifact: it
+// publishes every regular file of the directory, one layer each.
 package main
 
 import (
@@ -54,7 +62,8 @@ func main() {
 func run() error {
 	reference := flag.String("reference", "", "registry reference to publish, without a scheme")
 	directory := flag.String("dir", "", "directory of migration files to publish")
-	unknownMediaType := flag.String("unknown-media-type", "", "media type of the extra layer this executor cannot accept")
+	unknownMediaType := flag.String("unknown-media-type", "",
+		"media type of the extra layer this executor cannot accept; without it, the directory's files alone")
 	unknownName := flag.String("unknown-name", "capabilities.json", "file name the extra layer carries")
 	username := flag.String("username", "", "registry username")
 	password := flag.String("password", "", "registry password")
@@ -66,8 +75,6 @@ func run() error {
 		return errors.New("a reference is required")
 	case strings.TrimSpace(*directory) == "":
 		return errors.New("a migrations directory is required")
-	case strings.TrimSpace(*unknownMediaType) == "":
-		return errors.New("an unknown media type is required")
 	case *unknownMediaType == migrationLayerMediaType:
 		return fmt.Errorf("the extra layer must not be %q, which every executor accepts", migrationLayerMediaType)
 	}
@@ -97,12 +104,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	unknown, err := pushBlob(ctx, target, *unknownMediaType, *unknownName,
-		[]byte(`{"requires":["a capability this executor predates"]}`))
-	if err != nil {
-		return fmt.Errorf("push the extra layer: %w", err)
+	if strings.TrimSpace(*unknownMediaType) != "" {
+		unknown, pushErr := pushBlob(ctx, target, *unknownMediaType, *unknownName,
+			[]byte(`{"requires":["a capability this executor predates"]}`))
+		if pushErr != nil {
+			return fmt.Errorf("push the extra layer: %w", pushErr)
+		}
+		layers = append(layers, unknown)
 	}
-	layers = append(layers, unknown)
 
 	manifest, err := oras.PackManifest(ctx, target, oras.PackManifestVersion1_1, migrationArtifactType,
 		oras.PackManifestOptions{
@@ -122,7 +131,9 @@ func run() error {
 }
 
 // pushMigrationFiles publishes the directory the way a real artifact carries
-// it: one layer per file, named by its title annotation, in a stable order.
+// it: one layer per regular file at its top level, named by its title
+// annotation, in a stable order. A file that is not SQL is published too, as an
+// earlier Ptah published it.
 func pushMigrationFiles(ctx context.Context, target oras.Target, directory string) ([]ocispec.Descriptor, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -130,13 +141,13 @@ func pushMigrationFiles(ctx context.Context, target oras.Target, directory strin
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+		if !entry.Type().IsRegular() {
 			continue
 		}
 		names = append(names, entry.Name())
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("no migration files in %s", directory)
+		return nil, fmt.Errorf("no files in %s", directory)
 	}
 	sort.Strings(names)
 	descriptors := make([]ocispec.Descriptor, 0, len(names))

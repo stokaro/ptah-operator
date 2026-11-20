@@ -3,6 +3,7 @@ package e2e
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,18 @@ CREATE TABLE c (extra text) INHERITS (p);
 
 	unreadableMigrationFile   = "0000000001_create_events.up.sql"
 	unreadableMigrationReason = `invalid +ptah no_transaction value "sometimes"`
+
+	// strayMigrationFile is a top-level SQL file a directory of Ptah's
+	// ten-digit files does not name, and strayMigrationReason how Ptah opens
+	// its refusal of the directory that holds it.
+	strayMigrationFile   = "seed.sql"
+	strayMigrationReason = "migration file the Ptah format does not read"
+	// migrationFetchStep is the init container that pulls a migrations
+	// artifact, with the registry credentials, and noMigrationFilesWords its
+	// refusal of an artifact that holds no migration file, which stays in the
+	// step's log.
+	migrationFetchStep    = "fetch-migrations"
+	noMigrationFilesWords = "migration artifact contains no migration files"
 
 	// schemaFetchStep is the init container that pulls a schema artifact. It
 	// holds the registry credentials, writes the layer unparsed, and so passes
@@ -131,6 +144,23 @@ func migrationDirectoryRefused(migration *ptahv1alpha1.PtahMigration) (string, e
 		return "", fmt.Errorf("claim %+v stands beside the refusal", migration.Status.ActiveOperation)
 	}
 	return blocked.Message, nil
+}
+
+// fetchRefusalSaysOnly holds a migration whose fetch step failed to a
+// Progressing condition that names the step and its exit code and nothing
+// else: the step holds the registry credential, so what it printed stays in
+// its log. A message that goes on to carry the step's words, names another
+// step, or says the source's access was refused, is refused.
+func fetchRefusalSaysOnly(status ptahv1alpha1.PtahMigrationStatus, step string) error {
+	progressing := meta.FindStatusCondition(status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
+	if progressing == nil {
+		return fmt.Errorf("phase %s with no %s condition", status.Phase, ptahv1alpha1.ConditionMigrationProgressing)
+	}
+	pattern := regexp.MustCompile(`^the ` + regexp.QuoteMeta(step) + ` step exited [1-9][0-9]*, so the run never started$`)
+	if !pattern.MatchString(progressing.Message) {
+		return fmt.Errorf("%s says %q, want the %s step and its exit code alone", progressing.Type, progressing.Message, step)
+	}
+	return nil
 }
 
 // schemaReadTheRepair says what is missing from a schema that read a repaired

@@ -38,6 +38,9 @@ type goldenJobCase struct {
 	// again. TestCarryCredentialDeliveryRebuildsEveryReleasedJob holds the
 	// difference to exactly these variables.
 	rebuildAdds []string
+	// rebuildAddsArgs names the arguments this release adds to the OCI fetch
+	// of the Job a released builder wrote, as rebuildAdds names variables.
+	rebuildAddsArgs []string
 }
 
 // The operation Job is read by more than the kubelet. The controller-write
@@ -312,11 +315,15 @@ func goldenJobCases() []goldenJobCase {
 			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
+			// Since 0.2.16 the fetch of a History or an Apply writes the
+			// artifact without reading it as migrations. The upgrade to 0.2.16
+			// moves the executor, which retires such a claim anyway.
 			name: "migration-history",
 			build: func() (*batchv1.Job, error) {
 				return builder.BuildMigration(migrationFixture(), migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
-			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
+			rebuildAdds:     []string{runner.EnvOCICASHA256Grant},
+			rebuildAddsArgs: []string{"--skip-validation"},
 		},
 		{
 			name: "migration-history-pod-metadata",
@@ -325,7 +332,8 @@ func goldenJobCases() []goldenJobCase {
 				migration.Spec.Execution.PodMetadata = declaredMetadataFixture()
 				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
-			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
+			rebuildAdds:     []string{runner.EnvOCICASHA256Grant},
+			rebuildAddsArgs: []string{"--skip-validation"},
 		},
 		{
 			name: "migration-history-anonymous-ca-unset-execution",
@@ -339,6 +347,7 @@ func goldenJobCases() []goldenJobCase {
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
 				return builder.BuildMigration(migration, operation, nil)
 			},
+			rebuildAddsArgs: []string{"--skip-validation"},
 		},
 		{
 			name: "migration-apply-admitted-scheduling",
@@ -354,6 +363,7 @@ func goldenJobCases() []goldenJobCase {
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
+			rebuildAddsArgs: []string{"--skip-validation"},
 		},
 		{
 			// A drift check mounts its shadow on the history read, which

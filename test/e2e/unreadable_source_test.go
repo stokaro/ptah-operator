@@ -476,6 +476,56 @@ func TestAMigrationDirectoryRefusalIsBlockedWithNoClaim(t *testing.T) {
 	}
 }
 
+// The stray-file row waits for the file and the words the pinned image gave
+// for the same directory, and refuses the reason of another file.
+func TestUnreadableSourceSaysHoldsTheStrayFile(t *testing.T) {
+	t.Parallel()
+	said := runner.CodeDesiredSourceUnreadable + ": " + capturedReason(t, "scratch-unread.json")
+	if err := unreadableSourceSays(said, strayMigrationFile, strayMigrationReason); err != nil {
+		t.Fatalf("the capture: %v", err)
+	}
+	directive := runner.CodeDesiredSourceUnreadable + ": " + capturedReason(t, "scratch-directive.json")
+	if err := unreadableSourceSays(directive, strayMigrationFile, strayMigrationReason); err == nil {
+		t.Fatalf("unreadableSourceSays(%q) accepted the reason of another file", directive)
+	}
+}
+
+// fetchRefusalSaysOnly takes the step and its exit code, and refuses a message
+// that carries what the step printed, names another step, or reports a refused
+// access.
+func TestFetchRefusalSaysOnlyTheStepAndItsExitCode(t *testing.T) {
+	t.Parallel()
+	status := func(message string) ptahv1alpha1.PtahMigrationStatus {
+		return ptahv1alpha1.PtahMigrationStatus{Phase: ptahv1alpha1.MigrationPhaseReading, Conditions: []metav1.Condition{{
+			Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
+			Reason: string(ptahv1alpha1.ReasonOperationFailed), Message: message,
+		}}}
+	}
+	const said = "the fetch-migrations step exited 2, so the run never started"
+	if err := fetchRefusalSaysOnly(status(said), migrationFetchStep); err != nil {
+		t.Fatalf("fetchRefusalSaysOnly(%q) = %v", said, err)
+	}
+	for name, message := range map[string]string{
+		"the step's words":    said + ": error: " + noMigrationFilesWords,
+		"the words alone":     "error: " + noMigrationFilesWords,
+		"another step":        "the fetch-schema step exited 2, so the run never started",
+		"a refused access":    "the fetch-migrations step refused the source's access, so the run never started: access_denied: the grant names another host",
+		"an exit of zero":     "the fetch-migrations step exited 0, so the run never started",
+		"a sentence before":   "History failed: " + said,
+		"the Job's own words": "the History Job failed",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchRefusalSaysOnly(status(message), migrationFetchStep); err == nil {
+				t.Fatalf("fetchRefusalSaysOnly(%q) accepted it", message)
+			}
+		})
+	}
+	if err := fetchRefusalSaysOnly(ptahv1alpha1.PtahMigrationStatus{}, migrationFetchStep); err == nil {
+		t.Fatal("fetchRefusalSaysOnly accepted a status with no Progressing condition")
+	}
+}
+
 // A repair the row counts is one the source carried: a plan from another source,
 // with the failure gone, under the spec the failure was reported on. The last
 // rows are the two a suspension or a spec edit would pass.
