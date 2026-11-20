@@ -365,7 +365,8 @@ type MigrationsInputs struct {
 
 // MigrationsPostgreSQL proves the versioned-migration path against
 // PostgreSQL: the approval gate, the applied sequence, the history it leaves,
-// and the refusals that read that history.
+// the refusals that read that history, and a repeatable migration through
+// each state its record takes.
 var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Name:    "migrations-postgresql",
 	Test:    "TestMigrationsPostgreSQL",
@@ -373,6 +374,7 @@ var MigrationsPostgreSQL = define[MigrationsInputs](Phase{
 	Scenarios: []string{
 		"migration-policy",
 		"postgresql-migrations",
+		"postgresql-repeatable-migrations",
 	},
 	// The lifecycle publishes the engine's artifact, and the guard and
 	// result-read rows create their resources from it.
@@ -392,6 +394,7 @@ var MigrationsMySQL = define[MigrationsInputs](Phase{
 		"migration-policy",
 		"mysql-transaction-mode",
 		"mysql-migrations",
+		"mysql-repeatable-migrations",
 	},
 	// The lifecycle publishes the engine's artifact, and the guard and
 	// result-read rows create their resources from it.

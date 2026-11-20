@@ -1,0 +1,46 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigrationPlan",
+  "metadata": {
+    "name": "ptah-mplan-8cc3ad505be2583b0d6b173a",
+    "namespace": "team-a"
+  },
+  "spec": {
+    "contractVersion": 1,
+    "migrationRef": {
+      "name": "orders",
+      "uid": "migration-uid"
+    },
+    "fingerprint": "sha256:8cc3ad505be2583b0d6b173ad72d560094f067b771926eca9e7330bd2f81e6ab",
+    "migrations": [
+      {
+        "version": 3,
+        "checksum": "checksum-3"
+      }
+    ],
+    "repeatables": [
+      {
+        "identity": "item_names",
+        "checksum": "h1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+        "appliedChecksum": "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    ],
+    "historyFingerprint": "sha256:7da52d4bd49adfa4aa29228fbe129b0557bd59f0b06a4258055bfe648cb41c46",
+    "currentVersion": 2,
+    "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coordinationDigest": "sha256:c824a2452244b34b21a24dcfeb9c9dc2e91840781d3d4fd85c026b43b80bb988",
+    "targetIdentityDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "policyFingerprint": "sha256:6e809e20aa7bfbb744154efcf9b38693147cbb28627a671e113c3e142e0110e4",
+    "verificationPolicyUID": "verification-policy-uid",
+    "verificationPolicyDigest": "sha256:59fcd2bc1d3371c98ed0121503b82358a72afeb0f46bd212af60de70c7fc54ca",
+    "executionBindingID": "v1-33333333333333333333333333333333",
+    "controllerImage": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "controllerRevision": "controller-test-revision",
+    "controllerStateVersion": 1,
+    "ptahVersion": "v0.3.0",
+    "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runnerImage": "example.invalid/operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "runnerProtocolVersion": 1,
+    "createdAt": "2026-08-30T12:00:00Z"
+  }
+}

@@ -399,10 +399,21 @@ func publishedPlanFor(
 	migration *operatorv1alpha1.PtahMigration,
 ) *operatorv1alpha1.PtahMigrationPlan {
 	t.Helper()
+	return publishedPlanWith(t, migration, []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "checksum-3"}}, nil)
+}
+
+// publishedPlanWith is the plan the controller publishes for the sequence
+// given: its versioned migrations, then its repeatable migrations.
+func publishedPlanWith(
+	t *testing.T,
+	migration *operatorv1alpha1.PtahMigration,
+	planned []operatorv1alpha1.PlannedMigration,
+	repeatables []operatorv1alpha1.PlannedRepeatableMigration,
+) *operatorv1alpha1.PtahMigrationPlan {
+	t.Helper()
 
 	binding := migration.Status.ExecutionBinding
-	planned := []operatorv1alpha1.PlannedMigration{{Version: 3, Checksum: "checksum-3"}}
-	sequenceDigest, err := migrationplan.SequenceDigest(planned)
+	sequenceDigest, err := migrationplan.SequenceDigest(planned, repeatables)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,6 +453,7 @@ func publishedPlanFor(
 		MigrationRef:             operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
 		Fingerprint:              planFingerprint,
 		Migrations:               planned,
+		Repeatables:              repeatables,
 		HistoryFingerprint:       planBinding.HistoryFingerprint,
 		CurrentVersion:           migration.Status.History.CurrentVersion,
 		ArtifactDigest:           planBinding.ArtifactDigest,

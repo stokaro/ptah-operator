@@ -419,6 +419,39 @@ type MigrationHistoryStatus struct {
 	// Nothing applies while one exists.
 	Dirty bool `json:"dirty,omitempty"`
 
+	// PendingRepeatableCount is how many repeatable migrations the next run
+	// would execute after the pending versioned ones: R__<identity>.sql files
+	// the database has no record of, and files whose content changed since
+	// they last applied.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	PendingRepeatableCount int32 `json:"pendingRepeatableCount,omitempty"`
+
+	// UnfinishedRepeatables names the repeatable migrations whose last attempt
+	// failed or recorded no outcome. Ptah runs nothing while one exists, and
+	// the operator never removes the record: whether the attempt left part of
+	// its work behind is a question for a person with the database in front of
+	// them.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=255
+	UnfinishedRepeatables []string `json:"unfinishedRepeatables,omitempty"`
+
+	// OrphanedRepeatables names the repeatable migrations the database records
+	// as applied and no file of the artifact carries any more. Ptah leaves such
+	// a record alone and so does the operator: it plans and runs nothing for
+	// it, and the migration converges as it would without the record. A
+	// Warning Event names each identity the first time a read lists it. A file
+	// that carries the identity again is held to the content the record holds.
+	// A database ahead of its artifact lists none, since the artifact is older
+	// rather than the file gone.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=255
+	OrphanedRepeatables []string `json:"orphanedRepeatables,omitempty"`
+
 	// ModifiedVersions names applied migrations whose files no longer account
 	// for them. It is the refusal a versioned workflow exists to make, so the
 	// versions are published rather than summarized.
@@ -576,6 +609,17 @@ type MigrationRunStatus struct {
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=256
 	AppliedVersions []int64 `json:"appliedVersions,omitempty"`
+
+	// AppliedRepeatables names the selected repeatable migrations whose record
+	// says the planned content applied, in the order they ran. It is absent for
+	// a run that selected none, and for one a release without this field
+	// recorded.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=255
+	// +kubebuilder:validation:items:Pattern=`^[A-Za-z0-9_-]+$`
+	AppliedRepeatables []string `json:"appliedRepeatables,omitempty"`
 
 	// DispatchedBy is the manager that built and dispatched the run's Job,
 	// read from the Job's Pod template when the run was harvested. The plan
@@ -735,10 +779,20 @@ const (
 )
 
 // MigrationLogLossStatus is one entry the database refused.
+// +kubebuilder:validation:XValidation:rule="has(self.version) != has(self.repeatable)",message="a lost entry names a version or a repeatable migration, and not both"
 type MigrationLogLossStatus struct {
-	// Version is the migration the entry is about.
+	// Version is the versioned migration the entry is about, and absent for
+	// an entry about a repeatable migration.
 	// +kubebuilder:validation:Minimum=1
-	Version int64 `json:"version"`
+	// +optional
+	Version int64 `json:"version,omitempty"`
+	// Repeatable is the repeatable migration the entry is about, and absent
+	// for an entry about a version.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_-]+$`
+	// +optional
+	Repeatable string `json:"repeatable,omitempty"`
 	// State is what the entry would have recorded.
 	State MigrationLogEntryState `json:"state"`
 	// SQLState is the SQLSTATE the database answered with, empty when it gave
@@ -1003,6 +1057,7 @@ const (
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Current",type=integer,JSONPath=`.status.history.currentVersion`
 // +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.history.pendingCount`
+// +kubebuilder:printcolumn:name="Pending Repeatable",type=integer,JSONPath=`.status.history.pendingRepeatableCount`,priority=1
 // +kubebuilder:printcolumn:name="Outcome",type=string,JSONPath=`.status.lastRun.outcome`
 // +kubebuilder:printcolumn:name="Digest",type=string,JSONPath=`.status.artifact.digest`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
@@ -1064,12 +1119,14 @@ const (
 	// shadow, a selector in policy.driftCheck.exclude was refused, or the
 	// comparison covers an object it cannot describe. The Apply ran nothing.
 	ReasonDriftCheckUnsupported ConditionReason = "DriftCheckUnsupported"
-	// ReasonRepeatableMigrationsUnsupported means the history read lists
-	// repeatable migrations: R__<identity>.sql files in the artifact, or rows
-	// the database's record of them holds. Ptah v0.30.0 runs them again
-	// whenever their content changes, and this operator approves and runs a
-	// versioned sequence only, so no plan is published.
-	ReasonRepeatableMigrationsUnsupported ConditionReason = "RepeatableMigrationsUnsupported"
+	// ReasonRepeatableMigrationUnfinished means the database's record of a
+	// repeatable migration says its last attempt failed or recorded no
+	// outcome. Ptah runs nothing while one exists, and the operator never
+	// removes the record: an attempt outside a transaction, or one that
+	// stopped, may have left part of its work behind. A person reads the
+	// database, then removes the record with ptah migrations repair
+	// --repeatable, and the next run executes the file again.
+	ReasonRepeatableMigrationUnfinished ConditionReason = "RepeatableMigrationUnfinished"
 	// ReasonMigrationDirectoryUnreadable means Ptah could not read the
 	// artifact's migration directory: a file it cannot load, a migration that
 	// lacks its up or down file, since Ptah v0.33.1 a SQL file the directory's

@@ -1,0 +1,77 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigration",
+  "metadata": {
+    "generation": 1,
+    "name": "orders",
+    "namespace": "team-a"
+  },
+  "status": {
+    "observedGeneration": 1,
+    "phase": "InSync",
+    "conditions": [
+      {
+        "type": "Blocked",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "HistoryMatched",
+        "message": "The history continues this artifact"
+      },
+      {
+        "type": "Ready",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "HistoryMatched",
+        "message": "The database has every migration this artifact carries"
+      },
+      {
+        "type": "Progressing",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "HistoryMatched",
+        "message": "Nothing is pending"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "The migration history was read"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://registry.example/team/migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "transport": {}
+    },
+    "executionBinding": {
+      "epoch": "v1-33333333333333333333333333333333",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.3.0",
+      "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runnerProtocolVersion": 1
+    },
+    "history": {
+      "observedAt": null,
+      "contractVersion": 2,
+      "currentVersion": 2,
+      "appliedCount": 1,
+      "pendingCount": 0,
+      "fingerprint": "sha256:11be1ad3a08e8e7326a5266db8bfba2e190e474cad956a745cdbdeff26efd1e6",
+      "targetIdentityDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orphanedRepeatables": [
+        "item_names"
+      ],
+      "revisions": [
+        {
+          "version": 2,
+          "state": "applied"
+        }
+      ]
+    }
+  }
+}

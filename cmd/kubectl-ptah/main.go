@@ -460,11 +460,11 @@ because an approval is a decision about the whole document.
 
 schema and migration each take -o text (the default) or json, plus the same
 -n, --kubeconfig, --context and --timeout flags. Neither prints SQL or a table
-row. A migration plan records versions and checksums, and the statements live
-in the artifact. A schema reports its declared reference rows as counts -- how
-many the database is missing, holds differently, and holds that the declaration
-no longer has -- because which rows those are is in the plan, and reading a
-data plan is reading values.
+row. A migration plan records versions, repeatable migrations and their
+checksums, and the statements live in the artifact. A schema reports its
+declared reference rows as counts -- how many the database is missing, holds
+differently, and holds that the declaration no longer has -- because which rows
+those are is in the plan, and reading a data plan is reading values.
 
   kubectl ptah schema storefront -n application
   kubectl ptah schema storefront -n application -o json

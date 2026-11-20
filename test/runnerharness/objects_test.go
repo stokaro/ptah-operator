@@ -621,7 +621,7 @@ func pending(t *testing.T, row string, outcome rowOutcome) []operatorv1alpha1.Pl
 	if outcome.result.MigrationHistory == nil {
 		t.Fatalf("%s: the frame carries no history", row)
 	}
-	planned, err := migrationplan.Sequence(*outcome.result.MigrationHistory)
+	planned, _, err := migrationplan.Sequence(*outcome.result.MigrationHistory)
 	if err != nil {
 		t.Fatalf("%s: %v", row, err)
 	}

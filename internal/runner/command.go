@@ -55,6 +55,11 @@ const (
 	// EnvExpectedMigrationSequenceDigest binds a migration Apply to the exact
 	// ordered sequence its approved plan carries.
 	EnvExpectedMigrationSequenceDigest = "PTAH_EXPECTED_MIGRATION_SEQUENCE_DIGEST"
+	// EnvExpectedRepeatableSequence is the ordered list of repeatable
+	// migrations the approved plan runs after its versioned ones, as JSON.
+	// EnvExpectedMigrationSequenceDigest binds it with the versioned
+	// sequence, and an Apply whose plan selected none carries no variable.
+	EnvExpectedRepeatableSequence = "PTAH_EXPECTED_REPEATABLE_SEQUENCE"
 	// EnvExpectedMigrationHistoryFingerprint binds it to the reading of the
 	// revision table that plan was computed against.
 	EnvExpectedMigrationHistoryFingerprint = "PTAH_EXPECTED_MIGRATION_HISTORY_FINGERPRINT"
@@ -133,6 +138,7 @@ const (
 	envExpectedCoordination   = EnvExpectedCoordinationDigest
 	envExpectedSequence       = EnvExpectedMigrationSequence
 	envExpectedSequenceDigest = EnvExpectedMigrationSequenceDigest
+	envExpectedRepeatables    = EnvExpectedRepeatableSequence
 	envExpectedHistory        = EnvExpectedMigrationHistoryFingerprint
 	envDispatchNotAfter       = EnvDispatchNotAfter
 	envExecutionNotAfter      = EnvExecutionNotAfter
@@ -162,6 +168,7 @@ type Inputs struct {
 	CoordinationDigest         string
 	ExpectedCoordinationDigest string
 	ExpectedSequence           string
+	ExpectedRepeatables        string
 	ExpectedSequenceDigest     string
 	ExpectedHistoryFingerprint string
 	DispatchNotAfter           string
@@ -204,6 +211,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		CoordinationDigest:         values[envCoordinationDigest],
 		ExpectedCoordinationDigest: values[envExpectedCoordination],
 		ExpectedSequence:           values[envExpectedSequence],
+		ExpectedRepeatables:        values[envExpectedRepeatables],
 		ExpectedSequenceDigest:     values[envExpectedSequenceDigest],
 		ExpectedHistoryFingerprint: values[envExpectedHistory],
 		DispatchNotAfter:           values[envDispatchNotAfter],
@@ -334,6 +342,7 @@ func childEnvironment(environment []string) []string {
 		EnvExpectedCoordinationDigest,
 		EnvExpectedMigrationSequence,
 		EnvExpectedMigrationSequenceDigest,
+		EnvExpectedRepeatableSequence,
 		EnvExpectedMigrationHistoryFingerprint,
 		EnvDispatchNotAfter,
 		EnvExecutionNotAfter,

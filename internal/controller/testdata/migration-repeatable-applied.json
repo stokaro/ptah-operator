@@ -1,0 +1,77 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigration",
+  "metadata": {
+    "generation": 1,
+    "name": "orders",
+    "namespace": "team-a"
+  },
+  "status": {
+    "observedGeneration": 1,
+    "phase": "VerifyingHistory",
+    "conditions": [
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "The Apply opened the database"
+      },
+      {
+        "type": "Progressing",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "VerifyingConvergence",
+        "message": "Reading the history back to confirm what the run did"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://registry.example/team/migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "transport": {}
+    },
+    "executionBinding": {
+      "epoch": "v1-33333333333333333333333333333333",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.3.0",
+      "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runnerProtocolVersion": 1
+    },
+    "history": {
+      "observedAt": null,
+      "contractVersion": 2,
+      "currentVersion": 2,
+      "appliedCount": 1,
+      "pendingCount": 1,
+      "fingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "targetIdentityDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "lastRun": {
+      "outcome": "Applied",
+      "jobName": "ptah-m-apply-orders-5d06b0eaaa30addb",
+      "jobUID": "job-uid",
+      "operationID": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "planRef": {
+        "name": "ptah-mplan-be618f345f3114803ae7c20a",
+        "uid": "migration-plan-uid"
+      },
+      "authorization": {
+        "kind": "Policy"
+      },
+      "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "targetIdentityDigest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "executionBindingID": "v1-33333333333333333333333333333333",
+      "startedAt": "2026-08-30T11:59:00Z",
+      "finishedAt": "2026-08-30T12:00:00Z",
+      "appliedVersions": [
+        3
+      ],
+      "appliedRepeatables": [
+        "item_names"
+      ],
+      "message": "1 migration and 1 repeatable migration are recorded applied"
+    }
+  }
+}

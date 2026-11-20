@@ -201,7 +201,7 @@ func TestTheLongestEntryFitsOneLogRecord(t *testing.T) {
 		Plan: name, PlanUID: uid, PlanFingerprint: strings.Repeat("f", 128), Statements: 1 << 30, Destructive: true,
 		ApprovalRequired: true, Replaced: name, Authorization: operatorv1alpha1.MigrationRunAuthorizationKind("Approval"),
 		Approval: name, ApprovalUID: uid, Approver: username, Outcome: operatorv1alpha1.JournalDriftRemains,
-		Operation: "History", Reason: "R" + strings.Repeat("r", 127), JobName: name, JobUID: uid, AppliedVersions: 1 << 30,
+		Operation: "History", Reason: "R" + strings.Repeat("r", 127), JobName: name, JobUID: uid, AppliedVersions: 1 << 30, AppliedRepeatables: 1 << 30,
 		Failure: &operatorv1alpha1.MigrationRunFailureStatus{
 			Version: 1 << 62, Statement: 1 << 30, Statements: 1 << 30, SQLState: "40001", ErrorNumber: 65535,
 		},

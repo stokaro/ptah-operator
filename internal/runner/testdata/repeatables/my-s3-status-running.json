@@ -1,0 +1,52 @@
+{
+  "current_version": 1,
+  "applied_migrations": [
+    1
+  ],
+  "applied_migration_keys": [
+    "1"
+  ],
+  "pending_migrations": [],
+  "out_of_order_migrations": [],
+  "total_migrations": 1,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Items",
+      "checksum": "6f4560ec230d8507e0ddfd2fcecb29ab211b45c8650cd48d49dad8e96217bbeb",
+      "applied_checksum": "6f4560ec230d8507e0ddfd2fcecb29ab211b45c8650cd48d49dad8e96217bbeb",
+      "applied_at": "2026-11-20T16:15:33Z",
+      "execution_time_ms": 25,
+      "state": "applied"
+    }
+  ],
+  "repeatables": [
+    {
+      "identity": "item_names",
+      "path": "R__item_names.sql",
+      "checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+      "applied_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+      "state": "applied",
+      "attempt_checksum": "h1:k/Z3dP4G09SEnkXd53jmB5H4czHxWBq6c5E7elEhkoA=",
+      "attempt_order": 1,
+      "no_transaction": true,
+      "attempted_at": "2026-11-20T16:15:33Z",
+      "applied_at": "2026-11-20T16:15:33Z"
+    },
+    {
+      "identity": "zz_slow",
+      "path": "R__zz_slow.sql",
+      "checksum": "h1:6bD304StPGyfM7arJHKLRm0JWPMBXGHrl3ZJREg0cIs=",
+      "state": "running",
+      "attempt_checksum": "h1:6bD304StPGyfM7arJHKLRm0JWPMBXGHrl3ZJREg0cIs=",
+      "attempt_order": 1,
+      "no_transaction": true,
+      "attempted_at": "2026-11-20T16:15:36Z"
+    }
+  ],
+  "current_version_key": "1"
+}

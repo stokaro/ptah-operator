@@ -913,13 +913,20 @@ func validateResult(result Result, options ParseOptions) error {
 			if err := summary.Validate(); err != nil {
 				return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
 			}
-			if summary.Refused() && (report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 || report.Failure != nil) {
+			if summary.Refused() && (report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 ||
+				len(report.AppliedRepeatables) != 0 || report.Failure != nil) {
 				return fmt.Errorf("%w: a refusing drift check beside a run that ran migrations", ErrMalformedFrame)
 			}
 		}
+		// The selection decides whether the run did what the plan approved,
+		// and the applied identities reach status, so both are held to what
+		// the runner's decoder holds them to.
+		if err := report.ValidateRepeatables(); err != nil {
+			return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
+		}
 	}
 	if report := result.MigrationRun; report != nil && report.MigrationLog != nil {
-		if err := report.MigrationLog.Validate(report.Planned); err != nil {
+		if err := report.MigrationLog.Validate(report.Planned, report.PlannedRepeatableIdentities()); err != nil {
 			return fmt.Errorf("%w: %v", ErrMalformedFrame, err)
 		}
 		for _, loss := range report.MigrationLog.Lost {

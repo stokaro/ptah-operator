@@ -1,0 +1,7 @@
+{
+  "apiVersion": "v1",
+  "kind": "Event",
+  "message": "The database records repeatable migration item_names as applied, and no file of the artifact carries it. Ptah runs nothing for it and leaves what it created in place. To remove the record, run `ptah migrations repair --repeatable item_names`",
+  "reason": "RepeatableMigrationOrphaned",
+  "type": "Warning"
+}

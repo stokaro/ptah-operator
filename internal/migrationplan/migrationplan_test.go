@@ -222,10 +222,10 @@ func TestASequenceNoJobCouldCarryIsNotSelected(t *testing.T) {
 		return dataplane.MigrationStatusReport{ContractVersion: dataplane.SupportedMigrationStatusContract, Migrations: records}
 	}
 
-	if _, err := migrationplan.Sequence(report("20260925120000", "sha256:"+strings.Repeat("a", 64))); err != nil {
+	if _, _, err := migrationplan.Sequence(report("20260925120000", "sha256:"+strings.Repeat("a", 64))); err != nil {
 		t.Fatalf("Sequence() of ordinary migrations: %v", err)
 	}
-	_, err := migrationplan.Sequence(report(strings.Repeat("é", 128), strings.Repeat("é", 128)))
+	_, _, err := migrationplan.Sequence(report(strings.Repeat("é", 128), strings.Repeat("é", 128)))
 	if err == nil || !strings.Contains(err.Error(), "an Apply Job can carry") {
 		t.Fatalf("Sequence() error = %v, want the refusal of a sequence no Job could carry", err)
 	}

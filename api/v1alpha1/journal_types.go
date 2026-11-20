@@ -222,6 +222,13 @@ type JournalEntry struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	AppliedVersions int32 `json:"appliedVersions,omitempty"`
+	// AppliedRepeatables is how many repeatable migrations a run recorded
+	// applied, as status.lastRun.appliedRepeatables named them. A run may
+	// apply repeatable migrations and no version.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=256
+	// +optional
+	AppliedRepeatables int32 `json:"appliedRepeatables,omitempty"`
 	// Failure is where a PtahMigration's run stopped, as
 	// status.lastRun.failure said.
 	// +optional

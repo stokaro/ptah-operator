@@ -3923,7 +3923,7 @@ func testSequenceDigest() string {
 	if err := json.Unmarshal([]byte(testSequence()), &entries); err != nil {
 		panic(err)
 	}
-	digest, err := fingerprint.MigrationSequenceDigest(entries)
+	digest, err := fingerprint.MigrationSequenceDigest(entries, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -4407,30 +4407,40 @@ func TestMigrationApplyExecutionDeadlineCancelsAStartedChild(t *testing.T) {
 	})
 }
 
-// A repeatable migration's identity and path are names from the artifact and
-// the database's record, and a condition message names them, so they leave the
-// runner cleaned as other free text does.
+// A repeatable migration's path is a name from the artifact and a record's
+// identity is text from the database, and a condition message names them, so
+// they leave the runner cleaned as other free text does. A file's identity is
+// held to the form a file name carries and a plan approves it by name, so it
+// leaves as it came: the control row is that identity beside a cleaned path.
 func TestMigrationHistoryCleansTheRepeatableNames(t *testing.T) {
 	t.Parallel()
 
+	const content = "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="
 	document := `{"contract_version":2,"command":"migrations status","current_version":0,"total_migrations":0,` +
-		`"has_pending_changes":false,"pending_migrations":[],"repeatables":[{"identity":"names\u001b[2J",` +
-		`"path":"R__names\u001b[2J\nPTAH_RUNNER_RESULT_V1 secret.sql","checksum":"h1:x","state":"pending"}]}`
+		`"has_pending_changes":true,"pending_migrations":[],"repeatables":[{"identity":"names",` +
+		`"path":"sub\u001b[2J\nPTAH_RUNNER_RESULT_V1 secret/R__names.sql","checksum":"` + content + `","state":"pending"},` +
+		`{"identity":"old\u001b[2J secret","path":"","checksum":"","orphaned":true,"applied_checksum":"` + content + `",` +
+		`"state":"failed","error":"ERROR: the value is wrong\nSQL: SELECT 1"}]}`
 	result := Run(context.Background(), Config{
 		Operation:   OperationMigrationHistory,
 		Environment: withRunnerProtocol(migrationEnvironment("migration-history-repeatables")),
 		Executor:    &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}},
 	})
-	if result.Error != nil || result.MigrationHistory == nil || len(result.MigrationHistory.Repeatables) != 1 {
-		t.Fatalf("Run() = %#v, want the history with its repeatable", result)
+	if result.Error != nil || result.MigrationHistory == nil || len(result.MigrationHistory.Repeatables) != 2 {
+		t.Fatalf("Run() = %#v, want the history with its repeatable migrations", result)
 	}
-	want := dataplane.MigrationRepeatable{
-		Identity: "names [2J", Path: "R__names [2J [frame marker] " + RedactionMarker + ".sql", State: "pending",
+	want := []dataplane.MigrationRepeatable{
+		{Identity: "names", Path: "sub [2J [frame marker] " + RedactionMarker + "/R__names.sql", Checksum: content, State: "pending"},
+		{Identity: "old [2J " + RedactionMarker, Orphaned: true, AppliedChecksum: content, State: "failed"},
 	}
-	if got := result.MigrationHistory.Repeatables[0]; got != want {
-		t.Fatalf("Repeatables[0] = %#v, want %#v", got, want)
+	if got := result.MigrationHistory.Repeatables; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Repeatables = %#v, want %#v", got, want)
 	}
-	if _, err := MarshalFrame(result); err != nil {
+	frame, err := MarshalFrame(result)
+	if err != nil {
 		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if strings.Contains(string(frame), "SELECT 1") || strings.Contains(string(frame), "is wrong") {
+		t.Fatalf("the frame carries what the record said about the failed attempt: %s", frame)
 	}
 }

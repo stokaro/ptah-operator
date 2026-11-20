@@ -2,6 +2,7 @@ package crd_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -143,6 +144,27 @@ func TestRangeRulesAdmitTheirBounds(t *testing.T) {
 			name:   "PtahSchema with 128 protected tables",
 			base:   schemaBase(namespace),
 			mutate: setting(numbered("ledger_", 128), "spec", "policy", "protectedTables"),
+		},
+		{
+			// The plan rule asks for one of the two lists, so either alone
+			// passes it; the versions alone are every other row's base.
+			name: "PtahMigrationPlan of repeatable migrations alone",
+			base: basedOn("PtahMigrationPlan", namespace, "ptah-mplan-19581e27de7ced00ff1ce50b", migrationPlanSpec),
+			mutate: both(removing("spec", "migrations"), setting([]any{
+				repeatableStep,
+				merged(repeatableStep, map[string]any{"identity": strings.Repeat("a", 255), "appliedChecksum": "h1:" + strings.Repeat("/", 43) + "="}),
+			}, "spec", "repeatables")),
+		},
+		{
+			name: "PtahMigrationPlan with 256 repeatable migrations",
+			base: basedOn("PtahMigrationPlan", namespace, "ptah-mplan-19581e27de7ced00ff1ce50b", migrationPlanSpec),
+			mutate: func(t *testing.T, object *unstructured.Unstructured) {
+				repeatables := make([]any, 256)
+				for index := range repeatables {
+					repeatables[index] = merged(repeatableStep, map[string]any{"identity": fmt.Sprintf("view_%03d", index)})
+				}
+				set(t, object, repeatables, "spec", "repeatables")
+			},
 		},
 	}
 	for _, test := range tests {

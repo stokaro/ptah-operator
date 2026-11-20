@@ -1,0 +1,65 @@
+{
+  "current_version": 3,
+  "applied_migrations": [
+    1,
+    2,
+    3
+  ],
+  "applied_migration_keys": [
+    "1",
+    "2",
+    "3"
+  ],
+  "pending_migrations": [],
+  "out_of_order_migrations": [],
+  "total_migrations": 3,
+  "has_pending_changes": false,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Items",
+      "checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+      "applied_checksum": "2acda497a53da03a42e1b64bbea0129d51d3a6dec271d128747017edc2fb0fed",
+      "applied_at": "2026-11-20T16:14:34.312525Z",
+      "execution_time_ms": 2,
+      "state": "applied"
+    },
+    {
+      "version": 2,
+      "version_key": "2",
+      "description": "Add Color",
+      "checksum": "2c628ae375577bfe3487f9976c374c9a05fb39fe813cb485ad5bff50c3f70ced",
+      "applied_checksum": "2c628ae375577bfe3487f9976c374c9a05fb39fe813cb485ad5bff50c3f70ced",
+      "applied_at": "2026-11-20T16:14:34.318666Z",
+      "execution_time_ms": 1,
+      "state": "applied"
+    },
+    {
+      "version": 3,
+      "version_key": "3",
+      "description": "Index Name",
+      "checksum": "4bdcbfc4f2e84bedfd3714364cbedc105fb2bcac5a747b1b58eb6aec1be80a55",
+      "applied_checksum": "4bdcbfc4f2e84bedfd3714364cbedc105fb2bcac5a747b1b58eb6aec1be80a55",
+      "applied_at": "2026-11-20T16:14:38.480829Z",
+      "execution_time_ms": 2,
+      "state": "applied"
+    }
+  ],
+  "repeatables": [
+    {
+      "identity": "item_names",
+      "path": "R__item_names.sql",
+      "checksum": "h1:LJpbXPWml4n4X1/qHsstI93o5PAZz0JDjMJXXoyXJ+8=",
+      "applied_checksum": "h1:LJpbXPWml4n4X1/qHsstI93o5PAZz0JDjMJXXoyXJ+8=",
+      "state": "applied",
+      "attempt_checksum": "h1:LJpbXPWml4n4X1/qHsstI93o5PAZz0JDjMJXXoyXJ+8=",
+      "attempt_order": 1,
+      "attempted_at": "2026-11-20T16:14:38.487449Z",
+      "applied_at": "2026-11-20T16:14:38.489482Z"
+    }
+  ],
+  "current_version_key": "3"
+}

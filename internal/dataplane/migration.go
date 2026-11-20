@@ -140,22 +140,89 @@ type MigrationStatusReport struct {
 	PendingMigrations []int64           `json:"pending_migrations"`
 	Migrations        []MigrationRecord `json:"migrations,omitempty"`
 	DirtyRevision     *MigrationDirty   `json:"dirty_revision,omitempty"`
-	// Repeatables are the repeatable migrations Ptah v0.30.0 lists: each
-	// R__<identity>.sql file of the directory, and each row of the record
-	// table no file carries any more (stokaro/ptah#6156). This operator
-	// runs none of them, so a history that lists one stops before a plan.
-	// The list carries names and states only; what a record says about a
-	// failed attempt stays out of it.
+	// Repeatables are the repeatable migrations Ptah lists since v0.30.0: each
+	// R__<identity>.sql file of the directory, in the order a run executes
+	// them, then each row of the record table no file carries any more
+	// (stokaro/ptah#6156). What a record says about a failed attempt, which
+	// quotes the SQL and the server's answer, is not read into it.
 	Repeatables []MigrationRepeatable `json:"repeatables,omitempty"`
 }
 
+// Repeatable migration states a status document reports, as Ptah v0.33.1
+// spells them.
+const (
+	// RepeatableStatePending is a file the database has no record of.
+	RepeatableStatePending = "pending"
+	// RepeatableStateChanged is a file whose content no longer hashes to the
+	// digest recorded as applied.
+	RepeatableStateChanged = "changed"
+	// RepeatableStateApplied is a file whose content hashes to that digest.
+	RepeatableStateApplied = "applied"
+	// RepeatableStateRunning is an attempt that recorded its start and no
+	// outcome: whether its statements took effect is not known.
+	RepeatableStateRunning = "running"
+	// RepeatableStateFailed is an attempt whose body failed. Inside a
+	// transaction it took no effect; outside one, part of it may have.
+	RepeatableStateFailed = "failed"
+	// RepeatableStateOrphaned is a record no file carries any more, whose
+	// last attempt applied.
+	RepeatableStateOrphaned = "orphaned"
+)
+
+// repeatableStates is every repeatable state this operator knows how to act
+// on. Ptah counts a state it does not know as unfinished and runs nothing;
+// this operator refuses the document, for the reason it refuses an unknown
+// migration state.
+var repeatableStates = []string{
+	RepeatableStatePending,
+	RepeatableStateChanged,
+	RepeatableStateApplied,
+	RepeatableStateRunning,
+	RepeatableStateFailed,
+	RepeatableStateOrphaned,
+}
+
+// Reasons a run gives for executing a repeatable migration. The operator never
+// asks Ptah to retry unfinished work, so a run it dispatched gives the first
+// two only; retry is read so that a document is refused for what it says
+// rather than for a word.
+const (
+	RepeatableReasonNew     = "new"
+	RepeatableReasonChanged = "changed"
+	RepeatableReasonRetry   = "retry"
+)
+
+var repeatableReasons = []string{RepeatableReasonNew, RepeatableReasonChanged, RepeatableReasonRetry}
+
 // MigrationRepeatable is one repeatable migration a status lists: its
-// identity, the file that holds it, empty for a record row no file carries,
-// and its state.
+// identity, the file that holds it, and what the database records for it.
 type MigrationRepeatable struct {
 	Identity string `json:"identity"`
+	// Path is the file's place in the directory, and Checksum the h1 digest
+	// of its content as it is now. Both are empty for a record no file
+	// carries, which Orphaned marks.
 	Path     string `json:"path,omitempty"`
-	State    string `json:"state"`
+	Checksum string `json:"checksum,omitempty"`
+	Orphaned bool   `json:"orphaned,omitempty"`
+	// AppliedChecksum is the digest of the content that last applied, empty
+	// when none has.
+	AppliedChecksum string `json:"applied_checksum,omitempty"`
+	State           string `json:"state"`
+	// NoTransaction reports that the last attempt ran outside a transaction,
+	// so a failed or stopped one may have left part of its work behind.
+	NoTransaction bool `json:"no_transaction,omitempty"`
+}
+
+// Unfinished reports a record whose last attempt failed or recorded no
+// outcome. Ptah refuses every run while one exists.
+func (r MigrationRepeatable) Unfinished() bool {
+	return r.State == RepeatableStateFailed || r.State == RepeatableStateRunning
+}
+
+// Pending reports a file the next run would execute: new, or changed since it
+// last applied.
+func (r MigrationRepeatable) Pending() bool {
+	return !r.Orphaned && (r.State == RepeatableStatePending || r.State == RepeatableStateChanged)
 }
 
 // Bounds on what a repeatable migration names: an identity is part of a file
@@ -164,6 +231,37 @@ const (
 	MaxMigrationRepeatableIdentityBytes = 255
 	MaxMigrationRepeatablePathBytes     = 1024
 )
+
+// repeatableIdentityPattern is the identity a repeatable migration file may
+// carry, as Ptah parses R__<identity>.sql: ASCII letters, digits, underscores
+// and hyphens. A record no file carries was read from the database, which may
+// hold any text, so only a file's identity is held to it.
+var repeatableIdentityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// IsRepeatableIdentity reports whether identity is one a repeatable migration
+// file can carry.
+func IsRepeatableIdentity(identity string) bool {
+	return len(identity) <= MaxMigrationRepeatableIdentityBytes && repeatableIdentityPattern.MatchString(identity)
+}
+
+// repeatableChecksumPattern is the h1 digest Ptah records for a repeatable
+// migration: base64 of a SHA-256, as ptah.sum writes it.
+var repeatableChecksumPattern = regexp.MustCompile(`^h1:[A-Za-z0-9+/]{43}=$`)
+
+// IsRepeatableChecksum reports whether checksum is an h1 digest.
+func IsRepeatableChecksum(checksum string) bool {
+	return repeatableChecksumPattern.MatchString(checksum)
+}
+
+// MigrationRepeatableWork is one repeatable migration a run selected, in the
+// order it executes them.
+type MigrationRepeatableWork struct {
+	Identity        string `json:"identity"`
+	Path            string `json:"path"`
+	Checksum        string `json:"checksum"`
+	AppliedChecksum string `json:"applied_checksum,omitempty"`
+	Reason          string `json:"reason"`
+}
 
 // MigrationDirty is the revision row a failed or interrupted run left behind.
 type MigrationDirty struct {
@@ -180,6 +278,14 @@ type MigrationRunReport struct {
 	Outcome         string  `json:"outcome"`
 	Planned         []int64 `json:"planned,omitempty"`
 	Applied         []int64 `json:"applied,omitempty"`
+	// PlannedRepeatables are the repeatable migrations the run selected under
+	// the migration lock, to run after every planned version, and
+	// AppliedRepeatables the identities of those whose record says the
+	// selected content applied, in the same order. Ptah reports the selection
+	// even for a run its expected sequence refused, so the two lists are what
+	// tell a refused run from a failed one.
+	PlannedRepeatables []MigrationRepeatableWork `json:"planned_repeatables,omitempty"`
+	AppliedRepeatables []string                  `json:"applied_repeatables,omitempty"`
 	// Error is why the run failed. Its message can quote a row, so the runner
 	// reads its kind and drops the object before the report reaches a frame.
 	Error   *CommandError        `json:"error,omitempty"`
@@ -204,7 +310,18 @@ type MigrationRunReport struct {
 // migration statement. A target that could not be opened ends a run this way.
 func (r MigrationRunReport) StoppedBeforeSelecting() bool {
 	return r.Outcome == MigrationOutcomeFailed && r.Status == nil &&
-		len(r.Planned) == 0 && len(r.Applied) == 0 && r.Failure == nil
+		len(r.Planned) == 0 && len(r.Applied) == 0 && r.Failure == nil &&
+		len(r.PlannedRepeatables) == 0 && len(r.AppliedRepeatables) == 0
+}
+
+// PlannedRepeatableIdentities names the repeatable migrations the run
+// selected, in order.
+func (r MigrationRunReport) PlannedRepeatableIdentities() []string {
+	identities := make([]string, 0, len(r.PlannedRepeatables))
+	for _, work := range r.PlannedRepeatables {
+		identities = append(identities, work.Identity)
+	}
+	return identities
 }
 
 // MigrationRunFailure is the statement a run stopped at and the code the
@@ -295,6 +412,44 @@ func (r MigrationStatusReport) Pending() []int64 {
 		}
 	}
 	return versions
+}
+
+// PendingRepeatables are the repeatable migrations the next run would
+// execute, in the order it would execute them: the files that are new and the
+// files that changed since they last applied.
+func (r MigrationStatusReport) PendingRepeatables() []MigrationRepeatable {
+	var pending []MigrationRepeatable
+	for _, repeatable := range r.Repeatables {
+		if repeatable.Pending() {
+			pending = append(pending, repeatable)
+		}
+	}
+	return pending
+}
+
+// UnfinishedRepeatables are the records whose last attempt failed or
+// recorded no outcome, with a file or without one.
+func (r MigrationStatusReport) UnfinishedRepeatables() []MigrationRepeatable {
+	var unfinished []MigrationRepeatable
+	for _, repeatable := range r.Repeatables {
+		if repeatable.Unfinished() {
+			unfinished = append(unfinished, repeatable)
+		}
+	}
+	return unfinished
+}
+
+// OrphanedRepeatables are the records that applied and that no file carries
+// any more. Ptah leaves them alone; a record without a file whose attempt did
+// not finish is unfinished instead.
+func (r MigrationStatusReport) OrphanedRepeatables() []MigrationRepeatable {
+	var orphaned []MigrationRepeatable
+	for _, repeatable := range r.Repeatables {
+		if repeatable.State == RepeatableStateOrphaned {
+			orphaned = append(orphaned, repeatable)
+		}
+	}
+	return orphaned
 }
 
 // LastVersion is the highest version the artifact carries, and zero for an
@@ -411,11 +566,96 @@ func (r MigrationStatusReport) validate() error {
 	if r.DirtyRevision != nil && r.DirtyRevision.Version <= 0 {
 		return fmt.Errorf("migration status reports a dirty revision with no version")
 	}
+	identities := make(map[string]struct{}, len(r.Repeatables))
 	for _, repeatable := range r.Repeatables {
-		if repeatable.Identity == "" || len(repeatable.Identity) > MaxMigrationRepeatableIdentityBytes ||
-			len(repeatable.Path) > MaxMigrationRepeatablePathBytes {
-			return fmt.Errorf("migration status lists a repeatable migration with no identity, or with a name longer than a file name holds")
+		if err := repeatable.validate(); err != nil {
+			return err
 		}
+		if _, repeated := identities[repeatable.Identity]; repeated {
+			return fmt.Errorf("migration status lists one repeatable migration twice")
+		}
+		identities[repeatable.Identity] = struct{}{}
+	}
+	return nil
+}
+
+// validate holds one repeatable migration to what its state says. A file
+// carries an identity a file name can carry and the digest of its content; a
+// record no file carries has neither a path nor a digest, and its last attempt
+// either applied, which Ptah reports as orphaned, or did not finish. Nothing
+// here quotes an identity back, because a record's may be any text.
+func (r MigrationRepeatable) validate() error {
+	if r.Identity == "" || len(r.Identity) > MaxMigrationRepeatableIdentityBytes ||
+		len(r.Path) > MaxMigrationRepeatablePathBytes {
+		return fmt.Errorf("migration status lists a repeatable migration with no identity, or with a name longer than a file name holds")
+	}
+	if !slices.Contains(repeatableStates, r.State) {
+		return fmt.Errorf("migration status reports repeatable state %q, which this operator does not know", r.State)
+	}
+	if r.AppliedChecksum != "" && !IsRepeatableChecksum(r.AppliedChecksum) {
+		return fmt.Errorf("migration status reports a repeatable migration whose applied digest is not an h1 digest")
+	}
+	if r.Orphaned {
+		switch {
+		case r.Path != "" || r.Checksum != "":
+			return fmt.Errorf("migration status reports a repeatable record no file carries, with a file")
+		case r.State != RepeatableStateOrphaned && !r.Unfinished():
+			return fmt.Errorf("migration status reports a repeatable record no file carries in state %q", r.State)
+		}
+		return nil
+	}
+	switch {
+	case r.State == RepeatableStateOrphaned:
+		return fmt.Errorf("migration status reports an orphaned repeatable migration that a file carries")
+	case r.Path == "" || !IsRepeatableIdentity(r.Identity) || !IsRepeatableChecksum(r.Checksum):
+		return fmt.Errorf("migration status lists a repeatable migration file without a path, " +
+			"an identity a file name can carry, or an h1 digest")
+	case r.State == RepeatableStatePending && r.AppliedChecksum != "":
+		return fmt.Errorf("migration status reports a pending repeatable migration with applied content")
+	case r.State == RepeatableStateChanged && (r.AppliedChecksum == "" || r.AppliedChecksum == r.Checksum):
+		return fmt.Errorf("migration status reports a changed repeatable migration whose content did not change")
+	case r.State == RepeatableStateApplied && r.AppliedChecksum != r.Checksum:
+		return fmt.Errorf("migration status reports an applied repeatable migration whose content is not the applied one")
+	}
+	return nil
+}
+
+// ValidateRepeatables holds a run's repeatable selection to the run: each
+// selected file once, with an identity a file name carries, an h1 digest and
+// a reason Ptah gives, and each applied one selected, in the order selected.
+func (r MigrationRunReport) ValidateRepeatables() error {
+	selected := make(map[string]struct{}, len(r.PlannedRepeatables))
+	for _, work := range r.PlannedRepeatables {
+		switch {
+		case !IsRepeatableIdentity(work.Identity) || work.Path == "" || len(work.Path) > MaxMigrationRepeatablePathBytes:
+			return fmt.Errorf("migration run selected a repeatable migration without an identity a file name " +
+				"can carry, or without a path")
+		case !IsRepeatableChecksum(work.Checksum) || work.AppliedChecksum != "" && !IsRepeatableChecksum(work.AppliedChecksum):
+			return fmt.Errorf("migration run selected repeatable migration %s without an h1 digest", work.Identity)
+		case !slices.Contains(repeatableReasons, work.Reason):
+			return fmt.Errorf("migration run selected repeatable migration %s for reason %q, which this operator does not know",
+				work.Identity, work.Reason)
+		case work.Reason == RepeatableReasonNew && work.AppliedChecksum != "":
+			return fmt.Errorf("migration run selected repeatable migration %s as new, with applied content", work.Identity)
+		case work.Reason == RepeatableReasonChanged && (work.AppliedChecksum == "" || work.AppliedChecksum == work.Checksum):
+			return fmt.Errorf("migration run selected repeatable migration %s as changed, and its content did not change",
+				work.Identity)
+		}
+		if _, repeated := selected[work.Identity]; repeated {
+			return fmt.Errorf("migration run selected repeatable migration %s twice", work.Identity)
+		}
+		selected[work.Identity] = struct{}{}
+	}
+	next := 0
+	for _, identity := range r.AppliedRepeatables {
+		index := slices.IndexFunc(r.PlannedRepeatables[next:], func(work MigrationRepeatableWork) bool {
+			return work.Identity == identity
+		})
+		if index < 0 {
+			return fmt.Errorf("migration run reports a repeatable migration applied that it did not select, " +
+				"or out of the order it selected them")
+		}
+		next += index + 1
 	}
 	return nil
 }
@@ -489,13 +729,16 @@ func DecodeMigrationRun(data []byte) (MigrationRunReport, error) {
 			)
 		}
 	}
+	if err := report.ValidateRepeatables(); err != nil {
+		return MigrationRunReport{}, err
+	}
 	if report.Failure != nil {
 		if err := report.Failure.validate(report); err != nil {
 			return MigrationRunReport{}, err
 		}
 	}
 	if report.MigrationLog != nil {
-		if err := report.MigrationLog.Validate(report.Planned); err != nil {
+		if err := report.MigrationLog.Validate(report.Planned, report.PlannedRepeatableIdentities()); err != nil {
 			return MigrationRunReport{}, err
 		}
 	}

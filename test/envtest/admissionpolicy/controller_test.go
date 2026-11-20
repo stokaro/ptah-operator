@@ -212,6 +212,8 @@ func controllerRows(t *testing.T, c *catalog) {
 		migrationPlanRow         = "manager publishes a migration plan"
 		foreignMigrationRow      = "manager creates a migration plan stamped with another manager's image"
 		foreignStateMigrationRow = "manager creates a migration plan stamped with another controller-state version"
+		repeatablesPlanRow       = "manager publishes a migration plan of repeatable migrations alone"
+		versionsAndRepeatableRow = "manager publishes a migration plan of versions and repeatable migrations"
 	)
 	releaseState := managerBuilder().ControllerStateVersion
 	c.row(policyenv.Row{Name: publishRow, Do: as(manager, publishPlan)})
@@ -254,6 +256,13 @@ func controllerRows(t *testing.T, c *catalog) {
 	})
 	c.row(policyenv.Row{Name: migrationPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
 		return migrationPlan(harness.ManagerImage, releaseState)
+	}))})
+	c.row(policyenv.Row{Name: repeatablesPlanRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return migrationPlanOf(harness.ManagerImage, releaseState, nil, plannedRepeatables())
+	}))})
+	c.row(policyenv.Row{Name: versionsAndRepeatableRow, Do: as(manager, dryRunCreate(func() (client.Object, error) {
+		return migrationPlanOf(harness.ManagerImage, releaseState,
+			[]operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}, plannedRepeatables())
 	}))})
 	c.row(policyenv.Row{
 		Name: foreignMigrationRow, Deny: []string{migrationPlanGuard}, Message: "rejected an unsafe manifest shape",
@@ -537,7 +546,16 @@ func controllerRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard refuses what it matches", Policies: []string{migrationPlanGuard},
 		Apply:  policyenv.RefuseEverything(migrationPlanGuard),
-		Breaks: []string{migrationPlanRow, sourceMigrationPlanRow, gitMigrationPlanRow},
+		Breaks: []string{migrationPlanRow, sourceMigrationPlanRow, gitMigrationPlanRow, repeatablesPlanRow, versionsAndRepeatableRow},
+	})
+	// The guard reads both lists through dyn, so a guard that went on
+	// requiring the versioned one refuses a plan of repeatable migrations
+	// alone, which the CRD admits: the row is what shows the guard takes it.
+	c.mutation(policyenv.Mutation{
+		Name: "migration plan write guard requires versioned migrations", Policies: []string{migrationPlanGuard},
+		Apply: policyenv.RewriteValidations(migrationPlanGuard, "rejected an unsafe manifest shape",
+			`(!has(dyn(dyn(object).spec).migrations) || (`, `((`),
+		Breaks: []string{repeatablesPlanRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "snapshot delete guard binding dropped", Policies: []string{snapshotDeleteGuard},
@@ -630,9 +648,30 @@ func projectPlan(ctx context.Context, api client.Client) error {
 // same function. The manager's image, revision and runner image are recorded
 // on the plan and bind nothing, so the fingerprint leaves them out.
 func migrationPlan(controllerImage string, controllerStateVersion int32) (*operatorv1alpha1.PtahMigrationPlan, error) {
+	return migrationPlanOf(controllerImage, controllerStateVersion,
+		[]operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}, nil)
+}
+
+// plannedRepeatables are two repeatable migrations, one never run and one
+// whose content changed since it ran.
+func plannedRepeatables() []operatorv1alpha1.PlannedRepeatableMigration {
+	return []operatorv1alpha1.PlannedRepeatableMigration{
+		{Identity: "item_names", Checksum: "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="},
+		{Identity: "order_totals", Checksum: "h1:BBkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4=",
+			AppliedChecksum: "h1:CCkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="},
+	}
+}
+
+// migrationPlanOf is migrationPlan with the versions and the repeatable
+// migrations it runs.
+func migrationPlanOf(
+	controllerImage string,
+	controllerStateVersion int32,
+	planned []operatorv1alpha1.PlannedMigration,
+	repeatables []operatorv1alpha1.PlannedRepeatableMigration,
+) (*operatorv1alpha1.PtahMigrationPlan, error) {
 	builder := managerBuilder()
-	planned := []operatorv1alpha1.PlannedMigration{{Version: 1, Checksum: digest("1")}}
-	sequence, err := migrationplan.SequenceDigest(planned)
+	sequence, err := migrationplan.SequenceDigest(planned, repeatables)
 	if err != nil {
 		return nil, err
 	}
@@ -676,6 +715,7 @@ func migrationPlan(controllerImage string, controllerStateVersion int32) (*opera
 		RunnerImage:              builder.RunnerImage,
 		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
 		Migrations:               planned,
+		Repeatables:              repeatables,
 		CreatedAt:                metav1.NewTime(time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)),
 	})
 }

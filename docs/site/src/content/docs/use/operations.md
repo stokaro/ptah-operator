@@ -20,6 +20,7 @@ row that matches is where to go.
 | A resource that is not converging, and no obvious refusal | [Finding a resource that has stopped converging](#finding-a-resource-that-has-stopped-converging) |
 | A resource in `Blocked`, or a condition you do not recognize | [Condition reasons](../../troubleshoot/condition-reasons/) |
 | A migration `Blocked` with `HistoryDirty` | [A migration that failed at a statement](../recovery/#failed-statement) |
+| A migration `Blocked` with `RepeatableMigrationUnfinished`, or a `RepeatableMigrationOrphaned` Warning | [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations) |
 | A migration whose Apply ended `Partial` or `Unknown` | [A migration run nobody accounted for](#a-migration-run-nobody-accounted-for) |
 | A schema `Blocked` with `TargetIdentityChanged` after its URL Secret moved | [A schema whose target moved](../recovery/#a-schema-whose-target-moved) |
 | A new artifact to roll out | [Moving to a new artifact](#set-source) |

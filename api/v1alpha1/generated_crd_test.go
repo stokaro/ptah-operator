@@ -966,3 +966,48 @@ func TestGeneratedCRDsRefuseNamesThatCannotBecomeJobLabels(t *testing.T) {
 		})
 	}
 }
+
+// Every bound on a count of repeatable migrations is the number a plan may
+// hold, MaxPlannedRepeatables, which the code that fills them uses: the plan's
+// spec.repeatables, the run's status.lastRun.appliedRepeatables, and the
+// journal's appliedRepeatables count, which both kinds share. A marker that
+// moves without the constant, or the constant without the markers, fails here
+// rather than at the API server refusing a status the code built.
+func TestGeneratedCRDsBoundRepeatableCountsByThePlan(t *testing.T) {
+	t.Parallel()
+
+	root := repositoryRoot(t)
+	bases := filepath.Join(root, "config", "crd", "bases")
+	limit := int64(operatorv1alpha1.MaxPlannedRepeatables)
+
+	plan := storageVersionSchema(t, loadGeneratedCRD(t, filepath.Join(bases, "operator.ptah.run_ptahmigrationplans.yaml")))
+	if planned := plan.Properties["spec"].Properties["repeatables"]; planned.MaxItems == nil || *planned.MaxItems != limit {
+		t.Errorf("PtahMigrationPlan spec.repeatables holds at most %v, want %d", planned.MaxItems, limit)
+	}
+	migration := storageVersionSchema(t, loadGeneratedCRD(t, filepath.Join(bases, "operator.ptah.run_ptahmigrations.yaml")))
+	if applied := migration.Properties["status"].Properties["lastRun"].Properties["appliedRepeatables"]; applied.MaxItems == nil ||
+		*applied.MaxItems != limit {
+		t.Errorf("PtahMigration status.lastRun.appliedRepeatables holds at most %v, want %d", applied.MaxItems, limit)
+	}
+	checked := 0
+	for _, file := range []string{"operator.ptah.run_ptahmigrations.yaml", "operator.ptah.run_ptahschemas.yaml"} {
+		status := storageVersionSchema(t, loadGeneratedCRD(t, filepath.Join(bases, file))).Properties["status"]
+		entries := status.Properties["journal"].Properties["entries"]
+		if entries.Items == nil || entries.Items.Schema == nil {
+			t.Errorf("%s has no journal entry schema", file)
+			continue
+		}
+		count, found := entries.Items.Schema.Properties["appliedRepeatables"]
+		if !found {
+			t.Errorf("%s journal entries have no appliedRepeatables", file)
+			continue
+		}
+		if count.Minimum == nil || *count.Minimum != 0 || count.Maximum == nil || *count.Maximum != float64(limit) {
+			t.Errorf("%s journal appliedRepeatables bounds = [%v,%v], want [0,%d]", file, count.Minimum, count.Maximum, limit)
+		}
+		checked++
+	}
+	if checked != 2 {
+		t.Fatalf("checked the journal of %d kinds, want 2", checked)
+	}
+}

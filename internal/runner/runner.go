@@ -210,7 +210,7 @@ func Run(ctx context.Context, config Config) Result {
 				setResultError(&result, "missing_plan_binding", errors.New("the approved history fingerprint is required"), redactor, config.Diagnostics)
 				return result
 			}
-			sequence, err := approvedSequenceDocument(inputs.ExpectedSequence, inputs.ExpectedSequenceDigest)
+			sequence, err := approvedSequenceDocument(inputs.ExpectedSequence, inputs.ExpectedRepeatables, inputs.ExpectedSequenceDigest)
 			if err != nil {
 				setResultError(&result, "plan_binding_mismatch", err, redactor, config.Diagnostics)
 				return result
@@ -592,6 +592,7 @@ func decodeMigrationReport(
 	report.DriftCheck = nil
 	redactMigrationHistoryError(report.Status)
 	cleanListedRepeatables(report.Status, redactor)
+	cleanSelectedRepeatables(&report, redactor)
 	// A lost log entry's message can quote part of the value the database
 	// refused, such as the actor. What the frame keeps of it is the entry and
 	// the code the database answered with.
@@ -617,7 +618,7 @@ func driftCheckAnswersRequest(report dataplane.MigrationRunReport, requested boo
 	case !requested && report.DriftCheck != nil:
 		return errors.New("migration run reports a drift check nobody asked for")
 	case requested && report.DriftCheck == nil &&
-		(report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 || report.Failure != nil):
+		(report.Outcome != dataplane.MigrationOutcomeFailed || len(report.Applied) != 0 || len(report.AppliedRepeatables) != 0 || report.Failure != nil):
 		return errors.New("migration run was asked for a drift check, reports none, and went on to run migrations")
 	}
 	return nil
@@ -651,15 +652,33 @@ func redactMigrationHistoryError(report *dataplane.MigrationStatusReport) {
 // lists, as other free text that reaches a frame is cleaned: they are file names
 // from the artifact and identities from the database's record, and a
 // condition message names them.
+//
+// An identity a file name can carry is kept as it is. The decoder holds every
+// file's identity to that form, and a plan approves it by name: Ptah compares
+// the name, so one the redactor rewrote would be a plan no run could carry
+// out. Only a record's identity, which the database may hold as any text, is
+// cleaned. The digests are held to their form by the decoder too.
 func cleanListedRepeatables(report *dataplane.MigrationStatusReport, redactor Redactor) {
 	if report == nil {
 		return
 	}
 	for index := range report.Repeatables {
 		repeatable := &report.Repeatables[index]
-		repeatable.Identity = freeText(repeatable.Identity, redactor, dataplane.MaxMigrationRepeatableIdentityBytes)
+		if !dataplane.IsRepeatableIdentity(repeatable.Identity) {
+			repeatable.Identity = freeText(repeatable.Identity, redactor, dataplane.MaxMigrationRepeatableIdentityBytes)
+		}
 		repeatable.Path = freeText(repeatable.Path, redactor, dataplane.MaxMigrationRepeatablePathBytes)
 		repeatable.State = freeText(repeatable.State, redactor, 32)
+	}
+}
+
+// cleanSelectedRepeatables cleans the paths of the repeatable migrations a run
+// selected, as cleanListedRepeatables cleans a status's. Each identity and
+// digest was held to its form by the decoder, and the plan compares both.
+func cleanSelectedRepeatables(report *dataplane.MigrationRunReport, redactor Redactor) {
+	for index := range report.PlannedRepeatables {
+		work := &report.PlannedRepeatables[index]
+		work.Path = freeText(work.Path, redactor, dataplane.MaxMigrationRepeatablePathBytes)
 	}
 }
 

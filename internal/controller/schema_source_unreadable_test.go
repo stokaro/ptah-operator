@@ -302,7 +302,7 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 }
 
 var updateRefusalReading = flag.Bool("update", false,
-	"rewrite testdata/schema-source-unreadable.json from what the reconciler stores now")
+	"rewrite the readings under testdata from what the reconciler stores now")
 
 // refusalReadingPath is the stored schema of a refused Observe. The e2e
 // predicates that recognize the refusal in a cluster are tested against it

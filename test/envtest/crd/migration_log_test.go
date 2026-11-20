@@ -3,6 +3,7 @@ package crd_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -35,6 +36,11 @@ func TestPtahMigrationStatusHoldsARunsMigrationLog(t *testing.T) {
 	const counted = "losses lists the first lost entries, up to 16, and lost counts them all"
 	loss := func(extra map[string]any) map[string]any {
 		return map[string]any{"written": int64(1), "lost": int64(1), "losses": []any{merged(lostEntries(1)[0].(map[string]any), extra)}}
+	}
+	// An entry about a repeatable migration names it instead of a version.
+	const namesOne = "a lost entry names a version or a repeatable migration, and not both"
+	lostOne := func(entry map[string]any) map[string]any {
+		return map[string]any{"written": int64(1), "lost": int64(1), "losses": []any{entry}}
 	}
 	// Each record is written at both places it is kept, under the path the API
 	// server names for each.
@@ -69,6 +75,12 @@ func TestPtahMigrationStatusHoldsARunsMigrationLog(t *testing.T) {
 		{"a SQLSTATE that is not one", loss(map[string]any{"sqlState": "22001: oidc:alice"}), ".losses[0].sqlState", "should match"},
 		{"an error number two bytes cannot hold", loss(map[string]any{"errorNumber": int64(65536)}), ".losses[0].errorNumber", "less than or equal to 65535"},
 		{"a negative error number", loss(map[string]any{"errorNumber": int64(-1)}), ".losses[0].errorNumber", "greater than or equal to 0"},
+		{"an entry that names nothing", lostOne(map[string]any{"state": "Applied"}), ".losses[0]", namesOne},
+		{"an entry that names a version and a repeatable migration", loss(map[string]any{"repeatable": "item_names"}), ".losses[0]", namesOne},
+		{"a repeatable migration no file name carries", lostOne(map[string]any{"repeatable": "item names", "state": "Applied"}),
+			".losses[0].repeatable", "should match"},
+		{"a repeatable migration longer than a file name", lostOne(map[string]any{"repeatable": strings.Repeat("a", 256), "state": "Applied"}),
+			".losses[0].repeatable", "Too long"},
 		{"a negative count written", map[string]any{"written": int64(-1), "lost": int64(0)}, ".written", "greater than or equal to 0"},
 		{"no count written", map[string]any{"lost": int64(0)}, ".written", "Required value"},
 		{"no count lost", map[string]any{"written": int64(2)}, ".lost", "Required value"},
@@ -105,6 +117,7 @@ func TestPtahMigrationStatusHoldsARunsMigrationLog(t *testing.T) {
 			map[string]any{"version": int64(3), "state": "Applied"},
 		}}},
 		{"sixteen named of eighteen lost", map[string]any{"written": int64(0), "lost": int64(18), "losses": lostEntries(16)}},
+		{"a repeatable migration's refusal", lostOne(map[string]any{"repeatable": "item_names", "state": "Applied", "sqlState": "22001"})},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

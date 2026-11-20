@@ -136,13 +136,17 @@ func validateMigrationPlanShape(
 		plan.Spec.RunnerProtocolVersion != binding.RunnerProtocolVersion {
 		return errors.New("plan execution binding is not the migration's current one")
 	}
-	if len(plan.Spec.Migrations) == 0 || len(plan.Spec.Migrations) > migrationplan.MaxMigrations {
+	if len(plan.Spec.Migrations) == 0 && len(plan.Spec.Repeatables) == 0 ||
+		len(plan.Spec.Migrations) > migrationplan.MaxMigrations || len(plan.Spec.Repeatables) > migrationplan.MaxRepeatables {
 		return errors.New("plan carries no executable sequence")
 	}
 	if int(history.PendingCount) != len(plan.Spec.Migrations) {
 		return errors.New("plan sequence length does not match the pending count the history reported")
 	}
-	sequenceDigest, err := migrationplan.SequenceDigest(plan.Spec.Migrations)
+	if int(history.PendingRepeatableCount) != len(plan.Spec.Repeatables) {
+		return errors.New("plan repeatable migrations do not match the pending count the history reported")
+	}
+	sequenceDigest, err := migrationplan.SequenceDigest(plan.Spec.Migrations, plan.Spec.Repeatables)
 	if err != nil {
 		return err
 	}

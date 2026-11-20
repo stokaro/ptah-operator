@@ -80,7 +80,7 @@ decision.
 | `RefreshFailed` | A previously resolved source could not be refreshed. |
 | `Refreshing` | The requested source is being resolved again. |
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |
-| `RepeatableMigrationsUnsupported` | The migration history lists repeatable migrations: `R__<identity>.sql` files in the artifact, or rows of the database's record of them. The operator runs a versioned sequence only, so no plan is published. See [Repeatable migrations](#repeatable-migrations). |
+| `RepeatableMigrationUnfinished` | The last attempt of a repeatable migration failed or recorded no outcome. Ptah runs nothing while such a record exists, so the resource is `Blocked`, publishes no plan, and names each one, what is known of its attempt, and the repair. See [Repeatable migrations](#repeatable-migrations). |
 | `Requested` | The spec requests suspension. |
 | `ResolveFailed` | No immutable source resolution is available. |
 | `RunAcknowledged` | A person's `PtahMigrationRunAcknowledgment` settled the run a migration recorded as unresolved. On the acknowledgment it is `Consumed=True`; on the migration it is `Blocked=False` until the database has been read again, and `status.resolvedRun` names who acknowledged. |
@@ -132,27 +132,78 @@ what each state means and which Ptah commands end it.
 
 ## Repeatable migrations
 
-Since v0.30.0 Ptah reads an `R__<identity>.sql` file in a migration directory
-as a repeatable migration, which `ptah migrations up` runs after the versioned
-ones and again whenever its content changes. Ptah v0.29.2, which 0.2.14 ran,
-did not read such a file at all, so it never ran.
+Ptah reads an `R__<identity>.sql` file in a migration directory as a repeatable
+migration. `ptah migrations up` runs it after the versioned migrations of the
+same run, the first time it sees the file and again whenever its content
+changes, and keeps one row per identity in `schema_migrations_repeatable`.
+[Run versioned migrations](../../use/migrations/#repeatable-migrations) says how
+the operator plans and runs them.
 
-The operator approves and runs a versioned sequence and nothing else. A history
-read that lists a repeatable migration sets `Blocked=True` with
-`RepeatableMigrationsUnsupported`, leaves `Ready` false, publishes no plan, and
-reads again at `spec.interval`. The message names each file, or, for a row the
-database's record keeps after its file went, the identity:
+A repeatable migration whose last attempt is not settled stops the resource
+the way a dirty revision row does. Both set `Blocked=True`, leave `Ready` false,
+publish no plan, and read the history again at `spec.interval`. The operator
+never writes to the record, so a database somebody repaired converges on its
+own.
+
+`RepeatableMigrationUnfinished` is a record whose last attempt failed or
+recorded no outcome. Ptah refuses every run while one exists, versioned
+migrations included. The message says what is known of each attempt:
 
 ```
-The history lists 1 repeatable migration, which this operator does not run: R__account_names.sql. Remove the R__ files from the artifact and write what they do as versioned migrations; `ptah migrations repair --repeatable <identity>` deletes a row of the database's record, with --force while its file is still in the migration directory
+Repeatable migration: item_names failed inside a transaction, which took no effect (repair: `ptah migrations repair --repeatable item_names --force`). Ptah runs nothing while one is unfinished. Establish what the attempt did and correct the file, then delete the record with the repair command; the next plan runs the file again
 ```
 
-Remove the files from the artifact and publish what they did as versioned
-migrations. Where the database already records a repeatable migration, because
-someone ran Ptah by hand, `ptah migrations repair --repeatable <identity>`
-deletes its row and runs no migration SQL. While the file is still in the
-migration directory the command reads, it needs `--force`, and the next
-`migrations up` would run that file as new.
+On PostgreSQL a failed attempt ran in a transaction and left nothing. On MySQL,
+and under `transactionMode: none`, the message says the attempt failed outside a
+transaction and may have left part of its work behind. A record that says the
+attempt started and nothing more is a run that was stopped or lost inside it:
+whether its statements took effect is not known. In each case read the database,
+correct the file in the artifact, and delete the record:
+`ptah migrations repair --repeatable <identity>` deletes the row and runs no
+migration SQL, with `--force` while the file is still in the migration
+directory the command reads. The next history read finds the file pending, and
+the next plan runs it again, under approval as any other plan. A record whose
+identity no file name can carry, written to the table by something other than
+Ptah, is named quoted and with no command, since Ptah's repair refuses that
+identity; only deleting its row by hand removes it.
+
+An Apply that meets such a record, left by a run outside the operator after
+the plan was published, selects nothing. Ptah reports that run `unknown` over a
+running record, or over a failed one of a migration that ran without a
+transaction, and `failed` otherwise. The operator records it `Failed` either
+way, with a message that says Ptah ran nothing and names the record. It sets no
+`status.unresolvedRun`, since nothing ran that a person would have to account
+for, and the history read after it stops with `RepeatableMigrationUnfinished`.
+
+A record of an applied repeatable migration whose file is gone from the
+artifact, because it was deleted or renamed, is not a condition reason. Ptah
+leaves the record and what the migration created alone and reports a run with
+nothing else to do as up to date, and the operator does the same: it plans
+nothing for the record, and the resource converges as it would without it.
+`status.history.orphanedRepeatables` names the record, and the first history
+read that lists it sends one `Warning` Event with reason
+`RepeatableMigrationOrphaned`, which
+[can be lost](../events/#an-event-can-be-lost), so the status list is the
+record:
+
+```
+The database records repeatable migration item_names as applied, and no file of the artifact carries it. Ptah runs nothing for it and leaves what it created in place. To remove the record, run `ptah migrations repair --repeatable item_names`
+```
+
+Nothing has to be done. Run the command only if you want the record gone: it
+deletes the row, needs no `--force` once the file is gone, and leaves what the
+migration created in the database, so drop that first if nothing needs it. A
+renamed file is a new identity, pending like any new file, and the next plan
+runs it. [Repeatable migrations](../../use/migrations/#repeatable-migrations)
+says what happens when a file carries the old identity again. While the database is ahead of its artifact, `HistoryAhead`, as after a tag
+moved back to an older build, the history lists no record as orphaned and no
+Event names one: an older artifact lacks a newer file for the same reason it
+lacks a newer version. The Event names a record whose identity no file name
+can carry the way the refusal above does: quoted, and with no command.
+
+Operator releases before 0.2.16 ran a versioned sequence only. They stopped a
+history that listed a repeatable migration with
+`RepeatableMigrationsUnsupported`, which no longer exists.
 
 ## A migration that failed and committed nothing
 
@@ -501,7 +552,10 @@ cannot classify. A migration Apply that Ptah stopped before it selected any
 migration for another reason -- a lock or a timeout the server cannot carry, a
 lint policy that does not load -- is recorded the same way, `Failed` with the
 message "The run stopped before it selected any migration, and ran none", and
-waits the same interval.
+waits the same interval. When the history read after that failure failed too,
+Ptah reports the run `unknown`, and the message is "Ptah stopped before it
+selected any migration and could not read the history after it, so it ran
+nothing"; nothing ran, so no person has to account for it.
 
 ## A desired file Ptah could not read
 

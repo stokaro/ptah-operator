@@ -89,32 +89,43 @@ func TestAPolicySentenceAgreesWithItsCountOfMigrations(t *testing.T) {
 		name          string
 		policy        operatorv1alpha1.ApplyPolicy
 		planned       int
+		repeatables   int
 		conditionType string
 		want          string
 	}{
-		{"never, one", operatorv1alpha1.ApplyPolicyNever, 1, operatorv1alpha1.ConditionMigrationReady,
+		{"never, one", operatorv1alpha1.ApplyPolicyNever, 1, 0, operatorv1alpha1.ConditionMigrationReady,
 			"1 migration is pending and the apply policy is Never"},
-		{"never, two", operatorv1alpha1.ApplyPolicyNever, 2, operatorv1alpha1.ConditionMigrationReady,
+		{"never, two", operatorv1alpha1.ApplyPolicyNever, 2, 0, operatorv1alpha1.ConditionMigrationReady,
 			"2 migrations are pending and the apply policy is Never"},
-		{"always, one", operatorv1alpha1.ApplyPolicyAlways, 1, operatorv1alpha1.ConditionMigrationReady,
+		{"always, one", operatorv1alpha1.ApplyPolicyAlways, 1, 0, operatorv1alpha1.ConditionMigrationReady,
 			"1 migration is planned"},
-		{"always, two", operatorv1alpha1.ApplyPolicyAlways, 2, operatorv1alpha1.ConditionMigrationReady,
+		{"always, two", operatorv1alpha1.ApplyPolicyAlways, 2, 0, operatorv1alpha1.ConditionMigrationReady,
 			"2 migrations are planned"},
-		{"always, one, what happens next", operatorv1alpha1.ApplyPolicyAlways, 1, operatorv1alpha1.ConditionMigrationProgressing,
+		{"always, one, what happens next", operatorv1alpha1.ApplyPolicyAlways, 1, 0, operatorv1alpha1.ConditionMigrationProgressing,
 			"An Apply of 1 planned migration is what happens next"},
-		{"always, two, what happens next", operatorv1alpha1.ApplyPolicyAlways, 2, operatorv1alpha1.ConditionMigrationProgressing,
+		{"always, two, what happens next", operatorv1alpha1.ApplyPolicyAlways, 2, 0, operatorv1alpha1.ConditionMigrationProgressing,
 			"An Apply of 2 planned migrations is what happens next"},
-		{"on approval, one", operatorv1alpha1.ApplyPolicyOnApproval, 1, operatorv1alpha1.ConditionMigrationApprovalRequired,
+		{"on approval, one", operatorv1alpha1.ApplyPolicyOnApproval, 1, 0, operatorv1alpha1.ConditionMigrationApprovalRequired,
 			"1 planned migration needs an approval naming this plan"},
-		{"on approval, two", operatorv1alpha1.ApplyPolicyOnApproval, 2, operatorv1alpha1.ConditionMigrationApprovalRequired,
+		{"on approval, two", operatorv1alpha1.ApplyPolicyOnApproval, 2, 0, operatorv1alpha1.ConditionMigrationApprovalRequired,
 			"2 planned migrations need an approval naming this plan"},
+		{"never, one repeatable alone", operatorv1alpha1.ApplyPolicyNever, 0, 1, operatorv1alpha1.ConditionMigrationReady,
+			"1 repeatable migration is pending and the apply policy is Never"},
+		{"always, both", operatorv1alpha1.ApplyPolicyAlways, 1, 1, operatorv1alpha1.ConditionMigrationReady,
+			"1 migration and 1 repeatable migration are planned"},
+		{"always, both, what happens next", operatorv1alpha1.ApplyPolicyAlways, 2, 1, operatorv1alpha1.ConditionMigrationProgressing,
+			"An Apply of 2 planned migrations and 1 planned repeatable migration is what happens next"},
+		{"on approval, one repeatable alone", operatorv1alpha1.ApplyPolicyOnApproval, 0, 1, operatorv1alpha1.ConditionMigrationApprovalRequired,
+			"1 planned repeatable migration needs an approval naming this plan"},
+		{"on approval, two repeatables alone", operatorv1alpha1.ApplyPolicyOnApproval, 0, 2, operatorv1alpha1.ConditionMigrationApprovalRequired,
+			"2 planned repeatable migrations need an approval naming this plan"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			migration := migrationFixture()
 			migration.Spec.Policy.Apply = row.policy
 			reconciler := &MigrationReconciler{}
-			reconciler.applyMigrationPolicyPhase(migration, row.planned)
+			reconciler.applyMigrationPolicyPhase(migration, row.planned, row.repeatables)
 			assertMigrationCondition(t, migration, row.conditionType, row.want)
 		})
 	}

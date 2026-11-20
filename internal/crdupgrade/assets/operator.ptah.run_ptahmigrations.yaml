@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "23"
-    operator.ptah.run/crd-schema-digest: "sha256:bd8d0e4898fa1345d88e8b4faa46d0792e27b18393984d1779f8ca04091a6e09"
+    operator.ptah.run/crd-schema-version: "24"
+    operator.ptah.run/crd-schema-digest: "sha256:c5f66d94415044ce315596a83219083eecdf85b7aaeb44d194521c5f3f848051"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -28,6 +28,10 @@ spec:
       type: integer
     - jsonPath: .status.history.pendingCount
       name: Pending
+      type: integer
+    - jsonPath: .status.history.pendingRepeatableCount
+      name: Pending Repeatable
+      priority: 1
       type: integer
     - jsonPath: .status.lastRun.outcome
       name: Outcome
@@ -1960,6 +1964,13 @@ spec:
                   observedAt:
                     format: date-time
                     type: string
+                  orphanedRepeatables:
+                    items:
+                      maxLength: 255
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
                   outOfOrderVersions:
                     items:
                       format: int64
@@ -1968,6 +1979,10 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                   pendingCount:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  pendingRepeatableCount:
                     format: int32
                     minimum: 0
                     type: integer
@@ -2012,6 +2027,13 @@ spec:
                   targetIdentityDigest:
                     pattern: ^sha256:[0-9a-f]{64}$
                     type: string
+                  unfinishedRepeatables:
+                    items:
+                      maxLength: 255
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
                 required:
                 - appliedCount
                 - contractVersion
@@ -2035,6 +2057,11 @@ spec:
                         acknowledgment:
                           maxLength: 253
                           type: string
+                        appliedRepeatables:
+                          format: int32
+                          maximum: 256
+                          minimum: 0
+                          type: integer
                         appliedVersions:
                           format: int32
                           minimum: 0
@@ -2132,6 +2159,11 @@ spec:
                                     maximum: 65535
                                     minimum: 0
                                     type: integer
+                                  repeatable:
+                                    maxLength: 255
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9_-]+$
+                                    type: string
                                   sqlState:
                                     pattern: ^[0-9A-Z]{5}$
                                     type: string
@@ -2147,8 +2179,11 @@ spec:
                                     type: integer
                                 required:
                                 - state
-                                - version
                                 type: object
+                                x-kubernetes-validations:
+                                - message: a lost entry names a version or a repeatable
+                                    migration, and not both
+                                  rule: has(self.version) != has(self.repeatable)
                               maxItems: 16
                               type: array
                               x-kubernetes-list-type: atomic
@@ -2243,6 +2278,14 @@ spec:
                 type: string
               lastRun:
                 properties:
+                  appliedRepeatables:
+                    items:
+                      maxLength: 255
+                      pattern: ^[A-Za-z0-9_-]+$
+                      type: string
+                    maxItems: 256
+                    type: array
+                    x-kubernetes-list-type: set
                   appliedVersions:
                     items:
                       format: int64
@@ -2364,6 +2407,11 @@ spec:
                               maximum: 65535
                               minimum: 0
                               type: integer
+                            repeatable:
+                              maxLength: 255
+                              minLength: 1
+                              pattern: ^[A-Za-z0-9_-]+$
+                              type: string
                             sqlState:
                               pattern: ^[0-9A-Z]{5}$
                               type: string
@@ -2379,8 +2427,11 @@ spec:
                               type: integer
                           required:
                           - state
-                          - version
                           type: object
+                          x-kubernetes-validations:
+                          - message: a lost entry names a version or a repeatable
+                              migration, and not both
+                            rule: has(self.version) != has(self.repeatable)
                         maxItems: 16
                         type: array
                         x-kubernetes-list-type: atomic

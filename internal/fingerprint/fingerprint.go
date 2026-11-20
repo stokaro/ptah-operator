@@ -356,12 +356,29 @@ type SequenceEntry struct {
 	TransactionMode string `json:"transaction_mode"`
 }
 
+// RepeatableEntry is one repeatable migration of an approved sequence,
+// carrying exactly what MigrationSequenceDigest binds of it: the identity Ptah
+// records it under, the content it runs, and the content that last applied,
+// empty for one the database never ran. Ptah compares the first two with its
+// selection; the third is what the plan shows an approver as replaced.
+type RepeatableEntry struct {
+	Identity        string `json:"identity"`
+	Checksum        string `json:"checksum"`
+	AppliedChecksum string `json:"applied_checksum"`
+}
+
 // MigrationSequenceDigest binds a plan to the exact sequence it carries, in the
 // order it carries it: a plan that applies the same migrations in another order
-// is a different plan.
-func MigrationSequenceDigest(entries []SequenceEntry) (string, error) {
-	if len(entries) == 0 {
-		return "", fmt.Errorf("a plan carries at least one migration")
+// is a different plan. The repeatable migrations run after the versioned ones,
+// and their order binds the same way.
+//
+// A sequence without repeatable migrations digests to the value it digested to
+// before they existed, so a plan published then keeps its fingerprint. One with
+// them digests an object rather than a list, which no sequence without them
+// can produce.
+func MigrationSequenceDigest(entries []SequenceEntry, repeatables []RepeatableEntry) (string, error) {
+	if len(entries) == 0 && len(repeatables) == 0 {
+		return "", fmt.Errorf("a plan carries at least one migration or repeatable migration")
 	}
 	document := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
@@ -373,5 +390,16 @@ func MigrationSequenceDigest(entries []SequenceEntry) (string, error) {
 			"transaction_mode": entry.TransactionMode,
 		})
 	}
-	return DigestCanonicalJSON(document)
+	if len(repeatables) == 0 {
+		return DigestCanonicalJSON(document)
+	}
+	repeatable := make([]map[string]any, 0, len(repeatables))
+	for _, entry := range repeatables {
+		repeatable = append(repeatable, map[string]any{
+			"identity":         entry.Identity,
+			"checksum":         entry.Checksum,
+			"applied_checksum": entry.AppliedChecksum,
+		})
+	}
+	return DigestCanonicalJSON(map[string]any{"migrations": document, "repeatables": repeatable})
 }

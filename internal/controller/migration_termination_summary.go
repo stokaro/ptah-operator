@@ -106,7 +106,6 @@ func (r *MigrationReconciler) settleUnreadMigrationApply(
 // is the history read that follows it, as it is for a frame.
 func summaryMigrationApply(summary runner.Summary) reportedMigrationApply {
 	reported := reportedMigrationApply{
-		uncertain:            summary.Uncertain,
 		coordinationDigest:   summary.CoordinationDigest,
 		targetIdentityDigest: summary.TargetIdentityDigest,
 	}

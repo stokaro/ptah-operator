@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "23"
-    operator.ptah.run/crd-schema-digest: "sha256:f86521d83451c503b4a78629410ccc46671b5eff44504ace3363f4f5423c3be9"
+    operator.ptah.run/crd-schema-version: "24"
+    operator.ptah.run/crd-schema-digest: "sha256:985b73e8f443002ae47866352f9c90cc8598e8634ce7f0f2955a0ef80063a9d2"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1830,6 +1830,11 @@ spec:
                         acknowledgment:
                           maxLength: 253
                           type: string
+                        appliedRepeatables:
+                          format: int32
+                          maximum: 256
+                          minimum: 0
+                          type: integer
                         appliedVersions:
                           format: int32
                           minimum: 0
@@ -1927,6 +1932,11 @@ spec:
                                     maximum: 65535
                                     minimum: 0
                                     type: integer
+                                  repeatable:
+                                    maxLength: 255
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9_-]+$
+                                    type: string
                                   sqlState:
                                     pattern: ^[0-9A-Z]{5}$
                                     type: string
@@ -1942,8 +1952,11 @@ spec:
                                     type: integer
                                 required:
                                 - state
-                                - version
                                 type: object
+                                x-kubernetes-validations:
+                                - message: a lost entry names a version or a repeatable
+                                    migration, and not both
+                                  rule: has(self.version) != has(self.repeatable)
                               maxItems: 16
                               type: array
                               x-kubernetes-list-type: atomic

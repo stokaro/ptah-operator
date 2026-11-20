@@ -506,7 +506,7 @@ kubectl -n <namespace> get ptahschemaapprovals,ptahmigrationapprovals -o yaml
 ```
 
 ```sql
-SELECT logged_at, run_id, version, state, actor, actor_source, actor_origin, run_reference, error
+SELECT logged_at, run_id, version, repeatable, state, actor, actor_source, actor_origin, run_reference, error
 FROM schema_migrations_log
 ORDER BY logged_at, seq;
 

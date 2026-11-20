@@ -84,6 +84,17 @@ func renderText(out io.Writer, view View) error {
 		if len(history.OutOfOrderVersions) > 0 {
 			field("Out of order", joinVersions(history.OutOfOrderVersions))
 		}
+		if history.PendingRepeatableCount > 0 {
+			field("Pending repeatable", fmt.Sprintf("%d", history.PendingRepeatableCount))
+		}
+		if len(history.UnfinishedRepeatables) > 0 {
+			field("Unfinished", joinNames(history.UnfinishedRepeatables))
+		}
+		if len(history.OrphanedRepeatables) > 0 {
+			// A record no file carries stops nothing, so the line says so
+			// rather than reading like the unfinished one above it.
+			field("Orphaned", joinNames(history.OrphanedRepeatables)+" (recorded applied, no file; nothing runs)")
+		}
 	}
 	renderLastRun(&text, view.LastRun)
 	renderUnresolvedRun(&text, view.UID, readingGate(view), view.UnresolvedRun, view.LastRun)
@@ -162,6 +173,9 @@ func renderLastRun(text *strings.Builder, run *RunView) {
 	// label, and these are the versions this run applied.
 	if len(run.AppliedVersions) > 0 {
 		field("Versions", joinVersions(run.AppliedVersions))
+	}
+	if len(run.AppliedRepeatables) > 0 {
+		field("Repeatables", joinNames(run.AppliedRepeatables))
 	}
 	if failure := run.Failure; failure != nil {
 		stopped := fmt.Sprintf("version %d, statement %d of %d", failure.Version, failure.Statement, failure.Statements)
@@ -312,8 +326,15 @@ func renderPlan(text *strings.Builder, plan *PlanView, approvalRequired *Conditi
 		text.WriteString("\nNo plan is published.\n")
 		return
 	}
-	fmt.Fprintf(text, "\nPlan %s, %s from version %d:\n",
-		plan.Name, countedMigrations(len(plan.Migrations)), plan.CurrentVersion)
+	counted := countedMigrations(len(plan.Migrations))
+	switch {
+	case len(plan.Repeatables) == 0:
+	case len(plan.Migrations) == 0:
+		counted = countedRepeatables(len(plan.Repeatables))
+	default:
+		counted += " and " + countedRepeatables(len(plan.Repeatables))
+	}
+	fmt.Fprintf(text, "\nPlan %s, %s from version %d:\n", plan.Name, counted, plan.CurrentVersion)
 	for _, planned := range plan.Migrations {
 		description := planned.Description
 		if description == "" {
@@ -327,6 +348,15 @@ func renderPlan(text *strings.Builder, plan *PlanView, approvalRequired *Conditi
 			marks += " [tx " + planned.TransactionMode + "]"
 		}
 		fmt.Fprintf(text, "  %-20d %s%s\n", planned.Version, statusview.Clean(description), marks)
+	}
+	// After the versions, as Ptah runs them. A repeatable migration has no
+	// version, so the column says what it is.
+	for _, planned := range plan.Repeatables {
+		state := "new"
+		if planned.AppliedChecksum != "" {
+			state = "changed"
+		}
+		fmt.Fprintf(text, "  %-20s %s [%s]\n", "repeatable", statusview.Clean(planned.Identity), state)
 	}
 	if approvalRequired != nil {
 		fmt.Fprintf(text, "  ApprovalRequired: %s\n", statusview.Summary(*approvalRequired))
@@ -371,6 +401,23 @@ func countedMigrations(count int) string {
 		return "1 migration"
 	}
 	return fmt.Sprintf("%d migrations", count)
+}
+
+func countedRepeatables(count int) string {
+	if count == 1 {
+		return "1 repeatable migration"
+	}
+	return fmt.Sprintf("%d repeatable migrations", count)
+}
+
+// joinNames lists repeatable migration identities. They come from the
+// database's record as well as from file names, so each is cleaned.
+func joinNames(names []string) string {
+	cleaned := make([]string, 0, len(names))
+	for _, name := range names {
+		cleaned = append(cleaned, statusview.Clean(name))
+	}
+	return strings.Join(cleaned, ", ")
 }
 
 func joinVersions(versions []int64) string {

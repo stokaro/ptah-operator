@@ -147,7 +147,7 @@ func executorHistoryFixture(t *testing.T) (runner.Result, *ptahv1alpha1.PtahMigr
 	if err != nil {
 		t.Fatal(err)
 	}
-	sequence, err := migrationplan.Sequence(history)
+	sequence, _, err := migrationplan.Sequence(history)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestExecutorApplyJobCarriesEveryApprovedInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := workload.MigrationSequenceDigest(plan.Spec.Migrations)
+	digest, err := workload.MigrationSequenceDigest(plan.Spec.Migrations, plan.Spec.Repeatables)
 	if err != nil {
 		t.Fatal(err)
 	}

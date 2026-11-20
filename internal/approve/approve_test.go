@@ -741,6 +741,59 @@ func TestRenderReviewShowsAMigrationPlanAndWhereItsSQLIs(t *testing.T) {
 	}
 }
 
+// An approval of a plan approves its repeatable migrations too, so the review
+// names each after the versions with the content it runs, and says which ran
+// before and with what content.
+func TestRenderReviewShowsTheRepeatableMigrations(t *testing.T) {
+	t.Parallel()
+	const (
+		content = "h1:AAkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="
+		before  = "h1:BBkShW1bQ18rh5+kF6nNdfoHF+XZ/7T1YU+poQYCPN4="
+	)
+	repeatables := []operatorv1alpha1.PlannedRepeatableMigration{
+		{Identity: "item_names", Checksum: content},
+		{Identity: "order_totals", Checksum: content, AppliedChecksum: before},
+	}
+	listed := "  repeatable       item_names\n" +
+		"                   checksum " + content + ", new\n" +
+		"  repeatable       order_totals\n" +
+		"                   checksum " + content + ", changed from " + before + "\n"
+	for _, test := range []struct {
+		name       string
+		migrations []operatorv1alpha1.PlannedMigration
+		says       string
+	}{
+		{"after versions", []operatorv1alpha1.PlannedMigration{{Version: 14, Description: "add shipments", Checksum: "sha256:c14"}},
+			"checksum sha256:c14\nThen these repeatable migrations, in this order:\n" + listed},
+		{"alone", nil, "At version 13 no versioned migration is pending. These repeatable migrations run, in this order:\n" + listed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			api := planreadtest.NewClient(t, waitingMigration(func(_ *operatorv1alpha1.PtahMigration, p *operatorv1alpha1.PtahMigrationPlan) {
+				p.Spec.CurrentVersion = 13
+				p.Spec.Migrations = test.migrations
+				p.Spec.Repeatables = repeatables
+			})...)
+			review, err := approve.Load(context.Background(), api, approve.Migration, "application", "shipments")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			var out strings.Builder
+			if err := approve.RenderReview(&out, review); err != nil {
+				t.Fatalf("RenderReview() error = %v", err)
+			}
+			if !strings.Contains(out.String(), test.says) {
+				t.Fatalf("RenderReview() wrote\n%s\nmissing %q", out.String(), test.says)
+			}
+			// A plan of repeatable migrations alone has no sequence of
+			// versions to start from.
+			if test.migrations == nil && strings.Contains(out.String(), "From version") {
+				t.Fatalf("RenderReview() wrote\n%s\nwhich lists versions the plan does not carry", out.String())
+			}
+		})
+	}
+}
+
 func TestLoadRefusesAMigrationPlanInAContractItCannotRead(t *testing.T) {
 	t.Parallel()
 	api := planreadtest.NewClient(t, waitingMigration(func(_ *operatorv1alpha1.PtahMigration, p *operatorv1alpha1.PtahMigrationPlan) {

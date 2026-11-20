@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "23"
-    operator.ptah.run/crd-schema-digest: "sha256:f5fbc9e458c660ce2d5dc97628fbf7f8c2ca338733ca81904d3ebb8396689d81"
+    operator.ptah.run/crd-schema-version: "24"
+    operator.ptah.run/crd-schema-digest: "sha256:86f0c1ec5b204cd48fd03997943d301c12f24a3a56ba2819737e2c7c1067b708"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
@@ -25,9 +25,6 @@ spec:
       type: string
     - jsonPath: .spec.currentVersion
       name: From
-      type: integer
-    - jsonPath: .spec.migrations.length()
-      name: Steps
       type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -131,6 +128,28 @@ spec:
                 type: string
               ptahVersion:
                 type: string
+              repeatables:
+                items:
+                  properties:
+                    appliedChecksum:
+                      pattern: ^h1:[A-Za-z0-9+/]{43}=$
+                      type: string
+                    checksum:
+                      pattern: ^h1:[A-Za-z0-9+/]{43}=$
+                      type: string
+                    identity:
+                      maxLength: 255
+                      minLength: 1
+                      pattern: ^[A-Za-z0-9_-]+$
+                      type: string
+                  required:
+                  - checksum
+                  - identity
+                  type: object
+                maxItems: 256
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
               runnerImage:
                 type: string
               runnerProtocolVersion:
@@ -190,7 +209,6 @@ spec:
             - fingerprint
             - historyFingerprint
             - migrationRef
-            - migrations
             - policyFingerprint
             - ptahVersion
             - runnerImage
@@ -200,6 +218,8 @@ spec:
             x-kubernetes-validations:
             - message: a plan is immutable; generate a new plan instead
               rule: self == oldSelf
+            - message: a plan carries at least one migration or repeatable migration
+              rule: has(self.migrations) || has(self.repeatables)
             - message: contract version 1 binds artifactDigest and a verification
                 policy; contract version 2 binds source
               rule: 'self.contractVersion == 1 ? (has(self.artifactDigest) && has(self.verificationPolicyUID)

@@ -302,11 +302,12 @@ func migrationDataPlane(
 				return nil, nil, nil, nil, err
 			}
 			entries := migrationSequenceEntries(plan.Spec.Migrations)
-			sequenceDigest, err := fingerprint.MigrationSequenceDigest(entries)
+			repeatables := repeatableSequenceEntries(plan.Spec.Repeatables)
+			sequenceDigest, err := fingerprint.MigrationSequenceDigest(entries, repeatables)
 			if err != nil {
 				return nil, nil, nil, nil, fmt.Errorf("digest the approved migration sequence: %w", err)
 			}
-			sequence, err := encodeMigrationSequence(entries)
+			sequence, err := encodeSequence("sequence", entries)
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
@@ -319,6 +320,16 @@ func migrationDataPlane(
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
 				literalEnv(runner.EnvExecutionNotAfter, operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			)
+			// The repeatable migrations travel beside the versioned ones, in a
+			// variable of their own and under the same digest. A plan without
+			// them builds the Job it built before they existed.
+			if len(repeatables) > 0 {
+				encoded, err := encodeSequence("repeatable sequence", repeatables)
+				if err != nil {
+					return nil, nil, nil, nil, err
+				}
+				environment = append(environment, literalEnv(runner.EnvExpectedRepeatableSequence, encoded))
+			}
 			if plan.Spec.ShadowIdentityDigest != "" {
 				environment = append(environment, literalEnv(runner.EnvExpectedShadowIdentityDigest, plan.Spec.ShadowIdentityDigest))
 				// What the check leaves out reaches the Apply alone, since the
@@ -352,15 +363,19 @@ func migrationDataPlane(
 }
 
 // MigrationSequenceDigest is fingerprint.MigrationSequenceDigest over a plan's
-// sequence.
+// sequence: its versioned migrations and the repeatable migrations that run
+// after them.
 //
 // It lives here rather than beside the rest of the plan derivation because the
 // Job that executes a plan has to carry this digest, and internal/migrationplan
 // is built on top of this package. That package's SequenceDigest calls this,
 // and the runner digests the sequence it receives with the same function, so
 // there is one rule rather than copies that can drift.
-func MigrationSequenceDigest(planned []operatorv1alpha1.PlannedMigration) (string, error) {
-	return fingerprint.MigrationSequenceDigest(migrationSequenceEntries(planned))
+func MigrationSequenceDigest(
+	planned []operatorv1alpha1.PlannedMigration,
+	repeatables []operatorv1alpha1.PlannedRepeatableMigration,
+) (string, error) {
+	return fingerprint.MigrationSequenceDigest(migrationSequenceEntries(planned), repeatableSequenceEntries(repeatables))
 }
 
 // MaxEncodedMigrationSequence is the most bytes the approved sequence may take
@@ -375,24 +390,55 @@ const MaxEncodedMigrationSequence = 120 << 10
 // or an error when it would not fit. Plan publication calls it so a sequence
 // no Job could carry never becomes a plan anyone approves.
 func EncodeMigrationSequence(planned []operatorv1alpha1.PlannedMigration) (string, error) {
-	return encodeMigrationSequence(migrationSequenceEntries(planned))
+	return encodeSequence("sequence", migrationSequenceEntries(planned))
 }
 
-func encodeMigrationSequence(entries []fingerprint.SequenceEntry) (string, error) {
+// EncodeRepeatableSequence is the approved repeatable migrations as the Apply
+// Job carries them, in a variable of their own under the same bound, or an
+// error when they would not fit.
+func EncodeRepeatableSequence(repeatables []operatorv1alpha1.PlannedRepeatableMigration) (string, error) {
+	return encodeSequence("repeatable sequence", repeatableSequenceEntries(repeatables))
+}
+
+// encodeSequence is one list of an approved sequence as JSON, within the bound
+// one environment string can carry. what names the list in an error, and an
+// empty list encodes as one, which is what a plan of repeatable migrations
+// alone carries as its versioned sequence.
+func encodeSequence[T any](what string, entries []T) (string, error) {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	// Escaping <, > and & would make the same key six bytes a character for
 	// nothing: the value is read by the runner, never by a browser.
 	encoder.SetEscapeHTML(false)
+	if entries == nil {
+		entries = []T{}
+	}
 	if err := encoder.Encode(entries); err != nil {
-		return "", fmt.Errorf("encode the approved migration sequence: %w", err)
+		return "", fmt.Errorf("encode the approved migration %s: %w", what, err)
 	}
 	encoded := strings.TrimSuffix(buffer.String(), "\n")
 	if len(encoded) > MaxEncodedMigrationSequence {
-		return "", fmt.Errorf("the approved sequence encodes to %d bytes, over the %d an Apply Job can carry",
-			len(encoded), MaxEncodedMigrationSequence)
+		return "", fmt.Errorf("the approved %s encodes to %d bytes, over the %d an Apply Job can carry",
+			what, len(encoded), MaxEncodedMigrationSequence)
 	}
 	return encoded, nil
+}
+
+// repeatableSequenceEntries is a plan's repeatable migrations in the shape the
+// digest binds, nil for a plan that carries none.
+func repeatableSequenceEntries(planned []operatorv1alpha1.PlannedRepeatableMigration) []fingerprint.RepeatableEntry {
+	if len(planned) == 0 {
+		return nil
+	}
+	entries := make([]fingerprint.RepeatableEntry, 0, len(planned))
+	for _, repeatable := range planned {
+		entries = append(entries, fingerprint.RepeatableEntry{
+			Identity:        repeatable.Identity,
+			Checksum:        repeatable.Checksum,
+			AppliedChecksum: repeatable.AppliedChecksum,
+		})
+	}
+	return entries
 }
 
 // migrationSequenceEntries is a plan's sequence in the shape the digest binds.

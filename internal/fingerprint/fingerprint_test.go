@@ -508,3 +508,71 @@ func completePlanBinding() fingerprint.PlanBinding {
 		StatementCount:           3,
 	}
 }
+
+// A sequence with no repeatable migration digests to what 0.2.15 computed for
+// it, so a plan published before repeatable migrations keeps its fingerprint.
+// One with a repeatable migration binds each of its fields and the order of the
+// repeatable migrations, and differs from the same versions alone.
+func TestMigrationSequenceDigestBindsEachRepeatableMigration(t *testing.T) {
+	t.Parallel()
+
+	entries := []fingerprint.SequenceEntry{
+		{Version: 3, Checksum: "checksum-3"},
+		{Version: 4, VersionKey: "4", Checksum: "checksum-4", TransactionMode: "none"},
+	}
+	// The digest internal/fingerprint at the 0.2.15 tag returns for entries.
+	const released = "sha256:3d66c4e24465336767143c09d129efec228c094eeb4a15f4b4030ebf50dfbcee"
+	versionsAlone, err := fingerprint.MigrationSequenceDigest(entries, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if versionsAlone != released {
+		t.Fatalf("the versions alone digest to %s, and 0.2.15 digested them to %s", versionsAlone, released)
+	}
+	repeatables := func() []fingerprint.RepeatableEntry {
+		return []fingerprint.RepeatableEntry{
+			{Identity: "item_names", Checksum: "h1:" + strings.Repeat("B", 43) + "=", AppliedChecksum: "h1:" + strings.Repeat("A", 43) + "="},
+			{Identity: "totals", Checksum: "h1:" + strings.Repeat("C", 43) + "="},
+		}
+	}
+	base, err := fingerprint.MigrationSequenceDigest(entries, repeatables())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base == versionsAlone {
+		t.Fatal("the repeatable migrations left the digest as the versions alone have it")
+	}
+	for name, mutate := range map[string]func([]fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry{
+		"another identity": func(r []fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry { r[0].Identity = "names"; return r },
+		"other content": func(r []fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry {
+			r[0].Checksum = "h1:" + strings.Repeat("D", 43) + "="
+			return r
+		},
+		"another applied content": func(r []fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry {
+			r[0].AppliedChecksum = ""
+			return r
+		},
+		"the other order": func(r []fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry {
+			return []fingerprint.RepeatableEntry{r[1], r[0]}
+		},
+		"one fewer": func(r []fingerprint.RepeatableEntry) []fingerprint.RepeatableEntry { return r[:1] },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			digest, err := fingerprint.MigrationSequenceDigest(entries, mutate(repeatables()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest == base {
+				t.Fatalf("a sequence with %s digests to the same value", name)
+			}
+		})
+	}
+	alone, err := fingerprint.MigrationSequenceDigest(nil, repeatables())
+	if err != nil || alone == base {
+		t.Fatalf("the repeatable migrations alone digest to %s (%v), as with the versions", alone, err)
+	}
+	if _, err := fingerprint.MigrationSequenceDigest(nil, nil); err == nil {
+		t.Fatal("an empty sequence was digested")
+	}
+}

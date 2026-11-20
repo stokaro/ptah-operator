@@ -67,6 +67,13 @@ func runMigrationPhase(t *testing.T, phase phases.Of[phases.MigrationsInputs], e
 			body func()
 		}{"postgresql-migrations", m.engineMigrations})
 	}
+	// Ptah runs a repeatable migration inside a transaction on PostgreSQL and
+	// outside one on MySQL, and the operator reads a failed attempt
+	// differently for each, so both engines carry the row.
+	scenarios = append(scenarios, struct {
+		name string
+		body func()
+	}{engine + "-repeatable-migrations", m.repeatableMigrationsProof})
 
 	for _, scenario := range scenarios {
 		if !run.Scenario(scenario.name, m.scenario(scenario.body)) {

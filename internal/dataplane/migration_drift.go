@@ -22,12 +22,16 @@ const (
 // can carry what the driver said about the shadow database, its host or its
 // user, so the frame keeps a summary of it and nothing else.
 type MigrationDriftCheck struct {
-	Outcome  string                  `json:"outcome"`
-	Replayed []int64                 `json:"replayed,omitempty"`
-	Stage    string                  `json:"stage,omitempty"`
-	Reason   string                  `json:"reason,omitempty"`
-	Message  string                  `json:"message,omitempty"`
-	Findings []MigrationDriftFinding `json:"findings,omitempty"`
+	Outcome  string  `json:"outcome"`
+	Replayed []int64 `json:"replayed,omitempty"`
+	// ReplayedRepeatables names the applied repeatable migrations the check
+	// replayed on the shadow after the versions, as Ptah v0.33.1 reports
+	// them: the schema it compared is what both produce.
+	ReplayedRepeatables []string                `json:"replayed_repeatables,omitempty"`
+	Stage               string                  `json:"stage,omitempty"`
+	Reason              string                  `json:"reason,omitempty"`
+	Message             string                  `json:"message,omitempty"`
+	Findings            []MigrationDriftFinding `json:"findings,omitempty"`
 }
 
 // MigrationDriftFinding is one difference a drifted check found, or one object
@@ -37,13 +41,16 @@ type MigrationDriftFinding struct {
 }
 
 // MigrationDriftSummary is a drift check in the terms a frame carries: the
-// outcome, the stage and reason codes Ptah gave an unable one, and how many
-// findings there were. It carries no text and no object name.
+// outcome, the stage and reason codes Ptah gave an unable one, how many
+// findings there were, and how many applied migrations and repeatable
+// migrations the check replayed. It carries no text and no object name.
 type MigrationDriftSummary struct {
-	Outcome  string `json:"outcome"`
-	Stage    string `json:"stage,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	Findings int    `json:"findings,omitempty"`
+	Outcome             string `json:"outcome"`
+	Stage               string `json:"stage,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	Findings            int    `json:"findings,omitempty"`
+	Replayed            int    `json:"replayed,omitempty"`
+	ReplayedRepeatables int    `json:"replayedRepeatables,omitempty"`
 }
 
 // driftCode is a stage or a reason as Ptah spells them: a stage in kebab case
@@ -55,12 +62,19 @@ var driftCode = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 // fewer objects than this; a count above it is not a report of one.
 const maxDriftFindings = 1 << 20
 
+// maxDriftReplayed bounds the replayed counts a summary may carry, by the same
+// reasoning: no history replays a million migrations.
+const maxDriftReplayed = 1 << 20
+
 // Summary is the frame's account of the check.
 func (c *MigrationDriftCheck) Summary() *MigrationDriftSummary {
 	if c == nil {
 		return nil
 	}
-	return &MigrationDriftSummary{Outcome: c.Outcome, Stage: c.Stage, Reason: c.Reason, Findings: len(c.Findings)}
+	return &MigrationDriftSummary{
+		Outcome: c.Outcome, Stage: c.Stage, Reason: c.Reason, Findings: len(c.Findings),
+		Replayed: len(c.Replayed), ReplayedRepeatables: len(c.ReplayedRepeatables),
+	}
 }
 
 // Validate holds a summary to the shape each outcome has: a clean check names
@@ -69,6 +83,10 @@ func (c *MigrationDriftCheck) Summary() *MigrationDriftSummary {
 func (s MigrationDriftSummary) Validate() error {
 	if s.Findings < 0 || s.Findings > maxDriftFindings {
 		return fmt.Errorf("drift check reports %d findings", s.Findings)
+	}
+	if s.Replayed < 0 || s.Replayed > maxDriftReplayed || s.ReplayedRepeatables < 0 || s.ReplayedRepeatables > maxDriftReplayed {
+		return fmt.Errorf("drift check reports %d replayed migrations and %d replayed repeatable migrations",
+			s.Replayed, s.ReplayedRepeatables)
 	}
 	switch s.Outcome {
 	case MigrationDriftClean:
@@ -110,7 +128,16 @@ func (r MigrationRunReport) validateDriftCheck() error {
 			return errors.New("a drift finding lacks a kind code")
 		}
 	}
-	if summary.Refused() && (r.Outcome != MigrationOutcomeFailed || len(r.Applied) != 0 || r.Failure != nil) {
+	// What the check replayed is what the database applied, so each
+	// repeatable migration names a file once.
+	seen := make(map[string]struct{}, len(r.DriftCheck.ReplayedRepeatables))
+	for _, identity := range r.DriftCheck.ReplayedRepeatables {
+		if _, repeated := seen[identity]; repeated || !IsRepeatableIdentity(identity) {
+			return errors.New("a drift check replayed a repeatable migration twice, or one no file name can carry")
+		}
+		seen[identity] = struct{}{}
+	}
+	if summary.Refused() && (r.Outcome != MigrationOutcomeFailed || len(r.Applied) != 0 || len(r.AppliedRepeatables) != 0 || r.Failure != nil) {
 		return fmt.Errorf("a drift check that came back %s stopped a run that reports %s, an applied version or a failed statement",
 			summary.Outcome, r.Outcome)
 	}

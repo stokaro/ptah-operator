@@ -36,6 +36,7 @@ func migrationLogStatus(report *dataplane.MigrationLogReport) *operatorv1alpha1.
 		}
 		log.Losses = append(log.Losses, operatorv1alpha1.MigrationLogLossStatus{
 			Version:     loss.Version,
+			Repeatable:  loss.Repeatable,
 			State:       state,
 			SQLState:    loss.SQLState,
 			ErrorNumber: int32(loss.ErrorNumber), // The runner admits at most 65535.
