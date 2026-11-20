@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/schemas/differs-table-collation-mysql:v1",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-table-collation-mysql@sha256:da814bb409d6556ee443192873025ffc70b1ec6ad841a3aa07853565f988d4a2",
+  "digest": "sha256:da814bb409d6556ee443192873025ffc70b1ec6ad841a3aa07853565f988d4a2",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 813
+}

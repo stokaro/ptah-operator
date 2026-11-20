@@ -914,10 +914,19 @@ func desiredSourceRows() []directRow {
 		validate("validate-missing", "PostgreSQL", "absent.sql", true),
 		validate("validate-index", "PostgreSQL", "structural.sql", true),
 		validate("validate-good", "PostgreSQL", "good.sql", false),
+		// Since Ptah v0.33.1 a relative time default on a date or time column
+		// does not load (stokaro/ptah#6299, #6345): PostgreSQL reads 'now'
+		// once, when it creates the table.
+		validate("validate-relative-time", "PostgreSQL", "relative-time.sql", true),
 		scratch("scratch-directive", "migrations-directive", true),
 		scratch("scratch-name", "migrations-name", true),
 		scratch("scratch-down", "migrations-down", true),
 		scratch("scratch-good", "migrations-good", false),
+		// Since Ptah v0.33.1 a directory is read whole (stokaro/ptah#6313):
+		// a SQL file the Ptah format does not read refuses it, and so does an
+		// Atlas R__ file, whose version the revision table cannot keep.
+		scratch("scratch-unread", "migrations-unread", true),
+		scratch("scratch-atlas-repeatable", "migrations-atlas-repeatable", true),
 		scratch("scratch-control-bytes", controlBytesDirectory, true),
 		drift("drift-sql", "schema.sql"),
 		{
@@ -1162,6 +1171,14 @@ func unreadableSources(t *testing.T, l *lab) {
 	schema.observe("observe", unreadable(schemaVolume))
 	schema.plan("plan", nil, unreadable(schemaVolume))
 
+	// A schema v0.33.0 planned, with a default that changes on every plan, and
+	// v0.33.1 refuses to load.
+	relativeVolume := l.name("unreadable-relative-time")
+	l.fillSource(t, relativeVolume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/relative-time.sql")})
+	relative := l.newSchema(t, "desired-source-schema-relative-time", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
+	relative.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
+	relative.plan("plan", nil, unreadable(relativeVolume))
+
 	migrationVolume := l.name("unreadable-migrations")
 	l.fillSource(t, migrationVolume, map[string][]byte{
 		"migrations/0000000001_init.up.sql":   harnessFixture(t, "desired-source/migrations-directive/0000000001_init.up.sql"),
@@ -1177,6 +1194,26 @@ func unreadableSources(t *testing.T, l *lab) {
 		URL: migrationGit.URL, Ref: migrationGit.Ref, Path: migrationGit.Path, Commit: commit, ContentDigest: migrationContent,
 	})}
 	migration.history("history", unreadable(migrationVolume))
+
+	// A directory v0.33.0 ran in part, and v0.33.1 refuses whole: the runner
+	// names the file under the same code, from its second child.
+	for _, directory := range []struct {
+		name, fixture string
+		files         []string
+	}{
+		{"desired-source-migration-unread", "migrations-unread", []string{"0000000001_init.up.sql", "0000000001_init.down.sql", "seed.sql"}},
+		{"desired-source-migration-atlas-repeatable", "migrations-atlas-repeatable", []string{"1_init.sql", "R__seed.sql"}},
+	} {
+		volume := l.name(strings.TrimPrefix(directory.name, "desired-source-"))
+		files := map[string][]byte{}
+		for _, file := range directory.files {
+			files["migrations/"+file] = harnessFixture(t, "desired-source/"+directory.fixture+"/"+file)
+		}
+		l.fillSource(t, volume, files)
+		refused := l.newMigration(t, directory.name, enginePostgres, url, operatorv1alpha1.SourceSpec{Git: migrationGit})
+		refused.migration.Status.Artifact = migration.migration.Status.Artifact.DeepCopy()
+		refused.history("history", unreadable(volume))
+	}
 }
 
 // structuralFaults runs Observe and Plan on schemas that load and that Ptah

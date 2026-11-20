@@ -294,32 +294,52 @@ func TestAReadRetriedIsOneTheClaimStillHolds(t *testing.T) {
 	if schemaReadRetried(schema(retried, failed), "second") {
 		t.Error("accepted the claim the request was asked to end")
 	}
+}
 
-	progressing := []metav1.Condition{{
-		Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
-		Reason: string(ptahv1alpha1.ReasonOperationFailed),
-	}}
-	migration := func(operation *ptahv1alpha1.MigrationOperationStatus, conditions []metav1.Condition) *ptahv1alpha1.PtahMigration {
-		return &ptahv1alpha1.PtahMigration{Status: ptahv1alpha1.PtahMigrationStatus{ActiveOperation: operation, Conditions: conditions}}
+// migrationDirectoryRefused takes a migration that stopped on its directory, and
+// refuses the retry it replaced, another reason, and a stop a claim stands
+// beside.
+func TestAMigrationDirectoryRefusalIsBlockedWithNoClaim(t *testing.T) {
+	t.Parallel()
+	const said = "desired_source_unreadable: migration file the Ptah format does not read: seed.sql"
+	condition := func(conditionType string, status metav1.ConditionStatus, reason ptahv1alpha1.ConditionReason) metav1.Condition {
+		return metav1.Condition{Type: conditionType, Status: status, Reason: string(reason), Message: said}
 	}
-	retriedRun := &ptahv1alpha1.MigrationOperationStatus{ID: "second", Attempt: 2}
-	if !migrationReadRetried(migration(retriedRun, progressing), "") {
-		t.Fatal("refused a migration claim on its second attempt")
+	refused := func() *ptahv1alpha1.PtahMigration {
+		return &ptahv1alpha1.PtahMigration{Status: ptahv1alpha1.PtahMigrationStatus{
+			Phase: ptahv1alpha1.MigrationPhaseBlocked,
+			Conditions: []metav1.Condition{condition(ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+				ptahv1alpha1.ReasonMigrationDirectoryUnreadable)},
+		}}
 	}
-	for name, reading := range map[string]*ptahv1alpha1.PtahMigration{
-		"no claim":      migration(nil, progressing),
-		"first attempt": migration(&ptahv1alpha1.MigrationOperationStatus{ID: "second", Attempt: 1}, progressing),
-		"in progress": migration(retriedRun, []metav1.Condition{{
-			Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
-			Reason: string(ptahv1alpha1.ReasonOperationInProgress),
-		}}),
+	if message, err := migrationDirectoryRefused(refused()); err != nil || message != said {
+		t.Fatalf("migrationDirectoryRefused() = %q, %v", message, err)
+	}
+	for name, edit := range map[string]func(*ptahv1alpha1.PtahMigration){
+		"the retry it replaced": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.Phase = ptahv1alpha1.MigrationPhaseReading
+			m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{ID: "second", Attempt: 2}
+			m.Status.Conditions = []metav1.Condition{condition(ptahv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+				ptahv1alpha1.ReasonOperationFailed)}
+		},
+		"another reason": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonRepeatableMigrationsUnsupported)
+		},
+		"Blocked false": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions[0].Status = metav1.ConditionFalse },
+		"another phase": func(m *ptahv1alpha1.PtahMigration) { m.Status.Phase = ptahv1alpha1.MigrationPhaseReading },
+		"a claim beside": func(m *ptahv1alpha1.PtahMigration) {
+			m.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{ID: "next"}
+		},
+		"no condition": func(m *ptahv1alpha1.PtahMigration) { m.Status.Conditions = nil },
 	} {
-		if migrationReadRetried(reading, "") {
-			t.Errorf("migration %s: accepted", name)
-		}
-	}
-	if migrationReadRetried(migration(retriedRun, progressing), "second") {
-		t.Error("accepted the migration claim the row was asked to leave behind")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			migration := refused()
+			edit(migration)
+			if message, err := migrationDirectoryRefused(migration); err == nil {
+				t.Fatalf("accepted it: %q", message)
+			}
+		})
 	}
 }
 

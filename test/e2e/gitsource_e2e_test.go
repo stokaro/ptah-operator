@@ -1151,27 +1151,28 @@ func (c *gitRun) unreadableMigration() {
 	}), "create PtahMigration %s", gitUnreadableMigration)
 	migration := &ptahv1alpha1.PtahMigration{}
 	var message string
-	c.wait("the migration to say why it could not load its files", func() (bool, string) {
+	c.wait("the migration to stop and say why it could not load its files", func() (bool, string) {
 		if err := c.get(gitUnreadableMigration, migration); err != nil {
 			return false, err.Error()
 		}
-		progressing := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
-		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			return false, fmt.Sprintf("%s, Progressing %+v", migration.Status.Phase, progressing)
+		said, err := migrationDirectoryRefused(migration)
+		if err != nil {
+			return false, err.Error()
 		}
-		message = progressing.Message
-		err := unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
+		message = said
+		err = unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	if strings.Contains(message, gitUnreadableMigrationDatabase) || strings.Contains(message, c.password) || strings.Contains(message, c.keys.Token) {
 		c.fatalf("the reason names the target or the source's credential: %s", message)
 	}
-	c.wait("the OperationRetried Event to say why", func() (bool, string) {
+	c.wait("the MigrationDirectoryUnreadable Event to say why", func() (bool, string) {
 		events := &corev1.EventList{}
 		if err := c.cluster.Client.List(c.ctx, events, client.InNamespace(c.in.TestNamespace)); err != nil {
 			return false, err.Error()
 		}
-		err := unreadableSourceEvent(events.Items, migration.UID, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
+		err := unreadableSourceEvent(events.Items, migration.UID, string(ptahv1alpha1.ReasonMigrationDirectoryUnreadable),
+			unreadableMigrationFile, unreadableMigrationReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.deleteAndWait(migration)

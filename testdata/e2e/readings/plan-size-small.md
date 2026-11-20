@@ -47,7 +47,10 @@ v0.31.0 did. On November 19, 2026 the v0.33.0 release image
 (commit `37c98b0024b136dd5079f42dd705d49ab24aeb52`) wrote both with the same
 statements and size, 819 and 23,373 bytes. Only the plan name and the
 fingerprints moved, both on PostgreSQL and the `from_fingerprint` on MySQL, so
-both stay. Each run was
+both stay. Later that day the v0.33.1 release image
+`ghcr.io/stokaro/ptah@sha256:37c16165f4184ddfd80cf61da9a366fe13ab950830b095f401e91de2c2f4383c`
+(commit `f7c85bdc579c9e5939108a892f11e3d6d0974248`) wrote both byte for byte as
+v0.33.0 did. Each run was
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what

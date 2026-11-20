@@ -24,7 +24,7 @@ func TestDriftFindingVocabulary(t *testing.T) {
 		t.Fatalf("DriftFindingVocabularyVersion = %d, want 4", dataplane.DriftFindingVocabularyVersion)
 	}
 	want := []string{
-		"column_identities_removed", "column_types_narrowed",
+		"column_charsets_converted", "column_identities_removed", "column_types_narrowed",
 		"columns_added", "columns_modified", "columns_removed", "comments_changed", "constraints_added",
 		"constraints_removed", "constraints_validated", "data_rows_deleted", "data_rows_inserted",
 		"data_rows_updated", "enum_values_added", "enum_values_removed", "enums_added", "enums_removed",
@@ -36,7 +36,7 @@ func TestDriftFindingVocabulary(t *testing.T) {
 		"rls_policies_modified", "rls_policies_removed", "role_memberships_added",
 		"role_memberships_removed", "roles_added", "roles_modified", "roles_removed", "schemas_added",
 		"schemas_modified", "schemas_removed", "sequences_added", "sequences_modified",
-		"sequences_removed", "table_constraints_added", "table_constraints_removed", "tables_added",
+		"sequences_removed", "table_collations_changed", "table_constraints_added", "table_constraints_removed", "tables_added",
 		"tables_removed", "triggers_added", "triggers_modified", "triggers_removed", "undecided",
 		"unique_protections_removed", "vector_dimension_changed", "views_added", "views_modified",
 		"views_removed",
@@ -546,7 +546,7 @@ func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
 // Ptah v0.30.0 records the schema it placed unqualified names in on every
 // plan of a PostgreSQL URL that pins no search_path, so a decoder that does
 // not declare it refuses every such plan. The statement and the fields around
-// it are what the pinned v0.33.0 saved against PostgreSQL 17 for a generated
+// it are what the pinned v0.33.1 saved against PostgreSQL 17 for a generated
 // column whose expression changes, as v0.30.0 did; the fingerprints are
 // shortened.
 func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {

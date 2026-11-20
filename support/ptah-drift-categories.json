@@ -3,10 +3,11 @@
   "sources": [
     {
       "path": "docs/drift-findings.json",
-      "sha256": "2e304874143613792ed92cf9f0a5d4dd29999e2aa2ed709c8d92a7d9be4ca868"
+      "sha256": "235058f0b769cbb20a54dbbd308d7127a8bb8d613d7efe57bd09818e18671eeb"
     }
   ],
   "categories": [
+    "column_charsets_converted",
     "column_identities_removed",
     "column_types_narrowed",
     "columns_added",
@@ -55,6 +56,7 @@
     "sequences_added",
     "sequences_modified",
     "sequences_removed",
+    "table_collations_changed",
     "table_constraints_added",
     "table_constraints_removed",
     "tables_added",

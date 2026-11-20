@@ -1,0 +1,3 @@
+Pulled oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@sha256:cd3b8dfae0933d7d702f1ec9bac6e09690783aa4d3d7a24f19151df1bd71cfac to /source/schema.hcl, /source/managed-data.json
+Digest: sha256:cd3b8dfae0933d7d702f1ec9bac6e09690783aa4d3d7a24f19151df1bd71cfac
+Not parsed: the next command that reads the file reports what it cannot read.

@@ -1,8 +1,8 @@
 # MySQL migration history journal
 
-The JSONL reading contains all 18 general-log records for the isolated
+The JSONL reading contains all 20 general-log records for the isolated
 `ptah_audit` account during a successful Ptah `migrations status
---migrations-dir /migrations --json` invocation, captured on 2026-11-18 by
+--migrations-dir /migrations --json` invocation, captured on 2026-11-19 by
 `support/qualification/probes/schema_sql_readings.py --part migrations`. The
 database already held the repository's first two MySQL migrations, applied by
 the same executor, so History reads an existing revision table; its statements
@@ -11,7 +11,7 @@ whether the table exists.
 
 - MySQL: `8.4.11`
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Executor: the Ptah v0.30.1 release image, source `c5fba763a6fb346fc8a35d2f336d75a91385e3b9`. The
+- Executor: the Ptah v0.33.1 release image, source `f7c85bdc579c9e5939108a892f11e3d6d0974248`. The
   reading was first taken on 2026-10-10 with the v0.13.0 release image (`eb69f8c4`). On
   2026-10-21 the same probe run with the v0.14.0 release image (`e046527f`) produced this reading
   record for record, on 2026-11-03 so did the v0.17.0 release image, on 2026-11-04 the v0.18.0
@@ -23,14 +23,16 @@ whether the table exists.
   v0.29.5 release image (`8a634c05`). The v0.30.1 image adds five records, a second session
   that asks whether `schema_migrations_repeatable` exists, and changes no other. On 2026-11-18
   the v0.31.0 release image (`dc2decde`) and the v0.32.0 release image (`da2df4a5`)
-  reproduced it record for record, and on 2026-11-19 so did the v0.33.0 release image
-  (`37c98b00`)
+  reproduced the v0.30.1 reading record for record, and on 2026-11-19 so did the v0.33.0 release
+  image (`37c98b00`). The v0.33.1 image adds two records, a read of `SELECT @@SESSION.sql_mode`
+  at the start of each session
+  ([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), and changes no other
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 
 The reading preserves event times, thread IDs, `user_host`, command types and
-exact argument bytes encoded as hex. The 18 records comprise two Connect, five
-Query, three Prepare, three Execute, three Close stmt and two Quit: 8 received
+exact argument bytes encoded as hex. The 20 records comprise two Connect, seven
+Query, three Prepare, three Execute, three Close stmt and two Quit: 10 received
 SQL execution records. No password-bearing account setup or unrelated administrator
 traffic is included.
 
@@ -41,7 +43,8 @@ counts the table in `information_schema.tables` first and reads its columns
 from `SELECT * FROM schema_migrations WHERE 1 = 0`. The predicate keeps the
 earlier statements, because the Apply it also governs still sends them, and
 adds those two reads. It admits v0.30.1's count of the repeatable table as
-well, in the session that asks it.
+well, in the session that asks it, and v0.33.1's read of the session's
+`sql_mode`.
 
 The exact statements and bound parameters are reviewed against the pinned
 Ptah implementation:

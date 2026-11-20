@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "37c98b0024b136dd5079f42dd705d49ab24aeb52",
+  "ptahCommit": "f7c85bdc579c9e5939108a892f11e3d6d0974248",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -728,6 +728,17 @@
         "stale-apply"
       ],
       "command": "Query",
+      "statement": "SELECT @@SESSION.sql_mode",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Query",
       "statement": "SELECT DATABASE()",
       "parameters": ""
     },
@@ -762,6 +773,39 @@
       ],
       "command": "Query",
       "statement": "SHOW VARIABLES WHERE Variable_name IN ('partial_revokes', 'lower_case_table_names')",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Query",
+      "statement": "SELECT CHARACTER_SET_NAME, DEFAULT_COLLATE_NAME FROM information_schema.CHARACTER_SETS",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Query",
+      "statement": "SHOW SESSION VARIABLES LIKE 'default_collation_for_utf8mb4'",
+      "parameters": ""
+    },
+    {
+      "engine": "mysql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "Query",
+      "statement": "SELECT CHARSET(CONVERT('' USING utf8))",
       "parameters": ""
     },
     {

@@ -571,9 +571,16 @@ func TestAMigrationHistoryFailureWithNoKindLeavesDatabaseReachable(t *testing.T)
 					t.Fatal("the pass wrote no status, so it did not read the failure")
 				}
 				actual := readMigration(t, api, migration)
+				// A history read of files Ptah cannot read stops the
+				// migration rather than retrying it, and that is how
+				// this failure is recorded.
+				recorded := operatorv1alpha1.ReasonOperationFailed
+				if failure.Code == runner.CodeDesiredSourceUnreadable {
+					recorded = operatorv1alpha1.ReasonMigrationDirectoryUnreadable
+				}
 				progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
-				if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) {
-					t.Fatalf("Progressing = %#v, want the failure recorded", progressing)
+				if progressing == nil || progressing.Reason != string(recorded) {
+					t.Fatalf("Progressing = %#v, want the failure recorded as %s", progressing, recorded)
 				}
 				assertReachabilityKept(t, actual.Status.Conditions, previous)
 			})

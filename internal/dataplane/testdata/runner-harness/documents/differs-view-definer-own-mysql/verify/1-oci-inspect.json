@@ -1,16 +1,16 @@
 {
-  "reference": "oci://harness-registry:5000/schemas/differs-view-definer-own-mysql@sha256:b002a560840677239619b04de2dd00727ecb555aa86d63c210448710c61c5363",
-  "pinned_reference": "oci://harness-registry:5000/schemas/differs-view-definer-own-mysql@sha256:b002a560840677239619b04de2dd00727ecb555aa86d63c210448710c61c5363",
-  "digest": "sha256:b002a560840677239619b04de2dd00727ecb555aa86d63c210448710c61c5363",
+  "reference": "oci://harness-registry:5000/schemas/differs-view-definer-own-mysql@sha256:643ea6e599bb0852ebe12dc0c9e537239bb2ee07ab471bd0cadc27b08eafd2dd",
+  "pinned_reference": "oci://harness-registry:5000/schemas/differs-view-definer-own-mysql@sha256:643ea6e599bb0852ebe12dc0c9e537239bb2ee07ab471bd0cadc27b08eafd2dd",
+  "digest": "sha256:643ea6e599bb0852ebe12dc0c9e537239bb2ee07ab471bd0cadc27b08eafd2dd",
   "media_type": "application/vnd.oci.image.manifest.v1+json",
   "size": 813,
   "artifact_type": "application/vnd.stokaro.ptah.schema.v1",
   "annotations": {
     "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.schema.v1",
     "io.stokaro.ptah.schema-format": "hcl",
-    "io.stokaro.ptah.version": "0.33.0",
-    "org.opencontainers.image.created": "2026-11-19T08:22:49Z",
-    "org.opencontainers.image.revision": "37c98b0024b136dd5079f42dd705d49ab24aeb52"
+    "io.stokaro.ptah.version": "0.33.1",
+    "org.opencontainers.image.created": "2026-11-19T18:47:15Z",
+    "org.opencontainers.image.revision": "f7c85bdc579c9e5939108a892f11e3d6d0974248"
   },
   "layers": [
     {

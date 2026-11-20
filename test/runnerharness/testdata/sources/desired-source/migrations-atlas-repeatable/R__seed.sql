@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS b (id bigint);

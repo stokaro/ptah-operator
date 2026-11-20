@@ -34,9 +34,9 @@ import (
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
 
-// The sentence the runner reports for the plan of notes the pinned Ptah v0.33.0
-// saved against PostgreSQL 16 for a generated column whose expression changed,
-// which internal/runner/testdata/note-plan holds. The runner's
+// The sentence the runner reports for the plan of notes Ptah v0.33.0 saved, and
+// the pinned v0.33.1 saves again, against PostgreSQL 16 for a generated column
+// whose expression changed, which internal/runner/testdata/note-plan holds. The runner's
 // TestAPlanOfNotesIsADifferenceNotPlannable reads that capture to this
 // sentence.
 const unplannableNote = "ptah found a difference it cannot plan: WARNING: Generated column public.tasks.code changed, " +

@@ -1,0 +1,7 @@
+{
+  "contract_version": 2,
+  "command": "migrations status",
+  "error": {
+    "message": "error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_\u003cname\u003e.up.sql, NNNNNNNNNN_\u003cname\u003e.down.sql or R__\u003cname\u003e.sql, with .up, .down and .sql in lower case, or move it out of the directory"
+  }
+}

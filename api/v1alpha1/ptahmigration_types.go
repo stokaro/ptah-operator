@@ -1070,6 +1070,14 @@ const (
 	// whenever their content changes, and this operator approves and runs a
 	// versioned sequence only, so no plan is published.
 	ReasonRepeatableMigrationsUnsupported ConditionReason = "RepeatableMigrationsUnsupported"
+	// ReasonMigrationDirectoryUnreadable means Ptah could not read the
+	// artifact's migration directory: a file it cannot load, a migration that
+	// lacks its up or down file, or, since Ptah v0.33.1, a SQL file the
+	// directory's format does not read, which Ptah refuses rather than run the
+	// files beside it. Another read of the same files gives the same answer, so
+	// no plan is published and the directory is read again at the interval, or
+	// at once when a ConfigMap source changes.
+	ReasonMigrationDirectoryUnreadable ConditionReason = "MigrationDirectoryUnreadable"
 	// ReasonShadowDatabaseUnavailable means the shadow database could not be
 	// used. A history read that cannot name it, because its Secret key holds
 	// no URL, a URL the runner cannot identify, or the target's server and

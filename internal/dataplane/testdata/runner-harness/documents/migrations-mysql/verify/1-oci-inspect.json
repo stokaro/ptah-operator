@@ -1,16 +1,16 @@
 {
-  "reference": "oci://harness-registry:5000/migrations/migrations-mysql@sha256:319152c7d3a1675e06b6e5840538c1948c874cc0bdabb60b9c1663e3186303a1",
-  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-mysql@sha256:319152c7d3a1675e06b6e5840538c1948c874cc0bdabb60b9c1663e3186303a1",
-  "digest": "sha256:319152c7d3a1675e06b6e5840538c1948c874cc0bdabb60b9c1663e3186303a1",
+  "reference": "oci://harness-registry:5000/migrations/migrations-mysql@sha256:2aa60c3ebed0511d928cebe64987ee98c155a4257c6875c53d1ac417b3530221",
+  "pinned_reference": "oci://harness-registry:5000/migrations/migrations-mysql@sha256:2aa60c3ebed0511d928cebe64987ee98c155a4257c6875c53d1ac417b3530221",
+  "digest": "sha256:2aa60c3ebed0511d928cebe64987ee98c155a4257c6875c53d1ac417b3530221",
   "media_type": "application/vnd.oci.image.manifest.v1+json",
   "size": 2074,
   "artifact_type": "application/vnd.stokaro.ptah.migrations.v1",
   "annotations": {
     "io.stokaro.ptah.kind": "application/vnd.stokaro.ptah.migrations.v1",
     "io.stokaro.ptah.migration-format": "auto",
-    "io.stokaro.ptah.version": "0.33.0",
-    "org.opencontainers.image.created": "2026-11-19T08:11:41Z",
-    "org.opencontainers.image.revision": "37c98b0024b136dd5079f42dd705d49ab24aeb52"
+    "io.stokaro.ptah.version": "0.33.1",
+    "org.opencontainers.image.created": "2026-11-19T18:38:16Z",
+    "org.opencontainers.image.revision": "f7c85bdc579c9e5939108a892f11e3d6d0974248"
   },
   "layers": [
     {

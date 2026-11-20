@@ -392,6 +392,98 @@
     }
   },
   {
+    "name": "desired-source-migration-atlas-repeatable/history",
+    "operation": "migration-history",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "runner-harness/documents/desired-source-migration-atlas-repeatable/history/0-migrations-status.json"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "runner-harness/documents/desired-source-migration-atlas-repeatable/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah"
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:b6ba888b58102b49f1282bd2471b56c9a7a08b60f1be6b7a12ecf03245e47d3a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-migration-unread/history",
+    "operation": "migration-history",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/desired-source-migration-unread/history/0-migrations-status.json"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "runner-harness/documents/desired-source-migration-unread/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory"
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:0d2f4f6679d474f954ece1c9c1a0b5801581460e5eebc6a7f62221bbeccafb0a",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
     "name": "desired-source-migration/history",
     "operation": "migration-history",
     "source": "git",
@@ -432,6 +524,51 @@
       },
       "operation": "migration-history",
       "operationId": "sha256:a5fc4d3acd5300540c775fac8515a306b13bc264ebe991bd418bdb246587bce8",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-schema-relative-time/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "desired_source_unreadable",
+        "message": "error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+      },
+      "operation": "plan",
+      "operationId": "sha256:c26494a8797ecb4ca946edbf8c4f663ec886e5556f0c6aeec747139fea1b605b",
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
@@ -562,6 +699,23 @@
     ]
   },
   {
+    "name": "desired-source/scratch-atlas-repeatable",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error getting migration status: failed to get migration revisions: Atlas migration R__seed.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah\n",
+        "stdout": "desired-source/scratch-atlas-repeatable.json"
+      }
+    ]
+  },
+  {
     "name": "desired-source/scratch-control-bytes",
     "children": [
       {
@@ -642,6 +796,23 @@
         "exit": 2,
         "stderr": "error: error registering migrations: no migration files matched format \"auto\"; unrecognized SQL files: init.sql, not-a-migration.down.sql\n",
         "stdout": "desired-source/scratch-name.json"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/scratch-unread",
+    "children": [
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--db-url=sqlite:///:memory:",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: error registering migrations: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory\n",
+        "stdout": "desired-source/scratch-unread.json"
       }
     ]
   },
@@ -737,6 +908,22 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-missing.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time.txt"
       }
     ]
   },
@@ -1133,6 +1320,200 @@
       "stdout": "",
       "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
     }
+  },
+  {
+    "name": "differs-column-charset-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:81f5e97b8397bf1eebd89feaeca5d97914592ed0ec424f4a8908cf1e2b24caf1"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:81f5e97b8397bf1eebd89feaeca5d97914592ed0ec424f4a8908cf1e2b24caf1",
+      "planContentDigest": "sha256:fd2d21baeb64881d33da40d05547d5ba9fcccf084aacd17d9de38823f4d0950c",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:95fc318450b863213d80bfe1dfb0d8b2a7897a8ed1d7dc18b93047525dcf4a49"
+    }
+  },
+  {
+    "name": "differs-column-charset-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "column_charsets_converted",
+          "count": 1,
+          "severity": "destructive"
+        },
+        {
+          "category": "columns_modified",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:5867f4f34527bcd635ce4c1acc2002051483b9c6cdbd0ebb6c0f4db7b3637177",
+      "highestDriftSeverity": "destructive",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:6ae32644ebf28c7501bf7aa554b34279f6e36409940565102378750911d8f458",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:95fc318450b863213d80bfe1dfb0d8b2a7897a8ed1d7dc18b93047525dcf4a49"
+    }
+  },
+  {
+    "name": "differs-column-charset-mysql/observe-applied",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/observe-applied/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:50b3b7bfc771d5ecc9f333e2c51a07264337895702e7deb633866b93484075d3",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:05d4dfaf7f86910ccf1d6b62e4c8d46d3f5ff9c431d2976a239baba62ec06027",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:95fc318450b863213d80bfe1dfb0d8b2a7897a8ed1d7dc18b93047525dcf4a49"
+    }
+  },
+  {
+    "name": "differs-column-charset-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL;\n",
+        "stdout": "runner-harness/documents/differs-column-charset-mysql/plan/2-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:cb963ed34569b49a6bebcbec19b8a4c3d8e8412451c19ac5a068193fb6991072",
+      "planContentDigest": "sha256:fd2d21baeb64881d33da40d05547d5ba9fcccf084aacd17d9de38823f4d0950c",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:95fc318450b863213d80bfe1dfb0d8b2a7897a8ed1d7dc18b93047525dcf4a49"
+    },
+    "savedPlan": "runner-harness/documents/differs-column-charset-mysql/plan/3-saved-plan.json"
   },
   {
     "name": "differs-dependent-key-mysql/apply",
@@ -9203,6 +9584,963 @@
       "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
       "operation": "verify",
       "operationId": "sha256:3f7ef6df9a6436b4226868f268b944c0932016b59e4f41954b731b0cee750b5e",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-table-charset-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:4c1031b7492a90efeb52ae5f03c0d25987bdd6b8b830fd6136b8d93eff1ab72f"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:4c1031b7492a90efeb52ae5f03c0d25987bdd6b8b830fd6136b8d93eff1ab72f",
+      "planContentDigest": "sha256:50cd22ef5157705a93880e7461387dd9eada1bd5d82795cb635cb5c22fdd07f6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:75c7ef229ddec0d898359a10483cf17711545f5ad8757e90bb71532587ea23b1"
+    }
+  },
+  {
+    "name": "differs-table-charset-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "differing/drift-column-charsets-converted-mysql.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 3,
+      "driftFindings": [
+        {
+          "category": "column_charsets_converted",
+          "count": 1,
+          "severity": "destructive"
+        },
+        {
+          "category": "columns_modified",
+          "count": 1,
+          "severity": "warning"
+        },
+        {
+          "category": "table_collations_changed",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:233a9fb8225083395b049d34697402c4b011c13475a1eb7fbf1ba7db41e2d099",
+      "highestDriftSeverity": "destructive",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:051eb3e2e1bc2213107198b136439d74a2c5cbc753963e40015549012f793772",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:75c7ef229ddec0d898359a10483cf17711545f5ad8757e90bb71532587ea23b1"
+    }
+  },
+  {
+    "name": "differs-table-charset-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:8bae86a9d1edaa0eb6b8b42fa3dabc80a1ac6bda1bb04697a9452aa48c0ef0a0",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:010ae1be55cd6fc68b3ae80b61cf6a00e59acd052c264586eb0c705096c21917",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:75c7ef229ddec0d898359a10483cf17711545f5ad8757e90bb71532587ea23b1"
+    }
+  },
+  {
+    "name": "differs-table-charset-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL;\n",
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:40f54d0b9f1d19766870a20cb8488246d87f035508346f8b463167600291a63f",
+      "planContentDigest": "sha256:50cd22ef5157705a93880e7461387dd9eada1bd5d82795cb635cb5c22fdd07f6",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:75c7ef229ddec0d898359a10483cf17711545f5ad8757e90bb71532587ea23b1"
+    },
+    "savedPlan": "runner-harness/documents/differs-table-charset-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-table-charset-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:6b4c26e4c882d119e84d0f724ab42b47bd12d55c3b34849de58ed5087caf9659",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-table-charset-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-table-charset-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-charset-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:7ba98d10ea94b151c320235bb825937918c1c2fdc8b304a7e8e72e0115ff03f0",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-table-collation-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:57f6fa8c9f47d27d7d767779b15cf48cef7e903ec86e9d0dca1bd4a7f9e0a517"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:57f6fa8c9f47d27d7d767779b15cf48cef7e903ec86e9d0dca1bd4a7f9e0a517",
+      "planContentDigest": "sha256:c92bd9225634c0ae47bbfccb8833494fa4e0b823d3113694fb5559e02f573ab9",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9404fbc45ebbdbd4ef09cc33c6cefb9a096f11d16a7531e0806a92fe9ca152ff"
+    }
+  },
+  {
+    "name": "differs-table-collation-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/observe/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 2,
+      "driftFindings": [
+        {
+          "category": "columns_modified",
+          "count": 1,
+          "severity": "warning"
+        },
+        {
+          "category": "table_collations_changed",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:00e4bd94088331df473011e4b05c1e0856c030877f6258cd4ce186694f32faa3",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:b60ac6fc2da2cb2bd9a90a378f13171d031bc4921c765c97b1207613beecb1c6",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9404fbc45ebbdbd4ef09cc33c6cefb9a096f11d16a7531e0806a92fe9ca152ff"
+    }
+  },
+  {
+    "name": "differs-table-collation-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:6027cd3f114f03033e3a0017ab8a54857db294f5f8dee3597968679fdca2fa34",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:bf064ab99e20acf68c20e433f821a152b46a55039f6c0e7532fd6e307bc8bbad",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:9404fbc45ebbdbd4ef09cc33c6cefb9a096f11d16a7531e0806a92fe9ca152ff"
+    }
+  },
+  {
+    "name": "differs-table-collation-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL;\n",
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:e29b37d933beb3aa5751998ffa1ba1cc8b6ed8ec94d53240546782056742bd3d",
+      "planContentDigest": "sha256:c92bd9225634c0ae47bbfccb8833494fa4e0b823d3113694fb5559e02f573ab9",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:9404fbc45ebbdbd4ef09cc33c6cefb9a096f11d16a7531e0806a92fe9ca152ff"
+    },
+    "savedPlan": "runner-harness/documents/differs-table-collation-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-table-collation-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:df20d443c1164546c2f0fa68813b5dfa4073ec7b22d2b76b959cf631c1858e53",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-table-collation-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-table-collation-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:62024a24c7b3cd81379d79bf03db75090c2be80d49a8b0f26940247bf6d4e588",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "stdout": "",
+      "verificationPolicyDigest": "sha256:81767d37e728289983aae9da4b00dc0388f1af18a6768c30df5e47f6b2aa0a8d"
+    }
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/apply",
+    "operation": "apply",
+    "source": "none",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema apply",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-<random>.hcl",
+          "--auto-approve",
+          "--json",
+          "--run-reference=sha256:169274df0dcd53fa813720a6c483e0816e8e3579ccf4c757c4b542dd8e931708"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin;\nAuto-approval enabled; applying schema changes.\nSchema apply completed successfully.\n",
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/apply/0-schema-apply.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "mutationStarted": true,
+      "operation": "apply",
+      "operationId": "sha256:169274df0dcd53fa813720a6c483e0816e8e3579ccf4c757c4b542dd8e931708",
+      "planContentDigest": "sha256:8188286c9e8c4834fd16b46862cc5f21ff249278cae8795d656556e5af2f419e",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:eb1d6e7249ce63b7e3b99f24edf9ba0d339fae344a69b040cdcc7d92a6339553"
+    }
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/observe",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/observe/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 1,
+        "stdout": "differing/drift-table-collations-changed-mysql.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftFindingCount": 1,
+      "driftFindings": [
+        {
+          "category": "table_collations_changed",
+          "count": 1,
+          "severity": "warning"
+        }
+      ],
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:5aa437bbf420ab7617b64877dd763f1ddd49f207bc89b0e0696e965427049e1a",
+      "highestDriftSeverity": "warning",
+      "observedDialect": "mysql",
+      "observedDrift": true,
+      "operation": "observe",
+      "operationId": "sha256:d03ba8942e6d1ce2bfe042793fba1c24f095b09a7f2cdc0a4b26fe72d9c74f83",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:eb1d6e7249ce63b7e3b99f24edf9ba0d339fae344a69b040cdcc7d92a6339553"
+    }
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/observe-applied",
+    "operation": "observe",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/observe-applied/0-schema-pull.txt"
+      },
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/observe-applied/1-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:7fa8fad3674d4c47d463ca42dc085dc43448851e42f50e1cde44fe1b26429b50",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:28bb56cb3d16ce72dd12fc69d02e8cff5adcb171bff1d957d6681717398b0d50",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:eb1d6e7249ce63b7e3b99f24edf9ba0d339fae344a69b040cdcc7d92a6339553"
+    }
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/plan",
+    "operation": "plan",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema pull",
+        "args": [
+          "schema",
+          "pull",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+          "--out",
+          "/source/schema.hcl",
+          "--skip-parse"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/plan/0-schema-pull.txt"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin;\nPlan saved to file:///work/ptah-plan-output-<random>/first.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/plan/1-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin;\nPlan saved to file:///work/ptah-plan-output-<random>/second.plan.json\n",
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/plan/2-schema-plan.json"
+      },
+      {
+        "command": "schema apply --dry-run",
+        "args": [
+          "schema",
+          "apply",
+          "--plan",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--auto-approve",
+          "--json",
+          "--dry-run"
+        ],
+        "exit": 0,
+        "stderr": "Planned schema changes:\nALTER TABLE `differs_notes` COLLATE utf8mb4_bin;\n",
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/plan/3-schema-apply---dry-run.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:9adc0b07378976078a89d016730a65e23faa6f986fa83e42a1c4a599bde5d201",
+      "planContentDigest": "sha256:8188286c9e8c4834fd16b46862cc5f21ff249278cae8795d656556e5af2f419e",
+      "planOutcome": "Changes",
+      "protocolVersion": 1,
+      "stdout": "<sealed plan>",
+      "targetIdentityDigest": "sha256:eb1d6e7249ce63b7e3b99f24edf9ba0d339fae344a69b040cdcc7d92a6339553"
+    },
+    "savedPlan": "runner-harness/documents/differs-table-collation-pinned-mysql/plan/4-saved-plan.json"
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:88e88e23411238151c7d0b836b7306d38982607b724e40afd5cdc5f7dd9fb68d",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+      "resolvedSize": 813,
+      "stdout": ""
+    }
+  },
+  {
+    "name": "differs-table-collation-pinned-mysql/verify",
+    "operation": "verify",
+    "source": "oci",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "oci verify",
+        "args": [
+          "oci",
+          "verify",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+          "--policy",
+          "/work/ptah-verification-policy-<random>.yaml",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/verify/0-oci-verify.json"
+      },
+      {
+        "command": "oci inspect",
+        "args": [
+          "oci",
+          "inspect",
+          "oci://harness-registry:5000/schemas/differs-table-collation-pinned-mysql@<digest>",
+          "--format",
+          "json",
+          "--no-referrers"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-table-collation-pinned-mysql/verify/1-oci-inspect.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "observedArtifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "operation": "verify",
+      "operationId": "sha256:65fbc0bd5e90f2cbd81368865d1745f345d10e9ec34c81df8a17b4a328a74f7f",
       "protocolVersion": 1,
       "resolvedDigest": "<volatile>",
       "stdout": "",

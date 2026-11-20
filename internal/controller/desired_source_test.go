@@ -94,48 +94,6 @@ func TestASchemaSaysWhyItsDesiredFileCouldNotBeRead(t *testing.T) {
 	}
 }
 
-// TestAMigrationSaysWhyItsFilesCouldNotBeRead is the same reading on a
-// migration's History run, where the retry names the failure on Progressing and
-// in the OperationRetried Event.
-func TestAMigrationSaysWhyItsFilesCouldNotBeRead(t *testing.T) {
-	t.Parallel()
-
-	reason := `failed to load up migration 0000000001_init.up.sql: invalid migration directives in ` +
-		`0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false`
-	migration := migrationFixture()
-	migration.Status.ExecutionBinding = migrationExecutionBinding()
-	migration.Status.Artifact = resolvedMigrationArtifact()
-	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
-	migration.Finalizers = []string{migrationOperationFinalizer}
-	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
-	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
-	frame := migrationFrame(t, runner.Result{
-		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
-		OperationID: operation.ID, ChildExitCode: 2,
-		Error: &runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: reason},
-	})
-	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap())
-	recorder := record.NewFakeRecorder(32)
-	reconciler.Recorder = recorder
-
-	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	actual := readMigration(t, api, migration)
-	want := runner.CodeDesiredSourceUnreadable + ": " + reason
-	progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
-	if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) || progressing.Message != want {
-		t.Fatalf("Progressing = %#v, want OperationFailed with %q", progressing, want)
-	}
-	if event := findEvent(recorder, "Warning OperationRetried"); !strings.HasSuffix(event, ": "+want) {
-		t.Fatalf("OperationRetried event = %q, want it to end with %q", event, want)
-	}
-	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.MigrationOperationHistory ||
-		actual.Status.ActiveOperation.Attempt != operation.Attempt+1 {
-		t.Fatalf("the failure did not retry the claim: %+v", actual.Status.ActiveOperation)
-	}
-}
-
 // TestAFailedFetchIsNamedAsItsStep covers the schema an OCI artifact delivers,
 // which `schema pull --skip-parse` checks in an init container: an artifact it
 // refuses, such as a layer of another media type, ends the Pod there, before

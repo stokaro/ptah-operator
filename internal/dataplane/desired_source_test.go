@@ -61,6 +61,15 @@ func TestSchemaSourceProblemReadsALoadFailure(t *testing.T) {
 			name: "a file that is not there", fixture: "validate-missing.txt", engine: "PostgreSQL",
 			want: "error parsing schema file: schema file does not exist: /work/absent.sql",
 		},
+		{
+			// Since Ptah v0.33.1 a relative time literal as a date or time
+			// column's default is a fault of the file.
+			name: "a default the server reads once", fixture: "validate-relative-time.txt", engine: "PostgreSQL",
+			want: "error parsing schema file: read SQL schema file /work/relative-time.sql:3:43: column created_at: " +
+				"DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that " +
+				"moment and every plan changes the column again; write a function the server calls for each row, " +
+				"such as now() or CURRENT_DATE",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -363,6 +372,16 @@ func TestMigrationFilesProblemReadsALoadFailure(t *testing.T) {
 		"scratch-name.json":      `no migration files matched format "auto"; unrecognized SQL files: init.sql, not-a-migration.down.sql`,
 		"scratch-directive.json": `failed to load up migration 0000000001_init.up.sql: invalid migration directives in 0000000001_init.up.sql: invalid +ptah no_transaction value "sometimes": expected true or false`,
 		"scratch-down.json":      `incomplete migrations found (missing up or down files): [1]`,
+		// Since Ptah v0.33.1 a SQL file the directory's format does not read
+		// refuses the directory, where v0.33.0 ran the files beside it.
+		"scratch-unread.json": "migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, " +
+			"so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_<name>.up.sql, " +
+			"NNNNNNNNNN_<name>.down.sql or R__<name>.sql, with .up, .down and .sql in lower case, or move it out of the directory",
+		// An Atlas directory with an R__ file is refused when the revisions are
+		// read, under another prefix.
+		"scratch-atlas-repeatable.json": `Atlas migration R__seed.sql has version "R", which a revision table that records numbers ` +
+			"cannot keep; use the Atlas revision table (--revision-format atlas), or Ptah's file names, under which " +
+			"R__<name>.sql is a repeatable migration; a directory of repeatable migrations alone is read in Ptah's format with --dir-format ptah",
 		// What a file name can carry through a registry, as the runner receives it.
 		"scratch-control-bytes.json": "failed to load up migration 0000000001_a\x1b]0;pwn\x07.up.sql: invalid migration directives in " +
 			"0000000001_a\x1b]0;pwn\x07.up.sql: invalid +ptah no_transaction value \"sometimes\": expected true or false",
@@ -393,6 +412,16 @@ func TestMigrationFilesProblemRefusesWhatIsNotAboutTheFiles(t *testing.T) {
 		"a kind on a load": []byte(`{"contract_version":2,"command":"migrations status","error":{"kind":"database_unreachable",` +
 			`"message":"error registering migrations: no migration files matched"}}`),
 		"a prefix with no reason": []byte(`{"contract_version":2,"command":"migrations status","error":{"message":"error registering migrations: "}}`),
+		// The revision read carries what a database answered, so only the
+		// numeric-table refusal of an Atlas file is the directory's.
+		"a revision read the database refused": []byte(`{"contract_version":2,"command":"migrations status","error":{"message":` +
+			`"error getting migration status: failed to get migration revisions: permission denied for table schema_migrations"}}`),
+		"an Atlas file the read did not refuse": []byte(`{"contract_version":2,"command":"migrations status","error":{"message":` +
+			`"error getting migration status: failed to get migration revisions: Atlas migration 1_a.sql: connection reset by peer"}}`),
+		"the refusal under another read": []byte(`{"contract_version":2,"command":"migrations status","error":{"message":` +
+			`"error applying migrations: Atlas migration R__x.sql has version \"R\", which a revision table that records numbers cannot keep; use the Atlas revision table"}}`),
+		"the refusal with no file first": []byte(`{"contract_version":2,"command":"migrations status","error":{"message":` +
+			`"error getting migration status: failed to get migration revisions: the database said: Atlas migration R__x.sql has version \"R\", which a revision table that records numbers cannot keep; "}}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

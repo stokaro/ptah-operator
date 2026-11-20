@@ -854,26 +854,20 @@ func (c *configMapRun) unreadableSources() {
 		},
 	}), "create PtahMigration %s", configMapUnreadableMigration)
 	migration := &ptahv1alpha1.PtahMigration{}
-	c.wait("the migration to say why it could not load its file", func() (bool, string) {
+	c.wait("the migration to stop and say why it could not load its file", func() (bool, string) {
 		if err := c.get(configMapUnreadableMigration, migration); err != nil {
 			return false, err.Error()
 		}
-		progressing := meta.FindStatusCondition(migration.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
-		if progressing == nil || progressing.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			return false, fmt.Sprintf("%s, Progressing %+v", migration.Status.Phase, progressing)
+		said, err := migrationDirectoryRefused(migration)
+		if err != nil {
+			return false, err.Error()
 		}
-		message = progressing.Message
-		err := unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
+		message = said
+		err = unreadableSourceSays(message, unreadableMigrationFile, unreadableMigrationReason)
 		return err == nil, fmt.Sprint(err)
 	})
 	c.checkUnreadableText(message)
-	c.waitForUnreadableEvent(migration.UID, "OperationRetried", unreadableMigrationFile, unreadableMigrationReason)
-	c.wait("the migration's read to fail again under its claim", func() (bool, string) {
-		if err := c.get(configMapUnreadableMigration, migration); err != nil {
-			return false, err.Error()
-		}
-		return migrationReadRetried(migration, ""), fmt.Sprintf("%s, operation %+v", migration.Status.Phase, migration.Status.ActiveOperation)
-	})
+	c.waitForUnreadableEvent(migration.UID, string(ptahv1alpha1.ReasonMigrationDirectoryUnreadable), unreadableMigrationFile, unreadableMigrationReason)
 	generation = migration.Generation
 	failedSource = migration.Status.Artifact.Snapshot.ContentDigest
 	c.editSource(configMapUnreadableMigrationSource, unreadableMigrationFiles[0].key, "CREATE TABLE e2e_unreadable_events (id bigint);\n")

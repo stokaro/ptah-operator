@@ -72,6 +72,16 @@ type heldQuery struct {
 	name, query, seeded, fixed string
 }
 
+// tableCollation holds a MySQL row's differs_notes table to the default
+// collation its seed gave it.
+func tableCollation(seeded string) heldQuery {
+	return heldQuery{
+		name:   "the table's default collation",
+		query:  "SELECT table_collation FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'differs_notes'",
+		seeded: seeded,
+	}
+}
+
 // differingReading is what a row's captures hold, at the pin they answer.
 type differingReading struct {
 	// findings are the categories of the first drift report, sorted. None means
@@ -172,6 +182,7 @@ func differingRows() []differingRow {
 		parent  = "CREATE TABLE differs_parent (id bigint NOT NULL PRIMARY KEY)"
 		outside = "CREATE SCHEMA differs_outside"
 		scoped  = "&search_path=public"
+		note    = "INSERT INTO differs_notes VALUES (1, 'first note')"
 	)
 	const (
 		mysqlNotes   = "CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, owner_name varchar(64) NOT NULL)"
@@ -224,6 +235,85 @@ func differingRows() []differingRow {
 			want: differingReading{
 				findings:    []string{"columns_modified"},
 				statements:  []string{"MODIFY COLUMN `id` bigint"},
+				destructive: true,
+			},
+		},
+		// Ptah v0.33.1 compares a MySQL table's default collation where the
+		// declaration names it (stokaro/ptah#6291). A column that states its own
+		// collation keeps it, so the table's default is the only difference:
+		// Ptah rates it a warning, and the plan's ALTER TABLE ... COLLATE
+		// converts no value, so the manager lets it run unattended.
+		{
+			name: "table-collation-pinned", engine: engineMySQL, declared: "table-collation-pinned-mysql.sql",
+			stored: map[string]string{"observe/schema drift": "differing/drift-table-collations-changed-mysql.json"},
+			seed: []string{
+				"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, body varchar(64) COLLATE utf8mb4_0900_ai_ci NOT NULL) " +
+					"DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
+				note,
+			},
+			held: []heldQuery{tableCollation("utf8mb4_0900_ai_ci")},
+			want: differingReading{
+				findings:   []string{"table_collations_changed"},
+				statements: []string{"ALTER TABLE `differs_notes` COLLATE utf8mb4_bin"},
+			},
+		},
+		// A column that names no collation takes the table's, so the plan resets
+		// it in the same statement. Ptah rates the plan a warning; the manager
+		// reads its MODIFY COLUMN as destructive.
+		{
+			name: "table-collation", engine: engineMySQL, declared: "table-collation-mysql.sql",
+			seed: []string{
+				"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, body varchar(64) NOT NULL) " +
+					"DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
+				note,
+			},
+			held: []heldQuery{tableCollation("utf8mb4_0900_ai_ci")},
+			want: differingReading{
+				findings:    []string{"columns_modified", "table_collations_changed"},
+				statements:  []string{"ALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL"},
+				destructive: true,
+			},
+		},
+		// A table whose character set changes converts every column that takes
+		// it, which Ptah reports as column_charsets_converted and rates
+		// destructive beside the table's own change.
+		{
+			name: "table-charset", engine: engineMySQL, declared: "table-charset-mysql.sql",
+			stored: map[string]string{"observe/schema drift": "differing/drift-column-charsets-converted-mysql.json"},
+			seed: []string{
+				"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, body varchar(64) NOT NULL) " +
+					"DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci",
+				note,
+			},
+			held: []heldQuery{tableCollation("latin1_swedish_ci")},
+			want: differingReading{
+				findings: []string{"column_charsets_converted", "columns_modified", "table_collations_changed"},
+				statements: []string{
+					"ALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL",
+				},
+				destructive: true,
+			},
+		},
+		// A column's own character set. Every Ptah release up to v0.33.1 refuses
+		// to push such a SQL file as an artifact ("canonical schema HCL is not
+		// stable after parsing"), so the declaration comes from a Git source,
+		// which carries the file as written.
+		{
+			name: "column-charset", engine: engineMySQL, declared: "column-charset-mysql.sql", git: true,
+			seed: []string{
+				"CREATE TABLE differs_notes (id bigint NOT NULL PRIMARY KEY, " +
+					"body varchar(64) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL) " +
+					"DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
+				note,
+			},
+			held: []heldQuery{{
+				name:   "the column's character set",
+				query:  "SELECT character_set_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'differs_notes' AND column_name = 'body'",
+				seeded: "latin1",
+			}},
+			want: differingReading{
+				findings:    []string{"column_charsets_converted", "columns_modified"},
+				statements:  []string{"MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL"},
 				destructive: true,
 			},
 		},

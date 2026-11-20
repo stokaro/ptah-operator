@@ -1,0 +1,12 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "dry-run",
+  "plan_name": "plan_e0fa3ce4a690",
+  "plan_digest": "sha256:50cd22ef5157705a93880e7461387dd9eada1bd5d82795cb635cb5c22fdd07f6",
+  "units": [
+    {
+      "sql": "ALTER TABLE `differs_notes` CHARSET utf8mb4, COLLATE utf8mb4_0900_ai_ci, MODIFY COLUMN `body` varchar(64) NOT NULL"
+    }
+  ]
+}

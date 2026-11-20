@@ -1,0 +1,19 @@
+{
+  "format_version": 1,
+  "name": "plan_bed0325b04aa",
+  "dialect": "mysql",
+  "from_fingerprint": "sha256:4e157de6b28eec1902d6b346e8147982c71ff2a151525db7dc9a50802aa77b93",
+  "to_fingerprint": "sha256:050d0084ac346a463243865c81e694716f1c231c24c5fa60dc0f2bd32286ae3d",
+  "scope": {
+    "kind": "schema",
+    "name": "harness_differs_column_charset_mysql"
+  },
+  "destructive": true,
+  "statements": [
+    {
+      "sql": "ALTER TABLE `differs_notes` MODIFY COLUMN `body` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL",
+      "severity": "destructive",
+      "reason": "the column's character set changes from latin1 to utf8mb4: the server converts every value, and the statement fails on a character utf8mb4 cannot hold, or loses it where the session is not strict"
+    }
+  ]
+}

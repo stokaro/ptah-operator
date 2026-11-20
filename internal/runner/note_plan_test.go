@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-// notePlanText is the note the pinned Ptah v0.33.0 saved against PostgreSQL
-// 16 for a generated column whose expression changed, a change that server
-// cannot make in place (stokaro/ptah#6165). capturedNotePlan holds it.
+// notePlanText is the note Ptah v0.33.0 saved, and the pinned v0.33.1 saves
+// again, against PostgreSQL 16 for a generated column whose expression
+// changed, a change that server cannot make in place (stokaro/ptah#6165).
+// capturedNotePlan holds it.
 const notePlanText = "WARNING: Generated column public.tasks.code changed, but ALTER COLUMN SET EXPRESSION requires " +
 	"target capability alter_generated_column_expression, unavailable on this target (PostgreSQL added it in 17); " +
 	"manual migration required."

@@ -1,0 +1,26 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "changes",
+  "plan_digest": "sha256:8188286c9e8c4834fd16b46862cc5f21ff249278cae8795d656556e5af2f419e",
+  "plan_path": "/work/ptah-plan-output-2865151769/first.plan.json",
+  "plan": {
+    "format_version": 1,
+    "name": "plan_192f2cfc6c92",
+    "dialect": "mysql",
+    "from_fingerprint": "sha256:f9e0119d82e81fe5eff38560fa8ebde76cb93de0ef1ddff7224a260d631813dc",
+    "to_fingerprint": "sha256:9bae3bedcaf9f204bf6128d9f3f60d3c8e443a506de268a2bbd9a86b98e00bfe",
+    "scope": {
+      "kind": "schema",
+      "name": "harness_differs_table_collation_pinned_mysql"
+    },
+    "destructive": false,
+    "statements": [
+      {
+        "sql": "ALTER TABLE `differs_notes` COLLATE utf8mb4_bin",
+        "severity": "warning",
+        "reason": "the statement changes the table's default collation: a column added or restated without a collation takes it, and a unique key on such a column fails where it holds values the new collation finds equal"
+      }
+    ]
+  }
+}

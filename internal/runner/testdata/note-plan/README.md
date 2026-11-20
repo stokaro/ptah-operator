@@ -4,13 +4,20 @@
 `ptah schema plan --schema-file desired.sql --output plan.json --json`, and
 `saved-plan-postgres-16.json` is the plan it saved, both stored byte for byte.
 The image was `ghcr.io/stokaro/ptah@sha256:933cc38f93375e0a83ff49db0cfdcee301ab328e95d13496fb2b2be82be1f906`,
-the one `support/ptah.json` pins, and the server was
+the one `support/ptah.json` pinned then, and the server was
 `postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28`
 on an amd64 host. Against the plan v0.32.0 saved, and v0.31.0 before it, only
 the plan's `from_fingerprint`, and with it its name and digest, moved: the note,
 the statements and the `to_fingerprint` are the same. The v0.32.0 image run the
 same day against a fresh server still printed and saved the files this
 replaces byte for byte.
+
+On November 19, 2026 the v0.33.0 release image and the v0.33.1 one that
+`support/ptah.json` now pins,
+`ghcr.io/stokaro/ptah@sha256:37c16165f4184ddfd80cf61da9a366fe13ab950830b095f401e91de2c2f4383c`,
+each planned the table below against a fresh server of the same PostgreSQL
+image on an amd64 host, and printed and saved the same bytes but for the output
+path, the note included. The files stay.
 
 The database held a table whose generated column the schema file gives another
 expression:

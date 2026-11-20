@@ -312,7 +312,18 @@ the operator ran the versioned files beside it.
 [Repeatable migrations](../../troubleshoot/condition-reasons/#repeatable-migrations)
 says how to move what the files do into versioned migrations.
 
-None of the five resolves by waiting. The operator keeps reading the history at
+**Unreadable directory.** Ptah could not read the artifact's migration
+directory: a file it cannot load, a migration whose up or down file is missing,
+or, since Ptah v0.33.1, a SQL file at the top of the directory that its format
+does not read, such as a `seed.sql` beside Ptah's numbered files. Ptah refuses
+the whole directory rather than run the files beside such a file, and the
+resource is `Blocked` with `MigrationDirectoryUnreadable`, names the file, and
+publishes no plan. Rename the file or move it out of the directory the artifact
+is built from.
+[A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+lists what Ptah says.
+
+None of these resolves by waiting. The operator keeps reading the history at
 `spec.interval`, so fixing the database or the artifact is enough to unblock it;
 nothing else is required. For the last of them that usually means restoring the
 artifact the database was migrated with, rather than touching the database at
