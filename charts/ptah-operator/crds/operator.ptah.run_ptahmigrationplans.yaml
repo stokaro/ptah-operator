@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "24"
-    operator.ptah.run/crd-schema-digest: "sha256:e3c81d116d6b5d58d3ba2521a13811a45bb77cbb541bd32ae8f618e88a273e4d"
+    operator.ptah.run/crd-schema-digest: "sha256:86f0c1ec5b204cd48fd03997943d301c12f24a3a56ba2819737e2c7c1067b708"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
@@ -25,9 +25,6 @@ spec:
       type: string
     - jsonPath: .spec.currentVersion
       name: From
-      type: integer
-    - jsonPath: .spec.migrations.length()
-      name: Steps
       type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age

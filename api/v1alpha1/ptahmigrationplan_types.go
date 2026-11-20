@@ -228,7 +228,6 @@ type PtahMigrationPlanStatus struct {
 // +kubebuilder:resource:shortName=ptahmplan
 // +kubebuilder:printcolumn:name="Migration",type=string,JSONPath=`.spec.migrationRef.name`
 // +kubebuilder:printcolumn:name="From",type=integer,JSONPath=`.spec.currentVersion`
-// +kubebuilder:printcolumn:name="Steps",type=integer,JSONPath=`.spec.migrations.length()`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type PtahMigrationPlan struct {
 	metav1.TypeMeta   `json:",inline"`

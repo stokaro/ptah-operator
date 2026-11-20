@@ -181,6 +181,10 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   command that deletes the record. The Warning
   [can be lost](../../troubleshoot/events/#an-event-can-be-lost), so the status
   list is the record.
+- **`kubectl get ptahmigrationplans` no longer shows a `Steps` column.** Its
+  path, `.spec.migrations.length()`, is not one the API server's JSONPath can
+  evaluate, so it printed `<none>` for every plan. `kubectl ptah migration`
+  lists the planned versions and repeatable migrations.
 - **Executor.** The verified executor is now Ptah v0.34.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. Each MySQL schema read also asks

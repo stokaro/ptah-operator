@@ -497,6 +497,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e64d07d8f226ced12d92ba57813ebf51f049aeb33d1afb4394859bbffdae1b9c",
       "reason": "The runner reads the approved repeatable migrations from PTAH_EXPECTED_REPEATABLE_SEQUENCE, which a Job sets only when its plan selects one, binds them into the sequence digest and writes them into the --expect-sequence file after the versions. A history frame's repeatable migrations gain their content digests and the orphaned and no-transaction marks, and a run frame carries the ones Ptah planned and applied and the count a drift check replayed. A plan with no repeatable migration gives the same environment, file and digest as before. Only a manager of this build sets the variable or reads the new fields, and the CRD schema version this release moves refuses the rollback to an older one. The api package also gains a journal count and doc comments that no frame carries. The commands, the codes and the frame's shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:a8b8f28f60fb5abbbf14aefcfb3dd32524bb1dddc36bcfcad3bffe3443ed706b",
+      "reason": "The api package the runner builds against drops the PtahMigrationPlan Steps printer column, whose .spec.migrations.length() path the API server's JSONPath cannot evaluate, so it printed <none> for every plan. A printer column is a kubebuilder marker in a comment and reaches neither the runner's inputs nor its frames. Protocol 1 stays."
     }
   ]
 }
