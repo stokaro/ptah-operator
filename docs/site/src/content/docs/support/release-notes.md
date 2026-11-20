@@ -575,6 +575,16 @@ propagation is refused from this release: have it name
   holds its name. An update that moves a Pod to another Job is decided the
   same way, by the Job it leaves; one that moved a Pod without the operator's
   labels off an operation Job was admitted before.
+- **A source access refused at fetch time says why.** Before an Observe, a
+  Plan, or a migration's History or Apply fetches a credentialed source, a step
+  of the operation Job checks the access again: `validate-source-authority`
+  for an OCI source, and the fetch step itself for Git and HTTPS. A refusal
+  there used to read only that the step exited 2. The message now names the
+  step and then says what a Resolve says of the same grants, code and
+  sentence, which names the grant, key, field or host that refused it and
+  never a credential's value.
+  [A source access refused before the fetch](../../troubleshoot/condition-reasons/#a-source-access-refused-before-the-fetch)
+  shows the message.
 
 ## 0.2.14
 

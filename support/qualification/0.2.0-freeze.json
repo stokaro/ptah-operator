@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-19T19:48:30.676460+00:00",
+  "frozenAt": "2026-11-20T01:18:24.601394+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "97194ff2c8d9bcdc7a0f36ae31873936a7156c2163d1c65f2c8129f5c10b37a1"
+      "sha256": "156cf518fc08a298b2c7a757c29eba5941beb2fd4ba79c8deda4e1d3bc416c88"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.14 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 120,
+  "revision": 121,
   "supersedes": {
-    "freezeCommit": "b5b0a59635611c6ffc8f5138976c269b6b9abc23",
-    "sha256": "15cd6b3df80c328c98acddbf2d634c6b614a550fe52513dd61941170a88c71e3"
+    "freezeCommit": "f001e5c8f9bafe21d40a2a69648d8e7359898c30",
+    "sha256": "aecb1ed5e1fef930580159afe98c4eaa26341f66f3e02deac808a9f4318fb6c1"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.33.0 to the v0.33.1 release image, and record in the edge row what v0.33.1 changes: a migration directory is read whole, so a SQL file Ptah does not read as a migration is refused by name; a relative time literal as a PostgreSQL date or time default is a fault of the schema file; MySQL literals follow the session's NO_BACKSLASH_ESCAPES and a saved plan refuses a session that sets it; and a PostgreSQL generated column reads in sync in the server's spelling, with VIRTUAL columns on PostgreSQL 18. A history read of a directory Ptah refuses now stops Blocked with MigrationDirectoryUnreadable instead of retrying, and the scenarios configmap-unreadable-source and git-source-unreadable expect that. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Prepare 0.2.15: PostgreSQL 18.x and 16.x name run 44640143851 of the Added database lines workflow, which passed both lines on every supported Kubernetes minor at Ptah v0.33.1, the build the edge row verifies. The profile, its targets and every other input are unchanged."
 }
