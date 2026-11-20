@@ -23,12 +23,20 @@ reports `OperationFailed` and no longer counts in `ptah_operator_failures_total`
 an alert or a script that watched for either sees `Blocked` with
 `SchemaSourceUnreadable` instead. The executor moves to Ptah v0.34.0, which
 retires the execution binding: approve again whatever was waiting, after the
-resource has read its database with v0.34.0 and planned. The `fetch-migrations`
-step of a migration Job gains an argument, so a History or an Apply Job that
-0.2.15 dispatched and that still runs when the manager moves cannot be
-confirmed: the History runs again, and the Apply settles with outcome `Unknown`
-until a history read settles it. Let a migration Apply finish before you
-upgrade.
+resource has read its database with v0.34.0 and planned. The retirement
+reaches work in flight too. A read still running when the new manager starts
+runs again. An Apply whose Job 0.2.15 had created is recorded with outcome
+`Unknown`, whatever it did: a `PtahSchema` reads its database before anything
+else runs, and a `PtahMigration` claims no further Apply until a history read or
+a `PtahMigrationRunAcknowledgment` accounts for
+[the run](../../use/operations/#a-migration-run-nobody-accounted-for). To upgrade
+with no Apply in flight, let each running Apply end first, until
+`status.activeOperation` names none, and then keep a new one from starting until
+the new manager runs: set `spec.suspend` on the resource, or leave
+`spec.policy.apply` at `OnApproval` with no approval waiting. Suspending a
+resource, or changing its policy, while its Apply runs records that Apply as
+`Unknown` as well, since the spec is one of the inputs the Apply was claimed
+from. Resume after the upgrade.
 
 A migration directory of Ptah's `NNNNNNNNNN_<name>.up.sql` and `.down.sql`
 files that holds two files for one direction of a version now stops the history
