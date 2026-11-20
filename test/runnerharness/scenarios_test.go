@@ -81,6 +81,10 @@ func wantRefusal(word string) func(*rowSpec) {
 	return func(row *rowSpec) { row.wantRefusal = word }
 }
 
+func wantStopped(word string) func(*rowSpec) {
+	return func(row *rowSpec) { row.wantStopped = word }
+}
+
 // schemaLifecycle runs a declared schema through every operation on one engine,
 // from an OCI artifact: a table, a converged reading, a column added to it, and
 // an Apply refused because the database moved under its plan.
@@ -918,6 +922,16 @@ func desiredSourceRows() []directRow {
 		// does not load (stokaro/ptah#6299, #6345): PostgreSQL reads 'now'
 		// once, when it creates the table.
 		validate("validate-relative-time", "PostgreSQL", "relative-time.sql", true),
+		// Since Ptah v0.34.0 the refusal also covers a quoted type name, an
+		// array and a domain's own default (stokaro/ptah#6386), each worded
+		// as Ptah words it, which decides the code the runner reports.
+		validate("validate-relative-time-quoted", "PostgreSQL", "relative-time-quoted.sql", true),
+		validate("validate-relative-time-array", "PostgreSQL", "relative-time-array.sql", true),
+		validate("validate-relative-time-domain", "PostgreSQL", "relative-time-domain.sql", true),
+		// Since Ptah v0.34.0 a MySQL table that declares PARTITION BY does
+		// not load (stokaro/ptah#6375), where v0.33.1 planned the table
+		// without its partitions.
+		validate("validate-partition-mysql", "MySQL", "partition-mysql.sql", true),
 		scratch("scratch-directive", "migrations-directive", true),
 		scratch("scratch-name", "migrations-name", true),
 		scratch("scratch-down", "migrations-down", true),
@@ -926,6 +940,10 @@ func desiredSourceRows() []directRow {
 		// a SQL file the Ptah format does not read refuses it, and so does an
 		// Atlas R__ file, whose version the revision table cannot keep.
 		scratch("scratch-unread", "migrations-unread", true),
+		// Since Ptah v0.34.0 a second file for one direction of a version
+		// refuses the directory (stokaro/ptah#6388), where v0.33.1 ran
+		// whichever file it read last.
+		scratch("scratch-duplicate", "migrations-duplicate", true),
 		scratch("scratch-atlas-repeatable", "migrations-atlas-repeatable", true),
 		scratch("scratch-control-bytes", controlBytesDirectory, true),
 		drift("drift-sql", "schema.sql"),
@@ -1178,6 +1196,22 @@ func unreadableSources(t *testing.T, l *lab) {
 	relative := l.newSchema(t, "desired-source-schema-relative-time", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
 	relative.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
 	relative.plan("plan", nil, unreadable(relativeVolume))
+
+	// A domain's own relative time default, which v0.34.0 refuses as a fault
+	// of the schema rather than of the file (stokaro/ptah#6386). The rows
+	// record whichever code the frames carry, so a release that words it
+	// otherwise reaches the diff; TestARelativeTimeDomainReadsAsPtahWordsIt
+	// holds the reading.
+	domainVolume := l.name("unreadable-relative-time-domain")
+	l.fillSource(t, domainVolume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/relative-time-domain.sql")})
+	domain := l.newSchema(t, "desired-source-schema-relative-time-domain", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
+	domain.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
+	recorded := func(row *rowSpec) {
+		row.sharedSource = domainVolume
+		row.anyOutcome = true
+	}
+	domain.observe("observe", recorded, storedAs("schema drift", "desired-source/drift-relative-time-domain.json"))
+	domain.plan("plan", nil, recorded, storedAs("schema plan", "desired-source/plan-relative-time-domain.json"))
 
 	migrationVolume := l.name("unreadable-migrations")
 	l.fillSource(t, migrationVolume, map[string][]byte{

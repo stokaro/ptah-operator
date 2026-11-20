@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/migrations-log-lost-mysql@sha256:2f0d1be42843f69442836d78d99e015c4fe9849ebe2df7a642ee393b4c2d999c to /source/migrations
-Digest: sha256:2f0d1be42843f69442836d78d99e015c4fe9849ebe2df7a642ee393b4c2d999c
+Pulled oci://harness-registry:5000/migrations/migrations-log-lost-mysql@sha256:0bf0c70f7953466777a4c3b46fded9b7ab3cd60f1001b536b60d8b872bbcb533 to /source/migrations
+Digest: sha256:0bf0c70f7953466777a4c3b46fded9b7ab3cd60f1001b536b60d8b872bbcb533
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

@@ -1,3 +1,4 @@
-Pulled oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@sha256:3734c4b71def1020a42024a39ba684612c298cbaef49b4d73288ca661976c9dc to /source/migrations
-Digest: sha256:3734c4b71def1020a42024a39ba684612c298cbaef49b4d73288ca661976c9dc
+Pulled oci://harness-registry:5000/migrations/statement-errors-pg-literal-up@sha256:333177d5f66d32454017782ab931720702a7067452eeb8852986180b5603c397 to /source/migrations
+Digest: sha256:333177d5f66d32454017782ab931720702a7067452eeb8852986180b5603c397
 Format: auto
+Not validated: the next command that reads the directory reports what it cannot read.

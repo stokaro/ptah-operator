@@ -1072,9 +1072,10 @@ const (
 	ReasonRepeatableMigrationsUnsupported ConditionReason = "RepeatableMigrationsUnsupported"
 	// ReasonMigrationDirectoryUnreadable means Ptah could not read the
 	// artifact's migration directory: a file it cannot load, a migration that
-	// lacks its up or down file, or, since Ptah v0.33.1, a SQL file the
-	// directory's format does not read, which Ptah refuses rather than run the
-	// files beside it. Another read of the same files gives the same answer, so
+	// lacks its up or down file, since Ptah v0.33.1 a SQL file the directory's
+	// format does not read, which Ptah refuses rather than run the files beside
+	// it, and since v0.34.0 a second file for one direction of a version.
+	// Another read of the same files gives the same answer, so
 	// no plan is published and the directory is read again at the interval, or
 	// at once when a ConfigMap source changes.
 	ReasonMigrationDirectoryUnreadable ConditionReason = "MigrationDirectoryUnreadable"

@@ -314,12 +314,18 @@ says how to move what the files do into versioned migrations.
 
 **Unreadable directory.** Ptah could not read the artifact's migration
 directory: a file it cannot load, a migration whose up or down file is missing,
-or, since Ptah v0.33.1, a SQL file at the top of the directory that its format
-does not read, such as a `seed.sql` beside Ptah's numbered files. Ptah refuses
+since Ptah v0.33.1 a SQL file at the top of the directory that its format does
+not read, such as a `seed.sql` beside Ptah's numbered files, and since v0.34.0
+a second file for one direction of a version, as `0000000002_b.up.sql` beside
+`0000000002_c.up.sql`, of which earlier releases ran one
+([stokaro/ptah#6388](https://github.com/stokaro/ptah/pull/6388)). Ptah refuses
 the whole directory rather than run the files beside such a file, and the
 resource is `Blocked` with `MigrationDirectoryUnreadable`, names the file, and
-publishes no plan. Rename the file or move it out of the directory the artifact
-is built from.
+publishes no plan. Since 0.2.16 that holds for an OCI artifact too, which the
+fetch writes without reading it as migrations. An OCI artifact with no SQL file
+at all still fails at the `fetch-migrations` step, and only that step's log
+names why. Rename the file or move it out of the directory the artifact is
+built from.
 [A desired file Ptah could not read](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
 lists what Ptah says.
 
@@ -660,6 +666,19 @@ never the target's, where its login could drop the target. Give its database a
 name the target's does not have: Ptah tells two MySQL databases apart by name
 alone, and refuses a shadow named like the target as the target, at stage
 `realm-check`.
+
+On MySQL and MariaDB the verified Ptah build compares a view by its
+database-qualified name, and so it does a stored function and a MariaDB
+sequence. The shadow's name always differs from the target's, so each of them
+an applied migration created reads as drift, while tables and triggers do not.
+For a view the check reports `missing_view <shadow>.<view>` beside
+`extra_view <target>.<view>`, and every Apply after the migration that created
+the object stops with `SchemaDrifted`, whose message blames a change made
+outside the migrations. The fix is
+[stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416), which no Ptah
+release contains yet; [Ptah compatibility](../../support/ptah/) carries the
+limitation and what was measured. A view named under `exclude` reads as
+neither, and the check then compares nothing of that view.
 
 A PostgreSQL shadow can share the target's server. Everything Ptah empties is
 in the shadow's database, so its login needs privileges there alone, and a

@@ -476,6 +476,218 @@ func TestAMigrationDirectoryRefusalIsBlockedWithNoClaim(t *testing.T) {
 	}
 }
 
+// The stray-file row waits for the file and the words the pinned image gave
+// for the same directory, and refuses the reason of another file.
+func TestUnreadableSourceSaysHoldsTheStrayFile(t *testing.T) {
+	t.Parallel()
+	said := runner.CodeDesiredSourceUnreadable + ": " + capturedReason(t, "scratch-unread.json")
+	if err := unreadableSourceSays(said, strayMigrationFile, strayMigrationReason); err != nil {
+		t.Fatalf("the capture: %v", err)
+	}
+	directive := runner.CodeDesiredSourceUnreadable + ": " + capturedReason(t, "scratch-directive.json")
+	if err := unreadableSourceSays(directive, strayMigrationFile, strayMigrationReason); err == nil {
+		t.Fatalf("unreadableSourceSays(%q) accepted the reason of another file", directive)
+	}
+}
+
+// fetchRefusalSaysOnly takes the step and its exit code, and refuses a message
+// that carries what the step printed, names another step, or reports a refused
+// access.
+func TestFetchRefusalSaysOnlyTheStepAndItsExitCode(t *testing.T) {
+	t.Parallel()
+	status := func(message string) ptahv1alpha1.PtahMigrationStatus {
+		return ptahv1alpha1.PtahMigrationStatus{Phase: ptahv1alpha1.MigrationPhaseReading, Conditions: []metav1.Condition{{
+			Type: ptahv1alpha1.ConditionMigrationProgressing, Status: metav1.ConditionTrue,
+			Reason: string(ptahv1alpha1.ReasonOperationFailed), Message: message,
+		}}}
+	}
+	const said = "the fetch-migrations step exited 2, so the run never started"
+	if err := fetchRefusalSaysOnly(status(said), migrationFetchStep); err != nil {
+		t.Fatalf("fetchRefusalSaysOnly(%q) = %v", said, err)
+	}
+	for name, message := range map[string]string{
+		"the step's words":    said + ": error: " + noMigrationFilesWords,
+		"the words alone":     "error: " + noMigrationFilesWords,
+		"another step":        "the fetch-schema step exited 2, so the run never started",
+		"a refused access":    "the fetch-migrations step refused the source's access, so the run never started: access_denied: the grant names another host",
+		"an exit of zero":     "the fetch-migrations step exited 0, so the run never started",
+		"a sentence before":   "History failed: " + said,
+		"the Job's own words": "the History Job failed",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := fetchRefusalSaysOnly(status(message), migrationFetchStep); err == nil {
+				t.Fatalf("fetchRefusalSaysOnly(%q) accepted it", message)
+			}
+		})
+	}
+	if err := fetchRefusalSaysOnly(ptahv1alpha1.PtahMigrationStatus{}, migrationFetchStep); err == nil {
+		t.Fatal("fetchRefusalSaysOnly accepted a status with no Progressing condition")
+	}
+}
+
+// The Event a failed fetch writes is the condition's sentence after the
+// operation and its attempt. The Event a History attempt that failed at its
+// target wrote before it is among the others, as in the registry row.
+func TestFetchRefusalEventSaysOnlyTheStepAndItsExitCode(t *testing.T) {
+	t.Parallel()
+	const (
+		owner  = types.UID("migration-uid")
+		said   = "History attempt 3: the fetch-migrations step exited 2, so the run never started"
+		target = "History attempt 2: target_authentication_failed: the database refused the credentials."
+	)
+	event := func(uid types.UID, kind, reason, message string) corev1.Event {
+		return corev1.Event{InvolvedObject: corev1.ObjectReference{UID: uid}, Type: kind, Reason: reason, Message: message}
+	}
+	check := func(events ...corev1.Event) error {
+		return fetchRefusalEvent(events, owner, "History", migrationFetchStep)
+	}
+	if err := check(event(owner, corev1.EventTypeWarning, operationRetriedReason, target),
+		event(owner, corev1.EventTypeWarning, operationRetriedReason, said)); err != nil {
+		t.Errorf("the Event among others: %v", err)
+	}
+	for name, test := range map[string]struct {
+		events []corev1.Event
+		want   string
+	}{
+		"no Events":                {nil, "no Warning " + operationRetriedReason},
+		"another resource's Event": {[]corev1.Event{event("other-uid", corev1.EventTypeWarning, operationRetriedReason, said)}, "no Warning"},
+		"another reason":           {[]corev1.Event{event(owner, corev1.EventTypeWarning, "OperationFailed", said)}, "no Warning"},
+		"a Normal Event":           {[]corev1.Event{event(owner, corev1.EventTypeNormal, operationRetriedReason, said)}, "no Warning"},
+		"the step's words": {
+			[]corev1.Event{event(owner, corev1.EventTypeWarning, operationRetriedReason, said+": error: "+noMigrationFilesWords)},
+			"none says why",
+		},
+		"another operation": {
+			[]corev1.Event{event(owner, corev1.EventTypeWarning, operationRetriedReason,
+				"Apply attempt 1: the fetch-migrations step exited 2, so the run never started")},
+			"none says why",
+		},
+		"another step": {
+			[]corev1.Event{event(owner, corev1.EventTypeWarning, operationRetriedReason,
+				"History attempt 1: the fetch-schema step exited 2, so the run never started")},
+			"none says why",
+		},
+		"no attempt": {
+			[]corev1.Event{event(owner, corev1.EventTypeWarning, operationRetriedReason,
+				"History: the fetch-migrations step exited 2, so the run never started")},
+			"none says why",
+		},
+		"the target's Event alone": {[]corev1.Event{event(owner, corev1.EventTypeWarning, operationRetriedReason, target)}, "none says why"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := check(test.events...); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("fetchRefusalEvent() = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// The log the row scans for is the step's own, of a step that failed: a Pod
+// whose step passed, or whose other step failed, gives none.
+func TestFailedFetchLogReadsTheStepThatFailed(t *testing.T) {
+	t.Parallel()
+	pod := func(name, step string, exit int32) corev1.Pod {
+		return corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+				Name: step, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: exit}},
+			}}},
+		}
+	}
+	var read []string
+	reader := func(pod, container string) ([]byte, error) {
+		read = append(read, pod+"/"+container)
+		return []byte("error: " + noMigrationFilesWords), nil
+	}
+	log, err := failedFetchLog([]corev1.Pod{pod("passed", migrationFetchStep, 0), pod("failed", migrationFetchStep, 2)}, migrationFetchStep, reader)
+	if err != nil || string(log) != "error: "+noMigrationFilesWords || len(read) != 1 || read[0] != "failed/"+migrationFetchStep {
+		t.Fatalf("failedFetchLog() = %q, %v after reading %v", log, err, read)
+	}
+	for name, pods := range map[string][]corev1.Pod{
+		"no Pods":            nil,
+		"a step that passed": {pod("passed", migrationFetchStep, 0)},
+		"another step":       {pod("other", "install-runner", 1)},
+		"a step still running": {{Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{{
+			Name: migrationFetchStep, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		}}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := failedFetchLog(pods, migrationFetchStep, func(string, string) ([]byte, error) {
+				return []byte("read"), nil
+			}); err == nil {
+				t.Fatal("failedFetchLog() read a log")
+			}
+		})
+	}
+}
+
+// Ptah's answer to a registry that refused the credential, in the shape v0.33.1
+// and v0.34.0 print it, gives the words the row scans for; a fetch that failed
+// for another reason gives none.
+func TestRegistryRefusalWordsNeedTheRegistrysAnswer(t *testing.T) {
+	t.Parallel()
+	const (
+		url     = "http://registry.ptah-e2e.svc:5000/v2/ptah-e2e/migrations/postgresql-registry-refusal/manifests/sha256:1d2c"
+		refusal = `error: pull oci://registry.ptah-e2e.svc:5000/ptah-e2e/migrations/postgresql-registry-refusal@sha256:1d2c: ` +
+			`fetch OCI manifest: GET "` + url + `": response status code 401: unauthorized: authentication required: ` +
+			`[map[Action:pull Class: Name:ptah-e2e/migrations/postgresql-registry-refusal Type:repository]]` + "\n"
+	)
+	words, err := registryRefusalWords([]byte(refusal))
+	if err != nil || len(words) != 3 || words[2] != url {
+		t.Fatalf("registryRefusalWords() = %q, %v", words, err)
+	}
+	for _, word := range words {
+		if !strings.Contains(refusal, word) {
+			t.Errorf("%q is not in the log it came from", word)
+		}
+	}
+	for name, log := range map[string]string{
+		"no migration file":  "error: " + noMigrationFilesWords + "\n",
+		"a refused manifest": strings.Replace(refusal, "status code 401", "status code 404", 1),
+		"a forbidden pull":   strings.Replace(refusal, "401: unauthorized", "403: denied", 1),
+		"no registry path":   strings.Replace(refusal, "/v2/", "/", 1),
+		"nothing":            "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if words, err := registryRefusalWords([]byte(log)); err == nil {
+				t.Fatalf("registryRefusalWords() = %q", words)
+			}
+		})
+	}
+}
+
+// The scan finds each word in each document, and will not pass on nothing to
+// scan.
+func TestSaysNoneOfNeedsSomethingToScan(t *testing.T) {
+	t.Parallel()
+	documents := map[string][]byte{"status": []byte(`{"phase":"Reading"}`), "events": []byte(`[{"reason":"OperationRetried"}]`)}
+	if err := saysNoneOf(documents, []string{"unauthorized", "hunter2"}); err != nil {
+		t.Fatalf("saysNoneOf() = %v", err)
+	}
+	for name, test := range map[string]struct {
+		documents map[string][]byte
+		words     []string
+	}{
+		"a word in the status": {documents, []string{"hunter2", "Reading"}},
+		"a word in the Events": {documents, []string{"OperationRetried"}},
+		"no documents":         {nil, []string{"hunter2"}},
+		"an empty document":    {map[string][]byte{"status": nil}, []string{"hunter2"}},
+		"no words":             {documents, nil},
+		"an empty word":        {documents, []string{""}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := saysNoneOf(test.documents, test.words); err == nil {
+				t.Fatal("saysNoneOf() passed")
+			}
+		})
+	}
+}
+
 // A repair the row counts is one the source carried: a plan from another source,
 // with the failure gone, under the spec the failure was reported on. The last
 // rows are the two a suspension or a spec edit would pass.

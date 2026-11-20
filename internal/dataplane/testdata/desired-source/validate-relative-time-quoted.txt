@@ -1,0 +1,1 @@
+postgres: source: error parsing schema file: read SQL schema file /work/relative-time-quoted.sql:3:58: column created_at: DEFAULT 'now' on a "pg_catalog"."timestamptz" column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE

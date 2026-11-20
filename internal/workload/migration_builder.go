@@ -137,11 +137,31 @@ func (b Builder) BuildMigration(
 		annotations:        annotations,
 	}
 	if migrationReadsArtifactBytes(operation.Type) {
+		// --skip-validation leaves the directory unread as migrations in the
+		// fetch, so a file Ptah cannot load, or one the format does not read,
+		// is found by the operation container, which holds no registry
+		// credential and can name it, rather than by the fetch, whose words
+		// never reach status. The fetch still checks the manifest, the
+		// artifact type and format, the layer types, sizes, digests and names,
+		// and that the artifact holds a SQL file (stokaro/ptah#6406). History
+		// and Apply share it: an Apply of the same artifact meets in its run
+		// what History met in its read.
+		//
+		// The run reads the directory the way it read it before Ptah v0.34.0,
+		// and the way it reads a Git, an HTTPS or a ConfigMap source: by
+		// format detection, with no --dir-format from the artifact's
+		// annotation. Detection reads a directory whole and refuses a file it
+		// leaves out, and a history recorded under its version keys keeps
+		// reading the same. An artifact pushed with --dir-format atlas whose
+		// files are Ptah pairs reads version key 0000000001 under the Atlas
+		// grammar and 1 under detection.
 		job.fetch = &artifactFetchRequest{
 			source:        *operation.Source,
 			containerName: migrationFetchContainerName,
-			args:          []string{"migrations", "pull", operation.Source.ResolvedReference, "--out", migrationsPath},
-			destination:   migrationsPath,
+			args: []string{
+				"migrations", "pull", operation.Source.ResolvedReference, "--out", migrationsPath, "--skip-validation",
+			},
+			destination: migrationsPath,
 		}
 	}
 	return b.buildOperationJob(job)

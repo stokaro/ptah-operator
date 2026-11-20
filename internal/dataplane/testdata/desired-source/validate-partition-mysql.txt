@@ -1,0 +1,1 @@
+mysql: source: error parsing schema file: read SQL schema file /work/partition-mysql.sql:5:3: unsupported feature: PARTITION BY on table events: Ptah does not model MySQL or MariaDB partitioning (stokaro/ptah#6357); leave it out of the desired schema and manage the partitions outside Ptah

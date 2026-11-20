@@ -21,7 +21,69 @@ out of silence.
 **Before you upgrade.** A schema whose desired file Ptah cannot read no longer
 reports `OperationFailed` and no longer counts in `ptah_operator_failures_total`:
 an alert or a script that watched for either sees `Blocked` with
-`SchemaSourceUnreadable` instead. Nothing else.
+`SchemaSourceUnreadable` instead. The executor moves to Ptah v0.34.0, which
+retires the execution binding: approve again whatever was waiting, after the
+resource has read its database with v0.34.0 and planned. The retirement
+reaches work in flight too. A read still running when the new manager starts
+runs again. An Apply whose Job 0.2.15 had created is recorded with outcome
+`Unknown`, whatever it did: a `PtahSchema` reads its database before anything
+else runs, and a `PtahMigration` claims no further Apply until a history read or
+a `PtahMigrationRunAcknowledgment` accounts for
+[the run](../../use/operations/#a-migration-run-nobody-accounted-for). To upgrade
+with no Apply in flight, let each running Apply end first, until
+`status.activeOperation` names none, and then keep a new one from starting until
+the new manager runs: set `spec.suspend` on the resource, or leave
+`spec.policy.apply` at `OnApproval` with no approval waiting. Suspending a
+resource, or changing its policy, while its Apply runs records that Apply as
+`Unknown` as well, since the spec is one of the inputs the Apply was claimed
+from. Resume after the upgrade.
+
+A migration directory of Ptah's `NNNNNNNNNN_<name>.up.sql` and `.down.sql`
+files that holds two files for one direction of a version now stops the history
+read ([stokaro/ptah#6388](https://github.com/stokaro/ptah/pull/6388)). Under
+v0.33.1 Ptah treated them as one migration, ran the file that loaded last, and
+never ran the other. Now it refuses the directory and names both files, and the
+`PtahMigration` is `Blocked` with
+[`MigrationDirectoryUnreadable`](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read),
+whatever versions the database already records. This lists such versions in a
+directory, each with the direction that has two files:
+
+```sh
+ls migrations | sed -nE 's/^([0-9]{10})_.*\.(up|down)\.sql$/\1 \2/p' | sort | uniq -d
+```
+
+Find which of the two files the database ran by its revision row, give the other
+the next free version with a `.down.sql` beside it if it should run, or remove
+it, and rebuild the source.
+
+A MySQL schema file that partitions a table, with `PARTITION BY`, now stops the
+schema at `Blocked` with `SchemaSourceUnreadable`
+([stokaro/ptah#6375](https://github.com/stokaro/ptah/pull/6375)). Ptah does not
+model MySQL or MariaDB partitioning, and v0.33.1 planned such a table without
+its partitions, or read an existing one as in sync. Take the partitioning out of
+the declaration and manage the partitions outside Ptah. A table partitioned
+outside Ptah still reads in sync: Ptah lists it as not compared, and the operator
+does not say so. Two more PostgreSQL relative time defaults are refused the
+same way
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)): one on a
+quoted type, as `"pg_catalog"."timestamptz" DEFAULT 'now'`, and one on an
+array, as `date[] DEFAULT '{now}'`. So is a MySQL table that declares two
+`CHECK` constraints of one name
+([stokaro/ptah#6390](https://github.com/stokaro/ptah/pull/6390)). Ptah also
+refuses a domain's own relative time default, as `CREATE DOMAIN moment AS
+timestamp DEFAULT 'now'`, but as a fault of the schema, and names the domain
+`public.moment` where `schema validate` names it `moment`, so the operator does
+not tie the refusal to the file. An Observe fails with `child_exit` at every
+failure retry, a Plan fails with `plan_refused` and the code
+`declaration-refused`, and only the Pod log holds Ptah's sentence. Measured with
+`schema validate`, v0.33.1 accepted all of them.
+
+A PostgreSQL column default whose cast changes its value, as `DEFAULT
+(1.5::integer)` on a `numeric` column, which stores 2, now reads as drift where
+the database holds another default
+([stokaro/ptah#6353](https://github.com/stokaro/ptah/pull/6353)). Measured on
+PostgreSQL 17, v0.33.1 read such a column in sync, so a schema that read
+`InSync` can report `columns_modified` after the upgrade. Nothing else.
 
 - **A schema file Ptah cannot read stops the schema at `Blocked`.** An Observe
   or a Plan that Ptah answers with `desired_source_unreadable` named a file it
@@ -46,6 +108,48 @@ an alert or a script that watched for either sees `Blocked` with
   the first `Verified` entry to carry a `reason`, and `kubectl ptah wait --for
   applied` and `kubectl ptah settle --wait` stop and say Ptah could not read
   the desired schema.
+- **An OCI migration artifact Ptah cannot read stops at the history read.** The
+  `fetch-migrations` step now runs `ptah migrations pull --skip-validation`
+  ([stokaro/ptah#6406](https://github.com/stokaro/ptah/pull/6406)), which checks
+  the artifact and each file's name and path and writes the directory without
+  reading it as migrations. An artifact that holds a file Ptah refuses, such as
+  a `seed.sql` an earlier Ptah pushed, reaches the history read, which names the
+  file, and the `PtahMigration` stops `Blocked` with
+  [`MigrationDirectoryUnreadable`](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read).
+  What 0.2.15's notes say of such an artifact, that it fails at the
+  `fetch-migrations` step and is tried again with only that step's log naming
+  the file, no longer holds. An artifact that holds no SQL file at all still
+  fails at that step with `the fetch-migrations step exited 2, so the run never
+  started` and is tried again, and only `kubectl logs job/<job> -c
+  fetch-migrations` says `migration artifact contains no migration files`. That
+  container holds the registry credentials, so nothing it writes reaches status
+  or an Event.
+- **A Plan on a server with `NO_BACKSLASH_ESCAPES` says why it stops.** Since
+  Ptah v0.34.0 `schema apply --plan` names its refusal of a plan with a
+  backslash in a literal, on a session whose `sql_mode` names
+  `NO_BACKSLASH_ESCAPES`, as `backslash-mode`
+  ([stokaro/ptah#6400](https://github.com/stokaro/ptah/pull/6400)). The Plan now
+  fails with `plan_refused: ptah refused to plan the change (backslash-mode)`,
+  and Ptah's sentence is in the Pod log, where 0.2.15's notes say it fails with
+  `invalid_plan_output` and nothing says why. An approved plan whose Apply meets
+  a server that took the mode after the Plan fails with `apply_refused: ptah
+  refused the approved plan (backslash-mode)` before any statement.
+  [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  says what to change.
+- **Executor.** The verified executor is now Ptah v0.34.0, and the runner
+  harness, the schema SQL readings, both History readings and the capacity
+  calibration were measured with it. Each MySQL schema read also asks
+  `information_schema.PARTITIONS` which tables are partitioned. A saved plan
+  records under `omissions` each declaration its statements leave out, such as
+  a MySQL table option in a schema planned for PostgreSQL
+  ([stokaro/ptah#6395](https://github.com/stokaro/ptah/pull/6395)); the
+  operator keeps them in the stored plan and shows none of them. A MySQL or
+  MariaDB `CHECK`, generated column or expression default that held a quote or
+  a character beyond ASCII and was planned again at every Plan now reads in
+  sync ([stokaro/ptah#6381](https://github.com/stokaro/ptah/pull/6381)), and a
+  view that reads a view whose name sorts after its own is created after it
+  ([stokaro/ptah#6382](https://github.com/stokaro/ptah/pull/6382)), where
+  v0.33.1's Apply failed with error 1146.
 
 ## 0.2.15
 

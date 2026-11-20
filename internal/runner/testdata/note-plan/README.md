@@ -19,6 +19,15 @@ each planned the table below against a fresh server of the same PostgreSQL
 image on an amd64 host, and printed and saved the same bytes but for the output
 path, the note included. The files stay.
 
+On November 20, 2026 the v0.34.0 release image,
+`ghcr.io/stokaro/ptah@sha256:8be4bebe660fcc427028ce854f815f5e5ae24854134d80d6ed9f00ab3aaaa1dc`,
+and the v0.33.1 one each planned the table below against a fresh server of that
+PostgreSQL image, as its superuser in the database `postgres`, on another amd64
+host, and printed and saved the same bytes as each other. Against the files
+here that setup moved the output path and the `from_fingerprint`, with the
+plan's name and digest; the note, the statements and the `to_fingerprint` are
+the same, so the files stay.
+
 The database held a table whose generated column the schema file gives another
 expression:
 

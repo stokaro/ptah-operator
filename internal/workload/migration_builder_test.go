@@ -112,7 +112,12 @@ func TestBuildMigrationKeepsRegistryCredentialsOutOfTheSQLProcess(t *testing.T) 
 
 			pod := job.Spec.Template.Spec
 			fetch := requireContainer(t, pod.InitContainers, migrationFetchContainerName)
-			want := append(slices.Clone(ociFetchPrefix), "migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath)
+			// The fetch writes the directory unread, so the operation
+			// container names what it cannot read, and passes no
+			// --dir-format: the run reads by format detection, as it does
+			// every other source.
+			want := append(slices.Clone(ociFetchPrefix),
+				"migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath, "--skip-validation")
 			if !reflect.DeepEqual(fetch.Args, want) {
 				t.Fatalf("fetch args = %q, want %q", fetch.Args, want)
 			}

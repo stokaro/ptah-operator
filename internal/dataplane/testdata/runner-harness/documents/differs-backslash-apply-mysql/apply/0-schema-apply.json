@@ -1,0 +1,13 @@
+{
+  "contract_version": 4,
+  "command": "schema apply",
+  "outcome": "refused",
+  "plan_name": "plan_24639d0fbfc0",
+  "plan_digest": "sha256:8743ef8cb9c61fb80ec3bae614d8e8f401e95478ff1ee52f7666406ecee90c8b",
+  "refusal": {
+    "code": "backslash-mode"
+  },
+  "error": {
+    "message": "unsupported feature: the plan is written for a session whose sql_mode does not name NO_BACKSLASH_ESCAPES, the session's sql_mode names NO_BACKSLASH_ESCAPES, and a statement holds a backslash, which the two read differently; apply the desired schema without --plan, or connect with a sql_mode without NO_BACKSLASH_ESCAPES"
+  }
+}

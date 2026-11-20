@@ -546,7 +546,7 @@ func TestDecodePlanReadsTheScopeTheURLCovered(t *testing.T) {
 // Ptah v0.30.0 records the schema it placed unqualified names in on every
 // plan of a PostgreSQL URL that pins no search_path, so a decoder that does
 // not declare it refuses every such plan. The statement and the fields around
-// it are what the pinned v0.33.1 saved against PostgreSQL 17 for a generated
+// it are what Ptah v0.33.1 saved against PostgreSQL 17 for a generated
 // column whose expression changes, as v0.30.0 did; the fingerprints are
 // shortened.
 func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {
@@ -564,6 +564,67 @@ func TestDecodePlanAcceptsThePlacedSchema(t *testing.T) {
 	}
 	if _, err := dataplane.DecodePlan([]byte(strings.Replace(document, `"placed_schema":"public"`, `"placed_schema":["public"]`, 1)), "PostgreSQL"); err == nil {
 		t.Fatal("a placed schema that is not a string was accepted")
+	}
+}
+
+// Ptah v0.34.0 records in the plan each declaration its statements leave out
+// (stokaro/ptah#6395), so a decoder that does not declare the list refuses
+// every such plan. The documents are what v0.34.0 saved for a MySQL table
+// option planned against PostgreSQL 17, which the statement also names in a
+// comment, and for a PostgreSQL index storage parameter planned against MySQL
+// 8.4, which no statement names. The fingerprints are shortened, and the MySQL
+// plan keeps only its index statement.
+func TestDecodePlanAcceptsTheOmissionsItRecords(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		dialect, document string
+		want              dataplane.PlanOmission
+	}{
+		"a table option PostgreSQL cannot carry": {
+			dialect: "PostgreSQL",
+			document: `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from","to_fingerprint":"to",` +
+				`"scope":{"kind":"realm"},"placed_schema":"public","destructive":false,"statements":[{"sql":` +
+				`"-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"ro_t\" ` +
+				`(\n  \"id\" INT PRIMARY KEY NOT NULL,\n  \"name\" VARCHAR(20)\n)","severity":"safe",` +
+				`"reason":"does not remove data or tighten constraints"}],"omissions":[{"dialect":"postgres","reason":"unsupported",` +
+				`"kind":"table","name":"public.ro_t","property":"table option ENGINE","detail":"InnoDB","commented":true}]}`,
+			want: dataplane.PlanOmission{Dialect: "postgres", Reason: "unsupported", Kind: "table", Name: "public.ro_t",
+				Property: "table option ENGINE", Detail: "InnoDB", Commented: true},
+		},
+		"an index parameter MySQL cannot carry": {
+			dialect: "MySQL",
+			document: `{"format_version":1,"name":"p","dialect":"mysql","from_fingerprint":"from","to_fingerprint":"to",` +
+				`"scope":{"kind":"schema","name":"omit3"},"destructive":false,"statements":[{"sql":` +
+				`"CREATE INDEX ` + "`ro_t_name` ON `ro_t` (`name`)" + `","severity":"safe",` +
+				`"reason":"does not remove data or tighten constraints"}],"omissions":[{"dialect":"mysql","reason":"unsupported",` +
+				`"kind":"index","name":"ro_t_name","property":"index storage parameter fillfactor","detail":"70"}]}`,
+			want: dataplane.PlanOmission{Dialect: "mysql", Reason: "unsupported", Kind: "index", Name: "ro_t_name",
+				Property: "index storage parameter fillfactor", Detail: "70"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			decoded, err := dataplane.DecodePlan([]byte(test.document), test.dialect)
+			if err != nil {
+				t.Fatalf("DecodePlan() error = %v", err)
+			}
+			if len(decoded.Omissions) != 1 || decoded.Omissions[0] != test.want {
+				t.Fatalf("omissions = %+v, want [%+v]", decoded.Omissions, test.want)
+			}
+			// The comment a statement opens with is no change of authority.
+			if decoded.Destructive || len(decoded.PrivilegeChanges) != 0 {
+				t.Fatalf("the plan reads destructive=%v with privilege changes %v", decoded.Destructive, decoded.PrivilegeChanges)
+			}
+			// An omission is held to the fields Ptah declares, as the rest of
+			// the plan is: one this operator does not know refuses the plan.
+			unknown := strings.Replace(test.document, `"reason":"unsupported",`, `"reason":"unsupported","statement":0,`, 1)
+			if unknown == test.document {
+				t.Fatal("the document holds no omission to extend")
+			}
+			if _, err := dataplane.DecodePlan([]byte(unknown), test.dialect); err == nil {
+				t.Fatal("an omission carrying a field the operator does not declare was accepted")
+			}
+		})
 	}
 }
 

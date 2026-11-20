@@ -20,6 +20,14 @@ const (
 	rootedRowFileFamily = "boundary-row-file-rooted"
 	besideRowFileFamily = "boundary-row-file-beside"
 	unparsableFamily    = "boundary-unparsable-oci"
+	strayFileFamily     = "boundary-stray-file-oci"
+	noSQLFamily         = "boundary-no-sql-oci"
+	formatFamily        = "boundary-format-mismatch-oci"
+	// strayFileWords is how Ptah names the file a migration directory holds
+	// and its format does not read, and noSQLWords its refusal of an artifact
+	// with no migration file in it.
+	strayFileWords = "migration file the Ptah format does not read: seed.sql"
+	noSQLWords     = "migration artifact contains no migration files"
 	// outsideRoot is Ptah's refusal of a row file outside the working
 	// directory (stokaro/ptah#5560).
 	outsideRoot = "is outside allowed root"
@@ -125,6 +133,63 @@ func sourceBoundaries(t *testing.T, l *lab) {
 			}
 		}
 	})
+	// Since v0.33.0 `ptah migrations push` refuses a directory that holds a
+	// top-level file its format does not read, or no migration file at all,
+	// and earlier releases published both, so a registry may still hold such
+	// an artifact. Since 0.2.16 the fetch writes the artifact without reading
+	// it as migrations, so the History's own read names the stray file, in the
+	// container that holds no registry credential. An artifact with no
+	// migration file is still refused at the fetch, which writes no frame
+	// (stokaro/ptah-operator#1149).
+	t.Run("stray-file-oci", func(t *testing.T) {
+		t.Parallel()
+		database := "harness_boundary_stray_file"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publishFiles(t, strayFileFamily, "/fixtures/boundaries/migrations-stray", "ptah")
+		run := l.newMigration(t, strayFileFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		outcome := run.history("history", wantCode(runner.CodeDesiredSourceUnreadable))
+		if failure := outcome.result.Error; failure == nil || !strings.Contains(failure.Message, strayFileWords) {
+			t.Errorf("the History's frame says %+v, want %q", failure, strayFileWords)
+		}
+	})
+	t.Run("no-sql-oci", func(t *testing.T) {
+		t.Parallel()
+		database := "harness_boundary_no_sql"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publishFiles(t, noSQLFamily, "/fixtures/boundaries/migrations-no-sql", "ptah")
+		run := l.newMigration(t, noSQLFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		run.history("history", wantStopped(noSQLWords))
+	})
+	// An artifact whose migration-format annotation says ptah, over a file
+	// named for Atlas. A pull that reads the files as migrations reads them
+	// in the annotation's format and refuses this one; the fetch has written
+	// them unread since 0.2.16, and the History reads the directory by format
+	// detection, as an Apply of the artifact does. The row records whatever
+	// the History answers, and TestAMismatchedFormatReadsByDetection holds it.
+	t.Run("format-mismatch-oci", func(t *testing.T) {
+		t.Parallel()
+		database := "harness_boundary_format_mismatch"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publishFiles(t, formatFamily, "/fixtures/boundaries/migrations-atlas-named", "ptah")
+		run := l.newMigration(t, formatFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		run.history("history", func(spec *rowSpec) { spec.anyOutcome = true })
+	})
+}
+
+// publishFiles publishes a directory of the fixture volume as a migrations
+// artifact, one layer for each top-level file, under the migration-format
+// annotation given, without the checks of `ptah migrations push`, and returns
+// its reference.
+func (l *lab) publishFiles(t *testing.T, family, directory, format string) string {
+	t.Helper()
+	repository := "migrations/" + family
+	l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--name", l.name(family+"-publish"), "--network", l.network,
+		"--entrypoint", "/unknown-layer", l.images.tools,
+		"-reference", registryHost+"/"+repository+":v1", "-dir", directory, "-format", format, "-plain-http")
+	return "oci://" + registryHost + "/" + repository + ":v1"
 }
 
 // leaks names what a row printed that holds the secret, or "".
@@ -187,6 +252,46 @@ func checkBoundaries(captures runnerharness.Captures) error {
 			problems = append(problems, err)
 		case pull.Exit != 0 || !slices.Contains(pull.Args, "--skip-parse"):
 			problems = append(problems, fmt.Errorf("%s: the fetch ran %q and exited %d, want it to leave the schema unparsed and pass", name, pull.Args, pull.Exit))
+		}
+	}
+	return errors.Join(append(problems, checkUnreadMigrationFiles(captures))...)
+}
+
+// checkUnreadMigrationFiles says what the committed captures miss of the
+// migration artifacts the fetch writes unread: the stray file reaches the
+// History's own read, which names it, and an artifact with no migration file
+// stops at the fetch, before any read.
+func checkUnreadMigrationFiles(captures runnerharness.Captures) error {
+	var problems []error
+	stray := strayFileFamily + "/history"
+	if record, err := capturedRow(captures, stray); err != nil {
+		problems = append(problems, err)
+	} else {
+		frame, _ := record.Result.(map[string]any)
+		failure, _ := frame["error"].(map[string]any)
+		message, _ := failure["message"].(string)
+		if code := frameCode(record); code != runner.CodeDesiredSourceUnreadable || !strings.Contains(message, strayFileWords) {
+			problems = append(problems, fmt.Errorf("%s: the frame says %s: %q, want %s naming %q", stray, code, message, runner.CodeDesiredSourceUnreadable, strayFileWords))
+		}
+	}
+	switch pull, err := capturedChild(captures, stray, "migrations pull"); {
+	case err != nil:
+		problems = append(problems, err)
+	case pull.Exit != 0 || !slices.Contains(pull.Args, "--skip-validation"):
+		problems = append(problems, fmt.Errorf("%s: the fetch ran %q and exited %d, want it to write the artifact unread and pass", stray, pull.Args, pull.Exit))
+	}
+	empty := noSQLFamily + "/history"
+	switch pull, err := capturedChild(captures, empty, "migrations pull"); {
+	case err != nil:
+		problems = append(problems, err)
+	case pull.Exit == 0 || !slices.Contains(pull.Args, "--skip-validation") || !strings.Contains(pull.Stderr, noSQLWords):
+		problems = append(problems, fmt.Errorf("%s: the fetch ran %q, exited %d and said %q, want it refused with %q", empty, pull.Args, pull.Exit, pull.Stderr, noSQLWords))
+	}
+	if record, err := capturedRow(captures, empty); err == nil {
+		for _, child := range record.Children {
+			if child.Command != "migrations pull" {
+				problems = append(problems, fmt.Errorf("%s: `ptah %s` ran after the fetch refused the artifact", empty, child.Command))
+			}
 		}
 	}
 	return errors.Join(problems...)

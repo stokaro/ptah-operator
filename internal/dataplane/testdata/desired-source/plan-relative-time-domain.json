@@ -1,0 +1,11 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "refused",
+  "refusal": {
+    "code": "declaration-refused"
+  },
+  "error": {
+    "message": "compare database schema: domain \"public.moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+  }
+}

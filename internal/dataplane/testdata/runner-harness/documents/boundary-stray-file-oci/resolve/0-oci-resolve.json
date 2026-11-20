@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/boundary-stray-file-oci:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/boundary-stray-file-oci@sha256:94593cd718216669f38bfa4246d307b303a4592d34746a99382e11a7fb0a31b5",
+  "digest": "sha256:94593cd718216669f38bfa4246d307b303a4592d34746a99382e11a7fb0a31b5",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 1124
+}

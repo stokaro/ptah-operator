@@ -50,7 +50,11 @@ const (
 
 	postgresHost = "harness-postgres"
 	mysqlHost    = "harness-mysql"
-	registryHost = "harness-registry:5000"
+	// mysqlModeHost is a MySQL server of its own, for the rows that set its
+	// global sql_mode: a mode belongs to the whole server, so on the shared one
+	// it would reach every row reading at the time.
+	mysqlModeHost = "harness-mysql-mode"
+	registryHost  = "harness-registry:5000"
 
 	missingHost = "harness-no-such-host.invalid"
 
@@ -467,6 +471,7 @@ func (l *lab) buildTools(t *testing.T, architecture, work string) string {
 		"recorder": "./recorder", "runner/ptah-runner": "./recorder", "e2e-git-server": "../e2e/gitserver",
 		"e2e-https-server":  "../e2e/httpsserver",
 		"unparsable-schema": "../../hack/unparsableschemafixture",
+		"unknown-layer":     "../../hack/unknownlayerfixture",
 	} {
 		output := filepath.Join(work, binary)
 		build := exec.CommandContext(t.Context(), "go", "build", "-o", output, source) // #nosec G204 -- the harness's own command
@@ -542,6 +547,7 @@ COPY e2e-git-server /e2e-git-server
 COPY e2e-https-server /e2e-https-server
 COPY https-files/ /https-files/
 COPY unparsable-schema /unparsable-schema
+COPY unknown-layer /unknown-layer
 COPY fixtures/ /fixtures/
 COPY spec/ /spec/
 COPY keys/ /keys/
@@ -579,25 +585,45 @@ func selfSignedWithoutNames(t *testing.T) (certificate, key []byte) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 }
 
+// The servers keep their data in memory, in these directories.
+const (
+	postgresData = "/var/lib/postgresql/data"
+	mysqlData    = "/var/lib/mysql"
+	registryData = "/var/lib/registry"
+)
+
 func (l *lab) startDatabases(t *testing.T) {
 	t.Helper()
 	l.docker.must(t, []string{"POSTGRES_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
 		"--name", l.name("postgres"), "--network", l.network, "--network-alias", postgresHost,
 		"--env", "POSTGRES_PASSWORD",
-		// Most rows make a database, and CREATE DATABASE also writes its
-		// template to the WAL, which stays until a checkpoint, so the space a
-		// run takes grows with its rows.
-		"--tmpfs", "/var/lib/postgresql/data:rw,size=1g",
+		// Most rows make a database, which copies its template, about 7 MiB,
+		// into base/ and writes the same into the WAL. The WAL stays until a
+		// checkpoint, and the default max_wal_size of 1GB asks for one only
+		// after about 540 MB, so a run that ends inside one
+		// checkpoint_timeout, five minutes, keeps all of it: 384 MiB of WAL
+		// beside 628 MiB of databases filled the 1 GiB this directory had.
+		// max_wal_size bounds the WAL at 128 MiB, a checkpoint every few
+		// databases, however long the run takes. The size holds the
+		// databases a run makes, about 680 MiB at its end, and that bound, with
+		// about 730 MiB, some 100 databases, to spare.
+		"--tmpfs", postgresData+":rw,size=1536m",
 		"--mount", "type=volume,src="+l.name("tls")+",dst=/tls,readonly",
 		l.images.postgres,
 		"-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/server.key",
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
-	l.docker.must(t, []string{"MYSQL_ROOT_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
-		"--name", l.name("mysql"), "--network", l.network, "--network-alias", mysqlHost,
-		"--env", "MYSQL_ROOT_PASSWORD",
-		"--tmpfs", "/var/lib/mysql:rw,size=1g,uid=999,gid=999",
-		l.images.mysql,
-		"--innodb-doublewrite=0", "--sync-binlog=0", "--innodb-flush-log-at-trx-commit=0")
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
+		"-c", "max_wal_size=128MB", "-c", "min_wal_size=32MB")
+	for _, server := range []struct{ name, alias, size string }{
+		{l.name("mysql"), mysqlHost, "1g"},
+		{l.name("mysql-mode"), mysqlModeHost, "256m"},
+	} {
+		l.docker.must(t, []string{"MYSQL_ROOT_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
+			"--name", server.name, "--network", l.network, "--network-alias", server.alias,
+			"--env", "MYSQL_ROOT_PASSWORD",
+			"--tmpfs", mysqlData+":rw,size="+server.size+",uid=999,gid=999",
+			l.images.mysql,
+			"--innodb-doublewrite=0", "--sync-binlog=0", "--innodb-flush-log-at-trx-commit=0")
+	}
 	var ready sync.WaitGroup
 	for _, probe := range []struct {
 		name string
@@ -606,6 +632,7 @@ func (l *lab) startDatabases(t *testing.T) {
 	}{
 		{l.name("postgres"), []string{"pg_isready", "-U", "postgres", "-h", "127.0.0.1"}, nil},
 		{l.name("mysql"), []string{"mysql", "-h127.0.0.1", "-uroot", "-e", "SELECT 1"}, []string{"MYSQL_PWD=" + l.databasePassword}},
+		{l.name("mysql-mode"), []string{"mysql", "-h127.0.0.1", "-uroot", "-e", "SELECT 1"}, []string{"MYSQL_PWD=" + l.databasePassword}},
 	} {
 		ready.Go(func() {
 			deadline := time.Now().Add(3 * time.Minute)
@@ -632,11 +659,40 @@ func (l *lab) startDatabases(t *testing.T) {
 	}
 }
 
+// logStorage logs what each server's memory-backed directory holds against its
+// size, and for PostgreSQL how much of it is WAL and how many checkpoints ran.
+// A row that brings a run near a bound shows in the log before one fails.
+func (l *lab) logStorage(t *testing.T, when string) {
+	t.Helper()
+	exec := func(container string, args ...string) string {
+		stdout, stderr, exit, err := l.docker.run(context.Background(), nil, nil, append([]string{"exec", container}, args...)...)
+		if err != nil || exit != 0 {
+			return fmt.Sprintf("(%s exited %d: %v %s)", args[0], exit, err, bytes.TrimSpace(stderr))
+		}
+		return strings.TrimSpace(string(stdout))
+	}
+	used := func(container, path string) string {
+		lines := strings.Split(exec(container, "df", "-k", path), "\n")
+		fields := strings.Fields(lines[len(lines)-1])
+		if len(fields) < 3 {
+			return strings.Join(lines, " ")
+		}
+		return fields[2] + " of " + fields[1] + " KiB"
+	}
+	postgres := l.name("postgres")
+	t.Logf("storage %s: postgres %s (du KiB: %s; wal bytes written, timed and requested checkpoints, databases: %s); mysql %s; mysql-mode %s; registry %s",
+		when, used(postgres, postgresData),
+		strings.Join(strings.Fields(exec(postgres, "du", "-sk", postgresData+"/base", postgresData+"/pg_wal")), " "),
+		strings.ReplaceAll(exec(postgres, "psql", "-U", "postgres", "-At", "-F", " ", "-c",
+			"SELECT (SELECT wal_bytes FROM pg_stat_wal), num_timed, num_requested, (SELECT count(*) FROM pg_database) FROM pg_stat_checkpointer"), "\n", " "),
+		used(l.name("mysql"), mysqlData), used(l.name("mysql-mode"), mysqlData), used(l.name("registry"), registryData))
+}
+
 func (l *lab) startRegistry(t *testing.T) {
 	t.Helper()
 	l.docker.must(t, nil, "run", "--detach", "--pull", "never",
 		"--name", l.name("registry"), "--network", l.network, "--network-alias", strings.Split(registryHost, ":")[0],
-		"--tmpfs", "/var/lib/registry:rw,size=256m", l.images.registry)
+		"--tmpfs", registryData+":rw,size=256m", l.images.registry)
 	deadline := time.Now().Add(time.Minute)
 	for time.Now().Before(deadline) {
 		_, _, exit, err := l.docker.run(context.Background(), nil, nil, "exec", l.name("registry"),
@@ -653,17 +709,41 @@ func (l *lab) startRegistry(t *testing.T) {
 // sql runs statements in a database, as a person editing it by hand would.
 func (l *lab) sql(t *testing.T, engine, database string, statements ...string) {
 	t.Helper()
+	l.sqlOn(t, "", engine, database, statements...)
+}
+
+// server names the container behind a host the URLs name: the engine's shared
+// server for an empty host.
+func (l *lab) server(t *testing.T, host, engine string) string {
+	t.Helper()
+	switch {
+	case host == mysqlModeHost && engine == engineMySQL:
+		return l.name("mysql-mode")
+	case host != "":
+		t.Fatalf("no %s server at %q", engine, host)
+	case engine == enginePostgres:
+		return l.name("postgres")
+	case engine == engineMySQL:
+		return l.name("mysql")
+	default:
+		t.Fatalf("no engine %q", engine)
+	}
+	return ""
+}
+
+// sqlOn runs statements in a database of the server at host.
+func (l *lab) sqlOn(t *testing.T, host, engine, database string, statements ...string) {
+	t.Helper()
+	server := l.server(t, host, engine)
 	for _, statement := range statements {
 		var args []string
 		var env []string
 		switch engine {
 		case enginePostgres:
-			args = []string{"exec", l.name("postgres"), "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-c", statement}
-		case engineMySQL:
-			env = []string{"MYSQL_PWD=" + l.databasePassword}
-			args = []string{"exec", "--env", "MYSQL_PWD", l.name("mysql"), "mysql", "-uroot", "--database", database, "-e", statement}
+			args = []string{"exec", server, "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-c", statement}
 		default:
-			t.Fatalf("no engine %q", engine)
+			env = []string{"MYSQL_PWD=" + l.databasePassword}
+			args = []string{"exec", "--env", "MYSQL_PWD", server, "mysql", "-uroot", "--database", database, "-e", statement}
 		}
 		l.docker.must(t, env, args...)
 	}
@@ -673,25 +753,32 @@ func (l *lab) sql(t *testing.T, engine, database string, statements ...string) {
 // without column names or alignment, for a row to say what its seed left.
 func (l *lab) query(t *testing.T, engine, database, statement string) string {
 	t.Helper()
-	switch engine {
-	case enginePostgres:
-		return l.docker.must(t, nil, "exec", l.name("postgres"), "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-c", statement)
-	case engineMySQL:
-		return l.docker.must(t, []string{"MYSQL_PWD=" + l.databasePassword}, "exec", "--env", "MYSQL_PWD", l.name("mysql"),
-			"mysql", "-uroot", "--database", database, "--batch", "--skip-column-names", "-e", statement)
-	default:
-		t.Fatalf("no engine %q", engine)
-		return ""
+	return l.queryOn(t, "", engine, database, statement)
+}
+
+// queryOn runs query on the server at host.
+func (l *lab) queryOn(t *testing.T, host, engine, database, statement string) string {
+	t.Helper()
+	server := l.server(t, host, engine)
+	if engine == enginePostgres {
+		return l.docker.must(t, nil, "exec", server, "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-c", statement)
 	}
+	return l.docker.must(t, []string{"MYSQL_PWD=" + l.databasePassword}, "exec", "--env", "MYSQL_PWD", server,
+		"mysql", "-uroot", "--database", database, "--batch", "--skip-column-names", "-e", statement)
 }
 
 func (l *lab) createDatabase(t *testing.T, engine, database string) {
 	t.Helper()
+	l.createDatabaseOn(t, "", engine, database)
+}
+
+func (l *lab) createDatabaseOn(t *testing.T, host, engine, database string) {
+	t.Helper()
 	switch engine {
 	case enginePostgres:
-		l.sql(t, engine, "postgres", "CREATE DATABASE "+database)
+		l.sqlOn(t, host, engine, "postgres", "CREATE DATABASE "+database)
 	case engineMySQL:
-		l.sql(t, engine, "mysql", "CREATE DATABASE "+database)
+		l.sqlOn(t, host, engine, "mysql", "CREATE DATABASE "+database)
 	}
 }
 
@@ -735,6 +822,10 @@ type rowSpec struct {
 	// wantRefusal is a word the refusal of a fetch has to hold; set, the row
 	// ends at that fetch and writes no frame.
 	wantRefusal string
+	// wantStopped is a word the log of the container that stopped the Pod has
+	// to hold, where Ptah, not the runner, failed the step; set, the row ends
+	// at that container and writes no frame.
+	wantStopped string
 	// documents names where a command's document is stored, for the documents
 	// the decoders' tests read by a path of their own.
 	documents map[string]string
@@ -770,7 +861,7 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 		t.Fatalf("%s: %v", row.name, err)
 	}
 	var children []recording.Child
-	var frame, logs []byte
+	var frame, logs, stoppedLog []byte
 	var refusal string
 	summaryError := ""
 	finished := false
@@ -797,9 +888,10 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 			}
 			frame = ran.Frame
 			if !ok {
-				if refusal == "" {
+				if refusal == "" && row.wantStopped == "" {
 					t.Errorf("%s: container %s stopped the Pod: %s", row.name, container.Name, stderr)
 				}
+				stoppedLog = stderr
 				return
 			}
 		}
@@ -821,6 +913,14 @@ func (l *lab) runRow(t *testing.T, row rowSpec) rowOutcome {
 	if row.wantRefusal != "" {
 		if !strings.Contains(refusal, row.wantRefusal) {
 			t.Errorf("%s: the fetch refused with %q, want %q", row.name, refusal, row.wantRefusal)
+		}
+		l.addRow(record)
+		return outcome
+	}
+	if row.wantStopped != "" {
+		if finished || refusal != "" || !strings.Contains(string(stoppedLog), row.wantStopped) {
+			t.Errorf("%s: the Pod finished=%t with the refusal %q and the log %q, want a container to stop it saying %q",
+				row.name, finished, refusal, stoppedLog, row.wantStopped)
 		}
 		l.addRow(record)
 		return outcome

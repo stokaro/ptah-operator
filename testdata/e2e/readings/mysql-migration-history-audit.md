@@ -26,7 +26,9 @@ whether the table exists.
   reproduced the v0.30.1 reading record for record, and on 2026-11-19 so did the v0.33.0 release
   image (`37c98b00`). The v0.33.1 image adds two records, a read of `SELECT @@SESSION.sql_mode`
   at the start of each session
-  ([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), and changes no other
+  ([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), and changes no other. On
+  2026-11-20 the v0.34.0 release image (`90e98f6c`) reproduced the v0.33.1 reading record for
+  record
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

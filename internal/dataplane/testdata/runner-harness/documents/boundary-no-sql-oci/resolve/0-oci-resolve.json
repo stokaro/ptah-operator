@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/boundary-no-sql-oci:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/boundary-no-sql-oci@sha256:71f7c3a745113545801316ef6814352e3ba096d804943e646d77fc211554237f",
+  "digest": "sha256:71f7c3a745113545801316ef6814352e3ba096d804943e646d77fc211554237f",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 645
+}

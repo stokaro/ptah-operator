@@ -51,7 +51,7 @@ decision.
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
 | `LogEntriesLost` | `RunLogged` is false because the database refused entries the last run wrote to `schema_migrations_log`, so its own record of that run is incomplete. The run's outcome is unchanged. See [A run whose log entries the database refused](#a-run-whose-log-entries-the-database-refused). |
 | `LogWritten` | `RunLogged` is true because the database accepted every entry the last run wrote to `schema_migrations_log`. |
-| `MigrationDirectoryUnreadable` | A history read could not read the migration directory: a file Ptah cannot load, a migration without its up or down file, or a SQL file the directory's format does not read. `Blocked` is true, nothing is published, and the directory is read again at `spec.interval`, or at once when a ConfigMap source changes. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
+| `MigrationDirectoryUnreadable` | A history read could not read the migration directory: a file Ptah cannot load, a migration without its up or down file, a SQL file the directory's format does not read, or two files for one direction of a version. `Blocked` is true, nothing is published, and the directory is read again at `spec.interval`, or at once when a ConfigMap source changes. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
 | `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. On `ApprovalRequired` it says the database converged while a plan was outstanding, so nothing is left to approve. |
 | `NotRequired` | Policy allows this plan without separate approval: it destroys nothing and changes no privilege. |
@@ -88,7 +88,7 @@ decision.
 | `RunNotUnresolved` | A `PtahMigrationRunAcknowledgment` named a run its migration was not waiting on, so it settled nothing. Read the migration's `status.unresolvedRun` for the run it does record, or `status.resolvedRun` for what settled the one you named. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
 | `SchemaDrifted` | A migration Apply ran nothing because `spec.policy.driftCheck` found the target's schema differing from the one its applied migrations produce. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
-| `SchemaSourceUnreadable` | An Observe or a Plan could not read the desired schema: a file Ptah cannot parse, a relative time string as a date or time column's default, or a row file outside Ptah's working directory. `Ready` is false with Ptah's reason, phase `Blocked`, nothing is published, and the schema is read again at `spec.interval`, at once when a ConfigMap source or the spec changes, or on a read request. After an Apply it ends the proof. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
+| `SchemaSourceUnreadable` | An Observe or a Plan could not read the desired schema: a file Ptah cannot parse, a relative time string as a date or time column's default, a MySQL table partitioned with `PARTITION BY`, or a row file outside Ptah's working directory. `Ready` is false with Ptah's reason, phase `Blocked`, nothing is published, and the schema is read again at `spec.interval`, at once when a ConfigMap source or the spec changes, or on a read request. After an Apply it ends the proof. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
@@ -535,6 +535,21 @@ desired_source_unreadable: Atlas migration R__seed.sql has version "R", which a 
 A file that is not SQL, such as a `README.md`, and a file in a subdirectory are
 still left out.
 
+Since Ptah v0.34.0 a directory of Ptah's files that holds two files for one
+direction of a version is refused too
+([stokaro/ptah#6388](https://github.com/stokaro/ptah/pull/6388)), where v0.33.1
+ran the file that loaded last and never the other. So is a MySQL schema file
+that partitions a table
+([stokaro/ptah#6375](https://github.com/stokaro/ptah/pull/6375)), since Ptah
+does not model MySQL or MariaDB partitioning, and a PostgreSQL relative time
+default on a quoted type or an array
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)):
+
+```
+desired_source_unreadable: duplicate up migration for version 2: 0000000002_add_b.up.sql and 0000000002_add_c.up.sql
+desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql:5:3: unsupported feature: PARTITION BY on table events: Ptah does not model MySQL or MariaDB partitioning (stokaro/ptah#6357); leave it out of the desired schema and manage the partitions outside Ptah
+```
+
 The path is where the file sits in the operation Pod: `/source/schema/` and the
 path a ConfigMap item names or the last part of a Git path. SQL names the line
 and the column after the path, as `schema.sql:2:29` above, and YAML, HCL and
@@ -605,6 +620,15 @@ it, from the declaration and the paths in the Pod.
 Not everything that stops a desired file reaches this code. Ptah reads no SQL
 statement of a migration file until it runs it, so a statement that does not
 parse passes the history read and fails the Apply on the database.
+Since Ptah v0.34.0 neither does a domain's own relative time default, as
+`CREATE DOMAIN moment AS timestamp DEFAULT 'now'`
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)). Ptah refuses
+it as a fault of the schema, so it does not read as
+`desired_source_unreadable`, and it does not read as the
+`desired_schema_invalid` below either: drift and plan name the domain
+`public.moment` where validate names it `moment`, and the operator matches the
+two only where the name is a table's. An Observe fails with `child_exit` and a
+Plan with `plan_refused`, and only the Pod log holds Ptah's sentence.
 
 A desired schema that loads and that Ptah refuses as a whole, such as a foreign
 key to a table it does not declare, reads the same way under the code
@@ -685,6 +709,31 @@ desired-state author role does not:
 ```bash
 kubectl logs -n application job/<job> -c fetch-schema
 ```
+
+A migration directory published to an OCI registry reads the same way since
+0.2.16. The `fetch-migrations` init container checks the artifact as
+`fetch-schema` does, and each file's name and path, and writes the directory
+without reading it as migrations (`ptah migrations pull --skip-validation`,
+since Ptah v0.34.0,
+[stokaro/ptah#6406](https://github.com/stokaro/ptah/pull/6406)). The history
+read, in a container that holds no registry credential, reads the directory and
+names a file it refuses, such as the `seed.sql` above, and the `PtahMigration`
+stops `Blocked` with `MigrationDirectoryUnreadable`. In 0.2.15 the fetch read
+the directory itself, so such an artifact failed at that step and was tried
+again at each failure retry.
+
+An artifact that holds no SQL file at all is still refused at the fetch, since
+an empty directory would read as a history with nothing to apply. The message
+names only the step, `the fetch-migrations step exited 2, so the run never
+started`, the operation is tried again at each failure retry, and the reason,
+`migration artifact contains no migration files`, is only in the step's log:
+
+```bash
+kubectl logs -n application job/<job> -c fetch-migrations
+```
+
+`ptah migrations push` refuses both directories since Ptah v0.33.0, so such an
+artifact comes from an earlier Ptah or from another tool.
 
 ## A source access refused before the fetch
 
@@ -771,6 +820,26 @@ the rest, as in `, and 3 more`. A view name too long to fit is cut and ends in
 report that lists no view, or lists them in a form the operator does not read,
 gives the code alone.
 
+Ptah's `schema apply` refuses a MySQL or MariaDB plan with a backslash in a
+string literal on a session whose `sql_mode` names `NO_BACKSLASH_ESCAPES`,
+before any statement, and since v0.34.0 it names the refusal `backslash-mode`
+([stokaro/ptah#6400](https://github.com/stokaro/ptah/pull/6400)). Ptah writes a
+saved plan for a session in the default mode, where a backslash starts an
+escape, and a server in the other mode would store other characters than the
+plan spells. Ptah reads the session's mode and does not set it, and the operator
+refuses a `sql_mode` parameter in the URL, so the mode is the server's global
+one. A Plan meets the refusal in its dry run, and an approved plan's Apply in
+the run itself:
+
+```
+plan_refused: ptah refused to plan the change (backslash-mode)
+apply_refused: ptah refused the approved plan (backslash-mode)
+```
+
+The second follows a Plan made before the server took the mode. Before 0.2.16
+the Plan read `invalid_plan_output: plan validation reported failed rather
+than a dry run`, and nothing said why.
+
 | What Ptah refused | How it shows | What to do |
 | --- | --- | --- |
 | A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
@@ -779,6 +848,7 @@ gives the code alone.
 | The plan gives a PostgreSQL view or materialized view to a role that does not exist, since Ptah v0.30.1. | The Plan, or an approved plan's Apply, fails with the code `missing-owner-role`, naming the statement and the role. | Create the role, or declare the owner the view should have. |
 | The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, or declare an owner the login may give the view to. |
 | The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>`, or declare another owner. |
+| A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan fails at every retry with the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode`, or declare the value without a backslash. |
 | The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which reads `desired_schema_invalid` as above. | Read the sentence and change the declaration. |
 

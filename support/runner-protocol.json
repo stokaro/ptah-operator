@@ -487,6 +487,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:a449ddfc5aaae1d85dab0e268cf6af312d65bd425d9e26a5c874173e12d52a22",
       "reason": "The doc comment of a journal entry's reason in the api package the runner builds against now says a schema's Verified entry carries SchemaSourceUnreadable for a proof that could not read the desired schema. No frame carries a journal entry, and no type, field or validation moved. The runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:f65d03dc765ffefcc9c2155f23589c04db7526e3d746326337adad12ec1dbeb4",
+      "reason": "Read the refusal Ptah v0.34.0's schema apply dry run names backslash-mode, a plan with a backslash in a literal on a MySQL or MariaDB session whose sql_mode names NO_BACKSLASH_ESCAPES, as plan content, as the owner refusals are read: a Plan reports plan_refused with the code where it reported invalid_plan_output, and Ptah's sentence goes to the Pod log. The plan decoder accepts the omissions v0.34.0 records in a saved plan and decides nothing from them; the strict decoder refused every such plan. Doc comments in the api package the runner builds against say that MigrationDirectoryUnreadable also covers a second file for one direction of a version, and SchemaSourceUnreadable a partitioned MySQL table. plan_refused is a code every manager of protocol 1 reads, and the runner's commands, fields and frame shape are as they were. Protocol 1 stays."
     }
   ]
 }

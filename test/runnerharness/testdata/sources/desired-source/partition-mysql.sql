@@ -1,0 +1,8 @@
+CREATE TABLE events (
+  id bigint NOT NULL,
+  created date NOT NULL,
+  PRIMARY KEY (id, created)
+) PARTITION BY RANGE (YEAR(created)) (
+  PARTITION p0 VALUES LESS THAN (2026),
+  PARTITION p1 VALUES LESS THAN MAXVALUE
+);
