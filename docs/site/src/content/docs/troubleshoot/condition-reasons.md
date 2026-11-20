@@ -770,16 +770,22 @@ desired_schema_invalid: schema.sql: column "created_at" of table "events": DEFAU
 | `PtahSchema` Observe or Plan | `Ready=False` with reason `SchemaInvalid`, phase `Blocked`, and a `SchemaInvalid` Warning Event. `PlanReady` is false, `DriftDetected` and `InSync` are unknown, `ReconciliationFailed` is false, and `DatabaseReachable` is true: Ptah opened the database before it read the file. |
 
 The schema is not read again at the failure retry: another read of the same
-file gives the same answer. No plan is published, any approval is marked stale,
-and the source is read again at `spec.interval`, at once when a ConfigMap source
-or the spec changes, or on `kubectl ptah refresh`. A proof after an Apply that
-meets such a schema ends as one that meets a file Ptah cannot read does. Where
-the executor that planned the files refuses them on the read after, the journal
-records the proof `Verified` with outcome `Unknown` and reason `SchemaInvalid`,
-and `kubectl ptah wait --for applied` and `kubectl ptah settle --wait` stop and
-say Ptah refused the desired schema. Through 0.2.15 such a read was a failed
-operation instead, `ReconciliationFailed=True` with reason `OperationFailed`
-and an `OperationFailed` Warning Event, tried again after
+file against the same server gives the same answer. `schema validate` words the
+fault with the engine's defaults, but drift and plan decide it against the
+server, its version and its `sql_mode`, so a server change can move the
+verdict. No plan is published, any approval is marked stale, and the source is
+read again at `spec.interval`, at once when a ConfigMap source or the spec
+changes, or on `kubectl ptah refresh`, which is the way to read it again after
+the server changed. A proof after an Apply that meets such a schema ends as one
+that meets a file Ptah cannot read does. Under the binding the Apply ran under,
+the read after it meets a fault its Plan did not only where the server changed
+in between, such as an upgrade that moved what it supports or its `sql_mode`.
+The journal then records the proof `Verified` with outcome `Unknown` and reason
+`SchemaInvalid`, and `kubectl ptah wait --for applied` and
+`kubectl ptah settle --wait` stop and say Ptah refused the desired schema.
+Through 0.2.15 such a read was a failed operation instead,
+`ReconciliationFailed=True` with reason `OperationFailed` and an
+`OperationFailed` Warning Event, tried again after
 `spec.execution.failureRetryInterval`.
 
 The fault comes from the second run that names a file Ptah could not read, and

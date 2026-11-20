@@ -1793,10 +1793,12 @@ const (
 	// into a table the schema does not declare, an index on a column its
 	// table does not declare, or since Ptah v0.34.0 a domain whose own
 	// default is a relative time string such as 'now'. Another read of the
-	// same schema gives the same answer, so no plan is published and the
-	// schema is read again as it is for SchemaSourceUnreadable. A read after
-	// an Apply that ends this way ends the proof, and records no Apply as
-	// converged.
+	// same schema against the same server gives the same answer, so no plan
+	// is published and the schema is read again as it is for
+	// SchemaSourceUnreadable, at its interval or on a read request, which is
+	// how a server change, such as an upgrade that moves what it supports or
+	// its sql_mode, is read. A read after an Apply that ends this way ends
+	// the proof, and records no Apply as converged.
 	ReasonSchemaInvalid ConditionReason = "SchemaInvalid"
 	// ReasonSchemaSourceUnreadable says an Observe or a Plan could not read
 	// the desired schema: a file Ptah cannot parse, which since Ptah v0.33.1

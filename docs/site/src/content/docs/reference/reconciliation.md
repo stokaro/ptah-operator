@@ -164,10 +164,11 @@ The operator rolls nothing back. Each branch has its own recovery, and
   read is a whole interval away.
 - **A read fails.** Resolve, Verify, Observe, Plan and a history read change
   nothing, so they retry after `spec.execution.failureRetryInterval`. A desired
-  file Ptah cannot read is not retried: another read of the same file gets the
-  same answer, so the resource stops at
-  [`Blocked`](#blocked-is-a-refusal-not-a-fault) and reads it again at its
-  interval.
+  file Ptah cannot read, or a schema it refuses as a whole, is not retried:
+  another read of the same file against the same server gets the same answer,
+  so the resource stops at [`Blocked`](#blocked-is-a-refusal-not-a-fault) and
+  reads it again at its interval, or on `kubectl ptah refresh` after the server
+  changed.
 
 ### What differs between a schema and a migration {#schema-and-migration}
 

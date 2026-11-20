@@ -28,7 +28,10 @@ import (
 // its table does not declare, a domain whose own default is a relative time
 // string.
 //
-// Either answer belongs to the file, so another attempt gets it again. Retried
+// Either answer belongs to the file, so another attempt against the same
+// server gets it again. An invalid schema is decided against the server, its
+// version and its sql_mode, so a server change can move it; the interval and a
+// read request read it again, which is how such a change is noticed. Retried
 // at every failure retry, as before, the read dispatched a Job each time, took
 // the database Lease each time, and reported a fault while waiting on a person
 // to change the file. The read stops at Blocked instead, as a migration's
