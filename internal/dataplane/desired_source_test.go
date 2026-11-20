@@ -183,6 +183,14 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 		// The plan of this one excludes the table, and stops on the fault all
 		// the same.
 		{"an index on a table the plan excludes", "excluded-index", "PostgreSQL", indexKey},
+		// Since Ptah v0.34.0 a domain's own relative time default is a fault of
+		// the schema (stokaro/ptah#6386), and drift and plan name the domain
+		// in public, as they name a table.
+		{"a domain's relative time default", "relative-time-domain", "PostgreSQL", domainDefault},
+		// A column a domain types, with a relative time default of its own:
+		// drift and plan name its table in public and its type by the
+		// domain's schema.
+		{"a domain column's relative time default", "relative-time-domain-column", "PostgreSQL", domainColumnDefault},
 	} {
 		for _, command := range []string{"drift", "plan"} {
 			t.Run(test.name+"/"+command, func(t *testing.T) {
@@ -200,6 +208,23 @@ func TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn(t *testing.T) {
 // notUniqueTail is how Ptah v0.33.0 goes on after the not-unique fault it
 // wrote alone before (stokaro/ptah#6233).
 const notUniqueTail = ": a primary key, UNIQUE constraint or unique index must key exactly those columns"
+
+// relativeTimeTail is how Ptah v0.34.0 goes on after the type it names in the
+// refusal of a domain's relative time default.
+const relativeTimeTail = " domain is read once, when the domain is created, so every row gets that moment and every plan changes " +
+	"the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+
+// columnRelativeTimeTail is how it goes on after the column type it names in
+// the refusal of a column's relative time default.
+const columnRelativeTimeTail = " is read once, when the table is created, so every row gets that moment and every plan changes " +
+	"the column again; write a function the server calls for each row, such as now() or CURRENT_DATE"
+
+// domainDefault is validate's fault for relative-time-domain.sql, and
+// domainColumnDefault for relative-time-domain-column.sql.
+const (
+	domainDefault       = `domain "moment": DEFAULT 'now' on a timestamp` + relativeTimeTail
+	domainColumnDefault = `column "created_at" of table "events": DEFAULT 'now' on a moment column` + columnRelativeTimeTail
+)
 
 // On a PostgreSQL URL that pins no search_path, plan since Ptah v0.30.0 and
 // drift since v0.30.1 can name the table they placed in public with that
@@ -328,6 +353,108 @@ func TestSchemaStructuralProblemReadsATableThePlanPlacedInASchema(t *testing.T) 
 	}
 }
 
+// Drift and plan place a domain the file declares without a schema as they
+// place a table, so the refusal of its own relative time default names domain
+// "public.moment" where validate names domain "moment". A column that domain
+// types is named by the domain's schema, unquoted, where validate names the
+// type alone. Both were measured with Ptah v0.34.0 on PostgreSQL 17, and the
+// captures hold them (TestSchemaStructuralProblemReadsAFaultTheCommandStoppedOn);
+// the rows here vary them.
+func TestSchemaStructuralProblemReadsADomainThePlanPlacedInASchema(t *testing.T) {
+	t.Parallel()
+
+	domain := desiredSourceFixture(t, "validate-relative-time-domain.txt")
+	for failed, want := range map[string]bool{
+		`compare database schema: domain "public.moment": DEFAULT 'now' on a timestamp` + relativeTimeTail:   true,
+		`error comparing schemas: domain "app.moment": DEFAULT 'now' on a timestamp` + relativeTimeTail:      true,
+		`error comparing schemas: ` + domainDefault:                                                          true,
+		`error comparing schemas: domain "public.other": DEFAULT 'now' on a timestamp` + relativeTimeTail:    false,
+		`error comparing schemas: domain ".moment": DEFAULT 'now' on a timestamp` + relativeTimeTail:         false,
+		`error comparing schemas: domain "x.public.moment": DEFAULT 'now' on a timestamp` + relativeTimeTail: false,
+		`error comparing schemas: domain public."moment": DEFAULT 'now' on a timestamp` + relativeTimeTail:   false,
+		// The type a domain is over is a built-in type, which nothing places:
+		// only a column's type comes back with a schema in front of it.
+		`error comparing schemas: domain "public.moment": DEFAULT 'now' on a public.timestamp` + relativeTimeTail:     false,
+		`error comparing schemas: domain "public.moment": DEFAULT 'now' on a date` + relativeTimeTail:                 false,
+		`error comparing schemas: domain "public.moment": DEFAULT 'now' on a timestamp` + relativeTimeTail + `: held`: false,
+	} {
+		got, found := dataplane.SchemaStructuralProblem(domain, "PostgreSQL", failed)
+		if found != want || (found && got != domainDefault) {
+			t.Errorf("SchemaStructuralProblem(%q) = %q, %v, want found %v", failed, got, found, want)
+		}
+	}
+
+	column := desiredSourceFixture(t, "validate-relative-time-domain-column.txt")
+	placedColumn := func(table, columnType string) string {
+		return `compare database schema: column "created_at" of table ` + table + `: DEFAULT 'now' on a ` + columnType + ` column` + columnRelativeTimeTail
+	}
+	for failed, want := range map[string]bool{
+		placedColumn(`"public.events"`, "public.moment"): true,
+		placedColumn(`"events"`, "public.moment"):        true,
+		placedColumn(`"public.events"`, "moment"):        true,
+		placedColumn(`"events"`, "moment"):               true,
+		// The type is the domain's, which need not be the tables' schema.
+		placedColumn(`"public.events"`, "app.moment"):       true,
+		placedColumn(`"public.events"`, "public.other"):     false,
+		placedColumn(`"public.events"`, ".moment"):          false,
+		placedColumn(`"public.events"`, "x.public.moment"):  false,
+		placedColumn(`"public.events"`, `"public".moment`):  false,
+		placedColumn(`"public.events"`, `"public.moment"`):  false,
+		placedColumn(`"public.other"`, "public.moment"):     false,
+		placedColumn(`"public.events"`, "public.momentary"): false,
+		`compare database schema: column "public.created_at" of table "public.events": DEFAULT 'now' on a public.moment column` + columnRelativeTimeTail: false,
+		placedColumn(`"public.events"`, "public.moment") + `: held`:                                                                                      false,
+	} {
+		got, found := dataplane.SchemaStructuralProblem(column, "PostgreSQL", failed)
+		if found != want || (found && got != domainColumnDefault) {
+			t.Errorf("SchemaStructuralProblem(%q) = %q, %v, want found %v", failed, got, found, want)
+		}
+	}
+
+	// A type validate prints with its schema, or an array of the domain,
+	// comes back only as validate prints it, or placed the same way.
+	const arrays = "postgres: schema: column \"c\" of table \"t\": DEFAULT '{now}' on a moment[] column is read once\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: column "c" of table "public.t": DEFAULT '{now}' on a public.moment[] column is read once`:   true,
+		`error comparing schemas: column "c" of table "public.t": DEFAULT '{now}' on a public.moment column is read once`:     false,
+		`error comparing schemas: column "c" of table "public.t": DEFAULT '{now}' on a public.moment[][] column is read once`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(arrays), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+	const qualifiedType = "postgres: schema: column \"c\" of table \"t\": DEFAULT 'now' on a app.moment column is read once\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: column "c" of table "public.t": DEFAULT 'now' on a app.moment column is read once`:        true,
+		`error comparing schemas: column "c" of table "public.t": DEFAULT 'now' on a public.app.moment column is read once`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(qualifiedType), "PostgreSQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) found = %v, want %v", failed, found, want)
+		}
+	}
+
+	// A domain is placed only after the word domain, and only on PostgreSQL.
+	const subdomain = "postgres: schema: a subdomain \"moment\" is declared twice\n"
+	if got, found := dataplane.SchemaStructuralProblem([]byte(subdomain), "PostgreSQL",
+		`error comparing schemas: a subdomain "public.moment" is declared twice`); found {
+		t.Errorf("SchemaStructuralProblem() = %q, want no reason for a name after a longer word", got)
+	}
+	const words = "postgres: schema: DEFAULT 'now' on a cloud column is read once\n"
+	if got, found := dataplane.SchemaStructuralProblem([]byte(words), "PostgreSQL",
+		`error comparing schemas: DEFAULT 'now' on a cloud columns is read once`); found {
+		t.Errorf("SchemaStructuralProblem() = %q, want no reason for another word after the type", got)
+	}
+	const mysqlDomain = "mysql: schema: domain \"moment\": DEFAULT 'now' on a timestamp domain is read once\n"
+	for failed, want := range map[string]bool{
+		`error comparing schemas: domain "moment": DEFAULT 'now' on a timestamp domain is read once`:         true,
+		`error comparing schemas: domain "otherdb.moment": DEFAULT 'now' on a timestamp domain is read once`: false,
+	} {
+		if _, found := dataplane.SchemaStructuralProblem([]byte(mysqlDomain), "MySQL", failed); found != want {
+			t.Errorf("SchemaStructuralProblem(%q) on MySQL found = %v, want %v", failed, found, want)
+		}
+	}
+}
+
 // TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn holds the filter
 // to the measured near miss first. On a database that holds a schema the file
 // declares nothing of, drift and plan stop on a key into that schema, which
@@ -343,29 +470,6 @@ func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) 
 			if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-other-and-key.txt"), "PostgreSQL",
 				failedSentence(t, command+"-other-and-key.json")); found {
 				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
-			}
-		})
-		// A gap rather than a rule. Ptah v0.34.0 refuses a domain's own
-		// relative time default (stokaro/ptah#6386); validate names the domain
-		// "moment" and drift and plan name it "public.moment", and only a
-		// table's name may come back placed in a schema. So the Observe keeps
-		// child_exit and the Plan reports plan_refused, as the support catalog
-		// says. Placing a domain's name too would move this row.
-		t.Run("a domain the command placed in public/"+command, func(t *testing.T) {
-			t.Parallel()
-			validate := desiredSourceFixture(t, "validate-relative-time-domain.txt")
-			failed := failedSentence(t, command+"-relative-time-domain.json")
-			if got, found := dataplane.SchemaStructuralProblem(validate, "PostgreSQL", failed); found {
-				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
-			}
-			// The placement alone is what refuses it: the same sentence with
-			// the domain named as validate names it is read.
-			unplaced := strings.Replace(failed, `domain "public.moment"`, `domain "moment"`, 1)
-			if unplaced == failed {
-				t.Fatalf("the failed sentence %q names no domain public.moment", failed)
-			}
-			if _, found := dataplane.SchemaStructuralProblem(validate, "PostgreSQL", unplaced); !found {
-				t.Fatalf("SchemaStructuralProblem() reads nothing of %q", unplaced)
 			}
 		})
 	}

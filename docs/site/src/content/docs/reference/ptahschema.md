@@ -774,7 +774,7 @@ spec:
 | `status.journal.entries[].plan` | `string` | Plan names the plan the event concerns. |
 | `status.journal.entries[].planFingerprint` | `string` | PlanFingerprint is the spec.fingerprint of the plan an Apply or a run carried out, when the claim recorded it. |
 | `status.journal.entries[].planUID` | `string` | PlanUID is the UID of the plan an Apply or a run carried out, or of the plan a PtahMigration's approval was accepted for. |
-| `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set, on an OperationFailed entry. On a PtahSchema's Verified entry it says why a proof ended that compared nothing with the database: SchemaSourceUnreadable, where Ptah could not read the desired schema the Apply ran from. It is a code, never the message: a message can carry what status must not. |
+| `status.journal.entries[].reason` | `string` | Reason is the condition reason the failure set, on an OperationFailed entry. On a PtahSchema's Verified entry it says why a proof ended that compared nothing with the database: SchemaSourceUnreadable, where Ptah could not read the desired schema the Apply ran from, or SchemaInvalid, where Ptah refused it as a whole. It is a code, never the message: a message can carry what status must not. |
 | `status.journal.entries[].replaced` | `string` | Replaced names the plan a published PtahSchema plan took the place of: one a person could approve, or had approved, and that never ran. A PlanStale Warning reports the same replacement, and an Event can be lost. |
 | `status.journal.entries[].startedAt` | `string` | StartedAt is when an Apply or a run began. |
 | `status.journal.entries[].statements` | `integer` | Statements is how many statements a published PtahSchema plan holds. |

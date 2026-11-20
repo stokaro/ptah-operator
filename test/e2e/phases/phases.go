@@ -796,7 +796,9 @@ type ConfigMapSourceInputs struct {
 // before the operation container starts; a desired file Ptah cannot read
 // stopping a schema and a migration at Blocked, named in the condition and the
 // Event, and the schema read again on a request and on an edit but not at the
-// failure retry; the fault of a schema Ptah read and refuses; and a statement
+// failure retry; a schema Ptah read and refuses as a whole stopping at Blocked
+// the same way, held past the failure retry and read again on an edit; and a
+// statement
 // the database refuses, whose answer is in the Pod log and nowhere else, read by
 // running the command the status and the Event print, as the diagnostic reader
 // examples/diagnostic-reader-role.yaml is written for. The Job carries the 24 hour

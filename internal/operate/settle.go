@@ -459,14 +459,14 @@ func (w *waiter) proofEnded(s snapshot, schema *operatorv1alpha1.PtahSchema) ver
 	}
 	switch ended.Outcome {
 	case operatorv1alpha1.JournalUnknown:
-		// A proof whose read could not read the desired schema ends Unknown
-		// too, without the statement, and its entry carries the reason. Ready
-		// is no witness: the pass after the proof ends answers a read request
-		// or reads an edited ConfigMap source, and rewrites it.
-		if ended.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) {
+		// A proof whose read could not read the desired schema, or met one
+		// Ptah refuses, ends Unknown too, without the statement, and its entry
+		// carries the reason. Ready is no witness: the pass after the proof
+		// ends answers a read request or reads an edited ConfigMap source, and
+		// rewrites it.
+		if because, refused := schemaRefusedBecause(ended.Reason); refused {
 			return w.stop(s, StopProofEnded, fmt.Sprintf("a read of the target plan %s was made for ended the proof "+
-				"because Ptah could not read the desired schema the Apply ran from, so the statement was not taken",
-				plan))
+				"because %s, so the statement was not taken", plan, because))
 		}
 		return verdict{done: true}
 	case operatorv1alpha1.JournalInSync:

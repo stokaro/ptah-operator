@@ -87,6 +87,95 @@ func relativeTimeFailure(t *testing.T, fixture string) []byte {
 	return data
 }
 
+// capturedSchemaFault is the fault the pinned Ptah image gave for a schema it
+// read and refuses as a whole, read the way the runner reads it: from the
+// `schema validate` output the harness captured, held to the sentence the
+// captured drift document failed with, and with the file the runner names in
+// front of it.
+func capturedSchemaFault(t *testing.T, validated, failed string) string {
+	t.Helper()
+	failure, err := dataplane.DecodeDriftFailure(readCapture(t, "..", "dataplane", "testdata", "desired-source", failed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fault, found := dataplane.SchemaStructuralProblem(
+		readCapture(t, "..", "dataplane", "testdata", "desired-source", validated),
+		string(operatorv1alpha1.DatabaseEnginePostgreSQL), failure.Message,
+	)
+	if !found {
+		t.Fatalf("%s holds no fault %s stopped on", validated, failed)
+	}
+	return "schema.sql: " + fault
+}
+
+// domainFault is the fault Ptah v0.34.0 gives a timestamp domain whose own
+// default is 'now' (stokaro/ptah#6386), as the runner reports it.
+func domainFault(t *testing.T) string {
+	t.Helper()
+	fault := capturedSchemaFault(t, "validate-relative-time-domain.txt", "drift-relative-time-domain.json")
+	if !strings.HasPrefix(fault, `schema.sql: domain "moment": DEFAULT 'now'`) {
+		t.Fatalf("the captured fault %q is not the domain's relative time default", fault)
+	}
+	return fault
+}
+
+// relativeTimeDomainPtah answers the runner as Ptah v0.34.0 answers a
+// PostgreSQL schema that declares a timestamp domain whose own default is
+// 'now': drift and plan fail with the comparison's fault, naming the domain
+// in the schema they placed it in, and `schema validate` prints the same fault
+// with the name the file gives. Each answer is the document the harness
+// captured from the pinned image.
+type relativeTimeDomainPtah struct{ t *testing.T }
+
+func (p relativeTimeDomainPtah) Execute(_ context.Context, spec runner.CommandSpec, stdout, _ io.Writer) (int, error) {
+	if len(spec.Args) >= 2 && spec.Args[0] == "schema" {
+		fixture, exit := "", 2
+		switch spec.Args[1] {
+		case "drift":
+			fixture = "drift-relative-time-domain.json"
+		case "plan":
+			fixture = "plan-relative-time-domain.json"
+		case "validate":
+			fixture, exit = "validate-relative-time-domain.txt", 1
+		}
+		if fixture != "" {
+			_, err := stdout.Write(readCapture(p.t, "..", "dataplane", "testdata", "desired-source", fixture))
+			return exit, err
+		}
+	}
+	p.t.Errorf("the runner ran %s %v, which the capture has no answer for", spec.Path, spec.Args)
+	return -1, context.Canceled
+}
+
+// schemaRefusalRow is one of the answers that stop a schema's read: the code
+// the runner reports, the reason the schema stops with, the words InSync
+// uses for what Ptah did with the schema the Apply ran from, a word the
+// reason has to hold, and a Ptah that answers as the pinned image answered
+// for that file.
+type schemaRefusalRow struct {
+	name    string
+	code    string
+	reason  operatorv1alpha1.ConditionReason
+	refused string
+	says    string
+	ptah    func(*testing.T) runner.Executor
+}
+
+func schemaRefusalRows() []schemaRefusalRow {
+	return []schemaRefusalRow{
+		{
+			name: "a file Ptah cannot read", code: runner.CodeDesiredSourceUnreadable,
+			reason: operatorv1alpha1.ReasonSchemaSourceUnreadable, refused: "could not read", says: "DEFAULT 'now'",
+			ptah: func(t *testing.T) runner.Executor { return relativeTimePtah{t: t} },
+		},
+		{
+			name: "a schema Ptah refuses", code: runner.CodeDesiredSchemaInvalid,
+			reason: operatorv1alpha1.ReasonSchemaInvalid, refused: "refused", says: `domain "moment": DEFAULT 'now'`,
+			ptah: func(t *testing.T) runner.Executor { return relativeTimeDomainPtah{t: t} },
+		},
+	}
+}
+
 func drainEvents(recorder *record.FakeRecorder) []string {
 	var events []string
 	for {
@@ -119,6 +208,7 @@ var earlierInstant = metav1.NewTime(readRequestClock.Add(-3 * time.Hour))
 // approved: the approval it recorded exists.
 func unreadableReadFixture(
 	t *testing.T, claim operatorv1alpha1.OperationType, operation runner.Operation, failure *runner.ResultError,
+	edits ...func(*operatorv1alpha1.PtahSchema),
 ) (*operatorv1alpha1.PtahSchema, *SchemaReconciler, client.Client, *record.FakeRecorder) {
 	t.Helper()
 	schema := readOnlySchemaClaim(t, claim)
@@ -145,6 +235,9 @@ func unreadableReadFixture(
 	}
 	schema.Status.Source.VerificationPolicyUID = testPolicyUID
 	schema.Status.Source.VerificationPolicyDigest = fingerprint.DigestBytes([]byte("policy"))
+	for _, edit := range edits {
+		edit(schema)
+	}
 	bindActiveInput(t, schema)
 	approval := &operatorv1alpha1.PtahSchemaApproval{ObjectMeta: metav1.ObjectMeta{
 		Namespace: schema.Namespace, Name: "recorded-approval", UID: "recorded-approval-uid", Generation: 1,
@@ -166,64 +259,112 @@ func unreadableReadFixture(
 	return schema, reconciler, api, recorder
 }
 
-// The reproduction of stokaro/ptah-operator#1150. Since Ptah v0.33.1 a schema
-// whose date or time column defaults to a relative time string, as 'now', is
-// refused as a fault of the file, and every Observe and Plan fails with
-// desired_source_unreadable. The operator retried each at every failure retry:
-// a Job and the database Lease every 30 seconds by default, ReconciliationFailed
-// and an OperationFailed Warning each time, until a person changed the file.
-// Another read of the same file gets the same answer, so the read now stops at
-// Blocked with a reason of its own and Ptah's sentence, publishes no plan,
-// marks the recorded approval stale, says so once in a Warning, and reads again
-// at the interval.
+// The reproduction of stokaro/ptah-operator#1150 and #1158. Since Ptah v0.33.1
+// a schema whose date or time column defaults to a relative time string, as
+// 'now', is refused as a fault of the file, and every Observe and Plan fails
+// with desired_source_unreadable. Since v0.34.0 a timestamp domain whose own
+// default is 'now' is refused as a fault of the schema as a whole, which the
+// runner reports as desired_schema_invalid, as it does a foreign key into a
+// table the schema does not declare. The operator retried each at every
+// failure retry: a Job and the database Lease every 30 seconds by default,
+// ReconciliationFailed and an OperationFailed Warning each time, until a
+// person changed the file. Another read of the same file gets the same answer,
+// so the read now stops at Blocked with a reason for each answer and Ptah's
+// sentence, publishes no plan, marks the recorded approval stale, says so once
+// in a Warning, and reads again at the interval.
 //
-// The controls fail with codes a retry may change, and with the schema fault
-// Ptah reports for a file it read: each is a failed read as before, and runs
-// again.
+// An unreadable file says nothing about the target, so DatabaseReachable keeps
+// what the earlier read said, which the rows give as opened and as not opened.
+// A schema refused as a whole was compared with the database, so the refusal
+// says the read opened it, from a fixture whose earlier read did not.
+//
+// The controls fail with codes a retry may change: each is a failed read as
+// before, and runs again.
 func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 	t.Parallel()
 	relativeTime := capturedSchemaReason(t, "validate-relative-time.txt")
 	if !strings.Contains(relativeTime, "DEFAULT 'now'") {
 		t.Fatalf("the captured reason %q is not about a relative time default", relativeTime)
 	}
+	domain := domainFault(t)
+	foreignKey := capturedSchemaFault(t, "validate-foreign-key.txt", "drift-foreign-key.json")
+	unreadable := func(message string) runner.ResultError {
+		return runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: message}
+	}
+	invalid := func(message string) runner.ResultError {
+		return runner.ResultError{Code: runner.CodeDesiredSchemaInvalid, Message: message}
+	}
 	for _, row := range []struct {
 		name    string
 		claim   operatorv1alpha1.OperationType
 		runner  runner.Operation
 		failure runner.ResultError
-		blocked bool
+		// reason is what the read stops with; none is a failure that is
+		// retried.
+		reason operatorv1alpha1.ConditionReason
+		// unreached is an earlier read that did not open the database.
+		unreached bool
 	}{
 		{
 			name: "an Observe of a relative time default", claim: operatorv1alpha1.OperationObserve, runner: runner.OperationObserve,
-			failure: runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: relativeTime}, blocked: true,
+			failure: unreadable(relativeTime), reason: operatorv1alpha1.ReasonSchemaSourceUnreadable,
+		},
+		{
+			name: "an Observe of a relative time default after a read that did not open the database", claim: operatorv1alpha1.OperationObserve,
+			runner: runner.OperationObserve, failure: unreadable(relativeTime), reason: operatorv1alpha1.ReasonSchemaSourceUnreadable, unreached: true,
 		},
 		{
 			name: "a Plan of a relative time default", claim: operatorv1alpha1.OperationPlan, runner: runner.OperationPlan,
-			failure: runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: relativeTime}, blocked: true,
+			failure: unreadable(relativeTime), reason: operatorv1alpha1.ReasonSchemaSourceUnreadable,
 		},
 		{
 			name: "a Plan of a table option the parser refuses", claim: operatorv1alpha1.OperationPlan, runner: runner.OperationPlan,
-			failure: runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: unreadableReason}, blocked: true,
+			failure: unreadable(unreadableReason), reason: operatorv1alpha1.ReasonSchemaSourceUnreadable,
+		},
+		{
+			name: "an Observe of a domain's relative time default", claim: operatorv1alpha1.OperationObserve, runner: runner.OperationObserve,
+			failure: invalid(domain), reason: operatorv1alpha1.ReasonSchemaInvalid, unreached: true,
+		},
+		{
+			name: "a Plan of a domain's relative time default", claim: operatorv1alpha1.OperationPlan, runner: runner.OperationPlan,
+			failure: invalid(domain), reason: operatorv1alpha1.ReasonSchemaInvalid, unreached: true,
+		},
+		{
+			name: "an Observe of a foreign key into a table the schema does not declare", claim: operatorv1alpha1.OperationObserve,
+			runner: runner.OperationObserve, failure: invalid(foreignKey), reason: operatorv1alpha1.ReasonSchemaInvalid, unreached: true,
 		},
 		{
 			name: "control: an Observe that ended with an exit status", claim: operatorv1alpha1.OperationObserve, runner: runner.OperationObserve,
 			failure: runner.ResultError{Code: "child_exit", Message: "ptah exited with code 2"},
 		},
 		{
-			name: "control: a Plan of a schema Ptah read and refuses", claim: operatorv1alpha1.OperationPlan, runner: runner.OperationPlan,
-			failure: runner.ResultError{Code: runner.CodeDesiredSchemaInvalid, Message: "schema.sql: table public.orders has no columns"},
+			// What the domain's default read as before the runner placed the
+			// domain's name.
+			name: "control: a Plan Ptah refused with no fault the runner tied to the file", claim: operatorv1alpha1.OperationPlan,
+			runner:  runner.OperationPlan,
+			failure: runner.ResultError{Code: "plan_refused", Message: "ptah refused to plan the change (declaration-refused)"},
 		},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			schema, reconciler, api, recorder := unreadableReadFixture(t, row.claim, row.runner, &row.failure)
+			schema, reconciler, api, recorder := unreadableReadFixture(t, row.claim, row.runner, &row.failure,
+				func(schema *operatorv1alpha1.PtahSchema) {
+					if !row.unreached {
+						return
+					}
+					meta.SetStatusCondition(&schema.Status.Conditions, metav1.Condition{
+						Type: operatorv1alpha1.ConditionDatabaseReachable, Status: metav1.ConditionFalse,
+						Reason: string(operatorv1alpha1.ReasonDatabaseUnreachable), Message: "the database did not answer",
+						ObservedGeneration: schema.Generation, LastTransitionTime: earlierInstant,
+					})
+				})
 			attempt := schema.Status.ActiveOperation.Attempt
 
 			actual := reconcileSchema(t, reconciler, api, schema)
 
 			said := row.failure.Code + ": " + row.failure.Message
 			events := drainEvents(recorder)
-			if !row.blocked {
+			if row.reason == "" {
 				failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
 				if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != attempt+1 ||
 					actual.Status.Phase != operatorv1alpha1.PhaseFailed || failed == nil || failed.Status != metav1.ConditionTrue ||
@@ -231,8 +372,10 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 					t.Fatalf("the failed read was not retried: phase %s, claim %#v, ReconciliationFailed %#v",
 						actual.Status.Phase, actual.Status.ActiveOperation, failed)
 				}
-				if found := eventsStartingWith(events, corev1.EventTypeWarning+" SchemaSourceUnreadable"); len(found) != 0 {
-					t.Fatalf("a failure a retry may change was reported as an unreadable file: %q", found)
+				for _, reason := range []operatorv1alpha1.ConditionReason{operatorv1alpha1.ReasonSchemaSourceUnreadable, operatorv1alpha1.ReasonSchemaInvalid} {
+					if found := eventsStartingWith(events, corev1.EventTypeWarning+" "+string(reason)); len(found) != 0 {
+						t.Fatalf("a failure a retry may change was reported as %s: %q", reason, found)
+					}
 				}
 				return
 			}
@@ -257,10 +400,10 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 				reason    operatorv1alpha1.ConditionReason
 				message   string
 			}{
-				{operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSchemaSourceUnreadable, said},
-				{operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSchemaSourceUnreadable, ""},
-				{operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonSchemaSourceUnreadable, ""},
-				{operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSchemaSourceUnreadable, ""},
+				{operatorv1alpha1.ConditionReady, metav1.ConditionFalse, row.reason, said},
+				{operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, row.reason, ""},
+				{operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, row.reason, ""},
+				{operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, row.reason, ""},
 				{operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPlanNoLongerCurrent, ""},
 				{operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionFalse, operatorv1alpha1.ReasonSucceeded, ""},
 			} {
@@ -270,10 +413,23 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 					t.Fatalf("%s = %#v, want %s with %s %q", expected.condition, found, expected.status, expected.reason, expected.message)
 				}
 			}
-			// Nothing in the refusal says the target answered or did not.
-			if reachable := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable); reachable == nil ||
-				reachable.Status != metav1.ConditionTrue || !reachable.LastTransitionTime.Equal(&earlierInstant) {
-				t.Fatalf("DatabaseReachable = %#v, want the earlier read's, from %v", reachable, earlierInstant)
+			reachable := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable)
+			switch {
+			case row.reason == operatorv1alpha1.ReasonSchemaInvalid:
+				// The comparison that refused the schema read the database.
+				if reachable == nil || reachable.Status != metav1.ConditionTrue || reachable.Reason != string(operatorv1alpha1.ReasonObserved) ||
+					reachable.LastTransitionTime.Equal(&earlierInstant) {
+					t.Fatalf("DatabaseReachable = %#v, want True Observed, written by this read", reachable)
+				}
+			case row.unreached:
+				if reachable == nil || reachable.Status != metav1.ConditionFalse || !reachable.LastTransitionTime.Equal(&earlierInstant) {
+					t.Fatalf("DatabaseReachable = %#v, want the earlier read's False, from %v", reachable, earlierInstant)
+				}
+			default:
+				// Nothing in the refusal says the target answered or did not.
+				if reachable == nil || reachable.Status != metav1.ConditionTrue || !reachable.LastTransitionTime.Equal(&earlierInstant) {
+					t.Fatalf("DatabaseReachable = %#v, want the earlier read's, from %v", reachable, earlierInstant)
+				}
 			}
 			approval := &operatorv1alpha1.PtahSchemaApproval{}
 			if err := api.Get(context.Background(), client.ObjectKey{Namespace: schema.Namespace, Name: "recorded-approval"}, approval); err != nil {
@@ -283,9 +439,9 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 				stale.Status != metav1.ConditionTrue || stale.Reason != string(operatorv1alpha1.ReasonPlanNoLongerCurrent) {
 				t.Fatalf("ApprovalStale = %#v, want the recorded approval stale", stale)
 			}
-			if found := eventsStartingWith(events, corev1.EventTypeWarning+" SchemaSourceUnreadable"); len(found) != 1 ||
-				found[0] != corev1.EventTypeWarning+" SchemaSourceUnreadable "+said {
-				t.Fatalf("SchemaSourceUnreadable Warnings = %q, want one saying %q", found, said)
+			warning := corev1.EventTypeWarning + " " + string(row.reason)
+			if found := eventsStartingWith(events, warning+" "); len(found) != 1 || found[0] != warning+" "+said {
+				t.Fatalf("%s Warnings = %q, want one saying %q", row.reason, found, said)
 			}
 			if found := eventsStartingWith(events, corev1.EventTypeWarning+" OperationFailed"); len(found) != 0 {
 				t.Fatalf("the refusal was reported as a failed operation: %q", found)
@@ -304,75 +460,105 @@ func TestAReadOfASchemaPtahCannotReadStopsBlocked(t *testing.T) {
 var updateRefusalReading = flag.Bool("update", false,
 	"rewrite the readings under testdata from what the reconciler stores now")
 
-// refusalReadingPath is the stored schema of a refused Observe. The e2e
-// predicates that recognize the refusal in a cluster are tested against it
-// (test/e2e/unreadable_source_test.go).
-var refusalReadingPath = filepath.Join("testdata", "schema-source-unreadable.json")
+// refusalReadingPath and invalidReadingPath are the stored schemas of an
+// Observe that could not read its file and of one that met a schema Ptah
+// refuses. The e2e predicates that recognize each refusal in a cluster are
+// tested against them (test/e2e/unreadable_source_test.go).
+var (
+	refusalReadingPath = filepath.Join("testdata", "schema-source-unreadable.json")
+	invalidReadingPath = filepath.Join("testdata", "schema-invalid.json")
+)
 
-// TestTheRefusalReadingIsWhatTheReconcilerStores keeps that reading to the
-// document the reconciler stores, so the e2e predicates cannot pass against a
-// state the controller never writes. The condition transition times come from
-// the wall clock and are left out; every other field the refusal writes is
-// what the reconciler wrote, on its fixed clock.
+// TestTheRefusalReadingIsWhatTheReconcilerStores keeps those readings to the
+// documents the reconciler stores, so the e2e predicates cannot pass against
+// a state the controller never writes. The condition transition times come
+// from the wall clock and are left out; every other field the refusal writes
+// is what the reconciler wrote, on its fixed clock.
 func TestTheRefusalReadingIsWhatTheReconcilerStores(t *testing.T) {
 	t.Parallel()
-	schema, reconciler, api, _ := unreadableReadFixture(t, operatorv1alpha1.OperationObserve, runner.OperationObserve,
-		&runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: capturedSchemaReason(t, "validate-relative-time.txt")})
-	stored := reconcileSchema(t, reconciler, api, schema)
-	if stored.Status.Phase != operatorv1alpha1.PhaseBlocked {
-		t.Fatalf("the fixture did not stop: phase %s", stored.Status.Phase)
-	}
-	conditions := slices.Clone(stored.Status.Conditions)
-	for index := range conditions {
-		conditions[index].LastTransitionTime = metav1.Time{}
-	}
-	reading := map[string]any{
-		"apiVersion": operatorv1alpha1.GroupVersion.String(),
-		"kind":       "PtahSchema",
-		"metadata":   map[string]any{"namespace": stored.Namespace, "name": stored.Name, "generation": stored.Generation},
-		"status": map[string]any{
-			"phase":                  stored.Status.Phase,
-			"observedGeneration":     stored.Status.ObservedGeneration,
-			"lastAttemptTime":        stored.Status.LastAttemptTime,
-			"nextReconciliationTime": stored.Status.NextReconciliationTime,
-			"activeOperation":        stored.Status.ActiveOperation,
-			"plan":                   stored.Status.Plan,
-			"conditions":             conditions,
-		},
-	}
-	data, err := json.MarshalIndent(reading, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data = append(data, '\n')
-	if *updateRefusalReading {
-		if err := os.MkdirAll(filepath.Dir(refusalReadingPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(refusalReadingPath, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(refusalReadingPath)
-	if err != nil {
-		t.Fatalf("%v: run go test ./internal/controller -run TestTheRefusalReadingIsWhatTheReconcilerStores -update", err)
-	}
-	if !bytes.Equal(data, want) {
-		t.Fatalf("the reconciler stores another reading than %s; run go test ./internal/controller "+
-			"-run TestTheRefusalReadingIsWhatTheReconcilerStores -update and review the diff:\n%s", refusalReadingPath, data)
+	for _, reading := range []struct {
+		path    string
+		failure runner.ResultError
+	}{
+		{refusalReadingPath, runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: capturedSchemaReason(t, "validate-relative-time.txt")}},
+		{invalidReadingPath, runner.ResultError{Code: runner.CodeDesiredSchemaInvalid, Message: domainFault(t)}},
+	} {
+		t.Run(filepath.Base(reading.path), func(t *testing.T) {
+			t.Parallel()
+			schema, reconciler, api, _ := unreadableReadFixture(t, operatorv1alpha1.OperationObserve, runner.OperationObserve, &reading.failure)
+			stored := reconcileSchema(t, reconciler, api, schema)
+			if stored.Status.Phase != operatorv1alpha1.PhaseBlocked {
+				t.Fatalf("the fixture did not stop: phase %s", stored.Status.Phase)
+			}
+			conditions := slices.Clone(stored.Status.Conditions)
+			for index := range conditions {
+				conditions[index].LastTransitionTime = metav1.Time{}
+			}
+			document := map[string]any{
+				"apiVersion": operatorv1alpha1.GroupVersion.String(),
+				"kind":       "PtahSchema",
+				"metadata":   map[string]any{"namespace": stored.Namespace, "name": stored.Name, "generation": stored.Generation},
+				"status": map[string]any{
+					"phase":                  stored.Status.Phase,
+					"observedGeneration":     stored.Status.ObservedGeneration,
+					"lastAttemptTime":        stored.Status.LastAttemptTime,
+					"nextReconciliationTime": stored.Status.NextReconciliationTime,
+					"activeOperation":        stored.Status.ActiveOperation,
+					"plan":                   stored.Status.Plan,
+					"conditions":             conditions,
+				},
+			}
+			data, err := json.MarshalIndent(document, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, '\n')
+			if *updateRefusalReading {
+				if err := os.MkdirAll(filepath.Dir(reading.path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(reading.path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(reading.path)
+			if err != nil {
+				t.Fatalf("%v: run go test ./internal/controller -run TestTheRefusalReadingIsWhatTheReconcilerStores -update", err)
+			}
+			if !bytes.Equal(data, want) {
+				t.Fatalf("the reconciler stores another reading than %s; run go test ./internal/controller "+
+					"-run TestTheRefusalReadingIsWhatTheReconcilerStores -update and review the diff:\n%s", reading.path, data)
+			}
+		})
 	}
 }
 
 // A schema stopped on its file reads again only when something could have
 // changed the answer: at the interval, on a read request, or when its
 // ConfigMap source changes. Between those, a pass claims nothing and builds no
-// Job, where the retry it replaces dispatched one every failure retry.
+// Job, where the retry it replaces dispatched one every failure retry. A file
+// Ptah cannot read and a schema Ptah refuses stop the same way.
 func TestASchemaStoppedOnItsFileReadsAgain(t *testing.T) {
 	t.Parallel()
+	for _, refusal := range schemaRefusalRows() {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+			schemaStoppedOnItsFileReadsAgain(t, refusal)
+		})
+	}
+}
+
+func schemaStoppedOnItsFileReadsAgain(t *testing.T, refusal schemaRefusalRow) {
+	message := capturedSchemaReason(t, "validate-relative-time.txt")
+	source := "CREATE TABLE events (id bigint PRIMARY KEY, created_at timestamptz DEFAULT 'now');\n"
+	if refusal.code == runner.CodeDesiredSchemaInvalid {
+		message = domainFault(t)
+		source = "CREATE DOMAIN moment AS timestamp DEFAULT 'now';\nCREATE TABLE events (id bigint PRIMARY KEY, created_at moment NOT NULL);\n"
+	}
 	refused := func(t *testing.T) (*operatorv1alpha1.PtahSchema, *SchemaReconciler, client.Client) {
 		t.Helper()
 		schema, reconciler, api, _ := unreadableReadFixture(t, operatorv1alpha1.OperationObserve, runner.OperationObserve,
-			&runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: capturedSchemaReason(t, "validate-relative-time.txt")})
+			&runner.ResultError{Code: refusal.code, Message: message})
 		blocked := reconcileSchema(t, reconciler, api, schema)
 		if blocked.Status.Phase != operatorv1alpha1.PhaseBlocked || blocked.Status.ActiveOperation != nil {
 			t.Fatalf("the fixture did not stop: phase %s, claim %#v", blocked.Status.Phase, blocked.Status.ActiveOperation)
@@ -429,8 +615,7 @@ func TestASchemaStoppedOnItsFileReadsAgain(t *testing.T) {
 		t.Parallel()
 		schema := configMapSchemaFixture()
 		schema.Spec.Interval = metav1.Duration{Duration: time.Hour}
-		reconciler, api := fakeReconciler(t, staticLogs{}, schema, sourceConfigMap(
-			"CREATE TABLE events (id bigint PRIMARY KEY, created_at timestamptz DEFAULT 'now');\n"))
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, sourceConfigMap(source))
 		builder, key := leaderBuilder(t)
 		reconciler.Client = uidByNameClient{Client: api}
 		reconciler.Jobs = builder
@@ -446,13 +631,14 @@ func TestASchemaStoppedOnItsFileReadsAgain(t *testing.T) {
 		}
 		first := claimed.Status.Source.Snapshot.DeepCopy()
 		job := reconcileUntilJobNamed(t, reconciler, api, claimed, claim.JobName)
-		result, frame := runCapturedRead(t, reconciler, job, operatorv1alpha1.OperationObserve, relativeTimePtah{t: t})
-		if result.Error == nil || result.Error.Code != runner.CodeDesiredSourceUnreadable {
-			t.Fatalf("the Observe returned %#v, want desired_source_unreadable", result.Error)
+		result, frame := runCapturedRead(t, reconciler, job, operatorv1alpha1.OperationObserve, refusal.ptah(t))
+		if result.Error == nil || result.Error.Code != refusal.code {
+			t.Fatalf("the Observe returned %#v, want %s", result.Error, refusal.code)
 		}
 		finishBuiltJob(t, reconciler, api, job, frame)
 		blocked := reconcileSchema(t, reconciler, api, schema)
-		if blocked.Status.Phase != operatorv1alpha1.PhaseBlocked || blocked.Status.ActiveOperation != nil {
+		if blocked.Status.Phase != operatorv1alpha1.PhaseBlocked || blocked.Status.ActiveOperation != nil ||
+			!conditionMatches(blocked.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, refusal.reason) {
 			t.Fatalf("the ConfigMap schema did not stop: phase %s, claim %#v, conditions %#v",
 				blocked.Status.Phase, blocked.Status.ActiveOperation, blocked.Status.Conditions)
 		}
@@ -507,17 +693,17 @@ func unreadableProofRead(
 }
 
 // harvestUnreadableProofRead runs the proof's Job the controller built against
-// relativeTimePtah, holds the runner to desired_source_unreadable, and takes the
-// pass that harvests it. It returns what the runner said.
+// the refusal's Ptah, holds the runner to the refusal's code and words, and
+// takes the pass that harvests it. It returns what the runner said.
 func harvestUnreadableProofRead(
-	t *testing.T, reconciler *SchemaReconciler, api client.Client, schema *operatorv1alpha1.PtahSchema,
+	t *testing.T, reconciler *SchemaReconciler, api client.Client, schema *operatorv1alpha1.PtahSchema, refusal schemaRefusalRow,
 ) (*operatorv1alpha1.PtahSchema, string) {
 	t.Helper()
 	operation := schema.Status.ActiveOperation.Type
 	job := reconcileUntilJobNamed(t, reconciler, api, schema, schema.Status.ActiveOperation.JobName)
-	result, frame := runCapturedRead(t, reconciler, job, operation, relativeTimePtah{t: t})
-	if result.Error == nil || result.Error.Code != runner.CodeDesiredSourceUnreadable || !strings.Contains(result.Error.Message, "DEFAULT 'now'") {
-		t.Fatalf("the proof's %s returned %#v, want desired_source_unreadable naming the default", operation, result.Error)
+	result, frame := runCapturedRead(t, reconciler, job, operation, refusal.ptah(t))
+	if result.Error == nil || result.Error.Code != refusal.code || !strings.Contains(result.Error.Message, refusal.says) {
+		t.Fatalf("the proof's %s returned %#v, want %s saying %q", operation, result.Error, refusal.code, refusal.says)
 	}
 	finishBuiltJob(t, reconciler, api, job, frame)
 	return reconcileSchema(t, reconciler, api, schema), result.Error.Code + ": " + result.Error.Message
@@ -542,80 +728,13 @@ func harvestUnreadableProofRead(
 // file.
 func TestAProofWhoseReadCannotReadTheSchemaEnds(t *testing.T) {
 	t.Parallel()
-	for _, operation := range []operatorv1alpha1.OperationType{operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan} {
-		t.Run(string(operation), func(t *testing.T) {
-			t.Parallel()
-			schema, reconciler, api, recorder := unreadableProofRead(t, operation)
-			pending := schema.Status.PendingObservation
-			if holder := proofLeaseHolder(t, reconciler, api); holder == "" {
-				t.Fatal("the fixture's proof holds no Lease, so a released one shows nothing")
-			}
-
-			actual, said := harvestUnreadableProofRead(t, reconciler, api, schema)
-
-			if actual.Status.PendingObservation != nil || actual.Status.ActiveOperation != nil {
-				t.Fatalf("the proof did not end: pending %#v, operation %#v", actual.Status.PendingObservation, actual.Status.ActiveOperation)
-			}
-			if actual.Status.Applied != nil {
-				t.Fatalf("a proof that read nothing recorded the Apply as converged: %#v", actual.Status.Applied)
-			}
-			if slices.Contains(actual.Finalizers, activeOperationFinalizer) {
-				t.Fatalf("the ended proof kept the finalizer: %v", actual.Finalizers)
-			}
-			if holder := proofLeaseHolder(t, reconciler, api); holder != "" || actual.Status.PendingLockRelease != nil {
-				t.Fatalf("the ended proof still holds the Lease as %q, release owed %#v", holder, actual.Status.PendingLockRelease)
-			}
-			if actual.Status.Phase != operatorv1alpha1.PhaseBlocked || actual.Status.ObservedGeneration != pending.ApplyGeneration {
-				t.Fatalf("phase %s at observed generation %d, want Blocked at the Apply's generation %d",
-					actual.Status.Phase, actual.Status.ObservedGeneration, pending.ApplyGeneration)
-			}
-			if ready := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
-				ready.Reason != string(operatorv1alpha1.ReasonSchemaSourceUnreadable) || ready.Message != said {
-				t.Fatalf("Ready = %#v, want SchemaSourceUnreadable saying %q", ready, said)
-			}
-			if inSync := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync); inSync == nil ||
-				inSync.Status != metav1.ConditionUnknown || !strings.Contains(inSync.Message, "Nothing proved the Apply converged") {
-				t.Fatalf("InSync = %#v, want Unknown saying nothing proved the Apply", inSync)
-			}
-			if failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failed != nil &&
-				failed.Status == metav1.ConditionTrue {
-				t.Fatalf("the proof's end was reported as a failure: %#v", failed)
-			}
-			next := actual.Status.NextReconciliationTime
-			if next == nil || next.Sub(reconciler.now()) < interval(actual)-time.Second {
-				t.Fatalf("the next read is at %v, want %v after %v", next, interval(actual), reconciler.now())
-			}
-			verified := verifiedEntries(actual)
-			if len(verified) != 1 || verified[0].Outcome != operatorv1alpha1.JournalUnknown ||
-				verified[0].Reason != string(operatorv1alpha1.ReasonSchemaSourceUnreadable) ||
-				verified[0].Plan != pending.Plan.Name || verified[0].OperationID != pending.ApplyOperationID {
-				t.Fatalf("the journal records %#v, want one Verified Unknown, reason SchemaSourceUnreadable, for plan %s and Apply %s",
-					verified, pending.Plan.Name, pending.ApplyOperationID)
-			}
-			if warnings := warningsWithReason(recorder, "SchemaSourceUnreadable"); len(warnings) != 1 ||
-				warnings[0] != corev1.EventTypeWarning+" SchemaSourceUnreadable "+said {
-				t.Fatalf("Warnings = %q, want one SchemaSourceUnreadable saying %q", warnings, said)
-			}
-
-			// The Job's cleanup write wakes the next pass at once. It claims
-			// nothing and builds no Job.
-			jobs := jobNames(t, api, schema.Namespace)
-			again := reconcileSchema(t, reconciler, api, schema)
-			if again.Status.ActiveOperation != nil || again.Status.PendingObservation != nil {
-				t.Fatalf("the next pass claimed %#v with pending %#v", again.Status.ActiveOperation, again.Status.PendingObservation)
-			}
-			if after := jobNames(t, api, schema.Namespace); !slices.Equal(after, jobs) {
-				t.Fatalf("the next pass built a Job: %v, before %v", after, jobs)
-			}
-			reached := next.Add(time.Second)
-			reconciler.Clock = func() time.Time { return reached }
-			cycle := reconcileSchema(t, reconciler, api, schema)
-			if cycle.Status.PendingObservation != nil || cycle.Status.ActiveOperation == nil ||
-				cycle.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
-				t.Fatalf("at the interval the resource claimed %#v with pending %#v, want an ordinary Resolve",
-					cycle.Status.ActiveOperation, cycle.Status.PendingObservation)
-			}
-		})
+	for _, refusal := range schemaRefusalRows() {
+		for _, operation := range []operatorv1alpha1.OperationType{operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan} {
+			t.Run(refusal.name+"/"+string(operation), func(t *testing.T) {
+				t.Parallel()
+				proofWhoseReadCannotReadTheSchemaEnds(t, refusal, operation)
+			})
+		}
 	}
 
 	t.Run("control: a proof Observe that reads the schema keeps the proof and the Lease", func(t *testing.T) {
@@ -639,12 +758,95 @@ func TestAProofWhoseReadCannotReadTheSchemaEnds(t *testing.T) {
 	})
 }
 
+// proofWhoseReadCannotReadTheSchemaEnds is one row of the test above.
+func proofWhoseReadCannotReadTheSchemaEnds(t *testing.T, refusal schemaRefusalRow, operation operatorv1alpha1.OperationType) {
+	schema, reconciler, api, recorder := unreadableProofRead(t, operation)
+	pending := schema.Status.PendingObservation
+	if holder := proofLeaseHolder(t, reconciler, api); holder == "" {
+		t.Fatal("the fixture's proof holds no Lease, so a released one shows nothing")
+	}
+
+	actual, said := harvestUnreadableProofRead(t, reconciler, api, schema, refusal)
+
+	if actual.Status.PendingObservation != nil || actual.Status.ActiveOperation != nil {
+		t.Fatalf("the proof did not end: pending %#v, operation %#v", actual.Status.PendingObservation, actual.Status.ActiveOperation)
+	}
+	if actual.Status.Applied != nil {
+		t.Fatalf("a proof that read nothing recorded the Apply as converged: %#v", actual.Status.Applied)
+	}
+	if slices.Contains(actual.Finalizers, activeOperationFinalizer) {
+		t.Fatalf("the ended proof kept the finalizer: %v", actual.Finalizers)
+	}
+	if holder := proofLeaseHolder(t, reconciler, api); holder != "" || actual.Status.PendingLockRelease != nil {
+		t.Fatalf("the ended proof still holds the Lease as %q, release owed %#v", holder, actual.Status.PendingLockRelease)
+	}
+	if actual.Status.Phase != operatorv1alpha1.PhaseBlocked || actual.Status.ObservedGeneration != pending.ApplyGeneration {
+		t.Fatalf("phase %s at observed generation %d, want Blocked at the Apply's generation %d",
+			actual.Status.Phase, actual.Status.ObservedGeneration, pending.ApplyGeneration)
+	}
+	if ready := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+		ready.Reason != string(refusal.reason) || ready.Message != said {
+		t.Fatalf("Ready = %#v, want %s saying %q", ready, refusal.reason, said)
+	}
+	if inSync := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync); inSync == nil ||
+		inSync.Status != metav1.ConditionUnknown || !strings.Contains(inSync.Message, "Nothing proved the Apply converged") {
+		t.Fatalf("InSync = %#v, want Unknown saying nothing proved the Apply", inSync)
+	}
+	if failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failed != nil &&
+		failed.Status == metav1.ConditionTrue {
+		t.Fatalf("the proof's end was reported as a failure: %#v", failed)
+	}
+	next := actual.Status.NextReconciliationTime
+	if next == nil || next.Sub(reconciler.now()) < interval(actual)-time.Second {
+		t.Fatalf("the next read is at %v, want %v after %v", next, interval(actual), reconciler.now())
+	}
+	verified := verifiedEntries(actual)
+	if len(verified) != 1 || verified[0].Outcome != operatorv1alpha1.JournalUnknown ||
+		verified[0].Reason != string(refusal.reason) ||
+		verified[0].Plan != pending.Plan.Name || verified[0].OperationID != pending.ApplyOperationID {
+		t.Fatalf("the journal records %#v, want one Verified Unknown, reason %s, for plan %s and Apply %s",
+			verified, refusal.reason, pending.Plan.Name, pending.ApplyOperationID)
+	}
+	if warnings := warningsWithReason(recorder, string(refusal.reason)); len(warnings) != 1 ||
+		warnings[0] != corev1.EventTypeWarning+" "+string(refusal.reason)+" "+said {
+		t.Fatalf("Warnings = %q, want one %s saying %q", warnings, refusal.reason, said)
+	}
+
+	// The Job's cleanup write wakes the next pass at once. It claims
+	// nothing and builds no Job.
+	jobs := jobNames(t, api, schema.Namespace)
+	again := reconcileSchema(t, reconciler, api, schema)
+	if again.Status.ActiveOperation != nil || again.Status.PendingObservation != nil {
+		t.Fatalf("the next pass claimed %#v with pending %#v", again.Status.ActiveOperation, again.Status.PendingObservation)
+	}
+	if after := jobNames(t, api, schema.Namespace); !slices.Equal(after, jobs) {
+		t.Fatalf("the next pass built a Job: %v, before %v", after, jobs)
+	}
+	reached := next.Add(time.Second)
+	reconciler.Clock = func() time.Time { return reached }
+	cycle := reconcileSchema(t, reconciler, api, schema)
+	if cycle.Status.PendingObservation != nil || cycle.Status.ActiveOperation == nil ||
+		cycle.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
+		t.Fatalf("at the interval the resource claimed %#v with pending %#v, want an ordinary Resolve",
+			cycle.Status.ActiveOperation, cycle.Status.PendingObservation)
+	}
+}
+
 // A proof that ends under a newer generation hands the resource to that
 // generation: the refusal ends the proof as Superseded, credits nothing, and
 // the next read is the newer inputs' at once, which may carry a file Ptah can
 // read.
 func TestAProofWhoseReadCannotReadTheSchemaUnderANewerGenerationIsSuperseded(t *testing.T) {
 	t.Parallel()
+	for _, refusal := range schemaRefusalRows() {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+			proofUnderANewerGenerationIsSuperseded(t, refusal)
+		})
+	}
+}
+
+func proofUnderANewerGenerationIsSuperseded(t *testing.T, refusal schemaRefusalRow) {
 	schema, reconciler, api, _ := unreadableProofRead(t, operatorv1alpha1.OperationPlan, func(schema *operatorv1alpha1.PtahSchema) {
 		schema.Generation = schema.Status.PendingObservation.ApplyGeneration + 1
 	})
@@ -652,7 +854,7 @@ func TestAProofWhoseReadCannotReadTheSchemaUnderANewerGenerationIsSuperseded(t *
 		t.Fatal("the fixture's generation is the Apply's, so nothing newer is measured")
 	}
 
-	actual, _ := harvestUnreadableProofRead(t, reconciler, api, schema)
+	actual, _ := harvestUnreadableProofRead(t, reconciler, api, schema, refusal)
 
 	if actual.Status.PendingObservation != nil || actual.Status.Applied != nil {
 		t.Fatalf("pending %#v, applied %#v; want the proof ended and nothing credited",
@@ -686,11 +888,20 @@ func TestAProofWhoseReadCannotReadTheSchemaUnderANewerGenerationIsSuperseded(t *
 // The binding decides what follows, as it does for a proof that read the
 // database: the proof ends Superseded, the resource reads Pending with
 // ExecutionBindingChanged, and the next pass reads the source at once under
-// the new binding, where an ordinary read stops Blocked with
-// SchemaSourceUnreadable while the file stays as it is. Only the Warning
-// Event names the file for the proof itself.
+// the new binding, where an ordinary read stops Blocked with the refusal's
+// reason while the file stays as it is. Only the Warning Event names the file
+// for the proof itself.
 func TestAProofWhoseReadCannotReadTheSchemaAfterAPtahUpgradeIsSuperseded(t *testing.T) {
 	t.Parallel()
+	for _, refusal := range schemaRefusalRows() {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+			proofAfterAPtahUpgradeIsSuperseded(t, refusal)
+		})
+	}
+}
+
+func proofAfterAPtahUpgradeIsSuperseded(t *testing.T, refusal schemaRefusalRow) {
 	retired := "v1-" + strings.Repeat("ab", 16)
 	schema, reconciler, api, recorder := unreadableProofRead(t, operatorv1alpha1.OperationObserve, func(schema *operatorv1alpha1.PtahSchema) {
 		schema.Status.PendingObservation.Plan.ExecutionBindingID = retired
@@ -700,7 +911,7 @@ func TestAProofWhoseReadCannotReadTheSchemaAfterAPtahUpgradeIsSuperseded(t *test
 		t.Fatalf("the fixture's binding is %#v, so the plan's epoch was not retired", schema.Status.ExecutionBinding)
 	}
 
-	actual, said := harvestUnreadableProofRead(t, reconciler, api, schema)
+	actual, said := harvestUnreadableProofRead(t, reconciler, api, schema, refusal)
 
 	if actual.Status.PendingObservation != nil || actual.Status.ActiveOperation != nil || actual.Status.Applied != nil {
 		t.Fatalf("pending %#v, operation %#v, applied %#v; want the proof ended and nothing credited",
@@ -722,9 +933,9 @@ func TestAProofWhoseReadCannotReadTheSchemaAfterAPtahUpgradeIsSuperseded(t *test
 	if slices.Contains(actual.Finalizers, activeOperationFinalizer) {
 		t.Fatalf("the ended proof kept the finalizer: %v", actual.Finalizers)
 	}
-	if warnings := warningsWithReason(recorder, "SchemaSourceUnreadable"); len(warnings) != 1 ||
-		warnings[0] != corev1.EventTypeWarning+" SchemaSourceUnreadable "+said {
-		t.Fatalf("Warnings = %q, want one SchemaSourceUnreadable saying %q", warnings, said)
+	if warnings := warningsWithReason(recorder, string(refusal.reason)); len(warnings) != 1 ||
+		warnings[0] != corev1.EventTypeWarning+" "+string(refusal.reason)+" "+said {
+		t.Fatalf("Warnings = %q, want one %s saying %q", warnings, refusal.reason, said)
 	}
 	next := reconcileSchema(t, reconciler, api, schema)
 	if next.Status.ActiveOperation == nil || next.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
@@ -739,6 +950,15 @@ func TestAProofWhoseReadCannotReadTheSchemaAfterAPtahUpgradeIsSuperseded(t *test
 // again first. InSync does not say the proof completed.
 func TestAProofWhoseReadCannotReadTheSchemaUnderAChangedPolicyVerifiesAgain(t *testing.T) {
 	t.Parallel()
+	for _, refusal := range schemaRefusalRows() {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+			proofUnderAChangedPolicyVerifiesAgain(t, refusal)
+		})
+	}
+}
+
+func proofUnderAChangedPolicyVerifiesAgain(t *testing.T, refusal schemaRefusalRow) {
 	schema, reconciler, api, _ := unreadableProofRead(t, operatorv1alpha1.OperationPlan)
 	policy := &corev1.ConfigMap{}
 	key := client.ObjectKey{Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name}
@@ -754,7 +974,7 @@ func TestAProofWhoseReadCannotReadTheSchemaUnderAChangedPolicyVerifiesAgain(t *t
 		t.Fatal(err)
 	}
 
-	actual, _ := harvestUnreadableProofRead(t, reconciler, api, schema)
+	actual, _ := harvestUnreadableProofRead(t, reconciler, api, schema, refusal)
 
 	if actual.Status.PendingObservation != nil || actual.Status.Applied != nil || actual.Status.Source.Verified {
 		t.Fatalf("pending %#v, applied %#v, verified %t; want the proof ended, nothing credited and the source unverified",
@@ -765,8 +985,8 @@ func TestAProofWhoseReadCannotReadTheSchemaUnderAChangedPolicyVerifiesAgain(t *t
 	}
 	if inSync := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync); inSync == nil ||
 		inSync.Reason != string(operatorv1alpha1.ReasonPolicyChanged) || strings.Contains(inSync.Message, "proof completed") ||
-		!strings.Contains(inSync.Message, "could not read the desired schema") {
-		t.Fatalf("InSync = %#v, want PolicyChanged saying Ptah could not read the schema", inSync)
+		!strings.Contains(inSync.Message, "Ptah "+refusal.refused+" the desired schema") {
+		t.Fatalf("InSync = %#v, want PolicyChanged saying Ptah %s the schema", inSync, refusal.refused)
 	}
 	if verified := verifiedEntries(actual); len(verified) != 1 || verified[0].Outcome != operatorv1alpha1.JournalSuperseded {
 		t.Fatalf("the journal records %#v, want one Verified Superseded", verified)
@@ -788,109 +1008,123 @@ func TestAProofWhoseReadCannotReadTheSchemaUnderAChangedPolicyVerifiesAgain(t *t
 // two seconds can read it first.
 func TestTheWaitsOfAProofThatCouldNotReadTheSchemaSayWhy(t *testing.T) {
 	t.Parallel()
-	unreadable := &runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: unreadableReason}
-	// readAfterTheProof answers a read request on the pass after the proof
-	// ended, and takes the pass that claims the read it asks for.
-	readAfterTheProof := func(t *testing.T, reconciler *SchemaReconciler, api client.Client, schema *operatorv1alpha1.PtahSchema) {
-		t.Helper()
-		stored := storedSchema(t, api, schema)
-		if stored.Annotations == nil {
-			stored.Annotations = map[string]string{}
-		}
-		stored.Annotations[operatorv1alpha1.ReadRequestAnnotation] = reconciler.now().Format(time.RFC3339)
-		if err := api.Update(context.Background(), stored); err != nil {
-			t.Fatal(err)
-		}
-		reconcileSchema(t, reconciler, api, schema)
-		claimed := reconcileSchema(t, reconciler, api, schema)
-		if claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
-			t.Fatalf("the read request claimed %#v, want a Resolve", claimed.Status.ActiveOperation)
-		}
-		if ready := findCondition(claimed.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
-			ready.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) {
-			t.Fatalf("Ready = %#v after the claim, so the later document measures nothing", ready)
-		}
-	}
-
-	t.Run("wait --for applied", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
-		schema, plan, policyConfig := dispatchedApplyWithPlan(t)
-		job, pod := terminalWorkload(schema, batchv1.JobComplete)
-		applied := runner.Result{
-			ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationApply, OperationID: schema.Status.ActiveOperation.ID,
-			MutationStarted: true, CoordinationDigest: schema.Status.Plan.CoordinationDigest,
-			TargetIdentityDigest: schema.Status.Plan.TargetIdentityDigest,
-		}
-		reconciler, api := fakeReconciler(t, staticLogs{content: safetyRunnerFrame(t, applied)}, schema, plan, policyConfig, job, pod)
-		reconciler.Locks = targetlock.New(api, api, nil)
-		waiting := safetyGetSchema(t, api, schema)
-		if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
-			t.Fatalf("Reconcile() error = %v", err)
-		}
-		harvested := safetyGetSchema(t, api, schema)
-		target := harvested.Status.PendingObservation.Plan.TargetIdentityDigest
-		for _, object := range []client.Object{pod, job} {
-			if err := api.Delete(ctx, object); err != nil {
-				t.Fatal(err)
-			}
-		}
-		observing := reconcileSchema(t, reconciler, api, harvested)
-		ended := nextProofRead(t, reconciler, api, observing, "observe", target, unreadable)
-		if ended.Status.PendingObservation != nil {
-			t.Fatalf("the proof did not end: phase %s, pending %#v", ended.Status.Phase, ended.Status.PendingObservation)
-		}
-
-		ref := operate.Ref{Family: operate.FamilySchema, Namespace: schema.Namespace, Name: schema.Name}
-		for _, read := range []string{"the document that ended the proof", "the document the next pass wrote"} {
-			if read == "the document the next pass wrote" {
-				readAfterTheProof(t, reconciler, api, schema)
+	for _, refusal := range []struct {
+		name    string
+		failure *runner.ResultError
+		reason  operatorv1alpha1.ConditionReason
+		refused string
+	}{
+		{"a file Ptah cannot read", &runner.ResultError{Code: runner.CodeDesiredSourceUnreadable, Message: unreadableReason},
+			operatorv1alpha1.ReasonSchemaSourceUnreadable, "could not read"},
+		{"a schema Ptah refuses", &runner.ResultError{Code: runner.CodeDesiredSchemaInvalid, Message: domainFault(t)},
+			operatorv1alpha1.ReasonSchemaInvalid, "refused"},
+	} {
+		t.Run(refusal.name, func(t *testing.T) {
+			t.Parallel()
+			// readAfterTheProof answers a read request on the pass after the proof
+			// ended, and takes the pass that claims the read it asks for.
+			readAfterTheProof := func(t *testing.T, reconciler *SchemaReconciler, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+				t.Helper()
+				stored := storedSchema(t, api, schema)
+				if stored.Annotations == nil {
+					stored.Annotations = map[string]string{}
+				}
+				stored.Annotations[operatorv1alpha1.ReadRequestAnnotation] = reconciler.now().Format(time.RFC3339)
+				if err := api.Update(context.Background(), stored); err != nil {
+					t.Fatal(err)
+				}
+				reconcileSchema(t, reconciler, api, schema)
+				claimed := reconcileSchema(t, reconciler, api, schema)
+				if claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
+					t.Fatalf("the read request claimed %#v, want a Resolve", claimed.Status.ActiveOperation)
+				}
+				if ready := findCondition(claimed.Status.Conditions, operatorv1alpha1.ConditionReady); ready == nil ||
+					ready.Reason == string(refusal.reason) {
+					t.Fatalf("Ready = %#v after the claim, so the later document measures nothing", ready)
+				}
 			}
 
-			_, err := waitOn(api, ref, operate.WaitOptions{Target: operate.TargetApplied, Since: waiting})
+			t.Run("wait --for applied", func(t *testing.T) {
+				t.Parallel()
+				ctx := context.Background()
+				schema, plan, policyConfig := dispatchedApplyWithPlan(t)
+				job, pod := terminalWorkload(schema, batchv1.JobComplete)
+				applied := runner.Result{
+					ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationApply, OperationID: schema.Status.ActiveOperation.ID,
+					MutationStarted: true, CoordinationDigest: schema.Status.Plan.CoordinationDigest,
+					TargetIdentityDigest: schema.Status.Plan.TargetIdentityDigest,
+				}
+				reconciler, api := fakeReconciler(t, staticLogs{content: safetyRunnerFrame(t, applied)}, schema, plan, policyConfig, job, pod)
+				reconciler.Locks = targetlock.New(api, api, nil)
+				waiting := safetyGetSchema(t, api, schema)
+				if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+					t.Fatalf("Reconcile() error = %v", err)
+				}
+				harvested := safetyGetSchema(t, api, schema)
+				target := harvested.Status.PendingObservation.Plan.TargetIdentityDigest
+				for _, object := range []client.Object{pod, job} {
+					if err := api.Delete(ctx, object); err != nil {
+						t.Fatal(err)
+					}
+				}
+				observing := reconcileSchema(t, reconciler, api, harvested)
+				ended := nextProofRead(t, reconciler, api, observing, "observe", target, refusal.failure)
+				if ended.Status.PendingObservation != nil {
+					t.Fatalf("the proof did not end: phase %s, pending %#v", ended.Status.Phase, ended.Status.PendingObservation)
+				}
 
-			var stop *operate.StopError
-			if !errors.As(err, &stop) || stop.Reason != operate.StopUnresolved ||
-				!strings.Contains(stop.Message, "plan "+plan.Name+" ended because Ptah could not read the desired schema") {
-				t.Fatalf("wait on %s = %v, want a %s stop saying Ptah could not read the schema after plan %s",
-					read, err, operate.StopUnresolved, plan.Name)
-			}
-		}
-	})
+				ref := operate.Ref{Family: operate.FamilySchema, Namespace: schema.Namespace, Name: schema.Name}
+				for _, read := range []string{"the document that ended the proof", "the document the next pass wrote"} {
+					if read == "the document the next pass wrote" {
+						readAfterTheProof(t, reconciler, api, schema)
+					}
 
-	t.Run("settle --wait", func(t *testing.T) {
-		t.Parallel()
-		ctx := context.Background()
-		blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
-		target := blocked.Status.PendingObservation.Plan.TargetIdentityDigest
-		ref := operate.Ref{Family: operate.FamilySchema, Namespace: blocked.Namespace, Name: blocked.Name}
-		settled, err := operate.Settle(ctx, api, ref, operate.SettleOptions{})
-		if err != nil || !settled.Changed {
-			t.Fatalf("Settle = %#v, %v; want the printed value written", settled, err)
-		}
-		ended := nextProofRead(t, reconciler, api, blocked, "second", target, unreadable)
-		if ended.Status.PendingObservation != nil {
-			t.Fatalf("the proof did not end: phase %s, pending %#v", ended.Status.Phase, ended.Status.PendingObservation)
-		}
-		if entry := lastJournalEntry(t, ended); entry.Type != operatorv1alpha1.JournalVerified || entry.Outcome != operatorv1alpha1.JournalUnknown {
-			t.Fatalf("journal ends with %#v, want Verified Unknown, which a settlement records too", entry)
-		}
+					_, err := waitOn(api, ref, operate.WaitOptions{Target: operate.TargetApplied, Since: waiting})
 
-		for _, read := range []string{"the document that ended the proof", "the document the next pass wrote"} {
-			if read == "the document the next pass wrote" {
-				readAfterTheProof(t, reconciler, api, blocked)
-			}
-
-			_, err = waitOn(api, ref, operate.WaitOptions{
-				Target: operate.TargetSettled, Since: settled.Object, Settlement: settled.Printed.Value,
+					var stop *operate.StopError
+					if !errors.As(err, &stop) || stop.Reason != operate.StopUnresolved ||
+						!strings.Contains(stop.Message, "plan "+plan.Name+" ended because Ptah "+refusal.refused+" the desired schema") {
+						t.Fatalf("wait on %s = %v, want a %s stop saying Ptah %s the schema after plan %s",
+							read, err, operate.StopUnresolved, refusal.refused, plan.Name)
+					}
+				}
 			})
 
-			var stop *operate.StopError
-			if !errors.As(err, &stop) || stop.Reason != operate.StopProofEnded ||
-				!strings.Contains(stop.Message, "could not read the desired schema") {
-				t.Fatalf("settle --wait on %s = %v, want a %s stop saying Ptah could not read the schema",
-					read, err, operate.StopProofEnded)
-			}
-		}
-	})
+			t.Run("settle --wait", func(t *testing.T) {
+				t.Parallel()
+				ctx := context.Background()
+				blocked, reconciler, api := blockedProof(t, operatorv1alpha1.PendingObservationApplySucceeded)
+				target := blocked.Status.PendingObservation.Plan.TargetIdentityDigest
+				ref := operate.Ref{Family: operate.FamilySchema, Namespace: blocked.Namespace, Name: blocked.Name}
+				settled, err := operate.Settle(ctx, api, ref, operate.SettleOptions{})
+				if err != nil || !settled.Changed {
+					t.Fatalf("Settle = %#v, %v; want the printed value written", settled, err)
+				}
+				ended := nextProofRead(t, reconciler, api, blocked, "second", target, refusal.failure)
+				if ended.Status.PendingObservation != nil {
+					t.Fatalf("the proof did not end: phase %s, pending %#v", ended.Status.Phase, ended.Status.PendingObservation)
+				}
+				if entry := lastJournalEntry(t, ended); entry.Type != operatorv1alpha1.JournalVerified || entry.Outcome != operatorv1alpha1.JournalUnknown {
+					t.Fatalf("journal ends with %#v, want Verified Unknown, which a settlement records too", entry)
+				}
+
+				for _, read := range []string{"the document that ended the proof", "the document the next pass wrote"} {
+					if read == "the document the next pass wrote" {
+						readAfterTheProof(t, reconciler, api, blocked)
+					}
+
+					_, err = waitOn(api, ref, operate.WaitOptions{
+						Target: operate.TargetSettled, Since: settled.Object, Settlement: settled.Printed.Value,
+					})
+
+					var stop *operate.StopError
+					if !errors.As(err, &stop) || stop.Reason != operate.StopProofEnded ||
+						!strings.Contains(stop.Message, "because Ptah "+refusal.refused+" the desired schema") {
+						t.Fatalf("settle --wait on %s = %v, want a %s stop saying Ptah %s the schema",
+							read, err, operate.StopProofEnded, refusal.refused)
+					}
+				}
+			})
+		})
+	}
 }

@@ -1788,6 +1788,16 @@ const (
 	ReasonResolveFailed                ConditionReason = "ResolveFailed"
 	ReasonRunnerProtocolMismatch       ConditionReason = "RunnerProtocolMismatch"
 	ReasonSatisfied                    ConditionReason = "Satisfied"
+	// ReasonSchemaInvalid says an Observe or a Plan stopped on a fault of the
+	// desired schema as a whole, which Ptah reads and refuses: a foreign key
+	// into a table the schema does not declare, an index on a column its
+	// table does not declare, or since Ptah v0.34.0 a domain whose own
+	// default is a relative time string such as 'now'. Another read of the
+	// same schema gives the same answer, so no plan is published and the
+	// schema is read again as it is for SchemaSourceUnreadable. A read after
+	// an Apply that ends this way ends the proof, and records no Apply as
+	// converged.
+	ReasonSchemaInvalid ConditionReason = "SchemaInvalid"
 	// ReasonSchemaSourceUnreadable says an Observe or a Plan could not read
 	// the desired schema: a file Ptah cannot parse, which since Ptah v0.33.1
 	// includes a date or time column whose default is a relative time string

@@ -928,6 +928,10 @@ func desiredSourceRows() []directRow {
 		validate("validate-relative-time-quoted", "PostgreSQL", "relative-time-quoted.sql", true),
 		validate("validate-relative-time-array", "PostgreSQL", "relative-time-array.sql", true),
 		validate("validate-relative-time-domain", "PostgreSQL", "relative-time-domain.sql", true),
+		// A column typed by a domain over a date or time type, with a relative
+		// time default of its own, which Ptah refuses as a fault of the schema
+		// since v0.33.1 and names by the domain's schema in drift and plan.
+		validate("validate-relative-time-domain-column", "PostgreSQL", "relative-time-domain-column.sql", true),
 		// Since Ptah v0.34.0 a MySQL table that declares PARTITION BY does
 		// not load (stokaro/ptah#6375), where v0.33.1 planned the table
 		// without its partitions.
@@ -1198,20 +1202,25 @@ func unreadableSources(t *testing.T, l *lab) {
 	relative.plan("plan", nil, unreadable(relativeVolume))
 
 	// A domain's own relative time default, which v0.34.0 refuses as a fault
-	// of the schema rather than of the file (stokaro/ptah#6386). The rows
-	// record whichever code the frames carry, so a release that words it
-	// otherwise reaches the diff; TestARelativeTimeDomainReadsAsPtahWordsIt
-	// holds the reading.
-	domainVolume := l.name("unreadable-relative-time-domain")
-	l.fillSource(t, domainVolume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/relative-time-domain.sql")})
-	domain := l.newSchema(t, "desired-source-schema-relative-time-domain", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
-	domain.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
-	recorded := func(row *rowSpec) {
-		row.sharedSource = domainVolume
-		row.anyOutcome = true
+	// of the schema rather than of the file (stokaro/ptah#6386), and a column
+	// typed by a domain with a relative time default of its own, which
+	// v0.33.1 refuses the same way. Drift and plan name the domain in the
+	// schema they placed it in, so the runner has to place it too to read
+	// either as desired_schema_invalid. The rows record whichever code the
+	// frames carry, so a release that words it otherwise reaches the diff;
+	// TestARelativeTimeDomainReadsAsPtahWordsIt holds the reading.
+	for _, shape := range []string{"relative-time-domain", "relative-time-domain-column"} {
+		volume := l.name("unreadable-" + shape)
+		l.fillSource(t, volume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/"+shape+".sql")})
+		domain := l.newSchema(t, "desired-source-schema-"+shape, enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
+		domain.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
+		recorded := func(row *rowSpec) {
+			row.sharedSource = volume
+			row.anyOutcome = true
+		}
+		domain.observe("observe", recorded, storedAs("schema drift", "desired-source/drift-"+shape+".json"))
+		domain.plan("plan", nil, recorded, storedAs("schema plan", "desired-source/plan-"+shape+".json"))
 	}
-	domain.observe("observe", recorded, storedAs("schema drift", "desired-source/drift-relative-time-domain.json"))
-	domain.plan("plan", nil, recorded, storedAs("schema plan", "desired-source/plan-relative-time-domain.json"))
 
 	migrationVolume := l.name("unreadable-migrations")
 	l.fillSource(t, migrationVolume, map[string][]byte{

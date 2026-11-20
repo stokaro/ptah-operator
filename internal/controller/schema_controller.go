@@ -1404,12 +1404,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// dispatch was possible, every Apply error requires read-only proof.
 			return r.finishReportedApplyFailure(ctx, schema, job, err, result.ApplyFailure, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
-		// A desired schema Ptah cannot read is not a run that went wrong
-		// either: the runner asked Ptah again with no target, and Ptah said
-		// what in the file it refuses. Another attempt reads the same file and
-		// gets the same answer, so the read stops rather than retrying.
-		if schemaSourceUnreadable(operation.Type, result.Error) {
-			return r.refuseSchemaSource(ctx, schema, job, result, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
+		// A desired schema Ptah cannot read, or reads and refuses, is not a
+		// run that went wrong either: the runner asked Ptah again with no
+		// target, and Ptah said what in the file it refuses. Another attempt
+		// reads the same file and gets the same answer, so the read stops
+		// rather than retrying.
+		if refusal, refused := schemaRefusalOf(operation.Type, result.Error); refused {
+			return r.refuseSchemaSource(ctx, schema, job, result, refusal, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
 		}
 		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
@@ -1954,10 +1955,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	// planEnded is how a proof's read ended that planned nothing, whose
 	// Warning follows the status write.
 	var planEnded *planEnd
-	// sourceUnreadable is what a proof's read said of a desired schema Ptah
-	// could not read (refuseSchemaSource), whose Warning follows the status
-	// write.
-	var sourceUnreadable string
+	// refusalMessage is what a proof's read said of a desired schema Ptah
+	// could not read or refused (refuseSchemaSource), whose Warning, of the
+	// refusal's reason, follows the status write.
+	var refusalMessage string
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	if schemaClaimServesProof(schema) {
@@ -1968,30 +1969,36 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	clearFailure(schema)
 
 	operationType := schema.Status.ActiveOperation.Type
+	refusal, refused := schemaRefusalOf(operationType, result.Error)
 	switch {
-	case schemaSourceUnreadable(operationType, result.Error):
-		// The proof's read could not read the desired schema the Apply ran
-		// from. Only a proof's read reaches here with that code.
+	case refused:
+		// Ptah could not read the desired schema the Apply ran from, or
+		// refused it. Only a proof's read reaches here with either code.
 		pending := schema.Status.PendingObservation
 		if pending == nil {
-			return r.retryOperation(ctx, schema, nil, fmt.Errorf("an unreadable desired schema reached the result of a read that serves no proof"))
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("a refused desired schema reached the result of a read that serves no proof"))
 		}
 		// The read after an Apply marks the approval that Apply consumed, as an
 		// Observe that read the database does.
 		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 			return ctrl.Result{}, err
 		}
+		// An invalid schema says the read opened the database, as it does
+		// outside a proof (refuseSchemaSource).
+		if failureReadTheTarget(operationType, result.Error.Code) {
+			setSchemaTargetObserved(schema)
+		}
 		policyErr := r.verifiedSourcePolicyError(ctx, schema)
 		bindingErr := r.ensureCurrentStatusExecutionBinding(schema, &pending.Plan)
-		sourceUnreadable = resultCodeMessage(result.Error.Code, result.Error.Message)
-		r.endProofOnUnreadableSource(schema, pending, sourceUnreadable, policyErr == nil && bindingErr == nil)
+		refusalMessage = resultCodeMessage(result.Error.Code, result.Error.Message)
+		r.endProofOnRefusedSchema(schema, pending, refusal, refusalMessage, policyErr == nil && bindingErr == nil)
 		if err := r.settleProofInputs(ctx, schema, pending, policyErr, bindingErr); err != nil {
 			return ctrl.Result{}, err
 		}
 		if bindingErr == nil && policyErr != nil {
 			// settleProofInputs words InSync for a proof that read the database.
 			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged,
-				"Ptah could not read the desired schema the Apply ran from, so nothing proved the Apply, and the artifact requires verification against the current policy")
+				"Ptah "+refusal.refused+" the desired schema the Apply ran from, so nothing proved the Apply, and the artifact requires verification against the current policy")
 		}
 		schema.Status.PendingObservation = nil
 	case operationType == operatorv1alpha1.OperationResolve:
@@ -2444,10 +2451,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			return ctrl.Result{}, err
 		}
 	}
-	if sourceUnreadable == "" {
+	if refusalMessage == "" {
 		r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
 	} else {
-		r.event(schema, corev1.EventTypeWarning, "SchemaSourceUnreadable", "%s", bounded(sourceUnreadable, 512))
+		r.warnSchemaRefused(schema, refusal, refusalMessage)
 	}
 	if undecided != "" {
 		r.event(schema, corev1.EventTypeWarning, "DriftUndecided", "%s", bounded(undecided, 512))

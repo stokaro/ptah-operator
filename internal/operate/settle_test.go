@@ -621,6 +621,16 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonOperationInProgress),
 			"Resolve operation is in progress", 3),
 	}
+	// The read of the first target met a schema Ptah refuses as a whole.
+	invalid := unreadable.DeepCopy()
+	invalid.Status.Conditions = []metav1.Condition{
+		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonSchemaInvalid),
+			`desired_schema_invalid: schema/schema.sql: domain "moment": DEFAULT 'now' on a timestamp domain is read once`, 3),
+	}
+	invalid.Status.Journal.Entries[len(invalid.Status.Journal.Entries)-1].Reason = string(operatorv1alpha1.ReasonSchemaInvalid)
+	invalidThenRead := invalid.DeepCopy()
+	invalidThenRead.Status.Phase = operatorv1alpha1.PhaseResolving
+	invalidThenRead.Status.Conditions = unreadableThenRead.Status.Conditions
 	withdrawn := written.DeepCopy()
 	withdrawn.Annotations = nil
 	for _, row := range []struct {
@@ -635,6 +645,8 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		{"a newer generation", ended(operatorv1alpha1.JournalSuperseded), operate.StopProofEnded, "Verified Superseded"},
 		{"the first target's read could not read the schema", unreadable, operate.StopProofEnded, "could not read the desired schema"},
 		{"the same, read after the next pass rewrote Ready", unreadableThenRead, operate.StopProofEnded, "could not read the desired schema"},
+		{"the first target's read met a schema Ptah refuses", invalid, operate.StopProofEnded, "Ptah refused the desired schema"},
+		{"the same refusal, read after the next pass rewrote Ready", invalidThenRead, operate.StopProofEnded, "Ptah refused the desired schema"},
 		{"the annotation came off", withdrawn, operate.StopStatementWithdrawn, "no longer holds " + settleValue(movedTarget)},
 	} {
 		t.Run(row.name, func(t *testing.T) {
