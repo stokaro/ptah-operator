@@ -334,7 +334,7 @@ func TestAlertPartitionsRetainEveryIncident(t *testing.T) {
 	want := []string{
 		"certificate-expiry", "lock-release-owed", "lost-scrape-target", "lost-view",
 		"operations-failing", "ordinary-policy-waits", "plan-store-large",
-		"resource-overdue", "stalled-operation", "unresolved-apply",
+		"resource-blocked", "resource-overdue", "stalled-operation", "unresolved-apply",
 		"unresolved-view-read-failures", "upgrade-alerts",
 	}
 	var got []string

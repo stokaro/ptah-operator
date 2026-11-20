@@ -1014,6 +1014,19 @@ type PtahMigrationStatus struct {
 	// NextReconciliationTime is when the controller intends to look again.
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
+	// BlockedSince is when the migration stopped at Blocked for something a
+	// person has to change. The read the controller repeats at its interval
+	// moves the phase out of Blocked while it runs. This stays through that
+	// read, through a failed read waiting for its retry, through a spec edit
+	// and the pass it starts, and through a manager restart or a leader change,
+	// as long as each pass ends at Blocked again, whatever reason it names. A
+	// pass that ends anywhere else clears it, including the history read that
+	// finds nothing blocking and writes Planning: an Apply that follows carries
+	// none, and a block it ends in is dated from that block.
+	// ptah_operator_blocked_seconds reports its age.
+	// +optional
+	BlockedSince *metav1.Time `json:"blockedSince,omitempty"`
+
 	// LastReadRequest is the last value of the operator.ptah.run/read-requested-at
 	// annotation the controller answered, so an answered request is not
 	// answered again. A value longer than MaxReadRequestLength is recorded as

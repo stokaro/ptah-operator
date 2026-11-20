@@ -259,6 +259,11 @@ monitoring:
     #
     # Seconds a resource may be past its own status.nextReconciliationTime.
     overdueAfterSeconds: null
+    # Seconds a resource may stay Blocked for something a person has to change,
+    # dated by its status.blockedSince. A schema under apply: Never that is
+    # Blocked by that policy is not counted: reason ApplyDisabled, or a
+    # destructive plan its policy refuses.
+    blockedAfterSeconds: null
     # Seconds one operation may stay in flight.
     operationStalledAfterSeconds: null
     # How long a database-realm Lease release may stay owed.

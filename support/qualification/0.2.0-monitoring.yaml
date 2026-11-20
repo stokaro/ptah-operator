@@ -13,6 +13,7 @@ monitoring:
       qualification: "0.2.0"
     viewUnsyncedFor: 60s
     overdueAfterSeconds: 60
+    blockedAfterSeconds: 60
     operationStalledAfterSeconds: 60
     lockReleaseOwedFor: 60s
     certificateExpiresWithinSeconds: 86400

@@ -1,5 +1,6 @@
 # The state alerts, against the rules the chart renders with
-# overdueAfterSeconds=900, operationStalledAfterSeconds=1800,
+# overdueAfterSeconds=900, blockedAfterSeconds=3600,
+# operationStalledAfterSeconds=1800,
 # lockReleaseOwedFor=15m, certificateExpiresWithinSeconds=604800,
 # failures.window=30m with failures.count=20, and admissionFailingFor=5m
 # (hack/prometheus_rule_test.go writes them to rules.yaml beside this file).
@@ -30,6 +31,58 @@ tests:
               summary: "A schema resource is 17m 0s past its own next reconciliation"
               description: "status.nextReconciliationTime is when the controller meant to look again. The runbook lists the resources and what holds them."
               runbook_url: "https://operator.ptah.run/edge/use/operations/#resource-state"
+
+  # A schema blocked for an hour, on two replicas. Its interval repeats the
+  # read that refuses it, and the phase leaves Blocked for Resolving while
+  # that read runs: at 61m, the instant the age crosses the threshold, and
+  # again at 66m. A rule over the phase with a duration would start over at
+  # each of those reads and never fire. The age is dated by
+  # status.blockedSince, which those reads keep, so it fires at 61m and holds
+  # through the read at 66m. A migration blocked for half the threshold does
+  # not page.
+  - interval: 1m
+    input_series:
+      - series: 'ptah_operator_blocked_seconds{family="schema",pod="leader"}'
+        values: '0+60x70'
+      - series: 'ptah_operator_blocked_seconds{family="schema",pod="follower"}'
+        values: '0+60x70'
+      - series: 'ptah_operator_resources{family="schema",phase="Blocked",pod="leader"}'
+        values: '1x60 0 1x4 0 1x4'
+      - series: 'ptah_operator_resources{family="schema",phase="Resolving",pod="leader"}'
+        values: '0x60 1 0x4 1 0x4'
+      - series: 'ptah_operator_blocked_seconds{family="migration",pod="leader"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: PtahOperatorResourceBlocked
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: PtahOperatorResourceBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: schema
+            exp_annotations:
+              summary: "A schema resource has been Blocked for 1h 1m 0s"
+              description: "status.blockedSince dates the block and the Ready condition names what a person has to change. A schema under apply: Never Blocked by that policy is not counted: ApplyDisabled, or a destructive plan its policy refuses."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#blocked-resources"
+      - eval_time: 66m
+        alertname: PtahOperatorResourceBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              family: schema
+            exp_annotations:
+              summary: "A schema resource has been Blocked for 1h 6m 0s"
+              description: "status.blockedSince dates the block and the Ready condition names what a person has to change. A schema under apply: Never Blocked by that policy is not counted: ApplyDisabled, or a destructive plan its policy refuses."
+              runbook_url: "https://operator.ptah.run/edge/use/operations/#blocked-resources"
+    promql_expr_test:
+      # One incident from 61m: the read at 66m did not start a new one.
+      - expr: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceBlocked"}'
+        eval_time: 70m
+        exp_samples:
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceBlocked",family="schema",severity="warning"}'
+            value: 3660
 
   # An Apply in flight for longer than half an hour, beside a quick Resolve.
   - interval: 1m

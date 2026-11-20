@@ -2628,7 +2628,9 @@ Event at all. `status.journal` is the operator's record, and
 [Audit a database change](../audit/) says what an audit can rely on and what the
 installation adds. Alert on a sustained increase in
 `ptah_operator_failures_total` and on any increase in
-`ptah_operator_applies_total{outcome="uncertain"}`. Use status Conditions and
+`ptah_operator_applies_total{outcome="uncertain"}`. Neither says how long a
+resource has waited for a person; [Blocked resources](#blocked-resources) does.
+Use status Conditions and
 Events to identify the affected object instead of adding unbounded identity
 labels to metrics.
 
@@ -2941,6 +2943,7 @@ while `ptah_operator_unresolved_view_synced` reads 0.
 | `ptah_operator_resources{family,phase}` | Resources by the phase their status reports; `Unset` before the first reconciliation |
 | `ptah_operator_overdue_resources{family}` | Resources, not suspended, past their own `status.nextReconciliationTime` |
 | `ptah_operator_overdue_seconds{family}` | How far past it the latest one is. Absent where none is overdue |
+| `ptah_operator_blocked_seconds{family}` | How long the longest-blocked resource, not suspended, has been blocked, from its `status.blockedSince`. Absent where none is. [Blocked resources](#blocked-resources) says what dates a block |
 | `ptah_operator_active_operations{family,operation}` | Resources with an operation in flight, by type. A failed attempt waiting for its retry is not in flight |
 | `ptah_operator_active_operation_seconds{family,operation}` | How long the oldest of each type has been eligible to run, excluding a declared retry delay |
 | `ptah_operator_pending_lock_releases{family}` | Resources still owing the release of a realm Lease |
@@ -2960,6 +2963,7 @@ sets none:
 | Value | Alert |
 | --- | --- |
 | `overdueAfterSeconds` | `PtahOperatorResourceOverdue` |
+| `blockedAfterSeconds` | `PtahOperatorResourceBlocked` |
 | `operationStalledAfterSeconds` | `PtahOperatorOperationStalled` |
 | `lockReleaseOwedFor` | `PtahOperatorLockReleaseOwed` |
 | `certificateExpiresWithinSeconds` | `PtahOperatorWebhookCertificateExpiring` |
@@ -2971,8 +2975,9 @@ Once `PtahOperatorPlanStoreLarge` fires, a missing state reading keeps the
 existing incident open. A fresh reading at or below the configured budget
 clears it; loss of API access alone cannot establish that plans were pruned.
 
-`PtahOperatorResourceOverdue`, `PtahOperatorOperationStalled` and
-`PtahOperatorLockReleaseOwed` read the same view as
+`PtahOperatorResourceOverdue`, `PtahOperatorResourceBlocked`,
+`PtahOperatorOperationStalled` and `PtahOperatorLockReleaseOwed` read the same
+view as
 `PtahOperatorUnresolvedApply` and carry [the same 30-second
 hold](#unresolved-rules), so each clears 30 seconds after the reading that
 clears it. The hold keeps a firing alert only: a failed read during the lock
@@ -2984,9 +2989,71 @@ produced:
 
 ```promql
 max_over_time(max(ptah_operator_overdue_seconds)[7d:1m])
+max_over_time(max(ptah_operator_blocked_seconds)[7d:1m])
 max_over_time(max(ptah_operator_active_operation_seconds)[7d:1m])
 max_over_time(sum(increase(ptah_operator_failures_total[30m]))[7d:5m])
 ```
+
+#### Blocked resources {#blocked-resources}
+
+A resource stops at `Blocked` when something only a person can change stands in
+its way: Ptah's verification refused the artifact, no realm grants the namespace,
+a plan needs a change the policy does not allow, or an Apply's outcome is
+unknown. The `Ready` condition's reason names which, and
+[Condition reasons](../../troubleshoot/condition-reasons/) says what to change.
+
+The phase cannot say how long that has lasted. A blocked resource still repeats
+its read at its interval, and while that read runs the phase names the step
+under way: `Resolving`, `Verifying`, `Observing` or `Planning` for a schema,
+`Resolving`, `Verifying` or `Reading` for a migration, and `Failed` while a step
+that failed waits for its retry. It returns to `Blocked` when the read ends. A
+duration over `ptah_operator_resources{phase="Blocked"}` starts over at every
+such read, so it never outlasts one interval.
+
+`status.blockedSince` dates the block instead. The controller sets it on the
+write that ends a pass at `Blocked`, if nothing dates the block yet, and keeps it
+until a pass ends anywhere else. It stays through the reads the interval repeats,
+through a failed read waiting for its retry, and through a manager restart or a
+leader change. A spec edit keeps it too: if the pass after the edit ends at
+`Blocked` again, for whatever reason, the date is still the first block's. A pass
+that ends waiting for an approval, in sync, suspended, or failed with no read left
+to retry clears it. So does a migration's history read that finds nothing
+blocking: it writes `Planning`, so an Apply that follows carries no date, and a
+block the Apply ends in is dated from that block.
+
+Under `apply: Never` a schema records plans on purpose. One whose plan it could
+apply reports `Blocked` with reason `ApplyDisabled`, and a migration under that
+policy rests at `Planning` with the same reason. A schema whose plan its
+destructive-change policy refuses reports `Blocked` with reason `PolicyBlocked`,
+or `DestructiveChangesDisabled` where the approval gate meets the plan again;
+under `apply: Never` that plan would not run either way. These are the policy at
+work, and nobody has to act: none of them carries a date. Every other block under
+`apply: Never` is dated as under any other policy, since Ptah refusing the
+artifact, an unreadable source, an invalid schema or an unsupported engine still
+needs a person. Setting `apply: Never` on a schema dated for its destructive plan
+clears the date when the pass the edit starts ends at that block again.
+
+`ptah_operator_blocked_seconds{family}` is the age of the oldest date among the
+resources that are not suspended. A date on a status that has moved on, to in
+sync or to an approval, is not counted either; only a manager that does not know
+the field leaves one there. `PtahOperatorResourceBlocked` fires when the age
+passes `blockedAfterSeconds`, with no `for:`, since the age already is how long
+the block has lasted. It holds through a failed read like the other rules
+above. A resource that was already `Blocked` when the manager was upgraded to a
+release that dates blocks gets its date at the end of its next pass, so its age
+counts from then.
+
+The alert names the family only. List what it counts:
+
+```sh
+kubectl get ptahschemas,ptahmigrations --all-namespaces \
+  -o custom-columns='KIND:.kind,NAMESPACE:.metadata.namespace,NAME:.metadata.name,SUSPENDED:.spec.suspend,BLOCKED-SINCE:.status.blockedSince'
+```
+
+A row with `<none>` under `BLOCKED-SINCE` is not blocked, and a suspended one is
+not counted. Read the `Ready`
+condition of each dated one with `kubectl describe`, or with
+`kubectl ptah schema` or `kubectl ptah migration`, to see what it waits for.
 
 #### Dropped journal lines {#journal-lines-dropped}
 
@@ -3019,16 +3086,18 @@ line can be missing.
 #### What reaches a receiver {#alert-delivery}
 
 The rules are tested against synthetic series with promtool, and the path a
-real alert takes is tested on a cluster. The PostgreSQL migrations suite ends
-with a phase that stands up Prometheus, Alertmanager and a webhook receiver as
-plain Deployments, loads the rules from the chart's `PrometheusRule` as a rule
-file, scrapes every manager Pod behind the metrics Service, and asserts what
-the receiver logged:
+real alert takes is tested on a cluster. The lifecycle suite's `alerting`
+phase, the `alerting-operations` suite and the certificates suite's
+`alerting-certificates` phase each stand up Prometheus, Alertmanager and a
+webhook receiver as plain Deployments, load the rules from the chart's
+`PrometheusRule` as a rule file, scrape every manager Pod behind the metrics
+Service, and assert what the receiver logged. Among their rows:
 
 | Condition the phase creates | Alert at the receiver | Asserted |
 | --- | --- | --- |
 | An Apply Job removed while its run was going, from the migration rows | `PtahOperatorUnresolvedApply{family="migration"}` | Fires; the count in its summary equals what the drill-down above lists; its runbook link resolves to this page |
 | A schema whose Resolve Pod no node will schedule | `PtahOperatorOperationStalled{family="schema",operation="Resolve"}` | Fires no earlier than the threshold and within the detection target; clears within the rule's 30-second hold plus the slack once the Pod runs |
+| A schema Ptah's own verification refuses, read again every 30 seconds | `PtahOperatorResourceBlocked{family="schema"}` | Fires no earlier than the threshold after `status.blockedSince` and within the detection target; stays one incident through a read that leaves `Blocked`, with the age following the date; clears within the hold plus the slack once a spec edit removes the cause |
 | Every manager Pod deleted with every node cordoned | `PtahOperatorUnresolvedViewNotSynced` | Fires within `viewUnsyncedFor` plus the slack; clears once the managers are back |
 
 With a five-second scrape and evaluation interval and a five-second
@@ -3069,6 +3138,7 @@ so each sums them. The operation label on a state gauge is the API's type
 | --- | --- |
 | What state is the fleet in | `max by (family, phase) (ptah_operator_resources)` |
 | What needs a person | `max by (family) (ptah_operator_unresolved_attempts)` and `max by (family) (ptah_operator_resources{phase=~"Blocked\|AwaitingApproval"})` |
+| How long a block has lasted | `max by (family) (ptah_operator_blocked_seconds)` |
 | What has stopped being looked at | `max by (family) (ptah_operator_overdue_resources)` and `max by (family) (ptah_operator_overdue_seconds)` |
 | How long operations take | `histogram_quantile(0.95, sum by (family, operation, le) (rate(ptah_operator_operation_duration_seconds_bucket[1h])))` |
 | What is in flight, and for how long | `max by (family, operation) (ptah_operator_active_operation_seconds)` |

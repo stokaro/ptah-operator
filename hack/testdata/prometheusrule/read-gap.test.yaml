@@ -29,17 +29,21 @@ tests:
         values: '1x11 stale _ 1x11 stale _x6 1x3 0x10'
       - series: 'ptah_operator_overdue_seconds{family="schema",pod="leader"}'
         values: '1000x11 stale _ 1000x11 stale _x6 1000x3 0x10'
+      - series: 'ptah_operator_blocked_seconds{family="schema",pod="leader"}'
+        values: '5000x11 stale _ 5000x11 stale _x6 5000x3 0x10'
       - series: 'ptah_operator_active_operation_seconds{family="migration",operation="Apply",pod="leader"}'
         values: '2000x11 stale _ 2000x11 stale _x6 2000x3 5x10'
     promql_expr_test:
       # Two failed reads keep each incident and the instant it began, while
       # the read-failure rule reports them.
-      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 65s
         exp_samples:
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorUnresolvedApply",family="migration",severity="critical"}'
             value: 0
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceOverdue",family="schema",severity="warning"}'
+            value: 0
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceBlocked",family="schema",severity="warning"}'
             value: 0
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorOperationStalled",family="migration",operation="Apply",severity="warning"}'
             value: 0
@@ -48,49 +52,57 @@ tests:
         exp_samples:
           - labels: 'ALERTS{alertname="PtahOperatorUnresolvedViewReadFailures",alertstate="firing",severity="warning"}'
             value: 1
-      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 125s
         exp_samples:
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorUnresolvedApply",family="migration",severity="critical"}'
             value: 0
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceOverdue",family="schema",severity="warning"}'
             value: 0
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceBlocked",family="schema",severity="warning"}'
+            value: 0
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorOperationStalled",family="migration",operation="Apply",severity="warning"}'
             value: 0
       # Seven do not. 25s into the gap the incidents still fire; at 30s they
       # resolve, and the next reading starts new ones.
-      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 155s
         exp_samples:
           - labels: 'ALERTS{alertname="PtahOperatorUnresolvedApply",alertstate="firing",family="migration",severity="critical"}'
             value: 1
           - labels: 'ALERTS{alertname="PtahOperatorResourceOverdue",alertstate="firing",family="schema",severity="warning"}'
             value: 1
+          - labels: 'ALERTS{alertname="PtahOperatorResourceBlocked",alertstate="firing",family="schema",severity="warning"}'
+            value: 1
           - labels: 'ALERTS{alertname="PtahOperatorOperationStalled",alertstate="firing",family="migration",operation="Apply",severity="warning"}'
             value: 1
-      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 160s
         exp_samples: []
-      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS_FOR_STATE{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 165s
         exp_samples:
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorUnresolvedApply",family="migration",severity="critical"}'
             value: 165
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceOverdue",family="schema",severity="warning"}'
             value: 165
+          - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorResourceBlocked",family="schema",severity="warning"}'
+            value: 165
           - labels: 'ALERTS_FOR_STATE{alertname="PtahOperatorOperationStalled",family="migration",operation="Apply",severity="warning"}'
             value: 165
       # A reading that clears an incident resolves it 30s later, not before.
-      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 210s
         exp_samples:
           - labels: 'ALERTS{alertname="PtahOperatorUnresolvedApply",alertstate="firing",family="migration",severity="critical"}'
             value: 1
           - labels: 'ALERTS{alertname="PtahOperatorResourceOverdue",alertstate="firing",family="schema",severity="warning"}'
             value: 1
+          - labels: 'ALERTS{alertname="PtahOperatorResourceBlocked",alertstate="firing",family="schema",severity="warning"}'
+            value: 1
           - labels: 'ALERTS{alertname="PtahOperatorOperationStalled",alertstate="firing",family="migration",operation="Apply",severity="warning"}'
             value: 1
-      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorOperationStalled"}'
+      - expr: 'ALERTS{alertname=~"PtahOperatorUnresolvedApply|PtahOperatorResourceOverdue|PtahOperatorResourceBlocked|PtahOperatorOperationStalled"}'
         eval_time: 215s
         exp_samples: []
 

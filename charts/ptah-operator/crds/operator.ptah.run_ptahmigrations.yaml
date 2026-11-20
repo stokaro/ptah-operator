@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "24"
-    operator.ptah.run/crd-schema-digest: "sha256:c5f66d94415044ce315596a83219083eecdf85b7aaeb44d194521c5f3f848051"
+    operator.ptah.run/crd-schema-version: "25"
+    operator.ptah.run/crd-schema-digest: "sha256:dc5f8b0bc71ea7a8b492ed1f3d1b2e710b1e016186ba980a39a7f0a221052ba4"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1851,6 +1851,9 @@ spec:
                     https
                   rule: '[has(self.resolvedReference), has(self.snapshot), has(self.git),
                     has(self.https)].filter(set, set).size() == 1'
+              blockedSince:
+                format: date-time
+                type: string
               conditions:
                 items:
                   properties:

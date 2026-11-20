@@ -99,9 +99,16 @@ kubectl get ptahmigrations -A \
   | grep RepeatableMigrationsUnsupported
 ```
 
-The CRD schema version moves from 23 to 24: a `PtahMigrationPlan` may carry
-repeatable migrations, and the migration status gains fields that name them.
-Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
+The CRD schema version moves from 23 to 25: a `PtahMigrationPlan` may carry
+repeatable migrations, the migration status gains fields that name them, and
+both families' status gains `blockedSince`. A 0.2.15 replica that still leads
+during the rollout writes status by merge patch and leaves
+`status.blockedSince` as it finds it, so a resource it moves on from `Blocked`
+keeps the date until a pass under this release's manager ends somewhere other
+than `Blocked`. The blocked gauge does not count a date on a status that has
+settled, such as one 0.2.15 moved to `InSync` or to an approval; it counts one on
+a resource 0.2.15 left in a read or an Apply, or back at `Blocked`. Once this
+release's hook has updated the CRDs, 0.2.15's CRD hook refuses
 [a rollback](../../use/operations/#rollback) to 0.2.15. Nothing else.
 
 - **A schema file Ptah cannot read stops the schema at `Blocked`.** An Observe
@@ -227,6 +234,23 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   `Progressing` and a schema's `Applying` say it moves once the Apply's
   result is read. The upgrade to 0.2.16 is the first that waits, for an Apply
   whose Job matches the Job its recorded binding builds.
+- **A block carries the date it began.** `status.blockedSince` on a
+  `PtahSchema` and a `PtahMigration` records when a pass first stopped at
+  `Blocked` for something a person has to change. It stays through the reads
+  the interval repeats, a failed read waiting for its retry, a restart, a
+  leader change and a spec edit, until a pass ends anywhere else. A schema under
+  `apply: Never` that is `Blocked` by that policy carries none: with
+  `ApplyDisabled`, or with `PolicyBlocked` or `DestructiveChangesDisabled` for a
+  destructive plan its policy refuses. A migration's history read that finds
+  nothing blocking clears the date, so an Apply carries none.
+  `ptah_operator_blocked_seconds{family}` is the age of the oldest date, and the
+  chart value `monitoring.prometheusRule.blockedAfterSeconds`, unset by default,
+  renders `PtahOperatorResourceBlocked` over it. A duration over the phase could
+  not do this, since the phase leaves `Blocked` at every read. A resource
+  already `Blocked` at the upgrade gets its date at the end of its next pass,
+  and its age counts from then.
+  [Blocked resources](../../use/operations/#blocked-resources) says how to set
+  the threshold and find what it counts.
 - **Executor.** The verified executor is now Ptah v0.34.0, and the runner
   harness, the schema SQL readings, both History readings and the capacity
   calibration were measured with it. Each MySQL schema read also asks

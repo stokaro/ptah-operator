@@ -47,11 +47,15 @@ type alNegativeState struct {
 	observed                                 int64
 	suspended, applied, unresolved, approved bool
 	failed                                   bool
-	policy                                   ptahv1.ApplyPolicy
-	interval                                 time.Duration
-	plan                                     bool
-	waiting, disabled                        bool
-	readAt                                   time.Time
+	// blocked is a control that carries status.blockedSince. An approval
+	// wait is not a block, and apply: Never reports Blocked with
+	// ApplyDisabled on purpose, so a dated control would page as blocked.
+	blocked           bool
+	policy            ptahv1.ApplyPolicy
+	interval          time.Duration
+	plan              bool
+	waiting, disabled bool
+	readAt            time.Time
 }
 
 func alNegativeReading(object client.Object) alNegativeState {
@@ -61,6 +65,7 @@ func alNegativeReading(object client.Object) alNegativeState {
 	case *ptahv1.PtahSchema:
 		r.observed, r.suspended, r.policy, r.interval = v.Status.ObservedGeneration, v.Spec.Suspend, v.Spec.Policy.Apply, v.Spec.Interval.Duration
 		r.applied, r.unresolved = v.Status.Applied != nil, v.Status.PendingObservation != nil
+		r.blocked = v.Status.BlockedSince != nil
 		if v.Status.Plan != nil {
 			r.plan = v.Status.Plan.Name != "" && v.Status.Plan.UID != ""
 			r.approved = v.Status.Plan.Approval != nil
@@ -75,6 +80,7 @@ func alNegativeReading(object client.Object) alNegativeState {
 	case *ptahv1.PtahMigration:
 		r.observed, r.suspended, r.policy, r.interval = v.Status.ObservedGeneration, v.Spec.Suspend, v.Spec.Policy.Apply, v.Spec.Interval.Duration
 		r.applied, r.unresolved = v.Status.LastRun != nil, v.Status.UnresolvedRun != nil
+		r.blocked = v.Status.BlockedSince != nil
 		if v.Status.ActiveOperation != nil {
 			r.failed = v.Status.ActiveOperation.Attempt > 1 || v.Status.ActiveOperation.RetryNotBefore != nil
 		}
@@ -96,7 +102,7 @@ func alNegativeReading(object client.Object) alNegativeState {
 }
 
 func (r alNegativeState) safe() bool {
-	if r.claim.uid == "" || r.claim.generation <= 0 || r.claim.namespace == "" || (r.claim.family != "schema" && r.claim.family != "migration") || r.observed != r.claim.generation || r.suspended || r.applied || r.unresolved || r.approved || r.failed || r.interval != alNegativeInterval {
+	if r.claim.uid == "" || r.claim.generation <= 0 || r.claim.namespace == "" || (r.claim.family != "schema" && r.claim.family != "migration") || r.observed != r.claim.generation || r.suspended || r.applied || r.unresolved || r.approved || r.failed || r.blocked || r.interval != alNegativeInterval {
 		return false
 	}
 	if r.policy != ptahv1.ApplyPolicyOnApproval && r.policy != ptahv1.ApplyPolicyNever {

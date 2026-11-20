@@ -137,6 +137,7 @@ func runPromtool(t *testing.T, rule, scenarioFile string) {
 // written against.
 var stateThresholds = []string{
 	"monitoring.prometheusRule.overdueAfterSeconds=900",
+	"monitoring.prometheusRule.blockedAfterSeconds=3600",
 	"monitoring.prometheusRule.operationStalledAfterSeconds=1800",
 	"monitoring.prometheusRule.lockReleaseOwedFor=15m",
 	"monitoring.prometheusRule.certificateExpiresWithinSeconds=604800",
@@ -152,7 +153,7 @@ func TestAStateAlertRendersOnlyWhereItsThresholdIsSet(t *testing.T) {
 	t.Parallel()
 	rule := renderedPrometheusRule(t)
 	for _, alert := range []string{
-		"PtahOperatorResourceOverdue", "PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
+		"PtahOperatorResourceOverdue", "PtahOperatorResourceBlocked", "PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
 		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
 		"PtahOperatorPlanStoreLarge",
 	} {

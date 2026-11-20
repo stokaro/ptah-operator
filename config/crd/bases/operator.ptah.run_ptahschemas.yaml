@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "24"
-    operator.ptah.run/crd-schema-digest: "sha256:985b73e8f443002ae47866352f9c90cc8598e8634ce7f0f2955a0ef80063a9d2"
+    operator.ptah.run/crd-schema-version: "25"
+    operator.ptah.run/crd-schema-digest: "sha256:d81dd37158d64bdddee5ac63461aedeb43bc103d80e10c769269d02215a821c4"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1753,6 +1753,9 @@ spec:
                 - runnerProtocolVersion
                 - targetIdentityDigest
                 type: object
+              blockedSince:
+                format: date-time
+                type: string
               conditions:
                 items:
                   properties:

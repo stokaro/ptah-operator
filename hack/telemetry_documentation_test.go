@@ -162,6 +162,7 @@ func (stateTestView) ListSchemas(context.Context) ([]operatorv1alpha1.PtahSchema
 	return []operatorv1alpha1.PtahSchema{{Status: operatorv1alpha1.PtahSchemaStatus{
 		Phase:                  "Observing",
 		NextReconciliationTime: &past,
+		BlockedSince:           &past,
 		ActiveOperation:        &operatorv1alpha1.ActiveOperationStatus{Type: "Observe", StartedAt: past},
 		PendingLockRelease:     &operatorv1alpha1.TargetLockReleaseStatus{OperationID: "owed"},
 	}}}, nil

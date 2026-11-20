@@ -427,6 +427,7 @@
           "required": ["enabled", "labels", "viewUnsyncedFor", "runbookBaseURL", "lockReleaseOwedFor", "failures", "journalLinesDroppedWithin", "admissionFailingFor"],
           "properties": {
             "overdueAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
+            "blockedAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
             "operationStalledAfterSeconds": {"type": ["integer", "null"], "minimum": 1},
             "lockReleaseOwedFor": {"type": "string", "pattern": "^$|^[1-9][0-9]*(s|m|h)$"},
             "certificateExpiresWithinSeconds": {"type": ["integer", "null"], "minimum": 1},

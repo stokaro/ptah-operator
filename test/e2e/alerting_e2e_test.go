@@ -54,6 +54,7 @@ func runAlertingPhase(t *testing.T, phase phases.Of[phases.AlertingInputs]) {
 		"ordinary-policy-waits":         a.negativeControls,
 		"stalled-operation":             a.stalledOperation,
 		"resource-overdue":              a.resourceOverdue,
+		"resource-blocked":              a.resourceBlocked,
 		"lock-release-owed":             a.lockReleaseOwed,
 		"operations-failing":            a.operationsFailing,
 		"plan-store-large":              a.planStoreLarge,

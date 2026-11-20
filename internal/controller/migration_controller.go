@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/blockedsince"
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
@@ -861,6 +862,13 @@ func (r *MigrationReconciler) claimMigration(
 	}
 	inputFingerprint, err := r.migrationInputFingerprint(ctx, migration, operationType)
 	if err != nil {
+		// The inputs of a Verify claim include the verification policy, read
+		// from the API server. One that could not answer is no verdict: the
+		// error requeues the pass with the handoff still in status, so a
+		// Blocked migration keeps the date of its block.
+		if transientAPIError(err) {
+			return ctrl.Result{}, fmt.Errorf("read the %s claim's inputs: %w", operationType, err)
+		}
 		return r.claimRefused(ctx, migration, err)
 	}
 	id, err := r.newMigrationOperationID(inputFingerprint)
@@ -3129,6 +3137,10 @@ func (r *MigrationReconciler) patchMigrationStatus(
 	ctx context.Context,
 	before, after *operatorv1alpha1.PtahMigration,
 ) error {
+	// Every write of this migration's status passes here, so the date of a
+	// block is kept or cleared by what the write says about its pass, and no
+	// write on the way back to Blocked can drop it.
+	after.Status.BlockedSince = blockedsince.Next(after.Status.BlockedSince, blockedsince.Migration(after), r.now)
 	if reflect.DeepEqual(before.Status, after.Status) {
 		return nil
 	}

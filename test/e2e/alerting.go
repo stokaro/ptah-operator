@@ -643,6 +643,7 @@ func alProfileRuleTargets() map[string]alProfileRule {
 		alViewNotSynced:                 {Expr: "max(ptah_operator_unresolved_view_synced) == 0 or absent(ptah_operator_unresolved_view_synced)", For: "60s"},
 		alViewReadAlert:                 {Expr: "max(increase(ptah_operator_unresolved_view_read_failures_total[60s])) > 0"},
 		alOverdueAlert:                  {Expr: "max by (family) (ptah_operator_overdue_seconds) > 60", KeepFiringFor: alStateReadGapHoldText},
+		alBlockedAlert:                  {Expr: "max by (family) (ptah_operator_blocked_seconds) > 60", KeepFiringFor: alStateReadGapHoldText},
 		alOperationStall:                {Expr: "max by (family, operation) (ptah_operator_active_operation_seconds) > 60", KeepFiringFor: alStateReadGapHoldText},
 		"PtahOperatorLockReleaseOwed":   {Expr: "max by (family) (ptah_operator_pending_lock_releases) > 0", For: "60s", KeepFiringFor: alStateReadGapHoldText},
 		alCertificateAlert:              {Expr: "min(ptah_operator_webhook_certificate_expiry_timestamp_seconds) - time() < 86400"},

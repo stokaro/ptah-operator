@@ -70,6 +70,7 @@ var haAlwaysPresent = map[string]string{
 	"ptah_operator_resources":                                    "gauge",
 	"ptah_operator_overdue_resources":                            "gauge",
 	"ptah_operator_overdue_seconds":                              "gauge",
+	"ptah_operator_blocked_seconds":                              "gauge",
 	"ptah_operator_active_operations":                            "gauge",
 	"ptah_operator_active_operation_seconds":                     "gauge",
 	"ptah_operator_pending_lock_releases":                        "gauge",

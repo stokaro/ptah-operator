@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"strings"
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
@@ -135,6 +136,31 @@ func (a *alertingRun) negativeControls() {
 			}
 		}
 	}()
+	// The rows before this one block resources on purpose: an unresolved
+	// Apply stops its migration at Blocked. The blocked alert they fire
+	// resolves after them, and its resolution has to reach the receiver
+	// before the baseline is taken, or the window would count it as new.
+	allSchemas, allMigrations := &ptahv1.PtahSchemaList{}, &ptahv1.PtahMigrationList{}
+	a.check(a.cluster.Client.List(a.ctx, allSchemas), "inventory every schema before the quiet window")
+	a.check(a.cluster.Client.List(a.ctx, allMigrations), "inventory every migration before the quiet window")
+	if leftovers := alBlockedLeftovers(allSchemas.Items, allMigrations.Items); len(leftovers) != 0 {
+		a.fatalf("resources still blocked would page during the quiet window: %s", strings.Join(leftovers, ", "))
+	}
+	a.check(harness.Wait(a.ctx, "the blocked alert of earlier rows to resolve at the receiver", alTimeout, alDeliveryPoll, func(ctx context.Context) (bool, string, error) {
+		if !a.noActiveAlerts(fmt.Sprintf(`ALERTS{alertname=%q}`, alBlockedAlert)) {
+			return false, alBlockedAlert + " is still active", nil
+		}
+		log, err := a.deploymentLog(ctx, "alert-sink")
+		if err != nil {
+			return false, err.Error(), nil
+		}
+		deliveries, err := alDeliveries(log)
+		if err != nil {
+			return false, "", err
+		}
+		open := alBlockedUnresolved(deliveries)
+		return len(open) == 0, "no resolved notification yet for " + strings.Join(open, ", "), nil
+	}), "settle the blocked alert before the quiet window")
 	a.waitForTargets()
 	unresolved := a.negativeUnresolvedIdentity()
 	if len(unresolved) != 0 {

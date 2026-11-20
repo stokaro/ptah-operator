@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/blockedsince"
 )
 
 // The state gauges answer what the event counters cannot: how many resources
@@ -31,8 +32,9 @@ type StateView interface {
 }
 
 // StateCollector publishes the current population of resources by phase, the
-// ones overdue for their own next reconciliation, the operations in flight
-// and their age, and the lock releases still owed.
+// ones overdue for their own next reconciliation, the age of the oldest
+// block, the operations in flight and their age, and the lock releases still
+// owed.
 type StateCollector struct {
 	view  StateView
 	now   func() time.Time
@@ -41,6 +43,7 @@ type StateCollector struct {
 	resources      *prometheus.Desc
 	overdue        *prometheus.Desc
 	overdueSeconds *prometheus.Desc
+	blockedSeconds *prometheus.Desc
 	active         *prometheus.Desc
 	activeSeconds  *prometheus.Desc
 	lockReleases   *prometheus.Desc
@@ -66,6 +69,10 @@ func NewStateCollector(registerer prometheus.Registerer, view StateView, now fun
 			"ptah_operator_overdue_seconds",
 			"Seconds the most overdue resource of a family is past its own status.nextReconciliationTime. Absent where none is overdue.",
 			[]string{"family"}, nil),
+		blockedSeconds: prometheus.NewDesc(
+			"ptah_operator_blocked_seconds",
+			"Seconds the longest-blocked resource of a family, not suspended, has been blocked since its status.blockedSince. Absent where none is blocked.",
+			[]string{"family"}, nil),
 		active: prometheus.NewDesc(
 			"ptah_operator_active_operations",
 			"Resources with an operation in flight, by family and operation type. A failed attempt waiting for its retry is not in flight.",
@@ -89,6 +96,7 @@ func (c *StateCollector) Describe(into chan<- *prometheus.Desc) {
 	into <- c.resources
 	into <- c.overdue
 	into <- c.overdueSeconds
+	into <- c.blockedSeconds
 	into <- c.active
 	into <- c.activeSeconds
 	into <- c.lockReleases
@@ -101,9 +109,13 @@ type resourceState struct {
 	// attempt's claim in status.activeOperation until its retry, so the claim
 	// alone would count an ended operation as one still running and page as
 	// stalled for the whole failureRetryInterval.
-	failed             bool
-	suspended          bool
-	nextReconcile      *time.Time
+	failed        bool
+	suspended     bool
+	nextReconcile *time.Time
+	// blockedSince is status.blockedSince: when the resource stopped at
+	// Blocked for a person, kept through the reads it repeats meanwhile. It
+	// is nil where the status classifies as settled.
+	blockedSince       *time.Time
 	operation          string
 	operationStarted   time.Time
 	operationNotBefore *time.Time
@@ -136,6 +148,7 @@ func (c *StateCollector) emit(into chan<- prometheus.Metric, now time.Time, fami
 	oldestOperation := map[string]time.Time{}
 	overdue, lockReleases := 0, 0
 	var mostOverdue time.Duration
+	var oldestBlock *time.Time
 	for _, state := range states {
 		phases[state.phase]++
 		if state.owesLockRelease {
@@ -155,6 +168,9 @@ func (c *StateCollector) emit(into chan<- prometheus.Metric, now time.Time, fami
 			overdue++
 			mostOverdue = max(mostOverdue, now.Sub(*state.nextReconcile))
 		}
+		if !state.suspended && state.blockedSince != nil && (oldestBlock == nil || state.blockedSince.Before(*oldestBlock)) {
+			oldestBlock = state.blockedSince
+		}
 	}
 	label := string(family)
 	for phase, count := range phases {
@@ -163,6 +179,9 @@ func (c *StateCollector) emit(into chan<- prometheus.Metric, now time.Time, fami
 	into <- prometheus.MustNewConstMetric(c.overdue, prometheus.GaugeValue, float64(overdue), label)
 	if overdue > 0 {
 		into <- prometheus.MustNewConstMetric(c.overdueSeconds, prometheus.GaugeValue, mostOverdue.Seconds(), label)
+	}
+	if oldestBlock != nil {
+		into <- prometheus.MustNewConstMetric(c.blockedSeconds, prometheus.GaugeValue, max(now.Sub(*oldestBlock).Seconds(), 0), label)
 	}
 	for operation, count := range operations {
 		into <- prometheus.MustNewConstMetric(c.active, prometheus.GaugeValue, float64(count), label, operation)
@@ -198,6 +217,12 @@ func schemaStates(schemas []operatorv1alpha1.PtahSchema) []resourceState {
 			at := next.Time
 			state.nextReconcile = &at
 		}
+		// A date counts only while the status still explains it: a manager
+		// that does not know the field leaves it on a resource it moves on.
+		if since := schema.Status.BlockedSince; since != nil && blockedsince.Schema(&schema).Counted() {
+			at := since.Time
+			state.blockedSince = &at
+		}
 		if active := schema.Status.ActiveOperation; active != nil {
 			state.operation, state.operationStarted = string(active.Type), active.StartedAt.Time
 		}
@@ -219,6 +244,10 @@ func migrationStates(migrations []operatorv1alpha1.PtahMigration) []resourceStat
 		if next := migration.Status.NextReconciliationTime; next != nil {
 			at := next.Time
 			state.nextReconcile = &at
+		}
+		if since := migration.Status.BlockedSince; since != nil && blockedsince.Migration(&migration).Counted() {
+			at := since.Time
+			state.blockedSince = &at
 		}
 		if active := migration.Status.ActiveOperation; active != nil {
 			state.operation, state.operationStarted = string(active.Type), active.StartedAt.Time

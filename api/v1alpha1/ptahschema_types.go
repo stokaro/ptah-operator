@@ -879,6 +879,20 @@ type PtahSchemaStatus struct {
 	// sooner.
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
+	// BlockedSince is when the schema stopped at Blocked for something a
+	// person has to change. The read the controller repeats at its interval
+	// moves the phase out of Blocked while it runs. This stays through that
+	// read, through a failed read waiting for its retry, through a spec edit
+	// and the pass it starts, and through a manager restart or a leader change,
+	// as long as each pass ends at Blocked again, whatever reason it names. A
+	// pass that ends anywhere else clears it. Under apply policy Never a schema
+	// Blocked by that policy carries none: reason ApplyDisabled for a plan it
+	// could apply, and PolicyBlocked or DestructiveChangesDisabled for a
+	// destructive plan its policy refuses. It records those plans on purpose
+	// and waits for nobody. ptah_operator_blocked_seconds reports its age.
+	// +optional
+	BlockedSince *metav1.Time `json:"blockedSince,omitempty"`
+
 	// LastReadRequest is the last value of the operator.ptah.run/read-requested-at
 	// annotation the controller answered, so an answered request is not
 	// answered again. A value longer than MaxReadRequestLength is recorded as
