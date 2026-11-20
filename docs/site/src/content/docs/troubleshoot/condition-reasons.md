@@ -542,7 +542,7 @@ ran the file that loaded last and never the other. So is a MySQL schema file
 that partitions a table
 ([stokaro/ptah#6375](https://github.com/stokaro/ptah/pull/6375)), since Ptah
 does not model MySQL or MariaDB partitioning, and a PostgreSQL relative time
-default on a quoted type, an array or a domain
+default on a quoted type or an array
 ([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)):
 
 ```
@@ -620,6 +620,15 @@ it, from the declaration and the paths in the Pod.
 Not everything that stops a desired file reaches this code. Ptah reads no SQL
 statement of a migration file until it runs it, so a statement that does not
 parse passes the history read and fails the Apply on the database.
+Since Ptah v0.34.0 neither does a domain's own relative time default, as
+`CREATE DOMAIN moment AS timestamp DEFAULT 'now'`
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)). Ptah refuses
+it as a fault of the schema, so it does not read as
+`desired_source_unreadable`, and it does not read as the
+`desired_schema_invalid` below either: drift and plan name the domain
+`public.moment` where validate names it `moment`, and the operator matches the
+two only where the name is a table's. An Observe fails with `child_exit` and a
+Plan with `plan_refused`, and only the Pod log holds Ptah's sentence.
 
 A desired schema that loads and that Ptah refuses as a whole, such as a foreign
 key to a table it does not declare, reads the same way under the code

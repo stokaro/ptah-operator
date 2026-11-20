@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-20T10:32:35.052568+00:00",
+  "frozenAt": "2026-11-20T10:50:32.826756+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "f6052b107a4a4d00068c443fcf42e6925073a89e71fea05391042fd07f02ca98"
+      "sha256": "ee1960fb6b0b19c56ce16e0289c5f0cb8db9dfe44518fac055b7383667804031"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -84,5 +84,5 @@
     "freezeCommit": "7203208c6e1d6400d3f6c44e7dc40d5b707d7337",
     "sha256": "e83da2be5f9a8c257c4cc60fb4c32dbce7639159dc59bc782351787c15661c2c"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.33.1 to the v0.34.0 release image, and record in the edge row what v0.34.0 changes: a migration directory with two files for one direction of a version is refused by name; a MySQL table partitioned with PARTITION BY, three more PostgreSQL relative time defaults and two MySQL CHECK constraints of one name are faults of the schema file; a saved plan records the declarations its statements leave out; schema apply names its refusal of a plan with a backslash on a NO_BACKSLASH_ESCAPES session backslash-mode, which a Plan now reports as plan_refused; migrations pull writes an artifact unread under --skip-validation, which the fetch now passes, so a stray file in an OCI artifact stops the history read Blocked with MigrationDirectoryUnreadable. A MySQL or MariaDB view, stored function or MariaDB sequence an applied migration created reads as drift to a migration drift check under v0.33.1 and v0.34.0, which the edge and v0.2.15 rows now say in one sentence. The v0.2.15 row says what that release does with the backslash and stray-file cases. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.33.1 to the v0.34.0 release image, and record in the edge row what v0.34.0 changes: a migration directory with two files for one direction of a version is refused by name; a MySQL table partitioned with PARTITION BY, two more PostgreSQL relative time defaults and two MySQL CHECK constraints of one name are faults of the schema file, and a domain relative time default a fault of the schema that an Observe reports as child_exit and a Plan as plan_refused; a saved plan records the declarations its statements leave out; schema apply names its refusal of a plan with a backslash on a NO_BACKSLASH_ESCAPES session backslash-mode, which a Plan now reports as plan_refused; migrations pull writes an artifact unread under --skip-validation, which the fetch now passes, so a stray file in an OCI artifact stops the history read Blocked with MigrationDirectoryUnreadable. A MySQL or MariaDB view, stored function or MariaDB sequence an applied migration created reads as drift to a migration drift check under v0.33.1 and v0.34.0, which the edge and v0.2.15 rows now say in one sentence. The v0.2.15 row says what that release does with the backslash and stray-file cases. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

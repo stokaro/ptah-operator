@@ -63,14 +63,19 @@ model MySQL or MariaDB partitioning, and v0.33.1 planned such a table without
 its partitions, or read an existing one as in sync. Take the partitioning out of
 the declaration and manage the partitions outside Ptah. A table partitioned
 outside Ptah still reads in sync: Ptah lists it as not compared, and the operator
-does not say so. Three more PostgreSQL relative time defaults are refused the
+does not say so. Two more PostgreSQL relative time defaults are refused the
 same way
 ([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)): one on a
-quoted type, as `"pg_catalog"."timestamptz" DEFAULT 'now'`, one on an array, as
-`date[] DEFAULT '{now}'`, and a domain's own, as `CREATE DOMAIN moment AS
-timestamp DEFAULT 'now'`. So is a MySQL table that declares two `CHECK`
-constraints of one name
-([stokaro/ptah#6390](https://github.com/stokaro/ptah/pull/6390)). Measured with
+quoted type, as `"pg_catalog"."timestamptz" DEFAULT 'now'`, and one on an
+array, as `date[] DEFAULT '{now}'`. So is a MySQL table that declares two
+`CHECK` constraints of one name
+([stokaro/ptah#6390](https://github.com/stokaro/ptah/pull/6390)). Ptah also
+refuses a domain's own relative time default, as `CREATE DOMAIN moment AS
+timestamp DEFAULT 'now'`, but as a fault of the schema, and names the domain
+`public.moment` where `schema validate` names it `moment`, so the operator does
+not tie the refusal to the file. An Observe fails with `child_exit` at every
+failure retry, a Plan fails with `plan_refused` and the code
+`declaration-refused`, and only the Pod log holds Ptah's sentence. Measured with
 `schema validate`, v0.33.1 accepted all of them.
 
 A PostgreSQL column default whose cast changes its value, as `DEFAULT
