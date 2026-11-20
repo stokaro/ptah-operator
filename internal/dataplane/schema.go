@@ -67,6 +67,14 @@ const (
 	// that references an unknown table. Ptah v0.22.0 reported the same fault
 	// as a failed plan, with the same error message.
 	SchemaRefusalDeclarationRefused = "declaration-refused"
+	// SchemaRefusalBackslashMode is Ptah v0.34.0's refusal of a plan whose
+	// statements spell a string literal with a backslash in it, against a
+	// MySQL or MariaDB session whose sql_mode holds NO_BACKSLASH_ESCAPES
+	// (stokaro/ptah#6400). The plan was computed for one reading of a
+	// backslash and the server would store the other. `schema apply` raises
+	// it before its first statement, a dry run included. Ptah v0.33.1
+	// reported the same fault as a failed apply with no code.
+	SchemaRefusalBackslashMode = "backslash-mode"
 )
 
 // The refusals of an owner the server would refuse, which `schema apply`
@@ -156,6 +164,16 @@ func (r SchemaRefusal) RefusesOwner() bool {
 	default:
 		return false
 	}
+}
+
+// RefusesPlanContent reports whether a dry run's refusal is one of the plan as
+// it stands on this server, which the same plan meets again on every read
+// until the server or the declaration changes: an owner the server would
+// refuse (RefusesOwner), or backslash-mode. A stale plan, a lock timeout and
+// a code this operator does not know are not: the first two say the database
+// moved or was busy, and the last says nothing about which.
+func (r SchemaRefusal) RefusesPlanContent() bool {
+	return r.RefusesOwner() || r.Code == SchemaRefusalBackslashMode
 }
 
 // SchemaRefusalOwner is the statement an owner refusal names. Statement is the

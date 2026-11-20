@@ -1006,13 +1006,17 @@ func validatePlanDryRun(
 		return false
 	}
 	switch {
-	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && report.Refusal.RefusesOwner():
+	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && report.Refusal.RefusesPlanContent():
 		// Since Ptah v0.30.1 the dry run refuses an owner the server would
 		// refuse, as the Apply would, before any statement (stokaro/ptah#6196):
-		// it reads the roles a plan never reads. That is a refusal of the plan
-		// as it stands, named the way a plan's own refusal is. Ptah's sentence
-		// says what to grant, and names roles and objects of the database, so
-		// it goes to the Pod log.
+		// it reads the roles a plan never reads. Since v0.34.0 it refuses a
+		// plan whose string literals hold a backslash, on a MySQL session
+		// whose sql_mode holds NO_BACKSLASH_ESCAPES (stokaro/ptah#6400): the
+		// plan reads the mode, but only the dry run compares it with what the
+		// statements spell. Each is a refusal of the plan as it stands, named
+		// the way a plan's own refusal is. Ptah's sentence says what to change,
+		// and names roles, objects and columns of the database, so it goes to
+		// the Pod log.
 		//
 		// Every other refusal of the dry run stays the failed validation it was
 		// before: a stale plan is one the database moved under between the two
