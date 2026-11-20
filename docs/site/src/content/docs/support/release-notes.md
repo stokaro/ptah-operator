@@ -142,8 +142,12 @@ Once this release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   declares without a schema in the schema they placed it in, as
   `domain "public.moment"`, and a column it types by that schema, as
   `on a public.moment column`, where `schema validate` names them as the file
-  does, and the runner allows for both as it does for a table, so the refusal
-  of a domain's relative time default names the domain and the file.
+  does, and the runner allows for both as it does for a table. So the refusal
+  of a domain's relative time default names the domain and the file, and so
+  does the refusal of a relative time default on a column such a domain types,
+  which Ptah v0.33.1 already made and 0.2.15 read as `child_exit` from an
+  Observe and as `plan_refused` from a Plan, tried again at every failure
+  retry.
 - **An OCI migration artifact Ptah cannot read stops at the history read.** The
   `fetch-migrations` step now runs `ptah migrations pull --skip-validation`
   under Ptah v0.34.0 or later, the first release that has it

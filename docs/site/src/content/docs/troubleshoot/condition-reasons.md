@@ -754,8 +754,10 @@ anything, and stop on the first one they refuse
 ([stokaro/ptah#5845](https://github.com/stokaro/ptah/pull/5845)). Since Ptah
 v0.34.0 so does a domain whose own default is a relative time string, as
 `CREATE DOMAIN moment AS timestamp DEFAULT 'now'`
-([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)), and a column
-typed by a domain with a relative time default of its own:
+([stokaro/ptah#6386](https://github.com/stokaro/ptah/pull/6386)). So does a
+relative time default on a column typed by a domain over a date or time type,
+which Ptah refuses since v0.33.1
+([stokaro/ptah#6345](https://github.com/stokaro/ptah/pull/6345)):
 
 ```
 desired_schema_invalid: schema.sql: invalid foreign key: field "id" references unknown table "nope"
