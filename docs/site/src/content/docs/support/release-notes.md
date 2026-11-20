@@ -438,8 +438,11 @@ on PostgreSQL 16, 17 and 18. On PostgreSQL 18 a schema may now declare a
 ([stokaro/ptah#6341](https://github.com/stokaro/ptah/pull/6341)). Ptah reads a
 generated column the schema declares without a kind as `STORED`, and PostgreSQL
 18 makes a `VIRTUAL` one of `GENERATED ALWAYS AS (...)` without `STORED`, so a
-column created that way by hand or by a migration fails the Plan with
-`child_exit` until the schema declares it `VIRTUAL`.
+column created that way by hand or by a migration fails every Plan with
+`invalid_plan_output` until the schema declares it `VIRTUAL`. Running `ptah
+schema plan` against the database prints Ptah's sentence, which names the
+column and both kinds. A column Ptah creates from such a declaration is
+`STORED`.
 
 A PostgreSQL schema file that gives a date or time column a relative time
 literal for its default, as `created_at timestamptz DEFAULT 'now'`, or
