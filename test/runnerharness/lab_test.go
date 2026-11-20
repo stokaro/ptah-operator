@@ -585,19 +585,34 @@ func selfSignedWithoutNames(t *testing.T) (certificate, key []byte) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 }
 
+// The servers keep their data in memory, in these directories.
+const (
+	postgresData = "/var/lib/postgresql/data"
+	mysqlData    = "/var/lib/mysql"
+	registryData = "/var/lib/registry"
+)
+
 func (l *lab) startDatabases(t *testing.T) {
 	t.Helper()
 	l.docker.must(t, []string{"POSTGRES_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
 		"--name", l.name("postgres"), "--network", l.network, "--network-alias", postgresHost,
 		"--env", "POSTGRES_PASSWORD",
-		// Most rows make a database, and CREATE DATABASE also writes its
-		// template to the WAL, which stays until a checkpoint, so the space a
-		// run takes grows with its rows.
-		"--tmpfs", "/var/lib/postgresql/data:rw,size=1g",
+		// Most rows make a database, which copies its template, about 7 MiB,
+		// into base/ and writes the same into the WAL. The WAL stays until a
+		// checkpoint, and the default max_wal_size of 1GB asks for one only
+		// after about 540 MB, so a run that ends inside one
+		// checkpoint_timeout, five minutes, keeps all of it: 384 MiB of WAL
+		// beside 628 MiB of databases filled the 1 GiB this directory had.
+		// max_wal_size bounds the WAL at 128 MiB, a checkpoint every few
+		// databases, however long the run takes. The size holds the
+		// databases a run makes, about 680 MiB at its end, and that bound, with
+		// about 730 MiB, some 100 databases, to spare.
+		"--tmpfs", postgresData+":rw,size=1536m",
 		"--mount", "type=volume,src="+l.name("tls")+",dst=/tls,readonly",
 		l.images.postgres,
 		"-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/server.key",
-		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+		"-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off",
+		"-c", "max_wal_size=128MB", "-c", "min_wal_size=32MB")
 	for _, server := range []struct{ name, alias, size string }{
 		{l.name("mysql"), mysqlHost, "1g"},
 		{l.name("mysql-mode"), mysqlModeHost, "256m"},
@@ -605,7 +620,7 @@ func (l *lab) startDatabases(t *testing.T) {
 		l.docker.must(t, []string{"MYSQL_ROOT_PASSWORD=" + l.databasePassword}, "run", "--detach", "--pull", "never",
 			"--name", server.name, "--network", l.network, "--network-alias", server.alias,
 			"--env", "MYSQL_ROOT_PASSWORD",
-			"--tmpfs", "/var/lib/mysql:rw,size="+server.size+",uid=999,gid=999",
+			"--tmpfs", mysqlData+":rw,size="+server.size+",uid=999,gid=999",
 			l.images.mysql,
 			"--innodb-doublewrite=0", "--sync-binlog=0", "--innodb-flush-log-at-trx-commit=0")
 	}
@@ -644,11 +659,40 @@ func (l *lab) startDatabases(t *testing.T) {
 	}
 }
 
+// logStorage logs what each server's memory-backed directory holds against its
+// size, and for PostgreSQL how much of it is WAL and how many checkpoints ran.
+// A row that brings a run near a bound shows in the log before one fails.
+func (l *lab) logStorage(t *testing.T, when string) {
+	t.Helper()
+	exec := func(container string, args ...string) string {
+		stdout, stderr, exit, err := l.docker.run(context.Background(), nil, nil, append([]string{"exec", container}, args...)...)
+		if err != nil || exit != 0 {
+			return fmt.Sprintf("(%s exited %d: %v %s)", args[0], exit, err, bytes.TrimSpace(stderr))
+		}
+		return strings.TrimSpace(string(stdout))
+	}
+	used := func(container, path string) string {
+		lines := strings.Split(exec(container, "df", "-k", path), "\n")
+		fields := strings.Fields(lines[len(lines)-1])
+		if len(fields) < 3 {
+			return strings.Join(lines, " ")
+		}
+		return fields[2] + " of " + fields[1] + " KiB"
+	}
+	postgres := l.name("postgres")
+	t.Logf("storage %s: postgres %s (du KiB: %s; wal bytes written, timed and requested checkpoints, databases: %s); mysql %s; mysql-mode %s; registry %s",
+		when, used(postgres, postgresData),
+		strings.Join(strings.Fields(exec(postgres, "du", "-sk", postgresData+"/base", postgresData+"/pg_wal")), " "),
+		strings.ReplaceAll(exec(postgres, "psql", "-U", "postgres", "-At", "-F", " ", "-c",
+			"SELECT (SELECT wal_bytes FROM pg_stat_wal), num_timed, num_requested, (SELECT count(*) FROM pg_database) FROM pg_stat_checkpointer"), "\n", " "),
+		used(l.name("mysql"), mysqlData), used(l.name("mysql-mode"), mysqlData), used(l.name("registry"), registryData))
+}
+
 func (l *lab) startRegistry(t *testing.T) {
 	t.Helper()
 	l.docker.must(t, nil, "run", "--detach", "--pull", "never",
 		"--name", l.name("registry"), "--network", l.network, "--network-alias", strings.Split(registryHost, ":")[0],
-		"--tmpfs", "/var/lib/registry:rw,size=256m", l.images.registry)
+		"--tmpfs", registryData+":rw,size=256m", l.images.registry)
 	deadline := time.Now().Add(time.Minute)
 	for time.Now().Before(deadline) {
 		_, _, exit, err := l.docker.run(context.Background(), nil, nil, "exec", l.name("registry"),

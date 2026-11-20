@@ -112,6 +112,7 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 		})
 	})
 
+	l.logStorage(t, "after the lifecycles")
 	// A fault needs what a lifecycle really produced.
 	if inputs[enginePostgres].plan != nil && inputs[engineMySQL].plan != nil &&
 		inputs[enginePostgres].planned != nil && inputs[engineMySQL].planned != nil {
@@ -136,6 +137,7 @@ func TestRunnerAgainstThePinnedImage(t *testing.T) {
 				})
 			}
 		})
+		l.logStorage(t, "after the faults")
 	}
 
 	// The rows that read a repository whose branch was rewritten stop the
