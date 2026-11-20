@@ -932,41 +932,164 @@ func (m *migrationRun) unreadOCIFiles() {
 	secret = "e2e-" + m.engine.name + "-no-sql-oci-db"
 	m.isolatedDatabase("ptah_e2e_no_sql_oci", secret)
 	reference = m.reference("-no-sql")
-	credentials := m.publishFixtureArtifact(reference, empty, "", "no migration file")
+	m.publishFixtureArtifact(reference, empty, "", "no migration file")
 	m.mustCreate(m.migrationDocument(migrationSpec{
 		name: name, secret: secret, reference: reference,
 		coordinationKey: "e2e/no-sql-oci/" + m.engine.name, apply: "OnApproval", interval: "30s",
 	}))
+	refused := m.waitForFetchRefusal(name)
+	if log := m.failedFetchStepLog(name); !bytes.Contains(log, []byte(noMigrationFilesWords)) {
+		m.fatalf("the %s step of %s failed, and its log of %d bytes does not say the artifact holds no migration file",
+			migrationFetchStep, name, len(log))
+	}
+	m.saysNothingTheStepPrinted(name, refused, []string{noMigrationFilesWords})
+	m.finishFixture(name)
+	m.logf("PASS a %s migration whose artifact holds no migration file named the step and its exit code alone", m.engine.kind)
+}
+
+// registryRefusedOCIFetch is a fetch the registry refuses the credential of.
+// The step that holds the credential prints Ptah's answer, which names the
+// registry, the repository and the 401, and the status and the Events of the
+// migration name the step and its exit code, and neither what the step printed
+// nor the credential (stokaro/ptah-operator#1149).
+//
+// A Resolve and a Verify reach the registry with the same credential before
+// any fetch runs, so a credential that is wrong from the start fails the
+// Resolve, in the runner's words. The row lets both pass and holds the History
+// in its retry instead: the target's Secret names a wrong database password,
+// so each History attempt fails at the target after its fetch passed. The
+// registry Secret then gets a wrong password, and the next attempt's fetch is
+// refused. Neither Secret's value is an input of the claim, so the History is
+// retried, rather than started again from a Resolve.
+func (m *migrationRun) registryRefusedOCIFetch() {
+	m.t.Helper()
+	name := "e2e-registry-refusal-oci-" + m.engine.name
+	secret := "e2e-" + m.engine.name + "-registry-refusal-db"
+	auth := "e2e-" + m.engine.name + "-registry-refusal-auth"
+	// The database user is the registry user, ptah_e2e, which the row scans
+	// status for, so the database is named without it.
+	m.createDatabase(registryRefusalDatabase)
+	url := m.engine.databaseURL(m.in.TestNamespace, migrationDatabaseUser, registryRefusalDatabasePassword, registryRefusalDatabase)
+	m.protect(url, registryRefusalDatabasePassword)
+	m.createDatabaseSecret(secret, registryRefusalDatabase, url)
+
+	shared := &corev1.Secret{}
+	m.check(m.get(registryAuthSecret, shared), "read the registry Secret %s", registryAuthSecret)
+	username, password := string(shared.Data["username"]), string(shared.Data["password"])
+	if username == "" || password == "" {
+		m.fatalf("the registry Secret %s holds an empty username or password, so nothing could be scanned for them", registryAuthSecret)
+	}
+	authSecret := func(password string) map[string]any {
+		data := map[string]string{}
+		for key, value := range shared.Data {
+			data[key] = string(value)
+		}
+		data["password"] = password
+		return map[string]any{
+			"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+			"metadata": map[string]any{"namespace": m.in.TestNamespace, "name": auth},
+			"data":     secretData(data),
+		}
+	}
+	m.check(m.apply(authSecret(password)), "apply Secret %s", auth)
+
+	fixtures, err := filepath.Abs(m.fixtureDir(""))
+	m.check(err, "resolve the migration fixtures")
+	reference := m.reference("-registry-refusal")
+	m.publishFixtureArtifact(reference, fixtures, "", "the engine's migrations")
+	m.mustCreate(m.migrationDocument(migrationSpec{
+		name: name, secret: secret, reference: reference,
+		// An interval longer than the row keeps the chain from starting again
+		// at a Resolve, which would meet the wrong password before any fetch.
+		coordinationKey: "e2e/registry-refusal/" + m.engine.name, apply: "OnApproval", interval: "1h",
+		edit: func(spec map[string]any) {
+			spec["artifact"].(map[string]any)["registryAuthFrom"].(map[string]any)["name"] = auth
+		},
+	}))
+	key := reachabilityURLKey(secret)
+	var reading *ptahv1alpha1.PtahMigration
+	if !m.miUntil(migrationPoll, func() bool {
+		reading = m.migration(name)
+		return targetRefusedCredentials(reading.Status.Conditions, reading.Generation, key)
+	}) {
+		m.fatalf("the History of %s never reached its target and was refused the credential within %s: phase %s, conditions %+v",
+			name, waitTimeout, reading.Status.Phase, reading.Status.Conditions)
+	}
+
+	m.protect(registryRefusalPassword)
+	m.check(m.apply(authSecret(registryRefusalPassword)), "give Secret %s a wrong password", auth)
+	refused := m.waitForFetchRefusal(name)
+	words, err := registryRefusalWords(m.failedFetchStepLog(name))
+	m.check(err, "read why the %s step of %s failed", migrationFetchStep, name)
+	m.saysNothingTheStepPrinted(name, refused, append(words, username, password, registryRefusalPassword))
+	m.finishFixture(name)
+	m.logf("PASS a %s migration whose registry refused the fetch's credential named the step and its exit code alone", m.engine.kind)
+}
+
+// waitForFetchRefusal waits for a migration whose fetch step failed to say so,
+// in the condition and in a Warning Event, as the step and its exit code
+// alone, and returns the document that matched.
+func (m *migrationRun) waitForFetchRefusal(name string) *ptahv1alpha1.PtahMigration {
+	m.t.Helper()
 	var refused *ptahv1alpha1.PtahMigration
+	var last error
 	if !m.miUntil(migrationPoll, func() bool {
 		refused = m.migration(name)
 		last = fetchRefusalSaysOnly(refused.Status, migrationFetchStep)
 		return last == nil
 	}) {
-		m.fatalf("%s never named the step that refused an artifact with no migration file within %s: %v", name, waitTimeout, last)
+		m.fatalf("%s never named the step that failed within %s: %v", name, waitTimeout, last)
 	}
+	if !m.miUntil(migrationPoll, func() bool {
+		events := &corev1.EventList{}
+		m.check(m.list(events), "read the Events of %s", name)
+		last = fetchRefusalEvent(events.Items, refused.UID, string(ptahv1alpha1.MigrationOperationHistory), migrationFetchStep)
+		return last == nil
+	}) {
+		m.fatalf("the %s Warning Event of %s never named the step that failed: %v", operationRetriedReason, name, last)
+	}
+	return refused
+}
+
+// failedFetchStepLog reads the log of the fetch step of a Pod of the
+// migration whose fetch failed. The words the operator withholds from status
+// are there, so it is what shows the step failed for the reason the row
+// arranged, and what gives the scan of status something it could find.
+func (m *migrationRun) failedFetchStepLog(name string) []byte {
+	m.t.Helper()
+	jobs := &batchv1.JobList{}
+	m.check(m.list(jobs, client.MatchingLabels{labelMigration: name}), "list the Jobs of %s", name)
+	var pods []corev1.Pod
+	for index := range jobs.Items {
+		listed := &corev1.PodList{}
+		m.check(m.list(listed, client.MatchingLabels{"job-name": jobs.Items[index].Name}), "list the Pods of Job %s", jobs.Items[index].Name)
+		pods = append(pods, ownedPods(listed.Items, jobs.Items[index].UID)...)
+	}
+	log, err := failedFetchLog(pods, migrationFetchStep, func(pod, container string) ([]byte, error) {
+		return m.cluster.ContainerLog(m.ctx, m.in.TestNamespace, pod, container)
+	})
+	m.check(err, "read the %s step of %s", migrationFetchStep, name)
+	return log
+}
+
+// saysNothingTheStepPrinted holds the status that matched and the Events of
+// the migration, which the wait proved hold at least the fetch's, to none of
+// the words.
+func (m *migrationRun) saysNothingTheStepPrinted(name string, refused *ptahv1alpha1.PtahMigration, words []string) {
+	m.t.Helper()
 	events := &corev1.EventList{}
 	m.check(m.list(events), "read the Events of %s", name)
 	owned := slices.DeleteFunc(events.Items, func(event corev1.Event) bool { return event.InvolvedObject.UID != refused.UID })
+	if len(owned) == 0 {
+		m.fatalf("no Event of %s is left to scan", name)
+	}
 	status, err := json.Marshal(refused.Status)
 	m.check(err, "encode the status of %s", name)
 	said, err := json.Marshal(owned)
 	m.check(err, "encode the Events of %s", name)
-	if credentials.Username == "" || credentials.Password == "" {
-		m.fatalf("the registry credentials hold an empty field, so nothing could be scanned for them")
+	if err := saysNoneOf(map[string][]byte{"the status of " + name: status, "the Events of " + name: said}, words); err != nil {
+		m.fatalf("%s carries what its fetch step printed or held: %v", name, err)
 	}
-	for _, text := range [][]byte{status, said} {
-		for _, secret := range []string{credentials.Username, credentials.Password} {
-			if bytes.Contains(text, []byte(secret)) {
-				m.fatalf("%s carries a registry credential", name)
-			}
-		}
-		if bytes.Contains(text, []byte(noMigrationFilesWords)) {
-			m.fatalf("%s carries what the fetch printed: %s", name, text)
-		}
-	}
-	m.finishFixture(name)
-	m.logf("PASS a %s migration whose artifact holds no migration file named the step and its exit code alone", m.engine.kind)
 }
 
 // nativePolicyRefusalProof reads the phase's artifact under a policy Ptah itself

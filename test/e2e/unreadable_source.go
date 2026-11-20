@@ -41,6 +41,13 @@ CREATE TABLE c (extra text) INHERITS (p);
 	// step's log.
 	migrationFetchStep    = "fetch-migrations"
 	noMigrationFilesWords = "migration artifact contains no migration files"
+	// registryRefusalPassword is the wrong registry password the fetch row
+	// gives the step, and registryRefusalDatabasePassword the wrong database
+	// password that holds its History in retry until then. The database is
+	// named without ptah_e2e, the registry user the row scans for.
+	registryRefusalPassword         = "e2e-not-the-registry-password"
+	registryRefusalDatabasePassword = "e2e-not-the-database-password"
+	registryRefusalDatabase         = "e2e_registry_refusal"
 
 	// schemaFetchStep is the init container that pulls a schema artifact. It
 	// holds the registry credentials, writes the layer unparsed, and so passes
@@ -146,6 +153,12 @@ func migrationDirectoryRefused(migration *ptahv1alpha1.PtahMigration) (string, e
 	return blocked.Message, nil
 }
 
+// fetchRefusalSentence is the pattern of the sentence the operator writes for
+// a fetch step that failed: the step and its exit code.
+func fetchRefusalSentence(step string) string {
+	return `the ` + regexp.QuoteMeta(step) + ` step exited [1-9][0-9]*, so the run never started`
+}
+
 // fetchRefusalSaysOnly holds a migration whose fetch step failed to a
 // Progressing condition that names the step and its exit code and nothing
 // else: the step holds the registry credential, so what it printed stays in
@@ -156,9 +169,80 @@ func fetchRefusalSaysOnly(status ptahv1alpha1.PtahMigrationStatus, step string) 
 	if progressing == nil {
 		return fmt.Errorf("phase %s with no %s condition", status.Phase, ptahv1alpha1.ConditionMigrationProgressing)
 	}
-	pattern := regexp.MustCompile(`^the ` + regexp.QuoteMeta(step) + ` step exited [1-9][0-9]*, so the run never started$`)
+	pattern := regexp.MustCompile(`^` + fetchRefusalSentence(step) + `$`)
 	if !pattern.MatchString(progressing.Message) {
 		return fmt.Errorf("%s says %q, want the %s step and its exit code alone", progressing.Type, progressing.Message, step)
+	}
+	return nil
+}
+
+// operationRetriedReason is the reason of the Warning Event a migration writes
+// each time it retries an operation that failed.
+const operationRetriedReason = "OperationRetried"
+
+// fetchRefusalEvent finds the OperationRetried Warning Event one resource
+// wrote when the fetch step of an operation failed: "<operation> attempt <n>: "
+// and the condition's sentence, and nothing more. An Event that goes on to
+// carry the step's words, or names another step or operation, is refused.
+func fetchRefusalEvent(events []corev1.Event, owner types.UID, operation, step string) error {
+	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(operation) + ` attempt [1-9][0-9]*: ` + fetchRefusalSentence(step) + `$`)
+	return warningEventSays(events, owner, operationRetriedReason, func(message string) error {
+		if !pattern.MatchString(message) {
+			return fmt.Errorf("the Event says %q, want the %s step of the %s and its exit code alone", message, step, operation)
+		}
+		return nil
+	})
+}
+
+// failedFetchLog is the log of the step of a Pod whose step failed, where the
+// words the operator withholds from status stay. It refuses a Pod list in
+// which no Pod's step failed, since a row that scans for words the step never
+// printed would pass however the operator carried them.
+func failedFetchLog(pods []corev1.Pod, step string, read func(pod, container string) ([]byte, error)) ([]byte, error) {
+	for index := range pods {
+		for _, status := range pods[index].Status.InitContainerStatuses {
+			if status.Name != step || status.State.Terminated == nil || status.State.Terminated.ExitCode == 0 {
+				continue
+			}
+			return read(pods[index].Name, step)
+		}
+	}
+	return nil, fmt.Errorf("none of %d Pods has a %s step that failed", len(pods), step)
+}
+
+// registryRefusalWords are the parts of Ptah's answer to a registry that
+// refused the credential that the fetch step's log has to carry: the status
+// code, the registry's word for it, and the URL the step asked, which names
+// the registry and the repository. A log without them did not fail on the
+// credential. The URL is returned as the step printed it. The log itself is
+// not quoted: the step held the credential.
+func registryRefusalWords(log []byte) ([]string, error) {
+	match := regexp.MustCompile(`GET "([^"\s]+/v2/[^"\s]+)": response status code 401: unauthorized`).FindSubmatch(log)
+	if match == nil {
+		return nil, fmt.Errorf("the step's log of %d bytes carries no 401 for a registry request", len(log))
+	}
+	return []string{"response status code 401", "unauthorized", string(match[1])}, nil
+}
+
+// saysNoneOf refuses a document that carries one of the words. It refuses to
+// pass on no document, on an empty document and on no word, since each of
+// those would hold whatever the operator wrote.
+func saysNoneOf(documents map[string][]byte, words []string) error {
+	if len(documents) == 0 || len(words) == 0 {
+		return fmt.Errorf("%d documents and %d words, so nothing was scanned", len(documents), len(words))
+	}
+	for name, document := range documents {
+		if len(document) == 0 {
+			return fmt.Errorf("%s is empty, so nothing was scanned", name)
+		}
+		for _, word := range words {
+			if word == "" {
+				return fmt.Errorf("an empty word is found in every document")
+			}
+			if strings.Contains(string(document), word) {
+				return fmt.Errorf("%s carries %q", name, word)
+			}
+		}
 	}
 	return nil
 }
