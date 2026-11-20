@@ -808,7 +808,7 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.checkUnreadableText(message)
 	c.waitForUnreadableEvent(refused.UID, string(ptahv1alpha1.ReasonSchemaSourceUnreadable), unreadableSchemaFile, unreadableInheritsReason)
-	c.holdRefusal(configMapUnreadableSchema, refused, failureRetry, schemaSourceRefused)
+	c.holdRefusal(configMapUnreadableSchema, refused, schemaSourceRefused)
 	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
 	request := c.requestUnreadableSchemaRead(refused)
 	c.waitForStoppedSchema(configMapUnreadableSchema, "the read the request started to be refused in its turn", func(s *ptahv1alpha1.PtahSchema) error {
@@ -820,7 +820,7 @@ func (c *configMapRun) unreadableSources() {
 	})
 	c.deleteAndWait(refused)
 	c.logf("PASS a schema from a ConfigMap stopped and said why its file could not be read: %s", message)
-	c.invalidSchema(target, execution, failureRetry)
+	c.invalidSchema(target, execution)
 
 	data := map[string]string{}
 	items := []any{}
@@ -879,7 +879,7 @@ func (c *configMapRun) unreadableSources() {
 // repair reaches the same read the row above proves, so the file is not
 // repaired. The resource is removed afterward, so the target's Lease and
 // database are as the row above left them.
-func (c *configMapRun) invalidSchema(target, execution map[string]any, failureRetry time.Duration) {
+func (c *configMapRun) invalidSchema(target, execution map[string]any) {
 	c.t.Helper()
 	c.check(c.apply(c.sourceDocument(configMapInvalidSchemaSource, map[string]string{"schema.sql": invalidDomainSchema})),
 		"apply ConfigMap %s", configMapInvalidSchemaSource)
@@ -906,7 +906,7 @@ func (c *configMapRun) invalidSchema(target, execution map[string]any, failureRe
 	})
 	c.checkUnreadableText(message)
 	c.waitForInvalidSchemaEvent(refused.UID, invalidDomainReason)
-	c.holdRefusal(configMapInvalidSchema, refused, failureRetry, schemaInvalidRefused)
+	c.holdRefusal(configMapInvalidSchema, refused, schemaInvalidRefused)
 
 	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
 	c.editSource(configMapInvalidSchemaSource, "schema.sql", invalidKeySchema)
@@ -965,9 +965,10 @@ func (c *configMapRun) waitForStoppedSchema(name, what string, holds func(*ptahv
 // the attempt that refused it, counted from that attempt as the controller
 // counts its retry, and requires every reading to hold the same refusal, as
 // refusedAs reads it. A retry would start another read under a claim, and a
-// read that ends stamps another attempt.
+// read that ends stamps another attempt. The retry interval is the one the
+// refused document holds, which is what the controller waited by.
 func (c *configMapRun) holdRefusal(
-	name string, refused *ptahv1alpha1.PtahSchema, failureRetry time.Duration,
+	name string, refused *ptahv1alpha1.PtahSchema,
 	refusedAs func(*ptahv1alpha1.PtahSchema) (string, error),
 ) {
 	c.t.Helper()
@@ -975,8 +976,14 @@ func (c *configMapRun) holdRefusal(
 	if attempt == nil {
 		c.fatalf("the refused schema records no attempt to hold from")
 	}
+	failureRetry := refused.Spec.Execution.FailureRetryInterval.Duration
+	if failureRetry <= 0 {
+		c.fatalf("the refused schema holds spec.execution.failureRetryInterval %s, so there is no retry to hold past",
+			refused.Spec.Execution.FailureRetryInterval.Duration)
+	}
 	until := attempt.Add(2 * failureRetry)
-	c.logf("holding %s, until two failure retries after the refusal at %s", time.Until(until).Round(time.Second), attempt.UTC().Format(time.RFC3339))
+	c.logf("holding %s, until two failure retries of %s after the refusal at %s",
+		time.Until(until).Round(time.Second), failureRetry, attempt.UTC().Format(time.RFC3339))
 	readings := 0
 	for {
 		schema := &ptahv1alpha1.PtahSchema{}
