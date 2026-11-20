@@ -26,6 +26,7 @@ things, and [the next section](#three-states-kept-apart) says what.
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
 | `edge` | No range | `v0.33.1` | [edge](https://operator.ptah.run/edge/) |
+| `v0.2.15` | No range | `v0.33.1` | [v0.2.15](https://operator.ptah.run/v0.2.15/) |
 | `v0.2.14` | No range | `v0.29.2` | [v0.2.14](https://operator.ptah.run/v0.2.14/) |
 | `v0.2.13` | No range | `v0.29.0` | [v0.2.13](https://operator.ptah.run/v0.2.13/) |
 | `v0.2.12` | No range | `v0.26.0` | [v0.2.12](https://operator.ptah.run/v0.2.12/) |
@@ -102,6 +103,16 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 - Run 43780370228 of the same workflow passed both lines on every supported Kubernetes minor at Ptah v0.29.2.
 - Run 44640143851 of the same workflow passed both lines on every supported Kubernetes minor at Ptah v0.33.1.
 - The published verified set is a repository document. It is not compiled into the manager, and nothing compares a running executor's ptahVersion against it, so a combination outside this set is outside what the matrix measured rather than something the operator refuses. What is refused before a database is mutated is a change of any bound execution component between the plan and the apply -- Ptah, the executor image, the runner protocol version, the controller-state version -- checked before the Job is created. The manager's image and revision and the runner image are recorded and not bound: a manager release that changes only them applies the plans and approvals its predecessor left. What is refused after a Job has run is a runner speaking another protocol version, which is a rejected result frame rather than a prevented mutation. Pinning both the executor image and its ptahVersion at install is a requirement on whoever installs, not a check at runtime.
+
+### v0.2.15
+
+A released version. Its guide is at [https://operator.ptah.run/v0.2.15/](https://operator.ptah.run/v0.2.15/).
+
+**Declared:** the same as [`edge`](#edge).
+
+**Verified:** the same as [`edge`](#edge).
+
+**Limitations:** the same as [`edge`](#edge).
 
 ### v0.2.14
 
