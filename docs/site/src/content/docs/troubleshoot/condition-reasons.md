@@ -61,7 +61,7 @@ decision.
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
 | `PermissionDenied` | `DatabaseReachable` is false because the server accepted the credentials and refused the user access to the database. |
-| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. On `ApprovalRequired` it says a plan was waiting for an approval and the Plan after it ended with `ProtectedTable` or `DifferenceNotPlannable`, so nothing is left to approve. |
+| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. On `ApprovalRequired` it says a plan was waiting for an approval and the Plan after it ended with `ProtectedTable` or `DifferenceNotPlannable`, or a read of the schema ended with `SchemaSourceUnreadable`, so nothing is left to approve. |
 | `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
 | `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Past the deadline, the failure the run records keeps the refusal as what was last reported, unless the Job counted a Pod by then. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
@@ -88,6 +88,7 @@ decision.
 | `RunNotUnresolved` | A `PtahMigrationRunAcknowledgment` named a run its migration was not waiting on, so it settled nothing. Read the migration's `status.unresolvedRun` for the run it does record, or `status.resolvedRun` for what settled the one you named. |
 | `Satisfied` | Current plan approval requirements passed final validation. |
 | `SchemaDrifted` | A migration Apply ran nothing because `spec.policy.driftCheck` found the target's schema differing from the one its applied migrations produce. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
+| `SchemaSourceUnreadable` | An Observe or a Plan could not read the desired schema: a file Ptah cannot parse, a relative time string as a date or time column's default, or a row file outside Ptah's working directory. `Ready` is false with Ptah's reason, phase `Blocked`, nothing is published, and the schema is read again at `spec.interval`, at once when a ConfigMap source or the spec changes, or on a read request. After an Apply it ends the proof. See [A desired file Ptah could not read](#a-desired-file-ptah-could-not-read). |
 | `ScopedChanges` | The authoritative managed scope differs from desired state. |
 | `ScopedConverged` | The authoritative managed scope has no changes. |
 | `ScopedPlanPending` | Raw observation completed and scoped planning remains pending. |
@@ -559,30 +560,40 @@ declaration and reads no row file, as
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |
-| `PtahSchema` Observe or Plan | `ReconciliationFailed=True` with reason `OperationFailed`, and an `OperationFailed` Warning Event. |
+| `PtahSchema` Observe or Plan | `Ready=False` with reason `SchemaSourceUnreadable`, phase `Blocked`, and a `SchemaSourceUnreadable` Warning Event. `PlanReady` is false, `DriftDetected` and `InSync` are unknown, and `ReconciliationFailed` is false. |
 | `PtahMigration` history read | `Blocked=True` with reason `MigrationDirectoryUnreadable`, phase `Blocked`, and a `MigrationDirectoryUnreadable` Warning Event. |
 
-A schema's operation runs again after `spec.execution.failureRetryInterval`, on
-the same files. Repairing the source ends that with no edit to the resource. An
-edit to a ConfigMap is read at once. A new commit or a moved tag is read when the
-retry delay ends after `spec.interval` has passed since the source was last read,
-or sooner if you ask:
+Neither tries the same files again: another read would give the same answer.
+Each publishes no plan, marks any approval stale, and reads the source again at
+`spec.interval`. Repairing the source needs no edit to the resource. An edit to a
+ConfigMap source is read at once, and a new commit or a moved tag at the
+interval, or sooner if you ask:
 
 ```bash
 kubectl ptah refresh schema/storefront -n application --wait
-```
-
-A `ReadRestarted` Event says the failed operation gave way and why, and
-`status.activeOperation` starts again at attempt 1.
-
-A migration does not try the same files again: another read would give the same
-answer. It publishes no plan, marks any approval stale, and reads the source
-again at `spec.interval`. An edit to a ConfigMap source is read at once, and a
-new commit or a moved tag at the interval, or sooner if you ask:
-
-```bash
 kubectl ptah refresh migration/orders -n application --wait
 ```
+
+The read after a schema's Apply reads the files the Apply ran from, which no
+edit changes, so a file Ptah cannot read ends that proof instead of being tried
+again. Nothing records the Apply as converged, and the database-realm Lease is
+released. It usually happens after a Ptah upgrade between the Apply and that
+read, when the new release refuses what the release before it read. The
+upgrade [retires the execution binding](../../reference/mutation-lifecycle/#retire-an-execution-binding), so the
+proof ends under the new one: the journal records it `Verified` with outcome
+`Superseded`, the resource reads `Pending` with `ExecutionBindingChanged`, and
+the `SchemaSourceUnreadable` Warning Event is what names the file. The next
+pass reads the source at once and, while the file stays as it is, stops
+`Blocked` with `SchemaSourceUnreadable`. `kubectl ptah wait --for applied` and
+`kubectl ptah settle --wait` stop and say the proof settled under a newer
+generation, policy or execution binding, as they do when a newer generation or
+policy ends the proof.
+
+Where the executor that planned the files refuses them on the read after, the
+proof ends under the binding the Apply ran under: the resource is `Blocked`
+with `SchemaSourceUnreadable` until the interval, the journal records the proof
+`Verified` with outcome `Unknown` and reason `SchemaSourceUnreadable`, and both
+commands stop and say Ptah could not read the desired schema.
 
 The reason comes from a second run of Ptah that holds no database URL and no
 credential, so it cannot quote the database. It can quote a fragment of the file,
@@ -597,7 +608,10 @@ parse passes the history read and fails the Apply on the database.
 
 A desired schema that loads and that Ptah refuses as a whole, such as a foreign
 key to a table it does not declare, reads the same way under the code
-`desired_schema_invalid`, in the same places and on the same retry. So does an
+`desired_schema_invalid`. It is reported as a failed operation:
+`ReconciliationFailed=True` with reason `OperationFailed` and an
+`OperationFailed` Warning Event, and the operation runs again after
+`spec.execution.failureRetryInterval`. So does an
 index on a table no declaration defines, or on a column its table does not
 declare: since Ptah v0.26.0 drift and plan check every index before they compare
 anything, and stop on the first one they refuse

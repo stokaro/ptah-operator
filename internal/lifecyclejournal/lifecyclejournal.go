@@ -176,6 +176,10 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		// A proof that settles into Pending or Verifying settled under a newer
 		// generation, policy or execution binding, which decides what follows.
 		outcome := operatorv1alpha1.JournalSuperseded
+		// reason says why a proof ended that compared nothing with the
+		// database. Ready says it only in the write that ends the proof, and the
+		// next pass can rewrite it, so a reader of the journal reads it here.
+		var reason string
 		ready := meta.FindStatusCondition(after.Conditions, operatorv1alpha1.ConditionReady)
 		switch {
 		case after.Phase == operatorv1alpha1.PhaseInSync:
@@ -184,6 +188,12 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 			// A person gave the proof up, so nothing established what the Apply did.
 			outcome = operatorv1alpha1.JournalUnknown
 		case after.Phase == operatorv1alpha1.PhasePending || after.Phase == operatorv1alpha1.PhaseVerifying:
+		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable):
+			// Ptah could not read the desired schema the Apply ran from, under
+			// the execution binding it ran under, so nothing compared the
+			// database with it. After a Ptah upgrade the proof settles under the
+			// new binding instead, Superseded, above.
+			outcome, reason = operatorv1alpha1.JournalUnknown, ready.Reason
 		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonDriftUndecided):
 			// The plan changed nothing because Ptah could not decide some
 			// declared objects, so nothing showed the Apply converged.
@@ -193,7 +203,7 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		}
 		entries = append(entries, operatorv1alpha1.JournalEntry{
 			Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(now), Plan: pending.Plan.Name, Outcome: outcome,
-			OperationID: pending.ApplyOperationID,
+			OperationID: pending.ApplyOperationID, Reason: reason,
 		})
 	}
 	if failure := meta.FindStatusCondition(after.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failure != nil &&

@@ -765,11 +765,13 @@ func (c *configMapRun) replacedSnapshotRefused() {
 
 // unreadableSources delivers a schema file Ptah cannot read and a migration
 // file it cannot load, each through a ConfigMap, and reads the reason where a
-// person reads it. A read request is taken while the read fails. Repairing the
-// file is then all it takes: the edit alone ends the failed claim, with no spec
-// edit and no suspension, and the same resource plans from the repaired file, so
-// a reason that is true of one revision does not outlive it. The resources are
-// removed afterward: neither is a state a later scenario reads.
+// person reads it. Each stops at Blocked with no claim, and the schema stays
+// there past two failure retries without another read. A read request starts a
+// read at once, which Ptah refuses in its turn. Repairing the file is then all
+// it takes: the edit alone starts the next read, with no spec edit and no
+// suspension, and the same resource plans from the repaired file, so a reason
+// that is true of one revision does not outlive it. The resources are removed
+// afterward: neither is a state a later scenario reads.
 func (c *configMapRun) unreadableSources() {
 	c.t.Helper()
 	c.createDatabase(configMapUnreadableDatabase, configMapUnreadableSecret)
@@ -777,8 +779,9 @@ func (c *configMapRun) unreadableSources() {
 		"engine": "PostgreSQL", "coordinationKey": "e2e/" + configMapUnreadableDatabase,
 		"urlFrom": map[string]any{"name": configMapUnreadableSecret, "key": "url"},
 	}
-	// A short retry: the proof waits through the failed attempts it reads.
-	execution := map[string]any{"activeDeadlineSeconds": int64(600), "failureRetryInterval": "10s"}
+	// A short retry, so the hold past it is short too.
+	const failureRetry = 10 * time.Second
+	execution := map[string]any{"activeDeadlineSeconds": int64(600), "failureRetryInterval": failureRetry.String()}
 
 	c.check(c.apply(c.sourceDocument(configMapUnreadableSchemaSource, map[string]string{"schema.sql": unreadableInheritsSchema})),
 		"apply ConfigMap %s", configMapUnreadableSchemaSource)
@@ -794,48 +797,29 @@ func (c *configMapRun) unreadableSources() {
 			"interval": configMapInterval, "policy": map[string]any{"apply": "OnApproval"}, "execution": execution,
 		},
 	}), "create PtahSchema %s", configMapUnreadableSchema)
-	schema := &ptahv1alpha1.PtahSchema{}
 	var message string
-	c.wait("the schema to say why it could not read its file", func() (bool, string) {
-		if err := c.get(configMapUnreadableSchema, schema); err != nil {
-			return false, err.Error()
+	refused := c.waitForUnreadableSchema("the schema to stop and say why it could not read its file", func(s *ptahv1alpha1.PtahSchema) error {
+		said, err := schemaSourceRefused(s)
+		if err != nil {
+			return err
 		}
-		failed := meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
-			return false, fmt.Sprintf("%s, ReconciliationFailed %+v", schema.Status.Phase, failed)
-		}
-		message = failed.Message
-		err := unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
-		return err == nil, fmt.Sprint(err)
+		message = said
+		return unreadableSourceSays(message, unreadableSchemaFile, unreadableInheritsReason)
 	})
 	c.checkUnreadableText(message)
-	c.waitForUnreadableEvent(schema.UID, "OperationFailed", unreadableSchemaFile, unreadableInheritsReason)
-	retried := c.waitForUnreadableSchema("the read to fail again under its claim", func(s *ptahv1alpha1.PtahSchema) error {
-		if !schemaReadRetried(s, "") {
-			return fmt.Errorf("%s, operation %+v", s.Status.Phase, s.Status.ActiveOperation)
-		}
-		return nil
-	})
-	generation, failedSource := retried.Generation, schemaSourceIdentity(retried)
-	request := c.requestUnreadableSchemaRead(retried)
-	c.waitForUnreadableSchema("the read request to be taken while the read fails", func(s *ptahv1alpha1.PtahSchema) error {
-		if !readRequestTakenWhileFailing(s, request) {
-			return fmt.Errorf("lastReadRequest %q, phase %s", s.Status.LastReadRequest, s.Status.Phase)
-		}
-		return nil
-	})
-	c.waitForUnreadableSchema("the read the request started to fail in its turn", func(s *ptahv1alpha1.PtahSchema) error {
-		if !schemaReadRetried(s, retried.Status.ActiveOperation.ID) {
-			return fmt.Errorf("%s, operation %+v", s.Status.Phase, s.Status.ActiveOperation)
-		}
-		return nil
+	c.waitForUnreadableEvent(refused.UID, string(ptahv1alpha1.ReasonSchemaSourceUnreadable), unreadableSchemaFile, unreadableInheritsReason)
+	c.holdUnreadableRefusal(refused, failureRetry)
+	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
+	request := c.requestUnreadableSchemaRead(refused)
+	c.waitForUnreadableSchema("the read the request started to be refused in its turn", func(s *ptahv1alpha1.PtahSchema) error {
+		return readRequestRefusedAgain(s, request, refused.Status.LastAttemptTime)
 	})
 	c.editSource(configMapUnreadableSchemaSource, "schema.sql", configMapSchemaRevisions[0])
 	c.waitForUnreadableSchema("the schema to plan from the edit alone", func(s *ptahv1alpha1.PtahSchema) error {
 		return schemaReadTheRepair(s, generation, failedSource)
 	})
-	c.deleteAndWait(schema)
-	c.logf("PASS a schema from a ConfigMap said why its file could not be read: %s", message)
+	c.deleteAndWait(refused)
+	c.logf("PASS a schema from a ConfigMap stopped and said why its file could not be read: %s", message)
 	c.invalidSchema(target, execution)
 
 	data := map[string]string{}
@@ -947,6 +931,38 @@ func (c *configMapRun) waitForUnreadableSchema(what string, holds func(*ptahv1al
 		return true, ""
 	})
 	return matched
+}
+
+// holdUnreadableRefusal reads the refused schema until two failure retries have
+// passed since the attempt that refused it, counted from that attempt as the
+// controller counts its retry, and requires every reading to hold the same
+// refusal. A retry would start another read under a claim, and a read that
+// ends stamps another attempt.
+func (c *configMapRun) holdUnreadableRefusal(refused *ptahv1alpha1.PtahSchema, failureRetry time.Duration) {
+	c.t.Helper()
+	attempt := refused.Status.LastAttemptTime
+	if attempt == nil {
+		c.fatalf("the refused schema records no attempt to hold from")
+	}
+	until := attempt.Add(2 * failureRetry)
+	c.logf("holding %s, until two failure retries after the refusal at %s", time.Until(until).Round(time.Second), attempt.UTC().Format(time.RFC3339))
+	readings := 0
+	for {
+		schema := &ptahv1alpha1.PtahSchema{}
+		c.check(c.get(configMapUnreadableSchema, schema), "read PtahSchema %s during the hold", configMapUnreadableSchema)
+		c.check(schemaRefusalStands(schema, attempt), "the refusal of %s %s into the hold",
+			configMapUnreadableSchema, time.Since(attempt.Time).Round(time.Second))
+		readings++
+		if !time.Now().Before(until) {
+			break
+		}
+		select {
+		case <-time.After(2 * time.Second):
+		case <-c.ctx.Done():
+			c.fatalf("the phase ended during the hold until %s: %v", until, c.ctx.Err())
+		}
+	}
+	c.logf("the refusal stood through %d readings until %s", readings, until.UTC().Format(time.RFC3339))
 }
 
 // requestUnreadableSchemaRead writes a read request the way kubectl ptah refresh

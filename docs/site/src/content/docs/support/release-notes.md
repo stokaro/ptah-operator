@@ -16,6 +16,37 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.16
+
+**Before you upgrade.** A schema whose desired file Ptah cannot read no longer
+reports `OperationFailed` and no longer counts in `ptah_operator_failures_total`:
+an alert or a script that watched for either sees `Blocked` with
+`SchemaSourceUnreadable` instead. Nothing else.
+
+- **A schema file Ptah cannot read stops the schema at `Blocked`.** An Observe
+  or a Plan that Ptah answers with `desired_source_unreadable` named a file it
+  cannot parse, a row file outside its working directory, or, since Ptah
+  v0.33.1, a relative time string as a date or time column's default. The
+  operator retried it at every failure retry, with a Job each time, and each
+  attempt got the same answer. The schema now stops at `Blocked` with
+  [`SchemaSourceUnreadable`](../../troubleshoot/condition-reasons/#a-desired-file-ptah-could-not-read)
+  and Ptah's sentence, publishes no plan, marks the recorded approval stale,
+  and emits a `SchemaSourceUnreadable` Warning Event. It reads the file again
+  at its interval, at once when a ConfigMap source or the spec changes, or when
+  `kubectl ptah refresh` asks. Any other failed read is still retried, and
+  these refusals no longer count toward `PtahOperatorOperationsFailing`.
+- **The read after an Apply that meets such a file ends the proof.** It reads
+  the files the Apply ran from, so another attempt would get the same answer
+  while holding the database-realm Lease. The proof ends, records no Apply as
+  converged, and releases the Lease. After a Ptah upgrade between the Apply and
+  that read, the usual way here, the proof ends `Superseded` under the new
+  execution binding and the Warning Event names the file; the next pass reads
+  the source at once. Where the binding did not move, the journal records the
+  proof `Verified` with outcome `Unknown` and reason `SchemaSourceUnreadable`,
+  the first `Verified` entry to carry a `reason`, and `kubectl ptah wait --for
+  applied` and `kubectl ptah settle --wait` stop and say Ptah could not read
+  the desired schema.
+
 ## 0.2.15
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

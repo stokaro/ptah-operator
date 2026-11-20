@@ -233,8 +233,9 @@ func concernsAnApply(entryType operatorv1alpha1.JournalEntryType) bool {
 // summaryOf is what follows the type on an entry's first line: how it ended,
 // or which operation failed and why. outcome means something different on
 // each type, and the type stays beside it. The operator writes an operation
-// and a reason only on OperationFailed, but whatever the entry holds is
-// printed, so a value is never in the status and missing from the text.
+// only on OperationFailed, and a reason there and on a schema's Verified entry
+// whose proof could not read the desired schema, but whatever the entry holds
+// is printed, so a value is never in the status and missing from the text.
 func summaryOf(entry Entry) string {
 	parts := make([]string, 0, 3)
 	for _, part := range []string{string(entry.Outcome), entry.Operation, entry.Reason} {

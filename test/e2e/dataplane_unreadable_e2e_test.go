@@ -10,8 +10,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -23,9 +21,9 @@ import (
 // so a newer Ptah than the executor is what produces it. The fetch step holds the
 // registry credentials and writes the layer without parsing it, so the run goes on
 // to the ptah container, which holds none: its credential-free check names the
-// file and Ptah's reason. The row holds the condition and the Event to that
-// reason, and the Pods to a fetch that ended at zero before the ptah container
-// ran.
+// file and Ptah's reason, and the schema stops at Blocked with it. The row holds
+// the condition and the Event to that reason, and the Pods to a fetch that ended
+// at zero before the ptah container ran.
 func (d *dataPlane) unreadableOCISchema() {
 	d.t.Helper()
 	const (
@@ -41,15 +39,15 @@ func (d *dataPlane) unreadableOCISchema() {
 		coordinationKey: key, failureRetry: "5s", interval: "1m",
 	})
 	var message string
-	matched := d.waitForSchema(schemaName, "the schema to say why it could not read the artifact", func(s *ptahv1alpha1.PtahSchema) bool {
-		failed := meta.FindStatusCondition(s.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed)
-		if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(ptahv1alpha1.ReasonOperationFailed) {
+	matched := d.waitForSchema(schemaName, "the schema to stop and say why it could not read the artifact", func(s *ptahv1alpha1.PtahSchema) bool {
+		said, err := schemaSourceRefused(s)
+		if err != nil {
 			return false
 		}
-		message = failed.Message
+		message = said
 		return unreadableSourceSays(message, unreadableArtifactFile, unreadableArtifactWords) == nil
 	})
-	d.scan([]byte(message), "the ReconciliationFailed message of "+schemaName)
+	d.scan([]byte(message), "the Ready message of "+schemaName)
 	if strings.Contains(message, unreadableOCIPGDatabase) {
 		d.fatalf("the reason names the target: %s", message)
 	}
@@ -57,37 +55,27 @@ func (d *dataPlane) unreadableOCISchema() {
 	d.readUnreadableArtifactPods(schemaName)
 	d.repairedTagIsRead(schemaName, repository)
 	d.deleteAndWait(schemaName, 2*time.Minute)
-	d.logf("PASS a schema artifact the executor cannot parse said why from the ptah container: %s", message)
+	d.logf("PASS a schema artifact the executor cannot parse stopped and said why from the ptah container: %s", message)
 }
 
-// repairedTagIsRead pushes a schema the executor reads to the tag the failing
+// repairedTagIsRead pushes a schema the executor reads to the tag the refused
 // read came from, and waits for the interval to find it. Only a read of the
-// source can show a moved tag, so the interval is what ends the failed claim here,
-// and nothing writes to the resource. The wait cannot stop on phase Failed as
-// waitForSchema does: the attempts it waits through are the point. It audits as
-// that wait does.
+// source can show a moved tag, so the interval is what starts the next read
+// here, and nothing writes to the resource. The schema is Blocked, not Failed,
+// so the wait still ends at once on a schema that enters Failed.
 func (d *dataPlane) repairedTagIsRead(schemaName, repository string) {
 	d.t.Helper()
-	failing := &ptahv1alpha1.PtahSchema{}
-	d.check(d.get(schemaName, failing), "read %s before its tag moved", schemaName)
-	generation, failedSource := failing.Generation, schemaSourceIdentity(failing)
+	refused := &ptahv1alpha1.PtahSchema{}
+	d.check(d.get(schemaName, refused), "read %s before its tag moved", schemaName)
+	generation, failedSource := refused.Generation, schemaSourceIdentity(refused)
 	repaired := filepath.Join(repositoryRoot, "testdata", "e2e", "postgresql-v1.sql")
 	digest := d.publishSchema("postgresql", "unreadable-repair", "postgres", d.registryReference(repository), repaired)
-	deadline := time.Now().Add(waitTimeout)
-	var last error
-	for time.Now().Before(deadline) {
-		d.auditCompletedJobs()
-		schema := &ptahv1alpha1.PtahSchema{}
-		d.check(d.get(schemaName, schema), "read %s while its tag is read again", schemaName)
-		if last = schemaReadTheRepair(schema, generation, failedSource); last == nil {
-			if schema.Status.Source.Digest != digest {
-				d.fatalf("%s planned from digest %s, not the pushed %s", schemaName, schema.Status.Source.Digest, digest)
-			}
-			return
-		}
-		d.sleep(2 * time.Second)
+	schema := d.waitForSchema(schemaName, "the schema to plan from the repaired tag", func(s *ptahv1alpha1.PtahSchema) bool {
+		return schemaReadTheRepair(s, generation, failedSource) == nil
+	})
+	if schema.Status.Source.Digest != digest {
+		d.fatalf("%s planned from digest %s, not the pushed %s", schemaName, schema.Status.Source.Digest, digest)
 	}
-	d.fatalf("%s never read the repaired tag: %v", schemaName, last)
 }
 
 // publishUnparsableSchema runs the fixture on the host, against the registry as
@@ -115,24 +103,25 @@ func (d *dataPlane) publishUnparsableSchema(repository string) {
 // not yet promise one.
 func (d *dataPlane) waitForUnreadableArtifactEvent(owner types.UID) {
 	d.t.Helper()
+	reason := string(ptahv1alpha1.ReasonSchemaSourceUnreadable)
 	deadline := time.Now().Add(waitTimeout)
 	var last error
 	for time.Now().Before(deadline) {
 		events := &corev1.EventList{}
 		d.mustList(events)
-		if last = unreadableSourceEvent(events.Items, owner, "OperationFailed", unreadableArtifactFile, unreadableArtifactWords); last == nil {
+		if last = unreadableSourceEvent(events.Items, owner, reason, unreadableArtifactFile, unreadableArtifactWords); last == nil {
 			return
 		}
 		d.sleep(2 * time.Second)
 	}
-	d.fatalf("the OperationFailed Event never said why the artifact could not be read: %v", last)
+	d.fatalf("the %s Event never said why the artifact could not be read: %v", reason, last)
 }
 
 // readUnreadableArtifactPods holds every Pod of the schema's finished Observe
 // and Plan Jobs, the operations that fetch the layer, to a fetch that passed it
-// on, and scans the logs of both steps that read the artifact. Only the failed
-// reads have run when it is called, and a later attempt may not have finished,
-// so only a terminal Job counts, and the row needs one.
+// on, and scans the logs of both steps that read the artifact. Only the refused
+// reads have run when it is called, and the next cycle's read may not have
+// finished, so only a terminal Job counts, and the row needs one.
 func (d *dataPlane) readUnreadableArtifactPods(schema string) {
 	d.t.Helper()
 	jobs := &batchv1.JobList{}

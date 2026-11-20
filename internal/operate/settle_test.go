@@ -571,6 +571,25 @@ func TestAWaitForASettlementEndsWhereTheOperatorTookIt(t *testing.T) {
 	if err != nil || result.Target != operate.TargetSettled || reads != 3 {
 		t.Fatalf("Wait = %#v, %v after %d reads; want settled on the third", result, err, reads)
 	}
+
+	t.Run("read after the next pass stopped on a file Ptah cannot read", func(t *testing.T) {
+		t.Parallel()
+		// The settlement ended the proof, and the read the next pass started
+		// stopped on the desired schema before this poll. Ready names the file
+		// now, and the journal's entry is still the settlement's.
+		later := settled(written)
+		later.Status.Phase = operatorv1alpha1.PhaseBlocked
+		later.Status.Conditions = []metav1.Condition{
+			condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonSchemaSourceUnreadable),
+				"desired_source_unreadable: postgres: source: error parsing schema file", 3),
+		}
+
+		result, err, _ := waitSettled(t, written, later)
+
+		if err != nil || result.Target != operate.TargetSettled {
+			t.Fatalf("Wait = %#v, %v; want settled: the person's settlement ended the proof", result, err)
+		}
+	})
 }
 
 // A proof can end without the statement, and a statement can be taken back. Each
@@ -584,6 +603,24 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		document.Status.Conditions = nil
 		return document
 	}
+	// The first target came back and the read of it could not read the
+	// desired schema: the proof ends Unknown, as a settlement does, and the
+	// entry carries the reason. The statement was not what ended it.
+	unreadable := settled(written)
+	unreadable.Status.Phase = operatorv1alpha1.PhaseBlocked
+	unreadable.Status.Conditions = []metav1.Condition{
+		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonSchemaSourceUnreadable),
+			"desired_source_unreadable: postgres: source: error parsing schema file", 3),
+	}
+	unreadable.Status.Journal.Entries[len(unreadable.Status.Journal.Entries)-1].Reason = string(operatorv1alpha1.ReasonSchemaSourceUnreadable)
+	// The pass after the proof ended answered a read request, or read an
+	// edited ConfigMap source, and rewrote Ready before this poll.
+	unreadableThenRead := unreadable.DeepCopy()
+	unreadableThenRead.Status.Phase = operatorv1alpha1.PhaseResolving
+	unreadableThenRead.Status.Conditions = []metav1.Condition{
+		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonOperationInProgress),
+			"Resolve operation is in progress", 3),
+	}
 	withdrawn := written.DeepCopy()
 	withdrawn.Annotations = nil
 	for _, row := range []struct {
@@ -596,6 +633,8 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		{"the first target still drifts", ended(operatorv1alpha1.JournalDriftRemains), operate.StopProofEnded, "Verified DriftRemains"},
 		{"the first target could not decide", ended(operatorv1alpha1.JournalUndecided), operate.StopProofEnded, "Verified Undecided: Ptah could not decide"},
 		{"a newer generation", ended(operatorv1alpha1.JournalSuperseded), operate.StopProofEnded, "Verified Superseded"},
+		{"the first target's read could not read the schema", unreadable, operate.StopProofEnded, "could not read the desired schema"},
+		{"the same, read after the next pass rewrote Ready", unreadableThenRead, operate.StopProofEnded, "could not read the desired schema"},
 		{"the annotation came off", withdrawn, operate.StopStatementWithdrawn, "no longer holds " + settleValue(movedTarget)},
 	} {
 		t.Run(row.name, func(t *testing.T) {

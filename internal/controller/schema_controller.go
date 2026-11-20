@@ -1380,6 +1380,13 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			// dispatch was possible, every Apply error requires read-only proof.
 			return r.finishReportedApplyFailure(ctx, schema, job, err, result.ApplyFailure, evidence.PodUIDs, evidence.PodCount, waitForHorizon)
 		}
+		// A desired schema Ptah cannot read is not a run that went wrong
+		// either: the runner asked Ptah again with no target, and Ptah said
+		// what in the file it refuses. Another attempt reads the same file and
+		// gets the same answer, so the read stops rather than retrying.
+		if schemaSourceUnreadable(operation.Type, result.Error) {
+			return r.refuseSchemaSource(ctx, schema, job, result, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
+		}
 		if failureReadTheTarget(operation.Type, result.Error.Code) {
 			return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, err, setSchemaTargetObserved)
 		}
@@ -1779,19 +1786,24 @@ func (r *SchemaReconciler) warnPlanEnd(schema *operatorv1alpha1.PtahSchema, end 
 
 // setPlanEndConditions records what a Plan that ended with nothing to publish
 // found, in a proof or outside one: no plan, a database that differs, and no
-// plan ready. A plan that was waiting for an approval went away with nothing
-// in its place, so nobody can approve it, and left standing the condition
-// would keep asking for an approval beside Blocked.
-//
-// ApprovalRequired says what became of that plan, PlanNoLongerCurrent, and
-// not why Ptah planned nothing, which the other conditions carry. NoChanges
-// would say the database converged, and the journal reads it as a plan
-// nothing replaces: here the difference remains, so a plan approved and never
-// run is still the one the next plan replaces.
+// plan ready.
 func setPlanEndConditions(schema *operatorv1alpha1.PtahSchema, end planEnd) {
 	schema.Status.Plan = nil
 	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, end.reason, end.drift)
 	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, end.reason, end.planReady)
+	endApprovalRequirement(schema)
+}
+
+// endApprovalRequirement records that a plan which was waiting for an approval
+// went away with nothing in its place, so nobody can approve it. Left
+// standing, the condition would keep asking for an approval beside Blocked.
+//
+// ApprovalRequired says what became of that plan, PlanNoLongerCurrent, and
+// not why Ptah planned nothing, which the other conditions carry. NoChanges
+// would say the database converged, and the journal reads it as a plan
+// nothing replaces: here nothing showed the database converged, so a plan
+// approved and never run is still the one the next plan replaces.
+func endApprovalRequirement(schema *operatorv1alpha1.PtahSchema) {
 	if outstandingPlan, _ := lifecyclejournal.OutstandingPlan(schema.Status.Journal); outstandingPlan != "" ||
 		meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
 		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonPlanNoLongerCurrent,
@@ -1918,6 +1930,10 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	// planEnded is how a proof's read ended that planned nothing, whose
 	// Warning follows the status write.
 	var planEnded *planEnd
+	// sourceUnreadable is what a proof's read said of a desired schema Ptah
+	// could not read (refuseSchemaSource), whose Warning follows the status
+	// write.
+	var sourceUnreadable string
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	if schemaClaimServesProof(schema) {
@@ -1927,8 +1943,34 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	}
 	clearFailure(schema)
 
-	switch schema.Status.ActiveOperation.Type {
-	case operatorv1alpha1.OperationResolve:
+	operationType := schema.Status.ActiveOperation.Type
+	switch {
+	case schemaSourceUnreadable(operationType, result.Error):
+		// The proof's read could not read the desired schema the Apply ran
+		// from. Only a proof's read reaches here with that code.
+		pending := schema.Status.PendingObservation
+		if pending == nil {
+			return r.retryOperation(ctx, schema, nil, fmt.Errorf("an unreadable desired schema reached the result of a read that serves no proof"))
+		}
+		// The read after an Apply marks the approval that Apply consumed, as an
+		// Observe that read the database does.
+		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+		policyErr := r.verifiedSourcePolicyError(ctx, schema)
+		bindingErr := r.ensureCurrentStatusExecutionBinding(schema, &pending.Plan)
+		sourceUnreadable = resultCodeMessage(result.Error.Code, result.Error.Message)
+		r.endProofOnUnreadableSource(schema, pending, sourceUnreadable, policyErr == nil && bindingErr == nil)
+		if err := r.settleProofInputs(ctx, schema, pending, policyErr, bindingErr); err != nil {
+			return ctrl.Result{}, err
+		}
+		if bindingErr == nil && policyErr != nil {
+			// settleProofInputs words InSync for a proof that read the database.
+			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged,
+				"Ptah could not read the desired schema the Apply ran from, so nothing proved the Apply, and the artifact requires verification against the current policy")
+		}
+		schema.Status.PendingObservation = nil
+	case operationType == operatorv1alpha1.OperationResolve:
 		if git := schema.Spec.Desired.Git; git != nil {
 			revision, err := gitResolution(git, result)
 			if err != nil {
@@ -2022,7 +2064,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDigestPinned, "Desired OCI reference resolved to immutable content")
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPending, "Resolved content has not been verified")
-	case operatorv1alpha1.OperationVerify:
+	case operationType == operatorv1alpha1.OperationVerify:
 		if result.Stdout != "" || len(result.VerificationRequirements) != 0 || result.ResolvedDigest != schema.Status.Source.Digest ||
 			result.ObservedArtifactType != dataplane.SchemaArtifactType || result.VerificationPolicyDigest == "" ||
 			operation.VerificationPolicyUID == "" || result.VerificationPolicyDigest != operation.VerificationPolicyDigest {
@@ -2039,7 +2081,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
 		schema.Status.NextReconciliationTime = handoffDeadline(schema.Status.NextReconciliationTime, now)
 		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, operatorv1alpha1.ReasonPolicySatisfied, "Artifact type and verification policy were satisfied")
-	case operatorv1alpha1.OperationObserve:
+	case operationType == operatorv1alpha1.OperationObserve:
 		if result.Stdout != "" || result.CoordinationDigest == "" || result.TargetIdentityDigest == "" ||
 			result.DriftReportDigest == "" || result.DriftFindingCount < 0 {
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("observation lacks credential-free target evidence"))
@@ -2097,7 +2139,7 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			pending.PlanRequired = true
 			schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 		}
-	case operatorv1alpha1.OperationPlan:
+	case operationType == operatorv1alpha1.OperationPlan:
 		pending := schema.Status.PendingObservation
 		if pending == nil {
 			if policyErr := r.verifiedSourcePolicyError(ctx, schema); policyErr != nil {
@@ -2319,47 +2361,12 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		// ahead of the proof below, whose retired binding makes this Unknown.
 		setSchemaTargetObserved(schema)
 		if pending != nil {
-			if completedProofExecutionBindingErr != nil {
-				// Proof and historical Apply attribution are committed, but the
-				// applied plan belongs to an epoch a rotation has since retired. An
-				// approval CREATE that passed admission before the Apply claim can
-				// commit after that rotation's own sweep, so the applied plan's
-				// approvals are swept once more. The approval boundary closed at the
-				// rotation, so the sweep needs no record of its own: a pass that
-				// stops before the write below reads this Job again and sweeps again.
-				if err := r.markPlanApprovalsStaleWithReason(
-					ctx,
-					schema,
-					&pending.Plan,
-					operatorv1alpha1.ReasonExecutionBindingChanged,
-					"The approved plan uses an execution binding that is no longer configured",
-				); err != nil {
-					return ctrl.Result{}, err
-				}
-				schema.Status.Plan = nil
-				schema.Status.Phase = operatorv1alpha1.PhasePending
-				schema.Status.NextReconciliationTime = nil
-				markExecutionBindingRefreshRequired(schema)
-			} else if completedProofPolicyErr != nil {
-				schema.Status.Source.Verified = false
-				schema.Status.Source.VerifiedAt = nil
-				schema.Status.Source.VerificationPolicyUID = ""
-				schema.Status.Source.VerificationPolicyDigest = ""
-				schema.Status.Plan = nil
-				schema.Status.NextReconciliationTime = nil
-				if pending.ApplyGeneration == schema.Generation {
-					schema.Status.Phase = operatorv1alpha1.PhaseVerifying
-				} else {
-					schema.Status.Phase = operatorv1alpha1.PhasePending
-				}
-				setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, bounded(completedProofPolicyErr.Error(), 512))
-				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Any plan for the previous verification policy is stale")
-				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Post-Apply proof completed, but the artifact requires verification against the current policy")
-				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification against the current policy is pending")
+			if err := r.settleProofInputs(ctx, schema, pending, completedProofPolicyErr, completedProofExecutionBindingErr); err != nil {
+				return ctrl.Result{}, err
 			}
 			schema.Status.PendingObservation = nil
 		}
-	case operatorv1alpha1.OperationApply:
+	case operationType == operatorv1alpha1.OperationApply:
 		// A successful process is evidence only. Convergence is established by
 		// a new read-only observation, never by the Job exit code.
 		pending, err := pendingObservationFor(
@@ -2413,7 +2420,11 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 			return ctrl.Result{}, err
 		}
 	}
-	r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
+	if sourceUnreadable == "" {
+		r.event(schema, corev1.EventTypeNormal, "OperationCompleted", "%s operation completed", result.Operation)
+	} else {
+		r.event(schema, corev1.EventTypeWarning, "SchemaSourceUnreadable", "%s", bounded(sourceUnreadable, 512))
+	}
 	if undecided != "" {
 		r.event(schema, corev1.EventTypeWarning, "DriftUndecided", "%s", bounded(undecided, 512))
 	}
@@ -2421,6 +2432,59 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		r.warnPlanEnd(schema, *planEnded)
 	}
 	return ctrl.Result{RequeueAfter: statusPatchRequeue}, nil
+}
+
+// settleProofInputs records what follows a proof that ends in this status
+// write, where the verification policy or the execution binding moved while
+// it ran: policyErr and bindingErr are what each said when the read's result
+// was harvested. The read settled the Apply under the old one, and what
+// follows is read under the new one. The caller clears the pending
+// observation in the same write.
+func (r *SchemaReconciler) settleProofInputs(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+	policyErr, bindingErr error,
+) error {
+	if bindingErr != nil {
+		// Proof and historical Apply attribution are committed, but the
+		// applied plan belongs to an epoch a rotation has since retired. An
+		// approval CREATE that passed admission before the Apply claim can
+		// commit after that rotation's own sweep, so the applied plan's
+		// approvals are swept once more. The approval boundary closed at the
+		// rotation, so the sweep needs no record of its own: a pass that
+		// stops before the write below reads this Job again and sweeps again.
+		if err := r.markPlanApprovalsStaleWithReason(
+			ctx,
+			schema,
+			&pending.Plan,
+			operatorv1alpha1.ReasonExecutionBindingChanged,
+			"The approved plan uses an execution binding that is no longer configured",
+		); err != nil {
+			return err
+		}
+		schema.Status.Plan = nil
+		schema.Status.Phase = operatorv1alpha1.PhasePending
+		schema.Status.NextReconciliationTime = nil
+		markExecutionBindingRefreshRequired(schema)
+	} else if policyErr != nil {
+		schema.Status.Source.Verified = false
+		schema.Status.Source.VerifiedAt = nil
+		schema.Status.Source.VerificationPolicyUID = ""
+		schema.Status.Source.VerificationPolicyDigest = ""
+		schema.Status.Plan = nil
+		schema.Status.NextReconciliationTime = nil
+		if pending.ApplyGeneration == schema.Generation {
+			schema.Status.Phase = operatorv1alpha1.PhaseVerifying
+		} else {
+			schema.Status.Phase = operatorv1alpha1.PhasePending
+		}
+		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, bounded(policyErr.Error(), 512))
+		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Any plan for the previous verification policy is stale")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Post-Apply proof completed, but the artifact requires verification against the current policy")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification against the current policy is pending")
+	}
+	return nil
 }
 
 // undecidedReadyMessage is Ready's message for a Plan that could not decide
