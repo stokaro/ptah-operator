@@ -1983,13 +1983,16 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 			return ctrl.Result{}, err
 		}
-		// An invalid schema says the read opened the database, as it does
-		// outside a proof (refuseSchemaSource).
-		if failureReadTheTarget(operationType, result.Error.Code) {
-			setSchemaTargetObserved(schema)
-		}
 		policyErr := r.verifiedSourcePolicyError(ctx, schema)
 		bindingErr := r.ensureCurrentStatusExecutionBinding(schema, &pending.Plan)
+		// An invalid schema says the read opened the database, as it does
+		// outside a proof (refuseSchemaSource), but only under the binding
+		// the resource holds now. A read under a retired binding is
+		// historical evidence, and settleProofInputs records DatabaseReachable
+		// unknown for it; this write does not depend on coming before that.
+		if bindingErr == nil && failureReadTheTarget(operationType, result.Error.Code) {
+			setSchemaTargetObserved(schema)
+		}
 		refusalMessage = resultCodeMessage(result.Error.Code, result.Error.Message)
 		r.endProofOnRefusedSchema(schema, pending, refusal, refusalMessage, policyErr == nil && bindingErr == nil)
 		if err := r.settleProofInputs(ctx, schema, pending, policyErr, bindingErr); err != nil {

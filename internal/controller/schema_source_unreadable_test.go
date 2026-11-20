@@ -910,6 +910,10 @@ func proofAfterAPtahUpgradeIsSuperseded(t *testing.T, refusal schemaRefusalRow) 
 	if schema.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.Epoch == retired {
 		t.Fatalf("the fixture's binding is %#v, so the plan's epoch was not retired", schema.Status.ExecutionBinding)
 	}
+	if conditionMatches(schema.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged) {
+		t.Fatalf("the fixture already says DatabaseReachable is unknown under the new binding, so the read could not be shown to leave it so: %#v",
+			findCondition(schema.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable))
+	}
 
 	actual, said := harvestUnreadableProofRead(t, reconciler, api, schema, refusal)
 
@@ -923,6 +927,13 @@ func proofAfterAPtahUpgradeIsSuperseded(t *testing.T, refusal schemaRefusalRow) 
 	if !conditionMatches(actual.Status.Conditions, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged) ||
 		!conditionMatches(actual.Status.Conditions, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged) {
 		t.Fatalf("Ready and InSync do not name the new binding: %#v", actual.Status.Conditions)
+	}
+	// The read ran under the retired binding, so what it says of the target is
+	// historical evidence, even where Ptah refused the schema after it opened
+	// the database.
+	if !conditionMatches(actual.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged) {
+		t.Fatalf("DatabaseReachable = %#v, want Unknown with ExecutionBindingChanged",
+			findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionDatabaseReachable))
 	}
 	if verified := verifiedEntries(actual); len(verified) != 1 || verified[0].Outcome != operatorv1alpha1.JournalSuperseded {
 		t.Fatalf("the journal records %#v, want one Verified Superseded", verified)
