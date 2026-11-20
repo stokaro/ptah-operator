@@ -748,6 +748,13 @@ approval. Do not carry approval objects across an execution-binding upgrade as
 deployment automation. A dispatched Apply remains bound to its captured
 execution identity and proceeds through conservative outcome classification and
 post-Apply observation; the upgrade never recreates it with different binaries.
+Where the upgrade changes only `execution.ptahVersion` or
+`execution.executorImage`, the replacement manager reads that Apply's result
+under the binding it was dispatched under, however late its Job stops, and
+moves the binding after. Only a Job still running at the end of the claim's
+Lease term, or a Job, Pod or result that is not what the claim dispatched, is
+recorded as an outcome nobody established
+([Retire an execution binding](../../reference/mutation-lifecycle/#retire-an-execution-binding)).
 
 A release that changes only the manager image, the manager revision and
 `execution.runnerImage` -- which the release builds together, from one source

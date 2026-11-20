@@ -266,8 +266,7 @@
               "pull",
               "oci://registry.example/acme/orders-migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "--out",
-              "/source/migrations",
-              "--skip-validation"
+              "/source/migrations"
             ],
             "workingDir": "/fetch-work",
             "env": [

@@ -711,10 +711,13 @@ func runningExecutorPod(pod *corev1.Pod) {
 }
 
 // uncertainApplyUnderBindingChange stands up a dispatched Apply that a rollout
-// retires: the claim is in flight, an execution component moved under it, and
-// the database Lease is still held by the claim. The reconcile that follows
-// takes the uncertain path with whatever workload the caller left in the
-// namespace, which is what each row varies.
+// retires: the claim is in flight, a release moved the executor and the runner
+// protocol under it, and the database Lease is still held by the claim. A
+// moved protocol is a change the rotation does not wait through
+// (applyHoldsRotation), since this manager reads no frame of the protocol the
+// Apply was dispatched under. So the reconcile that follows takes the
+// uncertain path with whatever workload the caller left in the namespace,
+// which is what each row varies, whether or not that workload is the claim's.
 func uncertainApplyUnderBindingChange(
 	t *testing.T,
 	migration *operatorv1alpha1.PtahMigration,
@@ -726,8 +729,20 @@ func uncertainApplyUnderBindingChange(
 	migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
 	objects := append([]client.Object{migration, plan, verificationPolicyConfigMap()}, dispatched...)
 	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+	reconciler.Jobs = protocolMovingRollout()
 	holdMigrationApplyLease(t, reconciler, api, migration)
 	return reconciler, api
+}
+
+// protocolMovingRollout is the Job builder of a release that moved the runner
+// protocol: a rotation it starts cannot wait for a dispatched Apply, and
+// records the Apply outcome unknown whatever its Job is doing.
+func protocolMovingRollout() executionBindingJobs {
+	return executionBindingJobs{
+		ptahVersion:   "v0.3.0",
+		executorImage: "example.invalid/ptah@" + testDigest,
+		protocol:      int32(runner.ProtocolVersion) + 1,
+	}
 }
 
 // An Apply the controller cannot read is still an Apply that may be running.

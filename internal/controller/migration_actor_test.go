@@ -238,39 +238,6 @@ func TestAnApprovalWithdrawnBeforeDispatchRetiresTheClaim(t *testing.T) {
 	}
 }
 
-// A run dispatched across an upgrade that moves the executor. The binding changes
-// under it, so it is not adopted: it is recorded Unknown and stops the resource
-// until a History reading or an acknowledgment settles it, and it carries no name,
-// because the release that dispatched it wrote none. The release notes say this.
-func TestAnExecutorUpgradeRecordsANamelessRunningApplyAsUnknown(t *testing.T) {
-	t.Parallel()
-
-	current := workloadBuilderForMigrations()
-	run := runDispatchedBy(t, operatorv1alpha1.MigrationOperationApply, runShape{dispatcher: current, recorded: true})
-	if run.migration.Status.ActiveOperation.Actor != "" {
-		t.Fatal("the dispatched claim carries a name, so this row proves nothing about one without")
-	}
-	next := current
-	next.ExecutorImage = "example.invalid/ptah@sha256:" + strings.Repeat("e", 64)
-	reconciler, api := run.reconciler(t, next)
-
-	for pass := 0; pass < 4; pass++ {
-		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(run.migration)); err != nil {
-			t.Fatalf("Reconcile() pass %d error = %v", pass, err)
-		}
-	}
-	actual := readMigration(t, api, run.migration)
-	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
-		t.Fatalf("phase = %q, want Blocked; conditions %#v", actual.Status.Phase, actual.Status.Conditions)
-	}
-	if actual.Status.LastRun == nil || actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
-		t.Fatalf("last run = %#v, want an unknown outcome", actual.Status.LastRun)
-	}
-	if actual.Status.UnresolvedRun == nil || actual.Status.UnresolvedRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
-		t.Fatalf("unresolved run = %#v, want the run recorded as unknown", actual.Status.UnresolvedRun)
-	}
-}
-
 // The controller-write webhook refuses the cleanup of a Job whose template is
 // not the one its claim's admission snapshot recorded. A name in the template has
 // to pass that on the way out, or a run that applied would sit in Applying on

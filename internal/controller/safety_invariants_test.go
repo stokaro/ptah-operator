@@ -3520,8 +3520,13 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 		deleteJob           bool
 		keepConfiguredTuple bool
 		foreignEpoch        bool
+		// movedProtocol is a rollout that also moved the runner protocol. A
+		// rotation waits for a running Apply only through a move of the
+		// executor or the Ptah version alone (rotationMayWaitFor), so an
+		// existing Job is recorded outcome unknown only under such a rollout.
+		movedProtocol bool
 	}{
-		{name: "existing Job"},
+		{name: "existing Job under a moved runner protocol", movedProtocol: true},
 		{name: "missing Job", deleteJob: true},
 		// The components are the ones in force, but the claim names an epoch
 		// the binding does not: nothing proves the run was authorized under
@@ -3586,11 +3591,15 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 				reconciler.Jobs = fakeJobs{}
 				expectedExecutorImage = "example.invalid/ptah@" + testDigest
 			} else {
+				protocol := int32(runner.ProtocolVersion)
+				if test.movedProtocol {
+					protocol++
+				}
 				reconciler.Jobs = executionBindingJobs{
 					ptahVersion:   "v0.3.0",
 					executorImage: expectedExecutorImage,
 					runnerImage:   "example.invalid/operator@" + testDigest,
-					protocol:      int32(runner.ProtocolVersion),
+					protocol:      protocol,
 				}
 			}
 			result, err := reconciler.Reconcile(context.Background(), request)

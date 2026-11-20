@@ -365,8 +365,11 @@ settles the claim as stale or `Unknown` without reading its result.
 
 This decides what an operator upgrade does to work in flight. A release that
 keeps the execution binding and changes only the manager identity adopts every
-run its predecessor dispatched. A release that also changes the operation Job
-or its Pod template cannot confirm them: a running `PtahSchema` or
+run its predecessor dispatched. One that moves the executor image or the Ptah
+version as well adopts a running Apply the same way, under the binding the Apply
+was dispatched under, and moves the binding once its result is read
+([Retire an execution binding](#retire-an-execution-binding)). A release that
+also changes the operation Job or its Pod template cannot confirm them: a running `PtahSchema` or
 `PtahMigration` Apply is recorded `Unknown` rather than adopted, and nothing
 else is applied until that run is accounted for; a running read-only Job is
 run again. A migration Apply whose plan was deleted while it ran is
@@ -468,12 +471,18 @@ lock](../reconciliation/#suspended-and-losing-a-lock)). It runs its Job to the
 end, and one whose Job it cannot confirm waits for that Job to stop and gives it
 its TTL before it reads again.
 
-For a migration, suspending is also a spec edit, and the generation it bumps is
-one of the inputs `migrationInputFingerprint` digests. So the pass that finds
-the Job terminal also finds the inputs changed, and records the run `Unknown`
-and unresolved without reading its result, whatever the run did. A suspended
-migration takes no reading, so the record stands until the resource is resumed
-and a History reading of the same database finds nothing pending.
+In either family, suspending is also a spec edit, and the generation it bumps is
+one of the inputs a claim's fingerprint digests: `migrationInputFingerprint`
+for a migration, `operationInputFingerprint` for a schema. So the pass that
+finds an Apply's Job terminal also finds the inputs changed, and records the
+Apply `Unknown` without reading its result, whatever the run did. A migration
+records the run `Unknown` and unresolved. A suspended migration takes no
+reading, so the record stands until the resource is resumed and a History
+reading of the same database finds nothing pending. A schema records the Apply
+in `status.pendingObservation` with outcome `OutcomeUnknown`
+(`finishUncertainApplyWithReport`), and the post-apply proof starts from that
+outcome. A suspended schema starts no new Job, so the proof's read waits until
+the resource is resumed.
 
 ## Account for the outcome
 
@@ -622,17 +631,68 @@ Both families retire it; they differ in what is left over.
 
 | | Enforcement |
 | --- | --- |
-| `PtahSchema` | `rotateExecutionBinding` writes `status.pendingBindingRetirement` with the epoch, `reconcileBindingRetirement` works it off, `settleRetirement` clears it |
-| `PtahMigration` | `reconcileMigrationExecutionBinding` retires a claim in the write that installs the epoch, `letGoOfRetiredReadOnlyMigrationJob` holds a read-only one over its running Job first, `applyUncertainUnderBindingChange` records a dispatched Apply first |
+| `PtahSchema` | `dispatchedApplyHoldsRotation` holds the epoch for a dispatched Apply whose result can still be read, `rotateExecutionBinding` writes `status.pendingBindingRetirement` with the epoch, `reconcileBindingRetirement` works it off, `settleRetirement` clears it |
+| `PtahMigration` | `dispatchedMigrationApplyHoldsRotation` holds the epoch for a dispatched Apply whose result can still be read, `reconcileMigrationExecutionBinding` retires a claim in the write that installs the epoch, `letGoOfRetiredReadOnlyMigrationJob` holds a read-only one over its running Job first, `applyUncertainUnderBindingChange` records a dispatched Apply first |
+
+A dispatched Apply holds the epoch back while its result can still be read
+under the binding it was dispatched under. That is so when the change moved
+only the executor image or the Ptah version, the claim belongs to the epoch
+status records, and the Job under the claim's reserved name is this resource's
+and, where the claim recorded one, has its UID. The Apply is then supervised and
+read as any Apply is, under the binding status and the claim still record: its
+Job is rebuilt for the match with the recorded executor and Ptah version, its
+Pods are held to the claim's admission snapshot, its frame is read under the
+runner protocol and the result-record identity the claim fixes, and its run is
+recorded with the outcome it reported and its journal entry. The epoch moves on
+the first pass that finds no claim in flight, so the run is recorded before the
+binding moves, in that order. A schema's Apply keeps the proof it owes, and
+the proof runs under the new epoch. While the epoch waits, a migration's
+`Progressing` and a schema's `Applying` add `an execution component changed,
+and the execution binding moves once the Apply's result is read`.
+
+Nothing is dispatched while the epoch waits. The claim holds the resource, a
+new claim is made only after it is gone, on a pass that moves the epoch before
+it claims anything, and both the dispatch path and the controller-write webhook
+refuse a Job under a binding the manager is not configured with.
+
+Suspending the resource while the epoch waits does not let go of the claim,
+because suspension never discards a dispatched Apply, so the Job still holds
+the epoch while it runs. Suspending is a spec edit, though, and the generation
+it bumps is one of the claim's inputs. So once the Job stops, the Apply is
+recorded `Unknown` because its inputs changed, whatever it reported, as it
+would be with no rotation at all ([Supervise](#supervise)): a migration's run
+becomes an unresolved run, and a schema's proof starts from an unknown outcome.
+That record is written under the binding that authorized the Apply, and the
+epoch moves after it.
+
+The wait is bounded by values the claim persisted: its `startedAt` plus its
+`leaseDurationSeconds`, the term it took the database Lease for, which covers
+its execution deadline and its Pods' stop grace. A Job still running at the end
+of that term no longer holds the epoch. A Job that has stopped holds it until
+its result is read, however late that is. The Apply is recorded `Unknown` as
+before when its Job is gone, belongs to another UID or owner, or still runs at
+the end of the term, when the change moved the runner protocol or the
+controller-state version too, and when what the pass reads is not what the
+claim dispatched: a Job that differs from the rebuild under the recorded
+binding, a Pod that differs from the admission snapshot, or a frame of another
+protocol.
+
+A chart upgrade stops the old manager before the new one starts, and either
+one may be the first to read the result of an Apply the old one dispatched.
+When the old one reads it first, it records the run as its own Apply, and the
+new one finds no claim in flight and moves the epoch. Both write status under
+an optimistic lock, so passes that overlap during a leadership handover cannot
+both record the same claim.
 
 A migration leaves no record behind, because it moves the epoch only once
 nothing it retires is left. A claim goes in the write that installs the epoch.
 A read-only claim over a running Job that carries no cleanup TTL, as one a
 release before 0.2.11 created, holds that write back, under the binding status
 still records, until the Job stops or reaches its stop bound, and the Job gets
-its cleanup TTL first. A Job created with its TTL holds nothing back, and a
-suspended resource does not wait. A dispatched Apply becomes an unresolved run
-first, so the epoch moves on the next pass once no claim is in flight.
+its cleanup TTL first. A Job created with its TTL holds nothing back, and
+neither does a suspended resource's read-only claim. A dispatched Apply the
+epoch does not wait for becomes an unresolved run first, so the epoch moves on
+the next pass once no claim is in flight.
 
 A schema leaves up to two things, and names them in the write that installs
 the epoch: the retired plan, whose approvals are still to be marked stale, and
@@ -650,8 +710,8 @@ stop bound, and not at all once the resource is suspended unless it serves a
 proof, by the rule every read-only wait keeps, and a Warning Event names a Job
 it leaves running. The claim is then retired, and a Job that carries no TTL
 gets its cleanup TTL only when its envelope carries the retired epoch and
-the claim's admission snapshot. A dispatched Apply, or an outcome-unknown Apply
-of the retired epoch that no pass harvested, stays in
+the claim's admission snapshot. A dispatched Apply the epoch did not wait for,
+or an outcome-unknown Apply of the retired epoch that no pass harvested, stays in
 `status.pendingObservation`, and no proof is claimed until its Job is accounted
 for: its UID adopted from a late create, or given up on at the Apply's
 `ObserveAfter` horizon, and its cleanup TTL set once it stops. The

@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,11 +12,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
@@ -155,50 +156,69 @@ func sameRunningMigration(before, current *ptahv1alpha1.PtahMigration) bool {
 		equality.Semantic.DeepEqual(before.Spec, current.Spec)
 }
 
-// The new manager records Unknown under the old binding. The old executor
-// still owns the complete claim and realm until its workload stops.
-func migrationExecutorHeld(before, current *ptahv1alpha1.PtahMigration) error {
-	if !sameRunningMigration(before, current) || before.Status.ExecutionBinding == nil || before.Status.History == nil ||
+// runningMigrationClaim is the dispatched Apply the rollout meets: every
+// field the replacement manager reads it by, written before the rollout.
+func runningMigrationClaim(before *ptahv1alpha1.PtahMigration) error {
+	if before == nil || before.UID == "" || before.Status.ExecutionBinding == nil || before.Status.History == nil ||
 		before.Status.Plan == nil || before.Status.ActiveOperation == nil {
 		return errors.New("running migration has no exact original identity, plan, history or binding")
 	}
 	active := before.Status.ActiveOperation
 	if active.Type != ptahv1alpha1.MigrationOperationApply || !active.DispatchStarted || active.ID == "" ||
 		active.JobName == "" || active.JobUID == "" || active.AdmissionSnapshot == nil || active.ExecutionNotAfter == nil ||
-		!active.ExecutionNotAfter.After(active.StartedAt.Time) ||
+		!active.ExecutionNotAfter.After(active.StartedAt.Time) || active.ExecutionBindingID != before.Status.ExecutionBinding.Epoch ||
 		active.LeaseEpoch == "" || active.LeaseDurationSeconds < 5 || active.Source == nil || active.Target == nil ||
-		!equality.Semantic.DeepEqual(active.PlanRef, before.Status.Plan) ||
-		!equality.Semantic.DeepEqual(current.Status.ActiveOperation, active) ||
-		!equality.Semantic.DeepEqual(current.Status.ExecutionBinding, before.Status.ExecutionBinding) ||
-		!slices.Contains(current.Finalizers, migrationFinalizer) || current.Status.Plan != nil || current.Status.PendingLockRelease != nil ||
-		!conditionIs(current.Status.Conditions, ptahv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "ApplyOutcomeUnknown") ||
-		conditionStatus(current.Status.Conditions, ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue) {
-		return errors.New("running unknown migration lost or changed its protected original claim")
-	}
-	last, unresolved := current.Status.LastRun, current.Status.UnresolvedRun
-	if last == nil || last.Outcome != ptahv1alpha1.MigrationRunOutcomeUnknown || len(last.AppliedVersions) != 0 || last.JobName != active.JobName || last.JobUID != active.JobUID ||
-		!last.StartedAt.Equal(&active.StartedAt) || last.FinishedAt == nil || last.FinishedAt.IsZero() ||
-		unresolved == nil || unresolved.Outcome != last.Outcome || unresolved.OperationID != active.ID ||
-		unresolved.JobName != active.JobName || unresolved.JobUID != active.JobUID || unresolved.RecordedAt.IsZero() ||
-		!equality.Semantic.DeepEqual(unresolved.PlanRef, *active.PlanRef) ||
-		unresolved.TargetIdentityDigest != before.Status.History.TargetIdentityDigest || !sha256Pattern.MatchString(unresolved.TargetIdentityDigest) ||
-		last.DispatchedBy == nil || !equality.Semantic.DeepEqual(unresolved.DispatchedBy, last.DispatchedBy) {
-		return errors.New("running migration's unknown record does not name its original execution")
-	}
-	var copied ptahv1alpha1.UnresolvedMigrationRunStatus
-	if err := json.Unmarshal([]byte(current.Annotations[ptahv1alpha1.UnresolvedRunAnnotation]), &copied); err != nil ||
-		!equality.Semantic.DeepEqual(&copied, unresolved) {
-		return errors.New("running migration lost or changed the complete metadata copy of its unresolved run")
+		!equality.Semantic.DeepEqual(active.PlanRef, before.Status.Plan) {
+		return errors.New("running migration has no dispatched Apply claim under its recorded binding")
 	}
 	return nil
 }
 
-func migrationExecutorHeldWindow(events []watchEvent[*ptahv1alpha1.PtahMigration], before *ptahv1alpha1.PtahMigration, endVersion string) error {
+// migrationClaimHeld is a reading in which the original claim still stands as
+// the dispatching manager wrote it: the claim, the binding and the plan are
+// unchanged, and nothing is recorded about the run yet.
+func migrationClaimHeld(before, current *ptahv1alpha1.PtahMigration) error {
+	if err := runningMigrationClaim(before); err != nil {
+		return err
+	}
+	if !sameRunningMigration(before, current) ||
+		!equality.Semantic.DeepEqual(current.Status.ActiveOperation, before.Status.ActiveOperation) ||
+		!equality.Semantic.DeepEqual(current.Status.ExecutionBinding, before.Status.ExecutionBinding) ||
+		!equality.Semantic.DeepEqual(current.Status.Plan, before.Status.Plan) ||
+		!equality.Semantic.DeepEqual(current.Status.LastRun, before.Status.LastRun) ||
+		current.Status.UnresolvedRun != nil || current.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" ||
+		current.Status.PendingLockRelease != nil || !slices.Contains(current.Finalizers, migrationFinalizer) {
+		return errors.New("running migration released, rewrote or settled its original claim while the executor ran")
+	}
+	return nil
+}
+
+// migrationExecutorWaiting is the replacement manager holding the binding back
+// for the running Apply. The claim stands as before, and Progressing carries,
+// after the words of an Apply in flight, the words only the replacement
+// writes, so the reading cannot be one the dispatching manager left behind.
+func migrationExecutorWaiting(before, current *ptahv1alpha1.PtahMigration) error {
+	if err := migrationClaimHeld(before, current); err != nil {
+		return err
+	}
+	progressing := meta.FindStatusCondition(current.Status.Conditions, ptahv1alpha1.ConditionMigrationProgressing)
+	if progressing == nil || progressing.Status != metav1.ConditionTrue ||
+		(progressing.Reason != string(ptahv1alpha1.ReasonApprovedPlan) &&
+			progressing.Reason != string(ptahv1alpha1.ReasonOperationInProgress)) ||
+		!strings.HasSuffix(progressing.Message, controller.RotationWaitWords) {
+		return errors.New("progressing does not say the binding waits for the running Apply")
+	}
+	return nil
+}
+
+// migrationExecutorWaitWindow holds every watched reading from before to the
+// waiting one to the original claim. A later correct reading cannot hide an
+// earlier one that let the claim go.
+func migrationExecutorWaitWindow(events []watchEvent[*ptahv1alpha1.PtahMigration], before *ptahv1alpha1.PtahMigration, endVersion string) error {
 	if before == nil || before.ResourceVersion == "" || endVersion == "" || endVersion == before.ResourceVersion {
 		return errors.New("running migration window has no exact API boundaries")
 	}
 	started := false
-	var unknown *ptahv1alpha1.PtahMigration
 	for _, event := range events {
 		current := event.Object
 		if current == nil || current.UID != before.UID {
@@ -210,56 +230,168 @@ func migrationExecutorHeldWindow(events []watchEvent[*ptahv1alpha1.PtahMigration
 		if !started {
 			continue
 		}
-		if event.Type == watch.Deleted || !sameRunningMigration(before, current) ||
-			!equality.Semantic.DeepEqual(current.Status.ActiveOperation, before.Status.ActiveOperation) ||
-			!equality.Semantic.DeepEqual(current.Status.ExecutionBinding, before.Status.ExecutionBinding) ||
-			current.Status.PendingLockRelease != nil || !slices.Contains(current.Finalizers, migrationFinalizer) {
-			return errors.New("running migration window released or rewrote the live claim")
+		if event.Type == watch.Deleted {
+			return errors.New("running migration window saw the resource deleted")
 		}
-		if current.Status.UnresolvedRun != nil || unknown != nil {
-			if err := migrationExecutorHeld(before, current); err != nil {
-				return err
-			}
-			if unknown != nil && (!equality.Semantic.DeepEqual(unknown.Status.LastRun, current.Status.LastRun) ||
-				!equality.Semantic.DeepEqual(unknown.Status.UnresolvedRun, current.Status.UnresolvedRun)) {
-				return errors.New("running migration window rewrote terminal evidence")
-			}
-			unknown = current
-		} else if !equality.Semantic.DeepEqual(before.Status.Plan, current.Status.Plan) {
-			return errors.New("running migration discarded its plan before recording the unknown result")
+		if err := migrationClaimHeld(before, current); err != nil {
+			return err
 		}
 		if current.ResourceVersion == endVersion {
-			if unknown == nil {
-				return errors.New("running migration window never recorded Unknown")
-			}
-			return nil
+			return migrationExecutorWaiting(before, current)
 		}
 	}
 	return errors.New("running migration window did not reach both watch barriers")
 }
 
-func migrationExecutorHistoryRecovery(before, held, current *ptahv1alpha1.PtahMigration, replacement string) error {
-	if migrationExecutorHeld(before, held) != nil || !sameRunningMigration(before, current) {
-		return errors.New("migration recovery lacks the original held execution")
-	}
-	old, next := before.Status.ExecutionBinding, current.Status.ExecutionBinding
-	history, resolved := current.Status.History, current.Status.ResolvedRun
-	if next == nil || next.ExecutorImage != replacement || replacement == old.ExecutorImage || next.Epoch == old.Epoch ||
-		!executionEpoch.MatchString(next.Epoch) || next.PtahVersion != old.PtahVersion ||
-		next.ControllerStateVersion != old.ControllerStateVersion || next.RunnerProtocolVersion != old.RunnerProtocolVersion ||
-		current.Status.ActiveOperation != nil || current.Status.Plan != nil || current.Status.PendingLockRelease != nil ||
-		current.Status.UnresolvedRun != nil || current.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" ||
-		!equality.Semantic.DeepEqual(current.Status.LastRun, held.Status.LastRun) ||
-		resolved == nil || resolved.OperationID != held.Status.UnresolvedRun.OperationID || resolved.Outcome != ptahv1alpha1.MigrationRunOutcomeUnknown ||
-		resolved.Resolution != ptahv1alpha1.MigrationRunResolvedByHistoryRead || resolved.AcknowledgmentRef != nil || resolved.AcknowledgedBy != nil ||
-		history == nil || history.CurrentVersion != 3 || history.AppliedCount != 3 || history.PendingCount != 0 || history.Dirty ||
-		len(history.ModifiedVersions) != 0 || len(history.OutOfOrderVersions) != 0 ||
-		history.TargetIdentityDigest != held.Status.UnresolvedRun.TargetIdentityDigest ||
-		!history.ObservedAt.After(held.Status.UnresolvedRun.RecordedAt.Time) || !resolved.ResolvedAt.Equal(&history.ObservedAt) ||
-		!conditionIs(current.Status.Conditions, ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue, "HistoryMatched") {
-		return errors.New("migration recovery replayed, reattributed or failed to freshly account for the original run")
+// originalRunRecord is the record of the original Apply in a reading, or nil
+// while nothing records it.
+func originalRunRecord(before, current *ptahv1alpha1.PtahMigration) *ptahv1alpha1.MigrationRunStatus {
+	if last := current.Status.LastRun; last != nil && last.OperationID == before.Status.ActiveOperation.ID {
+		return last
 	}
 	return nil
+}
+
+// originalRunAppliedUnderItsBinding is the original Apply recorded as its own
+// result: Applied, with the versions it reported, the Job that ran it, and the
+// binding that authorized it, never the one that replaced it.
+func originalRunAppliedUnderItsBinding(before *ptahv1alpha1.PtahMigration, run *ptahv1alpha1.MigrationRunStatus) error {
+	active := before.Status.ActiveOperation
+	if run == nil || run.Outcome != ptahv1alpha1.MigrationRunOutcomeApplied || !slices.Equal(run.AppliedVersions, []int64{2, 3}) ||
+		run.JobName != active.JobName || run.JobUID != active.JobUID || run.ExecutionBindingID != before.Status.ExecutionBinding.Epoch ||
+		!run.StartedAt.Equal(&active.StartedAt) || run.FinishedAt == nil || run.FinishedAt.IsZero() ||
+		run.TargetIdentityDigest != before.Status.History.TargetIdentityDigest || !sha256Pattern.MatchString(run.TargetIdentityDigest) ||
+		!equality.Semantic.DeepEqual(run.PlanRef, active.PlanRef) || run.DispatchedBy == nil {
+		return errors.New("the original Apply is not recorded as its own Applied result under the binding that authorized it")
+	}
+	return nil
+}
+
+// sameRunRecord compares two readings of one run record. The first reading of
+// the database after the run adds its verification, and nothing else changes.
+func sameRunRecord(first, later *ptahv1alpha1.MigrationRunStatus) bool {
+	if first == nil || later == nil {
+		return false
+	}
+	a, b := first.DeepCopy(), later.DeepCopy()
+	a.Verification, b.Verification = nil, nil
+	return equality.Semantic.DeepEqual(a, b) &&
+		(first.Verification == nil || equality.Semantic.DeepEqual(first.Verification, later.Verification))
+}
+
+// migrationExecutorSettledThenRotated is the end of the rollout: the original
+// Apply recorded as its own result under the binding that authorized it, the
+// binding moved to the replacement executor alone, and the first reading of the
+// database under it confirming what the run applied. Nothing was replayed, and
+// no record says the run is anyone's to establish.
+func migrationExecutorSettledThenRotated(before, current *ptahv1alpha1.PtahMigration, replacement string) error {
+	if runningMigrationClaim(before) != nil || current == nil || !sameRunningMigration(before, current) {
+		return errors.New("migration recovery lacks the original running execution")
+	}
+	old, next := before.Status.ExecutionBinding, current.Status.ExecutionBinding
+	if next == nil || next.ExecutorImage != replacement || replacement == old.ExecutorImage || next.Epoch == old.Epoch ||
+		!executionEpoch.MatchString(next.Epoch) || next.PtahVersion != old.PtahVersion ||
+		next.ControllerStateVersion != old.ControllerStateVersion || next.RunnerProtocolVersion != old.RunnerProtocolVersion {
+		return errors.New("the binding did not move to the replacement executor alone")
+	}
+	active := before.Status.ActiveOperation
+	if current.Status.ActiveOperation != nil || current.Status.Plan != nil || current.Status.PendingLockRelease != nil ||
+		current.Status.UnresolvedRun != nil || current.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" ||
+		(current.Status.ResolvedRun != nil && current.Status.ResolvedRun.OperationID == active.ID) {
+		return errors.New("the original run was replayed, left in flight or recorded as nobody's")
+	}
+	run, history := originalRunRecord(before, current), current.Status.History
+	if err := originalRunAppliedUnderItsBinding(before, run); err != nil {
+		return err
+	}
+	if history == nil || history.CurrentVersion != 3 || history.AppliedCount != 3 || history.PendingCount != 0 || history.Dirty ||
+		len(history.ModifiedVersions) != 0 || len(history.OutOfOrderVersions) != 0 ||
+		history.TargetIdentityDigest != run.TargetIdentityDigest || history.ObservedAt.Before(run.FinishedAt) ||
+		run.Verification == nil || run.Verification.Result != ptahv1alpha1.MigrationRunVerifiedInSync ||
+		run.Verification.CurrentVersion != 3 || run.Verification.ObservedAt.Before(run.FinishedAt) ||
+		history.ObservedAt.Before(&run.Verification.ObservedAt) ||
+		!conditionIs(current.Status.Conditions, ptahv1alpha1.ConditionMigrationReady, metav1.ConditionTrue, "HistoryMatched") {
+		return errors.New("no reading of the database after the run confirmed what it applied")
+	}
+	return nil
+}
+
+// migrationExecutorReadWindow holds every watched reading from before to the
+// settled one to the order the rollout owes: the claim stands until the run is
+// recorded, the write that records it keeps the binding that authorized it,
+// nothing is claimed under that binding afterwards, and the binding moves once
+// and only after the run is recorded. No reading leaves the run for a person.
+func migrationExecutorReadWindow(events []watchEvent[*ptahv1alpha1.PtahMigration], before *ptahv1alpha1.PtahMigration,
+	replacement, endVersion string,
+) error {
+	if runningMigrationClaim(before) != nil || before.ResourceVersion == "" || endVersion == "" || endVersion == before.ResourceVersion {
+		return errors.New("running migration window has no exact API boundaries")
+	}
+	old := before.Status.ExecutionBinding
+	started, rotated := false, ""
+	var recorded *ptahv1alpha1.MigrationRunStatus
+	for _, event := range events {
+		current := event.Object
+		if current == nil || current.UID != before.UID {
+			continue
+		}
+		if current.ResourceVersion == before.ResourceVersion {
+			started = true
+		}
+		if !started {
+			continue
+		}
+		if event.Type == watch.Deleted || !sameRunningMigration(before, current) || current.Status.ExecutionBinding == nil {
+			return errors.New("running migration window lost its resource or binding")
+		}
+		if current.Status.UnresolvedRun != nil || current.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] != "" {
+			return errors.New("running migration window left the original run for a person to establish")
+		}
+		binding := current.Status.ExecutionBinding
+		run := originalRunRecord(before, current)
+		switch {
+		case run == nil && recorded != nil:
+			return errors.New("running migration window lost the record of the original run")
+		case run == nil:
+			if err := migrationClaimHeld(before, current); err != nil {
+				return err
+			}
+		default:
+			if err := originalRunAppliedUnderItsBinding(before, run); err != nil {
+				return err
+			}
+			if recorded == nil && !equality.Semantic.DeepEqual(binding, old) {
+				return errors.New("running migration window moved the binding in the write that recorded the run")
+			}
+			if recorded != nil && !sameRunRecord(recorded, run) {
+				return errors.New("running migration window rewrote the record of the original run")
+			}
+			recorded = run
+			if binding.Epoch == old.Epoch {
+				if rotated != "" || !equality.Semantic.DeepEqual(binding, old) {
+					return errors.New("running migration window moved the binding back")
+				}
+				if current.Status.ActiveOperation != nil {
+					return errors.New("running migration window claimed new work under the binding it retires")
+				}
+				break
+			}
+			if binding.ExecutorImage != replacement || (rotated != "" && binding.Epoch != rotated) {
+				return errors.New("running migration window moved the binding to something other than the replacement, or twice")
+			}
+			rotated = binding.Epoch
+			if claim := current.Status.ActiveOperation; claim != nil && claim.ExecutionBindingID != rotated {
+				return errors.New("running migration window claimed work under another binding than the current one")
+			}
+		}
+		if current.ResourceVersion == endVersion {
+			if recorded == nil || rotated == "" {
+				return errors.New("running migration window never recorded the run and moved the binding after it")
+			}
+			return nil
+		}
+	}
+	return errors.New("running migration window did not reach both watch barriers")
 }
 
 // Reuse the schema watch's serialization predicates on owned copies; the

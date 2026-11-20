@@ -240,13 +240,17 @@ type unknownWhileRunning struct {
 	says string
 }
 
-// executorRolledOut is a release that moved the executor. The execution binding
-// changes, and the running Apply is recorded unknown under the binding that
-// authorized it.
+// executorRolledOut is a release that moved the executor and the
+// controller-state version. The execution binding changes, and the running
+// Apply is recorded unknown under the binding that authorized it: a rotation
+// waits for a running Apply only through a move of the executor or the Ptah
+// version alone (rotationMayWaitFor), and the state version is what keeps this
+// one from waiting.
 func executorRolledOut() unknownWhileRunning {
 	current := workloadBuilderForMigrations()
 	next := current
 	next.ExecutorImage = "example.invalid/ptah@sha256:" + strings.Repeat("9", 64)
+	next.ControllerStateVersion = current.ControllerStateVersion + 1
 	return unknownWhileRunning{
 		shape: runShape{dispatcher: current, recorded: true}, next: next,
 		says: "an execution component changed",

@@ -106,6 +106,16 @@ var (
 type JobBuilder interface {
 	NameFor(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error)
 	Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, plan *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error)
+	// BuildUnderBinding is Build under the executor image and Ptah version
+	// binding names rather than this manager's own. It rebuilds the Job of a
+	// dispatched Apply a rollout's rotation waits for, under the binding the
+	// claim was made under.
+	BuildUnderBinding(
+		binding *operatorv1alpha1.ExecutionBindingStatus,
+		schema *operatorv1alpha1.PtahSchema,
+		operation operatorv1alpha1.ActiveOperationStatus,
+		plan *operatorv1alpha1.PtahSchemaPlan,
+	) (*batchv1.Job, error)
 	NameForMigration(migration *operatorv1alpha1.PtahMigration, operation operatorv1alpha1.MigrationOperationStatus) (string, error)
 	BuildMigration(
 		migration *operatorv1alpha1.PtahMigration,
@@ -632,6 +642,13 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 // runner image built beside it and nothing else finds the binding equal: the
 // epoch, the current plan and any pending approval carry over, and work the
 // previous manager dispatched is adopted as it stands.
+//
+// A dispatched Apply holds a rotation back while it can still be read under
+// the binding its claim was made under (dispatchedApplyHoldsRotation): the pass
+// goes on to supervise and consume it as any Apply, and the binding moves on
+// the first pass with no claim in flight, with the Apply's proof still owed.
+// One that cannot be read that way is recorded outcome unknown in the write
+// that rotates the binding.
 func (r *SchemaReconciler) reconcileExecutionBinding(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -664,6 +681,13 @@ func (r *SchemaReconciler) reconcileExecutionBinding(
 
 	operation := schema.Status.ActiveOperation
 	if schemaOperation(operation).Mutating && schemaMayHaveDispatched(operation) {
+		holds, err := r.dispatchedApplyHoldsRotation(ctx, schema, configured)
+		if err != nil {
+			return ctrl.Result{}, true, err
+		}
+		if holds {
+			return r.waitForApplyUnderRotation(ctx, schema)
+		}
 		result, err := r.finishUncertainApplyForExecutionBindingChange(
 			ctx,
 			schema,
@@ -2510,6 +2534,17 @@ func (r *SchemaReconciler) expectedJob(
 		if err != nil {
 			return nil, err
 		}
+	}
+	// A claim meets another configured binding here only while a rotation
+	// waits for its Apply, and its Job is the one built under the binding it
+	// was made under. This manager would build another executor into a new
+	// Job, and refuses to build one under the recorded binding for dispatch.
+	rotating, err := r.schemaBindingRotating(schema)
+	if err != nil {
+		return nil, err
+	}
+	if rotating {
+		return r.Jobs.BuildUnderBinding(schema.Status.ExecutionBinding, schema, *operation, plan)
 	}
 	return r.Jobs.Build(schema, *operation, plan)
 }

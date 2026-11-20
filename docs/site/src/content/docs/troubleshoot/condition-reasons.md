@@ -772,9 +772,9 @@ since Ptah v0.34.0,
 [stokaro/ptah#6406](https://github.com/stokaro/ptah/pull/6406)). The history
 read, in a container that holds no registry credential, reads the directory and
 names a file it refuses, such as the `seed.sql` above, and the `PtahMigration`
-stops `Blocked` with `MigrationDirectoryUnreadable`. In 0.2.15 the fetch read
-the directory itself, so such an artifact failed at that step and was tried
-again at each failure retry.
+stops `Blocked` with `MigrationDirectoryUnreadable`. In 0.2.15, and in a Job
+built for a Ptah before v0.34.0, the fetch reads the directory itself, so such
+an artifact fails at that step and is tried again at each failure retry.
 
 An artifact that holds no SQL file at all is still refused at the fetch, since
 an empty directory would read as a history with nothing to apply. The message

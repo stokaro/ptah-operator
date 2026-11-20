@@ -120,16 +120,19 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		f.check(err, "retain the committed decision while its original Apply is still running")
 	}
 	rollout(original, replacement)
+	// The replacement manager holds the binding back while the original
+	// executor runs: the claim stays as the original manager wrote it, and
+	// Applying carries the words only the replacement writes.
 	for _, row := range rows {
-		f.waitForSchema(row.name, "the original running Apply recorded under the replacement executor", func(resource *ptahv1alpha1.PtahSchema) bool {
-			return schemaExecutorRetirement(row.before, resource, types.UID(row.run.podUID), replacement) == nil
+		f.waitForSchema(row.name, "the replacement manager waiting for the original running Apply under its binding", func(resource *ptahv1alpha1.PtahSchema) bool {
+			return schemaExecutorWaiting(row.before, resource, types.UID(row.run.podUID)) == nil
 		})
 		boundary := f.schema(row.name)
 		establishBarrier(f, f.schemas, boundary, f.in.TestNamespace, row.name)
-		f.check(schemaExecutorHeldWindow(f.schemas.snapshot(), row.before, types.UID(row.run.podUID), replacement, boundary.ResourceVersion), "preserve the running claim through every watched status")
+		f.check(schemaExecutorWaitWindow(f.schemas.snapshot(), row.before, types.UID(row.run.podUID), boundary.ResourceVersion), "hold the running claim and its binding through every watched status")
 		f.assertLeaseHeldWithoutRelease(row.lease)
 		if f.executorApplyBackend(row.engine, row.database) != row.backend {
-			f.fatalf("the original database process changed while its executor epoch retired")
+			f.fatalf("the original database process changed while the binding waited for it")
 		}
 		job, pod := &batchv1.Job{}, &corev1.Pod{}
 		f.check(f.get(row.run.jobName, job), "read the original running Apply Job")
@@ -139,15 +142,25 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		}
 		f.assertColumn(row.engine, row.database, "fault_token", 0)
 	}
-	// Let the authorized old executables finish. The new manager must prove
-	// convergence under its own epoch without executing another Apply.
+	// Let the authorized old executables finish. The new manager reads each
+	// result under the binding that authorized it, moves the binding after,
+	// and proves convergence under its own epoch without another Apply.
 	f.stopPGBarrier(rows[0].barrier)
 	f.releaseMySQLBarrier()
+	applyFinished := map[string]time.Time{}
 	for _, row := range rows {
 		result := f.captureExactJobResult(row.run.jobName, row.run.jobUID, "apply")
 		if result.podUID != row.run.podUID || result.result.ChildExitCode != 0 || result.result.Error != nil {
 			f.fatalf("the original executor did not complete its authorized Apply")
 		}
+		job := &batchv1.Job{}
+		f.check(f.get(row.run.jobName, job), "read the original finished Apply Job")
+		finished, err := jobFinishedAt(job)
+		f.check(err, "date the original Apply by its own Job")
+		if string(job.UID) != row.run.jobUID {
+			f.fatalf("the original Apply Job was replaced before it was dated")
+		}
+		applyFinished[row.name] = finished
 		row.audit.assertRecords(row.sqlBefore, row.audit.snapshot(), row.audit.terminalPod(map[string]string{"job-name": row.run.jobName}, row.run.jobUID), true)
 		row.audit.close()
 	}
@@ -171,35 +184,27 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		}
 	}
 	for _, row := range rows {
-		active := row.before.Status.ActiveOperation
-		horizon := active.ExecutionNotAfter.Add(time.Duration(active.TerminationGracePeriodSeconds) * time.Second)
-		for time.Now().Before(horizon) {
-			f.maybeAudit()
-			current := f.schema(row.name)
-			// A read that crosses the horizon may already contain a legitimate
-			// diagnostic claim. Its Job timestamp is checked below.
-			if !time.Now().Before(horizon) {
-				break
-			}
-			f.check(schemaExecutorRetirement(row.before, current, types.UID(row.run.podUID), replacement), "retain the Apply evidence through its immutable execution horizon")
-			f.assertLeaseIdentity(row.lease)
-			f.sleep(time.Second)
-		}
-		// The retired plan cannot declare current convergence. Its proof is
-		// followed by Resolve -> Verify -> Observe -> Plan under the new epoch.
-		settled := f.waitForSchema(row.name, "fresh source verification and scoped convergence under the replacement executor", func(resource *ptahv1alpha1.PtahSchema) bool {
+		// The proof credits the original plan under the binding it ran under,
+		// and a plan of a retired binding cannot declare current convergence:
+		// Resolve -> Verify -> Observe -> Plan follow under the new epoch.
+		settled := f.waitForSchema(row.name, "the original Apply credited, then fresh source verification and scoped convergence under the replacement executor", func(resource *ptahv1alpha1.PtahSchema) bool {
 			captureRecovery()
 			return inSyncFor(resource, "ScopedConverged")
 		})
-		if settled.Status.ExecutionBinding == nil || settled.Status.ExecutionBinding.ExecutorImage != replacement || settled.Status.Applied != nil || settled.Status.Plan != nil {
-			f.fatalf("recovery attributed an old executor's Apply to the new epoch")
+		if settled.Status.ExecutionBinding == nil || settled.Status.ExecutionBinding.ExecutorImage != replacement || settled.Status.Plan != nil {
+			f.fatalf("recovery did not settle under the replacement executor")
 		}
+		f.check(schemaAppliedByOriginal(row.before, settled.Status.Applied), "credit the original Apply's plan under the binding it ran under")
+		boundary := settled.DeepCopy()
+		establishBarrier(f, f.schemas, boundary, f.in.TestNamespace, row.name)
+		f.check(schemaExecutorReadWindow(f.schemas.snapshot(), row.before, types.UID(row.run.podUID), replacement, boundary.ResourceVersion),
+			"read the Apply under its binding before the binding moves, and claim nothing under the retired one")
 		f.check(faultApprovalRetiredBy(f.unstructuredApproval(row.name+"-approval"), string(row.before.Status.Plan.UID),
 			ptahv1alpha1.ReasonExecutionBindingChanged), "retain the dispatch decision and its executor-change retirement")
 		for operation, before := range map[string]checkpoint{"observe": row.observeBefore, "plan": row.planBefore} {
 			uids := newAddedUIDs(f.jobs.snapshot(), row.name, operation, before)
 			if len(uids) != 2 {
-				f.fatalf("expected immutable proof and fresh-source %s Jobs for %s, found %d", operation, row.name, len(uids))
+				f.fatalf("expected the original Apply's proof and fresh-source %s Jobs for %s, found %d", operation, row.name, len(uids))
 			}
 			var jobs []*batchv1.Job
 			for _, uid := range uids {
@@ -228,7 +233,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 					}
 				}
 			}
-			f.check(schemaExecutorRecoveryPair(f.schemas.snapshot(), row.before, jobs, replacement, horizon), "retain both stages of replacement-executor recovery")
+			f.check(schemaExecutorRecoveryPair(f.schemas.snapshot(), row.before, jobs, replacement, applyFinished[row.name]), "retain both stages of replacement-executor recovery")
 		}
 		f.assertColumn(row.engine, row.database, "fault_token", 1)
 		if f.query(row.engine, row.database, "SELECT count(*) FROM e2e_widgets WHERE id=701 AND name='running-executor-control' AND note='preserve-this-row'") != "1" {
@@ -247,6 +252,6 @@ func (previous *faultRun) runningExecutorImageChanges() {
 		if err := leaseHeldUntilRelease(f.leases.snapshot(), row.lease); err != nil {
 			f.fatalf("the retired Apply lost its uninterrupted Lease: %v", err)
 		}
-		f.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; new epoch proved convergence without replay", row.engine, row.run.jobUID, row.run.podUID)
+		f.logf("PASS %s running Apply executor change: original Job=%s Pod=%s retained; its result was read under its binding before the binding moved, and the new epoch proved convergence without replay", row.engine, row.run.jobUID, row.run.podUID)
 	}
 }

@@ -112,12 +112,13 @@ func TestBuildMigrationKeepsRegistryCredentialsOutOfTheSQLProcess(t *testing.T) 
 
 			pod := job.Spec.Template.Spec
 			fetch := requireContainer(t, pod.InitContainers, migrationFetchContainerName)
-			// The fetch writes the directory unread, so the operation
-			// container names what it cannot read, and passes no
-			// --dir-format: the run reads by format detection, as it does
-			// every other source.
+			// The fetch passes no --dir-format: the run reads by format
+			// detection, as it does every other source. Whether it writes
+			// the directory unread depends on the Ptah version
+			// (TestTheMigrationPullFollowsThePtahVersionItIsBuiltFor), and
+			// the fixture's v0.3.0 predates --skip-validation.
 			want := append(slices.Clone(ociFetchPrefix),
-				"migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath, "--skip-validation")
+				"migrations", "pull", claim.Source.ResolvedReference, "--out", migrationsPath)
 			if !reflect.DeepEqual(fetch.Args, want) {
 				t.Fatalf("fetch args = %q, want %q", fetch.Args, want)
 			}
@@ -712,6 +713,20 @@ func migrationFixture() *operatorv1alpha1.PtahMigration {
 			},
 		},
 	}
+}
+
+// migrationUnderPtah is the builder and the migration of a release whose
+// executor, the digest of executor, carries Ptah version, with the migration's
+// binding recorded under it: an executor move, as the fixtures' v0.3.0 binding
+// would be under a rollout to that version.
+func migrationUnderPtah(version string, executor byte) (Builder, *operatorv1alpha1.PtahMigration) {
+	builder := builderFixture()
+	builder.PtahVersion = version
+	builder.ExecutorImage = "example.invalid/ptah@" + digest(executor)
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding.PtahVersion = builder.PtahVersion
+	migration.Status.ExecutionBinding.ExecutorImage = builder.ExecutorImage
+	return builder, migration
 }
 
 func migrationOperationFixture(operation operatorv1alpha1.MigrationOperationType) operatorv1alpha1.MigrationOperationStatus {

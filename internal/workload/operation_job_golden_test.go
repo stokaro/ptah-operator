@@ -38,9 +38,10 @@ type goldenJobCase struct {
 	// again. TestCarryCredentialDeliveryRebuildsEveryReleasedJob holds the
 	// difference to exactly these variables.
 	rebuildAdds []string
-	// rebuildAddsArgs names the arguments this release adds to the OCI fetch
-	// of the Job a released builder wrote, as rebuildAdds names variables.
-	rebuildAddsArgs []string
+	// ptahVersion is the Ptah version the case builds for when it is not the
+	// fixtures' v0.3.0. Only the version-dependent arguments
+	// (migrationPullArguments) and the binding the Job names depend on it.
+	ptahVersion string
 }
 
 // The operation Job is read by more than the kubelet. The controller-write
@@ -315,15 +316,11 @@ func goldenJobCases() []goldenJobCase {
 			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
-			// Since 0.2.16 the fetch of a History or an Apply writes the
-			// artifact without reading it as migrations. The upgrade to 0.2.16
-			// moves the executor, which retires such a claim anyway.
 			name: "migration-history",
 			build: func() (*batchv1.Job, error) {
 				return builder.BuildMigration(migrationFixture(), migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
-			rebuildAdds:     []string{runner.EnvOCICASHA256Grant},
-			rebuildAddsArgs: []string{"--skip-validation"},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-history-pod-metadata",
@@ -332,8 +329,7 @@ func goldenJobCases() []goldenJobCase {
 				migration.Spec.Execution.PodMetadata = declaredMetadataFixture()
 				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationHistory), nil)
 			},
-			rebuildAdds:     []string{runner.EnvOCICASHA256Grant},
-			rebuildAddsArgs: []string{"--skip-validation"},
+			rebuildAdds: []string{runner.EnvOCICASHA256Grant},
 		},
 		{
 			name: "migration-history-anonymous-ca-unset-execution",
@@ -347,7 +343,6 @@ func goldenJobCases() []goldenJobCase {
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
 				return builder.BuildMigration(migration, operation, nil)
 			},
-			rebuildAddsArgs: []string{"--skip-validation"},
 		},
 		{
 			name: "migration-apply-admitted-scheduling",
@@ -363,7 +358,30 @@ func goldenJobCases() []goldenJobCase {
 				operation.Source.Transport.CAFrom = goldenRegistryCA()
 				return builder.BuildMigration(migration, operation, migrationPlanFixture())
 			},
-			rebuildAddsArgs: []string{"--skip-validation"},
+		},
+		{
+			// A manager configured with Ptah v0.34.0 passes --skip-validation
+			// to the pull of an Apply it dispatches.
+			name: "migration-apply-ptah-v0.34.0",
+			build: func() (*batchv1.Job, error) {
+				builder, migration := migrationUnderPtah("v0.34.0", 'c')
+				return builder.BuildMigration(migration, migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), migrationPlanFixture())
+			},
+			ptahVersion: "v0.34.0",
+		},
+		{
+			// The same manager rebuilds the Apply a predecessor configured with
+			// v0.33.1 dispatched, under the binding the claim recorded, as the
+			// Job that predecessor built: the executor and the version are the
+			// recorded ones, and the pull passes nothing v0.33.1 lacks.
+			name: "migration-apply-ptah-v0.33.1-binding",
+			build: func() (*batchv1.Job, error) {
+				builder, _ := migrationUnderPtah("v0.34.0", 'c')
+				_, migration := migrationUnderPtah("v0.33.1", 'b')
+				return builder.BuildMigrationUnderBinding(migration.Status.ExecutionBinding, migration,
+					migrationOperationFixture(operatorv1alpha1.MigrationOperationApply), migrationPlanFixture())
+			},
+			ptahVersion: "v0.33.1",
 		},
 		{
 			// A drift check mounts its shadow on the history read, which

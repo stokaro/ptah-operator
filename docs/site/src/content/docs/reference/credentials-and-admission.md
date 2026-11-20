@@ -384,7 +384,8 @@ Apply keeps them the same way when its Job was deleted (`the dispatched Apply Jo
 is missing and will not be recreated`), replaced by another Job under the same name
 (`the dispatched Apply Job was replaced`) or left without its owner reference (`the
 dispatched Apply Job lost its owner`), when a release changed an execution
-component under it (`an execution component changed while the Apply was
+component under it and the Apply could not be read under the binding it was
+dispatched under (`an execution component changed while the Apply was
 dispatched`), and when its database Lease changed hands (`the database lock epoch
 changed under the dispatched run`). A `PtahMigration` deleted while its Apply
 waited takes its status with it, and its `MigrationRunUncertain` Warning Event
@@ -453,7 +454,8 @@ resource looks at an Apply's Pod every 5 seconds, also while a deleted resource
 waits for it. Some endings are recorded while the Pod can still start, and a Pod
 that starts later does not change the record. A `PtahMigration` records the run
 and keeps its claim until the Pod stops when its Job went while the Pod stood, when
-an execution component changed, when its Lease changed hands, and on any other
+an execution component changed and the binding stopped waiting for the run, when
+its Lease changed hands, and on any other
 ending above that finds its Job running or its Pods standing. A
 `PtahSchema` records every ending at once and reads the database again once the
 Apply's deadline has passed. So check whether the Secret exists now before you

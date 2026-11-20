@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controller"
 )
 
 func TestRunningMigrationPlanRequiresItsOwnPublishedArtifact(t *testing.T) {
@@ -188,7 +189,16 @@ func TestMigrationExecutorPodWatchNeedsTheExactOriginalReading(t *testing.T) {
 	}
 }
 
-func runningMigrationExecutorFixture() (*ptahv1alpha1.PtahMigration, *ptahv1alpha1.PtahMigration, *ptahv1alpha1.PtahMigration) {
+// runningMigrationExecutorFixture is the readings a rollout of the executor
+// leaves around a running migration Apply, in order: the claim the dispatching
+// manager wrote, the replacement's wait, the write that records the run under
+// the binding that authorized it, the write that moves the binding, and the
+// first reading of the database under the new binding.
+type runningMigrationExecutorReadings struct {
+	before, waiting, recorded, rotated, current *ptahv1alpha1.PtahMigration
+}
+
+func runningMigrationExecutorFixture() runningMigrationExecutorReadings {
 	before, _, _, _ := migrationReplacementFixture()
 	at := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -203,26 +213,36 @@ func runningMigrationExecutorFixture() (*ptahv1alpha1.PtahMigration, *ptahv1alph
 		AdmissionSnapshot: &ptahv1alpha1.PodAdmissionSnapshot{}, LeaseEpoch: ftEpoch, LeaseDurationSeconds: 360,
 		Source: &ptahv1alpha1.SourceAccessBinding{}, Target: &ptahv1alpha1.DatabaseTargetBinding{},
 	}
-	held := before.DeepCopy()
-	held.ResourceVersion, held.Status.Plan = "20", nil
-	recorded := metav1.NewTime(at.Add(time.Minute))
-	held.Status.LastRun = &ptahv1alpha1.MigrationRunStatus{Outcome: ptahv1alpha1.MigrationRunOutcomeUnknown,
-		JobName: "original-apply", JobUID: "J", StartedAt: metav1.NewTime(at), FinishedAt: &recorded, DispatchedBy: &ptahv1alpha1.ManagerRecord{}}
-	held.Status.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{Outcome: ptahv1alpha1.MigrationRunOutcomeUnknown,
-		OperationID: digest, JobName: "original-apply", JobUID: "J", PlanRef: *before.Status.Plan.DeepCopy(),
-		TargetIdentityDigest: digest, RecordedAt: recorded, DispatchedBy: &ptahv1alpha1.ManagerRecord{}}
-	held.Status.Conditions = []metav1.Condition{{Type: "Blocked", Status: metav1.ConditionTrue, Reason: "ApplyOutcomeUnknown"}, {Type: "Ready", Status: metav1.ConditionFalse}}
-	copyMigrationExecutorRecord(held)
-	current := held.DeepCopy()
-	current.ResourceVersion, current.Status.ActiveOperation, current.Status.UnresolvedRun = "30", nil, nil
-	delete(current.Annotations, ptahv1alpha1.UnresolvedRunAnnotation)
-	current.Status.ExecutionBinding.Epoch, current.Status.ExecutionBinding.ExecutorImage = ftOtherEpoch, "replacement"
+	before.Status.Conditions = []metav1.Condition{{Type: "Progressing", Status: metav1.ConditionTrue, Reason: "ApprovedPlan", Message: "Applying 2 planned migrations"}}
+
+	waiting := before.DeepCopy()
+	waiting.ResourceVersion = "20"
+	waiting.Status.Conditions[0].Message += controller.RotationWaitWords
+
+	recorded := waiting.DeepCopy()
+	recorded.ResourceVersion, recorded.Status.ActiveOperation, recorded.Status.Plan = "30", nil, nil
+	finished := metav1.NewTime(at.Add(time.Minute))
+	recorded.Status.LastRun = &ptahv1alpha1.MigrationRunStatus{
+		OperationID: digest, Outcome: ptahv1alpha1.MigrationRunOutcomeApplied, AppliedVersions: []int64{2, 3},
+		JobName: "original-apply", JobUID: "J", ExecutionBindingID: ftEpoch, TargetIdentityDigest: digest,
+		PlanRef: before.Status.Plan.DeepCopy(), StartedAt: metav1.NewTime(at), FinishedAt: &finished,
+		DispatchedBy: &ptahv1alpha1.ManagerRecord{},
+	}
+	recorded.Status.Conditions = []metav1.Condition{{Type: "Progressing", Status: metav1.ConditionTrue, Reason: "VerifyingConvergence"}}
+
+	rotated := recorded.DeepCopy()
+	rotated.ResourceVersion = "40"
+	rotated.Status.ExecutionBinding.Epoch, rotated.Status.ExecutionBinding.ExecutorImage = ftOtherEpoch, "replacement"
+
+	current := rotated.DeepCopy()
+	current.ResourceVersion = "60"
 	observed := metav1.NewTime(at.Add(2 * time.Minute))
 	current.Status.History = &ptahv1alpha1.MigrationHistoryStatus{TargetIdentityDigest: digest, ObservedAt: observed, CurrentVersion: 3, AppliedCount: 3}
-	current.Status.ResolvedRun = &ptahv1alpha1.ResolvedMigrationRunStatus{OperationID: digest, Outcome: ptahv1alpha1.MigrationRunOutcomeUnknown,
-		Resolution: ptahv1alpha1.MigrationRunResolvedByHistoryRead, ResolvedAt: observed}
+	current.Status.LastRun.Verification = &ptahv1alpha1.MigrationRunVerificationStatus{
+		ObservedAt: observed, CurrentVersion: 3, Result: ptahv1alpha1.MigrationRunVerifiedInSync,
+	}
 	current.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "HistoryMatched"}}
-	return before, held, current
+	return runningMigrationExecutorReadings{before: before, waiting: waiting, recorded: recorded, rotated: rotated, current: current}
 }
 
 func copyMigrationExecutorRecord(resource *ptahv1alpha1.PtahMigration) {
@@ -233,11 +253,25 @@ func copyMigrationExecutorRecord(resource *ptahv1alpha1.PtahMigration) {
 	resource.Annotations = map[string]string{ptahv1alpha1.UnresolvedRunAnnotation: string(content)}
 }
 
-func TestRunningMigrationExecutorKeepsItsEntireClaimAndUnknownRecord(t *testing.T) {
+// unresolvedOriginalRun is the record a rotation that did not wait leaves.
+func unresolvedOriginalRun(r *ptahv1alpha1.PtahMigration) {
+	r.Status.UnresolvedRun = &ptahv1alpha1.UnresolvedMigrationRunStatus{Outcome: ptahv1alpha1.MigrationRunOutcomeUnknown,
+		OperationID: "sha256:" + strings.Repeat("a", 64), JobName: "original-apply", JobUID: "J"}
+	copyMigrationExecutorRecord(r)
+}
+
+func TestRunningMigrationExecutorWaitKeepsTheEntireClaim(t *testing.T) {
 	t.Parallel()
-	before, held, _ := runningMigrationExecutorFixture()
-	if err := migrationExecutorHeld(before, held); err != nil {
+	readings := runningMigrationExecutorFixture()
+	before, waiting := readings.before, readings.waiting
+	if err := migrationExecutorWaiting(before, waiting); err != nil {
 		t.Fatal(err)
+	}
+	afterLeaseWait := waiting.DeepCopy()
+	afterLeaseWait.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonOperationInProgress)
+	afterLeaseWait.Status.Conditions[0].Message = "Apply operation is in progress" + controller.RotationWaitWords
+	if err := migrationExecutorWaiting(before, afterLeaseWait); err != nil {
+		t.Fatalf("the wait over the words a Lease wait leaves was refused: %v", err)
 	}
 	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration){
 		"lost claim":              func(r *ptahv1alpha1.PtahMigration) { r.Status.ActiveOperation = nil },
@@ -251,83 +285,73 @@ func TestRunningMigrationExecutorKeepsItsEntireClaimAndUnknownRecord(t *testing.
 		"premature release": func(r *ptahv1alpha1.PtahMigration) {
 			r.Status.PendingLockRelease = &ptahv1alpha1.TargetLockReleaseStatus{}
 		},
-		"new plan":            func(r *ptahv1alpha1.PtahMigration) { r.Status.Plan = before.Status.Plan.DeepCopy() },
-		"ready while unknown": func(r *ptahv1alpha1.PtahMigration) { r.Status.Conditions[1].Status = metav1.ConditionTrue },
-		"old resource UID":    func(r *ptahv1alpha1.PtahMigration) { r.UID = "replacement" },
-		"spec edit":           func(r *ptahv1alpha1.PtahMigration) { r.Spec.Suspend = true },
-		"another generation":  func(r *ptahv1alpha1.PtahMigration) { r.Generation++ },
-		"missing outcome":     func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun = nil },
-		"rewritten Applied outcome": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeApplied
+		"dropped plan":       func(r *ptahv1alpha1.PtahMigration) { r.Status.Plan = nil },
+		"run recorded":       func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun = readings.recorded.Status.LastRun.DeepCopy() },
+		"recorded unknown":   unresolvedOriginalRun,
+		"old resource UID":   func(r *ptahv1alpha1.PtahMigration) { r.UID = "replacement" },
+		"spec edit":          func(r *ptahv1alpha1.PtahMigration) { r.Spec.Suspend = true },
+		"another generation": func(r *ptahv1alpha1.PtahMigration) { r.Generation++ },
+		"the dispatching manager's own words": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.Conditions[0].Message = "Applying 2 planned migrations"
 		},
-		"applied versions attributed to Unknown": func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.AppliedVersions = []int64{2, 3} },
-		"missing unresolved record":              func(r *ptahv1alpha1.PtahMigration) { r.Status.UnresolvedRun = nil },
-		"unrelated target": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.UnresolvedRun.TargetIdentityDigest = "sha256:" + strings.Repeat("b", 64)
-			copyMigrationExecutorRecord(r)
+		"a Pod admission refusal's reason": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonPodAdmissionRefused)
 		},
-		"unrelated plan": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.UnresolvedRun.PlanRef.UID = "other"
-			copyMigrationExecutorRecord(r)
+		"a lock wait's reason": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.Conditions[0].Reason = string(ptahv1alpha1.ReasonWaitingForDatabaseLock)
 		},
-		"unrelated Job": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.UnresolvedRun.JobUID = "other"
-			copyMigrationExecutorRecord(r)
-		},
-		"missing metadata copy": func(r *ptahv1alpha1.PtahMigration) { r.Annotations = nil },
-		"partial metadata copy": func(r *ptahv1alpha1.PtahMigration) {
-			r.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] = `{"operationID":"x"}`
-		},
+		"not progressing": func(r *ptahv1alpha1.PtahMigration) { r.Status.Conditions[0].Status = metav1.ConditionFalse },
 	} {
 		t.Run(name, func(t *testing.T) {
-			current := held.DeepCopy()
+			current := waiting.DeepCopy()
 			mutate(current)
-			if migrationExecutorHeld(before, current) == nil {
-				t.Fatal("lost running-Apply protection passed")
+			if migrationExecutorWaiting(before, current) == nil {
+				t.Fatal("a reading that is not the replacement's wait for the original claim passed")
 			}
 		})
 	}
 }
 
-func TestRunningMigrationExecutorChecksEveryWatchedTransition(t *testing.T) {
+func TestRunningMigrationExecutorWaitChecksEveryWatchedTransition(t *testing.T) {
 	t.Parallel()
-	before, held, _ := runningMigrationExecutorFixture()
-	end := held.DeepCopy()
-	end.ResourceVersion = "21"
-	events := []watchEvent[*ptahv1alpha1.PtahMigration]{ftEvent(watch.Modified, before), ftEvent(watch.Modified, held), ftEvent(watch.Modified, end)}
-	if err := migrationExecutorHeldWindow(events, before, "21"); err != nil {
+	readings := runningMigrationExecutorFixture()
+	before, waiting := readings.before, readings.waiting
+	held := before.DeepCopy()
+	held.ResourceVersion = "15"
+	events := []watchEvent[*ptahv1alpha1.PtahMigration]{ftEvent(watch.Modified, before), ftEvent(watch.Modified, held), ftEvent(watch.Modified, waiting)}
+	if err := migrationExecutorWaitWindow(events, before, waiting.ResourceVersion); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration){
-		"lost claim between correct endpoints":  func(r *ptahv1alpha1.PtahMigration) { r.Status.ActiveOperation = nil },
-		"lost record between correct endpoints": func(r *ptahv1alpha1.PtahMigration) { r.Status.UnresolvedRun = nil },
-		"rewritten recording time": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.UnresolvedRun.RecordedAt = metav1.NewTime(r.Status.UnresolvedRun.RecordedAt.Add(time.Second))
-			copyMigrationExecutorRecord(r)
-		},
+		"lost claim between correct endpoints":      func(r *ptahv1alpha1.PtahMigration) { r.Status.ActiveOperation = nil },
+		"rotated binding between correct endpoints": func(r *ptahv1alpha1.PtahMigration) { r.Status.ExecutionBinding.Epoch = ftOtherEpoch },
+		"unknown record between correct endpoints":  unresolvedOriginalRun,
 	} {
 		t.Run(name, func(t *testing.T) {
 			bad := held.DeepCopy()
-			bad.ResourceVersion = "intermediate"
 			mutate(bad)
 			broken := slices.Clone(events)
-			broken = append(broken[:2], ftEvent(watch.Modified, bad), broken[2])
-			if migrationExecutorHeldWindow(broken, before, "21") == nil {
-				t.Fatal("a correct final reading hid a lost intermediate protection")
+			broken[1] = ftEvent(watch.Modified, bad)
+			if migrationExecutorWaitWindow(broken, before, waiting.ResourceVersion) == nil {
+				t.Fatal("a correct final reading hid an intermediate one that let the claim go")
 			}
 		})
 	}
-	for _, broken := range [][]watchEvent[*ptahv1alpha1.PtahMigration]{nil, events[1:], events[:2], {ftEvent(watch.Modified, before), ftEvent(watch.Deleted, end)}} {
-		if migrationExecutorHeldWindow(broken, before, "21") == nil {
+	if migrationExecutorWaitWindow(events[:2], before, held.ResourceVersion) == nil {
+		t.Fatal("a window that ends before the replacement's wait passed")
+	}
+	for _, broken := range [][]watchEvent[*ptahv1alpha1.PtahMigration]{nil, events[1:], events[:2], {ftEvent(watch.Modified, before), ftEvent(watch.Deleted, waiting)}} {
+		if migrationExecutorWaitWindow(broken, before, waiting.ResourceVersion) == nil {
 			t.Fatal("a missing watch barrier or deletion passed")
 		}
 	}
 }
 
-func TestRunningMigrationExecutorNeedsFreshHistoryWithoutReattribution(t *testing.T) {
+func TestRunningMigrationExecutorSettlesUnderItsBindingThenRotates(t *testing.T) {
 	t.Parallel()
-	before, held, current := runningMigrationExecutorFixture()
-	if err := migrationExecutorHistoryRecovery(before, held, current, "replacement"); err != nil {
+	readings := runningMigrationExecutorFixture()
+	before, current := readings.before, readings.current
+	if err := migrationExecutorSettledThenRotated(before, current, "replacement"); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*ptahv1alpha1.PtahMigration){
@@ -337,33 +361,123 @@ func TestRunningMigrationExecutorNeedsFreshHistoryWithoutReattribution(t *testin
 		"replayed Apply": func(r *ptahv1alpha1.PtahMigration) {
 			r.Status.ActiveOperation = before.Status.ActiveOperation.DeepCopy()
 		},
-		"still unknown":        func(r *ptahv1alpha1.PtahMigration) { r.Status.UnresolvedRun = held.Status.UnresolvedRun.DeepCopy() },
-		"restore copy remains": func(r *ptahv1alpha1.PtahMigration) { r.Annotations[ptahv1alpha1.UnresolvedRunAnnotation] = "old" },
-		"old history": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.History.ObservedAt = held.Status.UnresolvedRun.RecordedAt
+		"published plan":   func(r *ptahv1alpha1.PtahMigration) { r.Status.Plan = before.Status.Plan.DeepCopy() },
+		"recorded unknown": unresolvedOriginalRun,
+		"resolved as nobody's": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ResolvedRun = &ptahv1alpha1.ResolvedMigrationRunStatus{OperationID: before.Status.ActiveOperation.ID}
 		},
-		"another database": func(r *ptahv1alpha1.PtahMigration) { r.Status.History.TargetIdentityDigest = "other" },
+		"run Unknown": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeUnknown
+		},
+		"run Failed":          func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeFailed },
+		"no applied versions": func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.AppliedVersions = nil },
+		"run under the new binding": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.ExecutionBindingID = ftOtherEpoch
+		},
+		"another run": func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.OperationID = "other" },
+		"another Job": func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.JobUID = "other" },
+		"another database": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.TargetIdentityDigest = "sha256:" + strings.Repeat("b", 64)
+		},
+		"no dispatcher":    func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.DispatchedBy = nil },
 		"work remains":     func(r *ptahv1alpha1.PtahMigration) { r.Status.History.PendingCount = 1 },
 		"dirty history":    func(r *ptahv1alpha1.PtahMigration) { r.Status.History.Dirty = true },
 		"modified history": func(r *ptahv1alpha1.PtahMigration) { r.Status.History.ModifiedVersions = []int64{1} },
-		"rewritten success": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeApplied
+		"history of another database": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.History.TargetIdentityDigest = "sha256:" + strings.Repeat("b", 64)
 		},
-		"another run resolved": func(r *ptahv1alpha1.PtahMigration) { r.Status.ResolvedRun.OperationID = "other" },
-		"acknowledgment instead of History": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.ResolvedRun.Resolution = ptahv1alpha1.MigrationRunResolvedByAcknowledgment
+		"history read before the run finished": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.History.ObservedAt = metav1.NewTime(r.Status.LastRun.FinishedAt.Add(-time.Second))
 		},
-		"no matching History time": func(r *ptahv1alpha1.PtahMigration) {
-			r.Status.ResolvedRun.ResolvedAt = held.Status.UnresolvedRun.RecordedAt
+		"unverified run": func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.Verification = nil },
+		"run verified pending": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.Verification.Result = ptahv1alpha1.MigrationRunVerifiedPending
 		},
+		"verified before it finished": func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.Verification.ObservedAt = metav1.NewTime(r.Status.LastRun.FinishedAt.Add(-time.Second))
+		},
+		"not ready": func(r *ptahv1alpha1.PtahMigration) { r.Status.Conditions[0].Status = metav1.ConditionFalse },
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := current.DeepCopy()
 			mutate(r)
-			if migrationExecutorHistoryRecovery(before, held, r, "replacement") == nil {
-				t.Fatal("an unaccounted or reattributed execution passed as fresh recovery")
+			if migrationExecutorSettledThenRotated(before, r, "replacement") == nil {
+				t.Fatal("a run that is not its own Applied result under its binding, then confirmed, passed")
 			}
 		})
+	}
+}
+
+func TestRunningMigrationExecutorReadWindowKeepsTheOrder(t *testing.T) {
+	t.Parallel()
+	readings := runningMigrationExecutorFixture()
+	before := readings.before
+	reading := readings.rotated.DeepCopy()
+	reading.ResourceVersion = "50"
+	reading.Status.ActiveOperation = &ptahv1alpha1.MigrationOperationStatus{Type: ptahv1alpha1.MigrationOperationHistory, ID: "history", ExecutionBindingID: ftOtherEpoch}
+	ordered := []*ptahv1alpha1.PtahMigration{before, readings.waiting, readings.recorded, readings.rotated, reading, readings.current}
+	window := func(readings []*ptahv1alpha1.PtahMigration) []watchEvent[*ptahv1alpha1.PtahMigration] {
+		var events []watchEvent[*ptahv1alpha1.PtahMigration]
+		for _, r := range readings {
+			events = append(events, ftEvent(watch.Modified, r))
+		}
+		return events
+	}
+	end := readings.current.ResourceVersion
+	if err := migrationExecutorReadWindow(window(ordered), before, "replacement", end); err != nil {
+		t.Fatal(err)
+	}
+	for name, at := range map[string]struct {
+		index  int
+		mutate func(*ptahv1alpha1.PtahMigration)
+	}{
+		"binding moved in the write that recorded the run": {2, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ExecutionBinding = readings.rotated.Status.ExecutionBinding.DeepCopy()
+		}},
+		"binding moved while the claim stood": {1, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ExecutionBinding = readings.rotated.Status.ExecutionBinding.DeepCopy()
+		}},
+		"new work claimed under the retired binding": {2, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ActiveOperation = reading.Status.ActiveOperation.DeepCopy()
+			r.Status.ActiveOperation.ExecutionBindingID = ftEpoch
+		}},
+		"work claimed under another binding": {4, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ActiveOperation.ExecutionBindingID = ftEpoch
+		}},
+		"run recorded unknown": {2, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.LastRun.Outcome = ptahv1alpha1.MigrationRunOutcomeUnknown
+		}},
+		"run left for a person": {3, unresolvedOriginalRun},
+		"record lost":           {3, func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun = nil }},
+		"record rewritten":      {4, func(r *ptahv1alpha1.PtahMigration) { r.Status.LastRun.FinishedAt = &metav1.Time{Time: time.Now()} }},
+		"binding moved back": {4, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ExecutionBinding = before.Status.ExecutionBinding.DeepCopy()
+		}},
+		"binding moved elsewhere": {4, func(r *ptahv1alpha1.PtahMigration) { r.Status.ExecutionBinding.ExecutorImage = "third" }},
+		"claim rewritten while held": {1, func(r *ptahv1alpha1.PtahMigration) {
+			r.Status.ActiveOperation.LeaseEpoch = ftOtherEpoch
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			broken := make([]*ptahv1alpha1.PtahMigration, len(ordered))
+			for i, r := range ordered {
+				broken[i] = r.DeepCopy()
+			}
+			at.mutate(broken[at.index])
+			if migrationExecutorReadWindow(window(broken), before, "replacement", end) == nil {
+				t.Fatal("a window out of the order the rollout owes passed")
+			}
+		})
+	}
+	if migrationExecutorReadWindow(window(ordered[:3]), before, "replacement", readings.recorded.ResourceVersion) == nil {
+		t.Fatal("a window that ends before the binding moved passed")
+	}
+	deleted := window(ordered)
+	deleted[len(deleted)-1].Type = watch.Deleted
+	for _, broken := range [][]watchEvent[*ptahv1alpha1.PtahMigration]{nil, window(ordered[1:]), window(ordered[:5]), deleted} {
+		if migrationExecutorReadWindow(broken, before, "replacement", end) == nil {
+			t.Fatal("a missing watch barrier or deletion passed")
+		}
 	}
 }
 

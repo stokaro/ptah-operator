@@ -25,13 +25,17 @@ const releasedJobDirectory = "testdata/jobs-v0.2.10"
 // A Job v0.2.10 dispatched is still running when the manager is upgraded, and
 // the new manager holds it to the Job its claim rebuilds. Every golden case is
 // read back in the released shape, and the rebuilt Job, rewritten, has to be
-// that Job byte for byte. A case that declares rebuildAdds or rebuildAddsArgs
-// is a Job this release cannot confirm: the rewritten rebuild has to differ
-// from it, and be it byte for byte once exactly those variables and fetch
-// arguments are taken out.
+// that Job byte for byte. A case that declares rebuildAdds is a Job this
+// release cannot confirm: the rewritten rebuild has to differ from it, and be
+// it byte for byte once exactly those variables are taken out.
+//
+// The released Jobs are built for the fixtures' Ptah version, so a case built
+// for another (ptahVersion) has none.
 func TestCarryCredentialDeliveryRebuildsEveryReleasedJob(t *testing.T) {
 	t.Parallel()
-	cases := slices.DeleteFunc(goldenJobCases(), func(test goldenJobCase) bool { return test.unreleased })
+	cases := slices.DeleteFunc(goldenJobCases(), func(test goldenJobCase) bool {
+		return test.unreleased || test.ptahVersion != ""
+	})
 	entries, err := os.ReadDir(releasedJobDirectory)
 	if err != nil {
 		t.Fatal(err)
@@ -58,30 +62,17 @@ func TestCarryCredentialDeliveryRebuildsEveryReleasedJob(t *testing.T) {
 			// stored read-only Job without one (jobclaim), so the rewrite leaves
 			// the TTL alone, and the comparison here is of everything else.
 			expected.Spec.TTLSecondsAfterFinished = nil
-			// An argument this release adds to the fetch is no part of the
-			// credential delivery, so whether the rewrite has anything to do
-			// is asked of the rebuild without it.
-			withoutArguments := expected.DeepCopy()
-			for _, argument := range test.rebuildAddsArgs {
-				removeFetchArgument(withoutArguments, argument)
-			}
-			differed := !bytes.Equal(marshalJob(t, withoutArguments), released)
+			differed := !bytes.Equal(marshalJob(t, expected), released)
 			if got := CarryCredentialDelivery(expected, live); got != differed {
 				t.Fatalf("CarryCredentialDelivery() = %v for a released Job that differs from the rebuild: %v", got, differed)
 			}
-			if len(test.rebuildAdds) > 0 || len(test.rebuildAddsArgs) > 0 {
+			if len(test.rebuildAdds) > 0 {
 				if bytes.Equal(marshalJob(t, expected), released) {
-					t.Fatalf("the rebuild matches the released Job, so %v and %v are no longer additions",
-						test.rebuildAdds, test.rebuildAddsArgs)
+					t.Fatalf("the rebuild matches the released Job, so %v is no longer an addition", test.rebuildAdds)
 				}
 				for _, name := range test.rebuildAdds {
 					if removeVariable(expected, name) == 0 {
 						t.Fatalf("the rebuild carries no %s to take out", name)
-					}
-				}
-				for _, argument := range test.rebuildAddsArgs {
-					if removeFetchArgument(expected, argument) == 0 {
-						t.Fatalf("the rebuild's fetch carries no %s to take out", argument)
 					}
 				}
 			}
@@ -212,22 +203,6 @@ func removeVariable(job *batchv1.Job, name string) int {
 			containers[index].Env = slices.DeleteFunc(containers[index].Env, func(variable corev1.EnvVar) bool { return variable.Name == name })
 			removed += before - len(containers[index].Env)
 		}
-	}
-	return removed
-}
-
-// removeFetchArgument takes an argument out of the init container that fetches
-// an OCI source, and reports how many it took out.
-func removeFetchArgument(job *batchv1.Job, argument string) int {
-	removed := 0
-	for index := range job.Spec.Template.Spec.InitContainers {
-		container := &job.Spec.Template.Spec.InitContainers[index]
-		if container.Name != migrationFetchContainerName && container.Name != fetchContainerName {
-			continue
-		}
-		before := len(container.Args)
-		container.Args = slices.DeleteFunc(container.Args, func(each string) bool { return each == argument })
-		removed += before - len(container.Args)
 	}
 	return removed
 }

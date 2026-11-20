@@ -1165,8 +1165,14 @@ the current plan is no longer executable. A recorded approval becomes stale with
 authorization and database lock, the plan is cleared, and the replacement
 manager runs Resolve, Verify, Observe, and Plan again. Approve only the
 replacement plan; do not recreate an approval against the old UID or
-fingerprint. A dispatched Apply is never recreated under the new binding; its
-outcome is handled conservatively and requires post-Apply observation.
+fingerprint. A dispatched Apply is never recreated under the new binding.
+Where only the executor image or the Ptah version changed, the replacement
+manager reads the Apply's result under the binding it was dispatched under,
+however late its Job stops, records its outcome, and only then moves the
+binding. Only a Job still running at the end of the claim's Lease term, or a
+Job, Pod or result that is not what the claim dispatched, is recorded unknown
+([Retire an execution binding](../../reference/mutation-lifecycle/#retire-an-execution-binding)).
+Either way the database is read again before anything else is applied.
 
 The same proof is required when an Apply runner refuses a target Secret that
 changed after approval. The refusal describes one Pod attempt; it cannot account
@@ -1259,7 +1265,9 @@ A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
 terminates every old manager Pod before any replacement manager Pod starts.
 Before termination, the old manager may still dispatch an approval that is
 valid for the complete old execution binding. That Job remains internally
-consistent and is never changed to the replacement binding. If an upgrade
+consistent and is never changed to the replacement binding. Whichever manager
+reads its result first records it under that binding, and the replacement
+moves the binding after. If an upgrade
 maintenance window requires that no new Apply be dispatched after the window
 begins, first scale the manager Deployment to zero and wait until all manager
 Pods have terminated. Then run `helm upgrade --wait`; the chart restores the

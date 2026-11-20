@@ -26,6 +26,7 @@ const mutationLifecyclePage = "docs/site/src/content/docs/reference/mutation-lif
 var controllerFiles = []string{
 	"internal/controller/schema_controller.go",
 	"internal/controller/schema_binding_retirement.go",
+	"internal/controller/execution_binding_wait.go",
 	"internal/controller/migration_controller.go",
 	"internal/controller/migration_apply.go",
 	"internal/controller/migration_termination_summary.go",
