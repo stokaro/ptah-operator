@@ -1,9 +1,9 @@
 package certrotation
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,20 +51,21 @@ func TestTLSCertificateProberRequiresExactLeaf(t *testing.T) {
 		LeafCertificate:  served.leaf,
 	}
 	probe := tlsCertificateProber{}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	// The test's own context: a wall-clock deadline here fails a handshake that
+	// is merely slow under -race on a loaded host, and the test binary's
+	// -timeout already bounds one that hangs.
+	ctx := t.Context()
 	if err := probe.Probe(ctx, request); err != nil {
 		t.Fatalf("Probe() exact leaf error = %v", err)
 	}
+	// The refusal has to be the leaf comparison: any other error, such as an
+	// expired deadline, would pass a check that only asks for an error.
 	request.LeafCertificate = alternate.leaf
-	if err := probe.Probe(ctx, request); err == nil {
-		t.Fatal("Probe() accepted a different leaf signed by the same CA")
+	const differentLeaf = "webhook still serves a different certificate"
+	if err := probe.Probe(ctx, request); err == nil || !strings.Contains(err.Error(), differentLeaf) {
+		t.Fatalf("Probe() different leaf signed by the same CA error = %v, want %q", err, differentLeaf)
 	}
 
 	_ = listener.Close()
-	select {
-	case <-serveFinished:
-	case <-time.After(time.Second):
-		t.Fatal("TLS test server did not stop")
-	}
+	<-serveFinished
 }
