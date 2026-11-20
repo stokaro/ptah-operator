@@ -1,0 +1,83 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "generation": 1,
+    "name": "app",
+    "namespace": "team-a"
+  },
+  "status": {
+    "activeOperation": null,
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Succeeded",
+        "message": "The latest operation completed"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "Database schema was observed"
+      },
+      {
+        "type": "ApprovalRequired",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanNoLongerCurrent",
+        "message": "No plan is waiting: the plan that was is no longer current, and Ptah planned none in its place"
+      },
+      {
+        "type": "DriftDetected",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanRefused",
+        "message": "Whether the database differs is unknown until Ptah plans the desired schema"
+      },
+      {
+        "type": "PlanReady",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanRefused",
+        "message": "Nothing is planned from a desired schema Ptah refuses to plan"
+      },
+      {
+        "type": "InSync",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanRefused",
+        "message": "Whether the database matches the desired schema is unknown until Ptah plans it"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "PlanRefused",
+        "message": "plan_refused: ptah refused to plan the change (view-security-option: public.differs_notes_view security_invoker)"
+      }
+    ],
+    "lastAttemptTime": "2026-08-30T12:00:00Z",
+    "nextReconciliationTime": "2026-08-30T12:37:00Z",
+    "observedGeneration": 1,
+    "phase": "Blocked",
+    "plan": null
+  }
+}

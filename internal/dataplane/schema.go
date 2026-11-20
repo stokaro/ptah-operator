@@ -62,6 +62,11 @@ const (
 const (
 	SchemaRefusalStalePlan      = "stale-plan"
 	SchemaRefusalProtectedTable = "protected-table"
+	// SchemaRefusalLockTimeout is Ptah's RefusalLockTimeout: another session
+	// held the schema apply lock longer than --lock-timeout allowed. It can
+	// come from another schema's Apply, since MySQL's GET_LOCK name is
+	// server-wide, so it says nothing about the plan.
+	SchemaRefusalLockTimeout = "lock-timeout"
 	// SchemaRefusalDeclarationRefused is Ptah v0.23.0's refusal of a desired
 	// schema whose declarations contradict each other, such as a foreign key
 	// that references an unknown table. Ptah v0.22.0 reported the same fault
@@ -155,25 +160,16 @@ type SchemaRefusal struct {
 	// privilege, goes to the Pod log.
 }
 
-// RefusesOwner reports whether the refusal is one of an owner the server would
-// refuse: missing-owner-role, owner-transfer or owner-schema-privilege.
-func (r SchemaRefusal) RefusesOwner() bool {
-	switch r.Code {
-	case SchemaRefusalMissingOwnerRole, SchemaRefusalOwnerTransfer, SchemaRefusalOwnerSchemaPrivilege:
-		return true
-	default:
-		return false
-	}
-}
-
-// RefusesPlanContent reports whether a dry run's refusal is one of the plan as
-// it stands on this server, which the same plan meets again on every read
-// until the server or the declaration changes: an owner the server would
-// refuse (RefusesOwner), or backslash-mode. A stale plan, a lock timeout and
-// a code this operator does not know are not: the first two say the database
-// moved or was busy, and the last says nothing about which.
-func (r SchemaRefusal) RefusesPlanContent() bool {
-	return r.RefusesOwner() || r.Code == SchemaRefusalBackslashMode
+// Transient reports whether a refusal says the database moved or was busy
+// rather than anything about the plan: a stale plan, or a lock timeout, which
+// Ptah v0.34.0 names RefusalLockTimeout ("lock-timeout") in
+// internal/atlasschema/report.go. The same read may pass the next time. Every
+// other code, one this operator does not know included, is not transient: the
+// same plan against the same server meets it again, so a Plan that ends with
+// it stops rather than being tried again. A transient code Ptah adds later
+// stops too, and waits for the interval or a read request.
+func (r SchemaRefusal) Transient() bool {
+	return r.Code == SchemaRefusalStalePlan || r.Code == SchemaRefusalLockTimeout
 }
 
 // SchemaRefusalOwner is the statement an owner refusal names. Statement is the

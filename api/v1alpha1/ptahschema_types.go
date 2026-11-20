@@ -1802,6 +1802,22 @@ const (
 	ReasonResolveFailed                ConditionReason = "ResolveFailed"
 	ReasonRunnerProtocolMismatch       ConditionReason = "RunnerProtocolMismatch"
 	ReasonSatisfied                    ConditionReason = "Satisfied"
+	// ReasonPlanRefused says a Plan stopped on a refusal Ptah names by a code,
+	// which the runner reports as plan_refused: a view whose security option
+	// or definer the schema does not state, a drop something else depends on,
+	// an owner the server would refuse, a backslash the server's sql_mode
+	// reads another way, a declaration the target cannot host, or a code this
+	// operator does not know. Another Plan of the same schema against the same
+	// server, as the same account, gets the same answer, so no plan is
+	// published and the schema is read again at its interval, at once when a
+	// ConfigMap source or the spec changes, or on a read request, which is how
+	// a change on the server, such as a role an administrator creates, is
+	// read. A MySQL login that matches more than one account, as 'ptah'@'%'
+	// and 'ptah'@'10.244.1.%' do, can connect as another account from a Pod
+	// on another node, and a view-definer refusal can then lift on the next
+	// Plan. A read after an Apply that ends this way ends the proof, and
+	// records no Apply as converged.
+	ReasonPlanRefused ConditionReason = "PlanRefused"
 	// ReasonSchemaInvalid says an Observe or a Plan stopped on a fault of the
 	// desired schema as a whole, which Ptah reads and refuses: a foreign key
 	// into a table the schema does not declare, an index on a column its

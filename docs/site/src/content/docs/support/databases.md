@@ -156,7 +156,7 @@ A view runs as its definer unless it says `SQL SECURITY INVOKER`, and a plan
 that replaces a view sets the mode again. A replacement that names no
 `DEFINER` makes the account that runs it the view's definer. Since Ptah v0.29.3
 a plan refuses to replace a view the database holds as `INVOKER` when the
-declaration names no mode, and the Plan fails with the code
+declaration names no mode, and the Plan stops with `PlanRefused` and the code
 `view-security-option`; from v0.26.0 to v0.29.2 such a plan switched the view
 to `DEFINER`. Declare the mode each managed view should have.
 

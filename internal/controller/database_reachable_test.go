@@ -842,7 +842,8 @@ func TestAMigrationDatabaseReachableIsUnknownWithoutEvidence(t *testing.T) {
 // refusal and not as a failure.
 func plansThatReadTheTarget() map[string]*runner.ResultError {
 	return map[string]*runner.ResultError{
-		"a plan Ptah refused":             {Code: "plan_refused", Message: "ptah refused to plan the change (lock-timeout)"},
+		"a plan Ptah refused": {Code: runner.CodePlanRefused,
+			Message: "ptah refused to plan the change (view-security-option: public.notes_view security_invoker)"},
 		"two reads that differ":           {Code: "unstable_plan", Message: "consecutive plan reads did not return identical bytes"},
 		"a plan that holds a credential":  {Code: "credential_leak", Message: "plan output contains a protected credential or URL password"},
 		"a plan that could not be sealed": {Code: "plan_seal_failed", Message: "seal the plan"},
@@ -874,6 +875,32 @@ func (s *statusWrites) assertReachedBeside(t *testing.T, says func([]metav1.Cond
 	}
 }
 
+// underItsVerifiedPolicy is path with the verification policy its source was
+// verified by still in place, so a proof's read that ends the proof settles
+// under it rather than going back to verification.
+func underItsVerifiedPolicy(path targetOpeningSchema) targetOpeningSchema {
+	held := path
+	held.build = func(t *testing.T) (*operatorv1alpha1.PtahSchema, []client.Object) {
+		t.Helper()
+		schema, others := path.build(t)
+		digest := fingerprint.DigestBytes([]byte("policy"))
+		schema.Status.Source.VerificationPolicyDigest = digest
+		if pending := schema.Status.PendingObservation; pending != nil {
+			pending.Plan.VerificationPolicyDigest = digest
+		}
+		bindActiveInput(t, schema)
+		policy := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID,
+			},
+			Immutable: ptr(true),
+			Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
+		}
+		return schema, append(others, policy)
+	}
+	return held
+}
+
 func planPaths(t *testing.T) []targetOpeningSchema {
 	t.Helper()
 	var plans []targetOpeningSchema
@@ -890,14 +917,19 @@ func planPaths(t *testing.T) []targetOpeningSchema {
 
 // saysWhatTheReadCameTo picks out a status write that records failure: on
 // ReconciliationFailed for a read that is retried, and for a schema Ptah
-// refuses as a whole, which is not retried and records no failure, on
-// DriftDetected, the one condition the refusal words the same whether or not
-// the read served a proof (schema_source_unreadable_test.go holds the rest of
-// what it records).
+// refuses as a whole or a plan it refuses under a code, neither of which is
+// retried or records a failure, on DriftDetected, the one condition the
+// refusal words the same whether or not the read served a proof
+// (schema_source_unreadable_test.go and plan_refused_test.go hold the rest of
+// what each records).
 func saysWhatTheReadCameTo(failure *runner.ResultError) func([]metav1.Condition) bool {
-	if failure.Code == runner.CodeDesiredSchemaInvalid {
+	stopped := map[string]operatorv1alpha1.ConditionReason{
+		runner.CodeDesiredSchemaInvalid: operatorv1alpha1.ReasonSchemaInvalid,
+		runner.CodePlanRefused:          operatorv1alpha1.ReasonPlanRefused,
+	}
+	if reason, stops := stopped[failure.Code]; stops {
 		return func(conditions []metav1.Condition) bool {
-			return conditionMatches(conditions, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonSchemaInvalid) &&
+			return conditionMatches(conditions, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, reason) &&
 				!meta.IsStatusConditionTrue(conditions, operatorv1alpha1.ConditionReconciliationFailed)
 		}
 	}
@@ -911,7 +943,8 @@ func saysWhatTheReadCameTo(failure *runner.ResultError) func([]metav1.Condition)
 // A Plan that came back from the target opened it, whatever came of the plan. The
 // retry runs another Plan rather than an Observe, so a refusal that repeats would
 // otherwise keep an old reason for as long as it repeats. A schema Ptah refuses
-// as a whole is not retried, and the read still opened the target.
+// as a whole and a plan it refuses under a code are not retried, and the read
+// still opened the target.
 func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 	t.Parallel()
 	previous := previousReachability()["a target that refused"]
@@ -933,26 +966,7 @@ func TestAPlanThatReadTheTargetSetsDatabaseReachable(t *testing.T) {
 			// A fence refusal of a proof's read ends the proof, which settles
 			// under the policy the source was verified by: the Plan ends Blocked
 			// only where that policy still holds, as it does here.
-			fenced := path
-			fenced.build = func(t *testing.T) (*operatorv1alpha1.PtahSchema, []client.Object) {
-				t.Helper()
-				schema, others := path.build(t)
-				digest := fingerprint.DigestBytes([]byte("policy"))
-				schema.Status.Source.VerificationPolicyDigest = digest
-				if pending := schema.Status.PendingObservation; pending != nil {
-					pending.Plan.VerificationPolicyDigest = digest
-				}
-				bindActiveInput(t, schema)
-				policy := &corev1.ConfigMap{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID,
-					},
-					Immutable: ptr(true),
-					Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
-				}
-				return schema, append(others, policy)
-			}
-			_, actual, writes := harvestSchemaFrame(t, fenced,
+			_, actual, writes := harvestSchemaFrame(t, underItsVerifiedPolicy(path),
 				&runner.ResultError{Code: "protected_table", Message: "the plan would change a protected table"}, previous, testDigest)
 			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
 			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {

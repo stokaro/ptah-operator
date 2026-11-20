@@ -1,0 +1,107 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "generation": 2,
+    "name": "app",
+    "namespace": "team-a"
+  },
+  "status": {
+    "activeOperation": null,
+    "applied": null,
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "False",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "Succeeded",
+        "message": "The latest operation completed"
+      },
+      {
+        "type": "DatabaseReachable",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "Observed",
+        "message": "Database schema was observed"
+      },
+      {
+        "type": "DriftDetected",
+        "status": "False",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "ScopedConverged",
+        "message": "The authoritative managed scope has no changes"
+      },
+      {
+        "type": "InSync",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "ScopedConverged",
+        "message": "A stable scoped plan proves convergence"
+      },
+      {
+        "type": "Ready",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "InSync",
+        "message": "Schema is in sync"
+      },
+      {
+        "type": "PlanReady",
+        "status": "False",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "NoChanges",
+        "message": "No executable plan is required"
+      },
+      {
+        "type": "ArtifactResolved",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "DigestPinned",
+        "message": "Desired OCI reference resolved to immutable content"
+      },
+      {
+        "type": "ArtifactVerified",
+        "status": "True",
+        "observedGeneration": 2,
+        "lastTransitionTime": null,
+        "reason": "PolicySatisfied",
+        "message": "Artifact type and verification policy were satisfied"
+      }
+    ],
+    "lastAttemptTime": "2026-08-30T12:10:00Z",
+    "nextReconciliationTime": "2026-08-30T12:20:00Z",
+    "observedGeneration": 2,
+    "pendingLockRelease": null,
+    "pendingObservation": null,
+    "phase": "InSync",
+    "plan": null,
+    "source": {
+      "requestedReference": "oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resolvedReference": "oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "artifactType": "application/vnd.stokaro.ptah.schema.v1",
+      "size": 321,
+      "verified": true,
+      "verificationPolicyUID": "verification-policy-v1-uid",
+      "verificationPolicyDigest": "sha256:823412d1eacb67956220e532959f0104603057c88704863ca38e7cd188fda812",
+      "resolvedAt": "2026-08-30T12:10:00Z",
+      "verifiedAt": "2026-08-30T12:10:00Z"
+    }
+  }
+}

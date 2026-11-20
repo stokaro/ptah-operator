@@ -912,12 +912,17 @@ type nativePlan struct {
 // sentence, which names the tables and no row. A declaration refusal first asks
 // reportProblem whether the desired schema explains it, as a failure does: it
 // is the refusal Ptah v0.23.0 writes where v0.22.0 failed with the same message.
-// Any other refusal is reported by its code and the views it lists
-// (refusalSentence), and a failure, a report this runner cannot read, a plan
-// saved somewhere else and a file whose digest is not the reported one are all
-// invalid plan output. A failure that names no target
-// failure kind first asks reportProblem whether the desired schema explains it.
-// The exit status decides nothing; see noteReportedSuccess.
+// Any other refusal is plan_refused, by its code and the views it lists, with
+// Ptah's sentence in the Pod log (refusePlan), except a stale plan and a lock
+// timeout: they say the database moved or was busy rather than that the plan
+// is wrong, so they are invalid plan output, which is retried, as they are
+// from the dry run. Ptah v0.34.0's schema plan takes no lock and reads no plan
+// file, so it raises neither; the exception holds the day it does. A failure,
+// a report this runner cannot read, a plan saved somewhere else and a file
+// whose digest is not the reported one are all invalid plan output. A failure
+// that names no target failure kind first asks reportProblem whether the
+// desired schema explains it. The exit status decides nothing; see
+// noteReportedSuccess.
 func readNativePlan(
 	ctx context.Context,
 	config Config,
@@ -953,7 +958,12 @@ func readNativePlan(
 			reportProblem(report.Error.Message) {
 			return nativePlan{}, false
 		}
-		setResultError(result, codePlanRefused, errors.New(refusalSentence("ptah refused to plan the change", report.Refusal, redactor)), redactor, config.Diagnostics)
+		if report.Refusal.Transient() {
+			setResultError(result, "invalid_plan_output",
+				fmt.Errorf("plan command reported refused (%s) rather than a plan", report.Refusal.Code), redactor, config.Diagnostics)
+			return nativePlan{}, false
+		}
+		refusePlan(result, report.Refusal, report.Error, redactor, config.Diagnostics)
 		return nativePlan{}, false
 	case dataplane.SchemaPlanOutcomeFailed:
 		if kind, known := targetFailureOf(report.Error, outcome); known {
@@ -988,6 +998,19 @@ func readNativePlan(
 		return nativePlan{}, false
 	}
 	return nativePlan{outcome: report.Outcome, document: document, undecided: report.Undecided}, true
+}
+
+// refusePlan frames a plan, or the dry run of a saved one, that Ptah refused
+// under a code of its own as CodePlanRefused: the code and what the refusal
+// lists (refusalSentence). Ptah's sentence says what to change, and names
+// roles, objects and columns of the database, so it goes to the Pod log
+// (logReportedError) and to nothing the frame carries. A dependent object or a
+// code this runner does not know lists nothing the frame can name, so the log
+// is the one place that says which object it was.
+func refusePlan(result *Result, refusal *dataplane.SchemaRefusal, failure *dataplane.CommandError, redactor Redactor, diagnostics io.Writer) {
+	logReportedError(failure, redactor, diagnostics)
+	setResultError(result, CodePlanRefused,
+		errors.New(refusalSentence("ptah refused to plan the change", refusal, redactor)), redactor, diagnostics)
 }
 
 // validatePlanDryRun runs the saved plan through `schema apply --dry-run` and
@@ -1025,7 +1048,7 @@ func validatePlanDryRun(
 		return false
 	}
 	switch {
-	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && report.Refusal.RefusesPlanContent():
+	case report.Outcome == dataplane.SchemaApplyOutcomeRefused && report.Refusal != nil && !report.Refusal.Transient():
 		// Since Ptah v0.30.1 the dry run refuses an owner the server would
 		// refuse, as the Apply would, before any statement (stokaro/ptah#6196):
 		// it reads the roles a plan never reads. Since v0.34.0 it refuses a
@@ -1033,17 +1056,15 @@ func validatePlanDryRun(
 		// whose sql_mode holds NO_BACKSLASH_ESCAPES (stokaro/ptah#6400): the
 		// plan reads the mode, but only the dry run compares it with what the
 		// statements spell. Each is a refusal of the plan as it stands, named
-		// the way a plan's own refusal is. Ptah's sentence says what to change,
-		// and names roles, objects and columns of the database, so it goes to
-		// the Pod log.
+		// the way a plan's own refusal is (refusePlan), and so is every other
+		// code, one this runner does not know included.
 		//
-		// Every other refusal of the dry run stays the failed validation it was
-		// before: a stale plan is one the database moved under between the two
-		// reads, and a lock timeout can come from another schema's Apply, since
-		// MySQL's GET_LOCK name is server-wide. Neither says the plan is wrong.
-		logReportedError(report.Error, redactor, config.Diagnostics)
-		setResultError(result, codePlanRefused,
-			errors.New(refusalSentence("ptah refused to plan the change", report.Refusal, redactor)), redactor, config.Diagnostics)
+		// A stale plan and a lock timeout stay the failed validation they were
+		// before (Transient): a stale plan is one the database moved under
+		// between the two reads, and a lock timeout can come from another
+		// schema's Apply, since MySQL's GET_LOCK name is server-wide. Neither
+		// says the plan is wrong.
+		refusePlan(result, report.Refusal, report.Error, redactor, config.Diagnostics)
 		return false
 	case report.Outcome != dataplane.SchemaApplyOutcomeDryRun:
 		reason := report.Outcome

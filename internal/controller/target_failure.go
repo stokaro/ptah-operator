@@ -125,8 +125,11 @@ var databaseReachableReasons = map[dataplane.TargetFailureKind]operatorv1alpha1.
 // desired_schema_invalid is one. Ptah connects and pings before it loads the
 // file, and the runner writes the code only where the failed sentence ends with
 // the comparison's or a declaration's fault, which a connect failure never does.
-// A Plan that ends with it is not retried: the schema stops Blocked
-// (refuseSchemaSource), and the read that opened the target is recorded there.
+// plan_refused is one too: Ptah refuses a plan once it has compared the schema
+// with the database, and the dry run of a saved plan runs only after that plan.
+// A Plan that ends with either is not retried: the schema stops
+// Blocked (refuseSchemaSource), and the read that opened the target is recorded
+// there.
 // desired_source_unreadable is not. A parse error also comes after a reply, but
 // the runner writes the code when the Plan failed in a way no target failure
 // kind names and the file would not have parsed either. A server that drops the
@@ -134,7 +137,7 @@ var databaseReachableReasons = map[dataplane.TargetFailureKind]operatorv1alpha1.
 // engine.
 func planReadTheTarget(code string) bool {
 	switch code {
-	case "plan_refused", "unstable_plan", "credential_leak", "plan_seal_failed", runner.CodeDesiredSchemaInvalid:
+	case runner.CodePlanRefused, "unstable_plan", "credential_leak", "plan_seal_failed", runner.CodeDesiredSchemaInvalid:
 		return true
 	}
 	return false

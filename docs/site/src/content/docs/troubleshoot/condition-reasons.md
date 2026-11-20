@@ -61,9 +61,10 @@ decision.
 | `OutcomeUnknown` | Apply attribution is uncertain and only read-only proof may proceed. |
 | `Pending` | Resolved artifact content has not yet been verified. |
 | `PermissionDenied` | `DatabaseReachable` is false because the server accepted the credentials and refused the user access to the database. |
-| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. On `ApprovalRequired` it says a plan was waiting for an approval and the Plan after it ended with `ProtectedTable` or `DifferenceNotPlannable`, or a read of the schema ended with `SchemaSourceUnreadable`, so nothing is left to approve. |
+| `PlanNoLongerCurrent` | An approval's plan binding is no longer current. On `ApprovalRequired` it says a plan was waiting for an approval and the Plan after it ended with `ProtectedTable` or `DifferenceNotPlannable`, or a read of the schema ended with `SchemaSourceUnreadable`, `SchemaInvalid` or `PlanRefused`, so nothing is left to approve. |
 | `PlanPublicationRefused` | The API server refused to store the plan a Plan operation computed: an admission policy or webhook, a quota, RBAC, or the object's size. The message carries the refusal. The Plan runs again after `spec.execution.failureRetryInterval`, so a policy or quota that stops refusing lets the next plan through. |
 | `PlanReady` | An exact immutable plan is ready for approval. |
+| `PlanRefused` | A Plan stopped on a refusal Ptah names by a code, from the plan or from the dry run of the saved plan: a view whose security option or definer the schema does not state, an owner the server would refuse, a backslash its `sql_mode` reads another way, a declaration the target cannot host, or a code this release does not know. It stops the schema as `SchemaInvalid` does, and `DatabaseReachable` is true. See [A Plan that stops without saying why](#a-plan-that-stops-without-saying-why). |
 | `PodAdmissionRefused` | The operation's Job cannot create its Pod because the API server refused it; the message carries the refusal. The operation stays claimed, the Job keeps its deadline, and the Job controller keeps trying, so a policy that stops refusing lets it through. Past the deadline, the failure the run records keeps the refusal as what was last reported, unless the Job counted a Pod by then. Declare what the Pod has to carry in `spec.execution.podMetadata`, or change the policy. |
 | `PodConfigurationError` | The operation's Pod exists and the kubelet cannot set up its credential volumes or start its container; the message carries the kubelet's words, such as `MountVolume.SetUp failed for volume "database-url" : secret "application-database" not found`. Those words hold names and no value. The operation stays claimed, the Job keeps its deadline, and the kubelet keeps trying, so a Secret that arrives lets the operation go on with no action. |
 | `PolicyBlocked` | Destructive-change policy blocks the current plan. |
@@ -522,8 +523,9 @@ last time an operation opened it, not that it answers now. A failure that names
 no kind leaves the condition as it was, so a schema can read `True` beside a
 `ReconciliationFailed=True` whose message is `child_exit: ptah exited with code
 2`. The first operation that opens the target afterwards sets `True`, including
-a Plan retried after the database came back. That holds for a Plan that failed
-after a read came back from the target: `protected_table`, `plan_refused`,
+a Plan retried after the database came back. That holds for a Plan that ended
+after a read came back from the target, whether it is tried again or stops the
+schema: `protected_table`, `plan_refused`, `desired_schema_invalid`,
 `unstable_plan`, `credential_leak`, `plan_seal_failed`, and a plan the API server
 refused to store. `invalid_plan_output` leaves the condition, because the runner
 also writes it for a child that never reached the target.
@@ -802,9 +804,10 @@ where validate prints `moment`. The operator allows for those names, and the
 reason reads as validate prints it. A foreign key into a schema the database
 holds and the file declares nothing of does not reach this code. The comparison
 with that database refuses it, and the second run does not have that database.
-An Observe keeps `child_exit` and a Plan reads `plan_refused`, as below, each
-tried again at the failure retry, and a fault the second run finds elsewhere in
-the same file is not why the command stopped.
+An Observe keeps `child_exit`, tried again at the failure retry, and a Plan
+reads `plan_refused`, which stops the schema with
+[`PlanRefused`](#a-plan-that-stops-without-saying-why). A fault the second run
+finds elsewhere in the same file is not why the command stopped.
 
 Listing the table of a faulty index in `spec.policy.exclude` does not hide the
 fault. An Observe passes no selector to `schema drift`, and the Plan passes the
@@ -818,7 +821,8 @@ still reads as validate prints it.
 and the operator asks the second run about that refusal as it asks about a
 failure. A declaration refusal the second run does not explain, such as the
 foreign key into a schema only the database holds, reads `plan_refused: ptah
-refused to plan the change (declaration-refused)`.
+refused to plan the change (declaration-refused)` and stops the schema with
+`PlanRefused`.
 
 `ptah schema validate --dialect=<engine> --schema-file <file>` prints what the
 file alone can be refused for, indexes included, with no database.
@@ -855,11 +859,59 @@ refusal record, such as one from an earlier release.
 ## A Plan that stops without saying why
 
 Ptah refuses some changes rather than plan them. A refusal Ptah names by a code
-reaches status as `plan_refused: ptah refused to plan the change (<code>)`. A
-plan Ptah fails to make for any other reason than opening the target or reading
-the file reads `invalid_plan_output: plan command did not complete
-successfully`. Either way Ptah's sentence stays in the Pod, and running `ptah
-schema plan` yourself, at the digest the operator pins, prints it.
+reaches status as `plan_refused: ptah refused to plan the change (<code>)`, and
+Ptah's sentence, which names the objects and says what to change, is a line of
+the Plan Pod's log that starts with `ptah-runner: ptah reported:`. Status never
+carries it. The Plan's Job, and the log with it, is collected five minutes
+after it finishes; `kubectl ptah refresh` runs a new Plan, which writes a fresh
+log. A plan Ptah fails to make for any other reason than opening the target or
+reading the file reads `invalid_plan_output: plan command did not complete
+successfully`, and its sentence reaches no log. Either way, running `ptah
+schema plan` yourself against the database, at the digest the operator pins,
+prints the sentence.
+
+| Stage | Where the reason appears, and what follows |
+| --- | --- |
+| `PtahSchema` Plan | `Ready=False` with reason `PlanRefused` and the message, phase `Blocked`, and a `PlanRefused` Warning Event. `PlanReady` is false, `DriftDetected` and `InSync` are unknown, `ReconciliationFailed` is false, and `DatabaseReachable` is true: Ptah refuses only once it has compared the schema with the database, and the dry run of the saved plan runs only after the plan that compared them. |
+
+A `plan_refused` Plan is not tried again at the failure retry, whatever the
+code, one this release does not know included: another Plan of the same schema
+against the same server, as the same account, gets the same answer. A MySQL
+login that matches more than one account can connect as another one from a Pod
+on another node, and a `view-definer` refusal can then lift on the next Plan;
+[A definer the login may not name](#a-definer-the-login-may-not-name) and
+[MySQL authority](../../support/databases/#mysql-authority) say how such a
+login behaves. No plan is published, any approval is marked stale, and the
+source is read again at `spec.interval`, at once when a ConfigMap source or the
+spec changes, or on `kubectl ptah refresh`. A refusal the server decides, such
+as a role it does not hold, a privilege the login lacks or its `sql_mode`,
+lifts only on the server, and nothing the operator watches says when: fix it
+there, then run `kubectl ptah refresh`. Through 0.2.15 such a Plan was a
+failed operation, `ReconciliationFailed=True` with reason `OperationFailed`
+and an `OperationFailed` Warning Event, tried again after
+`spec.execution.failureRetryInterval`.
+
+A proof after an Apply that meets such a refusal ends as one that meets a
+schema Ptah refuses does. The journal records it `Verified` with outcome
+`Unknown` and reason `PlanRefused`. After an Apply that succeeded,
+`kubectl ptah wait --for applied` and `kubectl ptah settle --wait` then stop
+and say Ptah refused to plan the desired schema. The likelier way to such a
+proof is an Apply Ptah refused, `apply_refused`, whose proof meets the same
+code in its dry run. The wait verbs stop before it, on the Apply's
+`ApplyFinished` entry with outcome `Unknown`, as for any Apply that failed.
+
+A dry run that finds the database moved since the plan was read, or that waits
+too long for another session's lock, refuses nothing about the plan. It reads
+`invalid_plan_output: plan validation reported refused (stale-plan) rather than
+a dry run`, or `(lock-timeout)`, and the Plan is tried again at the failure
+retry. A plan refused under either code reads `invalid_plan_output: plan
+command reported refused (stale-plan) rather than a plan` and is tried again
+too, though Ptah v0.34.0's `schema plan` takes no lock and reads no plan file,
+so it raises neither. Every other code stops the schema, from the plan or from
+the dry run, one this release does not know included. A code Ptah adds later
+for a database that moved or was busy stops it as well, and the schema then
+waits for `spec.interval` or `kubectl ptah refresh` rather than planning again
+at every failure retry.
 
 Where Ptah's report lists the views and options it refused, as it does for
 `view-security-option` since v0.29.3, the message names them after the code,
@@ -930,15 +982,15 @@ than a dry run`, and nothing said why.
 
 | What Ptah refused | How it shows | What to do |
 | --- | --- | --- |
-| A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
-| A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-security-option`, naming each view and `sql_security`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
-| A MySQL or MariaDB view runs as its definer, under `SQL SECURITY DEFINER` before and after the change, and its definer is another account than the schema's login, since Ptah v0.29.4. A replacement without a `DEFINER` clause would make the login its definer, so the view would run with the login's privileges ([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). | An Observe reports `views_modified`, and the Plan fails at every retry with the code `view-definer`, naming each view, its definer and the login. | Point the schema's Secret at the definer, so the plan names that definer and the view keeps it. Or declare the view `SQL SECURITY INVOKER` if it should run with its reader's privileges, and the login becomes its definer. Or list the view in `spec.policy.exclude`. |
-| The plan gives a PostgreSQL view or materialized view to a role that does not exist, since Ptah v0.30.1. | The Plan, or an approved plan's Apply, fails with the code `missing-owner-role`, naming the statement and the role. | Create the role, or declare the owner the view should have. |
-| The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, or declare an owner the login may give the view to. |
-| The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan or the Apply fails with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>`, or declare another owner. |
-| A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan fails at every retry with the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode`, or declare the value without a backslash. |
-| The plan drops an object something else depends on. | The Plan fails at every retry with the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
-| The target cannot host or plan what the schema states. | The Plan fails at every retry with the code `declaration-refused`, unless the file alone explains it, which stops the schema `Blocked` with [`SchemaInvalid`](#a-desired-schema-ptah-refuses). | Read the sentence and change the declaration. |
+| A PostgreSQL view holds `security_invoker=true` or `security_barrier=true` and the desired schema does not state it. Removing the option would widen what the view's readers see. | An Observe reports `views_modified`, and the Plan stops with `PlanRefused` and the code `view-security-option`, naming each view and option. | State the option in the schema and push it with a Ptah v0.22.0 or later CLI: `true` to keep it, `false` to remove it. Or list the view in `spec.policy.exclude`. |
+| A MySQL or MariaDB view holds `SQL SECURITY INVOKER` and its declaration names no mode, since Ptah v0.29.3. A replacement without the clause would run the view with its definer's privileges, not its reader's. | An Observe reports `views_modified`, and the Plan stops with `PlanRefused` and the code `view-security-option`, naming each view and `sql_security`. | Declare the mode and push the schema with a Ptah v0.26.0 or later CLI: `CREATE SQL SECURITY INVOKER VIEW` in a SQL file, or `security = INVOKER` in HCL, to keep it, `DEFINER` to change it. Or list the view in `spec.policy.exclude`. |
+| A MySQL or MariaDB view runs as its definer, under `SQL SECURITY DEFINER` before and after the change, and its definer is another account than the schema's login, since Ptah v0.29.4. A replacement without a `DEFINER` clause would make the login its definer, so the view would run with the login's privileges ([stokaro/ptah#6109](https://github.com/stokaro/ptah/pull/6109)). | An Observe reports `views_modified`, and the Plan stops with `PlanRefused` and the code `view-definer`, naming each view, its definer and the login. | Point the schema's Secret at the definer, so the plan names that definer and the view keeps it. Or declare the view `SQL SECURITY INVOKER` if it should run with its reader's privileges, and the login becomes its definer. Or list the view in `spec.policy.exclude`. |
+| The plan gives a PostgreSQL view or materialized view to a role that does not exist, since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or an approved plan's Apply fails, with the code `missing-owner-role`, naming the statement and the role. | Create the role and run `kubectl ptah refresh`, or declare the owner the view should have. |
+| The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, and run `kubectl ptah refresh`; or declare an owner the login may give the view to. |
+| The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>` and run `kubectl ptah refresh`, or declare another owner. |
+| A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan stops with `PlanRefused` and the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode` and run `kubectl ptah refresh`, or declare the value without a backslash. |
+| The plan drops an object something else depends on. | The Plan stops with `PlanRefused` and the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
+| The target cannot host or plan what the schema states. | The Plan stops with `PlanRefused` and the code `declaration-refused`, unless the file alone explains it, which stops the schema with [`SchemaInvalid`](#a-desired-schema-ptah-refuses) instead. | Read the sentence and change the declaration. |
 
 ## A change a policy fences off
 
