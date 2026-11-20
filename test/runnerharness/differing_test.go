@@ -100,6 +100,9 @@ type differingReading struct {
 	counts map[string]int32
 	// observed counts the first report's inventory by kind.
 	observed map[string]int32
+	// notCompared is what the first report lists under not_compared, as
+	// "<kind> <name>", in order. Nil leaves the list unread.
+	notCompared []string
 	// driftRefusal is what the first read says instead of a report.
 	driftRefusal string
 	// unseen is what the frames of a refused read and a refused plan say the
@@ -749,7 +752,38 @@ func differingRows() []differingRow {
 			},
 		},
 	}
-	return append(rows, slices.Concat(partitionRows(), authorityRows(), sqlModeRows(), omissionRows())...)
+	return append(rows, slices.Concat(partitionRows(), mysqlPartitionRows(), authorityRows(), sqlModeRows(), omissionRows())...)
+}
+
+// mysqlPartitionRows read a MySQL table partitioned outside Ptah against a
+// declaration of the same table without its partitions. Ptah does not model
+// MySQL or MariaDB partitioning (stokaro/ptah#6357), and since v0.34.0 refuses
+// a declaration that partitions a table (stokaro/ptah#6375). A read of a table
+// the database holds partitioned compares it without the partitions, finds no
+// drift, and lists the table under not_compared, which the operator does not
+// read. A release that starts reporting the partitions as drift, or stops
+// listing them, moves this row.
+func mysqlPartitionRows() []differingRow {
+	return []differingRow{
+		{
+			name: "partition-outside", engine: engineMySQL, declared: "partition-outside-mysql.sql", git: true,
+			seed: []string{
+				"CREATE TABLE differs_events (id bigint NOT NULL, at date NOT NULL, PRIMARY KEY (id, at)) " +
+					"PARTITION BY RANGE COLUMNS (at) (PARTITION p2026 VALUES LESS THAN ('2027-01-01'), " +
+					"PARTITION prest VALUES LESS THAN (MAXVALUE))",
+			},
+			held: []heldQuery{{
+				name: "the table's partitions",
+				query: "SELECT COUNT(*) FROM information_schema.partitions " +
+					"WHERE table_schema = DATABASE() AND table_name = 'differs_events' AND partition_name IS NOT NULL",
+				seeded: "2",
+			}},
+			want: differingReading{
+				observed:    map[string]int32{"tables": 1},
+				notCompared: []string{"table partitioning differs_events"},
+			},
+		},
+	}
 }
 
 // sqlModeRows read a declaration whose string literals hold backslashes on a
@@ -1371,7 +1405,35 @@ func (row differingRow) checkFirstRead(captures runnerharness.Captures) error {
 			problems = append(problems, fmt.Errorf("%s: the first read's inventory observes %d %s, want %d", row.family(), report.Inventory[index].Observed, kind, want))
 		}
 	}
+	if row.want.notCompared != nil {
+		listed, err := notComparedOf(document)
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Errorf("%s: the first read: %w", row.family(), err))
+		case !slices.Equal(listed, row.want.notCompared):
+			problems = append(problems, fmt.Errorf("%s: the first read lists %q as not compared, want %q", row.family(), listed, row.want.notCompared))
+		}
+	}
 	return errors.Join(problems...)
+}
+
+// notComparedOf is what a drift report lists under not_compared, as "<kind>
+// <name>". The operator reads no such list, so its decoder does not either.
+func notComparedOf(document []byte) ([]string, error) {
+	var report struct {
+		NotCompared []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"not_compared"`
+	}
+	if err := json.Unmarshal(document, &report); err != nil {
+		return nil, err
+	}
+	listed := []string{}
+	for _, object := range report.NotCompared {
+		listed = append(listed, object.Kind+" "+object.Name)
+	}
+	return listed, nil
 }
 
 func (row differingRow) checkPlan(captures runnerharness.Captures) error {
@@ -2115,6 +2177,28 @@ func TestDifferingCheckRefusesAReadingThatMissedItsShape(t *testing.T) {
 				editDocument(captures, "differs-partition-dump-postgres/observe", "schema drift", func(document map[string]any) {
 					setEntry(document, "inventory", "kind", "indexes", "observed", 3)
 				})
+			},
+		},
+		{
+			name: "a partitioned table no longer listed as not compared", row: "differs-partition-outside-mysql", want: `lists [] as not compared`,
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-partition-outside-mysql/observe", "schema drift", func(document map[string]any) {
+					delete(document, "not_compared")
+				})
+			},
+		},
+		{
+			name: "partitions listed under another table", row: "differs-partition-outside-mysql", want: `lists ["table partitioning differs_other"] as not compared`,
+			edit: func(captures *runnerharness.Captures) {
+				editDocument(captures, "differs-partition-outside-mysql/observe", "schema drift", func(document map[string]any) {
+					setEntry(document, "not_compared", "kind", "table partitioning", "name", "differs_other")
+				})
+			},
+		},
+		{
+			name: "partitions read as drift", row: "differs-partition-outside-mysql", want: "the first read finds",
+			edit: func(captures *runnerharness.Captures) {
+				useDocument(captures, "differs-precision-mysql/observe", "differs-partition-outside-mysql/observe", "schema drift")
 			},
 		},
 		{

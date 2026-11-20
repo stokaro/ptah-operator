@@ -19,6 +19,10 @@
 // a directory holding no SQL file. An earlier Ptah published both, so a
 // registry can hold them, and the directory form imitates such an artifact: it
 // publishes every regular file of the directory, one layer each.
+//
+// --format sets the migration-format annotation, which `ptah migrations push`
+// derives from the files it reads, so a publisher can write one the files do
+// not agree with, as an artifact assembled by hand could carry.
 package main
 
 import (
@@ -65,6 +69,7 @@ func run() error {
 	unknownMediaType := flag.String("unknown-media-type", "",
 		"media type of the extra layer this executor cannot accept; without it, the directory's files alone")
 	unknownName := flag.String("unknown-name", "capabilities.json", "file name the extra layer carries")
+	format := flag.String("format", "ptah", "migration-format annotation the manifest carries")
 	username := flag.String("username", "", "registry username")
 	password := flag.String("password", "", "registry password")
 	plainHTTP := flag.Bool("plain-http", false, "talk to an explicitly trusted local registry over HTTP")
@@ -75,6 +80,8 @@ func run() error {
 		return errors.New("a reference is required")
 	case strings.TrimSpace(*directory) == "":
 		return errors.New("a migrations directory is required")
+	case strings.TrimSpace(*format) == "":
+		return errors.New("a migration format is required")
 	case *unknownMediaType == migrationLayerMediaType:
 		return fmt.Errorf("the extra layer must not be %q, which every executor accepts", migrationLayerMediaType)
 	}
@@ -117,7 +124,7 @@ func run() error {
 		oras.PackManifestOptions{
 			Layers: layers,
 			ManifestAnnotations: map[string]string{
-				dirFormatAnnotation: "ptah",
+				dirFormatAnnotation: *format,
 			},
 		})
 	if err != nil {

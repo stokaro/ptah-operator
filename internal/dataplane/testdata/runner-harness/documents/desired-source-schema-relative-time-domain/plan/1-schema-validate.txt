@@ -1,0 +1,1 @@
+postgres: schema: domain "moment": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE

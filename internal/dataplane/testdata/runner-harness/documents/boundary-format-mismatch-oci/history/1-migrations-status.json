@@ -1,0 +1,24 @@
+{
+  "current_version": 0,
+  "applied_migrations": [],
+  "pending_migrations": [
+    1
+  ],
+  "pending_migration_keys": [
+    "1"
+  ],
+  "out_of_order_migrations": [],
+  "total_migrations": 1,
+  "has_pending_changes": true,
+  "contract_version": 2,
+  "command": "migrations status",
+  "migrations": [
+    {
+      "version": 1,
+      "version_key": "1",
+      "description": "Create Items",
+      "checksum": "0d37cc1e9ff6c6bad30b79e1542ceac579f33b873cd2c1d36a21ad53d7a2e141",
+      "state": "pending"
+    }
+  ]
+}

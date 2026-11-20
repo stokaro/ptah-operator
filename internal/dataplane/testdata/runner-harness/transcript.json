@@ -1,5 +1,96 @@
 [
   {
+    "name": "boundary-format-mismatch-oci/history",
+    "operation": "migration-history",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "migrations pull",
+        "args": [
+          "migrations",
+          "pull",
+          "oci://harness-registry:5000/migrations/boundary-format-mismatch-oci@<digest>",
+          "--out",
+          "/source/migrations",
+          "--skip-validation"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-format-mismatch-oci/history/0-migrations-pull.txt"
+      },
+      {
+        "command": "migrations status",
+        "args": [
+          "migrations",
+          "status",
+          "--migrations-dir",
+          "/source/migrations",
+          "--json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-format-mismatch-oci/history/1-migrations-status.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "migrationHistory": {
+        "contract_version": 2,
+        "current_version": 0,
+        "has_pending_changes": true,
+        "migrations": [
+          {
+            "checksum": "0d37cc1e9ff6c6bad30b79e1542ceac579f33b873cd2c1d36a21ad53d7a2e141",
+            "description": "Create Items",
+            "state": "pending",
+            "version": 1,
+            "version_key": "1"
+          }
+        ],
+        "pending_migrations": [
+          1
+        ],
+        "total_migrations": 1
+      },
+      "operation": "migration-history",
+      "operationId": "sha256:718b04efaf5b4e816822c491db3f5ae7a1301d58f8b46ec7f4859c72d9c67977",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:90fd85a69f36e2a0bfb69083754f786305bf220e85cbebb90d7d32d6ab123a1f"
+    }
+  },
+  {
+    "name": "boundary-format-mismatch-oci/resolve",
+    "operation": "resolve",
+    "source": "oci",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "oci resolve",
+        "args": [
+          "oci",
+          "resolve",
+          "oci://harness-registry:5000/migrations/boundary-format-mismatch-oci:v1",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/boundary-format-mismatch-oci/resolve/0-oci-resolve.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "operation": "resolve",
+      "operationId": "sha256:c40fb46a7ff97640477918ecbe5fac8ce7f19f6103f21d8c23f9313ddcfeb7bd",
+      "protocolVersion": 1,
+      "resolvedDigest": "<volatile>",
+      "resolvedMediaType": "application/vnd.oci.image.manifest.v1+json",
+      "resolvedReference": "oci://harness-registry:5000/migrations/boundary-format-mismatch-oci@<digest>",
+      "resolvedSize": 654,
+      "stdout": ""
+    }
+  },
+  {
     "name": "boundary-no-sql-oci/history",
     "operation": "migration-history",
     "source": "oci",
@@ -672,6 +763,95 @@
     }
   },
   {
+    "name": "desired-source-schema-relative-time-domain/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 2,
+        "stderr": "error: error comparing schemas: domain \"public.moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "desired-source/drift-relative-time-domain.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time-domain/observe/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "child_exit",
+        "message": "ptah exited with code 2"
+      },
+      "operation": "observe",
+      "operationId": "sha256:a5fa76029f0e4efe5c92d7542f16d26e2cffacae1d602d653724de485e3f5e42",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
+    "name": "desired-source-schema-relative-time-domain/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "PostgreSQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 2,
+        "stderr": "error: compare database schema: domain \"public.moment\": DEFAULT 'now' on a timestamp domain is read once, when the domain is created, so every row gets that moment and every plan changes the domain again; write a function the server calls for each row, such as now() or CURRENT_DATE\n",
+        "stdout": "desired-source/plan-relative-time-domain.json"
+      },
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "runner-harness/documents/desired-source-schema-relative-time-domain/plan/1-schema-validate.txt"
+      }
+    ],
+    "result": {
+      "childExitCode": 2,
+      "coordinationDigest": "sha256:4f0c1d1e887a91ba98a646396c2ffb644fcdec23078af6755b461dba2e759333",
+      "error": {
+        "code": "plan_refused",
+        "message": "ptah refused to plan the change (declaration-refused)"
+      },
+      "operation": "plan",
+      "operationId": "sha256:275fa74f41ae8118ea7870edfa39cd8c624679baca1522d89b210ea6306e0063",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:06b7c9c0f2142686ead5aa953ab7921033c6b3144656bda069bbb0086f5743f3"
+    }
+  },
+  {
     "name": "desired-source-schema-relative-time/plan",
     "operation": "plan",
     "source": "git",
@@ -1099,6 +1279,54 @@
         "exit": 1,
         "stderr": "1 structural problem\n",
         "stdout": "desired-source/validate-relative-time.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time-array",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time-array.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time-domain",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time-domain.txt"
+      }
+    ]
+  },
+  {
+    "name": "desired-source/validate-relative-time-quoted",
+    "children": [
+      {
+        "command": "schema validate",
+        "args": [
+          "schema",
+          "validate",
+          "--dialect=PostgreSQL"
+        ],
+        "exit": 1,
+        "stderr": "1 structural problem\n",
+        "stdout": "desired-source/validate-relative-time-quoted.txt"
       }
     ]
   },
@@ -8713,6 +8941,97 @@
       "protocolVersion": 1,
       "stdout": "",
       "targetIdentityDigest": "sha256:6b1763e602d3bb1b1f9b44b88b716543660bc34c63ca55cff3b71000a67c8039"
+    }
+  },
+  {
+    "name": "differs-partition-outside-mysql/observe",
+    "operation": "observe",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema drift",
+        "args": [
+          "schema",
+          "drift",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "stdout": "runner-harness/documents/differs-partition-outside-mysql/observe/0-schema-drift.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "driftInventory": [
+        {
+          "desired": 2,
+          "kind": "columns",
+          "observed": 2
+        },
+        {
+          "desired": 1,
+          "kind": "constraints",
+          "observed": 1
+        },
+        {
+          "desired": 1,
+          "kind": "tables",
+          "observed": 1
+        }
+      ],
+      "driftReportDigest": "sha256:e2bf7fe32c47330683b068f29a4ca71ec77d12732b7b88139deae80e2c952792",
+      "observedDialect": "mysql",
+      "operation": "observe",
+      "operationId": "sha256:01a495c91d5ee83b42d7ba14fcd4a00448543071a6436bfd45681dcbb3745a06",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8487490d1f2b330510c25ea71c3c89b1a95ced3348a22fa18deed91f52d49d49"
+    }
+  },
+  {
+    "name": "differs-partition-outside-mysql/plan",
+    "operation": "plan",
+    "source": "git",
+    "engine": "MySQL",
+    "children": [
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/first.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\nwarning: table partitioning \"differs_events\" in the database is left out: Ptah does not model MySQL or MariaDB partitioning (stokaro/ptah#6357), so no comparison sees the partitions, and SQL written from this read creates the table without them\n",
+        "stdout": "runner-harness/documents/differs-partition-outside-mysql/plan/0-schema-plan.json"
+      },
+      {
+        "command": "schema plan",
+        "args": [
+          "schema",
+          "plan",
+          "--output",
+          "/work/ptah-plan-output-<random>/second.plan.json",
+          "--json"
+        ],
+        "exit": 0,
+        "stderr": "Schema is synced, no changes to be made.\nwarning: table partitioning \"differs_events\" in the database is left out: Ptah does not model MySQL or MariaDB partitioning (stokaro/ptah#6357), so no comparison sees the partitions, and SQL written from this read creates the table without them\n",
+        "stdout": "runner-harness/documents/differs-partition-outside-mysql/plan/1-schema-plan.json"
+      }
+    ],
+    "result": {
+      "childExitCode": 0,
+      "coordinationDigest": "sha256:55ac41a15be9c47be867f44acc00a9714bf21a53535af4e15e284fd6f7392c9b",
+      "operation": "plan",
+      "operationId": "sha256:67ac5b5ddbca522d78698e7cd3c8032f38f7ec1deacb566af0647b5ac7886dc0",
+      "planOutcome": "NoChanges",
+      "protocolVersion": 1,
+      "stdout": "",
+      "targetIdentityDigest": "sha256:8487490d1f2b330510c25ea71c3c89b1a95ced3348a22fa18deed91f52d49d49"
     }
   },
   {

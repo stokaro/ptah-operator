@@ -1,0 +1,7 @@
+{
+  "reference": "oci://harness-registry:5000/migrations/boundary-format-mismatch-oci:v1",
+  "pinned_reference": "oci://harness-registry:5000/migrations/boundary-format-mismatch-oci@sha256:18345e60141b446a396c222196a5399778ab76219b86ecc63f6c25c9aae468cc",
+  "digest": "sha256:18345e60141b446a396c222196a5399778ab76219b86ecc63f6c25c9aae468cc",
+  "media_type": "application/vnd.oci.image.manifest.v1+json",
+  "size": 654
+}

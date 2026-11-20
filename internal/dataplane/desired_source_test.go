@@ -71,6 +71,22 @@ func TestSchemaSourceProblemReadsALoadFailure(t *testing.T) {
 				"such as now() or CURRENT_DATE",
 		},
 		{
+			// Since Ptah v0.34.0 the refusal also covers a quoted type name
+			// and an array (stokaro/ptah#6386), in the same words.
+			name: "a default on a quoted type", fixture: "validate-relative-time-quoted.txt", engine: "PostgreSQL",
+			want: "error parsing schema file: read SQL schema file /work/relative-time-quoted.sql:3:58: column created_at: " +
+				"DEFAULT 'now' on a \"pg_catalog\".\"timestamptz\" column is read once, when the table is created, so every " +
+				"row gets that moment and every plan changes the column again; write a function the server calls for each " +
+				"row, such as now() or CURRENT_DATE",
+		},
+		{
+			name: "a default on an array", fixture: "validate-relative-time-array.txt", engine: "PostgreSQL",
+			want: "error parsing schema file: read SQL schema file /work/relative-time-array.sql:3:32: column days: " +
+				"DEFAULT '{now}' on a date[] column is read once, when the table is created, so every row gets that " +
+				"moment and every plan changes the column again; write a function the server calls for each row, " +
+				"such as now() or CURRENT_DATE",
+		},
+		{
 			// Since Ptah v0.34.0 MySQL partitioning is a fault of the file,
 			// where v0.33.1 planned the table without its partitions.
 			name: "a partitioned MySQL table", fixture: "validate-partition-mysql.txt", engine: "MySQL",
@@ -104,6 +120,9 @@ func TestSchemaSourceProblemRefusesWhatDoesNotExplainAFailure(t *testing.T) {
 		{"an index drift accepts", desiredSourceFixture(t, "validate-index.txt"), "PostgreSQL"},
 		{"a whole-schema fault", desiredSourceFixture(t, "validate-foreign-key.txt"), "PostgreSQL"},
 		{"a file with no problem", desiredSourceFixture(t, "validate-good.txt"), "PostgreSQL"},
+		// Ptah v0.34.0 refuses a domain's own relative time default
+		// (stokaro/ptah#6386) as a fault of the schema, not of the file.
+		{"a domain's relative time default", desiredSourceFixture(t, "validate-relative-time-domain.txt"), "PostgreSQL"},
 		{"another engine's dialect", desiredSourceFixture(t, "validate-sql.txt"), "MySQL"},
 		{"no engine", desiredSourceFixture(t, "validate-sql.txt"), ""},
 		{"no reason", []byte("postgres: source: \n"), "PostgreSQL"},
@@ -324,6 +343,29 @@ func TestSchemaStructuralProblemRefusesWhatTheCommandDidNotStopOn(t *testing.T) 
 			if got, found := dataplane.SchemaStructuralProblem(desiredSourceFixture(t, "validate-other-and-key.txt"), "PostgreSQL",
 				failedSentence(t, command+"-other-and-key.json")); found {
 				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
+			}
+		})
+		// A gap rather than a rule. Ptah v0.34.0 refuses a domain's own
+		// relative time default (stokaro/ptah#6386); validate names the domain
+		// "moment" and drift and plan name it "public.moment", and only a
+		// table's name may come back placed in a schema. So the Observe keeps
+		// child_exit and the Plan reports plan_refused, as the support catalog
+		// says. Placing a domain's name too would move this row.
+		t.Run("a domain the command placed in public/"+command, func(t *testing.T) {
+			t.Parallel()
+			validate := desiredSourceFixture(t, "validate-relative-time-domain.txt")
+			failed := failedSentence(t, command+"-relative-time-domain.json")
+			if got, found := dataplane.SchemaStructuralProblem(validate, "PostgreSQL", failed); found {
+				t.Fatalf("SchemaStructuralProblem() = %q, want no reason", got)
+			}
+			// The placement alone is what refuses it: the same sentence with
+			// the domain named as validate names it is read.
+			unplaced := strings.Replace(failed, `domain "public.moment"`, `domain "moment"`, 1)
+			if unplaced == failed {
+				t.Fatalf("the failed sentence %q names no domain public.moment", failed)
+			}
+			if _, found := dataplane.SchemaStructuralProblem(validate, "PostgreSQL", unplaced); !found {
+				t.Fatalf("SchemaStructuralProblem() reads nothing of %q", unplaced)
 			}
 		})
 	}

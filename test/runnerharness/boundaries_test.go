@@ -22,6 +22,7 @@ const (
 	unparsableFamily    = "boundary-unparsable-oci"
 	strayFileFamily     = "boundary-stray-file-oci"
 	noSQLFamily         = "boundary-no-sql-oci"
+	formatFamily        = "boundary-format-mismatch-oci"
 	// strayFileWords is how Ptah names the file a migration directory holds
 	// and its format does not read, and noSQLWords its refusal of an artifact
 	// with no migration file in it.
@@ -144,7 +145,7 @@ func sourceBoundaries(t *testing.T, l *lab) {
 		t.Parallel()
 		database := "harness_boundary_stray_file"
 		l.createDatabase(t, enginePostgres, database)
-		reference := l.publishFiles(t, strayFileFamily, "/fixtures/boundaries/migrations-stray")
+		reference := l.publishFiles(t, strayFileFamily, "/fixtures/boundaries/migrations-stray", "ptah")
 		run := l.newMigration(t, strayFileFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
 		run.resolve("resolve")
 		outcome := run.history("history", wantCode(runner.CodeDesiredSourceUnreadable))
@@ -156,22 +157,38 @@ func sourceBoundaries(t *testing.T, l *lab) {
 		t.Parallel()
 		database := "harness_boundary_no_sql"
 		l.createDatabase(t, enginePostgres, database)
-		reference := l.publishFiles(t, noSQLFamily, "/fixtures/boundaries/migrations-no-sql")
+		reference := l.publishFiles(t, noSQLFamily, "/fixtures/boundaries/migrations-no-sql", "ptah")
 		run := l.newMigration(t, noSQLFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
 		run.resolve("resolve")
 		run.history("history", wantStopped(noSQLWords))
 	})
+	// An artifact whose migration-format annotation says ptah, over a file
+	// named for Atlas. A pull that reads the files as migrations reads them
+	// in the annotation's format and refuses this one; the fetch has written
+	// them unread since 0.2.16, and the History reads the directory by format
+	// detection, as an Apply of the artifact does. The row records whatever
+	// the History answers, and TestAMismatchedFormatReadsByDetection holds it.
+	t.Run("format-mismatch-oci", func(t *testing.T) {
+		t.Parallel()
+		database := "harness_boundary_format_mismatch"
+		l.createDatabase(t, enginePostgres, database)
+		reference := l.publishFiles(t, formatFamily, "/fixtures/boundaries/migrations-atlas-named", "ptah")
+		run := l.newMigration(t, formatFamily, enginePostgres, l.databaseURL(enginePostgres, database), ociSource(reference))
+		run.resolve("resolve")
+		run.history("history", func(spec *rowSpec) { spec.anyOutcome = true })
+	})
 }
 
 // publishFiles publishes a directory of the fixture volume as a migrations
-// artifact, one layer for each top-level file, without the checks of `ptah
-// migrations push`, and returns its reference.
-func (l *lab) publishFiles(t *testing.T, family, directory string) string {
+// artifact, one layer for each top-level file, under the migration-format
+// annotation given, without the checks of `ptah migrations push`, and returns
+// its reference.
+func (l *lab) publishFiles(t *testing.T, family, directory, format string) string {
 	t.Helper()
 	repository := "migrations/" + family
 	l.docker.must(t, nil, "run", "--rm", "--pull", "never", "--name", l.name(family+"-publish"), "--network", l.network,
 		"--entrypoint", "/unknown-layer", l.images.tools,
-		"-reference", registryHost+"/"+repository+":v1", "-dir", directory, "-plain-http")
+		"-reference", registryHost+"/"+repository+":v1", "-dir", directory, "-format", format, "-plain-http")
 	return "oci://" + registryHost + "/" + repository + ":v1"
 }
 

@@ -922,6 +922,12 @@ func desiredSourceRows() []directRow {
 		// does not load (stokaro/ptah#6299, #6345): PostgreSQL reads 'now'
 		// once, when it creates the table.
 		validate("validate-relative-time", "PostgreSQL", "relative-time.sql", true),
+		// Since Ptah v0.34.0 the refusal also covers a quoted type name, an
+		// array and a domain's own default (stokaro/ptah#6386), each worded
+		// as Ptah words it, which decides the code the runner reports.
+		validate("validate-relative-time-quoted", "PostgreSQL", "relative-time-quoted.sql", true),
+		validate("validate-relative-time-array", "PostgreSQL", "relative-time-array.sql", true),
+		validate("validate-relative-time-domain", "PostgreSQL", "relative-time-domain.sql", true),
 		// Since Ptah v0.34.0 a MySQL table that declares PARTITION BY does
 		// not load (stokaro/ptah#6375), where v0.33.1 planned the table
 		// without its partitions.
@@ -1190,6 +1196,22 @@ func unreadableSources(t *testing.T, l *lab) {
 	relative := l.newSchema(t, "desired-source-schema-relative-time", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
 	relative.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
 	relative.plan("plan", nil, unreadable(relativeVolume))
+
+	// A domain's own relative time default, which v0.34.0 refuses as a fault
+	// of the schema rather than of the file (stokaro/ptah#6386). The rows
+	// record whichever code the frames carry, so a release that words it
+	// otherwise reaches the diff; TestARelativeTimeDomainReadsAsPtahWordsIt
+	// holds the reading.
+	domainVolume := l.name("unreadable-relative-time-domain")
+	l.fillSource(t, domainVolume, map[string][]byte{"schema/schema.sql": harnessFixture(t, "desired-source/relative-time-domain.sql")})
+	domain := l.newSchema(t, "desired-source-schema-relative-time-domain", enginePostgres, url, operatorv1alpha1.SourceSpec{Git: git.DeepCopy()})
+	domain.schema.Status.Source = *schema.schema.Status.Source.DeepCopy()
+	recorded := func(row *rowSpec) {
+		row.sharedSource = domainVolume
+		row.anyOutcome = true
+	}
+	domain.observe("observe", recorded, storedAs("schema drift", "desired-source/drift-relative-time-domain.json"))
+	domain.plan("plan", nil, recorded, storedAs("schema plan", "desired-source/plan-relative-time-domain.json"))
 
 	migrationVolume := l.name("unreadable-migrations")
 	l.fillSource(t, migrationVolume, map[string][]byte{
