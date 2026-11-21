@@ -558,7 +558,12 @@ func waitFailed(stderr io.Writer, ref operate.Ref, err error) int {
 		_, _ = io.WriteString(stderr, text.String())
 		return exitTimedOut
 	case errors.As(err, &stop):
-		fmt.Fprintf(&text, "kubectl-ptah: %s will not reach %s: %s.\n", ref, stop.Target, stop.Reason)
+		if stop.ReadEnded {
+			// The read happened: it is what it found that holds the resource.
+			fmt.Fprintf(&text, "kubectl-ptah: %s: the read ended Blocked: %s.\n", ref, statusview.Clean(stop.Held))
+		} else {
+			fmt.Fprintf(&text, "kubectl-ptah: %s will not reach %s: %s.\n", ref, stop.Target, stop.Reason)
+		}
 		field("Phase", orNone(statusview.Clean(stop.Phase)))
 		field("Why", statusview.Clean(stop.Message))
 		fmt.Fprintf(&text, "%s shows where it stands.\n", viewCommand(ref))

@@ -716,7 +716,10 @@ annotation, with a value later than any the resource holds and than the last
 one `status.lastReadRequest` answered, so a second request a moment after the
 first is not taken for an answered one. With `--wait` it waits for the read
 the request starts, under the rules below, and stops with `PolicyRefused` when
-that read ends in the verification policy's refusal of the artifact. It knows
+that read ends in the verification policy's refusal of the artifact, and with
+`Blocked` when it ends at any other `Blocked` a person ends, which is every
+reason but a database realm's and a plan recorded under apply `Never`
+([Waiting for the operator](../../use/operations/#wait) has the rule). It knows
 that read's reading by a new stamp in `status.history.observedAt` or
 `status.target.lastObservedAt`, and does not order it against the reading before:
 a manager whose clock is behind the previous one's dates a later reading earlier.

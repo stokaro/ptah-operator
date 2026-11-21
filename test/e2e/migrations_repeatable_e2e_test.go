@@ -3,9 +3,11 @@
 package e2e
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -140,6 +142,7 @@ func (m *migrationRun) repeatableMigrationsProof() {
 		_, err := repeatableStop(resource.Status, repeatableIdentity)
 		return err
 	})
+	m.assertWaitsStopOnTheRecord(name)
 	m.runRepeatableRepair("unfinished", secret, "repeatable-changed", force)
 	if count := records(); count != "0" {
 		m.fatalf("the repair left %s records of repeatable migrations in %s", count, database)
@@ -230,6 +233,51 @@ func (m *migrationRun) runPlan(resource *ptahv1alpha1.PtahMigration) *ptahv1alph
 		m.fatalf("the plan %s is not the one the run of %s carried out", plan.Name, resource.Name)
 	}
 	return plan
+}
+
+// assertWaitsStopOnTheRecord runs the waits a person runs on a migration the
+// record of an unfinished repeatable migration stops, with the plugin's own build:
+// kubectl ptah wait --for in-sync on the stop that stands, and kubectl ptah
+// refresh --wait on the read it asks for, which the record stops again. Each has
+// to end with exit status 8 and the reason: no read gives another answer until
+// the repair. Before stokaro/ptah-operator#1162 the wait for in-sync ran to its
+// timeout and exited 7, and refresh --wait exited 0 on the read that ended at the
+// record, so `kubectl ptah refresh --wait && next-step` went on to the next step.
+// The refresh reads the history once more, which the repair after it does not
+// depend on.
+func (m *migrationRun) assertWaitsStopOnTheRecord(name string) {
+	m.t.Helper()
+	for _, wait := range []struct {
+		target    string
+		arguments []string
+	}{
+		{"in-sync", []string{"wait", "migration/" + name, "--for", "in-sync", "--timeout", "5m"}},
+		{"read", []string{"refresh", "migration/" + name, "--wait", "--wait-timeout", "5m"}},
+	} {
+		started := time.Now()
+		arguments := append(slices.Clone(wait.arguments), "--kubeconfig", m.in.Kubeconfig, "-n", m.in.TestNamespace)
+		command := exec.CommandContext(m.ctx, m.kubectlPtah, arguments...) //nolint:gosec // The phase's own build.
+		var stdout, stderr bytes.Buffer
+		command.Stdout, command.Stderr = &stdout, &stderr
+		err := command.Run()
+		m.scan(stdout.Bytes(), "the kubectl ptah "+wait.arguments[0]+" output")
+		m.scan(stderr.Bytes(), "the kubectl ptah "+wait.arguments[0]+" diagnostics")
+		code := 0
+		var exit *exec.ExitError
+		switch {
+		case err == nil:
+		case errors.As(err, &exit):
+			code = exit.ExitCode()
+		default:
+			m.fatalf("kubectl ptah %s ended with no exit status: %v\n%s", wait.arguments[0], err, stderr.String())
+		}
+		if err := waitStoppedOnUnfinishedRepeatable(code, stderr.String(), wait.target, repeatableIdentity); err != nil {
+			m.fatalf("kubectl ptah %s on %s, which the record of %s stops: %v\nstdout:\n%s\nstderr:\n%s",
+				strings.Join(wait.arguments, " "), name, repeatableIdentity, err, stdout.String(), stderr.String())
+		}
+		m.logf("PASS kubectl ptah %s stopped on the record of %s with exit status %d after %s",
+			strings.Join(wait.arguments, " "), repeatableIdentity, code, time.Since(started).Round(time.Second))
+	}
 }
 
 // waitForRepeatable reads the migration until match accepts it and returns

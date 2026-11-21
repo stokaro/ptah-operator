@@ -24,7 +24,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/lifecyclejournal"
 )
 
-var updateGolden = flag.Bool("update", false, "rewrite testdata/history from what kubectl ptah history prints now")
+var updateGolden = flag.Bool("update", false, "rewrite the golden files under testdata from what kubectl ptah prints now")
 
 const historyGoldenDirectory = "testdata/history"
 

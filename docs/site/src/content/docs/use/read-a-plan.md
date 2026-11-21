@@ -228,7 +228,8 @@ writer changed after it was read, or settle met a schema that has not stopped on
 a moved target, a stop that prints no value, or a value that no longer matches),
 `5` refused by RBAC or the API server, and `6` sent with no answer: the approval
 or the change may have been stored. A wait adds `7` timed out and `8` the
-resource will not reach the target.
+resource will not reach the target, or the read `refresh --wait` asked for ended
+at `Blocked`.
 
 ## Where a schema stands {#schema}
 

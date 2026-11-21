@@ -2137,8 +2137,8 @@ reads those rather than the order or the time of what happened.
 | --- | --- |
 | `OtherPlanApplied` | another plan's run ended |
 | `OtherApprovalConsumed` | the same plan ran under another approval, as when two people approved it and the operator took the oldest, or a run spent that other approval, which leaves this one `Stale` |
-| `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead |
-| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it: the run has no `verification` and `status.history.targetIdentityDigest` names another database than the run's. Or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes |
+| `PlanSuperseded` | a migration's plan will not run under this approval: another plan replaced it or is running, a reading left nothing to apply, or the operator marked the approval `Stale`, as it does when a read ends anywhere but its plan or the verification policy refuses the artifact; while that refusal holds, the wait ends with `PolicyRefused` instead, and while a `Blocked` a person ends holds, with `Blocked` |
+| `CompletionNotProved` | a run ended that may be this one and no record says so: its record names no plan because an operator older than 0.2.10 wrote it, it names this plan and not what allowed the run, as the entry of a hold a restore brought back does, it names no fingerprint and `--plan` gave one, or a later run replaced it and the journal holds no reading after it. Also this very run, when the database moved before the next reading, since a reading of another database cannot verify it: the run has no `verification` and `status.history.targetIdentityDigest` names another database than the run's. Or when a verification policy refused the artifact before any reading followed the run, since nothing reads the database until an artifact passes, or the read after the run ended `Blocked` before it read the history, as a directory Ptah cannot read does |
 
 `--for approval` asks whether a plan waits for you, so a plan that waits already
 answers it, even one computed before the wait began. Started right after an edit
@@ -2183,9 +2183,11 @@ apply `Never`. No approval is asked for and nothing applies it until the spec
 changes. The wait reads the refusal from the condition the operator keeps
 while it resolves, verifies and reads again at its interval -- a schema's
 `ApprovalRequired`, a migration's `Ready` -- so a wait that reads it
-mid-cycle, outside `Blocked` or `Planning`, stops as well. As with every
-target, the refusal counts only when it is for the generation the resource has
-now and was planned from a reading that began after the wait did:
+mid-cycle, outside `Blocked` or `Planning`, stops as well. The stop says
+`PolicyBlocked` when the refusal is for the generation the resource has now and
+was planned from a reading that began after the wait did. One that stood when
+the wait began stops it with `Blocked`, as any other `Blocked` does (below),
+except under apply `Never`:
 
 ```text
 kubectl-ptah: ptahschema/storefront in namespace application will not reach in-sync: PolicyBlocked.
@@ -2210,7 +2212,8 @@ leaves the wait running, whatever `Ready` or `Blocked` still says.
 To see whether a policy edit helps, ask for a read with `kubectl ptah refresh
 --wait`. The refusal that stands when you ask does not stop it. If the read it
 asked for ends in a refusal again, the wait stops with `PolicyRefused` and the
-requirements, as `kubectl ptah wait --for read` does. If it ends with a reading,
+requirements, as `kubectl ptah wait --for read` does, and says that the read ended
+there: `the read ended Blocked: PolicyRefused.` If it ends with a reading,
 the wait is done, even when a read on a newer request has been refused by the time
 the wait looks again. A refusal from before the request, or from a read that was
 already under way when it was written, leaves the wait running until the read the
@@ -2224,6 +2227,100 @@ refusal writes. The wait compares that stamp with the one the resource carried w
 the wait began, or when the operator took the request if a read was under way at
 first. It never compares it with the time of the request, which your clock wrote
 and not the operator's.
+
+Any other `Blocked` a person ends stops a wait as well, with exit status 8 and
+the reason `Blocked`, whatever the operator's reason for it: a schema file Ptah
+cannot read (`SchemaSourceUnreadable`), a schema Ptah refuses as a whole
+(`SchemaInvalid`), a change Ptah cannot plan (`DifferenceNotPlannable`), a
+plan Ptah refuses with a code (`PlanRefused`), a migration directory it cannot read (`MigrationDirectoryUnreadable`), a revision
+the history reports dirty, modified, out of order or ahead of the artifact
+(`HistoryDirty`, `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`), a run
+nobody accounted for (`ApplyOutcomeUnknown`) once a reading after the run has
+not settled it, a repeatable migration whose last attempt the database records
+unfinished (`RepeatableMigrationUnfinished`), and any reason a later release
+adds. The stop names the reason, the words status
+carries for it, and what ends it. A reason the plugin has no words for ends with
+"A change to the spec, its source or the database ends it".
+
+```text
+kubectl-ptah: ptahmigration/orders in namespace application will not reach in-sync: Blocked.
+  Phase:       Blocked
+  Why:         HistoryDirty: Revision 3 is recorded dirty; a person has to decide what the interrupted run did. Repairing the dirty revision row ends it, as ptah migrations repair does: the operator reads again at spec.interval or on a read request (kubectl ptah refresh), and at once after a spec edit or a change to a ConfigMap source
+kubectl ptah migration orders -n application shows where it stands.
+```
+
+A `Blocked` that waits for no person keeps a wait running: a database realm's
+refusal (`RealmConflict`, `RealmNotAuthorized`), which another resource's change
+or an administrator's grant ends, and a plan recorded under apply `Never`
+(`ApplyDisabled`, and a schema's destructive plan under `Never`), which is what
+that policy asks for. The verification policy's refusal stops a wait with its
+own reason, as above.
+
+A run nobody accounted for waits for the operator before it waits for a person.
+The Apply that ends `Unknown` or `Partial` rests in `Blocked` with
+`ApplyOutcomeUnknown` beside the reading from before the run, and the operator's
+next read of the database removes `status.unresolvedRun` when it finds nothing of
+the artifact pending in the run's database. So a wait counts the `Blocked` only
+beside a reading other than the one it found beside the record. It does not
+compare `status.unresolvedRun.recordedAt` with `status.history.observedAt`, since
+after a failover another manager's clock may have written either. A wait that
+begins after a reading that left the record standing waits for the next one, at
+`spec.interval` or on a read request, and `refresh --wait` stops on the one it
+asked for.
+
+The wait reads a `Blocked` from the one condition the claim of every read
+rewrites: a schema's `Ready`, and a migration's `Progressing`, `False`, for the
+generation the resource has now, at rest in `Blocked`, with no read request the
+operator has not taken. A migration's `Blocked` and `Ready` keep the reason
+while the next read runs, so they decide nothing. A wait for `in-sync`,
+`approval` or `applied`, and one for a source, stops when two polls of the wait
+in a row find it, so it stops on a resource that already stands `Blocked`, as
+on a verification policy's refusal.
+
+The operator reads a resource at rest in `Blocked` again only at
+`spec.interval`, after a spec edit or a change to a ConfigMap source, or on a
+read request. A fix that lies outside the resource -- a Git push, an artifact
+pushed again under the same tag, a database repaired by hand or with
+`ptah migrations repair`, a role an administrator created -- leaves the old
+`Blocked` standing until then, so a plain wait started after such a fix stops on
+it after two polls, before the operator has read anything. After a fix outside
+the resource, run `kubectl ptah refresh <kind>/<name> --wait`, which waits for a
+read that begins after the fix.
+
+`kubectl ptah refresh --wait` and `kubectl ptah wait --for read` stop only on
+the `Blocked` the read they asked for ended in, and keep waiting through the one
+that stood when the request was written and through a read under way. The stop
+says that the read ended there:
+
+```text
+kubectl-ptah: ptahschema/storefront in namespace application: the read ended Blocked: SchemaSourceUnreadable.
+  Phase:       Blocked
+  Why:         SchemaSourceUnreadable: desired_source_unreadable: error parsing schema file: read SQL schema file /source/schema/schema.sql:3:43: column created_at: DEFAULT 'now' on a timestamptz column is read once, when the table is created, so every row gets that moment and every plan changes the column again; write a function the server calls for each row, such as now() or CURRENT_DATE. A file Ptah can read ends it: the operator reads again at spec.interval or on a read request (kubectl ptah refresh), and at once after a spec edit or a change to a ConfigMap source
+kubectl ptah schema storefront -n application shows where it stands.
+```
+
+The stamp that tells the two apart is `status.lastAttemptTime` for a schema,
+which each claim and each harvest write, and for a migration the
+`lastTransitionTime` of `Progressing`, which each claim takes to `True` and each
+`Blocked` back to `False`. A read that recorded a reading of the database ends
+the wait, unless the `Blocked` beside that reading belongs to the latest read
+since the request: a migration's history read records what it found in the
+status write that records its reading, and a schema's Plan refuses beside the
+reading its Observe recorded. The resource does not say which read that was,
+only which request it took last. So a read that ended in sync and was followed,
+faster than a poll, by a read that ended `Blocked` -- as a spec edit, a change
+to a ConfigMap source or an Apply under apply `Always` can make it -- stops the
+wait, and two refreshes of one resource write one annotation, so the earlier one
+finds the later request taken and ends as done. Neither stops on a `Blocked`
+from before the request. A read that ends at a realm's refusal, or at the plan
+apply `Never` records, ends as a read, and `refresh --wait` exits 0.
+
+An engine the operator does not run (`UnsupportedEngine`) is checked before any
+read request, so the operator takes none and starts no read while the spec names
+it. `refresh --wait` stops on the first poll that finds it, with
+`will not reach read: Blocked.`, since no read it could wait for begins, also
+when a spec edit named the engine after the operator took the request; a spec
+edit that names an engine the operator runs ends it at once.
 
 A wait does not put two of the operator's times in order either, except on a run
 an older operator recorded. The manager that holds the lease writes them, and

@@ -787,7 +787,8 @@ func TestWaitStopsOnAPolicyRefusalThatHolds(t *testing.T) {
 // refresh --wait on an artifact the verification policy refuses. The read it asked
 // for ends in the policy's refusal again, under a stamp the refusal it began on did
 // not carry -- a schema's status.source.resolvedAt, a migration's lastTransitionTime
-// on ArtifactVerified -- and the wait stops with exit status 8. A request the
+// on ArtifactVerified -- and the wait stops with exit status 8 and says the read
+// ended there, as a read that ends Blocked for any other reason does. A request the
 // operator took whose read has not ended leaves the wait to its timeout, which
 // names the refusal it began on.
 func TestRefreshWaitStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
@@ -859,8 +860,8 @@ func TestRefreshWaitStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 				if code != exitWillNotReach {
 					t.Fatalf("refresh --wait on a read that ended in a refusal = %d, stdout %q, stderr %q", code, stdout, stderr)
 				}
-				requireSays(t, "the stop", stderr, "will not reach read: PolicyRefused.", "Phase:       Blocked",
-					"Why:         "+message, "shows where it stands.")
+				requireSays(t, "the stop", stderr, ": the read ended Blocked: PolicyRefused.\n", "Phase:       Blocked",
+					"Why:         PolicyRefused: "+message, "shows where it stands.")
 			})
 			synctest.Test(t, func(t *testing.T) {
 				api := newCluster(t, refusedOn(family, earlier))

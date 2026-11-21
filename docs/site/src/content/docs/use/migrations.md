@@ -198,9 +198,9 @@ says how far back the journal, the Events and the finished Jobs reach.
 
 A stage can go another way:
 
-- At stage 2, phase `InSync` means nothing is pending, and `Blocked` means
-  [the history refused](#what-the-history-says). The wait times out with exit
-  status 7 in both cases.
+- At stage 2, phase `InSync` means nothing is pending, and the wait times out
+  with exit status 7. `Blocked` means [the history refused](#what-the-history-says),
+  and the wait stops with exit status 8 and the reason.
 - At stage 3, an `approve` that approves nothing found the plan replaced, or being
   replaced. Run it again, and it shows the current one.
 - At stage 4, exit status 7 means the run has not ended yet and 8 that it will not
@@ -330,9 +330,15 @@ lists what Ptah says.
 
 None of these resolves by waiting. The operator keeps reading the history at
 `spec.interval`, so fixing the database or the artifact is enough to unblock it;
-nothing else is required. For the last of them that usually means restoring the
-artifact the database was migrated with, rather than touching the database at
-all.
+nothing else is required. Each of them stops [a wait](../operations/#wait) with
+exit status 8 and the reason `Blocked`, after two polls, since no read gives
+another answer until somebody fixes it. A fix in the database or the registry
+does not end the `Blocked` that stood before it, so a plain `kubectl ptah wait`
+started after the fix stops on that one. Confirm the fix with
+`kubectl ptah refresh migration/<name> --wait` instead, which waits for a read
+that begins after it. For a database ahead of the artifact the fix usually means
+restoring the artifact the database was migrated with, rather than touching the
+database at all.
 
 **Checkpoints.** A migration file marked as a checkpoint carries the whole
 schema up to its version, so a database created after it bootstraps from that
@@ -435,7 +441,8 @@ the attempt, and the next history read stops at it with
 `RepeatableMigrationUnfinished`, as [what the history says](#what-the-history-says)
 describes. Nothing retries it: correct the file, delete the record with
 `ptah migrations repair --repeatable <identity> --force`, and the next plan
-runs the file again. A `Partial` or `Unknown` run is also recorded in
+runs the file again. `kubectl ptah refresh migration/<name> --wait` reads the
+history after the repair and confirms it. A `Partial` or `Unknown` run is also recorded in
 `status.unresolvedRun`, which stays until a person acknowledges it, as
 [A migration run nobody accounted for](../operations/#a-migration-run-nobody-accounted-for)
 says, since the file is pending again once the record is gone. A run that

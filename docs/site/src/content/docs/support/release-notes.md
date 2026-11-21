@@ -244,6 +244,40 @@ release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   command that deletes the record. The Warning
   [can be lost](../../troubleshoot/events/#an-event-can-be-lost), so the status
   list is the record.
+- **A wait stops on every `Blocked` a person ends.** `kubectl ptah refresh
+  --wait` and `kubectl ptah wait` stop with exit status 8 and the reason
+  `Blocked` on a resource at rest in `Blocked` for the generation it has now,
+  whatever the reason, a reason a later release adds included, and name the
+  reason, the words status carries for it and what ends it. A database realm's
+  refusal and a plan recorded under apply `Never` wait for no person and stop no
+  wait, as before. A run nobody accounted for (`ApplyOutcomeUnknown`) stops a
+  wait only once a reading after the run has left it standing: the operator's
+  own next reading settles the run when nothing is pending, so until then a
+  wait keeps running. The exit status of `refresh --wait` changes by case. A
+  read that ended in `RepeatableMigrationUnfinished`, in a history verdict
+  (`HistoryDirty`, `HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`,
+  `ApplyOutcomeUnknown`), or in a schema's refusal at the Plan beside the
+  reading its Observe recorded (`SchemaSourceUnreadable` or `SchemaInvalid`
+  there, `DifferenceNotPlannable`, `DriftUndecided`, `ProtectedTable`, or a
+  destructive plan `spec.policy.allowDestructive` does not allow) exited 0 and
+  now exits 8, so `kubectl ptah refresh --wait && next-step` stops there. A
+  read that ended in `SchemaSourceUnreadable` or `SchemaInvalid` at the
+  Observe, or in `MigrationDirectoryUnreadable`, ran to its timeout with exit
+  status 7 and now exits 8, and an engine the operator does not run now exits 8
+  at once instead of at the timeout. `refresh --wait` stops only on the
+  `Blocked` the read it asked for ended in, dated by `status.lastAttemptTime` on
+  a schema and by the `lastTransitionTime` of `Progressing` on a migration, and
+  says `the read ended Blocked`, as a read the verification policy refused now
+  does too (`the read ended Blocked: PolicyRefused`, where it said
+  `will not reach read: PolicyRefused`). A wait for `in-sync`, `approval`,
+  `applied` or a source that ran to its timeout on such a resource now exits 8
+  when two polls in a row find it, a destructive plan from before the wait
+  included, which stops with `Blocked` rather than `PolicyBlocked`. A plain
+  wait started after a fix outside the resource, such as a Git push or
+  `ptah migrations repair`, stops on the `Blocked` from before the fix: run
+  `kubectl ptah refresh <kind>/<name> --wait` instead, which waits for a read
+  that begins after it. [Waiting for the operator](../../use/operations/#wait)
+  has the rules.
 - **`kubectl get ptahmigrationplans` no longer shows a `Steps` column.** Its
   path, `.spec.migrations.length()`, is not one the API server's JSONPath can
   evaluate, so it printed `<none>` for every plan. `kubectl ptah migration`

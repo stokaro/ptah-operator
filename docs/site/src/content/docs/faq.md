@@ -342,8 +342,13 @@ operator saw last, so a schema that was `InSync` before somebody changed its
 database stays `InSync` until it reads the database again: ask for that read
 with `kubectl ptah refresh schema/<name> --wait`. That read covers
 [what the login can see](../support/databases/#what-the-login-cannot-see). A
-change made with the plugin, an approval included, waits in the same command
-with `--wait`.
+resource that is still `Blocked` from before your fix makes a plain wait exit 8
+after two polls, because the operator reads it again only at `spec.interval`, on
+a spec edit or on a read request. After a fix outside the resource, such as a
+Git push, a repaired database or `ptah migrations repair`, run
+`kubectl ptah refresh <kind>/<name> --wait`, which waits for a read that begins
+after the fix. A change made with the plugin, an approval included, waits in the
+same command with `--wait`.
 
 - [Operations](../use/operations/#wait)
 

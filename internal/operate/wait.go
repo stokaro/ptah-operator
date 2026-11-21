@@ -24,7 +24,8 @@ const (
 	// TargetRead is the end of the read a read request asked for: the request
 	// answered, a read of the database that began after it, and nothing in
 	// flight. A read that ends where the verification policy refuses the
-	// artifact stops the wait with StopPolicyRefused.
+	// artifact stops the wait with StopPolicyRefused, and one that ends at
+	// Blocked with a StopBlocked, both with ReadEnded set.
 	TargetRead Target = "read"
 	// TargetInSync is a resource that rests in sync at the required
 	// generation, by a read of the database that began after the baseline.
@@ -228,8 +229,28 @@ const (
 	// accepts: at spec.interval, on a read request, or at once after a spec edit.
 	// A wait for a migration run that has ended goes by the run's record instead,
 	// and one that applied with no reading after it is StopNotProved. A wait for a
-	// read stops on the refusal its own read ended in, and on no older one.
+	// read stops on the refusal its own read ended in, and on no older one, with
+	// ReadEnded set.
 	StopPolicyRefused StopReason = "PolicyRefused"
+	// StopBlocked is a resource at rest in Blocked on an answer the operator gives
+	// again on every read until a person changes something: a file, a directory or
+	// a schema Ptah refuses, a history a person has to repair, a run whose outcome
+	// nobody established, a plan Ptah could not make, an engine this operator does
+	// not run, and any reason added later. No plan outlives it and no approval
+	// does. The operator reads again at spec.interval, on a read request, and at
+	// once after a spec edit or a change to a ConfigMap source.
+	//
+	// It is not a database realm's refusal, which another object's change ends,
+	// and not a plan held under spec.policy.apply Never, which waits for nobody:
+	// ApplyDisabled, and a schema's destructive plan under Never. A run nobody
+	// accounted for counts once a reading has followed its record, since the
+	// operator's own reading settles it when nothing is pending. The verification
+	// policy's refusal is StopPolicyRefused (blockedHold).
+	//
+	// A wait for a read stops on the Blocked the read it asked for ended in, and
+	// on no older one, with ReadEnded set. Any other wait stops on one that holds
+	// on two polls in a row, as on StopPolicyRefused.
+	StopBlocked StopReason = "Blocked"
 	// StopDeleting is a resource that is being deleted.
 	StopDeleting StopReason = "Deleting"
 	// StopDeleted is a resource that was deleted while the wait read it.
@@ -244,9 +265,19 @@ type StopError struct {
 	Reason  StopReason
 	Phase   string
 	Message string
+	// Held is the reason of the condition a StopBlocked stopped on, and of the
+	// refusal a read's StopPolicyRefused did.
+	Held string
+	// ReadEnded reports a wait for a read whose read ended Blocked, for Held: the
+	// read the request asked for began and ended, so the target is not what it
+	// failed to reach. What the read found is why nothing else follows.
+	ReadEnded bool
 }
 
 func (e *StopError) Error() string {
+	if e.ReadEnded {
+		return fmt.Sprintf("%s: the read ended Blocked: %s", e.Ref, e.Message)
+	}
 	return fmt.Sprintf("%s will not reach %s: %s: %s", e.Ref, e.Target, e.Reason, e.Message)
 }
 
@@ -468,11 +499,15 @@ func (w *waiter) readApproval(ctx context.Context, reader client.Reader, deadlin
 // policy refuses the artifact, and when a run spends another approval of the same
 // plan. Nothing runs under a stale approval, even when its plan comes back under
 // the same UID, so the status alone would leave the wait to its timeout. One a
-// run consumed is that run's, and the wait goes on waiting for it. While the
-// refusal that withdrew it still holds, policyHeld answers, in its own words.
+// run consumed is that run's, and the wait goes on waiting for it.
+//
+// While a refusal holds the resource (standing), policyHeld answers instead, in
+// the refusal's own words: a read that ends at Blocked marks the approval stale
+// too, and "the approval went stale" would name the effect and not the file, the
+// directory or the history that caused it.
 func (w *waiter) approvalWithdrawn(s snapshot) (verdict, bool) {
 	approval, decision := w.decisionApproval, w.options.Decision
-	if approval == nil || !approval.stale || approval.consumed || w.artifactRefusal(s) != nil {
+	if approval == nil || !approval.stale || approval.consumed || w.standing(s) != nil {
 		return verdict{}, false
 	}
 	said := fmt.Sprintf("approval %s went stale (%s): %s", decision.ApprovalName, approval.reason, approval.message)
@@ -625,8 +660,10 @@ type waiter struct {
 	// refusalFloor is the refusal the document the request is dated by records,
 	// or none: the baseline, or the document in which the operator takes the
 	// request when the baseline does not rest. A refusal with another stamp ended
-	// a read that began after it (readRefusal).
+	// a read that began after it (readRefusal). blockedFloor is the same for the
+	// Blocked the document rests in (readBlocked).
 	refusalFloor refusalStamp
+	blockedFloor refusalStamp
 
 	// earlier is the plan whose post-Apply proof the baseline owed, until
 	// that proof ends: its Apply ended before the wait began. The
@@ -637,8 +674,12 @@ type waiter struct {
 	earlier        *planRecord
 	earlierApplied bool
 
-	// refusalReads counts the reads in a row that found the artifact refused.
-	refusalReads int
+	// standingReads counts the polls in a row that found a refusal holding the
+	// resource (standing).
+	standingReads int
+	// run is the run record the wait found first, and the reading beside it
+	// (runRead).
+	run *runSighting
 
 	// decisionApproval is what the last read of the decision's approval found,
 	// nil when none said anything, and approvalRefused that the API server
@@ -744,6 +785,7 @@ func (w *waiter) begin(baseline snapshot) {
 	}
 	w.fresh = newFreshness(baseline, w.minGeneration)
 	w.failureFloor = baseline.failureMark()
+	w.sightRun(baseline)
 	if baseline.proof && baseline.proofPlan.name != "" {
 		earlier := baseline.proofPlan
 		w.earlier = &earlier
@@ -751,7 +793,7 @@ func (w *waiter) begin(baseline snapshot) {
 	if w.options.Target != TargetRead {
 		return
 	}
-	w.refusalFloor = baseline.refusal
+	w.refusalFloor, w.blockedFloor = baseline.refusal, baseline.blocked
 	switch {
 	case baseline.lastReadRequest == w.token:
 		// Taken before the baseline, so a claim in flight now began after
@@ -764,10 +806,11 @@ func (w *waiter) begin(baseline snapshot) {
 }
 
 func (w *waiter) check(s snapshot) verdict {
-	if w.artifactRefusal(s) == nil {
-		w.refusalReads = 0
+	w.sightRun(s)
+	if w.standing(s) == nil {
+		w.standingReads = 0
 	} else {
-		w.refusalReads++
+		w.standingReads++
 	}
 	if w.options.Source == "" {
 		return w.checkTarget(s)
@@ -824,13 +867,16 @@ func (w *waiter) checkRead(s snapshot) verdict {
 			if w.floorAtAnswer {
 				w.fresh.raise(s.observedAt)
 				w.failureFloor = s.failureMark()
-				w.refusalFloor = s.refusal
+				w.refusalFloor, w.blockedFloor = s.refusal, s.blocked
 				fresh = false
 			}
 		case s.readRequest != w.options.ReadRequest:
 			return w.stop(s, StopReadReplaced, fmt.Sprintf("%s holds %q, so the operator will not take request %q",
 				operatorv1alpha1.ReadRequestAnnotation, s.readRequest, w.options.ReadRequest))
 		default:
+			if held := w.engineHold(s); held != nil {
+				return w.blockedStop(s, held, false)
+			}
 			return waitingFor("the operator to take read request %s; it does once no operation is running, "+
 				"the resource is not suspended, no retry delay is pending, and neither its engine, its "+
 				"database realm nor a proof whose target moved blocks it", w.options.ReadRequest)
@@ -849,15 +895,33 @@ func (w *waiter) checkRead(s snapshot) verdict {
 		// A fresh reading says a read that began after the request already
 		// ended with one, so a refusal is looked for only where there is none:
 		// beside a fresh reading it ended a later read, which this wait is not
-		// for.
+		// for, unless the read that recorded the reading ended in it
+		// (blockedBesideReading).
 		if refused := w.readRefusal(s); refused != nil {
-			return w.stop(s, StopPolicyRefused, refusalMessage(refused))
+			// Only a Verify writes the refusal's stamp, so the read began and
+			// ended there, and the stop says so as a Blocked read's does.
+			stop := w.stop(s, StopPolicyRefused, refused.Reason+": "+refusalMessage(refused))
+			stop.stop.Held, stop.stop.ReadEnded = refused.Reason, true
+			return stop
+		}
+		if held := w.engineHold(s); held != nil {
+			// The engine became unsupported after the operator took the request,
+			// which a spec edit does, and no read begins until it is supported.
+			// The pass that found it moved the Blocked's stamp without a read, so
+			// readBlocked would tell it as the end of one.
+			return w.blockedStop(s, held, false)
+		}
+		if held := w.readBlocked(s); held != nil {
+			return w.blockedStop(s, held, true)
 		}
 		return waitingFor("a read of the database that began after request %s (the last one is from %s)",
 			w.options.ReadRequest, instant(s.observedAt))
 	}
 	if !s.resting() {
 		return waitingFor("the read to end: %s", inFlight(s))
+	}
+	if held := w.blockedBesideReading(s); held != nil {
+		return w.blockedStop(s, held, true)
 	}
 	if v, ok := w.generationReached(s); !ok {
 		return v
@@ -900,14 +964,30 @@ func (w *waiter) checkInSync(s snapshot) verdict {
 // resource's change or the realm's grant ends that refusal, not this
 // resource's spec, and the timeout names it.
 //
-// A verification policy that refuses the artifact stops the wait as well, with
-// StopPolicyRefused: no plan and no approval outlives that refusal, and nothing
-// reads the database until an artifact passes. See artifactRefusal. A wait for a
+// A refusal that holds the resource at rest stops the wait as well, on two polls
+// in a row (standing): the verification policy's, with StopPolicyRefused, and any
+// other Blocked, with StopBlocked. No plan and no approval outlives either, and
+// every read gives the same answer until a person changes something. The
+// verification policy's answers first, and a plan its own policy holds answers
+// before any other Blocked, in the words each has always had. A wait for a
 // migration run that has ended does not come here (checkApplied).
 func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
-	if refused := w.heldRefusal(s); refused != nil {
-		return w.stop(s, StopPolicyRefused, refusalMessage(refused)), true
+	refusal := w.heldStanding(s)
+	if refusal != nil && refusal.reason == StopPolicyRefused {
+		return w.stop(s, refusal.reason, refusal.message), true
 	}
+	if held, ok := w.planPolicyHeld(s, fresh); ok {
+		return held, true
+	}
+	if refusal != nil {
+		return w.standingStop(s, refusal), true
+	}
+	return verdict{}, false
+}
+
+// planPolicyHeld is policyHeld's StopPolicyBlocked: a plan from a reading the
+// target may count, which the resource's own policy holds.
+func (w *waiter) planPolicyHeld(s snapshot, fresh bool) (verdict, bool) {
 	if s.plan == nil || !fresh {
 		return verdict{}, false
 	}
@@ -923,10 +1003,11 @@ func (w *waiter) policyHeld(s snapshot, fresh bool) (verdict, bool) {
 		s.plan.name, held.Reason, held.Message)), true
 }
 
-// refusalReadsToStop is how many reads in a row have to find the artifact refused.
-// The pass that answers a read request leaves the refusal as it found it and only
-// brings the next read forward, so one document says nothing of the claim the next
-// pass writes. That pass runs within a read's interval, and the second read sees it.
+// refusalReadsToStop is how many polls in a row have to find a refusal holding the
+// resource (standing). The pass that answers a read request leaves the refusal as
+// it found it and only brings the next read forward, so one document says nothing
+// of the claim the next pass writes. That pass runs within a poll's interval, and
+// the second poll sees it.
 const refusalReadsToStop = 2
 
 // refusalEnds says what ends a verification policy's refusal.
@@ -964,34 +1045,73 @@ func (w *waiter) readRefusal(s snapshot) *metav1.Condition {
 	return refused
 }
 
-// heldRefusal is artifactRefusal once enough reads in a row have found it, or nil.
-// check counts the reads, so a count that high means this document has it too.
-func (w *waiter) heldRefusal(s snapshot) *metav1.Condition {
-	if w.refusalReads < refusalReadsToStop {
+// standingRefusal is a refusal that holds the resource at rest, as a stop names
+// it: the verification policy's (StopPolicyRefused) or any other Blocked
+// (StopBlocked), the condition it was read from, and what the stop says, with
+// what ends it.
+type standingRefusal struct {
+	reason    StopReason
+	condition *metav1.Condition
+	message   string
+}
+
+// standing is the refusal that holds the resource at rest in this document, or
+// nil: artifactRefusal, and else blockedHold.
+func (w *waiter) standing(s snapshot) *standingRefusal {
+	if refused := w.artifactRefusal(s); refused != nil {
+		return &standingRefusal{reason: StopPolicyRefused, condition: refused, message: refusalMessage(refused)}
+	}
+	if held := w.blockedHold(s); held != nil {
+		return &standingRefusal{reason: StopBlocked, condition: held, message: blockedMessage(s, held)}
+	}
+	return nil
+}
+
+// heldStanding is standing once enough polls in a row have found a refusal, or
+// nil. check counts the polls, so a count that high means this document has one
+// too.
+func (w *waiter) heldStanding(s snapshot) *standingRefusal {
+	if w.standingReads < refusalReadsToStop {
 		return nil
 	}
-	return w.artifactRefusal(s)
+	return w.standing(s)
+}
+
+// standingStop is the stop on a standing refusal.
+func (w *waiter) standingStop(s snapshot, refusal *standingRefusal) verdict {
+	stop := w.stop(s, refusal.reason, refusal.message)
+	if refusal.reason == StopBlocked {
+		stop.stop.Held = refusal.condition.Reason
+	}
+	return stop
 }
 
 // readBackHeld stops a wait on a migration run that recorded its migrations
-// applied and has no reading of its database after it, while a verification
-// policy's refusal holds: the operator reads the history only once an artifact
-// passes. The run changed the database, so this is no refusal of the target. It
-// is a run that has nothing to show for it, and the message names it.
+// applied and has no reading of its database after it, while a refusal holds the
+// resource at rest (standing): the operator reads the history only once an
+// artifact passes the verification policy, and only once the read gets past what
+// holds it at Blocked. A history read that ends at Blocked records itself on the
+// run (StopNotConverged), so a Blocked here came before the history was read: a
+// directory Ptah cannot read, an engine the operator does not run. The run changed
+// the database, so this is no refusal of the target. It is a run that has nothing
+// to show for it, and the message names it.
 //
-// The first read that finds the refusal waits for the second, as policyHeld does,
+// The first poll that finds the refusal waits for the second, as policyHeld does,
 // and decides nothing else about the run.
 func (w *waiter) readBackHeld(s snapshot, run *runRecord) (verdict, bool) {
-	refused := w.artifactRefusal(s)
-	if refused == nil {
+	refusal := w.standing(s)
+	if refusal == nil {
 		return verdict{}, false
 	}
-	if w.refusalReads < refusalReadsToStop {
+	if w.standingReads < refusalReadsToStop {
 		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s)), true
 	}
+	because := "nothing reads the database while the verification policy refuses the artifact"
+	if refusal.reason == StopBlocked {
+		because = "the read after it ended Blocked"
+	}
 	return w.stop(s, StopNotProved, fmt.Sprintf("run %s recorded its migrations applied, and no reading of its database "+
-		"has followed, since nothing reads the database while the verification policy refuses the artifact: %s; %s",
-		run.jobName, refused.Message, refusalEnds)), true
+		"has followed, since %s: %s", run.jobName, because, refusal.message)), true
 }
 
 // artifactRefusal is the condition that says the verification policy's refusal of
@@ -1016,13 +1136,250 @@ func (w *waiter) artifactRefusal(s snapshot) *metav1.Condition {
 		refused.ObservedGeneration < s.generation || s.phase != phaseBlocked || !s.resting() || s.readRequestPending() {
 		return nil
 	}
-	if w.options.Source != "" {
-		if source, err := SourceOf(s.object); err != nil || source.Digest != w.sourceDigest {
-			return nil
-		}
+	if !w.ofTheSource(s) {
+		return nil
 	}
 	return refused
 }
+
+// ofTheSource reports a document whose refusal a wait may count: for a wait for a
+// source, one whose resolved artifact is the one the wait is for, and any document
+// for any other wait.
+func (w *waiter) ofTheSource(s snapshot) bool {
+	if w.options.Source == "" {
+		return true
+	}
+	source, err := SourceOf(s.object)
+	return err == nil && source.Digest == w.sourceDigest
+}
+
+// blockedHold is the condition that holds the resource at rest in Blocked, or nil.
+// It is the condition the claim of every operation rewrites (claimRewritten),
+// False and not a claim's own (blockedStamp), for the generation the resource has
+// now, at rest in Blocked, with no read
+// request the operator has not taken: a read under way, or a request not yet
+// taken, may give another answer, and a spec edited since may be the edit that
+// ends it. A Blocked that stands when the wait begins counts, as a verification
+// policy's refusal does, and a wait for a read counts only the one its own read
+// ended in (readBlocked). A wait for a source holds it to the artifact the wait is
+// for.
+//
+// The rule is what the Blocked is not (waitsForNoPerson), so a reason added to the
+// operator later is held by it without a change here.
+func (w *waiter) blockedHold(s snapshot) *metav1.Condition {
+	if !s.blocked.present {
+		return nil
+	}
+	held := claimRewritten(s.family, s.conditions)
+	if held.ObservedGeneration < s.generation || !s.resting() || !w.ofTheSource(s) || w.waitsForNoPerson(s, held) {
+		return nil
+	}
+	// The operator checks the engine before it looks at a read request, and takes
+	// none while the engine is unsupported, so one pending says nothing of a read.
+	if s.readRequestPending() && held.Reason != string(operatorv1alpha1.ReasonUnsupportedEngine) {
+		return nil
+	}
+	return held
+}
+
+// waitsForNoPerson reports a Blocked that no change of this resource ends, or that
+// is no refusal at all, which a wait does not stop on:
+//
+//   - a database realm's refusal, RealmConflict or RealmNotAuthorized. A peer's
+//     spec or the realm's grant ends it, the operator takes the verdict again
+//     within a minute, and the timeout names it;
+//   - a schema's plan held under spec.policy.apply Never: ApplyDisabled, and a
+//     destructive plan under Never (PolicyBlocked, DestructiveChangesDisabled). The
+//     policy records plans and applies none, so nothing waits for a person, and a
+//     read that ends there is a read that ended as asked. policyHeld still stops a
+//     wait for in-sync, approval or applied on such a plan, in its own words. A
+//     migration under Never stays in Planning and writes no Blocked for its plan;
+//   - a migration run nobody accounted for (ApplyOutcomeUnknown) that no reading
+//     has followed yet (runRead): the operator's own next reading of the run's
+//     database settles it when nothing is pending there;
+//   - the verification policy's refusal, which artifactRefusal reads.
+func (w *waiter) waitsForNoPerson(s snapshot, held *metav1.Condition) bool {
+	switch operatorv1alpha1.ConditionReason(held.Reason) {
+	case operatorv1alpha1.ReasonRealmConflict, operatorv1alpha1.ReasonRealmNotAuthorized,
+		operatorv1alpha1.ReasonApplyDisabled, operatorv1alpha1.ReasonPolicyRefused:
+		return true
+	case operatorv1alpha1.ReasonPolicyBlocked, operatorv1alpha1.ReasonDestructiveChangesDisabled:
+		return s.applyNever
+	case operatorv1alpha1.ReasonApplyOutcomeUnknown:
+		return !w.runRead(s)
+	}
+	return false
+}
+
+// runSighting is the run record (status.unresolvedRun) a wait found first, by
+// its operationID, and the reading (status.history.observedAt) beside it then.
+type runSighting struct {
+	operationID string
+	reading     time.Time
+}
+
+// sightRun keeps the first document of each run record the wait reads.
+func (w *waiter) sightRun(s snapshot) {
+	if s.unresolved == nil || w.run != nil && w.run.operationID == s.unresolved.operationID {
+		return
+	}
+	w.run = &runSighting{operationID: s.unresolved.operationID, reading: s.observedAt}
+}
+
+// runRead reports a reading of the database recorded while the run record s
+// carries stood: one other than the reading the wait found beside the record
+// first.
+//
+// The Apply that ends Unknown or Partial writes the record beside the reading
+// from before the run, and rests in Blocked until the next reading, which
+// removes the record when it finds nothing of the artifact pending in the run's
+// database. Until a reading has followed, the Blocked says nothing a person has
+// to act on. A document does not say whether its reading came before the
+// record or after, and the two times are not put in order: another manager's
+// clock writes one or the other after a failover. A reading the wait sees
+// replace the one it found beside the record was recorded after the record,
+// whatever its time. So a wait that begins after a reading that left the record
+// standing waits for the next one, which can only make it longer.
+//
+// A record that went, by a reading or a PtahMigrationRunAcknowledgment, leaves
+// ApplyOutcomeUnknown on Progressing until the read that follows at once, and
+// stops nothing.
+func (w *waiter) runRead(s snapshot) bool {
+	return s.unresolved != nil && w.run != nil && w.run.operationID == s.unresolved.operationID &&
+		!s.observedAt.Equal(w.run.reading)
+}
+
+// engineHold is blockedHold for an engine this operator does not run, or nil. The
+// operator checks the engine before it looks at a read request, so it takes no
+// request and starts no read while one is named: a wait for a read stops on the
+// first poll that finds it, since no read it could wait for begins. A spec edit
+// moves the generation, and blockedHold counts nothing until the operator has
+// observed it.
+func (w *waiter) engineHold(s snapshot) *metav1.Condition {
+	held := w.blockedHold(s)
+	if held == nil || held.Reason != string(operatorv1alpha1.ReasonUnsupportedEngine) {
+		return nil
+	}
+	return held
+}
+
+// readBlocked is the Blocked the read a request asked for ended in, or nil: a
+// blockedHold whose stamp (blockedStamp) differs from blockedFloor's, as
+// readRefusal is for the verification policy's refusal. The pass that answers a
+// request leaves the Blocked it found, under the stamp it had, and the claim the
+// next pass writes takes it out of blockedHold, so one document of a new Blocked
+// says enough.
+func (w *waiter) readBlocked(s snapshot) *metav1.Condition {
+	held := w.blockedHold(s)
+	if held == nil || s.blocked.same(w.blockedFloor) {
+		return nil
+	}
+	return held
+}
+
+// blockedBesideReading is the Blocked a read ended in, asked of a document that
+// also records a reading since the request, or nil.
+//
+// A migration's history read records a dirty revision, a modified or late file, a
+// database ahead of its artifact, a run nobody accounted for and an unfinished
+// repeatable migration in the status write that records its reading. A schema's
+// Plan runs after the Observe that records the reading, and its refusals stand
+// beside that reading. So each is the end of the read that recorded the reading.
+//
+// A document cannot say which read that was. It says the latest read since the
+// request ended there, and the case keys on that, with no newer request taken:
+// the operator takes a newer request on the pass after the rest a read ends in,
+// milliseconds later, so a poll can miss that rest and find the newer read's
+// Blocked beside this read's reading, and a document that shows a newer request
+// taken leaves the Blocked to that request's wait and ends this one. That rule
+// has limits, and none of them stops a wait on a Blocked older than its request:
+//
+//   - a rest shorter than a poll, which a spec edit or a change to a ConfigMap
+//     source makes, can carry the read after this one past it, so a wait whose own
+//     read ended in sync can stop on the next read's Blocked;
+//   - an Apply that follows the read at once, under spec.policy.apply Always,
+//     runs before a poll sees the rest, and its proof or read-back is then the
+//     latest read;
+//   - two refreshes of one resource write one annotation, and the later request's
+//     token replaces the earlier one's, so the earlier wait reads a newer request
+//     taken and ends as done.
+func (w *waiter) blockedBesideReading(s snapshot) *metav1.Condition {
+	if s.lastReadRequest != w.token {
+		return nil
+	}
+	return w.readBlocked(s)
+}
+
+// blockedStop is the StopBlocked on held. readEnded says the read a wait for a
+// read asked for ended in it; an engine the operator does not run starts no read.
+func (w *waiter) blockedStop(s snapshot, held *metav1.Condition, readEnded bool) verdict {
+	message := blockedMessage(s, held)
+	if held.Reason == string(operatorv1alpha1.ReasonUnsupportedEngine) && w.options.Target == TargetRead && !readEnded {
+		message = "the operator takes no read request and starts no read while the engine is unsupported: " + message
+	}
+	stop := w.stop(s, StopBlocked, message)
+	stop.stop.Held, stop.stop.ReadEnded = held.Reason, readEnded
+	return stop
+}
+
+// blockedMessage is what a StopBlocked says: the reason, the words status carries
+// for it, and what ends it. A schema's Ready carries them, and a migration's
+// Blocked does, beside the Progressing that tells the Blocked. Where Ptah refused,
+// the words are Ptah's code and sentence; elsewhere they are the operator's, and
+// for an unfinished repeatable migration they quote Ptah's repair command.
+func blockedMessage(s snapshot, held *metav1.Condition) string {
+	said := held.Message
+	if s.family == FamilyMigration {
+		if blocked := s.condition(operatorv1alpha1.ConditionMigrationBlocked); blocked != nil &&
+			blocked.Status == metav1.ConditionTrue && blocked.Reason == held.Reason {
+			said = blocked.Message
+		}
+	}
+	return fmt.Sprintf("%s: %s. %s", held.Reason, strings.TrimSuffix(said, "."), blockedEnds(held.Reason))
+}
+
+// readAgain is when the operator looks for what ends a Blocked.
+const readAgain = ": the operator reads again at spec.interval or on a read request (kubectl ptah refresh), " +
+	"and at once after a spec edit or a change to a ConfigMap source"
+
+// blockedEnds says what ends a Blocked: what a person changes, and when the
+// operator reads again to find it. A reason with no entry, one added later
+// included, gets blockedEndsOtherwise.
+var blockedEnds = func() func(string) string {
+	ends := map[operatorv1alpha1.ConditionReason]string{
+		operatorv1alpha1.ReasonSchemaSourceUnreadable:        "A file Ptah can read ends it",
+		operatorv1alpha1.ReasonSchemaInvalid:                 "A schema Ptah accepts ends it, or a server whose version or sql_mode changes Ptah's answer",
+		operatorv1alpha1.ReasonMigrationDirectoryUnreadable:  "A directory Ptah can read ends it",
+		operatorv1alpha1.ReasonRepeatableMigrationUnfinished: "Removing the record with the repair command ends it",
+		operatorv1alpha1.ReasonHistoryDirty:                  "Repairing the dirty revision row ends it, as ptah migrations repair does",
+		operatorv1alpha1.ReasonHistoryModified:               "Restoring the files the database recorded, or an artifact whose history matches it, ends it",
+		operatorv1alpha1.ReasonHistoryOutOfOrder:             "Renumbering the late migration above the applied version ends it",
+		operatorv1alpha1.ReasonHistoryAhead:                  "An artifact that carries the versions the database applied ends it",
+		operatorv1alpha1.ReasonApplyOutcomeUnknown: "A reading has followed the run and did not settle it. " +
+			"A reading of the run's database with nothing pending ends it, or a PtahMigrationRunAcknowledgment of the run",
+		operatorv1alpha1.ReasonProtectedTable:         "Removing the spec.policy.protectedTables entry, or an artifact that leaves the table alone, ends it",
+		operatorv1alpha1.ReasonDifferenceNotPlannable: "The change made by hand or with a migration, or an artifact that no longer asks for it, ends it",
+		operatorv1alpha1.ReasonPlanRefused: "A desired schema that states what the refusal names, or a database or server " +
+			"that no longer refuses it, ends it",
+		operatorv1alpha1.ReasonDriftUndecided: "A database or an artifact on which Ptah decides every declared object ends it",
+		operatorv1alpha1.ReasonPolicyBlocked:  "A desired schema whose plan destroys nothing, or spec.policy.allowDestructive, ends it",
+		operatorv1alpha1.ReasonDestructiveChangesDisabled: "A desired schema whose plan destroys nothing, or " +
+			"spec.policy.allowDestructive, ends it",
+	}
+	return func(reason string) string {
+		if reason == string(operatorv1alpha1.ReasonUnsupportedEngine) {
+			return "A spec that names an engine this operator runs ends it, at once, or an operator release that runs this one"
+		}
+		if end, ok := ends[operatorv1alpha1.ConditionReason(reason)]; ok {
+			return end + readAgain
+		}
+		return blockedEndsOtherwise
+	}
+}()
+
+// blockedEndsOtherwise is what ends a Blocked whose reason has no entry in
+// blockedEnds.
+const blockedEndsOtherwise = "A change to the spec, its source or the database ends it" + readAgain
 
 // policyHold is the condition that says the resource's own policy holds its
 // current plan, or nil.
@@ -1273,13 +1630,18 @@ func (w *waiter) appliedRunEnded(s snapshot, run *runRecord) verdict {
 // dated by the run's end instead. That compares two instants that two managers'
 // clocks may have written, and it is all such a record leaves to go by.
 func (w *waiter) unrecordedRunEnded(s snapshot, run *runRecord) verdict {
-	if held, ok := w.readBackHeld(s, run); ok {
-		return held
-	}
 	// The run's own account is written with VerifyingHistory, which does not rest,
 	// and the operator reads the history back before the resource settles: only
-	// that reading says what the revision table holds.
-	if !s.resting() || s.observedAt.Before(run.finishedAt) {
+	// that reading says what the revision table holds. A Blocked before such a
+	// reading holds it back (readBackHeld), and one beside it is what that reading
+	// found. The verification policy's refusal comes before every read, so it holds
+	// the reading back whatever date the reading beside it carries.
+	readBack := s.resting() && !s.observedAt.Before(run.finishedAt)
+	if refusal := w.standing(s); refusal != nil && (refusal.reason == StopPolicyRefused || !readBack) {
+		held, _ := w.readBackHeld(s, run)
+		return held
+	}
+	if !readBack {
 		return waitingFor("the history read back after run %s; now %s", run.jobName, inFlight(s))
 	}
 	if s.phase == string(operatorv1alpha1.MigrationPhaseBlocked) {

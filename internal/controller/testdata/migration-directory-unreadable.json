@@ -1,0 +1,52 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahMigration",
+  "metadata": {
+    "generation": 1,
+    "name": "orders",
+    "namespace": "team-a"
+  },
+  "status": {
+    "observedGeneration": 1,
+    "phase": "Blocked",
+    "conditions": [
+      {
+        "type": "Blocked",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "MigrationDirectoryUnreadable",
+        "message": "desired_source_unreadable: migration file the Ptah format does not read: seed.sql. Ptah reads a migration directory whole, so it refuses the directory rather than leave this file unapplied; name it NNNNNNNNNN_\u003cname\u003e.up.sql, NNNNNNNNNN_\u003cname\u003e.down.sql or R__\u003cname\u003e.sql, with .up, .down and .sql in lower case, or move it out of the directory"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "MigrationDirectoryUnreadable",
+        "message": "Ptah could not read the migration directory"
+      },
+      {
+        "type": "Progressing",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "MigrationDirectoryUnreadable",
+        "message": "Nothing runs until the migration directory can be read"
+      }
+    ],
+    "artifact": {
+      "resolvedReference": "oci://registry.example/team/migrations@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "transport": {}
+    },
+    "executionBinding": {
+      "epoch": "v1-33333333333333333333333333333333",
+      "controllerStateVersion": 1,
+      "ptahVersion": "v0.3.0",
+      "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runnerProtocolVersion": 1
+    },
+    "blockedSince": "2026-08-30T12:00:00Z"
+  }
+}

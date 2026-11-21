@@ -736,6 +736,7 @@ source changed after it was read, or settle met a schema that has not stopped
 on a moved target, a stop that prints no value, or a value that no longer
 matches or is not the one --expect names), 5 refused by RBAC or the API server,
 6 sent with no answer: the change may have been stored, 7 the wait timed out, 8
-the resource will not reach the target.
+the resource will not reach the target, or the read refresh --wait asked for
+ended at Blocked.
 `)
 }

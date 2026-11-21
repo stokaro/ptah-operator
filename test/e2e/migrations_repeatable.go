@@ -140,6 +140,33 @@ func repeatableStop(status ptahv1alpha1.PtahMigrationStatus, identity string) (s
 	return command, nil
 }
 
+// waitStoppedOnUnfinishedRepeatable holds what kubectl ptah wrote to stderr when a
+// wait for target met a migration the record of identity's unfinished attempt
+// stops: exit 8; for a wait for a read, the headline that says the read ended
+// Blocked for that reason, and for any other target the Blocked stop of that
+// target; and the reason with the condition's words about identity. Before
+// stokaro/ptah-operator#1162, refresh --wait exited 0 on the read that ended
+// there, and kubectl ptah wait --for in-sync ran to its timeout and exited 7,
+// though every read gave the same answer.
+func waitStoppedOnUnfinishedRepeatable(code int, stderr, target, identity string) error {
+	if code != approveWaitWillNotReach {
+		return fmt.Errorf("exit status %d, want %d", code, approveWaitWillNotReach)
+	}
+	reason := string(ptahv1alpha1.ReasonRepeatableMigrationUnfinished)
+	headline := " will not reach " + target + ": Blocked.\n"
+	if target == "read" {
+		headline = ": the read ended Blocked: " + reason + ".\n"
+	}
+	if !strings.Contains(stderr, headline) {
+		return fmt.Errorf("stderr does not say the wait for %s stopped on a Blocked (%q)", target, strings.TrimSpace(headline))
+	}
+	why := "\n  Why:         " + reason + ": Repeatable migration: " + identity + " "
+	if !strings.Contains(stderr, why) {
+		return fmt.Errorf("stderr does not name %s with the condition's words about %s", reason, identity)
+	}
+	return nil
+}
+
 // orphanedRepeatableSettled is the migration converged beside an applied
 // record of one repeatable migration that no file carries: in sync and Ready
 // for its current generation and not Blocked, with nothing in flight, no run
