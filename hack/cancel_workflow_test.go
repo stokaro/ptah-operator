@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 func TestVerifyCancelWorkflowRejectsDangerousMutations(t *testing.T) {
@@ -343,9 +345,7 @@ case "$method $path" in
     ;;
 esac
 `
-		if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(stub), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		testexec.WriteFile(t, filepath.Join(bin, "gh"), []byte(stub), 0o700)
 		runnerTemp := filepath.Join(directory, "runner")
 		if err := os.Mkdir(runnerTemp, 0o700); err != nil {
 			t.Fatal(err)

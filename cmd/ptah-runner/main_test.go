@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // runnerProtocol names this runner's protocol, as the builder does in every
@@ -64,9 +65,7 @@ func TestRunRefusesAJobBuiltForAnotherProtocol(t *testing.T) {
 
 	marker := filepath.Join(t.TempDir(), "executor-ran")
 	executor := filepath.Join(t.TempDir(), "ptah")
-	if err := os.WriteFile(executor, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, executor, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o700)
 	var stdout, stderr bytes.Buffer
 	run(
 		context.Background(),

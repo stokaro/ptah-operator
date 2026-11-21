@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // fetchScript is a Ptah that records its arguments and environment, and exits
@@ -20,9 +21,7 @@ func fetchScript(t *testing.T, exitCode int) (binary, record string) {
 	record = filepath.Join(directory, "record")
 	binary = filepath.Join(directory, "ptah")
 	script := "#!/bin/sh\n{ printf 'args=%s\\n' \"$*\"; env; } > '" + record + "'\nexit " + strconv.Itoa(exitCode) + "\n"
-	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, binary, []byte(script), 0o700)
 	return binary, record
 }
 

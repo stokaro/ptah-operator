@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stokaro/ptah-operator/hack/chartstamp"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // recordingHelm stands in for helm: it keeps every argument list it was handed.
@@ -319,9 +320,7 @@ func TestInstallRunsOnlyAHelmItCanUse(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			_ = os.Remove(ran)
 			script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s' '" + row.version + "'; exit 0; fi\n: > '" + ran + "'\n"
-			if err := os.WriteFile(filepath.Join(directory, "helm"), []byte(script), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			testexec.WriteFile(t, filepath.Join(directory, "helm"), []byte(script), 0o700)
 			t.Setenv("PATH", directory)
 
 			err := helmOnPath(nil)(context.Background(), []string{"upgrade", "--install"}, io.Discard, io.Discard)

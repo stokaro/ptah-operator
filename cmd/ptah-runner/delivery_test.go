@@ -35,6 +35,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/resultdelivery/jobconfig"
 	"github.com/stokaro/ptah-operator/internal/resultstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 type deliveryAPI struct {
@@ -152,9 +153,7 @@ func applyExecutable(t *testing.T) (string, string) {
 printf 'run\n' >> "$PTAH_TEST_INVOCATIONS"
 printf '%s\n' '{"contract_version":2,"command":"migrations up","direction":"up","outcome":"applied","planned":[3,4],"applied":[3,4],"status":{"contract_version":2,"current_version":4,"total_migrations":4,"has_pending_changes":false}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, path, []byte(script), 0o700)
 	return path, counter
 }
 

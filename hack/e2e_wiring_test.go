@@ -25,6 +25,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stokaro/ptah-operator/internal/testexec"
 	"github.com/stokaro/ptah-operator/test/e2e/phases"
 )
 
@@ -1226,9 +1227,7 @@ func TestReleaseChartExportIsExactAtomicAndSafe(t *testing.T) {
 				wrapperSource := "#!/bin/sh\n" +
 					"printf '%s' 'preserve racing target' >\"$E2E_RACE_TARGET\"\n" +
 					"exec \"$E2E_REAL_LN\" \"$@\"\n"
-				if err := os.WriteFile(linkWrapper, []byte(wrapperSource), 0o700); err != nil {
-					t.Fatal(err)
-				}
+				testexec.WriteFile(t, linkWrapper, []byte(wrapperSource), 0o700)
 				targetPath := filepath.Join(outputDirectory, "racing-release-chart.tgz")
 				command := exec.Command(
 					shellPath, scriptPath, workDirectory, chartPath, targetPath,

@@ -27,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 func TestLoadAndValidateManifestFreshness(t *testing.T) {
@@ -1774,9 +1776,7 @@ test "$3" = info
 printf '%s\n' "$TEST_DOCKER_ARCH"`,
 			}
 			for name, body := range stubs {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nset -eu\n"+body+"\n"), 0o700); err != nil {
-					t.Fatal(err)
-				}
+				testexec.WriteFile(t, filepath.Join(dir, name), []byte("#!/bin/sh\nset -eu\n"+body+"\n"), 0o700)
 			}
 			identity := filepath.Join(dir, "native-runtime.json")
 			command := exec.Command("bash", "-c", script)
