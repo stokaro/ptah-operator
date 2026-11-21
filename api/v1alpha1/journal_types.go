@@ -197,11 +197,12 @@ type JournalEntry struct {
 	// +optional
 	Operation string `json:"operation,omitempty"`
 	// Reason is the condition reason the failure set, on an OperationFailed
-	// entry. On a PtahSchema's Verified entry it says why a proof ended that
-	// compared nothing with the database: SchemaSourceUnreadable, where Ptah
-	// could not read the desired schema the Apply ran from, or SchemaInvalid,
-	// where Ptah refused it as a whole. It is a code, never the message: a
-	// message can carry what status must not.
+	// entry. On a PtahSchema's Verified entry it says why a proof ended with
+	// no verdict on the database: SchemaSourceUnreadable, where Ptah could not
+	// read the desired schema the Apply ran from, SchemaInvalid, where Ptah
+	// refused it as a whole, or PlanRefused, where Ptah refused to plan the
+	// change under a code. It is a code, never the message: a message can
+	// carry what status must not.
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[A-Z][A-Za-z0-9]*$`
 	// +optional

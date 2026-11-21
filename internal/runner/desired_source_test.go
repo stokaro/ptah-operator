@@ -259,7 +259,9 @@ func TestASchemaFaultTheCommandStoppedOnIsNamed(t *testing.T) {
 // TestAFaultTheCommandDidNotStopOnKeepsItsCode gives each operation the captures
 // of a file validate faults while drift and plan stop on something else, and
 // documents that hold no sentence to compare. Nothing either child printed
-// reaches the frame or the Pod log.
+// reaches the frame, and nothing the check printed reaches the Pod log. A
+// refused plan's own sentence does, on one line, as every plan_refused does
+// (refusePlan).
 func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
 	t.Parallel()
 
@@ -275,22 +277,26 @@ func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
 	for _, test := range []struct {
 		name, operation, code string
 		answers               func(*testing.T) (scriptedResponse, scriptedResponse)
+		// logged is the line of Ptah's the Pod log carries, if any.
+		logged string
 	}{
-		{"a key the database refuses, beside another", "observe", "child_exit", captured("drift-other-and-key.json", "validate-other-and-key.txt")},
+		{"a key the database refuses, beside another", "observe", "child_exit", captured("drift-other-and-key.json", "validate-other-and-key.txt"), ""},
 		// Ptah v0.23.0 refuses these plans as declaration-refused rather than
 		// failing them, and a refusal the file does not explain keeps its code.
-		{"a key the database refuses, beside another", "plan", "plan_refused", captured("plan-other-and-key.json", "validate-other-and-key.txt")},
+		{"a key the database refuses, beside another", "plan", "plan_refused", captured("plan-other-and-key.json", "validate-other-and-key.txt"),
+			`compare database schema: invalid foreign key: constraint "t_other" references unknown table "other.nope": ` +
+				`the database compared holds schema "other" and the desired schema declares nothing of it`},
 		// The key the database refuses, beside an index the plan did not stop on.
 		{"a key the database refuses, beside an index validate faults", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
 			return scriptedResponse{stdout: desiredSourceOutput(t, "drift-other-and-key.json"), exitCode: 2},
 				scriptedResponse{stdout: desiredSourceOutput(t, "validate-index-table.txt"), exitCode: 1}
-		}},
+		}, ""},
 		{"a document that does not decode", "observe", "child_exit", func(t *testing.T) (scriptedResponse, scriptedResponse) {
 			return scriptedResponse{stdout: "error comparing schemas: invalid foreign key", exitCode: 2}, foreignKey(t)
-		}},
+		}, ""},
 		{"a failed plan with no error", "plan", "invalid_plan_output", func(t *testing.T) (scriptedResponse, scriptedResponse) {
 			return scriptedResponse{stdout: `{"contract_version":3,"command":"schema plan","outcome":"failed"}`, exitCode: 2}, foreignKey(t)
-		}},
+		}, ""},
 	} {
 		t.Run(test.name+"/"+test.operation, func(t *testing.T) {
 			t.Parallel()
@@ -302,8 +308,16 @@ func TestAFaultTheCommandDidNotStopOnKeepsItsCode(t *testing.T) {
 			if len(executor.calls) != 2 {
 				t.Fatalf("ran %d children, want the failed command and its check", len(executor.calls))
 			}
-			for _, word := range []string{"invalid foreign key", "names table", "names column", "holds schema"} {
-				if strings.Contains(result.Error.Message, word) || strings.Contains(diagnostics, word) {
+			rest := diagnostics
+			if test.logged != "" {
+				line := "ptah-runner: ptah reported: " + test.logged + "\n"
+				if !strings.Contains(diagnostics, line) {
+					t.Fatalf("the Pod log does not carry the refusal's sentence on one line:\n%s", diagnostics)
+				}
+				rest = strings.Replace(diagnostics, line, "", 1)
+			}
+			for _, word := range []string{"invalid foreign key", "names table", "names column", "holds schema", "t_nope"} {
+				if strings.Contains(result.Error.Message, word) || strings.Contains(rest, word) {
 					t.Fatalf("the runner repeated %q: %q\n%s", word, result.Error.Message, diagnostics)
 				}
 			}

@@ -1079,6 +1079,32 @@ func TestWaitTargets(t *testing.T) {
 			wantStop: operate.StopUnresolved, wantMessage: "Ptah refused the desired schema the Apply ran from",
 		},
 		{
+			// The proof's read met a plan Ptah refuses, and the next pass has
+			// already rewritten Ready.
+			name: "applied: a schema Apply whose proof met a plan Ptah refuses stops the wait", target: operate.TargetApplied,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{
+					{phase: "Applying", operation: "Apply", observedAt: at(0)},
+					{
+						phase: "Resolving", operation: "Resolve", observedAt: at(0),
+						conditions: []metav1.Condition{{
+							Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse,
+							Reason: string(operatorv1alpha1.ReasonOperationInProgress), Message: "Resolve operation is in progress",
+						}},
+						journal: []operatorv1alpha1.JournalEntry{
+							{Type: operatorv1alpha1.JournalApplyFinished, At: metav1.NewTime(at(60)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalSucceeded},
+							{
+								Type: operatorv1alpha1.JournalVerified, At: metav1.NewTime(at(80)), Plan: "plan-1", Outcome: operatorv1alpha1.JournalUnknown,
+								Reason: string(operatorv1alpha1.ReasonPlanRefused),
+							},
+						},
+					},
+				}
+			},
+			wantStop: operate.StopUnresolved, wantMessage: "Ptah refused to plan the desired schema the Apply ran from",
+		},
+		{
 			// A person gave the proof up, and the read the next pass started
 			// stopped on the desired schema before this poll: Ready names the
 			// file, and the proof's entry is the settlement's.

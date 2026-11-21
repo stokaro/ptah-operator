@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -133,6 +134,60 @@ func schemaRefused(schema *ptahv1alpha1.PtahSchema, reason ptahv1alpha1.Conditio
 			meta.FindStatusCondition(schema.Status.Conditions, ptahv1alpha1.ConditionReconciliationFailed))
 	}
 	return ready.Message, nil
+}
+
+// refusalHoldPause is how long a refusal hold waits between two readings.
+const refusalHoldPause = 2 * time.Second
+
+// refusalHoldEnd is when a hold of refused ends: two failure retries after the
+// attempt that refused it, counted from that attempt as the controller counts
+// its retry, by the interval the refused document holds, which is what the
+// controller waited by. A controller that still retried would claim a read at
+// the first retry and stamp another attempt before the second.
+func refusalHoldEnd(refused *ptahv1alpha1.PtahSchema) (time.Time, error) {
+	attempt := refused.Status.LastAttemptTime
+	if attempt == nil {
+		return time.Time{}, errors.New("the refused schema records no attempt to hold from")
+	}
+	failureRetry := refused.Spec.Execution.FailureRetryInterval.Duration
+	if failureRetry <= 0 {
+		return time.Time{}, fmt.Errorf("the refused schema holds spec.execution.failureRetryInterval %s, so there is no retry to hold past",
+			failureRetry)
+	}
+	return attempt.Add(2 * failureRetry), nil
+}
+
+// holdSchemaRefusal reads a refused schema until refusalHoldEnd, pausing
+// between readings, and requires every reading to hold the same refusal at the
+// same attempt (schemaRefusalStands). It returns how many readings it took.
+// The last reading is the first one made at or after the end, so the hold
+// covers the whole span.
+func holdSchemaRefusal(
+	refused *ptahv1alpha1.PtahSchema, refusedAs func(*ptahv1alpha1.PtahSchema) (string, error),
+	read func() (*ptahv1alpha1.PtahSchema, error), now func() time.Time, pause func(time.Duration) error,
+) (int, error) {
+	until, err := refusalHoldEnd(refused)
+	if err != nil {
+		return 0, err
+	}
+	attempt := refused.Status.LastAttemptTime
+	for readings := 0; ; {
+		reached := !now().Before(until)
+		schema, err := read()
+		if err != nil {
+			return readings, fmt.Errorf("read during the hold: %w", err)
+		}
+		if err := schemaRefusalStands(schema, refusedAs, attempt); err != nil {
+			return readings, fmt.Errorf("%s into the hold: %w", now().Sub(attempt.Time).Round(time.Second), err)
+		}
+		readings++
+		if reached {
+			return readings, nil
+		}
+		if err := pause(refusalHoldPause); err != nil {
+			return readings, err
+		}
+	}
 }
 
 // schemaRefusalStands holds a schema refused as refused says to the attempt

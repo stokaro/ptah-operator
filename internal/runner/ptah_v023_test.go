@@ -265,8 +265,23 @@ func TestADeclarationRefusalIsNamedLikeAFailure(t *testing.T) {
 			if result.Uncertain || result.MutationStarted {
 				t.Fatalf("Run() = uncertain %v, mutation %v", result.Uncertain, result.MutationStarted)
 			}
-			if test.code == "plan_refused" && (strings.Contains(result.Error.Message, "invalid foreign key") || strings.Contains(diagnostics, "invalid foreign key")) {
-				t.Fatalf("the runner repeated Ptah's sentence: %q\n%s", result.Error.Message, diagnostics)
+			if test.code == "plan_refused" {
+				// The refusal's own sentence goes to the Pod log on one line
+				// (refusePlan), and nothing of it reaches the frame. Nothing the
+				// check printed goes anywhere: it faults another key, t_nope.
+				if strings.Contains(result.Error.Message, "invalid foreign key") {
+					t.Fatalf("the frame repeats Ptah's sentence: %q", result.Error.Message)
+				}
+				var refused dataplane.SchemaPlanReport
+				if err := json.Unmarshal([]byte(test.refused), &refused); err != nil {
+					t.Fatal(err)
+				}
+				if refused.Error != nil && !strings.Contains(diagnostics, "ptah-runner: ptah reported: "+refused.Error.Message+"\n") {
+					t.Fatalf("the Pod log does not carry the refusal's sentence %q:\n%s", refused.Error.Message, diagnostics)
+				}
+				if strings.Contains(diagnostics, "t_nope") {
+					t.Fatalf("the Pod log repeats what the check printed:\n%s", diagnostics)
+				}
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -271,8 +272,8 @@ func TestAPlanRefusalNamesTheViewsTheCapturedDocumentLists(t *testing.T) {
 		t.Run(test.row, func(t *testing.T) {
 			t.Parallel()
 			captured := readCapturedPlanRow(t, test.row)
-			if captured.framed.Code != codePlanRefused || captured.framed.Message != test.want {
-				t.Fatalf("the harness framed %+v, want %s with %q", captured.framed, codePlanRefused, test.want)
+			if captured.framed.Code != CodePlanRefused || captured.framed.Message != test.want {
+				t.Fatalf("the harness framed %+v, want %s with %q", captured.framed, CodePlanRefused, test.want)
 			}
 			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
 				stdout: captured.stdout, stderr: captured.stderr, exitCode: captured.exit,
@@ -311,8 +312,166 @@ func TestAPlanRefusalWithAListItCannotReadKeepsItsCode(t *testing.T) {
 				Operation: OperationPlan, Environment: withRunnerProtocol(mysqlEnvironment("unread-view-list")), Executor: executor,
 			})
 			want := "ptah refused to plan the change (view-security-option)"
-			if result.Error == nil || result.Error.Code != codePlanRefused || result.Error.Message != want {
-				t.Fatalf("Run() error = %+v, want %s with %q", result.Error, codePlanRefused, want)
+			if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+				t.Fatalf("Run() error = %+v, want %s with %q", result.Error, CodePlanRefused, want)
+			}
+		})
+	}
+}
+
+// Every plan_refused leaves Ptah's sentence in the Pod log, on one line, from
+// the plan and from the dry run of the saved plan alike (refusePlan), and
+// nothing of it in the frame or the summary. The frame names the code and
+// what the refusal lists, so a dependent object and a code this runner does
+// not know list nothing there, and the log is the one place that says which
+// object it was.
+func TestEveryPlanRefusalLeavesPtahsSentenceInThePodLog(t *testing.T) {
+	t.Parallel()
+
+	const dependent = "generate schema apply operations: unsupported feature: the plan drops table public.orders, which the " +
+		"declaration removes; policy orders_owner on public.invoices reads it, and the policy would be dropped with it. " +
+		"Change policy orders_owner on public.invoices so it no longer reads public.orders first"
+	captured := readCapturedPlanRow(t, "differs-view-invoker-unstated-postgres/plan")
+	var capturedReport dataplane.SchemaPlanReport
+	if err := json.Unmarshal([]byte(captured.stdout), &capturedReport); err != nil {
+		t.Fatal(err)
+	}
+	if capturedReport.Error == nil || capturedReport.Error.Message == "" {
+		t.Fatalf("the capture carries no sentence: %s", captured.stdout)
+	}
+	plan := validPlanDocument("DROP TABLE public.orders")
+	planRefused := func(refusal, sentence string) []scriptedResponse {
+		return []scriptedResponse{{
+			stdout: `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":` + refusal +
+				`,"error":{"message":` + string(mustMarshal(t, sentence)) + `}}`,
+			exitCode: 2,
+		}}
+	}
+	dryRunRefused := func(refusal, sentence string) []scriptedResponse {
+		return []scriptedResponse{planResponse(plan), planResponse(plan), {
+			stdout: `{"contract_version":4,"command":"schema apply","outcome":"refused","plan_name":"operator-plan",` +
+				`"plan_digest":"` + sha256Digest([]byte(plan)) + `","refusal":` + refusal +
+				`,"error":{"message":` + string(mustMarshal(t, sentence)) + `}}`,
+			exitCode: 2,
+		}}
+	}
+	for _, test := range []struct {
+		name      string
+		responses []scriptedResponse
+		sentence  string
+		// distinct is a part of the sentence nothing else the runner writes
+		// holds.
+		distinct, want string
+	}{
+		{
+			name:      "the plan, under a code that lists nothing",
+			responses: planRefused(`{"code":"dependent-object"}`, dependent),
+			sentence:  dependent, distinct: "orders_owner",
+			want: planRefusalLead + " (dependent-object)",
+		},
+		{
+			name:      "the plan, under a code this runner does not know",
+			responses: planRefused(`{"code":"some-later-code"}`, dependent),
+			sentence:  dependent, distinct: "orders_owner",
+			want: planRefusalLead + " (some-later-code)",
+		},
+		{
+			name:      "the plan, as the runner harness captured it",
+			responses: []scriptedResponse{{stdout: captured.stdout, stderr: captured.stderr, exitCode: captured.exit}},
+			sentence:  capturedReport.Error.Message, distinct: "rights of the user",
+			want: captured.framed.Message,
+		},
+		{
+			name:      "the dry run, under a code that lists nothing",
+			responses: dryRunRefused(`{"code":"dependent-object"}`, dependent),
+			sentence:  dependent, distinct: "orders_owner",
+			want: planRefusalLead + " (dependent-object)",
+		},
+		{
+			name:      "the dry run, under a code this runner does not know",
+			responses: dryRunRefused(`{"code":"some-later-code"}`, dependent),
+			sentence:  dependent, distinct: "orders_owner",
+			want: planRefusalLead + " (some-later-code)",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			diagnostics := &bytes.Buffer{}
+			result := Run(context.Background(), Config{
+				Operation:   OperationPlan,
+				Environment: withRunnerProtocol(databaseEnvironment("plan-refusal-log")),
+				Executor:    &scriptedExecutor{t: t, responses: test.responses},
+				Diagnostics: diagnostics,
+				TempDir:     t.TempDir(),
+			})
+			if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != test.want {
+				t.Fatalf("Run() error = %+v, want %s with %q", result.Error, CodePlanRefused, test.want)
+			}
+			if log := diagnostics.String(); !strings.Contains(log, "ptah-runner: ptah reported: "+test.sentence+"\n") {
+				t.Fatalf("the Pod log does not carry Ptah's sentence whole on one line:\n%s", log)
+			}
+			encoded, err := EncodeResult(result)
+			if err != nil {
+				t.Fatalf("EncodeResult() error = %v", err)
+			}
+			for name, crossing := range map[string][]byte{"the frame": encoded.Frame, "the summary": encoded.Summary} {
+				if bytes.Contains(crossing, []byte(test.distinct)) {
+					t.Errorf("%s carries Ptah's sentence: %s", name, crossing)
+				}
+			}
+		})
+	}
+}
+
+// A plan document refused because the database moved or was busy says nothing
+// about the plan, so the Plan reads as invalid output, which is retried, as the
+// same refusals do from the dry run. Ptah v0.34.0's schema plan raises neither:
+// it takes no lock and reads no plan file. Every other code, one this runner
+// does not know included, stays a refusal of the plan.
+func TestAPlanRefusedBecauseTheDatabaseMovedIsRetried(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, refusal, wantCode, want string
+	}{
+		{
+			name:     "a stale plan",
+			refusal:  `{"code":"stale-plan","changed":"schema"}`,
+			wantCode: "invalid_plan_output",
+			want:     "plan command reported refused (stale-plan) rather than a plan",
+		},
+		{
+			name:     "a lock timeout",
+			refusal:  `{"code":"lock-timeout"}`,
+			wantCode: "invalid_plan_output",
+			want:     "plan command reported refused (lock-timeout) rather than a plan",
+		},
+		{
+			name:     "a code it does not know",
+			refusal:  `{"code":"lock-timeouts"}`,
+			wantCode: CodePlanRefused,
+			want:     "ptah refused to plan the change (lock-timeouts)",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
+				stdout: `{"contract_version":3,"command":"schema plan","outcome":"refused","refusal":` + test.refusal +
+					`,"error":{"message":"another session holds the schema lock"}}`,
+				exitCode: 2,
+			}}}
+			result := Run(context.Background(), Config{
+				Operation: OperationPlan, Environment: withRunnerProtocol(mysqlEnvironment("plan-moved")), Executor: executor,
+			})
+			if result.Error == nil || result.Error.Code != test.wantCode || result.Error.Message != test.want {
+				t.Fatalf("Run() error = %+v, want %s with %q", result.Error, test.wantCode, test.want)
+			}
+			encoded, err := EncodeResult(result)
+			if err != nil {
+				t.Fatalf("EncodeResult() error = %v", err)
+			}
+			if bytes.Contains(encoded.Frame, []byte("schema lock")) {
+				t.Errorf("the frame carries Ptah's sentence: %s", encoded.Frame)
 			}
 		})
 	}

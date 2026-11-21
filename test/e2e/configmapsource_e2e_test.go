@@ -962,44 +962,30 @@ func (c *configMapRun) waitForStoppedSchema(name, what string, holds func(*ptahv
 }
 
 // holdRefusal reads schema name until two failure retries have passed since
-// the attempt that refused it, counted from that attempt as the controller
-// counts its retry, and requires every reading to hold the same refusal, as
-// refusedAs reads it. A retry would start another read under a claim, and a
-// read that ends stamps another attempt. The retry interval is the one the
-// refused document holds, which is what the controller waited by.
+// the attempt that refused it, and requires every reading to hold the same
+// refusal, as refusedAs reads it (holdSchemaRefusal).
 func (c *configMapRun) holdRefusal(
 	name string, refused *ptahv1alpha1.PtahSchema,
 	refusedAs func(*ptahv1alpha1.PtahSchema) (string, error),
 ) {
 	c.t.Helper()
-	attempt := refused.Status.LastAttemptTime
-	if attempt == nil {
-		c.fatalf("the refused schema records no attempt to hold from")
-	}
-	failureRetry := refused.Spec.Execution.FailureRetryInterval.Duration
-	if failureRetry <= 0 {
-		c.fatalf("the refused schema holds spec.execution.failureRetryInterval %s, so there is no retry to hold past",
-			refused.Spec.Execution.FailureRetryInterval.Duration)
-	}
-	until := attempt.Add(2 * failureRetry)
+	until, err := refusalHoldEnd(refused)
+	c.check(err, "hold the refusal of %s", name)
 	c.logf("holding %s, until two failure retries of %s after the refusal at %s",
-		time.Until(until).Round(time.Second), failureRetry, attempt.UTC().Format(time.RFC3339))
-	readings := 0
-	for {
+		time.Until(until).Round(time.Second), refused.Spec.Execution.FailureRetryInterval.Duration,
+		refused.Status.LastAttemptTime.UTC().Format(time.RFC3339))
+	readings, err := holdSchemaRefusal(refused, refusedAs, func() (*ptahv1alpha1.PtahSchema, error) {
 		schema := &ptahv1alpha1.PtahSchema{}
-		c.check(c.get(name, schema), "read PtahSchema %s during the hold", name)
-		c.check(schemaRefusalStands(schema, refusedAs, attempt), "the refusal of %s %s into the hold",
-			name, time.Since(attempt.Time).Round(time.Second))
-		readings++
-		if !time.Now().Before(until) {
-			break
-		}
+		return schema, c.get(name, schema)
+	}, time.Now, func(pause time.Duration) error {
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(pause):
+			return nil
 		case <-c.ctx.Done():
-			c.fatalf("the phase ended during the hold until %s: %v", until, c.ctx.Err())
+			return fmt.Errorf("the phase ended during the hold until %s: %w", until, c.ctx.Err())
 		}
-	}
+	})
+	c.check(err, "the refusal of %s", name)
 	c.logf("the refusal stood through %d readings until %s", readings, until.UTC().Format(time.RFC3339))
 }
 

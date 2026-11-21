@@ -49,8 +49,8 @@ func capturedPlanFailure(t *testing.T, row string) *runner.ResultError {
 // (stokaro/ptah#6105). The runner harness captured the refusal from the
 // release image and the frame the runner wrote for it, whose message names the
 // refusal's code and the view and option the document lists. Fed to a
-// schema's Plan, that frame reads as a failed reconciliation in exactly those
-// words, and as a Plan that reached its database.
+// schema's Plan, that frame stops the schema with Ready saying exactly those
+// words, records no failure, and reads as a Plan that reached its database.
 func TestACapturedMySQLViewSecurityRefusalReadsInStatus(t *testing.T) {
 	t.Parallel()
 	const want = "plan_refused: ptah refused to plan the change (view-security-option: differs_notes_view sql_security)"
@@ -59,16 +59,10 @@ func TestACapturedMySQLViewSecurityRefusalReadsInStatus(t *testing.T) {
 	for _, path := range planPaths(t) {
 		t.Run(path.name, func(t *testing.T) {
 			t.Parallel()
-			_, actual, writes := harvestSchemaFailure(t, path, failure, previous)
-			failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-			if failed == nil || failed.Status != metav1.ConditionTrue ||
-				failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) || failed.Message != want {
-				t.Fatalf("ReconciliationFailed = %#v, want True OperationFailed with %q", failed, want)
-			}
+			_, actual, writes := harvestSchemaFailure(t, underItsVerifiedPolicy(path), failure, previous)
+			assertPlanRefusedSays(t, actual, want)
 			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
-			writes.assertReachedBeside(t, func(conditions []metav1.Condition) bool {
-				return conditionMatches(conditions, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, operatorv1alpha1.ReasonOperationFailed)
-			})
+			writes.assertReachedBeside(t, saysWhatTheReadCameTo(failure))
 		})
 	}
 }
@@ -78,7 +72,7 @@ func TestACapturedMySQLViewSecurityRefusalReadsInStatus(t *testing.T) {
 // (stokaro/ptah#6109). The runner harness captured the refusal from the release
 // image as the documented login, which did not define the view, and the frame's
 // message names the view, its definer and that login. Fed to a schema's Plan,
-// the frame reads as a failed reconciliation in those words.
+// the frame stops the schema with Ready saying those words.
 func TestACapturedMySQLViewDefinerRefusalReadsInStatus(t *testing.T) {
 	t.Parallel()
 	const want = "plan_refused: ptah refused to plan the change (view-definer: differs_notes_view definer root@localhost account harness_view_other@%)"
@@ -87,13 +81,24 @@ func TestACapturedMySQLViewDefinerRefusalReadsInStatus(t *testing.T) {
 	for _, path := range planPaths(t) {
 		t.Run(path.name, func(t *testing.T) {
 			t.Parallel()
-			_, actual, _ := harvestSchemaFailure(t, path, failure, previous)
-			failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-			if failed == nil || failed.Status != metav1.ConditionTrue ||
-				failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) || failed.Message != want {
-				t.Fatalf("ReconciliationFailed = %#v, want True OperationFailed with %q", failed, want)
-			}
+			_, actual, _ := harvestSchemaFailure(t, underItsVerifiedPolicy(path), failure, previous)
+			assertPlanRefusedSays(t, actual, want)
 			assertDatabaseReached(t, actual.Status.Conditions, "Database schema was observed")
 		})
+	}
+}
+
+// assertPlanRefusedSays holds a schema whose Plan Ptah refused to Ready False
+// with PlanRefused and want, and to no failure recorded.
+func assertPlanRefusedSays(t *testing.T, actual *operatorv1alpha1.PtahSchema, want string) {
+	t.Helper()
+	ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != string(operatorv1alpha1.ReasonPlanRefused) ||
+		ready.Message != want {
+		t.Fatalf("Ready = %#v, want False PlanRefused with %q", ready, want)
+	}
+	if failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed); failed != nil &&
+		failed.Status == metav1.ConditionTrue {
+		t.Fatalf("the refusal was recorded as a failure: %#v", failed)
 	}
 }

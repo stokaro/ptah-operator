@@ -1409,7 +1409,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		// run that went wrong either: the runner asked Ptah again with no
 		// target, and Ptah said what in the file it refuses. Another attempt
 		// reads the same file and gets the same answer, so the read stops
-		// rather than retrying.
+		// rather than retrying. So does a Plan Ptah refused under a code:
+		// another Plan against the same server is refused the same way.
 		if refusal, refused := schemaRefusalOf(operation.Type, result.Error); refused {
 			return r.refuseSchemaSource(ctx, schema, job, result, refusal, evidence.PodUIDs, evidence.PodCount, evidence.Durable)
 		}
@@ -1973,8 +1974,9 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 	refusal, refused := schemaRefusalOf(operationType, result.Error)
 	switch {
 	case refused:
-		// Ptah could not read the desired schema the Apply ran from, or
-		// refused it. Only a proof's read reaches here with either code.
+		// Ptah could not read the desired schema the Apply ran from, refused
+		// it, or refused to plan it. Only a proof's read reaches here with one
+		// of those codes.
 		pending := schema.Status.PendingObservation
 		if pending == nil {
 			return r.retryOperation(ctx, schema, nil, fmt.Errorf("a refused desired schema reached the result of a read that serves no proof"))
@@ -1986,11 +1988,12 @@ func (r *SchemaReconciler) consumeResultWithTransport(ctx context.Context, schem
 		}
 		policyErr := r.verifiedSourcePolicyError(ctx, schema)
 		bindingErr := r.ensureCurrentStatusExecutionBinding(schema, &pending.Plan)
-		// An invalid schema says the read opened the database, as it does
-		// outside a proof (refuseSchemaSource), but only under the binding
-		// the resource holds now. A read under a retired binding is
-		// historical evidence, and settleProofInputs records DatabaseReachable
-		// unknown for it; this write does not depend on coming before that.
+		// An invalid schema or a refused plan says the read opened the
+		// database, as it does outside a proof (refuseSchemaSource), but only
+		// under the binding the resource holds now. A read under a retired
+		// binding is historical evidence, and settleProofInputs records
+		// DatabaseReachable unknown for it; this write does not depend on
+		// coming before that.
 		if bindingErr == nil && failureReadTheTarget(operationType, result.Error.Code) {
 			setSchemaTargetObserved(schema)
 		}

@@ -268,6 +268,7 @@ var SchemaFaults = define[DataPlaneInputs](Phase{
 	RequiresFull: []string{"assert"},
 	Scenarios: []string{
 		"external-postgresql-lifecycle",
+		"external-postgresql-plan-refusal",
 		"mysql-lifecycle",
 		"mysql-dsn-refusal",
 		"watches",

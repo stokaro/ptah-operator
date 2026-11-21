@@ -1633,7 +1633,7 @@ func instant(at time.Time) string {
 	return at.UTC().Format(time.RFC3339)
 }
 
-// schemaRefusedBecause says why a proof ended whose read compared nothing with
+// schemaRefusedBecause says why a proof ended whose read came to no verdict on
 // the database, by the reason its Verified entry carries, and reports whether
 // the reason is one of those.
 func schemaRefusedBecause(reason string) (string, bool) {
@@ -1642,6 +1642,8 @@ func schemaRefusedBecause(reason string) (string, bool) {
 		return "Ptah could not read the desired schema the Apply ran from", true
 	case string(operatorv1alpha1.ReasonSchemaInvalid):
 		return "Ptah refused the desired schema the Apply ran from", true
+	case string(operatorv1alpha1.ReasonPlanRefused):
+		return "Ptah refused to plan the desired schema the Apply ran from", true
 	}
 	return "", false
 }

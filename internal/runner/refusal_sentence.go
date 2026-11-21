@@ -8,9 +8,12 @@ import (
 )
 
 const (
-	// codePlanRefused and codeApplyRefused are the frame codes of a plan and of
-	// an approved plan's apply that Ptah refused under a code of its own.
-	codePlanRefused  = "plan_refused"
+	// CodePlanRefused says Ptah compared the desired schema with the database
+	// and refused to plan the change, or to dry-run the saved plan, under a
+	// code of its own that says the plan is wrong as it stands; a stale plan
+	// and a lock timeout are not such codes (dataplane.SchemaRefusal.Transient).
+	// codeApplyRefused says Ptah refused an approved plan's apply under a code.
+	CodePlanRefused  = "plan_refused"
 	codeApplyRefused = "apply_refused"
 
 	// maxRefusalSentenceBytes is what of a refusal's sentence fits an Event

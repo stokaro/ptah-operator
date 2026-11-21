@@ -176,8 +176,8 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 		// A proof that settles into Pending or Verifying settled under a newer
 		// generation, policy or execution binding, which decides what follows.
 		outcome := operatorv1alpha1.JournalSuperseded
-		// reason says why a proof ended that compared nothing with the
-		// database. Ready says it only in the write that ends the proof, and the
+		// reason says why a proof ended with no verdict on the database.
+		// Ready says it only in the write that ends the proof, and the
 		// next pass can rewrite it, so a reader of the journal reads it here.
 		var reason string
 		ready := meta.FindStatusCondition(after.Conditions, operatorv1alpha1.ConditionReady)
@@ -189,11 +189,13 @@ func SchemaEntries(before, after *operatorv1alpha1.PtahSchemaStatus, journal *op
 			outcome = operatorv1alpha1.JournalUnknown
 		case after.Phase == operatorv1alpha1.PhasePending || after.Phase == operatorv1alpha1.PhaseVerifying:
 		case ready != nil && (ready.Reason == string(operatorv1alpha1.ReasonSchemaSourceUnreadable) ||
-			ready.Reason == string(operatorv1alpha1.ReasonSchemaInvalid)):
-			// Ptah could not read the desired schema the Apply ran from, or
-			// refused it, under the execution binding it ran under, so nothing
-			// compared the database with it. After a Ptah upgrade the proof
-			// settles under the new binding instead, Superseded, above.
+			ready.Reason == string(operatorv1alpha1.ReasonSchemaInvalid) ||
+			ready.Reason == string(operatorv1alpha1.ReasonPlanRefused)):
+			// Ptah could not read the desired schema the Apply ran from,
+			// refused it, or refused to plan it, under the execution binding
+			// it ran under, so nothing decided whether the database matches
+			// it. After a Ptah upgrade the proof settles under the new binding
+			// instead, Superseded, above.
 			outcome, reason = operatorv1alpha1.JournalUnknown, ready.Reason
 		case ready != nil && ready.Reason == string(operatorv1alpha1.ReasonDriftUndecided):
 			// The plan changed nothing because Ptah could not decide some

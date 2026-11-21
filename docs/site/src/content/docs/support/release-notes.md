@@ -18,11 +18,12 @@ out of silence.
 
 ## 0.2.16
 
-**Before you upgrade.** A schema whose desired file Ptah cannot read, or whose
-desired schema Ptah refuses as a whole, no longer reports `OperationFailed` and
-no longer counts in `ptah_operator_failures_total`: an alert or a script that
-watched for either sees `Blocked` with `SchemaSourceUnreadable` or
-`SchemaInvalid` instead. The executor moves to Ptah v0.34.0, which
+**Before you upgrade.** A schema whose desired file Ptah cannot read, whose
+desired schema Ptah refuses as a whole, or whose Plan Ptah refuses under a
+code, no longer reports `OperationFailed` and no longer counts in
+`ptah_operator_failures_total`: an alert or a script that watched for any of
+them sees `Blocked` with `SchemaSourceUnreadable`, `SchemaInvalid` or
+`PlanRefused` instead. The executor moves to Ptah v0.34.0, which
 retires the execution binding: approve again whatever was waiting, after the
 resource has read its database with v0.34.0 and planned. A read still running
 when the new manager starts runs again. An Apply whose Job 0.2.15 created is
@@ -155,6 +156,33 @@ release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   which Ptah v0.33.1 already made and 0.2.15 read as `child_exit` from an
   Observe and as `plan_refused` from a Plan, tried again at every failure
   retry.
+- **A Plan Ptah refuses stops at `Blocked` too.** A Plan that ends with
+  `plan_refused` met a refusal Ptah names by a code: a view whose security
+  option or definer the schema does not state, a drop something else depends
+  on, a declaration the target cannot host, or, in the dry run of the saved
+  plan, an owner the server would refuse or a backslash its `sql_mode` reads
+  another way. The operator reported `OperationFailed` and planned again at
+  every failure retry, which met the same refusal each time. The schema now
+  stops at `Blocked` with
+  [`PlanRefused`](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  and the code, for every code, one this release does not know included, and
+  does what the stop on a schema Ptah refuses does. A proof after an Apply that
+  meets such a refusal ends, and its `Verified` entry carries the reason
+  `PlanRefused`. A refusal the server decides, such as a role it does not
+  hold, lifts only on the server, and nothing the operator watches says when:
+  run `kubectl ptah refresh` once it is fixed, or the schema reads again at its
+  interval. After an Apply that succeeded, `kubectl ptah wait --for applied`
+  and `kubectl ptah settle --wait` stop on such a proof and say Ptah refused
+  to plan the desired schema; after an Apply Ptah refused, they stop first on
+  the Apply's outcome, as before. A stale plan or a lock timeout refuses
+  nothing about the plan, in the plan or in its dry run, and reads
+  `invalid_plan_output` and is tried again. A dry run refused under any other
+  code stops the schema too, one this release does not know included. So a
+  transient code a later Ptah adds stops it as well, and waits for the
+  interval or `kubectl ptah refresh` rather than being tried again at every
+  failure retry. Ptah's sentence, which names the objects, is now in the Plan
+  Pod's log for every `plan_refused`; a refusal of the plan itself, rather
+  than of its dry run, left it nowhere.
 - **An OCI migration artifact Ptah cannot read stops at the history read.** The
   `fetch-migrations` step now runs `ptah migrations pull --skip-validation`
   under Ptah v0.34.0 or later, the first release that has it
@@ -179,9 +207,10 @@ release's hook has updated the CRDs, 0.2.15's CRD hook refuses
   backslash in a literal, on a session whose `sql_mode` names
   `NO_BACKSLASH_ESCAPES`, as `backslash-mode`
   ([stokaro/ptah#6400](https://github.com/stokaro/ptah/pull/6400)). The Plan now
-  fails with `plan_refused: ptah refused to plan the change (backslash-mode)`,
-  and Ptah's sentence is in the Pod log, where 0.2.15's notes say it fails with
-  `invalid_plan_output` and nothing says why. An approved plan whose Apply meets
+  reads `plan_refused: ptah refused to plan the change (backslash-mode)` and
+  stops with `PlanRefused`, as above, and Ptah's sentence is in the Pod log,
+  where 0.2.15's notes say it fails with `invalid_plan_output` and nothing says
+  why. An approved plan whose Apply meets
   a server that took the mode after the Plan fails with `apply_refused: ptah
   refused the approved plan (backslash-mode)` before any statement.
   [A Plan that stops without saying why](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)

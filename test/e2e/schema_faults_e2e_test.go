@@ -24,6 +24,7 @@ func TestSchemaFaults(t *testing.T) {
 		body func()
 	}{
 		{"external-postgresql-lifecycle", d.externalPostgresqlLifecycle},
+		{"external-postgresql-plan-refusal", d.externalPlanRefusal},
 		{"mysql-lifecycle", d.mysqlLifecycle},
 		{"mysql-dsn-refusal", d.mysqlDSNRefusalScenario},
 		{"watches", f.watches},

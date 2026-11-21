@@ -57,8 +57,8 @@ func TestAPlanWhoseDryRunRefusesTheBackslashModeIsRefused(t *testing.T) {
 
 	result, log, encoded := run(t, dryRun("refused", `{"code":"`+dataplane.SchemaRefusalBackslashMode+`"}`))
 	const want = "ptah refused to plan the change (backslash-mode)"
-	if result.Error == nil || result.Error.Code != codePlanRefused || result.Error.Message != want {
-		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, codePlanRefused, want)
+	if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, CodePlanRefused, want)
 	}
 	if result.MutationStarted || result.Uncertain || result.PlanContentDigest != "" {
 		t.Fatalf("a refused Plan reported work: %#v", result)
@@ -72,6 +72,13 @@ func TestAPlanWhoseDryRunRefusesTheBackslashModeIsRefused(t *testing.T) {
 		}
 	}
 
+	// A code it does not know is a refusal of the plan as well, by its code.
+	result, _, _ = run(t, dryRun("refused", `{"code":"backslash-modes"}`))
+	if unknown := "ptah refused to plan the change (backslash-modes)"; result.Error == nil ||
+		result.Error.Code != CodePlanRefused || result.Error.Message != unknown {
+		t.Errorf("a code it does not know: Run() error = %#v, want %s with %q", result.Error, CodePlanRefused, unknown)
+	}
+
 	// The controls: v0.33.1's failed apply, which carries the same sentence and
 	// no code, and the refusals that do not say the plan is wrong, read as a
 	// failed validation as before.
@@ -79,7 +86,6 @@ func TestAPlanWhoseDryRunRefusesTheBackslashModeIsRefused(t *testing.T) {
 		"Ptah v0.33.1's failed apply": {"failed", "", "failed"},
 		"a stale plan":                {"refused", `{"code":"stale-plan","changed":"schema"}`, "refused (stale-plan)"},
 		"a lock timeout":              {"refused", `{"code":"lock-timeout"}`, "refused (lock-timeout)"},
-		"a code it does not know":     {"refused", `{"code":"backslash-modes"}`, "refused (backslash-modes)"},
 	} {
 		result, _, _ = run(t, dryRun(test.outcome, test.refusal))
 		want := "plan validation reported " + test.reason + " rather than a dry run"

@@ -631,6 +631,16 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 	invalidThenRead := invalid.DeepCopy()
 	invalidThenRead.Status.Phase = operatorv1alpha1.PhaseResolving
 	invalidThenRead.Status.Conditions = unreadableThenRead.Status.Conditions
+	// The read of the first target met a plan Ptah refuses.
+	refusedPlan := unreadable.DeepCopy()
+	refusedPlan.Status.Conditions = []metav1.Condition{
+		condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, string(operatorv1alpha1.ReasonPlanRefused),
+			"plan_refused: ptah refused to plan the change (view-security-option: public.notes_view security_invoker)", 3),
+	}
+	refusedPlan.Status.Journal.Entries[len(refusedPlan.Status.Journal.Entries)-1].Reason = string(operatorv1alpha1.ReasonPlanRefused)
+	refusedPlanThenRead := refusedPlan.DeepCopy()
+	refusedPlanThenRead.Status.Phase = operatorv1alpha1.PhaseResolving
+	refusedPlanThenRead.Status.Conditions = unreadableThenRead.Status.Conditions
 	withdrawn := written.DeepCopy()
 	withdrawn.Annotations = nil
 	for _, row := range []struct {
@@ -647,6 +657,8 @@ func TestAWaitForASettlementStopsWhereNothingWillSettle(t *testing.T) {
 		{"the same, read after the next pass rewrote Ready", unreadableThenRead, operate.StopProofEnded, "could not read the desired schema"},
 		{"the first target's read met a schema Ptah refuses", invalid, operate.StopProofEnded, "Ptah refused the desired schema"},
 		{"the same refusal, read after the next pass rewrote Ready", invalidThenRead, operate.StopProofEnded, "Ptah refused the desired schema"},
+		{"the first target's read met a plan Ptah refuses", refusedPlan, operate.StopProofEnded, "Ptah refused to plan the desired schema"},
+		{"the plan refusal, read after the next pass rewrote Ready", refusedPlanThenRead, operate.StopProofEnded, "Ptah refused to plan the desired schema"},
 		{"the annotation came off", withdrawn, operate.StopStatementWithdrawn, "no longer holds " + settleValue(movedTarget)},
 	} {
 		t.Run(row.name, func(t *testing.T) {

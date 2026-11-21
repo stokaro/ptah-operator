@@ -655,6 +655,112 @@ func (d *dataPlane) assertViewInvokerHeldOnlyWhenItMoves(schema, publishReferenc
 	d.logf("PASS security_invoker held for a person only when the plan changes it, under apply Always")
 }
 
+// holdRefusal reads schema name until two failure retries have passed since
+// the attempt that refused it, auditing the Jobs that finished at every
+// reading as waitForSchema does, and requires every reading to hold the same
+// refusal, as refusedAs reads it (holdSchemaRefusal).
+func (d *dataPlane) holdRefusal(
+	name string, refused *ptahv1alpha1.PtahSchema,
+	refusedAs func(*ptahv1alpha1.PtahSchema) (string, error),
+) {
+	d.t.Helper()
+	until, err := refusalHoldEnd(refused)
+	d.check(err, "hold the refusal of %s", name)
+	d.logf("holding %s, until two failure retries of %s after the refusal at %s",
+		time.Until(until).Round(time.Second), refused.Spec.Execution.FailureRetryInterval.Duration,
+		refused.Status.LastAttemptTime.UTC().Format(time.RFC3339))
+	readings, err := holdSchemaRefusal(refused, refusedAs, func() (*ptahv1alpha1.PtahSchema, error) {
+		d.auditCompletedJobs()
+		schema := &ptahv1alpha1.PtahSchema{}
+		return schema, d.get(name, schema)
+	}, time.Now, func(pause time.Duration) error {
+		d.sleep(pause)
+		return nil
+	})
+	d.check(err, "the refusal of %s", name)
+	d.logf("the refusal stood through %d readings until %s", readings, until.UTC().Format(time.RFC3339))
+}
+
+// externalPlanRefusal proves that a Plan Ptah refuses stops the schema at
+// Blocked, and that the edit that removes the cause lets it go
+// (stokaro/ptah-operator#1166). It starts from the suspended schema the
+// security_invoker row leaves, in sync on v6, whose view holds
+// security_invoker=true. The v7 artifact declares the same view and leaves the
+// option unstated, which Ptah refuses to plan: dropping the option would widen
+// what the view's readers see. The schema stops with PlanRefused, written for
+// the generation that names v7, and its message is the code, the view and the
+// option alone. The refusal stands, at the attempt that made it, through two
+// failure retries from that attempt; one Plan Job ran, nothing was applied,
+// and the view keeps the option. Pointing the spec back at v6, which states
+// the option, is read at once: the schema comes back InSync on v6 by an
+// attempt stamped after the refusal, with no Apply, so with no Applied record,
+// which the Resolve of v7 cleared. It leaves the schema suspended.
+func (d *dataPlane) externalPlanRefusal() {
+	d.t.Helper()
+	schema := externalPGSchema
+	const held = "security_invoker=true:true"
+	start := d.schema(schema)
+	stated, statedDigest := start.Spec.Desired.OCIRef, start.Status.Source.Digest
+	if !quiescentlySuspended(start) || start.Status.Applied == nil || start.Status.Applied.ArtifactDigest != statedDigest {
+		d.fatalf("%s is not suspended on the artifact it applied: phase %s, source %q, applied %+v",
+			schema, start.Status.Phase, statedDigest, start.Status.Applied)
+	}
+	if state := d.externalViewState(); state != held {
+		d.fatalf("external PostgreSQL holds %s as %q before the plan refusal row, want %q", externalView, state, held)
+	}
+
+	publishReference := d.registryReference("postgresql-external")
+	digest := d.publishSchema("postgresql-external", "v7", "postgres", publishReference,
+		filepath.Join(repositoryRoot, "testdata", "e2e", "postgresql-external-v7-view-invoker-unstated.sql"))
+	before := d.checkpointJobs(schema, "")
+	d.patchSchema(schema, map[string]any{"spec": map[string]any{
+		"suspend": false, "interval": quiescentInterval,
+		"desired": map[string]any{"ociRef": strings.TrimSuffix(publishReference, ":stable") + "@" + digest},
+	}})
+	d.assertAlwaysPolicyKept(schema, quiescentInterval)
+	refusedGeneration := d.schema(schema).Generation
+	if refusedGeneration <= start.Generation {
+		d.fatalf("%s kept generation %d after the edit to v7", schema, refusedGeneration)
+	}
+	var message string
+	refused := d.waitForSchema(schema, "the Plan of v7 to stop with PlanRefused for "+externalView+"'s security_invoker",
+		func(s *ptahv1alpha1.PtahSchema) bool {
+			said, err := viewSecurityPlanRefused(s, externalView, refusedGeneration)
+			message = said
+			return err == nil
+		})
+	// A controller that still planned again at the failure retry would claim
+	// a Plan within the hold and stamp another attempt.
+	d.holdRefusal(schema, refused, func(s *ptahv1alpha1.PtahSchema) (string, error) {
+		return viewSecurityPlanRefused(s, externalView, refusedGeneration)
+	})
+	refusedCheckpoint := d.checkpointJobs(schema, "")
+	d.assertOneJobBetween(schema, "plan", before, refusedCheckpoint)
+	d.assertNoJobBetween(schema, "apply", before, refusedCheckpoint)
+	if state := d.externalViewState(); state != held {
+		d.fatalf("the refused plan left %s as %q, want %q", externalView, state, held)
+	}
+
+	d.patchSchema(schema, map[string]any{"spec": map[string]any{"desired": map[string]any{"ociRef": stated}}})
+	editedGeneration := d.schema(schema).Generation
+	if editedGeneration <= refusedGeneration {
+		d.fatalf("%s kept generation %d after the edit back to the artifact that states the option", schema, editedGeneration)
+	}
+	d.waitForSchema(schema, "the edit that states the option to bring "+schema+" back in sync after the refusal",
+		func(s *ptahv1alpha1.PtahSchema) bool {
+			return planRefusalLifted(s, statedDigest, editedGeneration, refused.Status.LastAttemptTime) == nil
+		})
+	d.assertNoJobBetween(schema, "apply", before, d.checkpointJobs(schema, ""))
+	if state := d.externalViewState(); state != held {
+		d.fatalf("after the refusal lifted the database holds %s as %q, want %q", externalView, state, held)
+	}
+	d.assertExternalPostgresqlCatalog()
+	d.suspend(schema, true)
+	d.waitForSchema(schema, "external PostgreSQL acceptance to suspend after the plan refusal", quiescentlySuspended)
+	d.auditRuntimeCredentials()
+	d.logf("PASS a Plan Ptah refuses stopped the schema with %s and the edit that states the option lifted it", message)
+}
+
 // applyViewStepUnattended publishes one artifact of the security_invoker row
 // and proves the plan it makes is the change want describes, applied with
 // nobody's approval under apply: Always. The poll fails at once on a reading

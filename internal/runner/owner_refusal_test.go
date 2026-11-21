@@ -160,8 +160,8 @@ func TestAPlanRefusingAnOwnerNamesIt(t *testing.T) {
 		TempDir:     t.TempDir(),
 	})
 	want := `ptah refused to plan the change (missing-owner-role: ` + statement + ` role no_such_role does not exist)`
-	if result.Error == nil || result.Error.Code != codePlanRefused || result.Error.Message != want {
-		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, codePlanRefused, want)
+	if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, CodePlanRefused, want)
 	}
 	encoded, err := EncodeResult(result)
 	if err != nil {
@@ -216,8 +216,8 @@ func TestAPlanWhoseDryRunRefusesAnOwnerIsRefused(t *testing.T) {
 	result, log, encoded := run(t, dryRun(`{"code":"owner-transfer","owner":{"statement":`+string(mustMarshal(t, statement))+
 		`,"kind":"VIEW","role":"outsider","connected":"ptah","privilege":"SET"}}`))
 	want := `ptah refused to plan the change (owner-transfer: ` + statement + ` role outsider connected ptah lacks SET)`
-	if result.Error == nil || result.Error.Code != codePlanRefused || result.Error.Message != want {
-		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, codePlanRefused, want)
+	if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+		t.Fatalf("Run() error = %#v, want %s with %q", result.Error, CodePlanRefused, want)
 	}
 	if !strings.Contains(log, "ptah-runner: ptah reported: "+sentence+"\n") {
 		t.Fatalf("the log does not carry Ptah's sentence whole on one line:\n%s", log)
@@ -228,17 +228,28 @@ func TestAPlanWhoseDryRunRefusesAnOwnerIsRefused(t *testing.T) {
 		}
 	}
 
-	// The controls: only an owner refusal is a refusal of the plan's content.
-	// A stale plan, a lock another schema's Apply held, any other code Ptah
-	// knows and a code it may add read as before v0.30.1, even with an owner
-	// object beside the code.
+	// Every other code is a refusal of the plan too, by its code alone, one
+	// Ptah may add included, even with an owner object beside it: the runner
+	// names an owner only under an owner code.
 	owner := `"owner":{"statement":` + string(mustMarshal(t, statement)) + `,"kind":"VIEW","role":"outsider"}`
+	for name, test := range map[string]struct{ refusal, code string }{
+		"a view definer":  {`{"code":"view-definer"}`, "view-definer"},
+		"an unknown code": {`{"code":"some-later-code",` + owner + `}`, "some-later-code"},
+	} {
+		result, _, _ = run(t, dryRun(test.refusal))
+		want := "ptah refused to plan the change (" + test.code + ")"
+		if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+			t.Errorf("%s: Run() error = %#v, want %s with %q", name, result.Error, CodePlanRefused, want)
+		}
+	}
+
+	// The controls: a stale plan and a lock another schema's Apply held say
+	// nothing about the plan and read as before v0.30.1, even with an owner
+	// object beside the code.
 	for name, test := range map[string]struct{ refusal, code string }{
 		"a stale plan":    {`{"code":"stale-plan","changed":"schema"}`, "stale-plan"},
 		"a lock timeout":  {`{"code":"lock-timeout"}`, "lock-timeout"},
-		"a view definer":  {`{"code":"view-definer"}`, "view-definer"},
 		"an owner object": {`{"code":"lock-timeout",` + owner + `}`, "lock-timeout"},
-		"an unknown code": {`{"code":"some-later-code",` + owner + `}`, "some-later-code"},
 	} {
 		result, _, _ = run(t, dryRun(test.refusal))
 		want := "plan validation reported refused (" + test.code + ") rather than a dry run"

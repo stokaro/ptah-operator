@@ -512,6 +512,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:97e6021c74c36bfb6f78ff5d125e91b101ce0b82858f7467398ecac24dcd84f7",
       "reason": "The api package the runner builds against gains status.blockedSince on PtahSchema and PtahMigration, the date the manager keeps while a resource stays Blocked for a person (#1160). The manager writes and reads it; no runner input, frame or code carries it. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:af87aae8557e0d95a2d3ca6447d44ac0574819a7d8b4ace18ea695f02cf41b08",
+      "reason": "The api package the runner builds against gains the reason PlanRefused, which a schema whose Plan Ptah refused under a code stops with, and which its conditions and a Verified journal entry carry and no frame carries. The runner exports plan_refused as CodePlanRefused. The dry run of a saved plan refused under any code but stale-plan and lock-timeout now reads plan_refused, as the plan's own refusal does, where only the owner codes and backslash-mode did. A plan document refused as stale-plan or lock-timeout now reads invalid_plan_output, as the dry run's do. Every plan_refused now writes Ptah's sentence to the Pod log, where only the dry run's did. Both codes were in the frame before, so a controller of either side reads what this runner writes, and the runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
     }
   ]
 }

@@ -39,6 +39,19 @@ import (
 // (MigrationDirectoryUnreadable), with a reason for each answer, since what a
 // person changes differs: a file Ptah does not parse, or a declaration the file
 // states.
+//
+// A Plan that Ptah refuses under a code of its own reports plan_refused, with
+// the code and what the refusal names: a view whose security option or definer
+// the schema does not state, from the plan; an owner the server would refuse,
+// or a backslash its sql_mode reads another way, from the dry run of the saved
+// plan (internal/runner). Such a refusal is decided by the schema and the
+// server together, and the same Plan against the same server gets it again, so
+// it stops the same way, with its own reason. Every code stops, those this
+// operator does not know too: a code is Ptah's statement that it refused the
+// plan as it stands, and a retry spends a Job and the Lease to hear it again. A
+// dry run that says the database moved between the two reads, or that another
+// session held the lock, is no refusal of the plan, and the runner reports it as
+// invalid_plan_output, which is retried.
 
 // schemaRefusal is one of those answers: the reason the schema stops with, and
 // the words its conditions use for what Ptah did with the desired schema.
@@ -60,10 +73,16 @@ var (
 	schemaInvalid = schemaRefusal{
 		reason: operatorv1alpha1.ReasonSchemaInvalid, refused: "refused", refuses: "refuses", accepts: "accepts",
 	}
+	// planRefused is plan_refused: Ptah compared the schema with the database
+	// and refused to plan the change, under a code.
+	planRefused = schemaRefusal{
+		reason: operatorv1alpha1.ReasonPlanRefused, refused: "refused to plan", refuses: "refuses to plan", accepts: "plans",
+	}
 )
 
 // schemaRefusalOf reports the refusal failure is, where it is Ptah's answer
-// about the desired schema to one of the two operations that read it.
+// about the desired schema to one of the two operations that read it. Only a
+// Plan plans, so only a Plan's plan_refused is one.
 func schemaRefusalOf(operation operatorv1alpha1.OperationType, failure *runner.ResultError) (schemaRefusal, bool) {
 	if failure == nil || (operation != operatorv1alpha1.OperationObserve && operation != operatorv1alpha1.OperationPlan) {
 		return schemaRefusal{}, false
@@ -73,16 +92,21 @@ func schemaRefusalOf(operation operatorv1alpha1.OperationType, failure *runner.R
 		return sourceUnreadable, true
 	case runner.CodeDesiredSchemaInvalid:
 		return schemaInvalid, true
+	case runner.CodePlanRefused:
+		if operation == operatorv1alpha1.OperationPlan {
+			return planRefused, true
+		}
 	}
 	return schemaRefusal{}, false
 }
 
 // refuseSchemaSource records an Observe or a Plan whose desired schema Ptah
-// could not read or refused. No plan outlives the refusal, and no approval of
-// one does. The read-only chain starts again from Resolve at the interval, when
-// a moved tag or branch can carry another file; at once when a ConfigMap
-// source changes or the spec does, which reconcile checks before the Blocked
-// phase; and on a read request, which a Blocked resource answers.
+// could not read or refused, or whose change Ptah refused to plan. No plan
+// outlives the refusal, and no approval of one does. The read-only chain
+// starts again from Resolve at the interval, when a moved tag or branch can
+// carry another file; at once when a ConfigMap source changes or the spec
+// does, which reconcile checks before the Blocked phase; and on a read
+// request, which a Blocked resource answers.
 //
 // An unreadable file says nothing about the target. The child that named it
 // holds no URL, and the run before it may have failed before it opened the
@@ -90,7 +114,9 @@ func schemaRefusalOf(operation operatorv1alpha1.OperationType, failure *runner.R
 // An invalid schema says the read opened it: Ptah connects before it loads the
 // file, and the runner reports one only where the failed command stopped on a
 // fault of the comparison or a declaration, which a connect failure never is
-// (failureReadTheTarget).
+// (failureReadTheTarget). So does a refused plan: Ptah refuses one only once it
+// has compared the schema with the database, and the dry run of a saved plan
+// runs only after the plan that compared them, in the same Pod.
 //
 // A read that serves a proof goes to consumeResultWithTransport instead, the
 // one place a proof ends, which writes how it ended with
@@ -149,35 +175,46 @@ func (r *SchemaReconciler) warnSchemaRefused(schema *operatorv1alpha1.PtahSchema
 		r.event(schema, corev1.EventTypeWarning, "SchemaSourceUnreadable", "%s", bounded(message, 512))
 	case operatorv1alpha1.ReasonSchemaInvalid:
 		r.event(schema, corev1.EventTypeWarning, "SchemaInvalid", "%s", bounded(message, 512))
+	case operatorv1alpha1.ReasonPlanRefused:
+		r.event(schema, corev1.EventTypeWarning, "PlanRefused", "%s", bounded(message, 512))
 	}
 }
 
 // endProofOnRefusedSchema writes how a proof ends whose read could not read
-// the desired schema, or met a schema Ptah refuses; consumeResultWithTransport
-// ends the proof in the same write. The proof reads the snapshot the Apply ran
-// from, which no edit changes, so a retry can only get the same refusal, and it
-// would hold the database Lease and dispatch a Job at every failure retry while
-// doing so. Keeping the pending observation while retiring the claim is not an
-// answer either: reconcile carries out a pending observation before anything
-// else, so the next pass would claim the same read at once. So the proof ends,
-// as a proof whose read planned nothing does (endRefusedPlan). Nothing
-// established what the Apply did, so no Applied record is written. The realm
-// goes back: the proof read runs only once the Apply's executor can no longer
-// write.
+// the desired schema, met a schema Ptah refuses, or met a plan Ptah refuses;
+// consumeResultWithTransport ends the proof in the same write. The proof reads
+// the snapshot the Apply ran from, which no edit changes, so a retry can only
+// get the same refusal, and it would hold the database Lease and dispatch a
+// Job at every failure retry while doing so. Keeping the pending observation
+// while retiring the claim is not an answer either: reconcile carries out a
+// pending observation before anything else, so the next pass would claim the
+// same read at once. So the proof ends, as a proof whose read planned nothing
+// does (endRefusedPlan). Nothing established what the Apply did, so no Applied
+// record is written. The realm goes back: the proof read runs only once the
+// Apply's executor can no longer write.
 //
-// The usual way here is a Ptah upgrade between the Apply and its proof, whose
+// A refused plan reaches here where the read after the Apply still finds a
+// change to make and Ptah refuses to plan it. The likeliest way is an Apply
+// Ptah refused, as apply_refused, before any statement: the change is still
+// there, and the proof's dry run of the plan it makes meets the same code. A
+// wait for the Apply stops before this, on the ApplyFinished entry with outcome
+// Unknown that the failed Apply journals (internal/operate). After an Apply
+// that succeeded, the proof gets here where the Apply left a difference, or
+// the server moved after the Plan, as a role dropped or a sql_mode set, and
+// that is the proof the wait verbs name as refused to plan. For a file, the
+// usual way here is a Ptah upgrade between the Apply and its proof, whose
 // release refuses what the release before it read. PtahVersion and
 // ExecutorImage are execution-binding components, so the upgrade retired the
 // binding the Apply's plan names, and the proof's read ran under the new one.
-// That proof is not current: settleProofInputs records the binding change,
-// the journal records the proof Verified Superseded, the resource reads
-// Pending, and the next pass reads the source at once, where an ordinary read
-// of the same file stops Blocked (refuseSchemaSource). The Warning Event is
-// what names the file for the proof itself. A newer generation or policy ends
-// the proof Superseded the same way. Only where the executor that planned the
-// snapshot refuses it on the read after does the proof end current: Blocked
-// until the interval, and Verified Unknown with the refusal's reason in the
-// journal (internal/lifecyclejournal), which is what the wait verbs read.
+// That proof is not current: settleProofInputs records the binding change, the
+// journal records the proof Verified Superseded, the resource reads Pending,
+// and the next pass reads the source at once, where an ordinary read of the
+// same file stops Blocked (refuseSchemaSource). The Warning Event is what names
+// the file for the proof itself. A newer generation or policy ends the proof
+// Superseded the same way. Only where the executor that planned the snapshot
+// refuses it on the read after does the proof end current: Blocked until the
+// interval, and Verified Unknown with the refusal's reason in the journal
+// (internal/lifecyclejournal), which is what the wait verbs read.
 //
 // current says the proof ends under the policy and execution binding the Apply
 // ran under.
@@ -205,10 +242,12 @@ func (r *SchemaReconciler) endProofOnRefusedSchema(
 }
 
 // setSchemaRefusalConditions records a read whose desired schema Ptah could
-// not read or refused: no plan, and nothing known about the difference, since
-// nothing was compared. Ready carries the runner's code and Ptah's sentence,
-// which is where a reader looks first; inSync says what the read leaves
-// unknown.
+// not read or refused, or whose change it refused to plan: no plan, and no
+// verdict on the difference, since nothing was compared or Ptah planned
+// nothing from what it compared. Ready carries the runner's message, which is
+// where a reader looks first: the code, then Ptah's reason for a file, or the
+// refusal's code and what it lists for a plan, whose sentence is in the Pod
+// log. inSync says what the read leaves unknown.
 func setSchemaRefusalConditions(schema *operatorv1alpha1.PtahSchema, refusal schemaRefusal, message, inSync string) {
 	schema.Status.Plan = nil
 	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, refusal.reason,
