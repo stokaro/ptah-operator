@@ -579,3 +579,70 @@ func TestRepeatableRunLoggedRefusesEachClause(t *testing.T) {
 		})
 	}
 }
+
+// The stops kubectl ptah prints on a migration the record stops, as
+// TestTheReadBlockedStopIsWhatThePluginPrints in cmd/kubectl-ptah keeps them.
+func readBlockedStop(t *testing.T, name string) string {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", "cmd", "kubectl-ptah", "testdata", "read-blocked", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
+}
+
+func TestWaitStoppedOnUnfinishedRepeatable(t *testing.T) {
+	t.Parallel()
+	refresh, wait := readBlockedStop(t, "refresh-repeatable-unfinished.txt"), readBlockedStop(t, "wait-repeatable-unfinished.txt")
+	for target, stderr := range map[string]string{"read": refresh, "in-sync": wait} {
+		if err := waitStoppedOnUnfinishedRepeatable(approveWaitWillNotReach, stderr, target, repeatableReadingIdentity); err != nil {
+			t.Fatalf("refused the stop the wait for %s printed: %v", target, err)
+		}
+	}
+	timeout := "Waiting up to 5m0s for ptahmigration/storefront in namespace demo to reach read.\n" +
+		"kubectl-ptah: ptahmigration/storefront in namespace demo did not reach read within 5m0s.\n" +
+		"  Phase:       Blocked\n" +
+		"  Held by:     Ready=False, RepeatableMigrationUnfinished: The repeatable migration record holds an attempt that did not finish\n"
+	replaced := func(from, to string) string {
+		if !strings.Contains(refresh, from) {
+			t.Fatalf("the stop does not carry %q to replace", from)
+		}
+		return strings.Replace(refresh, from, to, 1)
+	}
+	for _, test := range []struct {
+		name, stderr, target, identity string
+		code                           int
+	}{
+		// The defect: the wait ran to its timeout on a refusal every read
+		// repeats, and refresh --wait reported the read that ended there done.
+		{name: "a timeout", code: 7, stderr: timeout, target: "read", identity: repeatableReadingIdentity},
+		{
+			name: "a read reported done", code: 0, target: "read", identity: repeatableReadingIdentity,
+			stderr: "Waiting up to 5m0s for ptahmigration/storefront in namespace demo to reach read.\n",
+		},
+		{name: "the stop with another exit status", code: 1, stderr: refresh, target: "read", identity: repeatableReadingIdentity},
+		{name: "a wait for another target", code: approveWaitWillNotReach, stderr: refresh, target: "in-sync", identity: repeatableReadingIdentity},
+		{name: "the stop of a wait for in-sync, for a read", code: approveWaitWillNotReach, stderr: wait, target: "read", identity: repeatableReadingIdentity},
+		{
+			// An engine the operator does not run stops a read with no read ended.
+			name: "another stop", code: approveWaitWillNotReach, target: "read", identity: repeatableReadingIdentity,
+			stderr: replaced(": the read ended Blocked: RepeatableMigrationUnfinished.", " will not reach read: Blocked."),
+		},
+		{
+			name: "a read that ended Blocked for another reason", code: approveWaitWillNotReach, target: "read", identity: repeatableReadingIdentity,
+			stderr: replaced(": the read ended Blocked: RepeatableMigrationUnfinished.", ": the read ended Blocked: MigrationDirectoryUnreadable."),
+		},
+		{
+			name: "a read refusal for another reason", code: approveWaitWillNotReach, target: "read", identity: repeatableReadingIdentity,
+			stderr: replaced("Why:         RepeatableMigrationUnfinished: ", "Why:         MigrationDirectoryUnreadable: "),
+		},
+		{name: "another record", code: approveWaitWillNotReach, stderr: refresh, target: "read", identity: "item"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if err := waitStoppedOnUnfinishedRepeatable(test.code, test.stderr, test.target, test.identity); err == nil {
+				t.Fatalf("accepted exit %d with stderr %q for a wait for %s on %s", test.code, test.stderr, test.target, test.identity)
+			}
+		})
+	}
+}

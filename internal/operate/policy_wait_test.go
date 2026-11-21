@@ -126,6 +126,9 @@ func TestWaitStopsOnAPlanThePolicyHolds(t *testing.T) {
 		wantPhase   string
 		wantReached int
 		wantMessage string
+		// wantBlocked is a stop in the words of any Blocked that holds,
+		// StopBlocked, rather than the policy's own.
+		wantBlocked bool
 	}{
 		{
 			name: "in-sync: the refusal the cycle after the wait began ends in stops it", target: operate.TargetInSync,
@@ -172,8 +175,31 @@ func TestWaitStopsOnAPlanThePolicyHolds(t *testing.T) {
 			wantReached: 2,
 		},
 		{
-			name: "in-sync: a refusal decided before the wait began does not stop it", target: operate.TargetInSync,
-			docs: []doc{blocked},
+			// A poll can miss a whole cycle and read the refusal it ended in
+			// right after the one from before the wait. Both are a Blocked that
+			// holds on two polls in a row, and the policy's words still answer
+			// for the plan from the reading after the wait began.
+			name: "in-sync: a cycle no poll saw that ends in the same refusal", target: operate.TargetInSync,
+			docs: []doc{
+				blocked,
+				{phase: "Blocked", observedAt: at(30), plan: refusedPlan, conditions: destructiveBlocked(3)},
+			},
+			wantStop: 2, wantPhase: "Blocked",
+			wantMessage: "spec.policy holds plan " + refusedPlan.name + " (DestructiveChangesDisabled): " + destructiveRefusal,
+		},
+		{
+			// A refusal decided before the wait began is a Blocked at rest like
+			// any other (TestWaitStopsOnABlockedThatHolds): the policy's own
+			// words are for the plan a reading after the wait began computed.
+			name: "in-sync: a refusal decided before the wait began stops it as any Blocked does", target: operate.TargetInSync,
+			docs: []doc{blocked}, wantStop: 2, wantPhase: "Blocked", wantBlocked: true,
+			wantMessage: "PolicyBlocked: Plan is blocked by destructive-change policy",
+		},
+		{
+			// Under spec.policy.apply Never a plan is only recorded, and the
+			// policy holding it waits for no person.
+			name: "in-sync: the same refusal under spec.policy.apply Never does not stop it", target: operate.TargetInSync,
+			docs: []doc{{phase: "Blocked", observedAt: at(0), plan: refusedPlan, conditions: destructiveBlocked(3), applyNever: true}},
 		},
 		{
 			// The reading is the wait's, and the refusal beside it is the
@@ -216,10 +242,14 @@ func TestWaitStopsOnAPlanThePolicyHolds(t *testing.T) {
 			var timedOut *operate.TimeoutError
 			switch {
 			case row.wantStop > 0:
-				if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyBlocked || stop.Phase != row.wantPhase ||
+				want := operate.StopPolicyBlocked
+				if row.wantBlocked {
+					want = operate.StopBlocked
+				}
+				if !errors.As(err, &stop) || stop.Reason != want || stop.Phase != row.wantPhase ||
 					tl.readCount() != row.wantStop || !strings.Contains(stop.Error(), row.wantMessage) {
 					t.Fatalf("err = %v after %d reads, want a %s stop in phase %s at read %d naming %q",
-						err, tl.readCount(), operate.StopPolicyBlocked, row.wantPhase, row.wantStop, row.wantMessage)
+						err, tl.readCount(), want, row.wantPhase, row.wantStop, row.wantMessage)
 				}
 			case row.wantReached > 0:
 				if err != nil || result.Reads != row.wantReached || result.Target != row.target {

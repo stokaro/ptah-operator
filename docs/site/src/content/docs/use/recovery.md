@@ -620,6 +620,10 @@ and no Job.
 The resource reads the result at its next read and reaches `Ready=True`, and
 `status.lastRun` goes on saying `Failed` until a later run replaces it. With nothing
 left pending, that read also settles a `status.unresolvedRun`, with no acknowledgment.
+`kubectl ptah refresh migration/orders -n application --wait` asks for that read and
+waits for it. A plain `kubectl ptah wait` started after the retry exits 8 on a
+`HistoryDirty` the operator has not read again yet. On `ApplyOutcomeUnknown` it
+waits for that read, which settles the run.
 
 ```sh
 ptah migrations up --allow-dirty --to-version 2 --db-url "$DATABASE_URL" --migrations-dir ./migrations

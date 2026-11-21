@@ -1,0 +1,5 @@
+Waiting up to 5m0s for ptahmigration/storefront in namespace demo to reach in-sync.
+kubectl-ptah: ptahmigration/storefront in namespace demo will not reach in-sync: Blocked.
+  Phase:       Blocked
+  Why:         RepeatableMigrationUnfinished: Repeatable migration: item_names failed inside a transaction, which took no effect (repair: `ptah migrations repair --repeatable item_names --force`). Ptah runs nothing while one is unfinished. Establish what the attempt did and correct the file, then delete the record with the repair command; the next plan runs the file again. Removing the record with the repair command ends it: the operator reads again at spec.interval or on a read request (kubectl ptah refresh), and at once after a spec edit or a change to a ConfigMap source
+kubectl ptah migration storefront -n demo shows where it stands.

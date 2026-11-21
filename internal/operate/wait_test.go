@@ -774,15 +774,24 @@ func TestWaitTargets(t *testing.T) {
 			wantTimeout: true, wantMessage: "phase AwaitingApproval with ApprovalRequired True",
 		},
 		{
-			// The refusal may be from before the edit that ends it, and the wait
-			// has no baseline to tell. Only the plan a later reading computed
-			// stops the wait, as TestWaitStopsOnAPlanThePolicyHolds holds.
-			name: "approval: with no baseline, a policy refusal from an earlier reading does not stop the wait", target: operate.TargetApproval,
+			// A spec edit that may end the refusal moves the generation, which
+			// the wait sees. So with no baseline, a policy refusal from an
+			// earlier reading stops the wait as any Blocked at rest does, on the
+			// second poll.
+			name: "approval: with no baseline, a policy refusal from an earlier reading stops the wait", target: operate.TargetApproval,
 			only: operate.FamilySchema,
 			docs: func(f operate.Family) []doc {
 				return []doc{{phase: "Blocked", observedAt: at(0), plan: refusedPlan, conditions: destructiveBlocked(3)}}
 			},
-			wantTimeout: true, wantMessage: "phase AwaitingApproval with ApprovalRequired True",
+			wantStop: operate.StopBlocked, wantMessage: "PolicyBlocked: Plan is blocked by destructive-change policy",
+		},
+		{
+			name: "approval: with no baseline, a spec edit the operator has not observed since that refusal", target: operate.TargetApproval,
+			only: operate.FamilySchema,
+			docs: func(f operate.Family) []doc {
+				return []doc{{generation: 4, observedGeneration: 3, phase: "Blocked", observedAt: at(0), plan: refusedPlan, conditions: destructiveBlocked(3)}}
+			},
+			wantTimeout: true, wantMessage: "still waiting for the operator to observe generation 4",
 		},
 		{
 			name: "approval: with a baseline, the plan from the read after the one it shows in flight is the target", target: operate.TargetApproval,

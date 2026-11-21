@@ -308,7 +308,8 @@ func stamp(d *doc, family operate.Family, at time.Time) {
 // and otherwise the one in which the operator takes the request. The stamp is
 // compared and never ordered, here or against the request's own instant, which the
 // client's clock chose: the rows date refusals before the request, after it, and
-// before the refusal they replace, as managers whose clocks disagree do.
+// before the refusal they replace, as managers whose clocks disagree do. The stop
+// says the read ended there, as a stop on a Blocked a read ended in does.
 func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 	t.Parallel()
 
@@ -570,9 +571,12 @@ func TestAWaitForAReadStopsOnTheRefusalItsReadEndedIn(t *testing.T) {
 					}
 				case row.wantStop > 0:
 					if !errors.As(err, &stop) || stop.Reason != operate.StopPolicyRefused || stop.Phase != "Blocked" ||
-						stop.Target != operate.TargetRead || tl.readCount() != row.wantStop || !strings.Contains(stop.Message, refusalMessage) {
-						t.Fatalf("err = %v after %d reads, want a %s stop at read %d naming %q",
-							err, tl.readCount(), operate.StopPolicyRefused, row.wantStop, refusalMessage)
+						stop.Target != operate.TargetRead || tl.readCount() != row.wantStop ||
+						!strings.HasPrefix(stop.Message, "PolicyRefused: ") || !strings.Contains(stop.Message, refusalMessage) ||
+						stop.Held != "PolicyRefused" || !stop.ReadEnded ||
+						!strings.Contains(err.Error(), ": the read ended Blocked: PolicyRefused: ") {
+						t.Fatalf("err = %v (%#v) after %d reads, want a %s stop at read %d naming %q, which says the read ended there",
+							err, stop, tl.readCount(), operate.StopPolicyRefused, row.wantStop, refusalMessage)
 					}
 				case !errors.As(err, &timedOut):
 					t.Fatalf("err = %v after %d reads, want a timeout", err, tl.readCount())

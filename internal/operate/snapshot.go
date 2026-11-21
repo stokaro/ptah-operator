@@ -60,6 +60,11 @@ type snapshot struct {
 	// refusal stamps the verification policy's refusal ArtifactVerified records,
 	// and is absent when it records none (refusalStamp).
 	refusal refusalStamp
+	// blocked stamps the Blocked the resource rests in, and is absent when it
+	// does not rest in Blocked (blockedStamp).
+	blocked refusalStamp
+	// applyNever is spec.policy.apply Never.
+	applyNever bool
 }
 
 type planRecord struct {
@@ -160,6 +165,58 @@ func refusalOf(family Family, conditions []metav1.Condition, resolvedAt *metav1.
 	return refusalStamp{present: true, at: timeOf(resolvedAt)}
 }
 
+// claimRewritten is the condition the claim of every operation rewrites, and so
+// the one that says why a resource rests where it does: a schema's Ready, which
+// each claim takes to OperationInProgress, and a migration's Progressing, which
+// each claim takes to True. A resource at rest in Blocked carries the reason that
+// holds it there on it. A migration's Blocked and Ready keep that reason through
+// the next read, and a schema's PlanReady and InSync go at other times, so
+// neither dates anything.
+func claimRewritten(family Family, conditions []metav1.Condition) *metav1.Condition {
+	if family == FamilyMigration {
+		return meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	}
+	return meta.FindStatusCondition(conditions, operatorv1alpha1.ConditionReady)
+}
+
+// blockedStamp stamps the Blocked a document rests in, the way refusalOf stamps
+// the verification policy's refusal: two documents carry the same stamp while
+// they show the same Blocked, and different ones once an operation claimed after
+// the first ended in a Blocked of its own. attemptedAt is a schema's
+// status.lastAttemptTime, and nil for a migration.
+//
+// A schema's stamp is status.lastAttemptTime. Every claim writes it, and so does
+// every harvest, those that end in Blocked included (consumeResultWithTransport,
+// refuseSchemaSource, the end of a Plan with nothing to publish and
+// blockVerification in internal/controller), from the clock of the manager that
+// wrote it. Ready's own lastTransitionTime cannot say it: Ready stays False from
+// the claim's OperationInProgress to the Blocked, and keeps its time.
+//
+// A migration's stamp is the lastTransitionTime of Progressing. Every claim takes
+// it to True and every write of Blocked takes it back to False, so the time is the
+// Blocked's own. A migration records no time of an attempt.
+//
+// A Blocked the operator writes on a pass that claims nothing, the engine check's,
+// a realm's verdict or a plan's own policy on the approval pass, keeps the stamp
+// of what came before. None of them ends a read. Two Blocked writes that end reads
+// are always more than a second apart, since each read runs a Resolve and a Verify
+// before the step that refuses.
+//
+// A schema's claim takes Ready to False too, with OperationInProgress, in the
+// write that moves the phase off Blocked. Ready False with that reason is a claim
+// whatever the phase says, and stamps no Blocked.
+func blockedStamp(family Family, phase string, conditions []metav1.Condition, attemptedAt *metav1.Time) refusalStamp {
+	held := claimRewritten(family, conditions)
+	if phase != phaseBlocked || held == nil || held.Status != metav1.ConditionFalse ||
+		held.Reason == string(operatorv1alpha1.ReasonOperationInProgress) {
+		return refusalStamp{}
+	}
+	if family == FamilyMigration {
+		return refusalStamp{present: true, at: held.LastTransitionTime.Time}
+	}
+	return refusalStamp{present: true, at: timeOf(attemptedAt)}
+}
+
 // unresolvedRecord is a migration's status.unresolvedRun.
 type unresolvedRecord struct {
 	operationID string
@@ -196,6 +253,8 @@ func schemaSnapshot(schema *operatorv1alpha1.PtahSchema) snapshot {
 		lastReadRequest:    status.LastReadRequest,
 		conditions:         status.Conditions,
 		refusal:            refusalOf(FamilySchema, status.Conditions, status.Source.ResolvedAt),
+		blocked:            blockedStamp(FamilySchema, string(status.Phase), status.Conditions, status.LastAttemptTime),
+		applyNever:         schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever,
 		journal:            status.Journal,
 		object:             schema,
 	}
@@ -234,6 +293,8 @@ func migrationSnapshot(migration *operatorv1alpha1.PtahMigration) snapshot {
 		lastReadRequest:    status.LastReadRequest,
 		conditions:         status.Conditions,
 		refusal:            refusalOf(FamilyMigration, status.Conditions, nil),
+		blocked:            blockedStamp(FamilyMigration, string(status.Phase), status.Conditions, nil),
+		applyNever:         migration.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever,
 		history:            status.History != nil,
 		journal:            status.Journal,
 		object:             migration,

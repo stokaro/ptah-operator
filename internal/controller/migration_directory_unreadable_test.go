@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -66,24 +67,7 @@ func TestAHistoryReadOfAnUnreadableDirectoryStopsBlocked(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			migration := migrationFixture()
-			migration.Spec.Interval = metav1.Duration{Duration: 37 * time.Minute}
-			migration.Status.ExecutionBinding = migrationExecutionBinding()
-			migration.Status.Artifact = resolvedMigrationArtifact()
-			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
-			migration.Finalizers = []string{migrationOperationFinalizer}
-			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
-			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
-			frame := migrationFrame(t, runner.Result{
-				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
-				OperationID: operation.ID, ChildExitCode: 2,
-				CoordinationDigest:   operation.CoordinationDigest,
-				TargetIdentityDigest: testDigest,
-				Error:                &runner.ResultError{Code: row.code, Message: row.message},
-			})
-			reconciler, api := fakeMigrationReconciler(
-				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
-			)
+			reconciler, api, migration, operation := unreadableDirectoryRead(t, &runner.ResultError{Code: row.code, Message: row.message})
 			recorder := record.NewFakeRecorder(16)
 			reconciler.Recorder = recorder
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
@@ -152,4 +136,63 @@ func TestAHistoryReadOfAnUnreadableDirectoryStopsBlocked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// unreadableDirectoryRead is a migration whose history read is harvested on the
+// next pass, the Job ended and the runner's result failure, at a 37-minute
+// interval. It returns the claim being harvested.
+func unreadableDirectoryRead(
+	t *testing.T, failure *runner.ResultError,
+) (*MigrationReconciler, client.WithWatch, *operatorv1alpha1.PtahMigration, *operatorv1alpha1.MigrationOperationStatus) {
+	t.Helper()
+	migration := migrationFixture()
+	migration.Spec.Interval = metav1.Duration{Duration: 37 * time.Minute}
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	frame := migrationFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+		OperationID: operation.ID, ChildExitCode: 2,
+		CoordinationDigest:   operation.CoordinationDigest,
+		TargetIdentityDigest: testDigest,
+		Error:                failure,
+	})
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap())
+	return reconciler, api, migration, operation
+}
+
+// TestTheDirectoryRefusalReadingIsWhatTheReconcilerStores keeps
+// testdata/migration-directory-unreadable.json to the migration a history read
+// leaves that Ptah could not read the directory of, with the reason the pinned
+// Ptah image gave for a SQL file its format does not read. The wait rows in
+// internal/operate read their conditions from it. Condition transition times and
+// the next read's time come from the clocks and are left out.
+func TestTheDirectoryRefusalReadingIsWhatTheReconcilerStores(t *testing.T) {
+	t.Parallel()
+	reconciler, api, migration, _ := unreadableDirectoryRead(t, &runner.ResultError{
+		Code: runner.CodeDesiredSourceUnreadable, Message: capturedDirectoryReason(t, "scratch-unread.json"),
+	})
+	reconciler.Recorder = record.NewFakeRecorder(16)
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	stored := readMigration(t, api, migration)
+	if stored.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("the read did not stop: phase %s", stored.Status.Phase)
+	}
+	status := stored.Status.DeepCopy()
+	for index := range status.Conditions {
+		status.Conditions[index].LastTransitionTime = metav1.Time{}
+	}
+	status.NextReconciliationTime = nil
+	status.Journal = nil
+	keepReading(t, "migration-directory-unreadable.json", map[string]any{
+		"apiVersion": operatorv1alpha1.GroupVersion.String(),
+		"kind":       "PtahMigration",
+		"metadata":   map[string]any{"namespace": stored.Namespace, "name": stored.Name, "generation": stored.Generation},
+		"status":     status,
+	})
 }

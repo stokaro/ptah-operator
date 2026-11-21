@@ -59,6 +59,8 @@ type doc struct {
 	generation         int64
 	observedGeneration int64
 	suspend            bool
+	// applyNever is spec.policy.apply Never.
+	applyNever bool
 	// deleting is a resource deletion has begun on: it carries a finalizer,
 	// and the fake API server sets deletionTimestamp when it is deleted.
 	deleting   bool
@@ -78,8 +80,11 @@ type doc struct {
 	// resolvedAt is a schema's status.source.resolvedAt: when its last Resolve
 	// was harvested. A migration records no such time.
 	resolvedAt time.Time
-	plan       *planDoc
-	noHistory  bool
+	// attemptedAt is a schema's status.lastAttemptTime: when its last claim was
+	// written or its last operation harvested. A migration records no such time.
+	attemptedAt time.Time
+	plan        *planDoc
+	noHistory   bool
 	// historyDatabase is the database a migration's status.history was read from:
 	// databaseA when empty.
 	historyDatabase string
@@ -142,6 +147,8 @@ type unresolvedDoc struct {
 	job         string
 	plan        string
 	planUID     types.UID
+	// recordedAt is when the operator wrote the record: at(100) when zero.
+	recordedAt time.Time
 }
 
 func (d doc) object(family operate.Family) client.Object {
@@ -171,6 +178,9 @@ func (d doc) object(family operate.Family) client.Object {
 	if family == operate.FamilySchema {
 		schema := &operatorv1alpha1.PtahSchema{ObjectMeta: meta}
 		schema.Spec.Suspend = d.suspend
+		if d.applyNever {
+			schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyNever
+		}
 		status := &schema.Status
 		status.ObservedGeneration = observedGeneration
 		status.Phase = operatorv1alpha1.ReconciliationPhase(d.phase)
@@ -184,6 +194,10 @@ func (d doc) object(family operate.Family) client.Object {
 		if !d.resolvedAt.IsZero() {
 			resolved := metav1.NewTime(d.resolvedAt)
 			status.Source.ResolvedAt = &resolved
+		}
+		if !d.attemptedAt.IsZero() {
+			attempted := metav1.NewTime(d.attemptedAt)
+			status.LastAttemptTime = &attempted
 		}
 		if d.operation != "" {
 			status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
@@ -221,6 +235,9 @@ func (d doc) object(family operate.Family) client.Object {
 	}
 	migration := &operatorv1alpha1.PtahMigration{ObjectMeta: meta}
 	migration.Spec.Suspend = d.suspend
+	if d.applyNever {
+		migration.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyNever
+	}
 	status := &migration.Status
 	status.ObservedGeneration = observedGeneration
 	status.Phase = operatorv1alpha1.MigrationPhase(d.phase)
@@ -279,9 +296,13 @@ func (d doc) object(family operate.Family) client.Object {
 		}
 	}
 	if u := d.unresolved; u != nil {
+		recordedAt := u.recordedAt
+		if recordedAt.IsZero() {
+			recordedAt = at(100)
+		}
 		status.UnresolvedRun = &operatorv1alpha1.UnresolvedMigrationRunStatus{
 			Outcome: u.outcome, OperationID: u.operationID, JobName: u.job,
-			PlanRef: operatorv1alpha1.ImmutableObjectReference{Name: u.plan, UID: u.planUID}, RecordedAt: metav1.NewTime(at(100)),
+			PlanRef: operatorv1alpha1.ImmutableObjectReference{Name: u.plan, UID: u.planUID}, RecordedAt: metav1.NewTime(recordedAt),
 		}
 	}
 	return migration

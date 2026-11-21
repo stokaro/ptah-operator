@@ -126,6 +126,9 @@ modified version says an applied migration's file no longer matches what the
 database recorded for it; in both cases the answer is in the database, not in the
 resource. The operator keeps reading the history at `spec.interval`, so a database
 somebody fixed converges on its own, and a spec edit alone does not end either.
+After the fix, `kubectl ptah refresh migration/<name> --wait` reads the history
+at once and confirms it; a plain `kubectl ptah wait` exits 8 on the `Blocked`
+that stood before the fix.
 [A migration that failed at a statement](../../use/recovery/#failed-statement) says
 how a dirty row ends.
 
@@ -164,7 +167,13 @@ correct the file in the artifact, and delete the record:
 `ptah migrations repair --repeatable <identity>` deletes the row and runs no
 migration SQL, with `--force` while the file is still in the migration
 directory the command reads. The next history read finds the file pending, and
-the next plan runs it again, under approval as any other plan. A record whose
+the next plan runs it again, under approval as any other plan. The operator
+reads the history again at `spec.interval`, so confirm the repair with
+`kubectl ptah refresh migration/orders --wait`, which waits for a read that
+begins after it and exits 8 with `the read ended Blocked:
+RepeatableMigrationUnfinished` while the record is still there. A plain
+`kubectl ptah wait` started after the repair stops with exit status 8 on the
+`Blocked` that stood before it. A record whose
 identity no file name can carry, written to the table by something other than
 Ptah, is named quoted and with no command, since Ptah's repair refuses that
 identity; only deleting its row by hand removes it.
@@ -646,6 +655,12 @@ interval, or sooner if you ask:
 kubectl ptah refresh schema/storefront -n application --wait
 kubectl ptah refresh migration/orders -n application --wait
 ```
+
+With `--wait` each command waits for the read it asked for. A read that stops
+on the same file again ends the command with exit status 8, the reason, Ptah's
+sentence and what ends it, rather than at the timeout; the refusal from before
+the request does not end it.
+[Waiting for the operator](../../use/operations/#wait) has the rules.
 
 The read after a schema's Apply reads the files the Apply ran from, which no
 edit changes, so a file Ptah cannot read ends that proof instead of being tried

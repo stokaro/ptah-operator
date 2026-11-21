@@ -95,10 +95,13 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 	// The read after a refusal, failing at Resolve: the refusal no longer holds,
 	// and the status alone may still come back to the same plan.
 	reread := doc{phase: "Resolving", observedAt: at(0), operation: "Resolve", conditions: resolvedAgain(operate.FamilyMigration)}
+	// A history read that found a dirty revision, as recordMigrationHistory writes it.
 	dirty := doc{
 		phase: "Blocked", observedAt: at(30),
 		conditions: []metav1.Condition{
 			condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "HistoryDirty", "Revision 1 is recorded dirty", 3),
+			condition(operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, "HistoryDirty", "The migration is blocked", 3),
+			condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, "HistoryDirty", "Nothing runs from here", 3),
 		},
 	}
 	back := doc{
@@ -108,7 +111,10 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 	running := doc{phase: "Applying", observedAt: at(0), operation: "Apply", operationPlan: planDocOf("plan-a"), plan: planDocOf("plan-a")}
 	realm := doc{
 		phase: "Blocked", observedAt: at(30),
-		conditions: []metav1.Condition{condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "RealmConflict", "This database realm is claimed by 2 resources", 3)},
+		conditions: []metav1.Condition{
+			condition(operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, "RealmConflict", "This database realm is claimed by 2 resources", 3),
+			condition(operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, "RealmConflict", "Nothing runs while the realm is contested", 3),
+		},
 	}
 	stale := func(reason string) []*approvalDoc { return []*approvalDoc{{stale: reason}} }
 	forbidden := apierrors.NewForbidden(operatorv1alpha1.GroupVersion.WithResource("ptahmigrationapprovals").GroupResource(), "approve-a", errors.New("RBAC"))
@@ -153,7 +159,15 @@ func TestWaitForADecisionReadsItsApproval(t *testing.T) {
 			wantStop: operate.StopPlanSuperseded, wantMessage: "plan plan-a will not run under approval approve-a went stale (PolicyRefused)",
 		},
 		{
+			// A Blocked a person ends answers in its own words while it holds, as
+			// the verification policy's refusal does: the stale approval is what
+			// it did, and the repair is what ends it.
 			name: "a reading a person has to repair withdrew it", docs: []doc{dirty}, approvals: stale("PlanNoLongerCurrent"),
+			wantStop: operate.StopBlocked, wantMessage: "HistoryDirty: Revision 1 is recorded dirty. Repairing the dirty revision row ends it",
+		},
+		{
+			// A realm's refusal stops no wait, so the approval it withdrew answers.
+			name: "a realm's refusal that withdrew it", docs: []doc{realm}, approvals: stale("PlanNoLongerCurrent"),
 			wantStop: operate.StopPlanSuperseded, wantMessage: "approve-a went stale (PlanNoLongerCurrent)",
 		},
 		{
