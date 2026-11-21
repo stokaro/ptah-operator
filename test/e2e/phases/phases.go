@@ -577,8 +577,9 @@ type AlertingInputs struct {
 	RegistryCredentialsFile string `env:"E2E_REGISTRY_CREDENTIALS_FILE"`
 }
 
-// Alerting proves scrape and admission faults, lost managers, and interrupted
-// upgrades. Storage uses the certificate phase's independent monitoring setup.
+// Alerting proves a resource blocked across its own refresh, scrape and
+// admission faults, lost managers, and interrupted upgrades. Storage uses the
+// certificate phase's independent monitoring setup.
 var Alerting = define[AlertingInputs](Phase{
 	Name:         "alerting",
 	Test:         "TestAlerting",
@@ -587,6 +588,7 @@ var Alerting = define[AlertingInputs](Phase{
 	Scenarios: []string{
 		"native-producers",
 		"monitoring-path",
+		"resource-blocked",
 		"unresolved-view-read-failures",
 		"lost-scrape-target",
 		"lost-view",

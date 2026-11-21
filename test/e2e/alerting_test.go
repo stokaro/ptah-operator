@@ -112,6 +112,7 @@ func TestAlRuleFileRefusals(t *testing.T) {
 			return strings.Replace(r, "alert: "+alViewReadAlert+"\n", "alert: Renamed\n", 1)
 		},
 		"no overdue alert": func(r string) string { return strings.Replace(r, "alert: "+alOverdueAlert+"\n", "alert: Renamed\n", 1) },
+		"no blocked alert": func(r string) string { return strings.Replace(r, "alert: "+alBlockedAlert+"\n", "alert: Renamed\n", 1) },
 		"no admission alert": func(r string) string {
 			return strings.Replace(r, "alert: "+alAdmissionAlert+"\n", "alert: Renamed\n", 1)
 		},
@@ -206,13 +207,13 @@ func TestAlProfileRulesRejectMissingOrChangedThresholds(t *testing.T) {
 			}
 		}
 	}
-	if examined != 11 {
-		t.Fatalf("examined %d rules, want all eleven chart rules", examined)
+	if examined != 12 {
+		t.Fatalf("examined %d rules, want all twelve chart rules", examined)
 	}
-	// The unresolved, overdue, stalled and lock rules. The plan-store rule
-	// holds through a failed read by its own expression.
-	if held != 4 {
-		t.Fatalf("%d rendered rules carry a hold, want the four over the state reading", held)
+	// The unresolved, overdue, blocked, stalled and lock rules. The
+	// plan-store rule holds through a failed read by its own expression.
+	if held != 5 {
+		t.Fatalf("%d rendered rules carry a hold, want the five over the state reading", held)
 	}
 }
 
@@ -234,8 +235,8 @@ func TestAlStateReadGapHoldIsTheChartsHold(t *testing.T) {
 			t.Errorf("%s holds for %q, and the rows bound its resolution by %s", name, rule.KeepFiringFor, alStateReadGapHold)
 		}
 	}
-	if found != 4 {
-		t.Fatalf("%d profile rules hold through a failed read, want four", found)
+	if found != 5 {
+		t.Fatalf("%d profile rules hold through a failed read, want five", found)
 	}
 }
 
@@ -714,6 +715,7 @@ func TestAlRulesLoaded(t *testing.T) {
 	names := []string{
 		"PtahOperatorUnresolvedApply", "PtahOperatorUnresolvedViewNotSynced",
 		"PtahOperatorUnresolvedViewReadFailures", "PtahOperatorResourceOverdue",
+		"PtahOperatorResourceBlocked",
 		"PtahOperatorOperationStalled", "PtahOperatorLockReleaseOwed",
 		"PtahOperatorWebhookCertificateExpiring", "PtahOperatorPlanStoreLarge",
 		"PtahOperatorOperationsFailing", "PtahOperatorAdmissionUnavailable",
@@ -927,7 +929,7 @@ func TestAlRunbookAnchors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, anchor := range []string{"unresolved-gauges", "resource-state", "webhook-certificate-lifecycle"} {
+	for _, anchor := range []string{"unresolved-gauges", "resource-state", "blocked-resources", "webhook-certificate-lifecycle"} {
 		if !alRunbookAnchor(page, anchor) {
 			t.Errorf("the operations page has no {#%s} heading", anchor)
 		}

@@ -239,6 +239,12 @@ spec:
       - schema_migrations
 ```
 
+With nobody waiting, a refusal is seen only if something reports it. A refused
+plan leaves the resource `Blocked`, and `status.blockedSince` records when it
+stopped. The read every `interval` repeats leaves the date alone, so
+[the chart's `blockedAfterSeconds` rule](../../use/operations/#blocked-resources)
+can page once the block has lasted too long.
+
 ### A database more than one resource manages
 
 `sharedRealm` is the declaration that taking turns is intended. Every claimant

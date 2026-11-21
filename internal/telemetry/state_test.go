@@ -171,6 +171,85 @@ func TestTheStateGaugesReportTheFleetAsItIs(t *testing.T) {
 	}
 }
 
+// The blocked age is read from status.blockedSince, not from the phase: a
+// blocked resource spends part of every interval in the read it repeats, and
+// its age has to run on through that read (#1160).
+func TestTheBlockedAgeIsTheOldestBlockOfAFamily(t *testing.T) {
+	t.Parallel()
+	schemas := []operatorv1alpha1.PtahSchema{
+		// Blocked for thirty minutes and part-way through its interval read,
+		// so the phase no longer says Blocked.
+		{Status: operatorv1alpha1.PtahSchemaStatus{
+			Phase: "Resolving", BlockedSince: minutesBefore(30),
+			ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{Type: "Resolve", StartedAt: *minutesBefore(1)},
+		}},
+		// Blocked for ten minutes: younger, so not the age.
+		{Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked", BlockedSince: minutesBefore(10)}},
+		// Suspended with an older date: a person stopped it, and nothing waits.
+		{
+			Spec:   operatorv1alpha1.PtahSchemaSpec{Suspend: true},
+			Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked", BlockedSince: minutesBefore(90)},
+		},
+		// Blocked by apply: Never, which the controller does not date.
+		{Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked"}},
+	}
+	migrations := []operatorv1alpha1.PtahMigration{
+		{Status: operatorv1alpha1.PtahMigrationStatus{Phase: "Blocked"}},
+		{Status: operatorv1alpha1.PtahMigrationStatus{Phase: "InSync"}},
+	}
+	out := gatherState(t, stateView{synced: true, schemas: schemas, migrations: migrations})
+	if want := "ptah_operator_blocked_seconds{family=schema} 1800\n"; !strings.Contains(out, want) {
+		t.Errorf("the scrape does not carry %q:\n%s", want, out)
+	}
+	// No migration carries a date, so no age for one: zero would read as "one
+	// was blocked this instant", and a phase of Blocked does not count.
+	if strings.Contains(out, "ptah_operator_blocked_seconds{family=migration}") {
+		t.Errorf("an age was published for a family with nothing dated:\n%s", out)
+	}
+	out = gatherState(t, stateView{synced: true, migrations: []operatorv1alpha1.PtahMigration{
+		{Status: operatorv1alpha1.PtahMigrationStatus{Phase: "Reading", BlockedSince: minutesBefore(5)}},
+	}})
+	if want := "ptah_operator_blocked_seconds{family=migration} 300\n"; !strings.Contains(out, want) {
+		t.Errorf("the scrape does not carry %q:\n%s", want, out)
+	}
+}
+
+// A date the stored status no longer explains is not counted. A manager that
+// does not know the field leaves it on a resource it moves on, as a 0.2.15
+// replica that still leads during a rollout does, and a schema Blocked under
+// apply: Never by its own destructive-change policy waits for nobody (#1160).
+func TestTheBlockedAgeCountsOnlyADateItsStatusStillExplains(t *testing.T) {
+	t.Parallel()
+	ready := func(reason operatorv1alpha1.ConditionReason) []metav1.Condition {
+		return []metav1.Condition{{Type: operatorv1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: string(reason)}}
+	}
+	never := operatorv1alpha1.PtahSchemaSpec{Policy: operatorv1alpha1.ReconciliationPolicy{Apply: operatorv1alpha1.ApplyPolicyNever}}
+	schemas := []operatorv1alpha1.PtahSchema{
+		// Moved to InSync by a manager that kept the date it did not know.
+		{Status: operatorv1alpha1.PtahSchemaStatus{Phase: "InSync", BlockedSince: minutesBefore(120)}},
+		// Waiting for an approval: a person is asked, nobody is blocked.
+		{Status: operatorv1alpha1.PtahSchemaStatus{Phase: "AwaitingApproval", BlockedSince: minutesBefore(110)}},
+		// Blocked under Never by the destructive-change policy, as each place
+		// that writes it names it.
+		{Spec: never, Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked", BlockedSince: minutesBefore(100), Conditions: ready(operatorv1alpha1.ReasonPolicyBlocked)}},
+		{Spec: never, Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked", BlockedSince: minutesBefore(95), Conditions: ready(operatorv1alpha1.ReasonDestructiveChangesDisabled)}},
+		// Blocked under Never by a read fault: still a block.
+		{Spec: never, Status: operatorv1alpha1.PtahSchemaStatus{Phase: "Blocked", BlockedSince: minutesBefore(20), Conditions: ready(operatorv1alpha1.ReasonPolicyRefused)}},
+	}
+	migrations := []operatorv1alpha1.PtahMigration{
+		// A history read that found nothing blocking, and the plan it wrote.
+		{Status: operatorv1alpha1.PtahMigrationStatus{Phase: "Planning", BlockedSince: minutesBefore(60)}},
+		{Status: operatorv1alpha1.PtahMigrationStatus{Phase: "AwaitingApproval", BlockedSince: minutesBefore(50)}},
+	}
+	out := gatherState(t, stateView{synced: true, schemas: schemas, migrations: migrations})
+	if want := "ptah_operator_blocked_seconds{family=schema} 1200\n"; !strings.Contains(out, want) {
+		t.Errorf("the scrape does not carry %q:\n%s", want, out)
+	}
+	if strings.Contains(out, "ptah_operator_blocked_seconds{family=migration}") {
+		t.Errorf("an age was published for migrations whose statuses are settled:\n%s", out)
+	}
+}
+
 func TestTheCertificateExpiryIsTheCertificatesOwn(t *testing.T) {
 	t.Parallel()
 	notAfter := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)

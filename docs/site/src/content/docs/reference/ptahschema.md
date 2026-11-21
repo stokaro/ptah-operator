@@ -248,6 +248,12 @@ spec:
       - schema_migrations
 ```
 
+With nobody waiting, a refusal is seen only if something reports it. A refused
+plan leaves the resource `Blocked`, and `status.blockedSince` records when it
+stopped. The read every `interval` repeats leaves the date alone, so
+[the chart's `blockedAfterSeconds` rule](../../use/operations/#blocked-resources)
+can page once the block has lasted too long.
+
 ### A database more than one resource manages
 
 `sharedRealm` is the declaration that taking turns is intended. Every claimant
@@ -717,6 +723,7 @@ spec:
 | `status.applied.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
 | `status.applied.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. |
 | `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
+| `status.blockedSince` | `string` | BlockedSince is when the schema stopped at Blocked for something a person has to change. The read the controller repeats at its interval moves the phase out of Blocked while it runs. This stays through that read, through a failed read waiting for its retry, through a spec edit and the pass it starts, and through a manager restart or a leader change, as long as each pass ends at Blocked again, whatever reason it names. A pass that ends anywhere else clears it. Under apply policy Never a schema Blocked by that policy carries none: reason ApplyDisabled for a plan it could apply, and PolicyBlocked or DestructiveChangesDisabled for a destructive plan its policy refuses. It records those plans on purpose and waits for nobody. ptah_operator_blocked_seconds reports its age. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | `string`, required | message is a human readable message indicating details about the transition. This may be an empty string. |

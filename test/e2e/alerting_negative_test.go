@@ -69,6 +69,7 @@ func TestAlNegativeControlsRequireRealPolicyGatesAndNoApply(t *testing.T) {
 					"cadence disabled":               func(r *alNegativeState) { r.interval = 24 * time.Hour },
 					"apply claim":                    func(r *alNegativeState) { r.claim.id = "forbidden"; r.claim.operation = "Apply" },
 					"failed":                         func(r *alNegativeState) { r.claim.phase = "Failed" },
+					"dated as blocked":               func(r *alNegativeState) { r.blocked = true },
 				} {
 					changed := state
 					mutate(&changed)
@@ -103,6 +104,31 @@ func TestAlNegativeControlsRequireRealPolicyGatesAndNoApply(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// A control under apply: Never reports Blocked with ApplyDisabled (a schema)
+// or rests at Planning with it (a migration), and the blocked alert must not
+// count it: the reading refuses it the moment its status carries a date.
+func TestAlNegativeNeverControlCarriesNoBlockedDate(t *testing.T) {
+	t.Parallel()
+	since := metav1.NewTime(time.Unix(1800000000, 0).UTC())
+	for _, family := range []string{"schema", "migration"} {
+		for _, policy := range []ptahv1.ApplyPolicy{ptahv1.ApplyPolicyNever, ptahv1.ApplyPolicyOnApproval} {
+			object := negativeFixtureState(t, family, policy)
+			if !alNegativeReading(object).gated() {
+				t.Fatalf("%s/%s: the undated control was refused", family, policy)
+			}
+			switch v := object.(type) {
+			case *ptahv1.PtahSchema:
+				v.Status.BlockedSince = &since
+			case *ptahv1.PtahMigration:
+				v.Status.BlockedSince = &since
+			}
+			if reading := alNegativeReading(object); reading.safe() || reading.gated() || reading.unchanged(reading) {
+				t.Errorf("%s/%s: a control dated as blocked was accepted", family, policy)
+			}
 		}
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/blockedsince"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/coordination"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -2824,6 +2825,12 @@ func (r *SchemaReconciler) claimAt(
 	if operation == operatorv1alpha1.OperationVerify {
 		verificationPolicy, err = policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
 		if err != nil {
+			// An API server that could not answer is no verdict on the
+			// policy. The error requeues the pass with the handoff to Verify
+			// still in status, so a Blocked schema keeps the date of its block.
+			if transientAPIError(err) {
+				return ctrl.Result{}, fmt.Errorf("read the verification policy for the Verify claim: %w", err)
+			}
 			return r.operationFailure(ctx, schema, err)
 		}
 		inputs["verification_policy_uid"] = string(verificationPolicy.UID)
@@ -4955,6 +4962,10 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 			fmt.Sprintf("Database engine %q is supported", after.Spec.Target.Engine),
 		)
 	}
+	// Every write of this schema's status passes here, so the date of a block
+	// is kept or cleared by what the write says about its pass, and no write
+	// on the way back to Blocked can drop it.
+	after.Status.BlockedSince = blockedsince.Next(after.Status.BlockedSince, blockedsince.Schema(after), r.now)
 	if reflect.DeepEqual(before.Status, after.Status) {
 		return nil
 	}

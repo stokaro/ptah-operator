@@ -116,8 +116,15 @@ func (w *scheduledWalk) scheduledRead(document []byte) string {
 // document. It returns what the Plan stored.
 func (w *scheduledWalk) refresh(document []byte) *operatorv1alpha1.PtahSchema {
 	w.t.Helper()
+	w.claimed(operatorv1alpha1.OperationResolve)
+	return w.refreshFromResolve(document)
+}
+
+// refreshFromResolve is refresh for a pass that has already claimed Resolve.
+func (w *scheduledWalk) refreshFromResolve(document []byte) *operatorv1alpha1.PtahSchema {
+	w.t.Helper()
 	ctx := context.Background()
-	if _, err := w.reconciler.consumeResult(ctx, w.claimed(operatorv1alpha1.OperationResolve), nil, runner.Result{
+	if _, err := w.reconciler.consumeResult(ctx, w.stored(), nil, runner.Result{
 		Operation: runner.OperationResolve, ResolvedDigest: testDigest,
 		ResolvedReference: "oci://registry.example/team/schema@" + testDigest,
 		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 321,
