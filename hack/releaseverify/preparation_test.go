@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 func releaseStepsForTest(t *testing.T) map[string]workflowStep {
@@ -98,9 +100,7 @@ elif args[:2] not in (['attestation', 'verify'], ['release', 'verify'], ['releas
 `,
 			}
 			for name, body := range stubs {
-				if err := os.WriteFile(filepath.Join(directory, "bin", name), []byte(body), 0o700); err != nil {
-					t.Fatal(err)
-				}
+				testexec.WriteFile(t, filepath.Join(directory, "bin", name), []byte(body), 0o700)
 			}
 			digest := fmt.Sprintf("%x", sha256.Sum256([]byte("release-manifest.txt\n")))
 			if test.wrongDigest {

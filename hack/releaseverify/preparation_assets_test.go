@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // Exercise the actual materialization step without client output or a newly
@@ -70,9 +72,7 @@ done
 `,
 				}
 				for name, body := range scripts {
-					if err := os.WriteFile(filepath.Join(root, "bin", name), []byte(body), 0700); err != nil {
-						t.Fatal(err)
-					}
+					testexec.WriteFile(t, filepath.Join(root, "bin", name), []byte(body), 0700)
 				}
 				step := releaseStepsForTest(t)["artifacts"].Run
 				replacements := []string{

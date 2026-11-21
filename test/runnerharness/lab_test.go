@@ -31,6 +31,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/planseal"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 	"github.com/stokaro/ptah-operator/test/e2e/gitfixture"
 	"github.com/stokaro/ptah-operator/test/e2e/gitrepo"
 	"github.com/stokaro/ptah-operator/test/e2e/httpsfixture"
@@ -419,9 +420,7 @@ func writeTree(t *testing.T, file string, data []byte, mode os.FileMode) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil { // #nosec G301 -- an image's build context
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(file, data, mode); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, file, data, mode)
 	// WriteFile's mode passes through the umask, and the containers' user is
 	// not the file's owner.
 	if err := os.Chmod(file, mode); err != nil { // #nosec G302 -- an image's build context

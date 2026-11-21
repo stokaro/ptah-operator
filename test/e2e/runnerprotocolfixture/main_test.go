@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 func TestTheOverlayChangesOnlyTheShippingProtocolLiteral(t *testing.T) {
@@ -104,9 +105,7 @@ func TestTheCompiledFixtureRefusesEveryOperationBeforeStartingAChild(t *testing.
 		t.Fatalf("build the native incompatible CLI: %v\n%s", err, output)
 	}
 	child, marker := filepath.Join(directory, "child"), filepath.Join(directory, "child-started")
-	if err := os.WriteFile(child, []byte("#!/bin/sh\nprintf started > \"$RUNNER_FIXTURE_CHILD_MARKER\"\nexit 19\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, child, []byte("#!/bin/sh\nprintf started > \"$RUNNER_FIXTURE_CHILD_MARKER\"\nexit 19\n"), 0o755)
 	for _, operation := range []runner.Operation{runner.OperationResolve, runner.OperationVerify, runner.OperationObserve, runner.OperationPlan,
 		runner.OperationApply, runner.OperationMigrationHistory, runner.OperationMigrationApply} {
 		id := "native-protocol-" + string(operation)

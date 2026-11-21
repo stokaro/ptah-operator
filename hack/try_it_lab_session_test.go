@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // The lab builds a cluster of its own and keeps its kubeconfig in a file of its
@@ -169,7 +171,5 @@ func writeExecutable(t *testing.T, path, content string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testexec.WriteFile(t, path, []byte(content), 0o700)
 }

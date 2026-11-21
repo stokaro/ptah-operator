@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // The release list GitHub serves can trail a write by a moment: prepare run
@@ -104,9 +106,7 @@ total=$(wc -l < "$POLL_ROOT/answers")
 sed -n "${reads}p" "$POLL_ROOT/answers"
 `
 	for name, body := range map[string]string{"go": reader, "sleep": "#!/bin/sh\nexit 0\n"} {
-		if err := os.WriteFile(filepath.Join(stubs, name), []byte(body), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		testexec.WriteFile(t, filepath.Join(stubs, name), []byte(body), 0o700)
 	}
 	command := exec.Command("bash", "-c", "set -euo pipefail\n"+row.prelude+"\n"+block+"printf 'converged\\n'\n")
 	command.Dir = root

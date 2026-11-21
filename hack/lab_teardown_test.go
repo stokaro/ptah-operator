@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/internal/testexec"
 )
 
 // LAB_ENVIRONMENT is an input, and the teardown used to remove the directory it
@@ -307,9 +309,7 @@ func stubCommands(t *testing.T) string {
 	}
 	for name, body := range stubs {
 		path := filepath.Join(directory, name)
-		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-			t.Fatalf("write the %s stub: %v", name, err)
-		}
+		testexec.WriteFile(t, path, []byte(body), 0o755)
 	}
 	return directory
 }
@@ -388,9 +388,7 @@ func newResetLab(t *testing.T) resetLab {
 		"  esac\n" +
 		"done\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(directory, "kubectl"), []byte(stub), 0o755); err != nil {
-		t.Fatalf("write the kubectl stub: %v", err)
-	}
+	testexec.WriteFile(t, filepath.Join(directory, "kubectl"), []byte(stub), 0o755)
 	return resetLab{root: root, environment: environment, path: directory}
 }
 
