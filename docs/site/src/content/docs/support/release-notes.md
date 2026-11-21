@@ -100,6 +100,13 @@ kubectl get ptahmigrations -A \
   | grep RepeatableMigrationsUnsupported
 ```
 
+`kubectl ptah refresh --wait` and `kubectl ptah wait` now exit with status 8
+on a resource at rest in `Blocked` for something a person has to change, where
+they exited 0 or ran to the timeout with 7; the wait entry below lists each
+case. A script that runs a plain `wait` right after a fix outside the resource,
+such as a Git push or `ptah migrations repair`, now gets 8 from the `Blocked`
+before the fix. Run `kubectl ptah refresh <kind>/<name> --wait` there instead.
+
 The CRD schema version moves from 23 to 25: a `PtahMigrationPlan` may carry
 repeatable migrations, the migration status gains fields that name them, and
 both families' status gains `blockedSince`. A 0.2.15 replica that still leads

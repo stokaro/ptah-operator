@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-21T00:13:21.013014+00:00",
+  "frozenAt": "2026-11-21T11:47:53.853363+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "e480f6bd76481e83426ff5617cf2bd9e216dae5e223def03bbf6b5e722d47a31"
+      "sha256": "da5f8dbf670d1d4a614c594f15705e781a758ba8b0f7c4a486c846fe1bc46b43"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.15 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 129,
+  "revision": 130,
   "supersedes": {
-    "freezeCommit": "d99d22fbf9bd0eaf2e5603c2d8ae8914f7609072",
-    "sha256": "39b59abb8a2efd4020e37be39cbc8d652d8c4bdebdc718e7a5665a8f43a3ca78"
+    "freezeCommit": "cdcc9f0caec08658bd1c2ffe1db17b982bc1dee0",
+    "sha256": "acc56da820f48950af1c7750f100774338dc8bcd9624759ccf823959d4753217"
   },
-  "revisionReason": "Record in the edge and v0.2.15 rows of support/ptah.json, and in the MySQL authority passage of databases.md, that from 0.2.16 a Plan Ptah refuses with a code, view-security-option, view-definer and backslash-mode included, stops the PtahSchema Blocked with PlanRefused and reads again at its interval, on a change, or on kubectl ptah refresh, where 0.2.15 tried it again at every failure retry; and add the scenario external-postgresql-plan-refusal to the schema-faults phase. The profile, its targets, the other phases, suites, cells, platforms and every other input are unchanged."
+  "revisionReason": "Prepare 0.2.16: PostgreSQL 18.x and 16.x name run 44900487103 of the Added database lines workflow, which passed both lines on every supported Kubernetes minor at Ptah v0.34.0, the build the edge row verifies. The profile, its targets and every other input are unchanged."
 }
