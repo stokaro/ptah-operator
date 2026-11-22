@@ -55,7 +55,13 @@ v0.33.0 did. On November 20, 2026 the v0.34.0 release image
 (commit `90e98f6ca0b3d77e66b0d5e72a6a9e22da20653a`), run against disposable PostgreSQL 17.11 and MySQL 8.4.11
 servers as their superusers rather than through the lab, wrote the MySQL
 document byte for byte and the PostgreSQL one with the same statement and size
-and only the plan name and the fingerprints changed, so both stay. Each run was
+and only the plan name and the fingerprints changed, so both stay. On November
+22, 2026 the v0.35.0 release image
+`ghcr.io/stokaro/ptah@sha256:f76221499b83c232d737894daea53f8c3e1ebad20d6602f05b88ffae1134913a`
+(commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`), run the same way against
+PostgreSQL 17.11 and MySQL 8.4.11, wrote both with the same statements and size.
+Only the plan name and the fingerprints moved, both on PostgreSQL and the
+`to_fingerprint` on MySQL, so both stay. Each run was
 `ptah schema plan --schema-file <source> --output <plan> --json` against empty
 PostgreSQL 17.11 and MySQL 8.4.11 databases named `plan_size`, from the images
 `support/databases.json` pins for those lines, and the source is what

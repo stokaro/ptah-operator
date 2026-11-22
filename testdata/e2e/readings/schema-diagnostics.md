@@ -66,7 +66,13 @@ every PostgreSQL reading record for record, the 18 and 16 witnesses included,
 and every migration reading of both engines, and moved every MySQL schema
 reading, as the comparison with v0.33.1 below says. The MySQL schema readings
 here are v0.34.0's, the four saved exclusion plans are v0.34.0's, and the
-contract names the new statements.
+contract names the new statements. On November 22, 2026 the v0.34.0 image
+reproduced every checked-in reading again, and the v0.35.0 release image,
+commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`, reproduced the PostgreSQL
+History reading and the PostgreSQL restored-history refusal and moved every
+other reading, as the comparison with v0.34.0 below says. The moved readings
+and the four saved exclusion plans here are v0.35.0's, and the contract names
+the new statements.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -127,6 +133,27 @@ each lock reading fifteen. The contract has 108 statements where it had 106:
 the Prepare and the Execute are new, and no statement is dropped or changed.
 The four saved exclusion plans hold the same statements; only their name and
 `from_fingerprint` moved, on both engines.
+
+Against v0.34.0, v0.35.0 changed every schema reading and both MySQL migration
+readings, and no exit status. On MySQL each information_schema read is the
+same read with a schema predicate that compares the name byte for byte unless
+`lower_case_table_names` is set, and each command asks `SELECT DATABASE()`
+once more as it connects
+([stokaro/ptah#6454](https://github.com/stokaro/ptah/pull/6454)). Each MySQL
+reading has one more record, and each lock reading, three commands, three. On PostgreSQL, the
+18 and 16
+witnesses included, each probe runs under `SAVEPOINT ptah_probe_transaction`
+with `SET LOCAL standard_conforming_strings = on`, reads the transaction
+timestamp and `standard_conforming_strings`, and sends its `CREATE TABLE`
+prepared instead of as a simple query
+([stokaro/ptah#6462](https://github.com/stokaro/ptah/pull/6462)), and each
+comparison reads which roles hold `pg_read_all_data` or `pg_write_all_data`
+([stokaro/ptah#6418](https://github.com/stokaro/ptah/pull/6418)). An Observe
+has 67 records where it had 61, a plan 118 where it had 111, a plan
+validation, a refused stale Apply and the allowed Apply one more each, and the
+first Observe and plan of the empty database one and two more. The contract
+has 112 statements where it had 108. The four saved exclusion plans hold the
+same statements; only their name and `to_fingerprint` moved, on both engines.
 
 Against v0.33.0, v0.33.1 changed the MySQL readings and nothing else. Ptah
 reads `SELECT @@SESSION.sql_mode` when it connects and again on a pinned

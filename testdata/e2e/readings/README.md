@@ -319,7 +319,11 @@ did. On November 20, 2026 the v0.34.0 release image
 same order and each applied before the next, against a disposable PostgreSQL
 17.11 server as its superuser rather than through the probe's lab. Only the plan
 name and both fingerprints moved, which identify the database the plan read, so
-they stay.
+they stay. On November 22, 2026 the v0.35.0 release image
+`ghcr.io/stokaro/ptah@sha256:f76221499b83c232d737894daea53f8c3e1ebad20d6602f05b88ffae1134913a`
+(commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`) saved all three the same way,
+with the same statements and length, and again only the plan name and both
+fingerprints moved, so they stay.
 
 Before them the plans were the ones the Ptah v0.29.3 release image
 `ghcr.io/stokaro/ptah@sha256:094035745e808214833f5984363f0f36c50db1d3eccb978d6eeeeaaf98512d96`
