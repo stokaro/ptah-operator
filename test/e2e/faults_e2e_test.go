@@ -175,6 +175,16 @@ func (f *faultRun) waitForSchema(name, description string, match func(*ptahv1alp
 	return matched
 }
 
+// waitForReadAdoption waits until the schema has recorded the held read's Job
+// as its own, which the result receiver requires before it accepts the Job's
+// result. A proof calls it before it holds status writes back.
+func (f *faultRun) waitForReadAdoption(schema, operation, uid, description string) {
+	f.t.Helper()
+	f.waitForSchema(schema, description+" recorded as the schema's own Job", func(resource *ptahv1alpha1.PtahSchema) bool {
+		return readJobAdopted(resource, operation, uid)
+	})
+}
+
 // waitForAbsence waits until the object is gone from the test namespace.
 func (f *faultRun) waitForAbsence(object client.Object, name string) {
 	f.t.Helper()
