@@ -22,8 +22,8 @@ out of silence.
 on the upgrade. A schema's drift summary takes the category Ptah v0.35.0 adds,
 so the CRD schema version moves from 25 to 26. Once this release's hook has
 updated the CRDs, 0.2.17's CRD hook refuses
-[a rollback](../../use/operations/#rollback) to 0.2.17: a release's hook
-refuses CRD schemas newer than the release reads. The executor moves to Ptah
+[a rollback](../../use/operations/#rollback) to 0.2.17, since they are newer
+than 0.2.17 reads. The executor moves to Ptah
 v0.35.0, which retires the execution binding: approve again whatever was
 waiting, after the resource has read its database with v0.35.0 and planned. A
 read still
