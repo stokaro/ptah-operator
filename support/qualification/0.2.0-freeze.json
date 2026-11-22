@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-22T12:57:12.810350+00:00",
+  "frozenAt": "2026-11-22T15:19:01.339373+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "7844f93843be8e2a3f37cb311b5d43899127ee7cfb4d30c31080aeb9f5e53e71"
+      "sha256": "6ffdfca0ee65f1c6f8d7a34c4e39bc49354f3abbd58cadc211a1d1233bcb8fad"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "53ed77b4d3eb833cf4017e916d0b3f4f7fdb882b2a5a9fa3a55ec8782fb1a5b5"
+      "sha256": "9f7782ed47f72bb202dad1987b88a9ebea11b74d5ea6b780d4a24ba2ccb68bf7"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "dcfeb47a66ce9d6841f4f961053300278ad2ceace610b7f75a4a55d21d4b1d46",
+    "sha256": "a7a29c591a4a66291ff47a998fe57ffd9105a2a192058f7ca1daa6947ed42ab2",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.17 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 132,
+  "revision": 133,
   "supersedes": {
-    "freezeCommit": "d06f6abed8fbc89f52d1a34659536e483eb365dd",
-    "sha256": "75bf0b983787c56e9ebddc50b1d23a852cbc53fbc2da968e08e56701e47b5c2a"
+    "freezeCommit": "40115b17a6575ae774fc72bc3e5315f631670fde",
+    "sha256": "259495c5d70ef9994225dc1c0a0b9af6298c30860b335880474a7e823ea59fec"
   },
-  "revisionReason": "Declare the published v0.2.17 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.17 as the published predecessor of the next candidate. The profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.34.0 to the v0.35.0 release image, and record in the edge row what v0.35.0 changes: a MySQL or MariaDB view, stored function or MariaDB sequence an applied migration created is compared under the target's database by a migration drift check, so it no longer reads as drift; a PostgreSQL 18 column held as VIRTUAL and declared without a kind is refused with the code generated-kind, which a Plan reports as plan_refused and stops Blocked with PlanRefused. The edge, v0.2.17 and v0.2.16 rows also say that the drift check replays each applied migration under its file's own transaction directive rather than under --tx-mode, and the drift limitation of the edge, v0.2.17, v0.2.16 and v0.2.15 rows names v0.35.0 as the release with the fix. The schema SQL contract, the readings and the audits name what v0.35.0 sends. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

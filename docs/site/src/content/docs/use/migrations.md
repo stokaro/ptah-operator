@@ -785,8 +785,10 @@ alone. On MySQL and MariaDB a file whose statements need to run outside a
 transaction, as a `CREATE VIEW` does, therefore needs
 `-- +ptah no_transaction` on its first line even where `spec.transactionMode`
 is `none`. Without it the next drift-checked Apply stops with
-`DriftCheckUnsupported` at stage `replay` and applies nothing.
-[Ptah compatibility](../../support/ptah/) carries both and what was measured.
+`DriftCheckUnsupported` at stage `replay` and applies nothing
+([stokaro/ptah#6504](https://github.com/stokaro/ptah/issues/6504) asks the
+replay to take the run's mode). [Ptah compatibility](../../support/ptah/)
+carries both and what was measured.
 
 A PostgreSQL shadow can share the target's server. Everything Ptah empties is
 in the shadow's database, so its login needs privileges there alone, and a
