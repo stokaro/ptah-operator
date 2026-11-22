@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 
@@ -18,9 +17,6 @@ import (
 type retentionHost interface {
 	GetClient() client.Client
 	GetAPIReader() client.Reader
-	// GetEventRecorderFor writes core/v1 Events, which the chart grants the
-	// manager. The events.k8s.io recorder would need a grant it does not hold.
-	GetEventRecorderFor(name string) record.EventRecorder
 	Add(crmanager.Runnable) error
 }
 
@@ -36,9 +32,9 @@ const resultCollectorEventSource = "ptah-result-collector"
 // with delivery, from results, which is nil while delivery is off. main cannot
 // register the webhook without the validator, so it cannot skip the collector
 // in one mode without also leaving every controller write unjudged.
-func newWriteValidator(host retentionHost, registry prometheus.Registerer, jobs controllerwrite.JobBuilder, managerUsername string, results *resultservice.Service) (*controllerwrite.Validator, error) {
+func newWriteValidator(host retentionHost, events eventSources, registry prometheus.Registerer, jobs controllerwrite.JobBuilder, managerUsername string, results *resultservice.Service) (*controllerwrite.Validator, error) {
 	policy := resultcleanup.Policy{Reader: host.GetAPIReader(), Window: resultretention.MinimumWindow}
-	collector, err := resultcleanup.New(host.GetClient(), policy, registry, host.GetEventRecorderFor(resultCollectorEventSource))
+	collector, err := resultcleanup.New(host.GetClient(), policy, registry, events.For(resultCollectorEventSource))
 	if err != nil {
 		return nil, fmt.Errorf("configure result cleanup: %w", err)
 	}

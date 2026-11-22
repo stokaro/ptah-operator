@@ -1,17 +1,22 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	clocktesting "k8s.io/utils/clock/testing"
-	ctrl "sigs.k8s.io/controller-runtime"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 )
@@ -59,24 +64,17 @@ func TestARoutineEventLeavesAnotherReasonsBucketAlone(t *testing.T) {
 	}
 }
 
-// The broadcaster main gives the manager is what every recorder it makes sends
-// through, so the row sends through a recorder of that broadcaster to a sink.
+// The recorders main hands the controllers and the result collector come from
+// newEventRecorders, so the row sends through one of them to a sink.
 func TestTheManagersRecordersKeyTheSpamFilterByReason(t *testing.T) {
 	t.Parallel()
-
-	broadcaster := withEventBroadcaster(ctrl.Options{}).EventBroadcaster //nolint:staticcheck // Reads what main sets.
-	if broadcaster == nil {
-		t.Fatal("the manager is given no broadcaster, so controller-runtime's own keys the spam filter without the reason")
-	}
-	sink := &reasonSink{}
-	watcher := broadcaster.StartRecordingToSink(sink)
-	t.Cleanup(watcher.Stop)
 
 	scheme := runtime.NewScheme()
 	if err := operatorv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	recorder := broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "ptah-schema-controller"})
+	sink := &reasonSink{}
+	recorder := newEventRecorders(sink, scheme, logr.Discard()).For("ptah-schema-controller")
 	inventory := &operatorv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "inventory", UID: "inventory-uid"}}
 	for range routineEvents {
 		recorder.Event(inventory, corev1.EventTypeNormal, "OperationStarted", "Resolve started")
@@ -95,6 +93,55 @@ func TestTheManagersRecordersKeyTheSpamFilterByReason(t *testing.T) {
 	}
 	if started := sink.count("OperationStarted"); started != 25 {
 		t.Fatalf("%d of %d OperationStarted Events reached the sink, want client-go's burst of 25", started, routineEvents)
+	}
+	if requested := sink.count("ReadRequested"); requested != 1 {
+		t.Fatalf("the ReadRequested Event reached the sink %d times, want once", requested)
+	}
+}
+
+// controller-runtime's recorders send through a broadcaster the manager's spam
+// key never reaches, and a broadcaster given to the manager reaches the API
+// server twice. So no code of the manager asks controller-runtime for one: each
+// recorder comes from newEventRecorders.
+func TestTheManagerTakesNoEventRecorderFromControllerRuntime(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	examined := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		examined++
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.SelectorExpr:
+				if node.Sel.Name == "GetEventRecorderFor" || node.Sel.Name == "GetEventRecorder" {
+					t.Errorf("%s uses %s; make the recorder with newEventRecorders", name, node.Sel.Name)
+				}
+			case *ast.AssignStmt:
+				for _, target := range node.Lhs {
+					if field, ok := target.(*ast.SelectorExpr); ok && field.Sel.Name == "EventBroadcaster" {
+						t.Errorf("%s gives the manager an EventBroadcaster; make the recorders with newEventRecorders", name)
+					}
+				}
+			case *ast.KeyValueExpr:
+				if key, ok := node.Key.(*ast.Ident); ok && key.Name == "EventBroadcaster" {
+					t.Errorf("%s gives the manager an EventBroadcaster; make the recorders with newEventRecorders", name)
+				}
+			}
+			return true
+		})
+	}
+	if examined < 3 {
+		t.Fatalf("examined %d files of the manager, want main.go, events.go and results.go at least", examined)
 	}
 }
 

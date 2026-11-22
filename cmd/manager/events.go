@@ -3,9 +3,10 @@ package main
 import (
 	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
-	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // eventCorrelatorOptions is how the manager filters its Events before they
@@ -39,15 +40,40 @@ func eventSpamKey(event *corev1.Event) string {
 	}, "\x00")
 }
 
-// withEventBroadcaster gives the manager a broadcaster that filters every
-// recorder's Events through eventCorrelatorOptions, the controllers' and the
-// result collector's alike.
+// eventSources makes the Event recorder of a named source.
+type eventSources interface {
+	For(component string) record.EventRecorder
+}
+
+// eventRecorders makes the recorders of the controllers and the result
+// collector. They all send through one broadcaster, which filters with
+// eventCorrelatorOptions and writes core/v1 Events. The chart grants the
+// manager those; the events.k8s.io recorder would need a grant it does not
+// hold.
 //
-// controller-runtime does not stop a broadcaster it was given when the manager
-// stops, which is what its deprecation warns about. This one lives as long as
-// the process, which ends when the manager stops.
-func withEventBroadcaster(options ctrl.Options) ctrl.Options {
-	//nolint:staticcheck // The manager takes a spam key only through a broadcaster; see above for why it cannot leak.
-	options.EventBroadcaster = record.NewBroadcaster(record.WithCorrelatorOptions(eventCorrelatorOptions()))
-	return options
+// The broadcaster is the manager's own. controller-runtime takes one only
+// through a deprecated option, and then starts it once for each of its two
+// recorder providers, the cluster's and leader election's, so a leader would
+// send every Event twice and store every folded Event twice. Leader election
+// keeps controller-runtime's broadcaster. This one runs until the process
+// ends, which it does once the manager stops.
+type eventRecorders struct {
+	broadcaster record.EventBroadcaster
+	scheme      *runtime.Scheme
+}
+
+// newEventRecorders starts the broadcaster, sending to sink and logging each
+// Event at V(1), as controller-runtime's broadcaster does.
+func newEventRecorders(sink record.EventSink, scheme *runtime.Scheme, logger logr.Logger) eventRecorders {
+	broadcaster := record.NewBroadcaster(record.WithCorrelatorOptions(eventCorrelatorOptions()))
+	broadcaster.StartRecordingToSink(sink)
+	broadcaster.StartEventWatcher(func(event *corev1.Event) {
+		logger.V(1).Info(event.Message, "type", event.Type, "object", event.InvolvedObject, "reason", event.Reason)
+	})
+	return eventRecorders{broadcaster: broadcaster, scheme: scheme}
+}
+
+// For makes the recorder whose Events name component as their source.
+func (r eventRecorders) For(component string) record.EventRecorder {
+	return r.broadcaster.NewRecorder(r.scheme, corev1.EventSource{Component: component})
 }
