@@ -16,6 +16,25 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.17
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRDs do not change, and the executor stays at Ptah v0.34.0,
+so the execution binding does not move and nothing waiting for an approval has
+to be approved again. Nothing else.
+
+- **An Event of one reason no longer crowds out another.** The manager's
+  recorder lets 25 Events of each reason through for each resource and then one
+  every five minutes. In 0.2.16 and earlier all the Normal Events of a resource
+  shared that budget, and each read records eight, `OperationStarted` and
+  `OperationCompleted` for Resolve, Verify, Observe and Plan. After its first
+  few reads, a resource's `ReadRequested`, `ApprovalAccepted` or another Event
+  it records once reached the API server only when it came while the budget had
+  room ([#1176](https://github.com/stokaro/ptah-operator/issues/1176)). A tool
+  that counts a resource's Events now sees up to 25 of each reason where it saw
+  25 of each type. An Event can still be lost, and status is still the record:
+  [An Event can be lost](../../troubleshoot/events/#an-event-can-be-lost).
+
 ## 0.2.16
 
 **Before you upgrade.** A schema whose desired file Ptah cannot read, whose
