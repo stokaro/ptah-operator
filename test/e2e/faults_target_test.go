@@ -95,6 +95,34 @@ func TestProofReadClaimed(t *testing.T) {
 	}
 }
 
+func TestReadJobAdopted(t *testing.T) {
+	t.Parallel()
+	fresh := func() *ptahv1alpha1.PtahSchema { return ftActiveSchema(ptahv1alpha1.OperationObserve) }
+	accepts := func(r *ptahv1alpha1.PtahSchema) bool { return readJobAdopted(r, "observe", "j1") }
+	ftRefusesEach(t, fresh, accepts, []ftMutation[*ptahv1alpha1.PtahSchema]{
+		{"nothing active", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation = nil }},
+		{"the Job not yet recorded", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.JobUID = "" }},
+		{"another Job recorded", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.JobUID = "j2" }},
+		{"no Job named", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.JobName = "" }},
+		{"another read", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.Type = ptahv1alpha1.OperationPlan }},
+		{"an Apply", func(r *ptahv1alpha1.PtahSchema) { r.Status.ActiveOperation.Type = ptahv1alpha1.OperationApply }},
+	})
+	if readJobAdopted(fresh(), "observe", "") {
+		t.Fatal("accepted a Job with no UID")
+	}
+	if readJobAdopted(fresh(), "Observe", "j1") {
+		t.Fatal("accepted an operation not named as its Job's label")
+	}
+	plan := ftActiveSchema(ptahv1alpha1.OperationPlan)
+	if !readJobAdopted(plan, "plan", "j1") {
+		t.Fatal("refused a Plan that recorded its Job")
+	}
+	apply := ftActiveSchema(ptahv1alpha1.OperationApply)
+	if readJobAdopted(apply, "apply", "j1") {
+		t.Fatal("accepted an Apply as a held read")
+	}
+}
+
 func TestRetargetProofKeepsTheDispatchedApplyBinding(t *testing.T) {
 	t.Parallel()
 	refusal := "the URL Secret holds another target: kubectl annotate ptahschema x -n y " +

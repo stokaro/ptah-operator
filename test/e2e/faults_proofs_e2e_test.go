@@ -154,6 +154,7 @@ func (f *faultRun) harvestHeld(schema, operation string, before checkpoint, desc
 	f.t.Helper()
 	uid := f.waitForOneNewWatchedJob(schema, operation, before, description)
 	f.assertReadBlocked(uid, description)
+	f.waitForReadAdoption(schema, operation, uid, description)
 	f.pauseStatusWrites()
 	f.stopReadBarrier()
 	name := f.liveJobName(uid, description, operationJobs(schema, operation))

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -248,6 +249,18 @@ func heldReadOperation(schema *ptahv1alpha1.PtahSchema) bool {
 		ptahv1alpha1.OperationResolve, ptahv1alpha1.OperationVerify,
 		ptahv1alpha1.OperationObserve, ptahv1alpha1.OperationPlan,
 	}, active.Type) && active.JobName != "" && active.JobUID != ""
+}
+
+// readJobAdopted is a schema whose read-only operation, named as its Job's
+// operation label, has recorded that exact Job as its own. The result
+// receiver authorizes a delivery only from then on and answers 503 before, so
+// a proof that holds the controller's status writes waits for this first: the
+// write it would hold back is the adoption, and the runner would spend its
+// two-minute delivery budget on a receiver that cannot accept the result.
+func readJobAdopted(schema *ptahv1alpha1.PtahSchema, operation, jobUID string) bool {
+	active := schema.Status.ActiveOperation
+	return jobUID != "" && active != nil && active.Type != ptahv1alpha1.OperationApply &&
+		strings.ToLower(string(active.Type)) == operation && active.JobName != "" && string(active.JobUID) == jobUID
 }
 
 // readOperationRetried is the same operation dispatched again under a Job

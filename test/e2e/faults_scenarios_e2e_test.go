@@ -541,6 +541,7 @@ func (f *faultRun) runnerTermination() {
 func (f *faultRun) recoveryProofJob(schema, operation, uid, blocked, live string) harvestedJob {
 	f.t.Helper()
 	f.assertReadBlocked(uid, blocked)
+	f.waitForReadAdoption(schema, operation, uid, blocked)
 	f.pauseStatusWrites()
 	f.stopReadBarrier()
 	name := f.liveJobName(uid, live, operationJobs(schema, operation))
