@@ -16,6 +16,44 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.18
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. The CRDs do not change. The executor moves to Ptah v0.35.0,
+which retires the execution binding: approve again whatever was waiting, after
+the resource has read its database with v0.35.0 and planned. A read still
+running when the new manager starts runs again. An Apply whose Job 0.2.17
+created is waited for rather than retired: the new manager reads its result
+under the v0.34.0 binding it was dispatched under, records the outcome it
+reported, and moves the binding on the next pass, so the upgrade needs no pause
+for Applies to end. [0.2.16](#0216) lists when such an Apply is still recorded
+`Unknown`.
+
+- **A generated column's kind stops the schema instead of failing every
+  Plan.** PostgreSQL 18 makes `GENERATED ALWAYS AS (...)` without `STORED` a
+  `VIRTUAL` column, and Ptah reads the same declaration in a schema file as
+  `STORED`, so a column created that way by hand or by a migration cannot be
+  planned. Under 0.2.17 the Plan failed as `invalid_plan_output` and was tried
+  again at every failure retry, with a Job and the database Lease each time.
+  Ptah v0.35.0 refuses it under the code `generated-kind`
+  ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)), and the
+  `PtahSchema` stops `Blocked` with
+  [`PlanRefused`](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  and waits for `spec.interval` or `kubectl ptah refresh`. Ptah's sentence in
+  the Pod log names the column and both kinds. Declare the column `VIRTUAL`, or
+  drop it and add it back. An alert that watched for `OperationFailed` on such a
+  schema sees `Blocked` instead.
+- **A MySQL drift check no longer reads a view the migrations created as
+  drift.** Ptah v0.34.0 compared a view, a stored function and a MariaDB
+  sequence by their database-qualified name when `spec.policy.driftCheck`
+  replayed the history into a shadow, so each one an applied migration created
+  read as `missing_view <shadow>.<view>` beside `extra_view <target>.<view>`,
+  and every later Apply stopped with `SchemaDrifted` and applied nothing.
+  v0.35.0 compares them under the target's database
+  ([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)), and the
+  next Apply runs. A view listed under `spec.policy.driftCheck.exclude` only to
+  get past that can come off the list, so the check compares it again.
+
 ## 0.2.17
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
