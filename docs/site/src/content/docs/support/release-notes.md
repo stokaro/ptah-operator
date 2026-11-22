@@ -44,9 +44,11 @@ for Applies to end. [0.2.16](#0216) lists when such an Apply is still recorded
   ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)), and the
   `PtahSchema` stops `Blocked` with
   [`PlanRefused`](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
-  and waits for `spec.interval` or `kubectl ptah refresh`. Ptah's sentence in
-  the Pod log names the column and both kinds. Declare the column `VIRTUAL`, or
-  drop it and add it back. An alert that watched for `OperationFailed` on such a
+  and waits for `spec.interval` or `kubectl ptah refresh`. The message names
+  the table, the column, the kind the database holds and the kind the schema
+  declares, as in
+  `generated-kind: public.items column total held VIRTUAL declared STORED`.
+  Declare the column `VIRTUAL`, or drop it and add it back. An alert that watched for `OperationFailed` on such a
   schema sees `Blocked` instead.
 - **A MySQL drift check no longer reads a view the migrations created as
   drift.** Ptah v0.34.0 compared a view, a stored function and a MariaDB
