@@ -164,7 +164,7 @@ func (m *migrationRun) guardAuthorCreate(g guardRow) {
 				return true, "", nil
 			}
 			m.scan([]byte(err.Error()), "the author's first migration creation")
-			if apierrors.IsForbidden(err) && guardAuthorGrantPending(err.Error(), g.author, m.in.TestNamespace) {
+			if apierrors.IsForbidden(err) && guardAuthorGrantPending(err.Error(), g.author, m.in.TestNamespace, g.authorRole) {
 				return false, "the desired-state author's grant is not effective yet", nil
 			}
 			return false, "", err

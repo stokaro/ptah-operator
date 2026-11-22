@@ -1,0 +1,1 @@
+ptahmigrations.operator.ptah.run is forbidden: User "e2e-author-postgresql" cannot create resource "ptahmigrations" in API group "operator.ptah.run" in the namespace "ptah-test-a-1-36-4-ci-44999887648-1-1-36-migrations-922055a49e": RBAC: role.rbac.authorization.k8s.io "e2e-desired-state-author-postgresql" not found
