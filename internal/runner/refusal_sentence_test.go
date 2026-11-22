@@ -680,3 +680,131 @@ func TestARefusalSentenceNamesTheDefinersItLists(t *testing.T) {
 		})
 	}
 }
+
+// Since Ptah v0.35.0 a generated-kind refusal lists each column whose kind the
+// plan would change, with its table and the kinds the database holds and the
+// schema declares (stokaro/ptah#6466). The sentence names the column and both
+// kinds, so status says which column to drop or declare again.
+func TestARefusalSentenceNamesTheGeneratedColumnsItLists(t *testing.T) {
+	t.Parallel()
+
+	redactor := NewRedactor([]string{foldedDatabaseURL})
+	columns := func(entries ...dataplane.SchemaRefusalGeneratedColumn) dataplane.SchemaRefusal {
+		return dataplane.SchemaRefusal{Code: dataplane.SchemaRefusalGeneratedKind, GeneratedColumns: listed(t, entries...)}
+	}
+	column := func(table, name, held, declared string) dataplane.SchemaRefusalGeneratedColumn {
+		return dataplane.SchemaRefusalGeneratedColumn{Table: table, Column: name, HeldKind: held, DeclaredKind: declared}
+	}
+	nine := make([]dataplane.SchemaRefusalGeneratedColumn, 0, 9)
+	nineNamed := make([]string, 0, 8)
+	for index := range 9 {
+		nine = append(nine, column("public.t", fmt.Sprintf("c%d", index+1), "VIRTUAL", "STORED"))
+		if index < 8 {
+			nineNamed = append(nineNamed, fmt.Sprintf("public.t column c%d held VIRTUAL declared STORED", index+1))
+		}
+	}
+	huge := strings.Repeat("h", 10<<10)
+	lead := "ptah refused to plan the change (generated-kind: "
+	for _, test := range []struct {
+		name    string
+		refusal dataplane.SchemaRefusal
+		want    string
+	}{
+		{
+			name:    "a virtual column the schema declares stored",
+			refusal: columns(column("public.items", "total", "VIRTUAL", "STORED")),
+			want:    lead + "public.items column total held VIRTUAL declared STORED)",
+		},
+		{
+			name: "two columns in Ptah's order",
+			refusal: columns(
+				column("public.b", "x", "STORED", "VIRTUAL"),
+				column("public.a", "y", "VIRTUAL", "STORED"),
+			),
+			want: lead + "public.b column x held STORED declared VIRTUAL, public.a column y held VIRTUAL declared STORED)",
+		},
+		{
+			name:    "more columns than it names",
+			refusal: columns(nine...),
+			want:    lead + strings.Join(nineNamed, ", ") + ", and 1 more)",
+		},
+		{
+			// A table and a column are text a schema or the database holds:
+			// control and format characters, a frame header and a credential
+			// stay out of the frame, and each keeps one line.
+			name: "a table and a column that carry a terminal sequence, a frame header and a password",
+			refusal: columns(column(
+				"public.t\x1b[2J‮\nPTAH_RUNNER_RESULT_V1", "c Hunter2Hunter2", "VIRTUAL", "STORED",
+			)),
+			want: lead + "public.t [2J [frame marker] column c " + RedactionMarker + " held VIRTUAL declared STORED)",
+		},
+		{
+			name:    "a column nothing readable is left of",
+			refusal: columns(column("public.t", "\x1b​", "VIRTUAL", "STORED")),
+			want:    "ptah refused to plan the change (generated-kind)",
+		},
+		{
+			name:    "a table nothing readable is left of",
+			refusal: columns(column("​\x1b", "c", "VIRTUAL", "STORED")),
+			want:    "ptah refused to plan the change (generated-kind)",
+		},
+		{
+			// The kinds are Ptah's words and stay whole; the table is cut.
+			name: "a table too long for the sentence",
+			refusal: columns(
+				column(huge, "c", "VIRTUAL", "STORED"),
+				column("public.b", "d", "VIRTUAL", "STORED"),
+			),
+			want: lead + huge[:497-len(lead)-len(")")-len(", and 1 more")-len("...")-len(" held VIRTUAL declared STORED")] +
+				"... held VIRTUAL declared STORED, and 1 more)",
+		},
+		{
+			name: "a list it cannot read",
+			refusal: dataplane.SchemaRefusal{
+				Code: dataplane.SchemaRefusalGeneratedKind, GeneratedColumns: json.RawMessage(`[{"table":"public.t","column":"c","held_kind":"virtual","declared_kind":"STORED"}]`),
+			},
+			want: "ptah refused to plan the change (generated-kind)",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := refusalSentence(planRefusalLead, &test.refusal, redactor)
+			if got != test.want {
+				t.Fatalf("refusalSentence() = %q (%d bytes), want %q (%d bytes)", got, len(got), test.want, len(test.want))
+			}
+			if whole := "apply_refused: " + got; len(whole) > 512 {
+				t.Fatalf("%q is %d bytes, more than the 512 an Event keeps", whole, len(whole))
+			}
+		})
+	}
+}
+
+// The refusal Ptah v0.35.0 printed for a column PostgreSQL 18 holds as VIRTUAL
+// and the schema declares with no kind is a plan_refused that names the column
+// and both kinds, from the document as it was printed; testdata/generated-kind
+// says where it is from.
+func TestAPlanRefusalNamesTheGeneratedColumnTheCapturedDocumentLists(t *testing.T) {
+	t.Parallel()
+	read := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("testdata", "generated-kind", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	stdout, stderr := read("schema-plan-postgres-18.json"), read("schema-plan-postgres-18.stderr")
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: stdout, stderr: stderr, exitCode: 2}}}
+	result := Run(context.Background(), Config{
+		Operation: OperationPlan, Environment: withRunnerProtocol(databaseEnvironment("generated-kind")), Executor: executor,
+	})
+	want := "ptah refused to plan the change (generated-kind: public.items column total held VIRTUAL declared STORED)"
+	if result.Error == nil || result.Error.Code != CodePlanRefused || result.Error.Message != want {
+		t.Fatalf("Run() error = %+v, want %s with %q", result.Error, CodePlanRefused, want)
+	}
+	if result.PlanOutcome != "" || result.PlanContentDigest != "" {
+		t.Fatalf("a refused plan was reported as a plan: %#v", result)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("the manager's protocol refuses the frame: %v", err)
+	}
+}

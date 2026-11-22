@@ -97,19 +97,22 @@ func joinRefusalEntries(entries []refusalEntry) string {
 //     `ALTER VIEW "public"."v" OWNER TO "r" role r connected ptah lacks SET`.
 //     A missing role reads `does not exist`, a schema privilege
 //     `lacks CREATE on schema public`, and a role that owns the object now,
-//     which the plan gives it back to, adds `, and the role owns it now`.
+//     which the plan gives it back to, adds `, and the role owns it now`;
+//   - each column of generated_columns (generated-kind), with its table and
+//     the kinds the database holds and the schema declares, as
+//     `public.items column total held VIRTUAL declared STORED`.
 //
 // A definer-privilege refusal lists the statements whose definer the login may
 // not name, and this does not read that list, so it reads by its code alone
 // (dataplane.SchemaRefusal says when an Apply meets it). The Pod log carries
 // Ptah's sentence for it.
 //
-// A view, an account, a statement, a role and a schema come from a schema or a
-// database, so each goes through
+// A view, an account, a statement, a role, a schema, a table and a column come
+// from a schema or a database, so each goes through
 // freeText, which redacts it, puts a space where a control or format character
 // was and keeps it on one line. An option has to be an identifier, which the
 // dataplane reader holds it to, and so is a privilege, which has to be a word
-// of Ptah's.
+// of Ptah's, and a kind, which the reader holds to an upper-case word.
 //
 // It reports false when the refusal lists nothing, when a list it carries is in
 // a form the readers refuse, and when nothing readable is left of a value that
@@ -197,6 +200,25 @@ func refusalEntries(refusal *dataplane.SchemaRefusal, redactor Redactor) ([]refu
 			lacks += ", and the role owns it now"
 		}
 		entries = append(entries, refusalEntry{named: text, own: lacks})
+	}
+	if len(refusal.GeneratedColumns) != 0 {
+		named, ok := refusal.NamedGeneratedColumns()
+		if !ok {
+			return nil, false
+		}
+		for _, each := range named {
+			table, ok := clean(each.Table)
+			if !ok {
+				return nil, false
+			}
+			text, ok := labeled(table, "column", each.Column)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, refusalEntry{
+				named: text, own: " held " + each.HeldKind + " declared " + each.DeclaredKind,
+			})
+		}
 	}
 	return entries, len(entries) > 0
 }
