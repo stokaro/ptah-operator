@@ -1,9 +1,9 @@
 {
   "format_version": 1,
-  "name": "plan_a635c9dcb32f",
+  "name": "plan_1e9bd72253d5",
   "dialect": "mysql",
   "from_fingerprint": "sha256:a6f538b08799ab29f350dc52d6f05b58bcb323df2c2389e851063ac746f24fb7",
-  "to_fingerprint": "sha256:d282f84154bc56c19d486f0d3005ad3a9ab03e364d336a33f3cef5c87a784990",
+  "to_fingerprint": "sha256:c6632ca47a4ec64a3423feb5301023de032df78e91f36aab60dde266da5089cb",
   "scope": {
     "kind": "schema",
     "name": "ptah_audit_schema"

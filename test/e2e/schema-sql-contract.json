@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "ptahCommit": "90e98f6ca0b3d77e66b0d5e72a6a9e22da20653a",
+  "ptahCommit": "1ec0b95eea95afce6f50b5912311ce4822f0636b",
   "scope": "Exact schema diagnostics for initial v1 planning, v1-to-v2/v3 changes, populated v3/v4, fault-v1, and excluded-table fixtures; no generic SQL classification. Plan includes the native saved-plan dry run, its exact schema advisory lock, and the MySQL pinned-session foreign-key capability read. The separately identified stale Apply permits only its captured inspection and lock statements; its MySQL lock timeout is 60 seconds.",
   "statements": [
     {
@@ -462,6 +462,17 @@
         "stale-apply"
       ],
       "command": "query",
+      "statement": "\n\t\tSELECT role.rolname, member.rolname,\n\t\t(to_jsonb(m)->>'inherit_option')::boolean, (to_jsonb(m)->>'set_option')::boolean\n\t\tFROM pg_auth_members m\n\t\tJOIN pg_roles role ON role.oid = m.roleid\n\t\tJOIN pg_roles member ON member.oid = m.member\n\t\tWHERE role.rolname IN ('pg_read_all_data', 'pg_write_all_data')\n\t\tAND member.rolname NOT LIKE 'pg\\_%' ESCAPE '\\' AND member.rolname != 'postgres'\n\t\tORDER BY member.rolname, role.rolname",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan",
+        "stale-apply"
+      ],
+      "command": "query",
       "statement": "SELECT rolname, rolsuper FROM pg_roles WHERE rolname = current_user",
       "parameters": ""
     },
@@ -603,6 +614,36 @@
         "plan"
       ],
       "command": "query",
+      "statement": "SET LOCAL standard_conforming_strings = on",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan"
+      ],
+      "command": "query",
+      "statement": "SELECT extract(epoch FROM transaction_timestamp())::text || '/' || current_setting('standard_conforming_strings')",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan"
+      ],
+      "command": "query",
+      "statement": "SAVEPOINT ptah_probe_transaction",
+      "parameters": ""
+    },
+    {
+      "engine": "postgresql",
+      "operations": [
+        "observe",
+        "plan"
+      ],
+      "command": "query",
       "statement": "SAVEPOINT ptah_column_probe",
       "parameters": ""
     },
@@ -728,7 +769,7 @@
         "stale-apply"
       ],
       "command": "Query",
-      "statement": "SELECT @@SESSION.sql_mode",
+      "statement": "SELECT DATABASE()",
       "parameters": ""
     },
     {
@@ -739,7 +780,7 @@
         "stale-apply"
       ],
       "command": "Query",
-      "statement": "SELECT DATABASE()",
+      "statement": "SELECT @@SESSION.sql_mode",
       "parameters": ""
     },
     {
@@ -816,7 +857,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tDATA_TYPE,\n\t\t\tCOLUMN_TYPE,\n\t\t\tIS_NULLABLE,\n\t\t\tCOLUMN_DEFAULT,\n\t\t\tCHARACTER_MAXIMUM_LENGTH,\n\t\t\tNUMERIC_PRECISION,\n\t\t\tNUMERIC_SCALE,\n\t\t\tORDINAL_POSITION,\n\t\t\tCHARACTER_SET_NAME,\n\t\t\tCOLLATION_NAME,\n\t\t\tEXTRA,\n\t\t\tGENERATION_EXPRESSION,\n\t\t\tCOLUMN_COMMENT\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME, ORDINAL_POSITION",
+      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tDATA_TYPE,\n\t\t\tCOLUMN_TYPE,\n\t\t\tIS_NULLABLE,\n\t\t\tCOLUMN_DEFAULT,\n\t\t\tCHARACTER_MAXIMUM_LENGTH,\n\t\t\tNUMERIC_PRECISION,\n\t\t\tNUMERIC_SCALE,\n\t\t\tORDINAL_POSITION,\n\t\t\tCHARACTER_SET_NAME,\n\t\t\tCOLLATION_NAME,\n\t\t\tEXTRA,\n\t\t\tGENERATION_EXPRESSION,\n\t\t\tCOLUMN_COMMENT\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE (TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME, ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -827,7 +868,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tDATA_TYPE,\n\t\t\tCOLUMN_TYPE,\n\t\t\tIS_NULLABLE,\n\t\t\tCOLUMN_DEFAULT,\n\t\t\tCHARACTER_MAXIMUM_LENGTH,\n\t\t\tNUMERIC_PRECISION,\n\t\t\tNUMERIC_SCALE,\n\t\t\tORDINAL_POSITION,\n\t\t\tCHARACTER_SET_NAME,\n\t\t\tCOLLATION_NAME,\n\t\t\tEXTRA,\n\t\t\tGENERATION_EXPRESSION,\n\t\t\tCOLUMN_COMMENT\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME, ORDINAL_POSITION",
+      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tDATA_TYPE,\n\t\t\tCOLUMN_TYPE,\n\t\t\tIS_NULLABLE,\n\t\t\tCOLUMN_DEFAULT,\n\t\t\tCHARACTER_MAXIMUM_LENGTH,\n\t\t\tNUMERIC_PRECISION,\n\t\t\tNUMERIC_SCALE,\n\t\t\tORDINAL_POSITION,\n\t\t\tCHARACTER_SET_NAME,\n\t\t\tCOLLATION_NAME,\n\t\t\tEXTRA,\n\t\t\tGENERATION_EXPRESSION,\n\t\t\tCOLUMN_COMMENT\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE (TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME, ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -838,7 +879,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_COMMENT, ''), COALESCE(TABLE_COLLATION, ''), COALESCE(ROW_FORMAT, '')\n\t\tFROM information_schema.TABLES\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_TYPE = 'BASE TABLE'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_COMMENT, ''), COALESCE(TABLE_COLLATION, ''), COALESCE(ROW_FORMAT, '')\n\t\tFROM information_schema.TABLES\n\t\tWHERE (TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND TABLE_TYPE = 'BASE TABLE'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -849,7 +890,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_COMMENT, ''), COALESCE(TABLE_COLLATION, ''), COALESCE(ROW_FORMAT, '')\n\t\tFROM information_schema.TABLES\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_TYPE = 'BASE TABLE'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_COMMENT, ''), COALESCE(TABLE_COLLATION, ''), COALESCE(ROW_FORMAT, '')\n\t\tFROM information_schema.TABLES\n\t\tWHERE (TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND TABLE_TYPE = 'BASE TABLE'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -860,7 +901,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tCOLUMN_TYPE\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND DATA_TYPE = 'enum'\n\t\tORDER BY TABLE_NAME, COLUMN_NAME",
+      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tCOLUMN_TYPE\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE (TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND DATA_TYPE = 'enum'\n\t\tORDER BY TABLE_NAME, COLUMN_NAME",
       "parameters": ""
     },
     {
@@ -871,7 +912,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tCOLUMN_TYPE\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND DATA_TYPE = 'enum'\n\t\tORDER BY TABLE_NAME, COLUMN_NAME",
+      "statement": "SELECT\n\t\t\tTABLE_NAME,\n\t\t\tCOLUMN_NAME,\n\t\t\tCOLUMN_TYPE\n\t\tFROM information_schema.COLUMNS\n\t\tWHERE (TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND DATA_TYPE = 'enum'\n\t\tORDER BY TABLE_NAME, COLUMN_NAME",
       "parameters": ""
     },
     {
@@ -893,7 +934,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\ts.INDEX_NAME,\n\t\t\ts.TABLE_NAME,\n\t\t\ts.COLUMN_NAME,\n\t\t\ts.NON_UNIQUE,\n\t\t\ts.INDEX_TYPE,\n\t\t\t-- The number of leading characters this key indexes, NULL for a\n\t\t\t-- whole-column key. MySQL requires one for a BLOB or TEXT column,\n\t\t\t-- so a key that loses it produces a description the server refuses:\n\t\t\t-- used in key specification without a key length\n\t\t\t-- (stokaro/ptah#2112).\n\t\t\ts.SUB_PART,\n\t\t\t-- 'A' for an ascending key part, 'D' for a descending one, and NULL\n\t\t\t-- where the key has no order to report: a FULLTEXT or HASH key.\n\t\t\t-- KEY (a DESC) and KEY (a) are different indexes on both engines,\n\t\t\t-- so a read that discards this cannot tell a declaration that\n\t\t\t-- changed direction from one that did not (stokaro/ptah#2816).\n\t\t\ts.COLLATION,\n\t\t\tCOALESCE(s.INDEX_COMMENT, ''),\n\t\t\tCASE WHEN s.IS_VISIBLE = 'NO' THEN 1 ELSE 0 END,\n\t\t\t-- The expression of a functional key part, NULL for a column key\n\t\t\t-- part; see [Reader.indexKeyExpressionColumn].\n\t\t\ts.EXPRESSION\n\t\tFROM information_schema.STATISTICS s\n\t\tWHERE s.TABLE_SCHEMA = ?\n\t\tAND s.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX",
+      "statement": "SELECT\n\t\t\ts.INDEX_NAME,\n\t\t\ts.TABLE_NAME,\n\t\t\ts.COLUMN_NAME,\n\t\t\ts.NON_UNIQUE,\n\t\t\ts.INDEX_TYPE,\n\t\t\t-- The number of leading characters this key indexes, NULL for a\n\t\t\t-- whole-column key. MySQL requires one for a BLOB or TEXT column,\n\t\t\t-- so a key that loses it produces a description the server refuses:\n\t\t\t-- used in key specification without a key length\n\t\t\t-- (stokaro/ptah#2112).\n\t\t\ts.SUB_PART,\n\t\t\t-- 'A' for an ascending key part, 'D' for a descending one, and NULL\n\t\t\t-- where the key has no order to report: a FULLTEXT or HASH key.\n\t\t\t-- KEY (a DESC) and KEY (a) are different indexes on both engines,\n\t\t\t-- so a read that discards this cannot tell a declaration that\n\t\t\t-- changed direction from one that did not (stokaro/ptah#2816).\n\t\t\ts.COLLATION,\n\t\t\tCOALESCE(s.INDEX_COMMENT, ''),\n\t\t\tCASE WHEN s.IS_VISIBLE = 'NO' THEN 1 ELSE 0 END,\n\t\t\t-- The expression of a functional key part, NULL for a column key\n\t\t\t-- part; see [Reader.indexKeyExpressionColumn].\n\t\t\ts.EXPRESSION\n\t\tFROM information_schema.STATISTICS s\n\t\tWHERE (s.TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(s.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND s.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX",
       "parameters": ""
     },
     {
@@ -904,7 +945,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\ts.INDEX_NAME,\n\t\t\ts.TABLE_NAME,\n\t\t\ts.COLUMN_NAME,\n\t\t\ts.NON_UNIQUE,\n\t\t\ts.INDEX_TYPE,\n\t\t\t-- The number of leading characters this key indexes, NULL for a\n\t\t\t-- whole-column key. MySQL requires one for a BLOB or TEXT column,\n\t\t\t-- so a key that loses it produces a description the server refuses:\n\t\t\t-- used in key specification without a key length\n\t\t\t-- (stokaro/ptah#2112).\n\t\t\ts.SUB_PART,\n\t\t\t-- 'A' for an ascending key part, 'D' for a descending one, and NULL\n\t\t\t-- where the key has no order to report: a FULLTEXT or HASH key.\n\t\t\t-- KEY (a DESC) and KEY (a) are different indexes on both engines,\n\t\t\t-- so a read that discards this cannot tell a declaration that\n\t\t\t-- changed direction from one that did not (stokaro/ptah#2816).\n\t\t\ts.COLLATION,\n\t\t\tCOALESCE(s.INDEX_COMMENT, ''),\n\t\t\tCASE WHEN s.IS_VISIBLE = 'NO' THEN 1 ELSE 0 END,\n\t\t\t-- The expression of a functional key part, NULL for a column key\n\t\t\t-- part; see [Reader.indexKeyExpressionColumn].\n\t\t\ts.EXPRESSION\n\t\tFROM information_schema.STATISTICS s\n\t\tWHERE s.TABLE_SCHEMA = '{{database}}'\n\t\tAND s.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX",
+      "statement": "SELECT\n\t\t\ts.INDEX_NAME,\n\t\t\ts.TABLE_NAME,\n\t\t\ts.COLUMN_NAME,\n\t\t\ts.NON_UNIQUE,\n\t\t\ts.INDEX_TYPE,\n\t\t\t-- The number of leading characters this key indexes, NULL for a\n\t\t\t-- whole-column key. MySQL requires one for a BLOB or TEXT column,\n\t\t\t-- so a key that loses it produces a description the server refuses:\n\t\t\t-- used in key specification without a key length\n\t\t\t-- (stokaro/ptah#2112).\n\t\t\ts.SUB_PART,\n\t\t\t-- 'A' for an ascending key part, 'D' for a descending one, and NULL\n\t\t\t-- where the key has no order to report: a FULLTEXT or HASH key.\n\t\t\t-- KEY (a DESC) and KEY (a) are different indexes on both engines,\n\t\t\t-- so a read that discards this cannot tell a declaration that\n\t\t\t-- changed direction from one that did not (stokaro/ptah#2816).\n\t\t\ts.COLLATION,\n\t\t\tCOALESCE(s.INDEX_COMMENT, ''),\n\t\t\tCASE WHEN s.IS_VISIBLE = 'NO' THEN 1 ELSE 0 END,\n\t\t\t-- The expression of a functional key part, NULL for a column key\n\t\t\t-- part; see [Reader.indexKeyExpressionColumn].\n\t\t\ts.EXPRESSION\n\t\tFROM information_schema.STATISTICS s\n\t\tWHERE (s.TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(s.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND s.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY s.TABLE_NAME, s.INDEX_NAME, s.SEQ_IN_INDEX",
       "parameters": ""
     },
     {
@@ -915,7 +956,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT CONSTRAINT_NAME, CHECK_CLAUSE\n\t\tFROM information_schema.CHECK_CONSTRAINTS\n\t\tWHERE CONSTRAINT_SCHEMA = ?",
+      "statement": "SELECT CONSTRAINT_NAME, CHECK_CLAUSE\n\t\tFROM information_schema.CHECK_CONSTRAINTS\n\t\tWHERE (CONSTRAINT_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(CONSTRAINT_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))",
       "parameters": ""
     },
     {
@@ -926,7 +967,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT CONSTRAINT_NAME, CHECK_CLAUSE\n\t\tFROM information_schema.CHECK_CONSTRAINTS\n\t\tWHERE CONSTRAINT_SCHEMA = '{{database}}'",
+      "statement": "SELECT CONSTRAINT_NAME, CHECK_CLAUSE\n\t\tFROM information_schema.CHECK_CONSTRAINTS\n\t\tWHERE (CONSTRAINT_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(CONSTRAINT_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))",
       "parameters": ""
     },
     {
@@ -937,7 +978,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\ttc.CONSTRAINT_NAME,\n\t\t\ttc.TABLE_NAME,\n\t\t\ttc.CONSTRAINT_TYPE,\n\t\t\tCOALESCE(kcu.COLUMN_NAME, '') as COLUMN_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_SCHEMA, '') as REFERENCED_TABLE_SCHEMA,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_NAME, '') as REFERENCED_TABLE_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_COLUMN_NAME, '') as REFERENCED_COLUMN_NAME,\n\t\t\tCOALESCE(rc.DELETE_RULE, '') as DELETE_RULE,\n\t\t\tCOALESCE(rc.UPDATE_RULE, '') as UPDATE_RULE,\n\t\t\tCOALESCE(rc.MATCH_OPTION, '') as MATCH_OPTION,\n\t\t\tCOALESCE(tc.ENFORCED, 'YES') as ENFORCED\n\t\tFROM information_schema.TABLE_CONSTRAINTS tc\n\t\tLEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON\n\t\t\ttc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND\n\t\t\ttc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND\n\t\t\ttc.TABLE_NAME = kcu.TABLE_NAME AND\n\t\t\t-- KEY_COLUMN_USAGE carries no constraint type, so the referenced\n\t\t\t-- table stands in for one: a foreign key's rows name it and every\n\t\t\t-- other kind's leave it null. Without this the join is a cross\n\t\t\t-- product wherever two constraints on one table share a name, which\n\t\t\t-- both engines allow: a UNIQUE over one column came back over four\n\t\t\t-- (stokaro/ptah#2774).\n\t\t\t((tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NOT NULL)\n\t\t\t\tOR (tc.CONSTRAINT_TYPE <> 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NULL))\n\t\tLEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc ON\n\t\t\ttc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND\n\t\t\ttc.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA AND\n\t\t\t-- REFERENTIAL_CONSTRAINTS holds foreign keys alone, so a same-named\n\t\t\t-- UNIQUE would otherwise borrow the foreign key's referential\n\t\t\t-- actions. The table name is required for the same reason the type\n\t\t\t-- is: the name is unique per table, not per schema.\n\t\t\ttc.TABLE_NAME = rc.TABLE_NAME AND\n\t\t\ttc.CONSTRAINT_TYPE = 'FOREIGN KEY'\n\t\tWHERE tc.TABLE_SCHEMA = ?\n\t\tAND tc.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+      "statement": "SELECT\n\t\t\ttc.CONSTRAINT_NAME,\n\t\t\ttc.TABLE_NAME,\n\t\t\ttc.CONSTRAINT_TYPE,\n\t\t\tCOALESCE(kcu.COLUMN_NAME, '') as COLUMN_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_SCHEMA, '') as REFERENCED_TABLE_SCHEMA,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_NAME, '') as REFERENCED_TABLE_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_COLUMN_NAME, '') as REFERENCED_COLUMN_NAME,\n\t\t\tCOALESCE(rc.DELETE_RULE, '') as DELETE_RULE,\n\t\t\tCOALESCE(rc.UPDATE_RULE, '') as UPDATE_RULE,\n\t\t\tCOALESCE(rc.MATCH_OPTION, '') as MATCH_OPTION,\n\t\t\tCOALESCE(tc.ENFORCED, 'YES') as ENFORCED\n\t\tFROM information_schema.TABLE_CONSTRAINTS tc\n\t\tLEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON\n\t\t\ttc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND\n\t\t\t(tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(kcu.TABLE_SCHEMA USING utf8mb4))) AND\n\t\t\ttc.TABLE_NAME = kcu.TABLE_NAME AND\n\t\t\t-- KEY_COLUMN_USAGE carries no constraint type, so the referenced\n\t\t\t-- table stands in for one: a foreign key's rows name it and every\n\t\t\t-- other kind's leave it null. Without this the join is a cross\n\t\t\t-- product wherever two constraints on one table share a name, which\n\t\t\t-- both engines allow: a UNIQUE over one column came back over four\n\t\t\t-- (stokaro/ptah#2774).\n\t\t\t((tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NOT NULL)\n\t\t\t\tOR (tc.CONSTRAINT_TYPE <> 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NULL))\n\t\tLEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc ON\n\t\t\ttc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND\n\t\t\t(tc.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(rc.CONSTRAINT_SCHEMA USING utf8mb4))) AND\n\t\t\t-- REFERENTIAL_CONSTRAINTS holds foreign keys alone, so a same-named\n\t\t\t-- UNIQUE would otherwise borrow the foreign key's referential\n\t\t\t-- actions. The table name is required for the same reason the type\n\t\t\t-- is: the name is unique per table, not per schema.\n\t\t\ttc.TABLE_NAME = rc.TABLE_NAME AND\n\t\t\ttc.CONSTRAINT_TYPE = 'FOREIGN KEY'\n\t\tWHERE (tc.TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND tc.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -948,7 +989,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\ttc.CONSTRAINT_NAME,\n\t\t\ttc.TABLE_NAME,\n\t\t\ttc.CONSTRAINT_TYPE,\n\t\t\tCOALESCE(kcu.COLUMN_NAME, '') as COLUMN_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_SCHEMA, '') as REFERENCED_TABLE_SCHEMA,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_NAME, '') as REFERENCED_TABLE_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_COLUMN_NAME, '') as REFERENCED_COLUMN_NAME,\n\t\t\tCOALESCE(rc.DELETE_RULE, '') as DELETE_RULE,\n\t\t\tCOALESCE(rc.UPDATE_RULE, '') as UPDATE_RULE,\n\t\t\tCOALESCE(rc.MATCH_OPTION, '') as MATCH_OPTION,\n\t\t\tCOALESCE(tc.ENFORCED, 'YES') as ENFORCED\n\t\tFROM information_schema.TABLE_CONSTRAINTS tc\n\t\tLEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON\n\t\t\ttc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND\n\t\t\ttc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND\n\t\t\ttc.TABLE_NAME = kcu.TABLE_NAME AND\n\t\t\t-- KEY_COLUMN_USAGE carries no constraint type, so the referenced\n\t\t\t-- table stands in for one: a foreign key's rows name it and every\n\t\t\t-- other kind's leave it null. Without this the join is a cross\n\t\t\t-- product wherever two constraints on one table share a name, which\n\t\t\t-- both engines allow: a UNIQUE over one column came back over four\n\t\t\t-- (stokaro/ptah#2774).\n\t\t\t((tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NOT NULL)\n\t\t\t\tOR (tc.CONSTRAINT_TYPE <> 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NULL))\n\t\tLEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc ON\n\t\t\ttc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND\n\t\t\ttc.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA AND\n\t\t\t-- REFERENTIAL_CONSTRAINTS holds foreign keys alone, so a same-named\n\t\t\t-- UNIQUE would otherwise borrow the foreign key's referential\n\t\t\t-- actions. The table name is required for the same reason the type\n\t\t\t-- is: the name is unique per table, not per schema.\n\t\t\ttc.TABLE_NAME = rc.TABLE_NAME AND\n\t\t\ttc.CONSTRAINT_TYPE = 'FOREIGN KEY'\n\t\tWHERE tc.TABLE_SCHEMA = '{{database}}'\n\t\tAND tc.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
+      "statement": "SELECT\n\t\t\ttc.CONSTRAINT_NAME,\n\t\t\ttc.TABLE_NAME,\n\t\t\ttc.CONSTRAINT_TYPE,\n\t\t\tCOALESCE(kcu.COLUMN_NAME, '') as COLUMN_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_SCHEMA, '') as REFERENCED_TABLE_SCHEMA,\n\t\t\tCOALESCE(kcu.REFERENCED_TABLE_NAME, '') as REFERENCED_TABLE_NAME,\n\t\t\tCOALESCE(kcu.REFERENCED_COLUMN_NAME, '') as REFERENCED_COLUMN_NAME,\n\t\t\tCOALESCE(rc.DELETE_RULE, '') as DELETE_RULE,\n\t\t\tCOALESCE(rc.UPDATE_RULE, '') as UPDATE_RULE,\n\t\t\tCOALESCE(rc.MATCH_OPTION, '') as MATCH_OPTION,\n\t\t\tCOALESCE(tc.ENFORCED, 'YES') as ENFORCED\n\t\tFROM information_schema.TABLE_CONSTRAINTS tc\n\t\tLEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON\n\t\t\ttc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND\n\t\t\t(tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(kcu.TABLE_SCHEMA USING utf8mb4))) AND\n\t\t\ttc.TABLE_NAME = kcu.TABLE_NAME AND\n\t\t\t-- KEY_COLUMN_USAGE carries no constraint type, so the referenced\n\t\t\t-- table stands in for one: a foreign key's rows name it and every\n\t\t\t-- other kind's leave it null. Without this the join is a cross\n\t\t\t-- product wherever two constraints on one table share a name, which\n\t\t\t-- both engines allow: a UNIQUE over one column came back over four\n\t\t\t-- (stokaro/ptah#2774).\n\t\t\t((tc.CONSTRAINT_TYPE = 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NOT NULL)\n\t\t\t\tOR (tc.CONSTRAINT_TYPE <> 'FOREIGN KEY' AND kcu.REFERENCED_TABLE_NAME IS NULL))\n\t\tLEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc ON\n\t\t\ttc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND\n\t\t\t(tc.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(rc.CONSTRAINT_SCHEMA USING utf8mb4))) AND\n\t\t\t-- REFERENTIAL_CONSTRAINTS holds foreign keys alone, so a same-named\n\t\t\t-- UNIQUE would otherwise borrow the foreign key's referential\n\t\t\t-- actions. The table name is required for the same reason the type\n\t\t\t-- is: the name is unique per table, not per schema.\n\t\t\ttc.TABLE_NAME = rc.TABLE_NAME AND\n\t\t\ttc.CONSTRAINT_TYPE = 'FOREIGN KEY'\n\t\tWHERE (tc.TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(tc.TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND tc.TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -959,7 +1000,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = ?\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE (TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -970,7 +1011,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE TABLE_SCHEMA = '{{database}}'\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
+      "statement": "SELECT TABLE_NAME, VIEW_DEFINITION, CHECK_OPTION, SECURITY_TYPE, DEFINER, CURRENT_USER()\n\t\tFROM information_schema.VIEWS\n\t\tWHERE (TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND TABLE_NAME NOT IN ('schema_migrations', 'schema_migrations_log', 'schema_migrations_repeatable', 'ptah_migration_tags', 'ptah_schema_apply_log', 'schema_seeds')\n\t\tORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -981,7 +1022,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\tTRIGGER_NAME,\n\t\t\tEVENT_OBJECT_TABLE,\n\t\t\tACTION_TIMING,\n\t\t\tEVENT_MANIPULATION,\n\t\t\tACTION_ORIENTATION,\n\t\t\tACTION_STATEMENT\n\t\tFROM information_schema.TRIGGERS\n\t\tWHERE TRIGGER_SCHEMA = ?\n\t\tORDER BY EVENT_OBJECT_TABLE, TRIGGER_NAME",
+      "statement": "SELECT\n\t\t\tTRIGGER_NAME,\n\t\t\tEVENT_OBJECT_TABLE,\n\t\t\tACTION_TIMING,\n\t\t\tEVENT_MANIPULATION,\n\t\t\tACTION_ORIENTATION,\n\t\t\tACTION_STATEMENT\n\t\tFROM information_schema.TRIGGERS\n\t\tWHERE (TRIGGER_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TRIGGER_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tORDER BY EVENT_OBJECT_TABLE, TRIGGER_NAME",
       "parameters": ""
     },
     {
@@ -992,7 +1033,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\tTRIGGER_NAME,\n\t\t\tEVENT_OBJECT_TABLE,\n\t\t\tACTION_TIMING,\n\t\t\tEVENT_MANIPULATION,\n\t\t\tACTION_ORIENTATION,\n\t\t\tACTION_STATEMENT\n\t\tFROM information_schema.TRIGGERS\n\t\tWHERE TRIGGER_SCHEMA = '{{database}}'\n\t\tORDER BY EVENT_OBJECT_TABLE, TRIGGER_NAME",
+      "statement": "SELECT\n\t\t\tTRIGGER_NAME,\n\t\t\tEVENT_OBJECT_TABLE,\n\t\t\tACTION_TIMING,\n\t\t\tEVENT_MANIPULATION,\n\t\t\tACTION_ORIENTATION,\n\t\t\tACTION_STATEMENT\n\t\tFROM information_schema.TRIGGERS\n\t\tWHERE (TRIGGER_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TRIGGER_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tORDER BY EVENT_OBJECT_TABLE, TRIGGER_NAME",
       "parameters": ""
     },
     {
@@ -1003,7 +1044,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT ROUTINE_TYPE, SPECIFIC_NAME, PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER\n\t\tFROM information_schema.PARAMETERS\n\t\tWHERE SPECIFIC_SCHEMA = ?\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tAND ORDINAL_POSITION > 0\n\t\tORDER BY ROUTINE_TYPE, SPECIFIC_NAME, ORDINAL_POSITION",
+      "statement": "SELECT ROUTINE_TYPE, SPECIFIC_NAME, PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER\n\t\tFROM information_schema.PARAMETERS\n\t\tWHERE (SPECIFIC_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(SPECIFIC_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tAND ORDINAL_POSITION > 0\n\t\tORDER BY ROUTINE_TYPE, SPECIFIC_NAME, ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -1014,7 +1055,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT ROUTINE_TYPE, SPECIFIC_NAME, PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER\n\t\tFROM information_schema.PARAMETERS\n\t\tWHERE SPECIFIC_SCHEMA = '{{database}}'\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tAND ORDINAL_POSITION > 0\n\t\tORDER BY ROUTINE_TYPE, SPECIFIC_NAME, ORDINAL_POSITION",
+      "statement": "SELECT ROUTINE_TYPE, SPECIFIC_NAME, PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER\n\t\tFROM information_schema.PARAMETERS\n\t\tWHERE (SPECIFIC_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(SPECIFIC_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tAND ORDINAL_POSITION > 0\n\t\tORDER BY ROUTINE_TYPE, SPECIFIC_NAME, ORDINAL_POSITION",
       "parameters": ""
     },
     {
@@ -1025,7 +1066,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT\n\t\t\tROUTINE_NAME,\n\t\t\tDTD_IDENTIFIER,\n\t\t\tIS_DETERMINISTIC,\n\t\t\tSQL_DATA_ACCESS,\n\t\t\tSECURITY_TYPE,\n\t\t\tDEFINER,\n\t\t\tCURRENT_USER(),\n\t\t\tROUTINE_DEFINITION,\n\t\t\tCOALESCE(ROUTINE_COMMENT, ''),\n\t\t\tROUTINE_TYPE\n\t\tFROM information_schema.ROUTINES\n\t\tWHERE ROUTINE_SCHEMA = ?\n\t\t-- Both routine kinds. A procedure used to be filtered out here with\n\t\t-- nothing saying so, so a comparison against a schema holding one\n\t\t-- reported no difference and no diagnostic (stokaro/ptah#1722).\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tORDER BY ROUTINE_TYPE, ROUTINE_NAME",
+      "statement": "SELECT\n\t\t\tROUTINE_NAME,\n\t\t\tDTD_IDENTIFIER,\n\t\t\tIS_DETERMINISTIC,\n\t\t\tSQL_DATA_ACCESS,\n\t\t\tSECURITY_TYPE,\n\t\t\tDEFINER,\n\t\t\tCURRENT_USER(),\n\t\t\tROUTINE_DEFINITION,\n\t\t\tCOALESCE(ROUTINE_COMMENT, ''),\n\t\t\tROUTINE_TYPE\n\t\tFROM information_schema.ROUTINES\n\t\tWHERE (ROUTINE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(ROUTINE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4)))\n\t\t-- Both routine kinds. A procedure used to be filtered out here with\n\t\t-- nothing saying so, so a comparison against a schema holding one\n\t\t-- reported no difference and no diagnostic (stokaro/ptah#1722).\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tORDER BY ROUTINE_TYPE, ROUTINE_NAME",
       "parameters": ""
     },
     {
@@ -1036,7 +1077,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT\n\t\t\tROUTINE_NAME,\n\t\t\tDTD_IDENTIFIER,\n\t\t\tIS_DETERMINISTIC,\n\t\t\tSQL_DATA_ACCESS,\n\t\t\tSECURITY_TYPE,\n\t\t\tDEFINER,\n\t\t\tCURRENT_USER(),\n\t\t\tROUTINE_DEFINITION,\n\t\t\tCOALESCE(ROUTINE_COMMENT, ''),\n\t\t\tROUTINE_TYPE\n\t\tFROM information_schema.ROUTINES\n\t\tWHERE ROUTINE_SCHEMA = '{{database}}'\n\t\t-- Both routine kinds. A procedure used to be filtered out here with\n\t\t-- nothing saying so, so a comparison against a schema holding one\n\t\t-- reported no difference and no diagnostic (stokaro/ptah#1722).\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tORDER BY ROUTINE_TYPE, ROUTINE_NAME",
+      "statement": "SELECT\n\t\t\tROUTINE_NAME,\n\t\t\tDTD_IDENTIFIER,\n\t\t\tIS_DETERMINISTIC,\n\t\t\tSQL_DATA_ACCESS,\n\t\t\tSECURITY_TYPE,\n\t\t\tDEFINER,\n\t\t\tCURRENT_USER(),\n\t\t\tROUTINE_DEFINITION,\n\t\t\tCOALESCE(ROUTINE_COMMENT, ''),\n\t\t\tROUTINE_TYPE\n\t\tFROM information_schema.ROUTINES\n\t\tWHERE (ROUTINE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(ROUTINE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4)))\n\t\t-- Both routine kinds. A procedure used to be filtered out here with\n\t\t-- nothing saying so, so a comparison against a schema holding one\n\t\t-- reported no difference and no diagnostic (stokaro/ptah#1722).\n\t\tAND ROUTINE_TYPE IN ('FUNCTION', 'PROCEDURE')\n\t\tORDER BY ROUTINE_TYPE, ROUTINE_NAME",
       "parameters": ""
     },
     {
@@ -1047,7 +1088,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ? ORDER BY EVENT_NAME",
+      "statement": "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE (EVENT_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(EVENT_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4))) ORDER BY EVENT_NAME",
       "parameters": ""
     },
     {
@@ -1058,7 +1099,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = '{{database}}' ORDER BY EVENT_NAME",
+      "statement": "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE (EVENT_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(EVENT_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4))) ORDER BY EVENT_NAME",
       "parameters": ""
     },
     {
@@ -1069,7 +1110,7 @@
         "stale-apply"
       ],
       "command": "Prepare",
-      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE TABLE_SCHEMA = ? AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
+      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE (TABLE_SCHEMA = ? AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT(? USING utf8mb4))) AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
@@ -1080,7 +1121,7 @@
         "stale-apply"
       ],
       "command": "Execute",
-      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE TABLE_SCHEMA = '{{database}}' AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
+      "statement": "SELECT DISTINCT TABLE_NAME FROM information_schema.PARTITIONS\n\t\tWHERE (TABLE_SCHEMA = '{{database}}' AND (@@lower_case_table_names <> 0 OR CONVERT(TABLE_SCHEMA USING utf8mb4) COLLATE utf8mb4_bin = CONVERT('{{database}}' USING utf8mb4))) AND PARTITION_NAME IS NOT NULL ORDER BY TABLE_NAME",
       "parameters": ""
     },
     {
