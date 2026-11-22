@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-22T15:19:01.339373+00:00",
+  "frozenAt": "2026-11-22T15:57:35.009395+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "6ffdfca0ee65f1c6f8d7a34c4e39bc49354f3abbd58cadc211a1d1233bcb8fad"
+      "sha256": "a114b987e83b5b2d0a93cb4b9d0c8f7a353884f2c1516f6543789abdf1faae64"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -84,5 +84,5 @@
     "freezeCommit": "40115b17a6575ae774fc72bc3e5315f631670fde",
     "sha256": "259495c5d70ef9994225dc1c0a0b9af6298c30860b335880474a7e823ea59fec"
   },
-  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.34.0 to the v0.35.0 release image, and record in the edge row what v0.35.0 changes: a MySQL or MariaDB view, stored function or MariaDB sequence an applied migration created is compared under the target's database by a migration drift check, so it no longer reads as drift; a PostgreSQL 18 column held as VIRTUAL and declared without a kind is refused with the code generated-kind, which a Plan reports as plan_refused and stops Blocked with PlanRefused. The edge, v0.2.17 and v0.2.16 rows also say that the drift check replays each applied migration under its file's own transaction directive rather than under --tx-mode, and the drift limitation of the edge, v0.2.17, v0.2.16 and v0.2.15 rows names v0.35.0 as the release with the fix. The schema SQL contract, the readings and the audits name what v0.35.0 sends. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.34.0 to the v0.35.0 release image, and record in the edge row what v0.35.0 changes: a MySQL or MariaDB view, stored function or MariaDB sequence an applied migration created is compared under the target's database by a migration drift check, so it no longer reads as drift; a PostgreSQL 18 column held as VIRTUAL and declared without a kind is refused with the code generated-kind, which a Plan reports as plan_refused and stops Blocked with PlanRefused; a role membership whose ADMIN, INHERIT or SET option differs from its declaration is reported under the new drift category role_memberships_modified, which PtahSchema's status takes at CRD schema version 26 and support/ptah-drift-categories.json lists. The edge, v0.2.17 and v0.2.16 rows also say that the drift check replays each applied migration under its file's own transaction directive rather than under --tx-mode, and the drift limitation of the edge, v0.2.17, v0.2.16 and v0.2.15 rows names v0.35.0 as the release with the fix. The schema SQL contract, the readings and the audits name what v0.35.0 sends. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }

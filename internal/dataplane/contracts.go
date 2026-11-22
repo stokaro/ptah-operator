@@ -104,6 +104,7 @@ var (
 		"rls_policies_modified",
 		"rls_policies_removed",
 		"role_memberships_added",
+		"role_memberships_modified",
 		"role_memberships_removed",
 		"roles_added",
 		"roles_modified",

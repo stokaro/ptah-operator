@@ -3,7 +3,7 @@
   "sources": [
     {
       "path": "docs/drift-findings.json",
-      "sha256": "235058f0b769cbb20a54dbbd308d7127a8bb8d613d7efe57bd09818e18671eeb"
+      "sha256": "6f320ade0c281a7da7b16f8dc665719d37d981fbcc56f29a7d61702eb772d909"
     }
   ],
   "categories": [
@@ -46,6 +46,7 @@
     "rls_policies_modified",
     "rls_policies_removed",
     "role_memberships_added",
+    "role_memberships_modified",
     "role_memberships_removed",
     "roles_added",
     "roles_modified",

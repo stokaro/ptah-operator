@@ -19,9 +19,14 @@ out of silence.
 ## 0.2.18
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. The CRDs do not change. The executor moves to Ptah v0.35.0,
-which retires the execution binding: approve again whatever was waiting, after
-the resource has read its database with v0.35.0 and planned. A read still
+on the upgrade. A schema's drift summary takes the category Ptah v0.35.0 adds,
+so the CRD schema version moves from 25 to 26. Once this release's hook has
+updated the CRDs, 0.2.17's CRD hook refuses
+[a rollback](../../use/operations/#rollback) to 0.2.17: a release's hook
+refuses CRD schemas newer than the release reads. The executor moves to Ptah
+v0.35.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.35.0 and planned. A
+read still
 running when the new manager starts runs again. An Apply whose Job 0.2.17
 created is waited for rather than retired: the new manager reads its result
 under the v0.34.0 binding it was dispatched under, records the outcome it
@@ -53,6 +58,17 @@ for Applies to end. [0.2.16](#0216) lists when such an Apply is still recorded
   ([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)), and the
   next Apply runs. A view listed under `spec.policy.driftCheck.exclude` only to
   get past that can come off the list, so the check compares it again.
+- **A role membership whose options differ reads as drift.** v0.35.0 compares
+  the `ADMIN`, `INHERIT` and `SET` options of each membership a role declares
+  with `member_of`, and reports one that differs under the new category
+  `role_memberships_modified`
+  ([stokaro/ptah#6424](https://github.com/stokaro/ptah/pull/6424)), as a
+  warning, in `status.target.driftFindings`. An option the declaration leaves
+  out means its default. Measured on PostgreSQL 17 with a YAML schema whose
+  role states `member_of: [harness_readers]`, against a membership granted
+  `WITH ADMIN OPTION`, `schema drift` reports the category and the plan is
+  `GRANT "harness_readers" TO "harness_vault" WITH ADMIN FALSE`. 0.2.17 refuses
+  such a report, so with v0.35.0 its Observe of that schema would fail.
 
 ## 0.2.17
 

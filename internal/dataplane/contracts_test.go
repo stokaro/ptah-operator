@@ -34,7 +34,7 @@ func TestDriftFindingVocabulary(t *testing.T) {
 		"materialized_views_modified", "materialized_views_removed", "rls_enabled_tables_added",
 		"rls_enabled_tables_removed", "rls_force_added", "rls_force_removed", "rls_policies_added",
 		"rls_policies_modified", "rls_policies_removed", "role_memberships_added",
-		"role_memberships_removed", "roles_added", "roles_modified", "roles_removed", "schemas_added",
+		"role_memberships_modified", "role_memberships_removed", "roles_added", "roles_modified", "roles_removed", "schemas_added",
 		"schemas_modified", "schemas_removed", "sequences_added", "sequences_modified",
 		"sequences_removed", "table_collations_changed", "table_constraints_added", "table_constraints_removed", "tables_added",
 		"tables_removed", "triggers_added", "triggers_modified", "triggers_removed", "undecided",

@@ -517,6 +517,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:af87aae8557e0d95a2d3ca6447d44ac0574819a7d8b4ace18ea695f02cf41b08",
       "reason": "The api package the runner builds against gains the reason PlanRefused, which a schema whose Plan Ptah refused under a code stops with, and which its conditions and a Verified journal entry carry and no frame carries. The runner exports plan_refused as CodePlanRefused. The dry run of a saved plan refused under any code but stale-plan and lock-timeout now reads plan_refused, as the plan's own refusal does, where only the owner codes and backslash-mode did. A plan document refused as stale-plan or lock-timeout now reads invalid_plan_output, as the dry run's do. Every plan_refused now writes Ptah's sentence to the Pod log, where only the dry run's did. Both codes were in the frame before, so a controller of either side reads what this runner writes, and the runner's commands, codes, fields and frame shape are as they were. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:5d69ad0dd64a1979a97f55592cbb5046dc2648e89a97bb890bbb99c924edd98b",
+      "reason": "Accept the drift finding category Ptah v0.35.0 adds, role_memberships_modified for a role membership whose ADMIN, INHERIT or SET option differs from the declaration's, in a drift report and in a result frame. A manager that predates it refuses a report or a frame that carries one, which is the refusal a version mismatch would give, so protocol 1 stays. The commands, the fields and the frame shape are as they were."
     }
   ]
 }
