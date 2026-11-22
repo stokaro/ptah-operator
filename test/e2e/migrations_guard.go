@@ -54,9 +54,14 @@ func decodeManifests(content []byte) ([]map[string]any, error) {
 
 // guardAuthorGrantPending names only the authorizer's refusal of the exact
 // initial write. Admission and other failures must not become RBAC retries.
-func guardAuthorGrantPending(message, user, namespace string) bool {
+// The authorizer reads Roles and RoleBindings from separate caches, so it can
+// see the author's RoleBinding before the Role it names, and then adds that
+// this Role, and no other, was not found.
+func guardAuthorGrantPending(message, user, namespace, role string) bool {
 	denial := fmt.Sprintf(`ptahmigrations.operator.ptah.run is forbidden: User %q cannot create resource "ptahmigrations" in API group "operator.ptah.run" in the namespace %q`, user, namespace)
-	return strings.HasSuffix(strings.TrimSpace(message), denial)
+	message = strings.TrimSpace(message)
+	return strings.HasSuffix(message, denial) ||
+		strings.HasSuffix(message, denial+fmt.Sprintf(`: RBAC: role.rbac.authorization.k8s.io %q not found`, role))
 }
 
 // guardAuthorRole is the example desired-state author Role and RoleBinding,
