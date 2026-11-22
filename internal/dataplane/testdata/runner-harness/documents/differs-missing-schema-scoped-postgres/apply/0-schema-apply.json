@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_6f983e49620d",
-  "plan_digest": "sha256:c91a7c7f4ea75a74827a96ed0beae65a5ee91f628e73b6befc271209d246adfc",
+  "plan_name": "plan_d57fb093d149",
+  "plan_digest": "sha256:f794a168a3aae0103d6924ab6533e27978d710dcb626f014b6be67a07cbad2cc",
   "units": [
     {
       "sql": "CREATE SCHEMA IF NOT EXISTS \"differs_app\""

@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_385ac03d3a3f",
-  "plan_digest": "sha256:c92bd9225634c0ae47bbfccb8833494fa4e0b823d3113694fb5559e02f573ab9",
+  "plan_name": "plan_bc82dddd9c53",
+  "plan_digest": "sha256:f62820752bdc157fe62fb06d10a9cff9c2742ee041750a55b803add23b62a8d2",
   "units": [
     {
       "sql": "ALTER TABLE `differs_notes` COLLATE utf8mb4_bin, MODIFY COLUMN `body` varchar(64) NOT NULL"

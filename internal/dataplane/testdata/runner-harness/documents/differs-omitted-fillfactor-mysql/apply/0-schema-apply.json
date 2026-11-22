@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_0c4133f53f06",
-  "plan_digest": "sha256:4eac7a74cbed7478c52f07a3e22d72391ae5ff61203fccfda2a9f068b704ac6a",
+  "plan_name": "plan_0dfadb020e74",
+  "plan_digest": "sha256:835108eaba789c26ef98ff5ee89c0121d9146190786f98717afd28a2a96ec79b",
   "units": [
     {
       "sql": "CREATE TABLE `differs_omitted` (\n  `id` bigint PRIMARY KEY,\n  `name` varchar(20)\n)"

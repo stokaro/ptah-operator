@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "refused",
-  "plan_name": "plan_eeb163a2f3d8",
-  "plan_digest": "sha256:962fe76c65b86e5fbcfc40f59868a26ff45df3d91e96a05c893f8067caff3377",
+  "plan_name": "plan_bae83845e83a",
+  "plan_digest": "sha256:76b2f6b54eccbab8f78964423fd8c39f9324e1b89bb94fec0dc0175bc251411f",
   "refusal": {
     "code": "stale-plan",
     "changed": "schema",

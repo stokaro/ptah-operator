@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_5f96dc6d9e2f",
-  "plan_digest": "sha256:8bdfe26f511e20ef0ffc0e7ec8a7970eb2fad7fe472760f6cce0059dcb75bfba",
+  "plan_name": "plan_bf49b7e91733",
+  "plan_digest": "sha256:0644675154a67815225347dc55135d9883e4f532410420113f324eb948a20b39",
   "units": [
     {
       "sql": "ALTER TABLE \"public\".\"differs_events\" DETACH PARTITION \"public\".\"differs_e1\""

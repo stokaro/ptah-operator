@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_2cdddc7d2c44",
-  "plan_digest": "sha256:d6a2cc46e96d79e9cd1a888b8d11307f6d660ff1222b65c274a8c898d427ed29",
+  "plan_name": "plan_2945b2e83da6",
+  "plan_digest": "sha256:6d8ad7ad847f5e5d804ec3b07fa8b66ffd81ab6dd0d89109938f7d15d43398d5",
   "error": {
     "kind": "database_unreachable",
     "message": "connect to --db-url: failed to ping database: dial tcp: lookup harness-no-such-host.invalid on 127.0.0.11:53: server misbehaving"

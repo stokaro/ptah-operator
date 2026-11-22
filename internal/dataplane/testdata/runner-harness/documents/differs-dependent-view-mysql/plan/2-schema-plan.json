@@ -2,14 +2,14 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:ea6bdd5ece1c9377ff297efb4ed1f3d0a3daabb43fdcf8d8fb18e78a6ea56962",
-  "plan_path": "/work/ptah-plan-output-1269725400/second.plan.json",
+  "plan_digest": "sha256:20f9455c0f41c46e66c6bf662a90beb646cc741f097451ce22beb832b82a4c4d",
+  "plan_path": "/work/ptah-plan-output-4080988819/second.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_9dc962dde6b9",
+    "name": "plan_3e2645733e27",
     "dialect": "mysql",
     "from_fingerprint": "sha256:182b0ba3a526e528a44ee581fb7a4244c5f9ef4587a8b392f057540d6447a3d5",
-    "to_fingerprint": "sha256:381543cd9d92ada7902693d97dee3848712364d61db94a55e653cc6e9a48eeb0",
+    "to_fingerprint": "sha256:a80d9d8906691e03a363deed5b2f4b2f8c4bb09a03c61128e101104274a517ac",
     "scope": {
       "kind": "schema",
       "name": "harness_differs_dependent_view_mysql"

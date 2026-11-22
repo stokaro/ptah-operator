@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_24639d0fbfc0",
-  "plan_digest": "sha256:8743ef8cb9c61fb80ec3bae614d8e8f401e95478ff1ee52f7666406ecee90c8b",
+  "plan_name": "plan_69a3b6432e9e",
+  "plan_digest": "sha256:16192bafd4b6943365e8493b0d2c19bf7d34c8166bd950d6cffed4971f19c50c",
   "units": [
     {
       "sql": "CREATE TABLE `differs_paths` (\n  `id` bigint PRIMARY KEY,\n  `path` varchar(64) NOT NULL COMMENT 'a\\\\b' DEFAULT 'C:\\\\temp'\n)"

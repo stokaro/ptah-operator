@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "unknown",
-  "plan_name": "plan_00c675de07da",
-  "plan_digest": "sha256:a288c9f9d8fc484fb8ed81cb7b0d752f5dc71a8535de65db77989dacea61604b",
+  "plan_name": "plan_3b092c15b356",
+  "plan_digest": "sha256:658e03018e16b1aac14466db13f2326fbb03bd0ae8db0bfd30eb8cbf9c09c7a8",
   "units": [
     {
       "sql": "DROP FUNCTION `harness_differs_login_show_routine_mysql`.`differs_hand_fn`"
@@ -31,13 +31,13 @@
         "state": "started",
         "sqlstate": "42000",
         "error_number": 1142,
-        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'172.20.0.7' for table 'ptah_schema_apply_log'"
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'192.168.107.8' for table 'ptah_schema_apply_log'"
       },
       {
         "state": "unknown",
         "sqlstate": "42000",
         "error_number": 1142,
-        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'172.20.0.7' for table 'ptah_schema_apply_log'"
+        "message": "Error 1142 (42000): INSERT command denied to user 'harness_login_show_routine'@'192.168.107.8' for table 'ptah_schema_apply_log'"
       }
     ]
   }

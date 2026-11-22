@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_a19e3b5ada4f",
-  "plan_digest": "sha256:7b13b2611b76b402c693fbb973e94cb5368c223cb0fef7400d9304a9e3ac71f8",
+  "plan_name": "plan_e110dd9d2ada",
+  "plan_digest": "sha256:cba00c2391347b031fe3baeef85e64a5e6a3976b7f523bb343a05f5097ea0d41",
   "units": [
     {
       "sql": "-- POSTGRES: table option ENGINE=InnoDB is not supported by this target; skipped.\nCREATE TABLE \"public\".\"differs_omitted\" (\n  \"id\" bigint PRIMARY KEY NOT NULL,\n  \"name\" varchar(20)\n)"
