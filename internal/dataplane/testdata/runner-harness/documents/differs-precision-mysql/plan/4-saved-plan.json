@@ -1,9 +1,9 @@
 {
   "format_version": 1,
-  "name": "plan_94fabbedc59c",
+  "name": "plan_fb965f7ac5f7",
   "dialect": "mysql",
   "from_fingerprint": "sha256:ee59bb0a6fa19ed3cb816abf0d450147e252ed135ff808470e6859ee6b1ceba7",
-  "to_fingerprint": "sha256:8f45eac17850c87c34972ec1c1089faae2d2b9c9e74ed4d8b462a8843dea5fee",
+  "to_fingerprint": "sha256:8daa2c1b96e39110415ba7e66c9ddbd6b56a28eeaf7ee77cf3ec9b7dcac9806f",
   "scope": {
     "kind": "schema",
     "name": "harness_differs_precision_mysql"

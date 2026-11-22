@@ -1,8 +1,8 @@
 # MySQL migration history journal
 
-The JSONL reading contains all 20 general-log records for the isolated
+The JSONL reading contains all 21 general-log records for the isolated
 `ptah_audit` account during a successful Ptah `migrations status
---migrations-dir /migrations --json` invocation, captured on 2026-11-19 by
+--migrations-dir /migrations --json` invocation, captured on 2026-11-22 by
 `support/qualification/probes/schema_sql_readings.py --part migrations`. The
 database already held the repository's first two MySQL migrations, applied by
 the same executor, so History reads an existing revision table; its statements
@@ -11,7 +11,7 @@ whether the table exists.
 
 - MySQL: `8.4.11`
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Executor: the Ptah v0.33.1 release image, source `f7c85bdc579c9e5939108a892f11e3d6d0974248`. The
+- Executor: the Ptah v0.35.0 release image, source `1ec0b95eea95afce6f50b5912311ce4822f0636b`. The
   reading was first taken on 2026-10-10 with the v0.13.0 release image (`eb69f8c4`). On
   2026-10-21 the same probe run with the v0.14.0 release image (`e046527f`) produced this reading
   record for record, on 2026-11-03 so did the v0.17.0 release image, on 2026-11-04 the v0.18.0
@@ -28,13 +28,15 @@ whether the table exists.
   at the start of each session
   ([stokaro/ptah#6295](https://github.com/stokaro/ptah/pull/6295)), and changes no other. On
   2026-11-20 the v0.34.0 release image (`90e98f6c`) reproduced the v0.33.1 reading record for
-  record
+  record. The v0.35.0 image adds one record, a `SELECT DATABASE()` after the first session's
+  `sql_mode` read ([stokaro/ptah#6454](https://github.com/stokaro/ptah/pull/6454)), and changes
+  no other
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 
 The reading preserves event times, thread IDs, `user_host`, command types and
-exact argument bytes encoded as hex. The 20 records comprise two Connect, seven
-Query, three Prepare, three Execute, three Close stmt and two Quit: 10 received
+exact argument bytes encoded as hex. The 21 records comprise two Connect, eight
+Query, three Prepare, three Execute, three Close stmt and two Quit: 11 received
 SQL execution records. No password-bearing account setup or unrelated administrator
 traffic is included.
 

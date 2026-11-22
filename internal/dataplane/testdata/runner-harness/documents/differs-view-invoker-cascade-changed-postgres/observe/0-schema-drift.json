@@ -118,6 +118,9 @@
         "name": "differs_docs_pkey",
         "table_name": "public.differs_docs",
         "type": "PRIMARY KEY",
+        "columns": [
+          "id"
+        ],
         "identity": {
           "schema": "public",
           "table": "differs_docs",

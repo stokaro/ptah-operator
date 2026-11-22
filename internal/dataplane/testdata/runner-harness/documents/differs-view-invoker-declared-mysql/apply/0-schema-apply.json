@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_26fbbf516775",
-  "plan_digest": "sha256:41082870e51da2632edeb35ecd1d644cc4af885c96f6b5876540853c82d8693e",
+  "plan_name": "plan_b1b47c10eb99",
+  "plan_digest": "sha256:09d33713596d7ebaa6841a28fbc898897acfd1033de4914903460ca8f25933de",
   "units": [
     {
       "sql": "CREATE OR REPLACE SQL SECURITY INVOKER VIEW `differs_notes_view` AS\nSELECT id, owner_name FROM differs_notes",

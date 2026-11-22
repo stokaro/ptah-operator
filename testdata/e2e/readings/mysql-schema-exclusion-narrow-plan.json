@@ -1,9 +1,9 @@
 {
   "format_version": 1,
-  "name": "plan_7c74b2b82f3c",
+  "name": "plan_6ff40ffef8a9",
   "dialect": "mysql",
   "from_fingerprint": "sha256:10b02ce6661667fadab3ea678b64d7c27979689f0ee07ac372caeae26278a627",
-  "to_fingerprint": "sha256:2602f063bb83f780b11c2d2aa7808e57bc5bb8e5a2190e3b4e5dab4436e81406",
+  "to_fingerprint": "sha256:a345d45cfb6fa73237a077ea78389e13ff4dc70dc9a41f4c12bf7bbce3d56988",
   "exclude": [
     "e2e_excluded_policy_keep"
   ],

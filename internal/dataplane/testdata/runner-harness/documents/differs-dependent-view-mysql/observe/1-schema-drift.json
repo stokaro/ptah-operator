@@ -89,6 +89,9 @@
         "name": "PRIMARY",
         "table_name": "differs_parent",
         "type": "PRIMARY KEY",
+        "columns": [
+          "id"
+        ],
         "identity": {
           "schema": "harness_differs_dependent_view_mysql",
           "table": "differs_parent",

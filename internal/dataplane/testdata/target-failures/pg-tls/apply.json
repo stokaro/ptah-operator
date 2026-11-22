@@ -2,10 +2,10 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "failed",
-  "plan_name": "plan_447062eaa428",
-  "plan_digest": "sha256:1c5813a3a7fea69deb5e81ae00125fa75acb62bb48c54c4a10d4725bb40b001e",
+  "plan_name": "plan_dda5a991c9eb",
+  "plan_digest": "sha256:8ddae0480692597224320ebcf58e243b10ea84ed0cf516a11dd737b05296352a",
   "error": {
     "kind": "tls_failed",
-    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: 172.20.0.2:5432 (harness-postgres): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead"
+    "message": "connect to --db-url: failed to ping database: failed to connect to `user=postgres database=harness_fault`: 192.168.107.2:5432 (harness-postgres): failed to write startup message: write failed: tls: failed to verify certificate: x509: certificate relies on legacy Common Name field, use SANs instead"
   }
 }

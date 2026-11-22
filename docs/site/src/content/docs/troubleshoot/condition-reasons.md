@@ -284,8 +284,10 @@ Ready=False SchemaDrifted
   applied history cannot be replayed, as when an applied revision's file is
   gone or a lower version was applied after a higher one. At stage `replay`
   an applied migration failed on the empty shadow, as one that depends on
-  something no migration creates does; the Pod log says which migration. At
-  stage `scope` Ptah refused a selector in `spec.policy.driftCheck.exclude`,
+  something no migration creates does, or a MySQL file that needs
+  `-- +ptah no_transaction` and does not say so: the replay runs each file
+  under its own directive, not under `spec.transactionMode`. The Pod log says
+  which migration. At stage `scope` Ptah refused a selector in `spec.policy.driftCheck.exclude`,
   such as one with more parts than the URL's scope can address; the Pod log
   quotes it. At stage `schema-match` the read of the target could not describe
   an object the applied migrations create. At stage `target-introspect` Ptah
@@ -921,7 +923,7 @@ too long for another session's lock, refuses nothing about the plan. It reads
 a dry run`, or `(lock-timeout)`, and the Plan is tried again at the failure
 retry. A plan refused under either code reads `invalid_plan_output: plan
 command reported refused (stale-plan) rather than a plan` and is tried again
-too, though Ptah v0.34.0's `schema plan` takes no lock and reads no plan file,
+too, though Ptah v0.35.0's `schema plan` takes no lock and reads no plan file,
 so it raises neither. Every other code stops the schema, from the plan or from
 the dry run, one this release does not know included. A code Ptah adds later
 for a database that moved or was busy stops it as well, and the schema then
@@ -1004,6 +1006,7 @@ than a dry run`, and nothing said why.
 | The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, and run `kubectl ptah refresh`; or declare an owner the login may give the view to. |
 | The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>` and run `kubectl ptah refresh`, or declare another owner. |
 | A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan stops with `PlanRefused` and the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode` and run `kubectl ptah refresh`, or declare the value without a backslash. |
+| A PostgreSQL 18 database holds a column as a `VIRTUAL` generated column, and the schema declares it without a kind, which Ptah reads as `STORED`, since Ptah v0.35.0 ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)). PostgreSQL 18 makes `GENERATED ALWAYS AS (...)` without `STORED` a `VIRTUAL` column, so a column created that way by hand or by a migration meets it; one Ptah creates is `STORED`. | An Observe reports `columns_modified`, and the Plan stops with `PlanRefused` and the code `generated-kind`. Ptah's sentence in the Pod log names the column and both kinds. Before 0.2.18 the Plan read `invalid_plan_output` and was tried again at every failure retry. | Declare the column `VIRTUAL`, or drop it and add it back as the schema declares it, and run `kubectl ptah refresh`. |
 | The plan drops an object something else depends on. | The Plan stops with `PlanRefused` and the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan stops with `PlanRefused` and the code `declaration-refused`, unless the file alone explains it, which stops the schema with [`SchemaInvalid`](#a-desired-schema-ptah-refuses) instead. | Read the sentence and change the declaration. |
 

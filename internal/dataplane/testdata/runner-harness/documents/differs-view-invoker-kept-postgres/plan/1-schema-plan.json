@@ -2,14 +2,14 @@
   "contract_version": 3,
   "command": "schema plan",
   "outcome": "changes",
-  "plan_digest": "sha256:4c0d6bc06a47af414f18131df8319a76a05b90ac985f3b0a759f7566c14a3d86",
-  "plan_path": "/work/ptah-plan-output-86345407/first.plan.json",
+  "plan_digest": "sha256:d10bc171e27eb0b58aff49cd1847b99d05e57f1930b71d0066600d98489b6952",
+  "plan_path": "/work/ptah-plan-output-3777268626/first.plan.json",
   "plan": {
     "format_version": 1,
-    "name": "plan_ff3bf5379222",
+    "name": "plan_3ee00e96bb24",
     "dialect": "postgres",
     "from_fingerprint": "sha256:508d2948e9f4f1d44560eb415a5d8e862a932ec0e7004d21701fce9ca0328551",
-    "to_fingerprint": "sha256:9270493e8994e63d6339ac35576427684511ab83bce7a5d7f25ff366070c96e9",
+    "to_fingerprint": "sha256:a4a799af4d205a929adca2c3d12faa70579a0975c5334b67950e19d66e7b959f",
     "scope": {
       "kind": "realm"
     },

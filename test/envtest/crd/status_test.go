@@ -152,6 +152,22 @@ func TestPtahSchemaStatusRefusesAMalformedDriftSummary(t *testing.T) {
 		}
 	})
 
+	// Ptah v0.35.0 reports a role membership whose options differ from the
+	// declaration's under a category of its own, as a warning.
+	t.Run("Ptah v0.35.0's category is published", func(t *testing.T) {
+		t.Parallel()
+		observed := reread(t, schema)
+		set(t, observed, map[string]any{
+			"driftFindingCount": int64(1),
+			"driftFindings": []any{
+				merged(finding("role_memberships_modified"), map[string]any{"severity": "warning"}),
+			},
+		}, "status", "target")
+		if err := api.Status().Update(context.Background(), observed, client.DryRunAll); err != nil {
+			t.Fatalf("the API server refused Ptah v0.35.0's category on PtahSchema %s: %v", schema.GetName(), err)
+		}
+	})
+
 	// A report may find drift it lists under no category, as Ptah before
 	// v0.16.0 did for a grant. The controller records it as a safe highest
 	// severity with no summaries and no count, and the schema has to take that

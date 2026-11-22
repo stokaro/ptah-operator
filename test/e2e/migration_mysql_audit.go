@@ -249,8 +249,9 @@ func mysqlMigrationHistoryStatement(command, statement, database string) bool {
 		switch statement {
 		// Since Ptah v0.33.1 each connection reads the session's sql_mode
 		// first (stokaro/ptah#6342), to learn whether a backslash in a
-		// string literal escapes.
-		case "SELECT VERSION()", "SELECT @@SESSION.restrict_fk_on_non_standard_key", "SELECT @@SESSION.sql_mode", mysqlHistoryCreate,
+		// string literal escapes. Since v0.35.0 it also asks which database
+		// the session is in (stokaro/ptah#6454).
+		case "SELECT VERSION()", "SELECT @@SESSION.restrict_fk_on_non_standard_key", "SELECT @@SESSION.sql_mode", "SELECT DATABASE()", mysqlHistoryCreate,
 			"SELECT * FROM `schema_migrations` WHERE 1 = 0",
 			"SHOW CREATE TABLE `" + database + "`.`schema_migrations`",
 			"SELECT version, description, state, applied, total, COALESCE(error, ''), COALESCE(error_stmt, ''), execution_time_ms, checksum, applied_at\nFROM `" + database + "`.`schema_migrations`\nORDER BY version":

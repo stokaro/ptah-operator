@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "refused",
-  "plan_name": "plan_24639d0fbfc0",
-  "plan_digest": "sha256:42da45c1a367bf802894662b8b157d9d0cbd443362a467eaf8f5f3fb60eaf7c9",
+  "plan_name": "plan_69a3b6432e9e",
+  "plan_digest": "sha256:733b42800b099ce702eb86b107753053f6f5ed26cd0f2a754af308d89aabe406",
   "refusal": {
     "code": "backslash-mode"
   },

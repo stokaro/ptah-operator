@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_f66fa8aa6603",
-  "plan_digest": "sha256:8eabb6ce9ce47232bebe7b25c0b52bba367fcc10e55559d9a2a024f0556e6e94",
+  "plan_name": "plan_85ae81d1c89f",
+  "plan_digest": "sha256:51ca4bcc0c1b99e5d32891fd6623067efc89b7b5ed06c1bce735d746896472f0",
   "units": [
     {
       "sql": "DROP POLICY \"e2e_policy_notes_owner\" ON \"public\".\"e2e_policy_notes\""

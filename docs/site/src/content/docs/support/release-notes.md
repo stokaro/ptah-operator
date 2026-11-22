@@ -16,6 +16,60 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.18
+
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. A schema's drift summary takes the category Ptah v0.35.0 adds,
+so the CRD schema version moves from 25 to 26. Once this release's hook has
+updated the CRDs, 0.2.17's CRD hook refuses
+[a rollback](../../use/operations/#rollback) to 0.2.17, since they are newer
+than 0.2.17 reads. The executor moves to Ptah
+v0.35.0, which retires the execution binding: approve again whatever was
+waiting, after the resource has read its database with v0.35.0 and planned. A
+read still
+running when the new manager starts runs again. An Apply whose Job 0.2.17
+created is waited for rather than retired: the new manager reads its result
+under the v0.34.0 binding it was dispatched under, records the outcome it
+reported, and moves the binding on the next pass, so the upgrade needs no pause
+for Applies to end. [0.2.16](#0216) lists when such an Apply is still recorded
+`Unknown`.
+
+- **A generated column's kind stops the schema instead of failing every
+  Plan.** PostgreSQL 18 makes `GENERATED ALWAYS AS (...)` without `STORED` a
+  `VIRTUAL` column, and Ptah reads the same declaration in a schema file as
+  `STORED`, so a column created that way by hand or by a migration cannot be
+  planned. Under 0.2.17 the Plan failed as `invalid_plan_output` and was tried
+  again at every failure retry, with a Job and the database Lease each time.
+  Ptah v0.35.0 refuses it under the code `generated-kind`
+  ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)), and the
+  `PtahSchema` stops `Blocked` with
+  [`PlanRefused`](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  and waits for `spec.interval` or `kubectl ptah refresh`. Ptah's sentence in
+  the Pod log names the column and both kinds. Declare the column `VIRTUAL`, or
+  drop it and add it back. An alert that watched for `OperationFailed` on such a
+  schema sees `Blocked` instead.
+- **A MySQL drift check no longer reads a view the migrations created as
+  drift.** Ptah v0.34.0 compared a view, a stored function and a MariaDB
+  sequence by their database-qualified name when `spec.policy.driftCheck`
+  replayed the history into a shadow, so each one an applied migration created
+  read as `missing_view <shadow>.<view>` beside `extra_view <target>.<view>`,
+  and every later Apply stopped with `SchemaDrifted` and applied nothing.
+  v0.35.0 compares them under the target's database
+  ([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)), and the
+  next Apply runs. A view listed under `spec.policy.driftCheck.exclude` only to
+  get past that can come off the list, so the check compares it again.
+- **A role membership whose options differ reads as drift.** v0.35.0 compares
+  the `ADMIN`, `INHERIT` and `SET` options of each membership a role declares
+  with `member_of`, and reports one that differs under the new category
+  `role_memberships_modified`
+  ([stokaro/ptah#6424](https://github.com/stokaro/ptah/pull/6424)), as a
+  warning, in `status.target.driftFindings`. An option the declaration leaves
+  out means its default. Measured on PostgreSQL 17 with a YAML schema whose
+  role states `member_of: [harness_readers]`, against a membership granted
+  `WITH ADMIN OPTION`, `schema drift` reports the category and the plan is
+  `GRANT "harness_readers" TO "harness_vault" WITH ADMIN FALSE`. 0.2.17 refuses
+  such a report, so with v0.35.0 its Observe of that schema would fail.
+
 ## 0.2.17
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`

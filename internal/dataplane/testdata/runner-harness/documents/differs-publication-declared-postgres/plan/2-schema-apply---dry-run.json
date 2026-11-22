@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_99f4c6d88111",
-  "plan_digest": "sha256:676e5962445f9cec2a7d4bffa12135892157996be2147a144fb96362b155aa53",
+  "plan_name": "plan_6ad675147ea2",
+  "plan_digest": "sha256:0de960ef5dd1ffb0a9fca24eb04b4c67db7748662af3a35d984c3fe5d928ebdf",
   "units": [
     {
       "sql": "CREATE PUBLICATION \"differs_notes_pub\" FOR TABLE ONLY \"public\".\"differs_notes\""

@@ -1,0 +1,11 @@
+tables:
+  items:
+    columns:
+      id:
+        type: integer
+        primary: true
+roles:
+  harness_readers: {}
+  harness_vault:
+    login: true
+    member_of: [harness_readers]

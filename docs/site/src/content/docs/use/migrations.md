@@ -768,18 +768,27 @@ name the target's does not have: Ptah tells two MySQL databases apart by name
 alone, and refuses a shadow named like the target as the target, at stage
 `realm-check`.
 
-On MySQL and MariaDB the verified Ptah build compares a view by its
-database-qualified name, and so it does a stored function and a MariaDB
-sequence. The shadow's name always differs from the target's, so each of them
-an applied migration created reads as drift, while tables and triggers do not.
-For a view the check reports `missing_view <shadow>.<view>` beside
-`extra_view <target>.<view>`, and every Apply after the migration that created
-the object stops with `SchemaDrifted`, whose message blames a change made
-outside the migrations. The fix is
-[stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416), which no Ptah
-release contains yet; [Ptah compatibility](../../support/ptah/) carries the
-limitation and what was measured. A view named under `exclude` reads as
-neither, and the check then compares nothing of that view.
+On MySQL and MariaDB the verified Ptah build, v0.35.0, compares a view, a
+stored function and a MariaDB sequence under the target's database, as it does
+tables and triggers
+([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)). Ptah v0.34.0
+and earlier compared them by their database-qualified name, and the shadow's
+name always differs from the target's, so each of them an applied migration
+created read as drift: `missing_view <shadow>.<view>` beside
+`extra_view <target>.<view>` for a view, and every Apply after the migration
+that created it stopped with `SchemaDrifted`. A view listed under `exclude` to
+get past that can come off the list, and the check then compares it again.
+
+The check replays each applied migration under the directive its file states,
+not under `spec.transactionMode`, which Ptah applies to the pending migrations
+alone. On MySQL and MariaDB a file whose statements need to run outside a
+transaction, as a `CREATE VIEW` does, therefore needs
+`-- +ptah no_transaction` on its first line even where `spec.transactionMode`
+is `none`. Without it the next drift-checked Apply stops with
+`DriftCheckUnsupported` at stage `replay` and applies nothing
+([stokaro/ptah#6504](https://github.com/stokaro/ptah/issues/6504) asks the
+replay to take the run's mode). [Ptah compatibility](../../support/ptah/)
+carries both and what was measured.
 
 A PostgreSQL shadow can share the target's server. Everything Ptah empties is
 in the shadow's database, so its login needs privileges there alone, and a

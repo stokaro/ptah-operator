@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "applied",
-  "plan_name": "plan_890e2a0125c1",
-  "plan_digest": "sha256:5e4c97d5a9b3ae82bebeee4b7d564ca1beeebf8dc6538694240d9eeb42073537",
+  "plan_name": "plan_94b86c6ed165",
+  "plan_digest": "sha256:fdfaba76469c3dee3c4d81bdb0bb043fd117e528d27aae5b34b52867a8d8fe68",
   "units": [
     {
       "sql": "DROP VIEW \"public\".\"differs_notes_view\"",

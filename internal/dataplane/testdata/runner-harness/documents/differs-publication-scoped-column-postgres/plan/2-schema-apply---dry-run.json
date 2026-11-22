@@ -2,8 +2,8 @@
   "contract_version": 4,
   "command": "schema apply",
   "outcome": "dry-run",
-  "plan_name": "plan_440919880e76",
-  "plan_digest": "sha256:d7f6f153c20308ebe617a89bf248a1f096a42a3e020a54bf5219c7b625470dd6",
+  "plan_name": "plan_ec68fb064b34",
+  "plan_digest": "sha256:8ab3cc5e9bda3850de5b6b6716a36bb4b6dd0c5c2699f4020720a7e248f9c1c2",
   "units": [
     {
       "sql": "-- POSTGRES: ADD COLUMN \"owner_name\" fails if \"differs_notes\" holds any row; the column is NOT NULL and declares no default to fill it with.\nALTER TABLE \"differs_notes\" ADD COLUMN \"owner_name\" text NOT NULL"
