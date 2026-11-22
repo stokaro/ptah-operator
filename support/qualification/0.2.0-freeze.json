@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-22T17:25:18.457437+00:00",
+  "frozenAt": "2026-11-22T20:31:30.712164+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,7 +28,7 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "24ee2d051379ba0723c3823491f870cf10e94d032096a97d8b2711b4bdf05c39"
+      "sha256": "53d27bed3d9b3a338286b3504ac83b120e7ebc0d3a78463e4a596c3bf0a81bf8"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.17 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 134,
+  "revision": 135,
   "supersedes": {
-    "freezeCommit": "979cb5a4a60d9efe122800baf6ccc9b1aaf6ba17",
-    "sha256": "9f13c3775a2db4c1efdf51a3fdabd6394e074f3c7197087d62f5c9605d210ad9"
+    "freezeCommit": "0a10f2b4c395477edc49cbdffa22d37a6316fbe3",
+    "sha256": "5f840b6ea5218f1e88b247b2ed2e913733b03c620f633f4f5475921d2a5e6690"
   },
-  "revisionReason": "Say in the edge row of support/ptah.json that a generated-kind refusal under Ptah v0.35.0 reports plan_refused with the table, the column, the kind the database holds and the kind the schema declares after the code, as the runner now names them (#1164), where the row said the message named neither. The condition reasons page and the 0.2.18 release notes say the same. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
+  "revisionReason": "Name run 45058021225 of the Added database lines workflow, which passed PostgreSQL 18.x and 16.x on every supported Kubernetes minor at Ptah v0.35.0, as the evidence run of both lines in support/databases.json and in the edge row of support/ptah.json, where they named run 44900487103 at Ptah v0.34.0. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }
