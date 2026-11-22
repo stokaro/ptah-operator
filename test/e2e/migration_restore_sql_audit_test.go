@@ -119,7 +119,7 @@ func TestMySQLRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 	before := append(mysqlAuditBaseline(), mysqlMigrationAuditReading(t)...)
 	after := append(slices.Clone(before), rows...)
 	counts, err := mysqlMigrationRefusalSQLForJob(before, after, restoreAuditDatabase, mysqlAuditUser, restoreAuditClients(), "refused-job")
-	if err != nil || len(rows) != 96 || len(counts) != 1 || counts[mysqlAuditHost] != 43 {
+	if err != nil || len(rows) != 97 || len(counts) != 1 || counts[mysqlAuditHost] != 44 {
 		t.Fatalf("actual refused Apply: counts=%v error=%v", counts, err)
 	}
 	for _, uid := range []string{"", "another-job"} {
