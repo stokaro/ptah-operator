@@ -41,11 +41,12 @@ import (
 // on the Pods of the Job its claim recorded.
 //
 // The Warning goes through the Event recorder, whose spam filter gives each
-// object a burst of 25 Events of a type and then one every five minutes, so a
-// pass every five seconds would spend that burst in two minutes and starve every
-// other Warning about the schema. The Warning about one Pod is repeated twice as
-// long after each time, from thirty seconds to five minutes, as the result
-// collector's ResourceQuota Warning is.
+// reason on an object a burst of 25 Events and then one every five minutes, so
+// a pass every five seconds would spend that burst in two minutes, and a second
+// stuck Pod of the same resource would then be named only every five minutes.
+// The Warning about one Pod is repeated twice as long after each time, from
+// thirty seconds to five minutes, as the result collector's ResourceQuota
+// Warning is.
 //
 // Each wait keeps its own backoff for a Pod. One Pod can hold several waits in
 // turn: a live Apply's, then the deletion that follows it, or the proof that

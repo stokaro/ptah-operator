@@ -207,7 +207,7 @@ func main() {
 		log.Error(err, "invalid API request rate")
 		os.Exit(1)
 	}
-	manager, err := ctrl.NewManager(apiConfig, withStopTiming(ctrl.Options{
+	manager, err := ctrl.NewManager(apiConfig, withEventBroadcaster(withStopTiming(ctrl.Options{
 		Scheme:                  scheme,
 		Cache:                   managercache.Options(),
 		Client:                  managercache.ClientOptions(),
@@ -219,7 +219,7 @@ func main() {
 		WebhookServer: webhook.NewServer(webhook.Options{
 			Port: webhookPort, CertDir: webhookCertDir,
 		}),
-	}))
+	})))
 	if err != nil {
 		log.Error(err, "create manager")
 		os.Exit(1)
