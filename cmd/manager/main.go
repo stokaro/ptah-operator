@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -234,6 +235,7 @@ func main() {
 		log.Error(err, "create Kubernetes clientset")
 		os.Exit(1)
 	}
+	events := newEventRecorders(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events("")}, manager.GetScheme(), ctrl.Log.WithName("events"))
 	var results *resultservice.Service
 	if resultEndpoint != "" {
 		results, err = resultservice.New(resultservice.Config{TokenReviews: clientset.AuthenticationV1().TokenReviews(), Endpoint: resultEndpoint, Address: resultAddress, CertificateDirectory: resultCertDir, EnrollmentPolicyNamespace: managerIdentity[2], EnrollmentPolicyName: resultEnrollmentPolicy, Uploads: 1, UploadTimeout: 2 * time.Minute, Consumer: resultconsumer.Options{Workers: 1, Entries: 4, Timeout: 30 * time.Second, Retention: time.Minute}}, manager.GetClient(), manager.GetAPIReader())
@@ -274,7 +276,7 @@ func main() {
 	reconciler := &controller.SchemaReconciler{
 		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), CachedReader: manager.GetCache(),
 		Scheme:           manager.GetScheme(),
-		Recorder:         manager.GetEventRecorderFor("ptah-schema-controller"),
+		Recorder:         events.For("ptah-schema-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,
 		SealKey:          sealKey,
@@ -296,7 +298,7 @@ func main() {
 	migrations := &controller.MigrationReconciler{
 		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), CachedReader: manager.GetCache(),
 		Scheme:           manager.GetScheme(),
-		Recorder:         manager.GetEventRecorderFor("ptah-migration-controller"),
+		Recorder:         events.For("ptah-migration-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,
 		Locks:            targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
@@ -356,7 +358,7 @@ func main() {
 		Reader: manager.GetAPIReader(), Decoder: decoder,
 	}})
 	// Result retention runs with delivery on or off; see newWriteValidator.
-	writeValidator, err := newWriteValidator(manager, ctrlmetrics.Registry, builder, controllerServiceAccountUsername, results)
+	writeValidator, err := newWriteValidator(manager, events, ctrlmetrics.Registry, builder, controllerServiceAccountUsername, results)
 	if err != nil {
 		log.Error(err, "configure result retention")
 		os.Exit(1)

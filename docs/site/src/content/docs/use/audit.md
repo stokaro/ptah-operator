@@ -131,9 +131,12 @@ entries with the plans, approvals and acknowledgment they name.
 
 Events said less than the journal and lost part of it. They are a notification.
 At a one-minute interval each schema used its 25 Normal Events within about
-five minutes, and the recorder then lets one through every five minutes. The
+five minutes, and the recorder then let one through every five minutes. The
 second plan's `ApprovalRequired` and the second approval's `ApprovalAccepted`
-reached no Event on either schema, while the journal recorded both. Events
+reached no Event on either schema, while the journal recorded both. In the
+build this run measured, every Normal Event of a resource shared that budget.
+Each reason has its own now, so a read's routine Events no longer use up an
+approval's, but an Event can still be lost. Events
 about a deleted resource stay for their hour and go with the namespace.
 [An Event can be lost](../../troubleshoot/events/#an-event-can-be-lost) says why.
 

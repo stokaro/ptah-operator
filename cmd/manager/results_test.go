@@ -34,8 +34,8 @@ func newRecordingHost() *recordingHost {
 func (h *recordingHost) GetClient() client.Client    { return h.client }
 func (h *recordingHost) GetAPIReader() client.Reader { return h.apiReader }
 
-func (h *recordingHost) GetEventRecorderFor(name string) record.EventRecorder {
-	h.recorders = append(h.recorders, name)
+func (h *recordingHost) For(component string) record.EventRecorder {
+	h.recorders = append(h.recorders, component)
 	return record.NewFakeRecorder(1)
 }
 
@@ -62,7 +62,7 @@ func TestTheManagerRunsRetentionWhateverDeliverySays(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
 			host := newRecordingHost()
-			validator, err := newWriteValidator(host, prometheus.NewRegistry(), nil, testManagerUsername, row.results)
+			validator, err := newWriteValidator(host, host, prometheus.NewRegistry(), nil, testManagerUsername, row.results)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +75,7 @@ func TestTheManagerRunsRetentionWhateverDeliverySays(t *testing.T) {
 			// The collector's Events are how a namespace whose quota refuses a
 			// retirement says why. Without a recorder it says nothing.
 			if !slices.Equal(host.recorders, []string{resultCollectorEventSource}) {
-				t.Fatalf("asked the manager for event recorders %q, want one for %q", host.recorders, resultCollectorEventSource)
+				t.Fatalf("asked for event recorders %q, want one for %q", host.recorders, resultCollectorEventSource)
 			}
 			policy := validator.ResultCleanup
 			if policy == nil {
@@ -117,7 +117,7 @@ func TestRetentionSetupFailsWithoutItsCollector(t *testing.T) {
 			t.Parallel()
 			host := newRecordingHost()
 			row.setup(host)
-			validator, err := newWriteValidator(host, prometheus.NewRegistry(), nil, testManagerUsername, nil)
+			validator, err := newWriteValidator(host, host, prometheus.NewRegistry(), nil, testManagerUsername, nil)
 			if err == nil || validator != nil {
 				t.Fatalf("got validator %v and error %v, want an error alone", validator, err)
 			}

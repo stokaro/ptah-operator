@@ -504,11 +504,10 @@ func TestARealmRefusalDoesNotHideAReplacement(t *testing.T) {
 	}
 }
 
-// The recorder's spam filter admits 25 Warnings per object and then one every five
-// minutes, so a read that fails for half an hour leaves little for the Warning
-// that follows, and a manager killed after the status write sends nothing. Nothing
-// derives this Warning a second time, so the write that replaces a plan has to
-// record the replacement itself.
+// The recorder's spam filter admits 25 PlanStale Warnings per object and then one
+// every five minutes, and a manager killed after the status write sends nothing.
+// Nothing derives this Warning a second time, so the write that replaces a plan
+// has to record the replacement itself.
 func TestALostWarningLeavesTheReplacementOnRecord(t *testing.T) {
 	t.Parallel()
 
