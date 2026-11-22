@@ -28,6 +28,13 @@ here that setup moved the output path and the `from_fingerprint`, with the
 plan's name and digest; the note, the statements and the `to_fingerprint` are
 the same, so the files stay.
 
+On November 22, 2026 the v0.35.0 release image,
+`ghcr.io/stokaro/ptah@sha256:f76221499b83c232d737894daea53f8c3e1ebad20d6602f05b88ffae1134913a`,
+planned the same table against a fresh server of that PostgreSQL image, as its
+superuser in the database `postgres`, on an arm64 host. Against the files here
+both fingerprints moved, with the plan's name and digest; the note and the
+statements are the same, so the files stay.
+
 The database held a table whose generated column the schema file gives another
 expression:
 
