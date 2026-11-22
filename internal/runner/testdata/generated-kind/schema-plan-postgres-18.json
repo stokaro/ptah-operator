@@ -1,0 +1,19 @@
+{
+  "contract_version": 3,
+  "command": "schema plan",
+  "outcome": "refused",
+  "refusal": {
+    "code": "generated-kind",
+    "generated_columns": [
+      {
+        "table": "public.items",
+        "column": "total",
+        "held_kind": "VIRTUAL",
+        "declared_kind": "STORED"
+      }
+    ]
+  },
+  "error": {
+    "message": "generate schema apply operations: unsupported feature: generated column public.items.total is VIRTUAL and the schema declares it STORED; the postgres planner cannot change a generated column's kind in place, so drop the column and add it back, or declare it VIRTUAL"
+  }
+}

@@ -971,11 +971,21 @@ earlier servers ask for. Where the role already owns the view, as when a plan
 rebuilds the view and gives it back to its owner, the message adds `, and the
 role owns it now`. Ptah's sentence in the Pod log says what to grant.
 
+Since v0.35.0 Ptah refuses a plan that would change a generated column's kind,
+`STORED` to `VIRTUAL` or back, which no statement does in place, under the code
+`generated-kind` ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)).
+It lists each such column with its table, the kind the database holds and the
+kind the schema declares, and the message names them after the code:
+
+```
+plan_refused: ptah refused to plan the change (generated-kind: public.items column total held VIRTUAL declared STORED)
+```
+
 It names the first eight that fit in the 512 bytes an Event keeps, then counts
-the rest, as in `, and 3 more`. A view name too long to fit is cut and ends in
-`...`, and a control character in a view or an account reads as a space. A
-report that lists no view, or lists them in a form the operator does not read,
-gives the code alone.
+the rest, as in `, and 3 more`. A name too long to fit is cut and ends in
+`...`, and a control character in a view, an account, a table or a column reads
+as a space. A report that lists nothing, or lists it in a form the operator does
+not read, gives the code alone.
 
 Ptah's `schema apply` refuses a MySQL or MariaDB plan with a backslash in a
 string literal on a session whose `sql_mode` names `NO_BACKSLASH_ESCAPES`,
@@ -1006,7 +1016,7 @@ than a dry run`, and nothing said why.
 | The plan gives a view to a role the login may not give an object to: the login lacks `SET` on the role (PostgreSQL 16 and later) or membership in it (earlier), since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-transfer`, naming the statement, the role, the login and the privilege. | `GRANT <role> TO <login> WITH SET TRUE` on PostgreSQL 16 and later, `GRANT <role> TO <login>` before, and run `kubectl ptah refresh`; or declare an owner the login may give the view to. |
 | The plan gives a view to a role without `CREATE` on the view's schema, since Ptah v0.30.1. | The Plan stops with `PlanRefused`, or the Apply fails, with the code `owner-schema-privilege`, naming the statement, the role and the schema. | `GRANT CREATE ON SCHEMA <schema> TO <role>` and run `kubectl ptah refresh`, or declare another owner. |
 | A MySQL or MariaDB plan holds a backslash in a string literal, and the session's `sql_mode` names `NO_BACKSLASH_ESCAPES`, since Ptah v0.34.0. | The Plan stops with `PlanRefused` and the code `backslash-mode`, or an approved plan's Apply fails with it before any statement. Ptah's sentence in the Pod log names the mode. | Take `NO_BACKSLASH_ESCAPES` out of the server's global `sql_mode` and run `kubectl ptah refresh`, or declare the value without a backslash. |
-| A PostgreSQL 18 database holds a column as a `VIRTUAL` generated column, and the schema declares it without a kind, which Ptah reads as `STORED`, since Ptah v0.35.0 ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)). PostgreSQL 18 makes `GENERATED ALWAYS AS (...)` without `STORED` a `VIRTUAL` column, so a column created that way by hand or by a migration meets it; one Ptah creates is `STORED`. | An Observe reports `columns_modified`, and the Plan stops with `PlanRefused` and the code `generated-kind`. Ptah's sentence in the Pod log names the column and both kinds. Before 0.2.18 the Plan read `invalid_plan_output` and was tried again at every failure retry. | Declare the column `VIRTUAL`, or drop it and add it back as the schema declares it, and run `kubectl ptah refresh`. |
+| A PostgreSQL 18 database holds a column as a `VIRTUAL` generated column, and the schema declares it without a kind, which Ptah reads as `STORED`, since Ptah v0.35.0 ([stokaro/ptah#6466](https://github.com/stokaro/ptah/pull/6466)). PostgreSQL 18 makes `GENERATED ALWAYS AS (...)` without `STORED` a `VIRTUAL` column, so a column created that way by hand or by a migration meets it; one Ptah creates is `STORED`. | An Observe reports `columns_modified`, and the Plan stops with `PlanRefused` and the code `generated-kind`, naming the table, the column and both kinds. Before 0.2.18 the Plan read `invalid_plan_output` and was tried again at every failure retry. | Declare the column `VIRTUAL`, or drop it and add it back as the schema declares it, and run `kubectl ptah refresh`. |
 | The plan drops an object something else depends on. | The Plan stops with `PlanRefused` and the code `dependent-object`. | Declare the dependent too, or drop it by hand, or list the dropped object in `spec.policy.exclude`. |
 | The target cannot host or plan what the schema states. | The Plan stops with `PlanRefused` and the code `declaration-refused`, unless the file alone explains it, which stops the schema with [`SchemaInvalid`](#a-desired-schema-ptah-refuses) instead. | Read the sentence and change the declaration. |
 

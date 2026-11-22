@@ -522,6 +522,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:5d69ad0dd64a1979a97f55592cbb5046dc2648e89a97bb890bbb99c924edd98b",
       "reason": "Accept the drift finding category Ptah v0.35.0 adds, role_memberships_modified for a role membership whose ADMIN, INHERIT or SET option differs from the declaration's, in a drift report and in a result frame. A manager that predates it refuses a report or a frame that carries one, which is the refusal a version mismatch would give, so protocol 1 stays. The commands, the fields and the frame shape are as they were."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:15bb6c852a4988e526d8bd4e2daaec53b2af70eda11ce5228cde57de956e9e90",
+      "reason": "The runner reads the generated_columns list of a generated-kind refusal, which Ptah v0.35.0 writes (stokaro/ptah#6466), and its plan_refused message names each column with its table and both kinds after the code, as it names views, definers and owners (#1164). A list in another form gives the code alone, as before. The code, the frame fields and their shape are as they were, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

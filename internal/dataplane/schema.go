@@ -80,6 +80,13 @@ const (
 	// it before its first statement, a dry run included. Ptah v0.33.1
 	// reported the same fault as a failed apply with no code.
 	SchemaRefusalBackslashMode = "backslash-mode"
+	// SchemaRefusalGeneratedKind is Ptah v0.35.0's refusal of a plan that
+	// would change a generated column's kind, STORED to VIRTUAL or back, which
+	// no statement does in place (stokaro/ptah#6466). PostgreSQL 18 makes
+	// GENERATED ALWAYS AS without STORED a VIRTUAL column, and Ptah reads the
+	// same declaration in a schema file as STORED. Ptah v0.34.0 reported the
+	// same fault as a failed plan with no code.
+	SchemaRefusalGeneratedKind = "generated-kind"
 )
 
 // The refusals of an owner the server would refuse, which `schema apply`
@@ -120,6 +127,10 @@ var (
 	// one is a malformed document rather than a new code. An option a refusal
 	// names is held to it too, for the same reason.
 	schemaRefusalCodePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
+	// generatedKindPattern is the shape of a generated column's kind, STORED
+	// or VIRTUAL in Ptah v0.35.0: a word of Ptah's, so the runner names it as
+	// written.
+	generatedKindPattern = regexp.MustCompile(`^[A-Z]{1,16}$`)
 )
 
 // SchemaRefusal is why a plan or an apply refused. Only the fields its code
@@ -147,6 +158,11 @@ type SchemaRefusal struct {
 	// the object to, since Ptah v0.30.1 (stokaro/ptah#6196). It is read by
 	// NamedOwner.
 	Owner json.RawMessage `json:"owner,omitempty"`
+	// GeneratedColumns are the generated columns a generated-kind refusal
+	// names, each with its table and the kinds the database holds and the
+	// schema declares, since Ptah v0.35.0 (stokaro/ptah#6466). They are read
+	// by NamedGeneratedColumns.
+	GeneratedColumns json.RawMessage `json:"generated_columns,omitempty"`
 
 	// Since Ptah v0.29.4 a definer-privilege refusal of a schema apply also
 	// lists the statements whose definer the connected account may not name,
@@ -271,6 +287,40 @@ func decodeRefusalList[Entry any](listed json.RawMessage) ([]Entry, bool) {
 	var named []Entry
 	if err := json.Unmarshal(listed, &named); err != nil || len(named) == 0 {
 		return nil, false
+	}
+	return named, true
+}
+
+// SchemaRefusalGeneratedColumn is one generated column a generated-kind
+// refusal names. Table is the column's table as the comparison names it, with
+// its schema on PostgreSQL, and Column is the column as the schema spells it.
+// HeldKind is the kind the database holds and DeclaredKind the kind the
+// schema declares.
+type SchemaRefusalGeneratedColumn struct {
+	Table        string `json:"table"`
+	Column       string `json:"column"`
+	HeldKind     string `json:"held_kind"`
+	DeclaredKind string `json:"declared_kind"`
+}
+
+// NamedGeneratedColumns reads the generated columns a refusal names, in the
+// order Ptah lists them. It reports false when the refusal names none, and
+// when it names them in a form this operator does not read: anything but a
+// list of objects, each with a table and a column, and with two kinds that are
+// words of Ptah's.
+//
+// The table and the column are returned as written. They come from a schema
+// or a database, so a caller that shows one cleans it first.
+func (r SchemaRefusal) NamedGeneratedColumns() ([]SchemaRefusalGeneratedColumn, bool) {
+	named, ok := decodeRefusalList[SchemaRefusalGeneratedColumn](r.GeneratedColumns)
+	if !ok {
+		return nil, false
+	}
+	for _, each := range named {
+		if each.Table == "" || each.Column == "" ||
+			!generatedKindPattern.MatchString(each.HeldKind) || !generatedKindPattern.MatchString(each.DeclaredKind) {
+			return nil, false
+		}
 	}
 	return named, true
 }
