@@ -96,14 +96,17 @@ func TestTheCompiledFixtureRefusesEveryOperationBeforeStartingAChild(t *testing.
 	if err := writeOverlay(sourcePath, directory, runner.ProtocolVersion); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	// The build is bounded by the test's own deadline only. A cold build on a
+	// loaded host can take more than the two minutes the runs below are given,
+	// and a build that ran out of time says nothing about the refusal.
 	binary := filepath.Join(directory, "runner")
-	build := exec.CommandContext(ctx, "go", "build", "-overlay", filepath.Join(directory, "overlay.json"), "-o", binary, "./cmd/ptah-runner")
+	build := exec.CommandContext(t.Context(), "go", "build", "-overlay", filepath.Join(directory, "overlay.json"), "-o", binary, "./cmd/ptah-runner")
 	build.Dir = root
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build the native incompatible CLI: %v\n%s", err, output)
 	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
 	child, marker := filepath.Join(directory, "child"), filepath.Join(directory, "child-started")
 	testexec.WriteFile(t, child, []byte("#!/bin/sh\nprintf started > \"$RUNNER_FIXTURE_CHILD_MARKER\"\nexit 19\n"), 0o755)
 	for _, operation := range []runner.Operation{runner.OperationResolve, runner.OperationVerify, runner.OperationObserve, runner.OperationPlan,

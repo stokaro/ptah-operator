@@ -29,10 +29,13 @@ Git or an OCI artifact, and the database records each version it applied in
 new one, the operator read that history and ran nothing again. SchemaHero had no
 migrations and no record in the database.
 
-Approvals are Kubernetes objects, so who approved is lost with the cluster in both
-products. Keeping that in the database is
-[tracked](https://github.com/stokaro/ptah-operator/issues/800). `PtahSchema` also
-computes its SQL and keeps its plans in the cluster.
+Approvals are Kubernetes objects, so in the versions we compared, who approved
+was lost with the cluster in both products. That is no longer true of Ptah
+Operator: from 0.2.10 a migration's approver is on its rows in
+`schema_migrations_log` in the database, and from 0.2.13 a schema's is in
+`ptah_schema_apply_log` where the login may insert into it.
+[Audit](../../use/audit/) says what each record holds and who can change it.
+`PtahSchema` still computes its SQL and keeps its plans in the cluster.
 
 ## What we measured
 
