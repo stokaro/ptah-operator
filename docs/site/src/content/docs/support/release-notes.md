@@ -18,6 +18,11 @@ out of silence.
 
 ## 0.2.19
 
+**Before you upgrade.** The manager image is new, so keep `--force-conflicts`
+on the upgrade. Nothing else asks anything of you: the CRD schema version, the
+runner protocol and the executor, Ptah v0.35.0, are those of 0.2.18, so a plan
+waiting for an approval and the approval given for it carry over.
+
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
   supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x
