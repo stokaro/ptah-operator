@@ -527,6 +527,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:15bb6c852a4988e526d8bd4e2daaec53b2af70eda11ce5228cde57de956e9e90",
       "reason": "The runner reads the generated_columns list of a generated-kind refusal, which Ptah v0.35.0 writes (stokaro/ptah#6466), and its plan_refused message names each column with its table and both kinds after the code, as it names views, definers and owners (#1164). A list in another form gives the code alone, as before. The code, the frame fields and their shape are as they were, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:3cac9a27c411fb721ee6fc1ce2ad48a511fdee4aa8658db496f6a4aef0d3a885",
+      "reason": "A plan Ptah reports failed with no refusal code, no target failure and no fault of the file now writes Ptah's sentence to the Plan Pod's log as a ptah-runner: ptah reported: line, as a coded refusal does (#1170). The frame keeps invalid_plan_output with the generic message, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

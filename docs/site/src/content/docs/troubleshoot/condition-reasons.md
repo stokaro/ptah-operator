@@ -883,9 +883,10 @@ carries it. The Plan's Job, and the log with it, is collected five minutes
 after it finishes; `kubectl ptah refresh` runs a new Plan, which writes a fresh
 log. A plan Ptah fails to make for any other reason than opening the target or
 reading the file reads `invalid_plan_output: plan command did not complete
-successfully`, and its sentence reaches no log. Either way, running `ptah
-schema plan` yourself against the database, at the digest the operator pins,
-prints the sentence.
+successfully`, and its sentence is the same `ptah-runner: ptah reported:` line
+of the Plan Pod's log. That Plan is tried again at every failure retry, and
+each retry writes the line again. Running `ptah schema plan` yourself against
+the database, at the digest the operator pins, prints the sentence too.
 
 | Stage | Where the reason appears, and what follows |
 | --- | --- |

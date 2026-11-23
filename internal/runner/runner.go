@@ -977,6 +977,10 @@ func readNativePlan(
 		if reportProblem(failed) {
 			return nativePlan{}, false
 		}
+		// Ptah's sentence names the cause, and no code carries it, so the Pod
+		// log is the one place a person reads it; the frame keeps the generic
+		// message, as it does for a refusal (refusePlan).
+		logReportedError(report.Error, redactor, config.Diagnostics)
 		setResultError(result, "invalid_plan_output", errors.New("plan command did not complete successfully"), redactor, config.Diagnostics)
 		return nativePlan{}, false
 	}
