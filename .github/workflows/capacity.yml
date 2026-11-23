@@ -60,7 +60,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -80,7 +80,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.1
+          version: v4.3.2
       # One minor, and the newest is the one a reader would install against. It
       # is selected from the same matrix the lifecycle fans out over, so the two
       # cannot name different releases.

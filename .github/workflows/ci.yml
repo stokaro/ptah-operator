@@ -81,7 +81,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -137,7 +137,7 @@ jobs:
           persist-credentials: false
       - name: Set up Go
         id: setup-go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -221,7 +221,7 @@ jobs:
         id: verify-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.1
+          version: v4.3.2
       - name: Install the pinned ShellCheck
         id: shellcheck
         shell: bash
@@ -284,7 +284,7 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: v2.20.0
+          version: v2.20.3
           args: check
       - name: Run project verification
         id: project-verify
@@ -315,7 +315,7 @@ jobs:
           persist-credentials: false
       - name: Set up Go
         id: race-setup-go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -326,7 +326,7 @@ jobs:
         id: race-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.1
+          version: v4.3.2
       # setup-go caches the module downloads and, on a key miss, whatever build
       # output existed when that job ended. Its key is the Go version and
       # go.sum, so it changes only when a dependency does: every run after the
@@ -370,7 +370,7 @@ jobs:
           persist-credentials: false
       - name: Set up Go
         id: harness-setup-go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -423,14 +423,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.1
+          version: v4.3.2
       - name: Cache the Go build output
         id: prepare-build-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
@@ -619,14 +619,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v4.3.1
+          version: v4.3.2
       # Per minor, because the three lifecycle jobs run at once: one shared key
       # would have them race to save the same entry, and the last one to finish
       # would be the only one whose work survived.
@@ -886,7 +886,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
