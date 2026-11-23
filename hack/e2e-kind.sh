@@ -125,6 +125,7 @@ E2E_MYSQL_SOURCE_IMAGE=${E2E_MYSQL_SOURCE_IMAGE:-mysql:8.4@sha256:b3b90af2a6552a
 # The date support/databases.json says an added line's image was built. Nothing
 # else names it, so a run of the default image compares nothing.
 E2E_POSTGRES_IMAGE_CREATED=${E2E_POSTGRES_IMAGE_CREATED:-}
+E2E_MYSQL_IMAGE_CREATED=${E2E_MYSQL_IMAGE_CREATED:-}
 # The alerting phase's Prometheus and Alertmanager. Prometheus is the release
 # support/tools.json pins promtool from, so the rules run under the evaluator
 # their unit tests ran under.
@@ -261,6 +262,13 @@ is_pinned_image() {
 # in test/e2e/phases carries the same expression for the phases.
 postgres_image_major() {
 	printf '%s\n' "$1" | sed -nE 's/^[^@]*:([1-9][0-9]*)[^/:@]*@sha256:[0-9a-f]{64}$/\1/p'
+}
+
+# mysql_image_line prints the MySQL release line, major.minor, a digest-pinned
+# image names in its tag, and nothing for an image that names none.
+# MySQLImageLine in test/e2e/phases carries the same expression for the phases.
+mysql_image_line() {
+	printf '%s\n' "$1" | sed -nE 's/^[^@]*:([1-9][0-9]*\.[0-9]+)([.-][^/:@]*)?@sha256:[0-9a-f]{64}$/\1/p'
 }
 
 # image_created_on reports whether Docker's created time for an image, the first
@@ -506,6 +514,9 @@ E2E_POSTGRES_MAJOR=$(postgres_image_major "$E2E_POSTGRES_SOURCE_IMAGE")
 [ -n "$E2E_POSTGRES_MAJOR" ] ||
 	fail "E2E_POSTGRES_SOURCE_IMAGE must name a PostgreSQL major version in its tag: $E2E_POSTGRES_SOURCE_IMAGE"
 EXTERNAL_PG_DATA_DIRECTORY=$(postgres_data_directory "$E2E_POSTGRES_MAJOR")
+E2E_MYSQL_LINE=$(mysql_image_line "$E2E_MYSQL_SOURCE_IMAGE")
+[ -n "$E2E_MYSQL_LINE" ] ||
+	fail "E2E_MYSQL_SOURCE_IMAGE must name a MySQL release line, such as 8.4, in its tag: $E2E_MYSQL_SOURCE_IMAGE"
 
 # release_manifest_field prints the value of the one NAME= line the release
 # manifest carries, and fails on a field that is missing or repeated.
@@ -2863,6 +2874,21 @@ if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then
 fi
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
+# The official image installs the line it declares as MYSQL_MAJOR, so a tag whose
+# digest belongs to another line fails here instead of reporting this one proven.
+mysql_image_environment=$(docker --context "$DOCKER_CONTEXT" image inspect \
+	--format '{{range .Config.Env}}{{println .}}{{end}}' "$E2E_MYSQL_SOURCE_IMAGE") ||
+	fail "could not read the environment $E2E_MYSQL_SOURCE_IMAGE declares"
+mysql_image_declared=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_MAJOR=//p')
+[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||
+	fail "$E2E_MYSQL_SOURCE_IMAGE names MySQL $E2E_MYSQL_LINE in its tag and declares MYSQL_MAJOR=$mysql_image_declared"
+if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then
+	mysql_image_created=$(docker --context "$DOCKER_CONTEXT" image inspect \
+		--format '{{.Created}}' "$E2E_MYSQL_SOURCE_IMAGE") ||
+		fail "could not read when $E2E_MYSQL_SOURCE_IMAGE was built"
+	image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||
+		fail "$E2E_MYSQL_SOURCE_IMAGE was built at $mysql_image_created, and support/databases.json says $E2E_MYSQL_IMAGE_CREATED"
+fi
 # Pulled only where the alerting phase runs: every other suite would fetch two
 # images from Docker Hub for nothing.
 E2E_PROMETHEUS_IMAGE=

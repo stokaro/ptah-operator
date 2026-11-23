@@ -465,9 +465,10 @@ func TestTheDatabaseLineJobsAreTheOnesTheWorkflowRuns(t *testing.T) {
 		t.Fatalf("hack/verify-kubernetes-support.go -output=database-lines: %v", err)
 	}
 	var matrix []struct {
-		Minor string `json:"minor"`
-		Suite string `json:"suite"`
-		Image string `json:"postgres_source_image"`
+		Minor    string `json:"minor"`
+		Suite    string `json:"suite"`
+		Postgres string `json:"postgres_source_image"`
+		MySQL    string `json:"mysql_source_image"`
 	}
 	if err := json.Unmarshal(output, &matrix); err != nil {
 		t.Fatal(err)
@@ -480,7 +481,7 @@ func TestTheDatabaseLineJobsAreTheOnesTheWorkflowRuns(t *testing.T) {
 		lifecycles := required[len(gatePrerequisiteJobs):]
 		var want []string
 		for _, entry := range matrix {
-			if entry.Image == line.Image {
+			if map[string]string{"postgresql": entry.Postgres, "mysql": entry.MySQL}[line.Engine] == line.Image {
 				want = append(want, databaseLinesCallerJob+" / Kubernetes "+entry.Minor+" "+entry.Suite)
 			}
 		}

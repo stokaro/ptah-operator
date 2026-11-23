@@ -4,9 +4,9 @@
 The executor's schema commands are run against disposable PostgreSQL 17 and
 MySQL 8.4 servers that journal every statement they receive, one isolated
 command per journal, following testdata/e2e/readings/schema-diagnostics.md.
-With --postgresql-line it runs the stale-plan sequence on an added PostgreSQL
-line from support/databases.json instead, and keeps the readings that witness
-each diagnostic operation on that server.
+With --postgresql-line or --mysql-line it runs the stale-plan sequence on an
+added line from support/databases.json instead, and keeps the readings that
+witness each diagnostic operation on that server.
 The journals are written in the shape the checked-in readings use, with the
 executor's client address rewritten to the address those readings name, so a
 reading taken with the pinned executor can be compared byte for byte with the
@@ -398,10 +398,15 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
     return results
 
 
+def added_lines(engine):
+    """The added lines of engine the catalog declares, as (release, image): 18 for PostgreSQL, 9.7 for MySQL."""
+    catalog = json.loads((ROOT / 'support/databases.json').read_text())
+    return [(line['line'].removesuffix('.x'), line['image']) for line in catalog['added'] if line['engine'] == engine]
+
+
 def added_postgresql_lines():
     """The added PostgreSQL lines the catalog declares, as (major, image)."""
-    catalog = json.loads((ROOT / 'support/databases.json').read_text())
-    return [(line['line'].removesuffix('.x'), line['image']) for line in catalog['added'] if line['engine'] == 'postgresql']
+    return added_lines('postgresql')
 
 
 def migration_directory(engine, versions, root):
@@ -556,9 +561,8 @@ def contract_readings(engine):
                      (f'{engine}-schema-{stem}drift-stale-apply.jsonl', 'stale-apply')]
     if engine == 'mysql':
         readings += [('mysql-schema-lock-45-plan.jsonl', 'plan'), ('mysql-schema-lock-60-plan.jsonl', 'plan')]
-    if engine == 'postgresql':
-        for major, _ in added_postgresql_lines():
-            readings += [(f'postgresql-{major}-schema-{name}.jsonl', operation) for name, operation in LINE_WITNESSES]
+    for release, _ in added_lines(engine):
+        readings += [(f'{engine}-{release}-schema-{name}.jsonl', operation) for name, operation in LINE_WITNESSES]
     return readings
 
 
@@ -619,6 +623,7 @@ def main():
     parser.add_argument('--out', required=True, help='directory the readings are written to')
     parser.add_argument('--part', choices=('all', 'schema', 'migrations'), default='all')
     parser.add_argument('--postgresql-line', help='capture an added PostgreSQL line from support/databases.json, such as 18')
+    parser.add_argument('--mysql-line', help='capture an added MySQL line from support/databases.json, such as 9.7')
     parser.add_argument('--compare', action='store_true',
                         help='compare every reading with the checked-in one instead of only writing it')
     parser.add_argument('--contract', help='instead of capturing, write the diagnostic contract the readings in --out witness')
@@ -641,16 +646,17 @@ def main():
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     results = {}
-    images = dict(added_postgresql_lines())
-    if args.postgresql_line and args.postgresql_line not in images:
-        parser.error(f'support/databases.json adds no PostgreSQL line {args.postgresql_line}')
+    lines = {engine: release for engine, release in (('postgresql', args.postgresql_line), ('mysql', args.mysql_line)) if release}
+    for engine, release in lines.items():
+        if release not in dict(added_lines(engine)):
+            parser.error(f'support/databases.json adds no {engine} line {release}')
     with tempfile.TemporaryDirectory(prefix='ptah-sql-readings-') as scratch:
-        if args.postgresql_line:
-            results.update(capture_stale_plan(args.context, args.executor_image, 'postgresql', out,
-                                              f'postgresql-{args.postgresql_line}-schema-',
-                                              server_image=images[args.postgresql_line],
+        for engine, release in lines.items():
+            results.update(capture_stale_plan(args.context, args.executor_image, engine, out,
+                                              f'{engine}-{release}-schema-',
+                                              server_image=dict(added_lines(engine))[release],
                                               keep={name for name, _ in LINE_WITNESSES}))
-        for engine in () if args.postgresql_line else args.engine or sorted(SERVERS):
+        for engine in () if lines else args.engine or sorted(SERVERS):
             if args.part in ('all', 'schema'):
                 results.update(capture(args.context, args.executor_image, engine, out))
             if args.part in ('all', 'migrations'):

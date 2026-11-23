@@ -39,7 +39,10 @@ image (`1ec0b95e`) reproduced the PostgreSQL reading record for record, and the
 MySQL one with a `SELECT DATABASE()` after the first session's `sql_mode` read
 ([stokaro/ptah#6454](https://github.com/stokaro/ptah/pull/6454)), which the
 History contract admits, so the MySQL reading here is v0.35.0's, one record
-more; no other record moved. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+more; no other record moved. On 2026-11-23 the v0.35.0 image reproduced the
+MySQL reading record for record on MySQL 9.7.4
+(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`).
+They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

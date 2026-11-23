@@ -162,10 +162,10 @@ func schemaAuditReading(t *testing.T, engine, operation string) []byte {
 	return raw
 }
 
-// addedPostgresLineStems names the readings of each PostgreSQL line
-// support/databases.json adds, such as "postgresql-18". A line the catalog adds
-// without readings fails where its reading is read.
-func addedPostgresLineStems(t *testing.T) []string {
+// addedLineStems names the readings of each line of engine support/databases.json
+// adds, such as "postgresql-18" or "mysql-9.7". A line the catalog adds without
+// readings fails where its reading is read.
+func addedLineStems(t *testing.T, engine string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "support", "databases.json"))
 	if err != nil {
@@ -182,17 +182,17 @@ func addedPostgresLineStems(t *testing.T) []string {
 	}
 	var stems []string
 	for _, line := range catalog.Added {
-		if line.Engine != "postgresql" {
+		if line.Engine != engine {
 			continue
 		}
-		major, found := strings.CutSuffix(line.Line, ".x")
-		if !found || major == "" {
-			t.Fatalf("added PostgreSQL line %q does not name a major version", line.Line)
+		release, found := strings.CutSuffix(line.Line, ".x")
+		if !found || release == "" {
+			t.Fatalf("added %s line %q does not name a release", engine, line.Line)
 		}
-		stems = append(stems, "postgresql-"+major)
+		stems = append(stems, engine+"-"+release)
 	}
 	if len(stems) == 0 {
-		t.Fatal("support/databases.json adds no PostgreSQL line, so no added line is witnessed")
+		t.Fatalf("support/databases.json adds no %s line, so no added line is witnessed", engine)
 	}
 	return stems
 }
@@ -390,18 +390,21 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			if engine == "mysql" {
 				readings = append(readings, witness{name: "lock-45-plan", operation: "plan", count: 128, stem: engine}, witness{name: "lock-60-plan", operation: "plan", count: 128, stem: engine})
 			}
-			// Each added PostgreSQL line keeps a witness per operation, read
-			// through the same audit. PostgreSQL 18 reads a column's NOT NULL
-			// constraint name where 17 selects an empty string, so that one
-			// declaration has a witness only on 18. PostgreSQL 16 and 15 send
-			// what 17 sends and spell the parameter detail differently.
-			if engine == "postgresql" {
-				for _, stem := range addedPostgresLineStems(t) {
-					readings = append(readings,
-						witness{name: "drift-observe", operation: "observe", count: 67, stem: stem},
-						witness{name: "drift-plan", operation: "plan", count: 118, stem: stem},
-						witness{name: "drift-stale-apply", operation: "stale-apply", count: 59, stem: stem})
-				}
+			// Each added line keeps a witness per operation, read through the
+			// same audit. PostgreSQL 18 reads a column's NOT NULL constraint
+			// name where 17 selects an empty string, so that one declaration
+			// has a witness only on 18. PostgreSQL 16 and 15 send what 17 sends
+			// and spell the parameter detail differently. MySQL 9.7 sends what
+			// 8.4 sends.
+			counts := map[string]map[string]int{
+				"postgresql": {"observe": 67, "plan": 118, "stale-apply": 59},
+				"mysql":      {"observe": 26, "plan": 49, "stale-apply": 30},
+			}[engine]
+			for _, stem := range addedLineStems(t, engine) {
+				readings = append(readings,
+					witness{name: "drift-observe", operation: "observe", count: counts["observe"], stem: stem},
+					witness{name: "drift-plan", operation: "plan", count: counts["plan"], stem: stem},
+					witness{name: "drift-stale-apply", operation: "stale-apply", count: counts["stale-apply"], stem: stem})
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)
@@ -423,7 +426,7 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 							return pg(a, sql, parameters)
 						}, nil)
 				} else {
-					rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, engine, reading.name))
+					rows, parseErr := mysqlStatementJournal(schemaAuditReading(t, reading.stem, reading.name))
 					if parseErr != nil {
 						t.Fatal(parseErr)
 					}

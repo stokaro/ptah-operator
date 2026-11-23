@@ -159,6 +159,12 @@ type matrixEntry struct {
 	// The date the catalog says that image was built. The driver holds it to
 	// what Docker reports for the image, because the age rule reads this date.
 	PostgresImageCreated string `json:"postgres_image_created,omitempty"`
+	// The MySQL line a job of the added database lines runs on, and the date
+	// its image was built, the same way. A job runs one added line, so at most
+	// one of the two pairs is set, and the other engine runs the driver's
+	// default.
+	MySQLSourceImage  string `json:"mysql_source_image,omitempty"`
+	MySQLImageCreated string `json:"mysql_image_created,omitempty"`
 	// The acceptance suite this job runs, in the acceptance matrix only. A job
 	// is one minor and one suite, so the four suites of a minor run at once
 	// against clusters of their own. The plain matrix keeps its old shape,
@@ -1282,6 +1288,8 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		// added database lines name their image, and the date it was built, here.
 		"E2E_POSTGRES_SOURCE_IMAGE":  "${{ matrix.postgres_source_image }}",
 		"E2E_POSTGRES_IMAGE_CREATED": "${{ matrix.postgres_image_created }}",
+		"E2E_MYSQL_SOURCE_IMAGE":     "${{ matrix.mysql_source_image }}",
+		"E2E_MYSQL_IMAGE_CREATED":    "${{ matrix.mysql_image_created }}",
 		// No Ptah source reaches a lifecycle job: the executor is the Ptah
 		// image the catalog pins beside this commit, copied by digest.
 		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
@@ -5830,9 +5838,9 @@ const (
 const ciAcceptanceOutput = "${{ inputs.database_lines && 'database-lines' || 'acceptance' }}"
 
 // databaseEngineNames are the engines the table on the support page names. The
-// driver takes a PostgreSQL line through E2E_POSTGRES_SOURCE_IMAGE and the
-// lifecycle job hands it one, so only PostgreSQL can be added until that job
-// hands the MySQL image the same way.
+// driver takes a line of either through its source image input,
+// E2E_POSTGRES_SOURCE_IMAGE or E2E_MYSQL_SOURCE_IMAGE, and the lifecycle job
+// hands an added line's image to the one its engine reads.
 var databaseEngineNames = map[string]string{"postgresql": "PostgreSQL", "mysql": "MySQL"}
 
 var (
@@ -5887,7 +5895,7 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		return databaseCatalog{}, fmt.Errorf("%s: names no baseline line", path)
 	}
 	seen := map[string]bool{}
-	claim := func(line databaseLine) error {
+	claim := func(line databaseLine, added bool) error {
 		if _, known := databaseEngineNames[line.Engine]; !known {
 			return fmt.Errorf("%s: engine %q is not one the support page names", path, line.Engine)
 		}
@@ -5897,18 +5905,23 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		if !pinnedImagePattern.MatchString(line.Image) {
 			return fmt.Errorf("%s: %s %s must be pinned by digest: %q", path, line.Engine, line.Line, line.Image)
 		}
-		// The lifecycle holds both PostgreSQL servers to the tag, so a green run
-		// proves the tag's major version, whatever this row says.
-		if line.Engine == "postgresql" {
-			major, err := phases.PostgresImageMajor(line.Image)
-			if err != nil {
-				return fmt.Errorf("%s: %w", path, err)
-			}
-			if want := strconv.Itoa(major) + ".x"; line.Line != want {
-				return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
-			}
+		// The lifecycle holds both PostgreSQL servers to the tag, and the line
+		// the MySQL image declares to its tag, so a green run proves the tag's
+		// line, whatever this row says. A baseline MySQL line may say more after
+		// it, as its LTS does. An added line may not: the witness test and the
+		// readings probe take its file stem from the line itself.
+		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
 		}
-		key := line.Engine + " " + line.Line
+		want := release + ".x"
+		if line.Line != want && (added || line.Engine != "mysql" || !strings.HasPrefix(line.Line, want+" ")) {
+			return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
+		}
+		// Two rows that name one release would run jobs of the same names, and
+		// either run would read as the other's evidence, whatever each row adds
+		// after the release.
+		key := line.Engine + " " + release
 		if seen[key] {
 			return fmt.Errorf("%s: %s appears twice", path, key)
 		}
@@ -5916,12 +5929,12 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		return nil
 	}
 	for _, line := range catalog.Baseline {
-		if err := claim(line); err != nil {
+		if err := claim(line, false); err != nil {
 			return databaseCatalog{}, err
 		}
 	}
 	for _, line := range catalog.Added {
-		if err := claim(line.databaseLine); err != nil {
+		if err := claim(line.databaseLine, true); err != nil {
 			return databaseCatalog{}, err
 		}
 		if err := validateAddedDatabaseLine(path, line, now); err != nil {
@@ -5932,10 +5945,6 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 }
 
 func validateAddedDatabaseLine(path string, line addedDatabaseLine, now time.Time) error {
-	if line.Engine != "postgresql" {
-		return fmt.Errorf("%s: %s %s cannot be added yet: the lifecycle job hands the driver a PostgreSQL image and no other",
-			path, line.Engine, line.Line)
-	}
 	created, err := time.Parse(time.DateOnly, line.ImageCreated)
 	if err != nil {
 		return fmt.Errorf("%s: %s imageCreated is not a date: %w", path, line.Line, err)
@@ -5988,6 +5997,10 @@ func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
 		exactSourceLine("the PostgreSQL source image pulled", `mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql`),
 		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
+		exactSourceLine("the MySQL source image pulled", `mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql`),
+		exactSourceLine("the MySQL line held to the image", `[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`),
+		exactSourceLine("an added MySQL line's date read", `if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then`),
+		exactSourceLine("the MySQL date held to the image", `image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`),
 	})
 }
 
@@ -6110,7 +6123,7 @@ func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog da
 	}
 	var entries []matrixEntry
 	for _, line := range catalog.Added {
-		major, err := phases.PostgresImageMajor(line.Image)
+		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", databaseCatalogPath, err)
 		}
@@ -6122,10 +6135,16 @@ func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog da
 			if leftOut[entry.Suite] {
 				continue
 			}
-			entry.Minor = fmt.Sprintf("%s on %s %d", entry.Minor, databaseEngineNames[line.Engine], major)
-			entry.MinorSlug = fmt.Sprintf("%s-%s-%d", entry.MinorSlug, line.Engine, major)
-			entry.PostgresSourceImage = line.Image
-			entry.PostgresImageCreated = line.ImageCreated
+			entry.Minor = fmt.Sprintf("%s on %s %s", entry.Minor, databaseEngineNames[line.Engine], release)
+			entry.MinorSlug = fmt.Sprintf("%s-%s-%s", entry.MinorSlug, line.Engine, strings.ReplaceAll(release, ".", "-"))
+			switch line.Engine {
+			case "postgresql":
+				entry.PostgresSourceImage = line.Image
+				entry.PostgresImageCreated = line.ImageCreated
+			case "mysql":
+				entry.MySQLSourceImage = line.Image
+				entry.MySQLImageCreated = line.ImageCreated
+			}
 			entries = append(entries, entry)
 		}
 	}

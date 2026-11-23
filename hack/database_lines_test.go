@@ -145,12 +145,43 @@ func TestADatabaseCatalogThatClaimsTooMuchIsRefused(t *testing.T) {
 			}
 		})
 	}
-	t.Run("only PostgreSQL can be added", func(t *testing.T) {
+	// A MySQL line is held to the major.minor its tag names, which is what the
+	// driver holds the image's declared line to.
+	mysqlRow := func(line, image string) string {
+		return `{"engine": "mysql", "line": "` + line + `", "image": "` + image + `", "imageCreated": "` + fixturePostgres18Date +
+			`", "state": "pending", "leftOut": [{"suite": "migrations-postgresql", "reason": "It runs PostgreSQL alone."}]}`
+	}
+	t.Run("a MySQL line can be added", func(t *testing.T) {
 		t.Parallel()
-		mysql := strings.Replace(strings.Replace(fixtureAddedRow, `"engine": "postgresql"`, `"engine": "mysql"`, 1), `"line": "18.x"`, `"line": "9.7.x"`, 1)
-		_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, mysql), databaseCatalogNow)
-		if err == nil || !strings.Contains(err.Error(), "cannot be added yet") {
-			t.Fatalf("loadDatabaseCatalog() error = %v, want the engine refused", err)
+		added := fixtureAddedRow + ", " + mysqlRow("9.7.x", "mysql:9.7"+digest)
+		catalog, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, added), databaseCatalogNow)
+		if err != nil || len(catalog.Added) != 2 {
+			t.Fatalf("loadDatabaseCatalog() = %d added lines, %v, want the MySQL line read", len(catalog.Added), err)
+		}
+	})
+	for name, test := range map[string]struct{ line, image, want string }{
+		"a MySQL tag that names another line": {"9.7.x", "mysql:9.6" + digest, "names 9.6.x"},
+		"a MySQL tag that names only a major": {"9.7.x", "mysql:9" + digest, "MySQL release line"},
+		"a MySQL line that says more first":   {"LTS 9.7.x", "mysql:9.7" + digest, "names 9.7.x"},
+		"a MySQL line that runs on":           {"9.7.xx", "mysql:9.7" + digest, "names 9.7.x"},
+		// The witness test and the probe read an added line's stem from the line.
+		"an added MySQL line that says more after it": {"9.7.x LTS", "mysql:9.7" + digest, "names 9.7.x"},
+		// The baseline already runs 8.4 under the same job names.
+		"an added MySQL release the baseline names": {"8.4.x", "mysql:8.4" + digest, "appears twice"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, fixtureAddedRow+", "+mysqlRow(test.line, test.image)), databaseCatalogNow)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("loadDatabaseCatalog() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	t.Run("a baseline MySQL tag that names another line", func(t *testing.T) {
+		t.Parallel()
+		_, err := loadDatabaseCatalog(writeDatabaseCatalog(t, `"image": "`+fixtureMySQLImage+`"`, `"image": "mysql:9.7`+digest+`"`), databaseCatalogNow)
+		if err == nil || !strings.Contains(err.Error(), "names 9.7.x") {
+			t.Fatalf("loadDatabaseCatalog() error = %v, want the baseline held to its tag", err)
 		}
 	})
 	t.Run("the fixture itself loads", func(t *testing.T) {
@@ -419,6 +450,47 @@ func TestTheDatabaseLineMatrixIsEveryMinorAgainstEverySuiteItKeeps(t *testing.T)
 			}
 		}
 	}
+	// A MySQL line's jobs hand the driver the MySQL image, leave PostgreSQL on
+	// its default, and take a name and an artifact of their own.
+	mysql := addedDatabaseLine{
+		databaseLine: databaseLine{Engine: "mysql", Line: "9.7.x", Image: "mysql:9.7@sha256:" + strings.Repeat("d", 64)},
+		ImageCreated: "2026-01-02", State: databaseLinePending,
+		LeftOut: []databaseLeftOutSuite{{Suite: "migrations-postgresql", Reason: "It runs PostgreSQL alone."}},
+	}
+	both := catalog
+	both.Added = []addedDatabaseLine{line, mysql}
+	entries, err = databaseLineMatrix(minors, suites, both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mysqlJobs, taken := 0, map[string]bool{}
+	for _, entry := range entries {
+		name, artifact := "Kubernetes "+entry.Minor+" "+entry.Suite, entry.MinorSlug+"-"+entry.SuiteSlug
+		if acceptance[name] || acceptance[artifact] || taken[name] || taken[artifact] {
+			t.Fatalf("job %q takes a name or an artifact another job has", name)
+		}
+		taken[name], taken[artifact] = true, true
+		if entry.MySQLSourceImage == "" {
+			continue
+		}
+		mysqlJobs++
+		if entry.MySQLSourceImage != mysql.Image || entry.MySQLImageCreated != mysql.ImageCreated {
+			t.Fatalf("job %q runs %q built on %q, want %s on %s", name, entry.MySQLSourceImage, entry.MySQLImageCreated, mysql.Image, mysql.ImageCreated)
+		}
+		if entry.PostgresSourceImage != "" || entry.PostgresImageCreated != "" {
+			t.Fatalf("MySQL job %q also names a PostgreSQL line: %+v", name, entry)
+		}
+		if !strings.Contains(name, "on MySQL 9.7 ") || !strings.HasSuffix(entry.MinorSlug, "-mysql-9-7") {
+			t.Fatalf("job %q (%s) does not say which line it runs", name, entry.MinorSlug)
+		}
+		if entry.Suite == "migrations-postgresql" {
+			t.Fatalf("the matrix runs %s, which the MySQL line leaves out", entry.Suite)
+		}
+	}
+	if want := len(minors) * (len(suites.Suites) - len(mysql.LeftOut)); mysqlJobs != want {
+		t.Fatalf("the matrix holds %d MySQL jobs, want %d", mysqlJobs, want)
+	}
+
 	empty := catalog
 	empty.Added = nil
 	if _, err := databaseLineMatrix(minors, suites, empty); err == nil || !strings.Contains(err.Error(), "no added line") {
@@ -431,8 +503,10 @@ func TestTheDatabaseLineMatrixIsEveryMinorAgainstEverySuiteItKeeps(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "postgres_source_image") || strings.Contains(string(encoded), "postgres_image_created") {
-		t.Fatalf("the acceptance matrix carries the PostgreSQL image: %s", encoded)
+	for _, field := range []string{"postgres_source_image", "postgres_image_created", "mysql_source_image", "mysql_image_created"} {
+		if strings.Contains(string(encoded), field) {
+			t.Fatalf("the acceptance matrix carries %s: %s", field, encoded)
+		}
 	}
 }
 
@@ -562,6 +636,18 @@ func TestVerifyWorkflowHoldsTheDatabaseLinesCall(t *testing.T) {
 			"          E2E_POSTGRES_IMAGE_CREATED: ${{ matrix.postgres_image_created }}\n",
 			"", "lifecycle environment bindings",
 		},
+		"the MySQL image the driver defaults to, on every job": {
+			"E2E_MYSQL_SOURCE_IMAGE: ${{ matrix.mysql_source_image }}",
+			"E2E_MYSQL_SOURCE_IMAGE: mysql:9.7", "lifecycle environment bindings",
+		},
+		"no MySQL image handed to the driver": {
+			"          E2E_MYSQL_SOURCE_IMAGE: ${{ matrix.mysql_source_image }}\n",
+			"", "lifecycle environment bindings",
+		},
+		"no MySQL build date handed to the driver": {
+			"          E2E_MYSQL_IMAGE_CREATED: ${{ matrix.mysql_image_created }}\n",
+			"", "lifecycle environment bindings",
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -641,6 +727,38 @@ func TestTheDriverAndThePhasesReadThePostgresImageAlike(t *testing.T) {
 			}
 		})
 	}
+	mysqlFunction := functionsFromDriver(t, "mysql_image_line")
+	for _, image := range []string{
+		"mysql:8.4" + digest,
+		"mysql:9.7" + digest,
+		"mysql:9.7.4" + digest,
+		"mysql:9.7-oraclelinux9" + digest,
+		"mysql:26.10" + digest,
+		"registry.example:5000/mirror/mysql:9.7" + digest,
+		"mysql" + digest,
+		"registry.example:5000/mysql" + digest,
+		"mysql:9" + digest,
+		"mysql:lts" + digest,
+		"mysql:0.7" + digest,
+		"mysql:9.7",
+		"mysql:9.7@sha256:abc",
+		"",
+	} {
+		t.Run(image, func(t *testing.T) {
+			t.Parallel()
+			line, err := phases.MySQLImageLine(image)
+			read, shellErr := runDriverFunction(mysqlFunction, `mysql_image_line "$1"`, image)
+			if shellErr != nil {
+				t.Fatalf("sh: %v", shellErr)
+			}
+			if err != nil {
+				line = ""
+			}
+			if read != line {
+				t.Fatalf("the phases read %q from %q and the driver reads %q", line, image, read)
+			}
+		})
+	}
 	for _, major := range []int{14, 16, 17, 18, 19} {
 		want := phases.PostgresDataDirectory(major)
 		got, err := runDriverFunction(functions, `postgres_data_directory "$1"`, strconv.Itoa(major))
@@ -687,11 +805,16 @@ func TestTheDriverHoldsAnAddedLinesDateToItsImage(t *testing.T) {
 	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, driver); err != nil {
 		t.Fatalf("verifyDatabaseImageDateCheck() error = %v", err)
 	}
-	const check = `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`
-	if !strings.Contains(string(driver), check) {
-		t.Fatalf("the driver does not hold %q", check)
-	}
-	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), check, "true ||", 1))); err == nil {
-		t.Fatal("a driver that stopped comparing the date was accepted")
+	for _, check := range []string{
+		`image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`,
+		`image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`,
+		`[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`,
+	} {
+		if strings.Count(string(driver), check) != 1 {
+			t.Fatalf("the driver does not hold %q once", check)
+		}
+		if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), check, "true ||", 1))); err == nil {
+			t.Fatalf("a driver that stopped making %q was accepted", check)
+		}
 	}
 }
