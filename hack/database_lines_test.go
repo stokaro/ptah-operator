@@ -164,6 +164,10 @@ func TestADatabaseCatalogThatClaimsTooMuchIsRefused(t *testing.T) {
 		"a MySQL tag that names only a major": {"9.7.x", "mysql:9" + digest, "MySQL release line"},
 		"a MySQL line that says more first":   {"LTS 9.7.x", "mysql:9.7" + digest, "names 9.7.x"},
 		"a MySQL line that runs on":           {"9.7.xx", "mysql:9.7" + digest, "names 9.7.x"},
+		// The witness test and the probe read an added line's stem from the line.
+		"an added MySQL line that says more after it": {"9.7.x LTS", "mysql:9.7" + digest, "names 9.7.x"},
+		// The baseline already runs 8.4 under the same job names.
+		"an added MySQL release the baseline names": {"8.4.x", "mysql:8.4" + digest, "appears twice"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

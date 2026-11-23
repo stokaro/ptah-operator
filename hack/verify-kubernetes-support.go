@@ -5895,7 +5895,7 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		return databaseCatalog{}, fmt.Errorf("%s: names no baseline line", path)
 	}
 	seen := map[string]bool{}
-	claim := func(line databaseLine) error {
+	claim := func(line databaseLine, added bool) error {
 		if _, known := databaseEngineNames[line.Engine]; !known {
 			return fmt.Errorf("%s: engine %q is not one the support page names", path, line.Engine)
 		}
@@ -5907,17 +5907,21 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		}
 		// The lifecycle holds both PostgreSQL servers to the tag, and the line
 		// the MySQL image declares to its tag, so a green run proves the tag's
-		// line, whatever this row says. A MySQL line may say more after it, as
-		// the baseline's LTS does.
+		// line, whatever this row says. A baseline MySQL line may say more after
+		// it, as its LTS does. An added line may not: the witness test and the
+		// readings probe take its file stem from the line itself.
 		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		want := release + ".x"
-		if line.Line != want && (line.Engine != "mysql" || !strings.HasPrefix(line.Line, want+" ")) {
+		if line.Line != want && (added || line.Engine != "mysql" || !strings.HasPrefix(line.Line, want+" ")) {
 			return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
 		}
-		key := line.Engine + " " + line.Line
+		// Two rows that name one release would run jobs of the same names, and
+		// either run would read as the other's evidence, whatever each row adds
+		// after the release.
+		key := line.Engine + " " + release
 		if seen[key] {
 			return fmt.Errorf("%s: %s appears twice", path, key)
 		}
@@ -5925,12 +5929,12 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		return nil
 	}
 	for _, line := range catalog.Baseline {
-		if err := claim(line); err != nil {
+		if err := claim(line, false); err != nil {
 			return databaseCatalog{}, err
 		}
 	}
 	for _, line := range catalog.Added {
-		if err := claim(line.databaseLine); err != nil {
+		if err := claim(line.databaseLine, true); err != nil {
 			return databaseCatalog{}, err
 		}
 		if err := validateAddedDatabaseLine(path, line, now); err != nil {
