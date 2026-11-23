@@ -527,6 +527,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:15bb6c852a4988e526d8bd4e2daaec53b2af70eda11ce5228cde57de956e9e90",
       "reason": "The runner reads the generated_columns list of a generated-kind refusal, which Ptah v0.35.0 writes (stokaro/ptah#6466), and its plan_refused message names each column with its table and both kinds after the code, as it names views, definers and owners (#1164). A list in another form gives the code alone, as before. The code, the frame fields and their shape are as they were, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e7c7779272be5864dbfc43eae79d7f8267e4a86760c6a102d77c52ccb603492a",
+      "reason": "The comments on the Pending and VerifyingHistory migration phases in api/v1alpha1 now say when the controller writes each phase (#921). No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

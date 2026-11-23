@@ -11,7 +11,10 @@ import (
 type MigrationPhase string
 
 const (
-	// MigrationPhasePending is a migration the controller has not yet acted on.
+	// MigrationPhasePending is a migration whose plan or operation claim the
+	// controller discarded because its inputs changed. The next pass starts
+	// the read-only chain again from resolution. A new migration has no phase
+	// until its first pass, which moves it to Resolving.
 	MigrationPhasePending MigrationPhase = "Pending"
 	// MigrationPhaseResolving is resolving the artifact reference to a digest.
 	MigrationPhaseResolving MigrationPhase = "Resolving"
@@ -33,8 +36,9 @@ const (
 	MigrationPhaseBlocked MigrationPhase = "Blocked"
 	// MigrationPhaseApplying is an execution Job in flight.
 	MigrationPhaseApplying MigrationPhase = "Applying"
-	// MigrationPhaseVerifyingHistory is reading the history back to confirm
-	// what the run did.
+	// MigrationPhaseVerifyingHistory follows a run whose outcome a reading of
+	// the history has to confirm. It lasts one pass: the next pass claims that
+	// read, the phase shows Reading, and the read's result is the verdict.
 	MigrationPhaseVerifyingHistory MigrationPhase = "VerifyingHistory"
 	// MigrationPhaseInSync is a history that matches the artifact with nothing
 	// pending.
