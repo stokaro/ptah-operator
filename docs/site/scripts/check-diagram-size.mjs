@@ -230,10 +230,14 @@ async function main() {
   const browser = await chromium.launch();
   const problems = [];
   let measured = 0;
+  let smallest = { size: Infinity, where: '' };
   try {
     for (const page of pages) {
       const reading = await measure(browser, `http://127.0.0.1:${port}${base}/${page.route}`);
       measured += reading.diagrams.length;
+      reading.diagrams.forEach((diagram, index) => {
+        if (diagram.smallest < smallest.size) smallest = { size: diagram.smallest, where: `${page.route} diagram ${index + 1}` };
+      });
       problems.push(...diagramProblems(page, reading));
     }
   } finally {
@@ -247,7 +251,7 @@ async function main() {
   }
   console.log(
     `check-diagram-size.mjs: OK (${measured} diagrams on ${pages.length} pages, every label at ` +
-      `${labelFloor}px or more at ${viewportWidth}px)`,
+      `${labelFloor}px or more at ${viewportWidth}px; the smallest is ${smallest.size.toFixed(1)}px, in ${smallest.where})`,
   );
 }
 

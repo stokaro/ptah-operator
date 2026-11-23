@@ -78,14 +78,19 @@ config:
     nodeSpacing: 16
     rankSpacing: 26
 ---
-flowchart LR
-  accTitle: The components of Ptah Operator and what each one acts on
-  accDescr: Each row is a component on the left and, on the right, what it acts on. The manager writes the resources and Leases and creates one Job per operation. In the Job, ptah-runner starts the Ptah executor, which reads the OCI registry and the database and sends the result over TLS to the receiver in the manager. The receiver persists it as a PtahResultRecord before it acknowledges, and the manager reads it back. The certificate rotator serves the admission guards, and the CRD manager installs the kinds.
-  manager["<b>manager</b><br/>reconcilers,<br/>webhooks"] --> kinds["<b>Kubernetes API</b><br/>PtahSchema,<br/>PtahMigration,<br/>plans, approvals,<br/>Leases"]
-  manager --> job["<b>a Job per operation</b><br/>claimed, then<br/>created; its runner<br/>starts Ptah, which<br/>reads the registry<br/>and the database"]
-  receiver["<b>receiver</b><br/>in the manager"] --> results["<b>PtahResultRecord</b><br/>the Job's result,<br/>sent over TLS,<br/>stored before<br/>the receipt, read<br/>by the manager"]
-  rotator["<b>ptah-cert-rotator</b>"] --> guards["<b>admission</b><br/>typed policies,<br/>webhooks"]
-  crd["<b>ptah-crd-manager</b><br/>Helm hooks"] --> crds["<b>the CRDs</b>"]
+flowchart TD
+  accTitle: The components of Ptah Operator, in the order an operation passes through them
+  accDescr: The manager writes the resources and Leases, claims an operation and creates its Job. In the Job, ptah-runner starts the Ptah executor, which reads the OCI registry and the database. The result goes over TLS to the receiver in the manager, which stores it as a PtahResultRecord before it sends the receipt, and the manager reads it back and records the outcome. Beside them, the certificate rotator serves the admission webhooks, and the CRD manager installs the CRDs from Helm hooks.
+  manager["<b>manager</b><br/>reconcilers and webhooks;<br/>writes PtahSchema, PtahMigration,<br/>plans, approvals and Leases"]
+  job["<b>a Job per operation</b><br/>ptah-runner starts Ptah, which<br/>reads the OCI registry<br/>and the database"]
+  receiver["<b>result receiver</b>, in the manager<br/>stores a PtahResultRecord<br/>before it sends the receipt"]
+  back["<b>manager</b><br/>reads the result back<br/>and records the outcome"]
+  rotator["<b>ptah-cert-rotator</b><br/>serves the certificates of<br/>the admission webhooks"]
+  crd["<b>ptah-crd-manager</b><br/>installs the CRDs<br/>from Helm hooks"]
+  manager -->|"claims, then creates"| job
+  job -->|"result over TLS"| receiver
+  receiver -->|"background read"| back
+  back ~~~ rotator ~~~ crd
 ```
 
 The manager decides and records. It creates Jobs and reads persisted results
