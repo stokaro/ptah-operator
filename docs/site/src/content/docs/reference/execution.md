@@ -499,8 +499,8 @@ read from writing is the command the runner runs, one fixed command line for
 each operation, and the audit below measures what those commands send. The
 runner opens no database connection of its own; it starts Ptah with the target
 URL in its environment. The behavior below was read from the source of the Ptah
-build [`support/ptah.json`](../../support/ptah/) pins, v0.35.0 at commit
-`1ec0b95e`.
+build [`support/ptah.json`](../../support/ptah/) pins, v0.35.1 at commit
+`ff4a4368`.
 
 | Operation | Runner command | What reaches the database |
 | --- | --- | --- |

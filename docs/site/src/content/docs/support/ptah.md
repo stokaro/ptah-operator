@@ -21,11 +21,11 @@ things, and [the next section](#three-states-kept-apart) says what.
 <!-- BEGIN GENERATED COMPATIBILITY -->
 **Axis:** Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.
 
-**Last measured:** 2026-11-22.
+**Last measured:** 2026-11-23.
 
 | Operator | Declared range | Verified builds | Guide |
 | --- | --- | --- | --- |
-| `edge` | No range | `v0.35.0` | [edge](https://operator.ptah.run/edge/) |
+| `edge` | No range | `v0.35.1` | [edge](https://operator.ptah.run/edge/) |
 | `v0.2.18` | No range | `v0.35.0` | [v0.2.18](https://operator.ptah.run/v0.2.18/) |
 | `v0.2.17` | No range | `v0.34.0` | [v0.2.17](https://operator.ptah.run/v0.2.17/) |
 | `v0.2.16` | No range | `v0.34.0` | [v0.2.16](https://operator.ptah.run/v0.2.16/) |
@@ -54,7 +54,7 @@ The development state. Its guide is at [https://operator.ptah.run/edge/](https:/
 
 **Verified:**
 
-- Ptah `v0.35.0`. Commit [`1ec0b95eea95afce6f50b5912311ce4822f0636b`](https://github.com/stokaro/ptah/commit/1ec0b95eea95afce6f50b5912311ce4822f0636b), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
+- Ptah `v0.35.1`. Commit [`ff4a4368f96968e6f43322e3e5dd27f2415e0013`](https://github.com/stokaro/ptah/commit/ff4a4368f96968e6f43322e3e5dd27f2415e0013), runner protocol version 1, evidence `kubernetes-e2e`. The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, whose declared rows converge on both engines, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against PostgreSQL and MySQL.
 
 **Limitations:**
 
@@ -133,7 +133,9 @@ A released version. Its guide is at [https://operator.ptah.run/v0.2.18/](https:/
 
 **Declared:** the same as [`edge`](#edge).
 
-**Verified:** the same as [`edge`](#edge).
+**Verified:**
+
+- Ptah `v0.35.0`. Commit [`1ec0b95eea95afce6f50b5912311ce4822f0636b`](https://github.com/stokaro/ptah/commit/1ec0b95eea95afce6f50b5912311ce4822f0636b), runner protocol version 1, evidence `kubernetes-e2e`. The scope is the same as for [`edge`](#edge).
 
 **Limitations:** the same as [`edge`](#edge) without its number 66 and number 67 limitations.
 
