@@ -120,7 +120,8 @@
       "line": "9.7.x",
       "image": "mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446",
       "imageCreated": "2026-11-03",
-      "state": "pending",
+      "state": "supported",
+      "evidenceRun": "45223146080",
       "leftOut": [
         {
           "suite": "migrations-postgresql",
