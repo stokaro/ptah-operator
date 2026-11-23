@@ -393,8 +393,8 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			// Each added PostgreSQL line keeps a witness per operation, read
 			// through the same audit. PostgreSQL 18 reads a column's NOT NULL
 			// constraint name where 17 selects an empty string, so that one
-			// declaration has a witness only on 18. PostgreSQL 16 sends what 17
-			// sends and spells the parameter detail differently.
+			// declaration has a witness only on 18. PostgreSQL 16 and 15 send
+			// what 17 sends and spell the parameter detail differently.
 			if engine == "postgresql" {
 				for _, stem := range addedPostgresLineStems(t) {
 					readings = append(readings,

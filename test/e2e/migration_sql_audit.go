@@ -305,8 +305,8 @@ func postgresStatementRefusalSQL(raw []byte, database string, clients map[string
 
 // postgresParameterDetail spells a statement's bound parameters the way the
 // contracts write them. PostgreSQL 17 logs them as "Parameters: $1 = 'x'", and
-// 16 logs the same detail as "parameters: $1 = 'x'": measured on 17.11 and
-// 16.15 with the same executor command. Only that one prefix is rewritten, so
+// 16 and 15 log the same detail as "parameters: $1 = 'x'": measured on 17.11,
+// 16.15 and 15.19 with the same executor command. Only that one prefix is rewritten, so
 // the SQL, the values and every other spelling are still compared byte for byte.
 func postgresParameterDetail(detail string) string {
 	if values, found := strings.CutPrefix(detail, "parameters: "); found {

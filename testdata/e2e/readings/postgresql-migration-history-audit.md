@@ -55,7 +55,8 @@ parameters, arbitrary SELECT or WITH statements, and failed unauthorized SQL
 are refused. PostgreSQL 16.15 logs this History with the same statements and
 values and labels its parameter lists `parameters: ` where 17 writes
 `Parameters: `. The audit reads 16's label as 17's, so the same predicate holds
-on both, and a changed value is refused under either label.
+on both, and a changed value is refused under either label. PostgreSQL 15.19
+logs it the same way as 16.15.
 
 This reading validates the parser and the allowed diagnostic control. It does
 not establish that a later approval-refusal scenario passed. That result
