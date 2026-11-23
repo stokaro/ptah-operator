@@ -1,0 +1,1013 @@
+---
+/**
+ * The lifecycle explorer on the Reconciliation page: one scenario stage by
+ * stage, the objects it touches, and how those objects relate.
+ *
+ * src/lifecycle-explorer.mjs is the content, and this file only renders it.
+ * Everything is rendered here, on the server, twice: as the text a reader
+ * without JavaScript, a search index or a printer gets, and as the
+ * interactive view, which starts hidden. The script below shows the
+ * interactive view and hides the text once it is running, so a page whose
+ * script failed still reads whole. It never builds markup, only switches
+ * what is shown, which is why the scoped styles below reach everything the
+ * reader sees.
+ *
+ * The state a reader chose, the stage and the object, is kept in the query
+ * string with replaceState: the hash stays the page's own anchor, and the
+ * browser's history gains no entry per click.
+ */
+import { actors, notCovered, objects, relations, relationTypes, scenario } from '../lifecycle-explorer.mjs';
+
+const objectById = new Map(objects.map((object) => [object.id, object]));
+const actorLabel = new Map(actors.map((actor) => [actor.id, actor.label]));
+const typeById = new Map(relationTypes.map((type) => [type.id, type]));
+
+// A relation read from one end: the label is the relation's own name from the
+// object that carries it, and its inverse from the other.
+const relationsOf = (id) =>
+  relations
+    .filter((relation) => relation.from === id || relation.to === id)
+    .map((relation) => {
+      const outgoing = relation.from === id;
+      const type = typeById.get(relation.type);
+      return {
+        type: relation.type,
+        label: outgoing ? type.label : type.inverse,
+        other: outgoing ? relation.to : relation.from,
+        text: relation.text,
+      };
+    });
+
+// The actors a stage names, the lead first, then in the fixed order.
+const actorsOf = (stage) =>
+  actors
+    .filter((actor) => stage.actors[actor.id])
+    .sort((left, right) => (left.id === stage.lead ? -1 : right.id === stage.lead ? 1 : 0))
+    .map((actor) => ({ ...actor, text: stage.actors[actor.id], lead: actor.id === stage.lead }));
+
+const stagesOf = (id) => scenario.stages.filter((stage) => stage.objects.includes(id));
+
+const stages = scenario.stages;
+
+// A kind name such as PtahSchemaPlanChunk is one word to the browser, and a
+// phone-width column breaks it wherever it runs out. These are the points
+// where it may break instead: before each capital that follows a lowercase
+// letter.
+const breakable = (name) => name.split(/(?<=[a-z])(?=[A-Z])/);
+
+// What the script needs and cannot read off the markup cheaply.
+const model = {
+  stages: stages.map((stage) => ({ id: stage.id, objects: stage.objects })),
+  relations: relations.map(({ from, to, type }) => ({ from, to, type })),
+  types: Object.fromEntries(relationTypes.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
+};
+---
+
+<section
+  id="lifecycle-explorer"
+  class="lx not-content"
+  aria-label={`Lifecycle explorer: ${scenario.title}`}
+  data-lx
+  data-lx-model={JSON.stringify(model)}
+>
+  <div class="lx__head">
+    <p class="lx__eyebrow">Lifecycle explorer</p>
+    <p class="lx__title">{scenario.title}</p>
+    <p class="lx__summary">{scenario.summary}</p>
+  </div>
+
+  <div class="lx__app" data-lx-app data-pagefind-ignore hidden>
+    <div class="lx__bar">
+      <p class="lx__count" data-lx-count aria-live="polite">Stage 1 of {stages.length}: {stages[0].title}</p>
+      <div class="lx__nav">
+        <button type="button" class="lx__button" data-lx-prev disabled>Previous</button>
+        <button type="button" class="lx__button" data-lx-next>Next</button>
+      </div>
+    </div>
+
+    <ol class="lx__steps" aria-label="Stages. Use the arrow keys to move between them.">
+      {
+        stages.map((stage, index) => (
+          <li>
+            <button
+              type="button"
+              class="lx__step"
+              data-lx-step={stage.id}
+              aria-current={index === 0 ? 'step' : undefined}
+              tabindex={index === 0 ? 0 : -1}
+              data-lead={stage.lead}
+              aria-label={`Stage ${index + 1}: ${stage.title}`}
+            >
+              <span class="lx__step-n">{index + 1}</span>
+              <span class="lx__step-t">{stage.title}</span>
+            </button>
+          </li>
+        ))
+      }
+    </ol>
+
+    <div class="lx__stages">
+      {
+        stages.map((stage, index) => (
+          <div class="lx__panel" data-lx-stage-panel={stage.id} hidden={index !== 0}>
+            <div class="lx__panel-head">
+              <p class="lx__panel-title">
+                <span class="lx__panel-n">{index + 1}</span>
+                {stage.title}
+              </p>
+              <p class="lx__phase">
+                <span class="lx__label">Phase</span> <code>{stage.phase}</code>
+              </p>
+            </div>
+
+            <ul class="lx__actors" aria-label="Who acts">
+              {actorsOf(stage).map((actor) => (
+                <li class="lx__actor" data-actor={actor.id} data-lead={actor.lead ? 'true' : undefined}>
+                  <span class="lx__actor-name">
+                    {actor.label}
+                    {actor.lead && <span class="lx__lead">acts</span>}
+                  </span>
+                  <span class="lx__actor-text">{actor.text}</span>
+                </li>
+              ))}
+            </ul>
+
+            <div class="lx__involved">
+              <span class="lx__label">Objects</span>
+              {stage.objects.map((id) => (
+                <button type="button" class="lx__chip" data-lx-select={id}>
+                  {objectById.get(id).label}
+                </button>
+              ))}
+            </div>
+
+            {stage.expect && (
+              <p class="lx__expect">
+                <span class="lx__label">Expect</span> {stage.expect}
+              </p>
+            )}
+
+            <div class="lx__inspect">
+              <span class="lx__label">Inspect</span>
+              {stage.inspect.map((step) => (
+                <div class="lx__command">
+                  <pre><code>{step.command}</code></pre>
+                  <p>{step.says}</p>
+                </div>
+              ))}
+            </div>
+
+            <p class="lx__done">
+              <span class="lx__label">Done when</span> {stage.done}
+            </p>
+            {stage.limits && (
+              <p class="lx__limits">
+                <span class="lx__label">What it does not prove</span> {stage.limits}
+              </p>
+            )}
+            <p class="lx__links">
+              {stage.links.map((link) => (
+                <a href={link.href}>{link.label}</a>
+              ))}
+            </p>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="lx__map">
+      <p class="lx__map-title">Objects and how they relate</p>
+      <p class="lx__hint" data-lx-hint>
+        Objects in the current stage are marked. Select one to see what it is and what it is related to.
+      </p>
+      <ul class="lx__nodes">
+        {
+          objects.map((object) => (
+            <li>
+              <button type="button" class="lx__node" data-lx-object={object.id} aria-pressed="false">
+                <span class="lx__node-label">
+                  {breakable(object.label).map((part, index) => (
+                    <>
+                      {index > 0 && <wbr />}
+                      {part}
+                    </>
+                  ))}
+                </span>
+                {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
+                <span class="lx__node-rel" data-lx-rel />
+              </button>
+            </li>
+          ))
+        }
+      </ul>
+
+      <ul class="lx__legend" aria-label="Relationship types">
+        {
+          relationTypes.map((type) => (
+            <li data-type={type.id}>
+              <span class="lx__swatch" aria-hidden="true" />
+              <span>
+                <strong>{type.label}</strong> {type.text}
+              </span>
+            </li>
+          ))
+        }
+      </ul>
+
+      {
+        objects.map((object) => (
+          <div class="lx__object" data-lx-object-panel={object.id} hidden>
+            <p class="lx__panel-title">
+              {object.label}
+              {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
+            </p>
+            <p>{object.purpose}</p>
+            <p>
+              <span class="lx__label">Where</span> {object.lives}
+            </p>
+            <p>
+              <span class="lx__label">Written by</span> {actorLabel.get(object.writer)}
+            </p>
+            <ul class="lx__relations" aria-label={`How ${object.label} relates to the others`}>
+              {relationsOf(object.id).map((relation) => (
+                <li data-type={relation.type}>
+                  <span class="lx__swatch" aria-hidden="true" />
+                  <span>
+                    <strong>{relation.label}</strong>{' '}
+                    <button type="button" class="lx__link-button" data-lx-select={relation.other}>
+                      {objectById.get(relation.other).label}
+                    </button>
+                    . {relation.text}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div class="lx__inspect">
+              <span class="lx__label">Inspect</span>
+              {object.inspect.map((step) => (
+                <div class="lx__command">
+                  <pre><code>{step.command}</code></pre>
+                  <p>{step.says}</p>
+                </div>
+              ))}
+            </div>
+            <p class="lx__goto">
+              <span class="lx__label">In stages</span>
+              {stagesOf(object.id).map((stage) => (
+                <button type="button" class="lx__chip" data-lx-goto={stage.id}>
+                  {stages.indexOf(stage) + 1} {stage.title}
+                </button>
+              ))}
+            </p>
+            <p class="lx__links">
+              {object.links.map((link) => (
+                <a href={link.href}>{link.label}</a>
+              ))}
+            </p>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="lx__text" data-lx-text>
+    <ol class="lx__text-stages">
+      {
+        stages.map((stage) => (
+          <li data-lx-text-stage={stage.id}>
+            <p>
+              <strong>{stage.title}.</strong> Phase <code>{stage.phase}</code>.
+            </p>
+            <ul>
+              {actorsOf(stage).map((actor) => (
+                <li>
+                  <strong>{actor.label}:</strong> {actor.text}
+                </li>
+              ))}
+            </ul>
+            <p>Objects: {stage.objects.map((id) => objectById.get(id).label).join(', ')}.</p>
+            {stage.expect && <p>Expect: {stage.expect}</p>}
+            {stage.inspect.map((step) => (
+              <p>
+                <code>{step.command}</code>: {step.says}
+              </p>
+            ))}
+            <p>Done when: {stage.done}</p>
+            {stage.limits && <p>What it does not prove: {stage.limits}</p>}
+            <p>
+              Read more:{' '}
+              {stage.links.map((link, index) => (
+                <>
+                  {index > 0 && ', '}
+                  <a href={link.href}>{link.label}</a>
+                </>
+              ))}
+              .
+            </p>
+          </li>
+        ))
+      }
+    </ol>
+    <p>
+      <strong>The objects, and how they relate.</strong> An owner reference is what the garbage collector follows;
+      a name, a UID or a digest is a reference and deletes nothing.
+    </p>
+    <ul class="lx__text-objects">
+      {
+        objects.map((object) => (
+          <li data-lx-text-object={object.id}>
+            <strong>{object.label}</strong> ({object.kind}). {object.purpose} {object.lives}
+            <ul>
+              {relationsOf(object.id).map((relation) => (
+                <li>
+                  {relation.label} {objectById.get(relation.other).label}: {relation.text}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+
+  <p class="lx__later">
+    {notCovered.text}{' '}
+    {notCovered.links.map((link, index) => (
+      <>
+        {index > 0 && ', '}
+        <a href={link.href}>{link.label}</a>
+      </>
+    ))}
+    .
+  </p>
+</section>
+
+<style>
+  .lx {
+    --lx-gap: 0.75rem;
+    container-type: inline-size;
+    margin-block: 1.5rem;
+    padding: 1rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    background: var(--ptah-surface);
+    line-height: 1.5;
+    font-size: 0.9375rem;
+  }
+
+  .lx [hidden] {
+    display: none !important;
+  }
+
+  .lx p,
+  .lx ul,
+  .lx ol {
+    margin: 0;
+  }
+
+  .lx :is(p, ul, ol, div) + :is(p, ul, ol, div) {
+    margin-top: var(--lx-gap);
+  }
+
+  .lx__eyebrow,
+  .lx__label,
+  .lx__map-title {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .lx__label {
+    margin-right: 0.35rem;
+  }
+
+  .lx__head .lx__eyebrow + .lx__title {
+    margin-top: 0.15rem;
+  }
+
+  .lx__title {
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-h3);
+    font-weight: 600;
+  }
+
+  .lx__summary,
+  .lx__hint,
+  .lx__later {
+    color: var(--sl-color-gray-2);
+  }
+
+  .lx code {
+    overflow-wrap: break-word;
+    font-size: var(--sl-text-code-sm);
+  }
+
+  /* The root is not-content, so Starlight's prose rules stay out of the
+   * layout; the links still read as the page's links. */
+  .lx a {
+    color: var(--sl-color-text-accent);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  .lx__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .lx__count {
+    color: var(--sl-color-gray-2);
+  }
+
+  .lx__nav {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .lx .lx__nav,
+  .lx .lx__steps {
+    margin-top: 0;
+  }
+
+  .lx__steps {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.375rem;
+    padding: 0;
+    list-style: none;
+    margin-top: var(--lx-gap) !important;
+  }
+
+  .lx__steps li {
+    margin: 0 !important;
+  }
+
+  .lx__button,
+  .lx__step,
+  .lx__chip,
+  .lx__node {
+    font: inherit;
+    color: var(--sl-color-text);
+    background: var(--sl-color-bg);
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+
+  .lx__button {
+    padding: 0.35rem 0.8rem;
+  }
+
+  .lx__button:disabled {
+    color: var(--sl-color-gray-3);
+    cursor: default;
+  }
+
+  .lx__step {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    gap: 0.4rem;
+    align-items: flex-start;
+    padding: 0.4rem 0.5rem;
+    text-align: left;
+    font-size: var(--sl-text-xs);
+    line-height: 1.3;
+  }
+
+  .lx__step-n,
+  .lx__panel-n {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--sl-color-gray-4);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lx__step[aria-current='step'] {
+    border-color: var(--sl-color-accent);
+    background: var(--sl-color-accent-low);
+  }
+
+  .lx__step[aria-current='step'] .lx__step-n,
+  .lx__panel-n {
+    border-color: var(--sl-color-accent);
+    background: var(--sl-color-accent);
+    color: var(--sl-color-text-invert);
+  }
+
+  .lx__step[data-done] .lx__step-n {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent);
+  }
+
+  .lx__panel,
+  .lx__object {
+    padding-top: var(--lx-gap);
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
+  .lx__panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+  }
+
+  .lx__panel-head > * {
+    margin-top: 0 !important;
+  }
+
+  .lx__panel-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-h4);
+    font-weight: 600;
+  }
+
+  .lx__actors {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0;
+    list-style: none;
+  }
+
+  .lx__actor {
+    display: grid;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+    gap: 0.75rem;
+    margin: 0 !important;
+    padding: 0.5rem 0.625rem;
+    border-left: 3px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg);
+  }
+
+  .lx__actor[data-lead] {
+    border-left-color: var(--sl-color-accent);
+  }
+
+  .lx__actor-name {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+
+  .lx__lead {
+    display: block;
+    color: var(--sl-color-accent);
+    font-size: var(--sl-text-xs);
+    font-weight: 400;
+  }
+
+  .lx__involved,
+  .lx__goto {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  .lx__chip {
+    padding: 0.15rem 0.55rem;
+    font-size: var(--sl-text-xs);
+  }
+
+  .lx__chip[aria-pressed='true'] {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent);
+  }
+
+  .lx__command {
+    margin-top: 0.375rem !important;
+  }
+
+  .lx__command pre {
+    margin: 0;
+    padding: 0.5rem 0.625rem;
+    overflow-x: auto;
+    border: 1px solid var(--sl-color-hairline);
+    background: var(--sl-color-bg-inline-code);
+    font-size: var(--sl-text-code-sm);
+    line-height: 1.5;
+  }
+
+  /* A command keeps its lines as typed, so a flag never breaks at its hyphen;
+   * a long one scrolls inside its own box rather than widening the page. */
+  .lx__command pre code {
+    white-space: pre;
+    overflow-wrap: normal;
+  }
+
+  .lx__command p {
+    margin-top: 0.25rem !important;
+    color: var(--sl-color-gray-2);
+  }
+
+  .lx__limits {
+    padding-left: 0.625rem;
+    border-left: 3px solid var(--ptah-amber);
+  }
+
+  .lx__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+  }
+
+  .lx__map {
+    margin-top: 1.25rem !important;
+    padding-top: var(--lx-gap);
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
+  .lx__nodes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    padding: 0;
+    list-style: none;
+  }
+
+  .lx__nodes li {
+    margin: 0 !important;
+  }
+
+  .lx__node {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    width: 100%;
+    height: 100%;
+    padding: 0.5rem 0.625rem;
+    text-align: left;
+    border-width: 2px;
+    border-color: var(--sl-color-hairline);
+  }
+
+  .lx__node-label {
+    font-weight: 600;
+    overflow-wrap: break-word;
+  }
+
+  .lx__node-kind {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+    font-weight: 400;
+    overflow-wrap: anywhere;
+  }
+
+  .lx__node-rel {
+    color: var(--sl-color-accent);
+    font-size: var(--sl-text-xs);
+  }
+
+  .lx__node[data-in-stage] {
+    background: var(--sl-color-accent-low);
+  }
+
+  .lx__node[aria-pressed='true'] {
+    border-color: var(--sl-color-accent);
+    border-style: solid;
+  }
+
+  /* A related node carries its relation's line style, the one the legend
+   * draws, so the type reads without color as well. */
+  .lx__node[data-related='owns'] {
+    border-color: var(--sl-color-gray-2);
+    border-style: solid;
+  }
+  .lx__node[data-related='references'] {
+    border-color: var(--sl-color-gray-2);
+    border-style: dashed;
+  }
+  .lx__node[data-related='contains'] {
+    border-color: var(--sl-color-gray-2);
+    border-style: double;
+    border-width: 3px;
+  }
+  .lx__node[data-related='holds'] {
+    border-color: var(--ptah-amber);
+    border-style: dotted;
+  }
+  .lx__node[data-related='delivers'] {
+    border-color: var(--ptah-green);
+    border-style: dashed;
+  }
+
+  .lx__legend,
+  .lx__relations {
+    display: grid;
+    gap: 0.375rem;
+    padding: 0;
+    list-style: none;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-2);
+  }
+
+  .lx__relations {
+    font-size: inherit;
+  }
+
+  .lx__legend li,
+  .lx__relations li {
+    display: grid;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    gap: 0.5rem;
+    align-items: baseline;
+    margin: 0 !important;
+  }
+
+  .lx__legend strong,
+  .lx__relations strong {
+    color: var(--sl-color-white);
+  }
+
+  .lx__swatch {
+    display: block;
+    height: 0;
+    border-top: 2px solid var(--sl-color-gray-2);
+    transform: translateY(-0.25em);
+  }
+
+  [data-type='references'] > .lx__swatch {
+    border-top-style: dashed;
+  }
+  [data-type='contains'] > .lx__swatch {
+    border-top: 4px double var(--sl-color-gray-2);
+  }
+  [data-type='holds'] > .lx__swatch {
+    border-top: 3px dotted var(--ptah-amber);
+  }
+  [data-type='delivers'] > .lx__swatch {
+    border-top: 2px dashed var(--ptah-green);
+  }
+
+  .lx__link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--sl-color-text-accent);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+    cursor: pointer;
+  }
+
+  .lx__text-stages,
+  .lx__text-objects {
+    padding-left: 1.25rem;
+  }
+
+  .lx__text li + li {
+    margin-top: 0.75rem;
+  }
+
+  .lx__text ul {
+    padding-left: 1.1rem;
+  }
+
+  .lx__text li li + li {
+    margin-top: 0.25rem;
+  }
+
+  .lx__text p + p {
+    margin-top: 0.25rem;
+  }
+
+  .lx__later {
+    margin-top: 1rem !important;
+    padding-top: var(--lx-gap);
+    border-top: 1px solid var(--sl-color-hairline);
+    font-size: var(--sl-text-xs);
+  }
+
+  /* Once the script runs, the interactive view replaces the text. */
+  .lx[data-lx-ready] .lx__text {
+    display: none;
+  }
+
+  @container (max-width: 34rem) {
+    .lx__step {
+      justify-content: center;
+      padding: 0.4rem 0.2rem;
+    }
+    .lx__step-t {
+      display: none;
+    }
+    .lx__actor {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.15rem;
+    }
+    .lx__lead {
+      display: inline;
+      margin-left: 0.4rem;
+    }
+    .lx__nodes {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @container (min-width: 34.01rem) and (max-width: 44rem) {
+    .lx__nodes {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .lx__panel:not([hidden]),
+    .lx__object:not([hidden]) {
+      animation: lx-in 160ms ease-out;
+    }
+    @keyframes lx-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+    }
+  }
+
+  @media print {
+    .lx__app {
+      display: none !important;
+    }
+    .lx[data-lx-ready] .lx__text {
+      display: block;
+    }
+  }
+</style>
+
+<script>
+  type Model = {
+    stages: { id: string; objects: string[] }[];
+    relations: { from: string; to: string; type: string }[];
+    types: Record<string, { label: string; inverse: string }>;
+  };
+
+  const STAGE_PARAM = 'lx-stage';
+  const OBJECT_PARAM = 'lx-object';
+
+  function start(root: HTMLElement) {
+    const model: Model = JSON.parse(root.dataset.lxModel || '{}');
+    const app = root.querySelector<HTMLElement>('[data-lx-app]');
+    if (!app || !model.stages?.length) return;
+
+    const steps = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-step]')];
+    const stagePanels = new Map(
+      [...root.querySelectorAll<HTMLElement>('[data-lx-stage-panel]')].map((panel) => [panel.dataset.lxStagePanel, panel]),
+    );
+    const nodes = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-object]')];
+    const objectPanels = new Map(
+      [...root.querySelectorAll<HTMLElement>('[data-lx-object-panel]')].map((panel) => [panel.dataset.lxObjectPanel, panel]),
+    );
+    const count = root.querySelector<HTMLElement>('[data-lx-count]');
+    const prev = root.querySelector<HTMLButtonElement>('[data-lx-prev]');
+    const next = root.querySelector<HTMLButtonElement>('[data-lx-next]');
+    const ids = model.stages.map((stage) => stage.id);
+
+    let stageIndex = 0;
+    let selected: string | null = null;
+
+    // The relation between the selected object and another, read from the
+    // selected end. Two relations between one pair (a reference and an owner
+    // reference) show ownership, the one the garbage collector acts on.
+    const relationTo = (other: string) => {
+      const found = model.relations.filter(
+        (relation) =>
+          (relation.from === selected && relation.to === other) || (relation.to === selected && relation.from === other),
+      );
+      if (found.length === 0) return null;
+      const relation = found.find((one) => one.type === 'owns') ?? found[0];
+      const type = model.types[relation.type];
+      return { type: relation.type, label: relation.from === selected ? type.label : type.inverse };
+    };
+
+    const writeUrl = () => {
+      try {
+        const url = new URL(location.href);
+        url.searchParams.set(STAGE_PARAM, ids[stageIndex]);
+        if (selected) url.searchParams.set(OBJECT_PARAM, selected);
+        else url.searchParams.delete(OBJECT_PARAM);
+        history.replaceState(history.state, '', url);
+      } catch {
+        // A sandboxed frame can refuse replaceState; the explorer works without it.
+      }
+    };
+
+    // The URL changes only after the reader chose something, so a page that
+    // was merely opened keeps the address it was opened at.
+    const render = (write = true) => {
+      const stage = model.stages[stageIndex];
+      steps.forEach((step, index) => {
+        const current = index === stageIndex;
+        if (current) step.setAttribute('aria-current', 'step');
+        else step.removeAttribute('aria-current');
+        step.tabIndex = current ? 0 : -1;
+        if (index < stageIndex) step.dataset.done = '';
+        else delete step.dataset.done;
+      });
+      for (const [id, panel] of stagePanels) panel.hidden = id !== stage.id;
+      const title = steps[stageIndex].querySelector('.lx__step-t')?.textContent ?? '';
+      if (count) count.textContent = `Stage ${stageIndex + 1} of ${ids.length}: ${title}`;
+      if (prev) prev.disabled = stageIndex === 0;
+      if (next) next.disabled = stageIndex === ids.length - 1;
+
+      for (const node of nodes) {
+        const id = node.dataset.lxObject!;
+        if (stage.objects.includes(id)) node.dataset.inStage = '';
+        else delete node.dataset.inStage;
+        node.setAttribute('aria-pressed', String(id === selected));
+        const relation = selected && id !== selected ? relationTo(id) : null;
+        const badge = node.querySelector<HTMLElement>('[data-lx-rel]');
+        if (relation) {
+          node.dataset.related = relation.type;
+          if (badge) badge.textContent = relation.label;
+        } else {
+          delete node.dataset.related;
+          if (badge) badge.textContent = id === selected ? 'Selected' : '';
+        }
+      }
+      for (const chip of root.querySelectorAll<HTMLElement>('.lx__involved [data-lx-select]')) {
+        chip.setAttribute('aria-pressed', String(chip.dataset.lxSelect === selected));
+      }
+      for (const [id, panel] of objectPanels) panel.hidden = id !== selected;
+      if (write) writeUrl();
+    };
+
+    const goTo = (index: number, focus = false) => {
+      stageIndex = Math.max(0, Math.min(ids.length - 1, index));
+      render();
+      if (focus) steps[stageIndex].focus();
+    };
+
+    const select = (id: string | null, reveal = false) => {
+      selected = id && objectPanels.has(id) ? id : null;
+      render();
+      if (reveal && selected) {
+        const panel = objectPanels.get(selected)!;
+        const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        panel.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+      }
+    };
+
+    steps.forEach((step, index) => {
+      step.addEventListener('click', () => goTo(index));
+      step.addEventListener('keydown', (event) => {
+        const moves: Record<string, number> = {
+          ArrowRight: stageIndex + 1,
+          ArrowDown: stageIndex + 1,
+          ArrowLeft: stageIndex - 1,
+          ArrowUp: stageIndex - 1,
+          Home: 0,
+          End: ids.length - 1,
+        };
+        if (!(event.key in moves)) return;
+        event.preventDefault();
+        goTo(moves[event.key], true);
+      });
+    });
+    prev?.addEventListener('click', () => goTo(stageIndex - 1));
+    next?.addEventListener('click', () => goTo(stageIndex + 1));
+
+    for (const node of nodes) {
+      node.addEventListener('click', () => {
+        const id = node.dataset.lxObject!;
+        select(selected === id ? null : id);
+      });
+    }
+    root.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const chip = target.closest<HTMLElement>('[data-lx-select]');
+      if (chip) select(chip.dataset.lxSelect!, true);
+      const goto = target.closest<HTMLElement>('[data-lx-goto]');
+      if (goto) {
+        goTo(ids.indexOf(goto.dataset.lxGoto!));
+        steps[stageIndex].scrollIntoView({ block: 'nearest' });
+      }
+    });
+
+    // A link that carries a state restores it; anything it does not name keeps
+    // the default.
+    const params = new URLSearchParams(location.search);
+    const wanted = ids.indexOf(params.get(STAGE_PARAM) ?? '');
+    if (wanted >= 0) stageIndex = wanted;
+    const object = params.get(OBJECT_PARAM);
+    if (object && objectPanels.has(object)) selected = object;
+
+    app.hidden = false;
+    root.dataset.lxReady = '';
+    render(false);
+  }
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-lx]')) start(root);
+</script>
