@@ -15,7 +15,7 @@ require (
 	github.com/prometheus/common v0.73.1
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/crypto v0.59.0
-	golang.org/x/mod v0.42.0
+	golang.org/x/mod v0.43.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
 	gomodules.xyz/jsonpatch/v2 v2.5.0
