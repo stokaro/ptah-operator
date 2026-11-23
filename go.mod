@@ -7,7 +7,7 @@ toolchain go1.27.4
 require (
 	github.com/evanphx/json-patch/v5 v5.9.11
 	github.com/go-git/go-git/v5 v5.19.3
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/google/cel-go v0.30.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.25.0
