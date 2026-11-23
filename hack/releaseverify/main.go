@@ -52,7 +52,7 @@ const (
 	imageName             = "ghcr.io/stokaro/ptah-operator"
 	ptahCatalogPath       = "support/ptah.json"
 	kubernetesSupportPath = "support/kubernetes.json"
-	buildxVersion         = "v0.38.2"
+	buildxVersion         = "v0.39.1"
 	buildkitImage         = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest            = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 	sbomGenerator         = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
@@ -1462,7 +1462,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		},
 		map[string]string{
 			"checkout":     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go":     "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"setup-go":     "actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 			"setup-helm":   "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4",
 			"setup-buildx": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
 			"build":        "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
@@ -1511,7 +1511,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		[]string{"checkout", "setup-go", "support-evidence", "database-line-evidence", "acceptance-evidence", "acceptance-evidence-upload"},
 		map[string]string{
 			"checkout":                   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go":                   "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"setup-go":                   "actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 			"acceptance-evidence-upload": uploadArtifactAction,
 		}); err != nil {
 		return err
@@ -1620,7 +1620,7 @@ func verifyWorkflowSemantics(document []byte) error {
 		},
 		map[string]string{
 			"checkout":            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-			"setup-go":            "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+			"setup-go":            "actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 			"setup-buildx":        "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
 			"registry-login":      "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
 			"image":               "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",

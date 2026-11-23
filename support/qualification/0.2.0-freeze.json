@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-22T22:49:51.777738+00:00",
+  "frozenAt": "2026-11-23T07:39:56.942310+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -36,7 +36,7 @@
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
-      "sha256": "5992598bd994d7f61aa91a5241e857dbb1fc85a043b69026c101ebac68868f5f"
+      "sha256": "2381e2eb908edb2f5bc3f797ed2a000b751e3d891eef5c051e5f7ac944b85ba4"
     },
     {
       "path": "support/qualification/kindnet/pending-pod.patch",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 136,
+  "revision": 137,
   "supersedes": {
-    "freezeCommit": "7596efea23bbf8b46c762db85c1a7a4c7cabdabd",
-    "sha256": "dd05d72c9b14dcc1fabd25cffdc90b1e2e1d017b30f4d84521125e51b246cba5"
+    "freezeCommit": "34d61f70bcc487308a23a95671e08ff050f3619c",
+    "sha256": "e7947a69254159f66690acd9a8bb5ea1b04e6c57bb1da89434e8418d0dd069d2"
   },
-  "revisionReason": "Declare the published v0.2.18 in support/ptah.json, as the release procedure asks once the tag exists, and record v0.2.18 as the published predecessor of the next candidate. The profile, its targets and every other input are unchanged."
+  "revisionReason": "The golang:1.27.4-alpine digest moved in the kindnet qualification image, a Renovate update with no change to the build."
 }

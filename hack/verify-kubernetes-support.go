@@ -71,11 +71,11 @@ const (
 	// The Helm the chart-rendering jobs install. One pin, so what CI renders
 	// and what a release renders are the same program.
 	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
-	helmVersion     = "v4.3.1"
+	helmVersion     = "v4.3.2"
 
 	// The action that mints the support updater's ptah-automation token, at
 	// v3.3.0, and the organization variable and secret it reads.
-	createAppTokenAction = "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
+	createAppTokenAction = "actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc"
 	automationAppIDVar   = "vars.CAPABILITY_MATRIX_APP_ID"
 	automationAppKey     = "secrets.CAPABILITY_MATRIX_APP_KEY"
 
@@ -1048,7 +1048,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		path,
 		"verify",
 		verifySteps[1],
-		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+		"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
 	); err != nil {
 		return err
@@ -1545,7 +1545,7 @@ func verifyRaceSetupSteps(path, jobName string, checkout, setupGo workflowStep) 
 		path,
 		jobName,
 		setupGo,
-		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+		"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
 	)
 }
@@ -1781,7 +1781,7 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		return err
 	}
 	if err := verifyUpdaterActionStep(path, "prepare", prepareSteps[1],
-		"actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+		"actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5",
 		map[string]string{
 			"go-version-file":       "go.mod",
 			"cache-dependency-path": "go.sum",
