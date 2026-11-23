@@ -15,6 +15,8 @@
     "check:faq-groups:selftest": "node scripts/check-faq-groups.mjs --selftest",
     "check:faq-page": "node scripts/check-faq-page.mjs",
     "check:faq-page:selftest": "node scripts/check-faq-page.mjs --selftest",
+    "check:diagram-size": "node scripts/check-diagram-size.mjs",
+    "check:diagram-size:selftest": "node scripts/check-diagram-size.mjs --selftest",
     "check:versions": "node scripts/check-versions.mjs",
     "check:versions:selftest": "node scripts/check-versions.mjs --selftest",
     "check:build-info": "node scripts/check-build-info.mjs",

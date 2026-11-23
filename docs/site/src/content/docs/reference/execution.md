@@ -12,33 +12,32 @@ lifecycles that decide which operation runs next are
 ## One operation, end to end
 
 ```mermaid
-sequenceDiagram
-  participant C as manager
-  participant S as PtahSchema status
-  participant K as Kubernetes API
-  participant J as operation Job
-  participant P as Ptah in the Pod
-  participant R as result receiver
-
-  C->>S: write the operation claim
-  Note over S: named before the Job exists
-  C->>K: read ServiceAccount, LimitRange,<br/>RuntimeClass, PriorityClass
-  C->>S: persist the admission snapshot digest
-  C->>K: mark an Apply's approval consumed
-  C->>S: persist dispatchStarted
-  Note over S: the one permitted create
-  C->>K: create the Job
-  K-->>J: schedule the Pod
-  Note over J: webhook compares the post-mutation<br/>Pod against the snapshot
-  J->>P: runner starts Ptah
-  P-->>J: machine-readable output
-  J->>R: operation-bound result over TLS with Pod token
-  R->>K: persist intent, chunks, completion
-  R->>K: validate persisted result
-  R-->>J: durable receipt
-  C->>K: background consumer reads result
-  C->>S: record the outcome
-  C->>K: schedule an Apply's cleanup TTL
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 340
+    nodeSpacing: 16
+    rankSpacing: 26
+---
+flowchart TD
+  accTitle: One operation, end to end
+  accDescr: Each box names who acts and what they do, in order, from the manager writing the claim to the manager recording the outcome.
+  claim["<b>manager → status</b><br/>write the operation claim,<br/>named before the Job exists"]
+  read["<b>manager → API</b><br/>read ServiceAccount, LimitRange,<br/>RuntimeClass, PriorityClass"]
+  snapshot["<b>manager → status</b><br/>persist the admission snapshot digest"]
+  consume["<b>manager → API</b><br/>mark an Apply's approval consumed"]
+  dispatch["<b>manager → status</b><br/>persist dispatchStarted,<br/>the one permitted create"]
+  create["<b>manager → API</b><br/>create the Job"]
+  admit["<b>API → Pod</b><br/>schedule it; the webhook compares the<br/>mutated Pod with the snapshot"]
+  run["<b>runner → Ptah</b><br/>start Ptah, read its<br/>machine-readable output"]
+  deliver["<b>Pod → result receiver</b><br/>the operation-bound result,<br/>over TLS with the Pod's token"]
+  persist["<b>receiver → API</b><br/>persist intent, chunks and completion,<br/>validate them, then send a durable receipt"]
+  consumer["<b>manager → API</b><br/>a background consumer reads the result"]
+  record["<b>manager → status</b><br/>record the outcome; schedule<br/>an Apply's cleanup TTL"]
+  claim --> read --> snapshot --> consume --> dispatch --> create --> admit --> run --> deliver --> persist --> consumer --> record
 ```
 
 The claim is written before the Job exists. That is what lets the controller
