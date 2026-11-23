@@ -16,6 +16,18 @@ release that says so, and this is where it is said. A version that asks
 nothing of you says so in as many words, rather than leaving you to read it
 out of silence.
 
+## 0.2.19
+
+- **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
+  the Added database lines workflow passed the whole lifecycle on it on every
+  supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x
+  or 18.x has nothing to change for that.
+- **A Plan that Ptah fails without a refusal code logs Ptah's sentence.** The
+  Plan Pod's log has one line, `ptah-runner: ptah reported:`, with the first
+  line of what Ptah said, as a failed Apply already logged. The runner removes
+  the password from a database URL in it; the host and the login can remain.
+  A log collector that keeps operation Pod logs keeps that line too.
+
 ## 0.2.18
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
