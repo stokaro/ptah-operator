@@ -376,8 +376,9 @@ files, and copies them into an immutable snapshot ConfigMap named
 size and SHA-256 beside them. The content digest is the SHA-256 of that
 manifest, so the same files give the same digest whatever key they came from.
 There is no verification policy for such a source, so there is no Verify step
-and no `ArtifactVerified` condition; `ArtifactResolved` says
-`SnapshotTaken`.
+and no `ArtifactVerified` condition. A schema's `ArtifactResolved` says
+`SnapshotTaken`. A migration has no `ArtifactResolved` condition: its
+`Progressing` condition says `SnapshotTaken` until the history read starts.
 
 Every later operation that reads the files mounts the snapshot, never the
 source ConfigMap. An init container in the Pod checks the snapshot against the

@@ -542,6 +542,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e5946fa26d8ac71205b0a0b7aff3455033df6f2b79efb7c7ca28ed6ee9316e58",
       "reason": "Dependency updates the runner links, with no change to its own source: golang.org/x/crypto v0.59.0 with x/net v0.62.0, x/sys v0.50.0, x/term v0.48.0 and x/text v0.44.0; x/oauth2 v0.38.0; controller-runtime v0.25.3; prometheus/common v0.74.0; go-logr/logr v1.4.4; pandatix/go-abnf v0.5.5; go.yaml.in/yaml/v2 v2.4.5. What the runner accepts, enforces and returns is written in this repository and did not change, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:15777d365382dfc21eb4b5304af27ecfa4749e5da96df58d2750b3cd2e7341ba",
+      "reason": "The comment on the Pending migration phase in api/v1alpha1 now says that a ConfigMap source, which the manager reads itself, moves a new migration straight to Reading, and only an OCI, Git or HTTPS source to Resolving. No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }
