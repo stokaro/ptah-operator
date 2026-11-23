@@ -9,15 +9,17 @@ rather than merged. What the operator is put together from is
 [Architecture](../architecture/); what enforces each promise, per family, is
 [Execution guarantees](../guarantees/).
 
-## Follow one schema change {#follow-one-schema-change}
+## Follow one change {#follow-one-schema-change}
 
-The explorer below walks one schema change from `kubectl apply` to `InSync`:
-who acts at each stage, which objects it touches, how they relate, and the
-command that shows it. Choose a path to follow the change where it turns: a
+The explorer below walks one change from `kubectl apply` to `InSync`, for a
+schema or for versioned migrations: who acts at each stage, which objects it
+touches, how they relate, and the command that shows it. Choose the family,
+then a path to follow the change where it turns. A schema change can meet a
 plan Ptah refuses, a plan replaced before anyone approved it, or an Apply
-nobody can account for, and how each recovers. Select a stage, or an object,
-to follow it. The sections after it are the precise reference it is taken
-from.
+nobody can account for. A migration can find nothing pending, or end a run
+`Partial` or `Unknown` that a reading or a person's acknowledgment settles.
+Select a stage, or an object, to follow it. The sections after it are the
+precise reference it is taken from.
 
 <div data-lifecycle-explorer></div>
 

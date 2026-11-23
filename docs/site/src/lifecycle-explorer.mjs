@@ -1,22 +1,30 @@
-// The lifecycle explorer's content: one scenario, the objects it touches and
-// how they relate. LifecycleExplorer.astro renders it twice, as the
-// interactive view and as the text a reader without JavaScript, a search index
-// or a printer gets, and scripts/check-lifecycle-explorer.mjs holds the page to
-// it. Nothing here is rendered by hand anywhere else.
+// The lifecycle explorer's content: one scenario per resource family, the
+// objects each touches and how they relate. LifecycleExplorer.astro renders it
+// twice, as the interactive view and as the text a reader without JavaScript,
+// a search index or a printer gets, and scripts/check-lifecycle-explorer.mjs
+// holds the page to it. Nothing here is rendered by hand anywhere else.
 //
 // Every statement comes from a page of this site, and each stage links the
 // pages it was taken from. Links are relative to the page the explorer is
 // embedded in, reference/reconciliation/, so they carry the version's base
 // path and the link checker reads them like any other link on that page.
 //
-// The scenario is the one First schema walks: a PtahSchema named
+// A family is a scenario, its paths, its objects and their relations. The
+// schema family's scenario is the one First schema walks: a PtahSchema named
 // `application` in the namespace `application`, read from a ConfigMap, under
-// `apply: OnApproval`, with a plan that changes something. Its stages are the
-// successful path. `paths` adds the ones that turn off it: a plan Ptah
-// refuses, a plan replaced before anyone approved it, and an Apply nobody can
-// account for. A path names the successful stage it turns after and the one it
-// comes back at, if it does, and `walkOf` joins them. The migration family and
-// the audit view are later slices of #817.
+// `apply: OnApproval`, with a plan that changes something. The migration
+// family's is the one Run versioned migrations walks: a PtahMigration named
+// `orders` in the same namespace, read from a ConfigMap of the two migrations
+// in examples/configmap-kustomize, created without Kustomize, under the
+// default `apply: OnApproval`.
+//
+// A scenario's stages are its successful path. Each other path names the
+// stage it turns after and the one it comes back at, if it does, and `walkOf`
+// joins them. A path turns off the successful path, or off another path when
+// the stage it names is that path's own, as an acknowledgment turns off a run
+// nobody accounted for. Stage, path and object ids are unique across families,
+// so a link that names one names its family too. The audit view, the composed
+// workflow and the depth levels are later slices of #817.
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -62,7 +70,10 @@ export const relationTypes = [
   },
 ];
 
-export const objects = [
+// The schema family. Its objects are a schema's own: the plan holds the SQL,
+// in chunks, and an Apply nobody can account for is settled by a fresh
+// observation rather than by a person.
+const schemaObjects = [
   {
     id: 'schema',
     label: 'PtahSchema',
@@ -218,7 +229,7 @@ export const objects = [
 // Every relationship once, from the object that carries or exercises it. The
 // object view lists each from both ends, under the relation's label at one end
 // and its inverse at the other.
-export const relations = [
+const schemaRelations = [
   { from: 'schema', to: 'source', type: 'references', text: 'spec.desired.configMap names the source ConfigMap and the keys it selects.' },
   { from: 'schema', to: 'source', type: 'owns', text: 'The snapshot ConfigMap ptah-src-<hash> is owned by the schema, and deleted once nothing names it.' },
   { from: 'schema', to: 'status', type: 'contains', text: 'The status subresource, written by the manager alone.' },
@@ -243,7 +254,7 @@ export const relations = [
 // out rather than written as "nothing". `objects` are the ones the stage
 // touches, `inspect` the supported way to read it, `done` how to tell the
 // stage is over.
-export const scenario = {
+const schemaScenario = {
   id: 'schema-change',
   title: 'One schema change',
   summary:
@@ -464,12 +475,13 @@ export const scenario = {
 };
 
 // The paths through the scenario. The first is the default, and its stages
-// are scenario.stages. Every other one turns after the successful stage
-// `turnsAfter` names, walks its own `stages`, and comes back at the successful
-// stage `rejoins` names, or ends on its own when it names none. A branch stage
-// is written like a successful one, and its id is unique across all paths, so
-// a link that names it names its path too.
-export const paths = [
+// are scenario.stages. Every other one turns after the stage `turnsAfter`
+// names, walks its own `stages`, and comes back at the stage `rejoins` names,
+// or ends on its own when it names none. Both name stages of the path it turns
+// off: the successful one, or the path whose own stage `turnsAfter` is. A
+// branch stage is written like a successful one, and its id is unique across
+// all paths, so a link that names it names its path too.
+const schemaPaths = [
   {
     id: 'success',
     label: 'Successful',
@@ -746,26 +758,778 @@ export const paths = [
   },
 ];
 
-export const defaultPath = paths[0].id;
 
-// The stages a path walks, in order: the successful ones up to the stage it
-// turns after, its own, then the successful ones from the stage it rejoins at.
-// `main` is the successful path's stages, so the gate's self-test can pass a
-// model of its own.
-export function walkOf(path, main = scenario.stages) {
-  if (!path.turnsAfter) return main;
-  const turn = main.findIndex((stage) => stage.id === path.turnsAfter);
-  const rejoin = path.rejoins ? main.findIndex((stage) => stage.id === path.rejoins) : main.length;
-  return [...main.slice(0, turn + 1), ...(path.stages ?? []), ...main.slice(rejoin < 0 ? main.length : rejoin)];
-}
-
-// What this slice leaves to later ones, said on the page so a reader does not
-// take the absence of a path for a path that cannot turn.
-export const notCovered = {
-  text: 'Other turns, such as nothing to change, apply: Never or Always, a read that fails and a proof whose target moved, are drawn in the reference below, and versioned migrations have a walk of their own.',
+// What the schema family leaves to the reference, said on the page so a
+// reader does not take the absence of a path for a path that cannot turn.
+const schemaNotCovered = {
+  text: 'Other turns, such as nothing to change, apply: Never or Always, a read that fails and a proof whose target moved, are drawn in the reference below.',
   links: [
     { label: 'Where the path turns', href: '#where-the-path-turns' },
     { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
-    { label: 'Run versioned migrations', href: '../../use/migrations/#stage-by-stage' },
+    { label: 'What differs between a schema and a migration', href: '#schema-and-migration' },
   ],
 };
+
+// The migration family. A migration plan names versions and checksums and
+// holds no SQL, so it has no chunks and no Plan Job: the manager builds it
+// from the history reading, and the statements stay in the source. A run
+// nobody can account for holds the resource until a reading or a person
+// settles it, which is why the family has an acknowledgment and the schema
+// family has none.
+const migrationObjects = [
+  {
+    id: 'migration',
+    label: 'PtahMigration',
+    kind: 'PtahMigration',
+    writer: 'you',
+    purpose:
+      'The desired state: which database, which source holds the numbered migration files, and the policy a run is held to. You write its spec; only the manager writes its status.',
+    lives: 'Your namespace, application.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The phase, what holds the migration, its source, what the history said, the plan waiting, the last run and every condition.',
+      },
+    ],
+    links: [
+      { label: 'PtahMigration fields', href: '../ptahmigration/' },
+      { label: 'A migration, not a plan', href: '../../use/read-a-plan/#migration' },
+    ],
+  },
+  {
+    id: 'm-source',
+    label: 'Source ConfigMap and snapshot',
+    kind: 'ConfigMap',
+    writer: 'operator',
+    purpose:
+      'You write the ConfigMap that holds the migration files. The manager copies the items the migration selects into an immutable snapshot ConfigMap named ptah-src-<hash>, with a manifest of every file’s path, size and SHA-256. The History read and the Apply mount the snapshot, never the source, and the SQL an Apply runs comes from it.',
+    lives: 'Your namespace, beside the migration.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'Source: ConfigMap orders-migrations, and Snapshot, the copy every operation reads.' },
+    ],
+    links: [
+      { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
+      { label: 'Deliver from a ConfigMap, Git or HTTPS', href: '../../use/sources/#from-a-configmap' },
+    ],
+  },
+  {
+    id: 'm-status',
+    label: 'Status and conditions',
+    kind: 'PtahMigration status',
+    writer: 'operator',
+    purpose:
+      'Where the migration stands: status.phase as a summary, conditions as the stable interface, the last reading of the revision table in status.history, the operation claim in status.activeOperation, the last run in status.lastRun, a run nobody accounted for in status.unresolvedRun and how one was settled in status.resolvedRun, and the lifecycle journal in status.journal.',
+    lives: 'The status subresource of the PtahMigration. Admission refuses a status write from anyone but the manager.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'The phase, the history read, the last run, an unresolved run and every condition.' },
+      {
+        command: 'kubectl ptah migration orders -n application --details',
+        says: 'Every status field the plugin knows: the claim and its Job, a Lease release still owed, the revision rows and each run whole.',
+      },
+      {
+        command: 'kubectl ptah history migration/orders -n application',
+        says: 'The journal, entry by entry, with every approval and run acknowledgment that names the migration.',
+      },
+    ],
+    links: [
+      { label: 'Every status field the plugin knows', href: '../../use/read-a-plan/#details' },
+      { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+      { label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' },
+    ],
+  },
+  {
+    id: 'm-plan',
+    label: 'PtahMigrationPlan',
+    kind: 'PtahMigrationPlan',
+    writer: 'operator',
+    purpose:
+      'The sequence an Apply may run: each pending version in order with its description and checksum, the history fingerprint and the version it was computed against, and the source by the content digest of its files. The manager builds it from the history reading, with no Job. It is immutable and holds no SQL. Its fingerprint binds the sequence, the history, the target and the execution binding, so a changed input makes another plan.',
+    lives: 'Your namespace, beside the migration. Reading it takes get on ptahmigrationplans.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The plan, each version with its description, and beneath it the migration’s ApprovalRequired condition. No SQL: the statements stay in the source.',
+      },
+      { command: 'kubectl ptah migration orders -n application -o json', says: 'The same view as a document, with the plan’s fingerprint as plan.fingerprint, for a script.' },
+    ],
+    links: [
+      { label: 'Immutable bindings', href: '../plans-and-approvals/#immutable-bindings' },
+      { label: 'PtahMigrationPlan fields', href: '../ptahmigrationplan/' },
+    ],
+  },
+  {
+    id: 'm-approval',
+    label: 'PtahMigrationApproval',
+    kind: 'PtahMigrationApproval',
+    writer: 'you',
+    purpose:
+      'A person’s decision about one exact plan. It names the migration by name and UID, the plan by name and UID, and the plan’s fingerprint, all three written out. Admission stamps who approved and when, and refuses an approval the current evidence no longer supports. It authorizes one execution.',
+    lives: 'Your namespace. It has no owner, so it stays when the migration is deleted.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The approvals that name the migration, whether each names the current plan, and Consumed or Stale.',
+      },
+      { command: 'kubectl ptah history migration/orders -n application', says: 'Every approval that names the migration, oldest first.' },
+    ],
+    links: [
+      { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+      { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+    ],
+  },
+  {
+    id: 'm-acknowledgment',
+    label: 'PtahMigrationRunAcknowledgment',
+    kind: 'PtahMigrationRunAcknowledgment',
+    writer: 'you',
+    purpose:
+      'A person’s statement that one run nobody could account for has been accounted for. It names the migration by name and UID and the run by its operationID, and admission stamps who acknowledged and when. It repairs nothing and approves nothing: it lifts the hold, and the history is read again before anything is planned.',
+    lives: 'Your namespace. It has no owner, so it stays when the migration is deleted.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'Run acknowledgments: each with the operation it names, marked when that is the unresolved run, and Consumed or Stale.',
+      },
+      { command: 'kubectl ptah history migration/orders -n application', says: 'Every acknowledgment that names the migration, oldest first.' },
+    ],
+    links: [
+      { label: 'Settling it by hand', href: '../../use/operations/#clear-unresolved-run' },
+      { label: 'PtahMigrationRunAcknowledgment fields', href: '../ptahmigrationrunacknowledgment/' },
+    ],
+  },
+  {
+    id: 'm-job',
+    label: 'Operation Job',
+    kind: 'Job',
+    writer: 'operator',
+    purpose:
+      'One Job per operation that reads or changes the database, here History and Apply; an OCI artifact adds Resolve and Verify. Its Pod runs ptah-runner, which starts the Ptah executor once an init container has checked the snapshot against the content digest. Only this Pod touches the database: the manager holds no database credential. A History Job is removed 300 seconds after it finishes; an Apply Job gets its cleanup TTL only once its result was read.',
+    lives: 'Your namespace, beside the migration.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application --details',
+        says: 'Active operation: the claim, the Job it names, and whether that Job is confirmed by UID.',
+      },
+    ],
+    links: [
+      { label: 'One operation, end to end', href: '../execution/#one-operation-end-to-end' },
+      { label: 'The shape of the system', href: '../architecture/#the-shape-of-the-system' },
+    ],
+  },
+  {
+    id: 'm-lease',
+    label: 'Database-realm Lease',
+    kind: 'Lease',
+    writer: 'operator',
+    purpose:
+      'The lock every resource that can change one database takes turns through, so a schema and a migration of one database serialize. It is keyed by a SHA-256 digest of the engine, the namespace and the coordinationKey. A migration takes it for an Apply and nothing else: reading the history changes nothing. It hands it back once the run is accounted for, and keeps it while a run that reported nothing could still be writing.',
+    lives: 'The coordination namespace, which is the release namespace unless the chart names another. No owner reference ties it to the migration.',
+    inspect: [
+      { command: 'kubectl -n <operator namespace> get leases -o wide', says: 'Each Lease with its holder.' },
+      { command: 'kubectl ptah migration orders -n application --details', says: 'Lock release: a Lease the run held that is still to be handed back.' },
+    ],
+    links: [
+      { label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' },
+      { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
+    ],
+  },
+  {
+    id: 'm-result',
+    label: 'PtahResultRecord',
+    kind: 'PtahResultRecord',
+    writer: 'operator',
+    purpose:
+      'A Job’s result, stored before its receipt, for a History read as for an Apply. The receiver in the manager authenticates the operation, Job and Pod, persists the whole result, reads it back and only then acknowledges. A repeated delivery returns the same receipt and runs no SQL again. The receipt proves the result arrived, not that a migration applied or that the database holds every one.',
+    lives: 'Your namespace. The record is owned by the migration, and its chunks by the record. A collector deletes it at least an hour after retirement.',
+    inspect: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'Last run: the outcome the manager took from the result. Ordinary inspection reads no result payload: payloads are confidential.',
+      },
+    ],
+    links: [
+      { label: 'Durable result protocol', href: '../execution/#durable-result-protocol' },
+      { label: 'PtahResultRecord fields', href: '../ptahresultrecord/' },
+    ],
+  },
+];
+
+const migrationRelations = [
+  { from: 'migration', to: 'm-source', type: 'references', text: 'spec.artifact.configMap names the source ConfigMap and the items it selects.' },
+  { from: 'migration', to: 'm-source', type: 'owns', text: 'The snapshot ConfigMap ptah-src-<hash> is owned by the migration, and deleted once nothing names it.' },
+  { from: 'migration', to: 'm-status', type: 'contains', text: 'The status subresource, written by the manager alone.' },
+  { from: 'migration', to: 'm-plan', type: 'owns', text: 'Plans are owned by the migration and collected with it.' },
+  { from: 'migration', to: 'm-job', type: 'owns', text: 'Every operation Job is owned by the migration. The plan does not own the Job.' },
+  { from: 'migration', to: 'm-result', type: 'owns', text: 'A result record is owned by the migration whose operation produced it.' },
+  { from: 'm-status', to: 'm-plan', type: 'references', text: 'status.plan names the current plan, and status.lastRun the plan a run carried out.' },
+  {
+    from: 'm-status',
+    to: 'm-job',
+    type: 'references',
+    text: 'status.activeOperation names the Job before the Job exists, and status.lastRun names it by name and UID after it ran.',
+  },
+  { from: 'm-status', to: 'm-acknowledgment', type: 'references', text: 'status.resolvedRun names the acknowledgment that settled a run, and who made it.' },
+  {
+    from: 'm-plan',
+    to: 'm-source',
+    type: 'references',
+    text: 'spec.source binds the source by kind, the ConfigMap’s UID and the content digest of the selected files. The SQL stays there.',
+  },
+  { from: 'm-approval', to: 'migration', type: 'references', text: 'spec names the migration by name and UID.' },
+  { from: 'm-approval', to: 'm-plan', type: 'references', text: 'spec names the plan by name and UID, and its fingerprint.' },
+  { from: 'm-acknowledgment', to: 'migration', type: 'references', text: 'spec names the migration by name and UID.' },
+  { from: 'm-acknowledgment', to: 'm-status', type: 'references', text: 'spec.operationID names the run status.unresolvedRun records.' },
+  { from: 'm-job', to: 'm-plan', type: 'references', text: 'The Apply Job carries the plan’s approved sequence, which Ptah compares with its own selection.' },
+  { from: 'm-job', to: 'm-source', type: 'references', text: 'Each operation mounts the snapshot, never the source ConfigMap, and checks it against the content digest first.' },
+  { from: 'migration', to: 'm-lease', type: 'holds', text: 'The Apply claim holds the Lease for the run, and only the run.' },
+  {
+    from: 'm-job',
+    to: 'm-result',
+    type: 'delivers',
+    text: 'The Pod sends its result over TLS to the receiver, which stores it as PtahResultRecord before it acknowledges.',
+  },
+  { from: 'm-result', to: 'm-status', type: 'delivers', text: 'A background consumer reads the record, and the manager records the outcome in status.' },
+];
+
+const migrationScenario = {
+  id: 'migration-run',
+  title: 'One migration run',
+  summary:
+    'A PtahMigration read from a ConfigMap under the default apply: OnApproval, from kubectl apply to a history read that finds nothing left to apply. Choose a path to follow it where it turns: a history with nothing pending, or a run that ends Partial or Unknown and holds the migration until a reading or a person settles it. The commands use the names from Run versioned migrations.',
+  stages: [
+    {
+      id: 'm-apply',
+      title: 'Apply the migration',
+      phase: 'none yet',
+      lead: 'you',
+      actors: {
+        you: 'Create the Secret that holds the database URL and the ConfigMap that holds the migration files, then kubectl apply the PtahMigration. It names no apply policy, so it takes the default, OnApproval.',
+        kubernetes: 'The API server validates the object against its schema and stores it.',
+        operator: 'Sees the new resource. A new resource has no phase until its first pass.',
+      },
+      objects: ['migration', 'm-source'],
+      inspect: [{ command: 'kubectl ptah migration orders -n application', says: 'The migration and the policy its spec asks for: Policy: apply OnApproval.' }],
+      done: 'The PtahMigration exists in the namespace.',
+      links: [
+        { label: 'Run one from the command line', href: '../../use/migrations/#stage-by-stage' },
+        { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+      ],
+    },
+    {
+      id: 'm-source',
+      title: 'Pin the source',
+      phase: 'Reading',
+      lead: 'operator',
+      actors: {
+        operator:
+          'Reads the ConfigMap from the API server and copies the selected files into an immutable snapshot, ptah-src-<hash>, owned by the migration. A ConfigMap source runs no Resolve Job and has no verification policy, so there is no Verify step and the phase goes straight to Reading. An OCI artifact takes a Resolve and a Verify Job here, and a Git or HTTPS source a Resolve Job.',
+        kubernetes: 'Stores the snapshot ConfigMap.',
+      },
+      objects: ['m-source', 'm-status'],
+      expect: 'Phase Reading, and Progressing=True with reason SnapshotTaken: the ConfigMap was copied into the snapshot and the history is read next. There is no ArtifactVerified condition.',
+      inspect: [{ command: 'kubectl ptah migration orders -n application', says: 'Source: ConfigMap orders-migrations, and the Snapshot every operation reads.' }],
+      done: 'The snapshot is recorded, and the history read is next.',
+      links: [
+        { label: 'A ConfigMap source', href: '#a-configmap-source' },
+        { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
+      ],
+    },
+    {
+      id: 'm-history',
+      title: 'Read the history',
+      phase: 'Reading',
+      lead: 'executor',
+      actors: {
+        operator: 'Writes the History claim to status.activeOperation, then creates a read-only History Job. It takes no Lease: reading the history changes nothing.',
+        kubernetes:
+          'Runs the Job’s Pod. An init container checks the snapshot against the content digest and copies the files before the container that holds the database URL starts.',
+        executor:
+          'Reads the database’s own revision table against the files: the current version, what is applied and what is pending. No SQL and no error text is read into the revision rows status keeps.',
+      },
+      objects: ['m-job', 'm-source', 'm-status', 'm-result'],
+      expect:
+        'History read with its time, Current version, Applied and Pending: 2. Blocked=False with reason HistoryMatched, because the history continues the files, and Ready=False with reason MigrationsPending. The phase moves to Planning.',
+      inspect: [
+        { command: 'kubectl ptah migration orders -n application', says: 'History read, Current version, Applied and Pending.' },
+        {
+          command: 'kubectl ptah migration orders -n application --details',
+          says: 'Active operation: the History claim and its Job. Once the reading is stored, the newest revision rows under History read.',
+        },
+      ],
+      done: 'The reading is stored in status.history, and the migration moves to Planning.',
+      limits:
+        'The reading is the database’s record of what ran, not of what the tables hold. A history that is dirty, modified, out of order or ahead stops the migration Blocked here, and nothing is planned.',
+      links: [
+        { label: 'What the history says', href: '../../use/migrations/#what-the-history-says' },
+        { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
+      ],
+    },
+    {
+      id: 'm-plan',
+      title: 'Publish the plan',
+      phase: 'Planning, then AwaitingApproval',
+      lead: 'operator',
+      actors: {
+        operator:
+          'Builds the plan from the reading it holds, with no Job and no Lease: planning a migration is arithmetic on that reading. It creates a PtahMigrationPlan named ptah-mplan-<hash>, owned by the migration, that lists each pending version with its description and checksum and binds the source by its content digest. Under OnApproval it then waits.',
+        kubernetes: 'Stores the plan, which is immutable.',
+      },
+      objects: ['m-plan', 'm-status', 'migration'],
+      expect:
+        'Phase AwaitingApproval. Ready=False, Progressing=False and ApprovalRequired=True, each with reason AwaitingApproval. The journal records PlanPublished.',
+      inspect: [
+        {
+          command: 'kubectl ptah wait migration/orders --for approval -n application',
+          says: 'Returns once a plan waits for an approval. Exit 7 means it timed out, as when nothing is pending, and exit 8 that the history refused.',
+        },
+        { command: 'kubectl ptah migration orders -n application', says: 'The plan: each version with its description. No SQL: the statements are in the files.' },
+      ],
+      done: 'A plan waits for an approval. Not one migration in it has run.',
+      links: [
+        { label: 'A migration, not a plan', href: '../../use/read-a-plan/#migration' },
+        { label: 'Immutable bindings', href: '../plans-and-approvals/#immutable-bindings' },
+      ],
+    },
+    {
+      id: 'm-decision',
+      title: 'Approve that exact plan',
+      phase: 'AwaitingApproval',
+      lead: 'you',
+      actors: {
+        you: 'Run kubectl ptah approve. It shows each version with its checksum and the identities the approval will carry, asks for a decision and creates the approval as you. It shows no SQL, so read the files the source holds. If the plan was replaced, it approves nothing.',
+        kubernetes:
+          'Admission stamps your username and the time, and refuses an approval the evidence no longer supports: a plan that was replaced or is no longer current, a history or a database that moved, or a changed source or execution component. It refuses a username under system:ptah-operator:, which the operator records for runs no person approved. RBAC decides whether you may approve at all.',
+        operator:
+          'Wakes on the approval and holds it to the plan it names, by the migration’s UID, the plan’s UID and the fingerprint.',
+      },
+      objects: ['m-approval', 'm-plan', 'migration'],
+      expect: 'The command prints each version with its checksum, then Approved:, with the identity admission stamped. The approval carries no condition until the run is dispatched.',
+      inspect: [
+        {
+          command: 'kubectl ptah approve migration/orders -n application --wait',
+          says: 'Creates the approval and stays until the run of that plan has ended and the history was read back.',
+        },
+        { command: 'kubectl ptah migration orders -n application', says: 'The approvals that name the migration, and whether each names the current plan.' },
+      ],
+      done: 'An approval of the current plan is stored.',
+      limits:
+        'An approval authorizes one execution of that plan. Deleting it before the run’s Job exists withdraws it; once the Job exists, deleting it changes nothing about the run.',
+      links: [
+        { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+        { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+      ],
+    },
+    {
+      id: 'm-dispatch',
+      title: 'Claim and dispatch the run',
+      phase: 'Applying',
+      lead: 'operator',
+      actors: {
+        operator:
+          'Writes the Apply claim to status.activeOperation and takes the database-realm Lease. It persists the admission snapshot, marks the approval consumed and persists dispatchStarted, then makes its one permitted create of the Apply Job. A migration plan holds no SQL, so nothing is copied for the Pod to mount. After that boundary a missing Apply Job is an unknown outcome and is never created again, and a manager that restarts reads the boundary from status.',
+        kubernetes: 'Schedules the Pod. A webhook compares the mutated Pod with the admission snapshot before it is scheduled.',
+      },
+      objects: ['m-status', 'm-approval', 'm-job', 'm-lease'],
+      expect: 'Phase Applying. The approval carries Consumed=True with reason DispatchCommitted, and the journal records ApprovalAccepted with the approver.',
+      inspect: [
+        { command: 'kubectl ptah migration orders -n application --details', says: 'Active operation: the Apply claim and the Job it names.' },
+        { command: 'kubectl -n application get ptahmigration orders -w', says: 'The phase as it moves, from elsewhere.' },
+      ],
+      done: 'The Apply Job exists and is bound to the claim.',
+      links: [
+        { label: 'One operation, end to end', href: '../execution/#one-operation-end-to-end' },
+        { label: 'Execution guarantees', href: '../guarantees/' },
+      ],
+    },
+    {
+      id: 'm-execute',
+      title: 'Run the approved sequence',
+      phase: 'Applying',
+      lead: 'executor',
+      actors: {
+        executor:
+          'The runner refuses to start Ptah unless the Pod’s database URL names the target the plan was computed against. Ptah compares the approved sequence with what it selects under the migration lock, just before anything runs, and any difference refuses the run before it changes anything. Every row the run writes to schema_migrations_log names the approver.',
+        kubernetes: 'Runs the Pod to its end.',
+        operator: 'Waits. The Job’s exit status is not taken as the result: the verdict is the database’s, read from the revision table.',
+      },
+      objects: ['m-job', 'm-plan', 'm-source', 'm-lease'],
+      expect: 'Phase Applying until the result is read.',
+      inspect: [{ command: 'kubectl -n application get ptahmigration orders -w', says: 'Applying, then VerifyingHistory and Reading.' }],
+      done: 'The Pod has ended and sent its result.',
+      links: [
+        { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+        { label: 'The approver’s name in the target database', href: '../../use/security/#approver-in-the-database' },
+      ],
+    },
+    {
+      id: 'm-deliver',
+      title: 'Deliver the result',
+      phase: 'Applying, then VerifyingHistory',
+      lead: 'operator',
+      actors: {
+        executor: 'The runner uploads one bounded result over TLS with the Pod’s bound token. A lost receipt makes it deliver again, never run Ptah again.',
+        kubernetes: 'Stores the PtahResultRecord.',
+        operator:
+          'The receiver authenticates the operation, Job and Pod, persists the whole result, reads it back and acknowledges. A background consumer reads it, and the manager records status.lastRun with the outcome, the Job, the claim, the plan and the approval that allowed it. It clears status.plan, gives the Job its cleanup TTL and hands the Lease back. The journal records RunFinished.',
+      },
+      objects: ['m-result', 'm-job', 'm-status', 'm-lease'],
+      expect:
+        'Last run: Applied, with the versions it applied, and a MigrationRunFinished Event. Phase VerifyingHistory for one pass, with Progressing=True and reason VerifyingConvergence. RunFinished in the journal has outcome Succeeded.',
+      inspect: [
+        {
+          command: 'kubectl ptah migration orders -n application',
+          says: 'Last run: the outcome, the Job by name and UID, the operation, the plan and who authorized it.',
+        },
+      ],
+      done: 'The run is recorded, and the history is read back next.',
+      limits: 'The receipt proves the result arrived, and Applied is what the run reported. Neither is the reading that settles the migration.',
+      links: [
+        { label: 'Durable result protocol', href: '../execution/#durable-result-protocol' },
+        { label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' },
+      ],
+    },
+    {
+      id: 'm-verify',
+      title: 'Read the history back',
+      phase: 'VerifyingHistory, then Reading and InSync',
+      lead: 'executor',
+      actors: {
+        operator:
+          'Claims a read of the history on the next pass and creates a History Job, as at Read the history, without the Lease. The reading of the database the run named is the verdict, and the manager writes it on the run as status.lastRun.verification.',
+        kubernetes: 'Runs the read-only History Job.',
+        executor: 'Reads the revision table again.',
+      },
+      objects: ['m-job', 'm-status', 'm-result'],
+      expect:
+        'Phase InSync, Ready=True with reason HistoryMatched, Pending: 0, and Read back: InSync at version 2 on the last run. The journal records Verified with outcome InSync.',
+      inspect: [
+        {
+          command: 'kubectl ptah migration orders -n application',
+          says: 'Phase InSync, Ready=True with reason HistoryMatched, Pending: 0 and Last run: Applied.',
+        },
+      ],
+      done: 'kubectl ptah approve --wait ends with reached applied.',
+      limits: 'InSync means the revision table records every migration the files carry. It says nothing about the data in the tables.',
+      links: [
+        { label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' },
+        { label: 'Waiting for the operator', href: '../../use/operations/#wait' },
+      ],
+    },
+    {
+      id: 'm-journal',
+      title: 'Read what happened',
+      phase: 'InSync',
+      lead: 'you',
+      actors: {
+        you: 'Read the journal, the revision rows and the Events. Reading changes nothing, and you can read them at any stage.',
+        operator: 'Keeps the journal in the status writes it already makes, and reads the history again at its interval.',
+      },
+      objects: ['m-status', 'm-approval', 'm-plan'],
+      expect:
+        'PlanPublished, ApprovalAccepted, RunFinished with outcome Succeeded and Verified with outcome InSync, each with its time, and status.history.revisions a row for each migration.',
+      inspect: [
+        { command: 'kubectl ptah history migration/orders -n application', says: 'The journal, with the approval you made.' },
+        {
+          command: 'kubectl ptah migration orders -n application --details',
+          says: 'The newest rows of the revision table under History read, with how long each migration ran where the table records it.',
+        },
+        { command: 'kubectl events -n application --for ptahmigration/orders', says: 'The migration’s Events, which go first.' },
+      ],
+      done: 'In sync, until the next read.',
+      limits:
+        'The journal keeps at most 64 entries, none more than 30 days older than the newest. The database keeps its own record in schema_migrations_log, which the operator never deletes.',
+      links: [
+        { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+        { label: 'What a resource kept of its past', href: '../../use/read-a-plan/#history' },
+      ],
+    },
+  ],
+};
+
+const migrationPaths = [
+  {
+    id: 'm-success',
+    label: 'Successful',
+    title: 'A successful migration run',
+    summary: 'Nothing refused and nothing failing, from kubectl apply to a history read with nothing pending.',
+  },
+  {
+    id: 'm-nothing',
+    label: 'Nothing pending',
+    title: 'The history has nothing pending',
+    summary:
+      'The history read finds every migration the files carry already applied. No plan is published, nothing asks for an approval, and no Apply runs.',
+    turnsAfter: 'm-history',
+    stages: [
+      {
+        id: 'm-nothing-read',
+        title: 'Find nothing pending',
+        phase: 'Reading, then InSync',
+        lead: 'operator',
+        actors: {
+          executor: 'Reads the revision table, as on the successful path, and finds every migration the files carry recorded applied.',
+          operator: 'Records the reading and publishes no plan. Nothing asks for an approval, no Apply Job is created, and the Lease is never taken.',
+        },
+        objects: ['m-status', 'm-job'],
+        expect: 'Phase InSync, Ready=True with reason HistoryMatched, Pending: 0, and no plan.',
+        inspect: [
+          { command: 'kubectl ptah migration orders -n application', says: 'Phase InSync, History read with Pending: 0, and no plan.' },
+          { command: 'kubectl ptah wait migration/orders --for approval -n application', says: 'Times out with exit 7: no plan is coming.' },
+        ],
+        done: 'The migration rests InSync with no plan.',
+        limits: 'A history with nothing pending is the database’s record of what ran. It does not say the tables hold what those migrations made.',
+        links: [
+          { label: 'Where the path turns', href: '#where-the-path-turns' },
+          { label: 'Run one from the command line', href: '../../use/migrations/#stage-by-stage' },
+        ],
+      },
+      {
+        id: 'm-nothing-rest',
+        title: 'Rest in sync until the next read',
+        phase: 'InSync',
+        lead: 'you',
+        actors: {
+          you: 'Nothing is owed. To run a new migration, add its file to the ConfigMap and its item to the resource. After a change made outside the operator, ask for a read rather than waiting for the interval.',
+          operator:
+            'Reads the history again at spec.interval, at once when a selected key of the ConfigMap or the spec changes, or on kubectl ptah refresh. A read that finds nothing to do writes no journal entry.',
+        },
+        objects: ['migration', 'm-source', 'm-status'],
+        expect: 'InSync after every read that finds nothing pending. A read that finds a new migration publishes a plan, as at Publish the plan on the successful path.',
+        inspect: [
+          {
+            command: 'kubectl ptah refresh migration/orders -n application --wait',
+            says: 'Asks for a read now and stays until it has ended. It starts no Apply and approves nothing.',
+          },
+          { command: 'kubectl ptah history migration/orders -n application', says: 'The journal, which holds no entry for a read that found nothing to do.' },
+        ],
+        done: 'In sync, until the next read.',
+        links: [
+          { label: 'Reading again on request', href: '#reading-again-on-request' },
+          { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'm-unresolved',
+    label: 'Partial or Unknown',
+    title: 'A run nobody can account for',
+    summary:
+      'The run ends Partial, having committed part of a migration, or Unknown, with evidence nobody could read. It is never retried. The migration publishes no plan and dispatches no Apply until a history read with nothing pending, or a person’s acknowledgment, settles the run.',
+    turnsAfter: 'm-execute',
+    stages: [
+      {
+        id: 'm-unresolved-record',
+        title: 'The run ends Partial or Unknown',
+        phase: 'Applying, then Blocked',
+        lead: 'operator',
+        actors: {
+          executor:
+            'Ptah reports a migration that committed some of its statements and not the rest, as MySQL DDL or transactionMode: none can leave, or the run leaves evidence nobody can read.',
+          kubernetes: 'Keeps the Apply Job, where one exists, and its Pod log for 24 hours after the Job finishes.',
+          operator:
+            'Records status.lastRun with the outcome, and status.unresolvedRun with the operation, the Job, the plan and the database, with a copy in the operator.ptah.run/unresolved-run annotation. It never retries the run and rolls nothing back. After a run that reported, it hands the Lease back; after one that reported nothing, or whose Job went missing, it keeps the Lease until the run’s dispatch and execution deadlines have passed.',
+        },
+        objects: ['m-status', 'm-job', 'm-result', 'm-lease', 'migration'],
+        expect:
+          'Phase Blocked. Blocked=True, Ready=False and Progressing=False, each with reason ApplyOutcomeUnknown, and a MigrationRunFinished Warning, or MigrationRunUncertain for a run that reported nothing. The journal records RunFinished with outcome Partial or Unknown.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Last run, then the Unresolved run block: the operation, the Job, the plan, the database and what to do.',
+          },
+          { command: 'kubectl events -n application --for ptahmigration/orders', says: 'The Warning, with where the run’s Pod log is and for how long.' },
+        ],
+        done: 'The run is recorded as unresolved, and nothing more runs.',
+        limits:
+          'Partial and Unknown are never retried: a file that committed half its statements would run them twice, and no controller can know which half. Unknown does not mean that nothing ran. kubectl ptah approve --wait stops here with exit 8.',
+        links: [
+          { label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' },
+          { label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' },
+        ],
+      },
+      {
+        id: 'm-unresolved-investigate',
+        title: 'Establish what the run did',
+        phase: 'Blocked',
+        lead: 'you',
+        actors: {
+          you: 'Read the record, then the database it names, which is the only one the run can have changed: the Pod log while the Job is kept, and Ptah’s own reading of the revision table, at the Ptah version status.executionBinding.ptahVersion names. A replica or a restored copy finds nothing wrong and would settle a record that was telling the truth. The Lease says whether the run could still be writing.',
+          operator:
+            'Goes on reading the history at spec.interval, and publishes no plan and dispatches no Apply, the migration that run was applying included. Suspension, an unsupported engine, a realm another resource claims and a newer manager’s stored state each hold it before that read.',
+        },
+        objects: ['m-status', 'm-job', 'm-lease'],
+        inspect: [
+          { command: 'kubectl ptah migration orders -n application --details', says: 'Every field of the unresolved run, and of the last run beside it.' },
+          {
+            command: 'kubectl logs -n application job/<apply job> -c ptah',
+            says: 'One line from the run with the database’s words, after ptah-runner: ptah reported:, for 24 hours after the Job finishes.',
+          },
+          {
+            command: 'ptah migrations status --db-url "$DATABASE_URL" --migrations-dir ./migrations',
+            says: 'Ptah’s own reading, with ./migrations a local copy of the files: a dirty row names its version, its state and how many statements committed, such as state=failed applied=1/2.',
+          },
+        ],
+        done: 'You know what the run left in the database, and whether work is still pending.',
+        limits:
+          'The record stops this migration from changing the database. It does not mean the database is idle: other resources that share the realm may be working against it.',
+        links: [
+          { label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' },
+          { label: 'A migration that failed at a statement', href: '../../use/recovery/#failed-statement' },
+          { label: 'What a failed Apply leaves in its Pod log', href: '../../use/operations/#failed-apply-log' },
+        ],
+      },
+      {
+        id: 'm-unresolved-read',
+        title: 'A read with nothing pending settles it',
+        phase: 'Blocked, then InSync',
+        lead: 'operator',
+        actors: {
+          you: 'Finish or undo what the run left, with Ptah: run what is left, or undo what it committed and publish the sequence without that migration. Then ask for a read rather than waiting for the interval.',
+          operator:
+            'A history read of the database the record names that finds nothing of the files left to apply removes status.unresolvedRun and its annotation and records status.resolvedRun with resolution HistoryRead. The migration is InSync with no spec edit. A read of another database, or one that finds work still pending, keeps the record.',
+          executor: 'Reads the revision table, as at Read the history.',
+        },
+        objects: ['m-status', 'm-job', 'm-source'],
+        expect: 'Phase InSync, Ready=True with reason HistoryMatched, and Settled run: the outcome and the operation, by a history read.',
+        inspect: [
+          {
+            command: 'kubectl ptah refresh migration/orders -n application --wait',
+            says: 'Asks for the read and stays until it has ended. Exit 8 means it ended Blocked again: work is still pending, and only an acknowledgment settles that.',
+          },
+          { command: 'kubectl ptah migration orders -n application', says: 'Settled run, by a history read, once the record is gone.' },
+        ],
+        done: 'The record is gone and the migration is InSync.',
+        limits:
+          'The read settles the record and credits no run with the result: it does not say who finished the migration, or how. A settlement by reading writes no journal entry of its own.',
+        links: [
+          { label: 'How it clears', href: '../../use/operations/#how-it-clears' },
+          { label: 'Finish what it started', href: '../../use/recovery/#failed-partial' },
+          { label: 'Reading again on request', href: '#reading-again-on-request' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'm-acknowledged',
+    label: 'Acknowledged',
+    title: 'A person acknowledges the run',
+    summary:
+      'The database is accounted for and still has work pending, which no reading can settle, so a person acknowledges that one run. The acknowledgment repairs nothing and approves nothing: the history is read again, and what is still pending is planned and waits for a new approval.',
+    turnsAfter: 'm-unresolved-investigate',
+    stages: [
+      {
+        id: 'm-ack-write',
+        title: 'Acknowledge that run',
+        phase: 'Blocked',
+        lead: 'you',
+        actors: {
+          you: 'Write a PtahMigrationRunAcknowledgment that names the migration by name and UID and the run by its operationID, both printed in the Unresolved run block, and create it as yourself. It takes create on ptahmigrationrunacknowledgments in the namespace, which the chart’s approver ClusterRole grants.',
+          kubernetes: 'Admission stamps your authenticated identity and the time, and refuses one written for anybody else, or one that names a run the migration does not record now.',
+        },
+        objects: ['m-acknowledgment', 'migration', 'm-status'],
+        expect: 'The acknowledgment is stored, with your identity in spec.acknowledgedBy.',
+        inspect: [
+          { command: 'kubectl ptah migration orders -n application', says: 'The migration UID and the operation ID, in the Unresolved run block.' },
+          {
+            command: 'kubectl create -f acknowledgment.yaml',
+            says: 'Creates it from a file holding the YAML in Settling it by hand, with both values filled in. No kubectl ptah command writes an acknowledgment.',
+          },
+        ],
+        done: 'An acknowledgment of that run is stored.',
+        limits: 'Do not acknowledge a run to make the migration move again. An acknowledgment says the database was accounted for, not what it holds now.',
+        links: [
+          { label: 'Settling it by hand', href: '../../use/operations/#clear-unresolved-run' },
+          { label: 'Where to stop', href: '../../use/operations/#clear-stop' },
+        ],
+      },
+      {
+        id: 'm-ack-settle',
+        title: 'The run is settled, and the history read again',
+        phase: 'Blocked, then Reading and AwaitingApproval',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Takes the oldest acknowledgment that names the recorded run, whether or not the migration is suspended. It removes status.unresolvedRun, records status.resolvedRun with the acknowledgment and who made it, and marks the acknowledgment Consumed. Then it reads the history before anything is planned. Work still pending gets a new plan, which under OnApproval waits for a new approval, because the run spent the one it carried.',
+          you: 'Read the new plan and decide again, as at Approve that exact plan. A second acknowledgment of the same run is answered Stale and settles nothing.',
+        },
+        objects: ['m-status', 'm-acknowledgment', 'm-plan', 'm-approval'],
+        expect:
+          'Blocked=False with reason RunAcknowledged, a Normal UnresolvedRunAcknowledged Event naming who acknowledged which run, and the acknowledgment Consumed=True. The journal records RunAcknowledged. Then a new plan waits with ApprovalRequired=True, or the migration is InSync.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Settled run, by the acknowledgment and from you, and the acknowledgment with its conditions.',
+          },
+          { command: 'kubectl ptah history migration/orders -n application', says: 'RunAcknowledged, joined to the run’s RunFinished by operationID.' },
+          { command: 'kubectl ptah wait migration/orders --for approval -n application', says: 'Returns once the new plan waits for an approval.' },
+        ],
+        done: 'The run is settled. A new plan goes on from Approve that exact plan, or the migration is InSync.',
+        limits:
+          'An acknowledgment is not an approval of the next plan, and it is not a repair. The history read and every refusal it makes still apply: a dirty revision row holds the migration Blocked with HistoryDirty.',
+        links: [
+          { label: 'What proves it worked', href: '../../use/operations/#clear-evidence' },
+          { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+        ],
+      },
+    ],
+  },
+];
+
+const migrationNotCovered = {
+  text: 'Other turns, such as an artifact the verification policy refuses, a history that is dirty, modified, out of order or ahead, a run that failed at a statement, a plan replaced before anyone approved it, apply: Never or Always and a read that fails, are drawn in the reference below.',
+  links: [
+    { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
+    { label: 'Where the path turns', href: '#where-the-path-turns' },
+    { label: 'A migration that failed at a statement', href: '../../use/recovery/#failed-statement' },
+  ],
+};
+
+// The families a reader chooses between, the default first. Choosing another
+// starts it at its default path, at its first stage, with nothing selected.
+export const families = [
+  {
+    id: 'schema',
+    label: 'Schema',
+    scenario: schemaScenario,
+    paths: schemaPaths,
+    objects: schemaObjects,
+    relations: schemaRelations,
+    notCovered: schemaNotCovered,
+  },
+  {
+    id: 'migration',
+    label: 'Migrations',
+    scenario: migrationScenario,
+    paths: migrationPaths,
+    objects: migrationObjects,
+    relations: migrationRelations,
+    notCovered: migrationNotCovered,
+  },
+];
+
+export const defaultFamily = families[0].id;
+
+// The path another path turns off: the one whose own stage it turns after,
+// or the default path when that stage is a successful one. `model` is a
+// family's { stages, paths }, so the gate's self-test can pass one of its own.
+export function parentOf(path, model) {
+  if (!path.turnsAfter) return null;
+  const owner = model.paths.find(
+    (other) => other !== path && (other.stages ?? []).some((stage) => stage.id === path.turnsAfter),
+  );
+  return owner ?? model.paths[0];
+}
+
+// The stages a path walks, in order: the stages of the path it turns off up to
+// the stage it turns after, its own, then that path's stages from the stage it
+// rejoins at. A path that turns off itself, directly or through others, walks
+// nothing before its own stages, and the gate refuses it.
+export function walkOf(path, model, seen = new Set()) {
+  if (!path.turnsAfter) return model.stages;
+  const parent = parentOf(path, model);
+  const before = seen.has(parent.id) ? [] : walkOf(parent, model, new Set([...seen, path.id]));
+  const turn = before.findIndex((stage) => stage.id === path.turnsAfter);
+  const rejoin = path.rejoins ? before.findIndex((stage) => stage.id === path.rejoins) : before.length;
+  return [...before.slice(0, turn + 1), ...(path.stages ?? []), ...before.slice(rejoin < 0 ? before.length : rejoin)];
+}

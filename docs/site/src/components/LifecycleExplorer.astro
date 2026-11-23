@@ -1,8 +1,8 @@
 ---
 /**
- * The lifecycle explorer on the Reconciliation page: one scenario stage by
- * stage, the paths it can take where it turns, the objects it touches, and how
- * those objects relate.
+ * The lifecycle explorer on the Reconciliation page: one scenario per
+ * resource family, stage by stage, the paths it can take where it turns, the
+ * objects it touches, and how those objects relate.
  *
  * src/lifecycle-explorer.mjs is the content, and this file only renders it.
  * Everything is rendered here, on the server, twice: as the text a reader
@@ -13,68 +13,22 @@
  * what is shown, which is why the scoped styles below reach everything the
  * reader sees.
  *
- * Each stage has one panel, whichever paths walk it, and each path its own
- * list of steps. The script shows the current path's list and the current
- * stage's panel, and numbers the panel by its place in that path.
+ * Each family has a view of its own, with its paths, steps, panels and map,
+ * and the script shows one of them. Within a family each stage has one panel,
+ * whichever paths walk it, and each path its own list of steps. The script
+ * shows the current path's list and the current stage's panel, and numbers
+ * the panel by its place in that path.
  *
- * The state a reader chose, the stage, the object and a path other than the
- * default, is kept in the query string with replaceState: the hash stays the
- * page's own anchor, and the browser's history gains no entry per click.
+ * The state a reader chose, the stage, the object, a path other than the
+ * default and a family other than the default, is kept in the query string
+ * with replaceState: the hash stays the page's own anchor, and the browser's
+ * history gains no entry per click. Choosing another family starts it afresh,
+ * so no path, stage or object of one family is carried into the other.
  */
-import {
-  actors,
-  defaultPath,
-  notCovered,
-  objects,
-  paths,
-  relations,
-  relationTypes,
-  scenario,
-  walkOf,
-} from '../lifecycle-explorer.mjs';
+import { actors, defaultFamily, families, parentOf, relationTypes, walkOf } from '../lifecycle-explorer.mjs';
 
-const objectById = new Map(objects.map((object) => [object.id, object]));
 const actorLabel = new Map(actors.map((actor) => [actor.id, actor.label]));
 const typeById = new Map(relationTypes.map((type) => [type.id, type]));
-
-const main = scenario.stages;
-const walks = new Map(paths.map((path) => [path.id, walkOf(path)]));
-
-// Every stage once: the successful ones, then each path's own.
-const allStages = [...main, ...paths.flatMap((path) => path.stages ?? [])];
-
-// The path a stage is drawn in first: its own for a branch stage, the default
-// for one the successful path walks.
-const homePath = (id) => paths.find((path) => (path.stages ?? []).some((stage) => stage.id === id)) ?? paths[0];
-const isBranch = (id) => homePath(id).id !== defaultPath;
-const numberIn = (pathId, id) => walks.get(pathId).findIndex((stage) => stage.id === id) + 1;
-
-// Where the path can turn after a stage: the successful stage that follows it,
-// and the first stage of every path that turns there.
-const turnsAt = (id) => {
-  const turning = paths.filter((path) => path.turnsAfter === id);
-  if (turning.length === 0) return [];
-  const next = main[main.findIndex((stage) => stage.id === id) + 1];
-  return [{ path: paths[0], next }, ...turning.map((path) => ({ path, next: path.stages[0] }))].filter(
-    (option) => option.next,
-  );
-};
-
-// A relation read from one end: the label is the relation's own name from the
-// object that carries it, and its inverse from the other.
-const relationsOf = (id) =>
-  relations
-    .filter((relation) => relation.from === id || relation.to === id)
-    .map((relation) => {
-      const outgoing = relation.from === id;
-      const type = typeById.get(relation.type);
-      return {
-        type: relation.type,
-        label: outgoing ? type.label : type.inverse,
-        other: outgoing ? relation.to : relation.from,
-        text: relation.text,
-      };
-    });
 
 // The actors a stage names, the lead first, then in the fixed order.
 const actorsOf = (stage) =>
@@ -83,394 +37,525 @@ const actorsOf = (stage) =>
     .sort((left, right) => (left.id === stage.lead ? -1 : right.id === stage.lead ? 1 : 0))
     .map((actor) => ({ ...actor, text: stage.actors[actor.id], lead: actor.id === stage.lead }));
 
-const stagesOf = (id) => allStages.filter((stage) => stage.objects.includes(id));
-
-// What the text version says of each path. The successful path is written out
-// whole; another path writes out its own stages and names the successful ones
-// it shares, so every stage of every path is in the text once in full.
-const textBlocks = paths.map((path) => {
-  const walk = walks.get(path.id);
-  if (path.id === defaultPath) return { path, stages: main, start: 1 };
-  const turn = main.findIndex((stage) => stage.id === path.turnsAfter);
-  const before = main.slice(0, turn + 1);
-  const own = path.stages;
-  const after = walk.slice(before.length + own.length);
-  return { path, before, stages: own, start: before.length + 1, after, afterStart: before.length + own.length + 1 };
-});
-
 const titles = (stages) => stages.map((stage) => stage.title).join(', ');
 
-// A kind name such as PtahSchemaPlanChunk is one word to the browser, and a
-// phone-width column breaks it wherever it runs out. These are the points
-// where it may break instead: before each capital that follows a lowercase
-// letter.
+// A kind name such as PtahMigrationRunAcknowledgment is one word to the
+// browser, and a button holding it is as wide as the word, wider than a
+// phone-width column. These are the points where it may break instead: before
+// each capital that follows a lowercase letter.
 const breakable = (name) => name.split(/(?<=[a-z])(?=[A-Z])/);
 
-// What the script needs and cannot read off the markup cheaply.
-const model = {
-  stages: allStages.map((stage) => ({ id: stage.id, objects: stage.objects })),
-  paths: paths.map((path) => ({
-    id: path.id,
-    walk: walks.get(path.id).map((stage) => stage.id),
-    turnsAfter: path.turnsAfter ?? null,
-    first: path.stages?.[0]?.id ?? null,
-  })),
-  defaultPath,
-  relations: relations.map(({ from, to, type }) => ({ from, to, type })),
-  types: Object.fromEntries(relationTypes.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
-};
+// Everything one family's view and its text are drawn from.
+const views = families.map((family) => {
+  const { scenario, paths, objects, relations } = family;
+  const main = scenario.stages;
+  const shape = { stages: main, paths };
+  const defaultPath = paths[0].id;
+  const walks = new Map(paths.map((path) => [path.id, walkOf(path, shape)]));
+  const objectById = new Map(objects.map((object) => [object.id, object]));
 
-const firstWalk = walks.get(defaultPath);
+  // Every stage once: the successful ones, then each path's own.
+  const allStages = [...main, ...paths.flatMap((path) => path.stages ?? [])];
+
+  // The path a stage is drawn in first: its own for a branch stage, the
+  // default for one the successful path walks.
+  const homePath = (id) => paths.find((path) => (path.stages ?? []).some((stage) => stage.id === id)) ?? paths[0];
+  const isBranch = (id) => homePath(id).id !== defaultPath;
+  const numberIn = (pathId, id) => walks.get(pathId).findIndex((stage) => stage.id === id) + 1;
+
+  // Where the path can turn after a stage: the stage that follows it on the
+  // path it belongs to, and the first stage of every path that turns there.
+  const turnsAt = (id) => {
+    const turning = paths.filter((path) => path.turnsAfter === id);
+    if (turning.length === 0) return [];
+    const home = homePath(id);
+    const walk = walks.get(home.id);
+    const next = walk[walk.findIndex((stage) => stage.id === id) + 1];
+    return [{ path: home, next }, ...turning.map((path) => ({ path, next: path.stages[0] }))].filter(
+      (option) => option.next,
+    );
+  };
+
+  // A relation read from one end: the label is the relation's own name from
+  // the object that carries it, and its inverse from the other.
+  const relationsOf = (id) =>
+    relations
+      .filter((relation) => relation.from === id || relation.to === id)
+      .map((relation) => {
+        const outgoing = relation.from === id;
+        const type = typeById.get(relation.type);
+        return {
+          type: relation.type,
+          label: outgoing ? type.label : type.inverse,
+          other: outgoing ? relation.to : relation.from,
+          text: relation.text,
+        };
+      });
+
+  const stagesOf = (id) => allStages.filter((stage) => stage.objects.includes(id));
+
+  // What the text version says of each path. The default path is written out
+  // whole; another path writes out its own stages and names the ones it
+  // shares with the path it turns off, so every stage of every path is in the
+  // text once in full.
+  const textBlocks = paths.map((path) => {
+    if (path.id === defaultPath) return { path, stages: main, start: 1 };
+    const parent = parentOf(path, shape);
+    const parentWalk = walks.get(parent.id);
+    const turn = parentWalk.findIndex((stage) => stage.id === path.turnsAfter);
+    const before = parentWalk.slice(0, turn + 1);
+    const own = path.stages;
+    const after = walks.get(path.id).slice(before.length + own.length);
+    const from = parent.id === defaultPath ? 'the successful path' : `the path ${parent.label}`;
+    return { path, from, before, stages: own, start: before.length + 1, after, afterStart: before.length + own.length + 1 };
+  });
+
+  // What the script needs and cannot read off the markup cheaply.
+  const model = {
+    family: family.id,
+    stages: allStages.map((stage) => ({ id: stage.id, objects: stage.objects })),
+    paths: paths.map((path) => ({
+      id: path.id,
+      walk: walks.get(path.id).map((stage) => stage.id),
+      turnsAfter: path.turnsAfter ?? null,
+      first: path.stages?.[0]?.id ?? null,
+      parent: parentOf(path, shape)?.id ?? null,
+      own: (path.stages ?? []).map((stage) => stage.id),
+    })),
+    defaultPath,
+    relations: relations.map(({ from, to, type }) => ({ from, to, type })),
+    types: Object.fromEntries(relationTypes.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
+  };
+
+  return {
+    family,
+    scenario,
+    paths,
+    objects,
+    main,
+    walks,
+    allStages,
+    objectById,
+    homePath,
+    isBranch,
+    numberIn,
+    turnsAt,
+    relationsOf,
+    stagesOf,
+    textBlocks,
+    model,
+    defaultPath,
+    firstWalk: walks.get(defaultPath),
+  };
+});
 ---
 
 <section
   id="lifecycle-explorer"
   class="lx not-content"
-  aria-label={`Lifecycle explorer: ${scenario.title}`}
+  aria-label="Lifecycle explorer"
   data-lx
-  data-lx-model={JSON.stringify(model)}
+  data-lx-default-family={defaultFamily}
 >
   <div class="lx__head">
     <p class="lx__eyebrow">Lifecycle explorer</p>
-    <p class="lx__title">{scenario.title}</p>
-    <p class="lx__summary">{scenario.summary}</p>
   </div>
 
   <div class="lx__app" data-lx-app data-pagefind-ignore hidden>
-    <div class="lx__paths" role="group" aria-label="Path">
-      <span class="lx__label">Path</span>
+    <div class="lx__paths lx__families" role="group" aria-label="Resource family">
+      <span class="lx__label">Family</span>
       {
-        paths.map((path) => (
-          <button type="button" class="lx__path" data-lx-path={path.id} aria-pressed={String(path.id === defaultPath)}>
-            {path.label}
+        views.map((view) => (
+          <button
+            type="button"
+            class="lx__path"
+            data-lx-family={view.family.id}
+            aria-pressed={String(view.family.id === defaultFamily)}
+          >
+            {view.family.label}
           </button>
         ))
       }
     </div>
-    {
-      paths.map((path) => (
-        <p class="lx__path-summary" data-lx-path-summary={path.id} hidden={path.id !== defaultPath}>
-          <strong>{path.title}.</strong> {path.summary}
-        </p>
-      ))
-    }
-
-    <div class="lx__bar">
-      <p class="lx__count" data-lx-count aria-live="polite">Stage 1 of {firstWalk.length}: {firstWalk[0].title}</p>
-      <div class="lx__nav">
-        <button type="button" class="lx__button" data-lx-prev disabled>Previous</button>
-        <button type="button" class="lx__button" data-lx-next>Next</button>
-      </div>
-    </div>
 
     {
-      paths.map((path) => (
-        <ol
-          class="lx__steps"
-          data-lx-steps={path.id}
-          hidden={path.id !== defaultPath}
-          aria-label={`Stages of the path ${path.label}. Use the arrow keys to move between them.`}
+      views.map((view) => (
+        <div
+          class="lx__family-view"
+          data-lx-family-view={view.family.id}
+          data-lx-model={JSON.stringify(view.model)}
+          hidden={view.family.id !== defaultFamily}
         >
-          {walks.get(path.id).map((stage, index) => (
-            <li>
+          <p class="lx__title">{view.scenario.title}</p>
+          <p class="lx__summary">{view.scenario.summary}</p>
+
+          <div class="lx__paths" role="group" aria-label="Path">
+            <span class="lx__label">Path</span>
+            {view.paths.map((path) => (
               <button
                 type="button"
-                class="lx__step"
-                data-lx-step={stage.id}
-                data-branch={isBranch(stage.id) ? '' : undefined}
-                aria-current={path.id === defaultPath && index === 0 ? 'step' : undefined}
-                tabindex={index === 0 ? 0 : -1}
-                data-lead={stage.lead}
-                aria-label={`Stage ${index + 1}: ${stage.title}`}
+                class="lx__path"
+                data-lx-path={path.id}
+                aria-pressed={String(path.id === view.defaultPath)}
               >
-                <span class="lx__step-n">{index + 1}</span>
-                <span class="lx__step-t">{stage.title}</span>
+                {path.label}
               </button>
-            </li>
+            ))}
+          </div>
+          {view.paths.map((path) => (
+            <p class="lx__path-summary" data-lx-path-summary={path.id} hidden={path.id !== view.defaultPath}>
+              <strong>{path.title}.</strong> {path.summary}
+            </p>
           ))}
-        </ol>
-      ))
-    }
 
-    <div class="lx__stages">
-      {
-        allStages.map((stage) => (
-          <div class="lx__panel" data-lx-stage-panel={stage.id} hidden={stage.id !== firstWalk[0].id}>
-            <div class="lx__panel-head">
-              <p class="lx__panel-title">
-                <span class="lx__panel-n" data-lx-panel-n>
-                  {numberIn(homePath(stage.id).id, stage.id)}
-                </span>
-                {stage.title}
-                {isBranch(stage.id) && <span class="lx__branch-tag">{homePath(stage.id).label}</span>}
-              </p>
-              <p class="lx__phase">
-                <span class="lx__label">Phase</span> <code>{stage.phase}</code>
-              </p>
+          <div class="lx__bar">
+            <p class="lx__count" data-lx-count aria-live="polite">
+              Stage 1 of {view.firstWalk.length}: {view.firstWalk[0].title}
+            </p>
+            <div class="lx__nav">
+              <button type="button" class="lx__button" data-lx-prev disabled>
+                Previous
+              </button>
+              <button type="button" class="lx__button" data-lx-next>
+                Next
+              </button>
             </div>
+          </div>
 
-            <ul class="lx__actors" aria-label="Who acts">
-              {actorsOf(stage).map((actor) => (
-                <li class="lx__actor" data-actor={actor.id} data-lead={actor.lead ? 'true' : undefined}>
-                  <span class="lx__actor-name">
-                    {actor.label}
-                    {actor.lead && <span class="lx__lead">acts</span>}
-                  </span>
-                  <span class="lx__actor-text">{actor.text}</span>
+          {view.paths.map((path) => (
+            <ol
+              class="lx__steps"
+              data-lx-steps={path.id}
+              hidden={path.id !== view.defaultPath}
+              aria-label={`Stages of the path ${path.label}. Use the arrow keys to move between them.`}
+            >
+              {view.walks.get(path.id).map((stage, index) => (
+                <li>
+                  <button
+                    type="button"
+                    class="lx__step"
+                    data-lx-step={stage.id}
+                    data-branch={view.isBranch(stage.id) ? '' : undefined}
+                    aria-current={path.id === view.defaultPath && index === 0 ? 'step' : undefined}
+                    tabindex={index === 0 ? 0 : -1}
+                    data-lead={stage.lead}
+                    aria-label={`Stage ${index + 1}: ${stage.title}`}
+                  >
+                    <span class="lx__step-n">{index + 1}</span>
+                    <span class="lx__step-t">{stage.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ))}
+
+          <div class="lx__stages">
+            {view.allStages.map((stage) => (
+              <div class="lx__panel" data-lx-stage-panel={stage.id} hidden={stage.id !== view.firstWalk[0].id}>
+                <div class="lx__panel-head">
+                  <p class="lx__panel-title">
+                    <span class="lx__panel-n" data-lx-panel-n>
+                      {view.numberIn(view.homePath(stage.id).id, stage.id)}
+                    </span>
+                    {stage.title}
+                    {view.isBranch(stage.id) && <span class="lx__branch-tag">{view.homePath(stage.id).label}</span>}
+                  </p>
+                  <p class="lx__phase">
+                    <span class="lx__label">Phase</span> <code>{stage.phase}</code>
+                  </p>
+                </div>
+
+                <ul class="lx__actors" aria-label="Who acts">
+                  {actorsOf(stage).map((actor) => (
+                    <li class="lx__actor" data-actor={actor.id} data-lead={actor.lead ? 'true' : undefined}>
+                      <span class="lx__actor-name">
+                        {actor.label}
+                        {actor.lead && <span class="lx__lead">acts</span>}
+                      </span>
+                      <span class="lx__actor-text">{actor.text}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <div class="lx__involved">
+                  <span class="lx__label">Objects</span>
+                  {stage.objects.map((id) => (
+                    <button type="button" class="lx__chip" data-lx-select={id}>
+                      {breakable(view.objectById.get(id).label).map((part, index) => (
+                        <>
+                          {index > 0 && <wbr />}
+                          {part}
+                        </>
+                      ))}
+                    </button>
+                  ))}
+                </div>
+
+                {stage.expect && (
+                  <p class="lx__expect">
+                    <span class="lx__label">Expect</span> {stage.expect}
+                  </p>
+                )}
+
+                <div class="lx__inspect">
+                  <span class="lx__label">Inspect</span>
+                  {stage.inspect.map((step) => (
+                    <div class="lx__command">
+                      <pre><code>{step.command}</code></pre>
+                      <p>{step.says}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <p class="lx__done">
+                  <span class="lx__label">Done when</span> {stage.done}
+                </p>
+                {stage.limits && (
+                  <p class="lx__limits">
+                    <span class="lx__label">What it does not prove</span> {stage.limits}
+                  </p>
+                )}
+
+                {view.turnsAt(stage.id).length > 0 && (
+                  <div class="lx__turn" role="group" aria-label="Where the path turns">
+                    <p class="lx__label">The path turns here. Choose what happens next</p>
+                    <div class="lx__turn-options">
+                      {view.turnsAt(stage.id).map((option) => (
+                        <button
+                          type="button"
+                          class="lx__turn-option"
+                          data-lx-choose={option.path.id}
+                          data-lx-then={option.next.id}
+                          aria-pressed="false"
+                        >
+                          <strong>{option.path.label}</strong>
+                          <span>{option.next.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p class="lx__links">
+                  {stage.links.map((link) => (
+                    <a href={link.href}>{link.label}</a>
+                  ))}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div class="lx__map">
+            <p class="lx__map-title">Objects and how they relate</p>
+            <p class="lx__hint" data-lx-hint>
+              Objects in the current stage are marked. Select one to see what it is and what it is related to.
+            </p>
+            <ul class="lx__nodes">
+              {view.objects.map((object) => (
+                <li>
+                  <button type="button" class="lx__node" data-lx-object={object.id} aria-pressed="false">
+                    <span class="lx__node-label">
+                      {breakable(object.label).map((part, index) => (
+                        <>
+                          {index > 0 && <wbr />}
+                          {part}
+                        </>
+                      ))}
+                    </span>
+                    {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
+                    <span class="lx__node-rel" data-lx-rel />
+                  </button>
                 </li>
               ))}
             </ul>
 
-            <div class="lx__involved">
-              <span class="lx__label">Objects</span>
-              {stage.objects.map((id) => (
-                <button type="button" class="lx__chip" data-lx-select={id}>
-                  {objectById.get(id).label}
-                </button>
-              ))}
-            </div>
-
-            {stage.expect && (
-              <p class="lx__expect">
-                <span class="lx__label">Expect</span> {stage.expect}
-              </p>
-            )}
-
-            <div class="lx__inspect">
-              <span class="lx__label">Inspect</span>
-              {stage.inspect.map((step) => (
-                <div class="lx__command">
-                  <pre><code>{step.command}</code></pre>
-                  <p>{step.says}</p>
-                </div>
-              ))}
-            </div>
-
-            <p class="lx__done">
-              <span class="lx__label">Done when</span> {stage.done}
-            </p>
-            {stage.limits && (
-              <p class="lx__limits">
-                <span class="lx__label">What it does not prove</span> {stage.limits}
-              </p>
-            )}
-
-            {turnsAt(stage.id).length > 0 && (
-              <div class="lx__turn" role="group" aria-label="Where the path turns">
-                <p class="lx__label">The path turns here. Choose what happens next</p>
-                <div class="lx__turn-options">
-                  {turnsAt(stage.id).map((option) => (
-                    <button
-                      type="button"
-                      class="lx__turn-option"
-                      data-lx-choose={option.path.id}
-                      data-lx-then={option.next.id}
-                      aria-pressed="false"
-                    >
-                      <strong>{option.path.label}</strong>
-                      <span>{option.next.title}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <p class="lx__links">
-              {stage.links.map((link) => (
-                <a href={link.href}>{link.label}</a>
-              ))}
-            </p>
-          </div>
-        ))
-      }
-    </div>
-
-    <div class="lx__map">
-      <p class="lx__map-title">Objects and how they relate</p>
-      <p class="lx__hint" data-lx-hint>
-        Objects in the current stage are marked. Select one to see what it is and what it is related to.
-      </p>
-      <ul class="lx__nodes">
-        {
-          objects.map((object) => (
-            <li>
-              <button type="button" class="lx__node" data-lx-object={object.id} aria-pressed="false">
-                <span class="lx__node-label">
-                  {breakable(object.label).map((part, index) => (
-                    <>
-                      {index > 0 && <wbr />}
-                      {part}
-                    </>
-                  ))}
-                </span>
-                {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
-                <span class="lx__node-rel" data-lx-rel />
-              </button>
-            </li>
-          ))
-        }
-      </ul>
-
-      <ul class="lx__legend" aria-label="Relationship types">
-        {
-          relationTypes.map((type) => (
-            <li data-type={type.id}>
-              <span class="lx__swatch" aria-hidden="true" />
-              <span>
-                <strong>{type.label}</strong> {type.text}
-              </span>
-            </li>
-          ))
-        }
-      </ul>
-
-      {
-        objects.map((object) => (
-          <div class="lx__object" data-lx-object-panel={object.id} hidden>
-            <p class="lx__panel-title">
-              {object.label}
-              {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
-            </p>
-            <p>{object.purpose}</p>
-            <p>
-              <span class="lx__label">Where</span> {object.lives}
-            </p>
-            <p>
-              <span class="lx__label">Written by</span> {actorLabel.get(object.writer)}
-            </p>
-            <ul class="lx__relations" aria-label={`How ${object.label} relates to the others`}>
-              {relationsOf(object.id).map((relation) => (
-                <li data-type={relation.type}>
+            <ul class="lx__legend" aria-label="Relationship types">
+              {relationTypes.map((type) => (
+                <li data-type={type.id}>
                   <span class="lx__swatch" aria-hidden="true" />
                   <span>
-                    <strong>{relation.label}</strong>{' '}
-                    <button type="button" class="lx__link-button" data-lx-select={relation.other}>
-                      {objectById.get(relation.other).label}
-                    </button>
-                    . {relation.text}
+                    <strong>{type.label}</strong> {type.text}
                   </span>
                 </li>
               ))}
             </ul>
-            <div class="lx__inspect">
-              <span class="lx__label">Inspect</span>
-              {object.inspect.map((step) => (
-                <div class="lx__command">
-                  <pre><code>{step.command}</code></pre>
-                  <p>{step.says}</p>
+
+            {view.objects.map((object) => (
+              <div class="lx__object" data-lx-object-panel={object.id} hidden>
+                <p class="lx__panel-title">
+                  <span>
+                    {breakable(object.label).map((part, index) => (
+                      <>
+                        {index > 0 && <wbr />}
+                        {part}
+                      </>
+                    ))}
+                  </span>
+                  {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
+                </p>
+                <p>{object.purpose}</p>
+                <p>
+                  <span class="lx__label">Where</span> {object.lives}
+                </p>
+                <p>
+                  <span class="lx__label">Written by</span> {actorLabel.get(object.writer)}
+                </p>
+                <ul class="lx__relations" aria-label={`How ${object.label} relates to the others`}>
+                  {view.relationsOf(object.id).map((relation) => (
+                    <li data-type={relation.type}>
+                      <span class="lx__swatch" aria-hidden="true" />
+                      <span>
+                        <strong>{relation.label}</strong>{' '}
+                        <button type="button" class="lx__link-button" data-lx-select={relation.other}>
+                          {breakable(view.objectById.get(relation.other).label).map((part, index) => (
+                            <>
+                              {index > 0 && <wbr />}
+                              {part}
+                            </>
+                          ))}
+                        </button>
+                        . {relation.text}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div class="lx__inspect">
+                  <span class="lx__label">Inspect</span>
+                  {object.inspect.map((step) => (
+                    <div class="lx__command">
+                      <pre><code>{step.command}</code></pre>
+                      <p>{step.says}</p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <p class="lx__goto">
-              <span class="lx__label">In stages</span>
-              {stagesOf(object.id).map((stage) => (
-                <button type="button" class="lx__chip" data-lx-goto={stage.id}>
-                  {isBranch(stage.id) ? `${homePath(stage.id).label}: ` : `${numberIn(defaultPath, stage.id)} `}
-                  {stage.title}
-                </button>
-              ))}
-            </p>
-            <p class="lx__links">
-              {object.links.map((link) => (
-                <a href={link.href}>{link.label}</a>
-              ))}
-            </p>
+                <p class="lx__goto">
+                  <span class="lx__label">In stages</span>
+                  {view.stagesOf(object.id).map((stage) => (
+                    <button type="button" class="lx__chip" data-lx-goto={stage.id}>
+                      {view.isBranch(stage.id)
+                        ? `${view.homePath(stage.id).label}: `
+                        : `${view.numberIn(view.defaultPath, stage.id)} `}
+                      {stage.title}
+                    </button>
+                  ))}
+                </p>
+                <p class="lx__links">
+                  {object.links.map((link) => (
+                    <a href={link.href}>{link.label}</a>
+                  ))}
+                </p>
+              </div>
+            ))}
           </div>
-        ))
-      }
-    </div>
+
+          <p class="lx__later">
+            {view.family.notCovered.text}{' '}
+            {view.family.notCovered.links.map((link, index) => (
+              <>
+                {index > 0 && ', '}
+                <a href={link.href}>{link.label}</a>
+              </>
+            ))}
+            .
+          </p>
+        </div>
+      ))
+    }
   </div>
 
   <div class="lx__text" data-lx-text>
     {
-      textBlocks.map((block) => (
-        <div class="lx__text-path" data-lx-text-path={block.path.id}>
-          <p>
-            <strong>Path: {block.path.title}.</strong> {block.path.summary}
-            {block.before && (
-              <>
-                {' '}
-                Stages 1 to {block.before.length} are those of the successful path: {titles(block.before)}. Then:
-              </>
-            )}
-          </p>
-          <ol class="lx__text-stages" start={block.start}>
-            {block.stages.map((stage) => (
-              <li data-lx-text-stage={stage.id}>
+      views.map((view) => (
+        <div class="lx__text-family" data-lx-text-family={view.family.id}>
+          <p class="lx__title">{view.scenario.title}</p>
+          <p class="lx__summary">{view.scenario.summary}</p>
+          {view.textBlocks.map((block) => (
+            <div class="lx__text-path" data-lx-text-path={block.path.id}>
+              <p>
+                <strong>Path: {block.path.title}.</strong> {block.path.summary}
+                {block.before && (
+                  <>
+                    {' '}
+                    Stages 1 to {block.before.length} are those of {block.from}: {titles(block.before)}. Then:
+                  </>
+                )}
+              </p>
+              <ol class="lx__text-stages" start={block.start}>
+                {block.stages.map((stage) => (
+                  <li data-lx-text-stage={stage.id}>
+                    <p>
+                      <strong>{stage.title}.</strong> Phase <code>{stage.phase}</code>.
+                    </p>
+                    <ul>
+                      {actorsOf(stage).map((actor) => (
+                        <li>
+                          <strong>{actor.label}:</strong> {actor.text}
+                        </li>
+                      ))}
+                    </ul>
+                    <p>Objects: {stage.objects.map((id) => view.objectById.get(id).label).join(', ')}.</p>
+                    {stage.expect && <p>Expect: {stage.expect}</p>}
+                    {stage.inspect.map((step) => (
+                      <p>
+                        <code>{step.command}</code>: {step.says}
+                      </p>
+                    ))}
+                    <p>Done when: {stage.done}</p>
+                    {stage.limits && <p>What it does not prove: {stage.limits}</p>}
+                    <p>
+                      Read more:{' '}
+                      {stage.links.map((link, index) => (
+                        <>
+                          {index > 0 && ', '}
+                          <a href={link.href}>{link.label}</a>
+                        </>
+                      ))}
+                      .
+                    </p>
+                  </li>
+                ))}
+              </ol>
+              {block.after && block.after.length > 0 && (
                 <p>
-                  <strong>{stage.title}.</strong> Phase <code>{stage.phase}</code>.
+                  Stages {block.afterStart} to {block.afterStart + block.after.length - 1} are those of {block.from}{' '}
+                  again: {titles(block.after)}.
                 </p>
+              )}
+              {block.after && block.after.length === 0 && <p>The path ends here.</p>}
+            </div>
+          ))}
+          <p>
+            <strong>The objects, and how they relate.</strong> An owner reference is what the garbage collector
+            follows; a name, a UID or a digest is a reference and deletes nothing.
+          </p>
+          <ul class="lx__text-objects">
+            {view.objects.map((object) => (
+              <li data-lx-text-object={object.id}>
+                <strong>{object.label}</strong> ({object.kind}). {object.purpose} {object.lives}
                 <ul>
-                  {actorsOf(stage).map((actor) => (
+                  {view.relationsOf(object.id).map((relation) => (
                     <li>
-                      <strong>{actor.label}:</strong> {actor.text}
+                      {relation.label} {view.objectById.get(relation.other).label}: {relation.text}
                     </li>
                   ))}
                 </ul>
-                <p>Objects: {stage.objects.map((id) => objectById.get(id).label).join(', ')}.</p>
-                {stage.expect && <p>Expect: {stage.expect}</p>}
-                {stage.inspect.map((step) => (
-                  <p>
-                    <code>{step.command}</code>: {step.says}
-                  </p>
-                ))}
-                <p>Done when: {stage.done}</p>
-                {stage.limits && <p>What it does not prove: {stage.limits}</p>}
-                <p>
-                  Read more:{' '}
-                  {stage.links.map((link, index) => (
-                    <>
-                      {index > 0 && ', '}
-                      <a href={link.href}>{link.label}</a>
-                    </>
-                  ))}
-                  .
-                </p>
               </li>
             ))}
-          </ol>
-          {block.after && block.after.length > 0 && (
-            <p>
-              Stages {block.afterStart} to {block.afterStart + block.after.length - 1} are those of the successful path
-              again: {titles(block.after)}.
-            </p>
-          )}
-          {block.after && block.after.length === 0 && <p>The path ends here.</p>}
+          </ul>
+          <p class="lx__later">
+            {view.family.notCovered.text}{' '}
+            {view.family.notCovered.links.map((link, index) => (
+              <>
+                {index > 0 && ', '}
+                <a href={link.href}>{link.label}</a>
+              </>
+            ))}
+            .
+          </p>
         </div>
       ))
     }
-    <p>
-      <strong>The objects, and how they relate.</strong> An owner reference is what the garbage collector follows;
-      a name, a UID or a digest is a reference and deletes nothing.
-    </p>
-    <ul class="lx__text-objects">
-      {
-        objects.map((object) => (
-          <li data-lx-text-object={object.id}>
-            <strong>{object.label}</strong> ({object.kind}). {object.purpose} {object.lives}
-            <ul>
-              {relationsOf(object.id).map((relation) => (
-                <li>
-                  {relation.label} {objectById.get(relation.other).label}: {relation.text}
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))
-      }
-    </ul>
   </div>
-
-  <p class="lx__later">
-    {notCovered.text}{' '}
-    {notCovered.links.map((link, index) => (
-      <>
-        {index > 0 && ', '}
-        <a href={link.href}>{link.label}</a>
-      </>
-    ))}
-    .
-  </p>
 </section>
 
 <style>
@@ -514,10 +599,6 @@ const firstWalk = walks.get(defaultPath);
 
   .lx__label {
     margin-right: 0.35rem;
-  }
-
-  .lx__head .lx__eyebrow + .lx__title {
-    margin-top: 0.15rem;
   }
 
   .lx__title {
@@ -789,9 +870,12 @@ const firstWalk = walks.get(defaultPath);
     border-color: var(--sl-color-hairline);
   }
 
+  /* A part such as Acknowledgment is wider than a node in two columns of
+   * a 320px screen, so the map takes one column there (below). Should a part
+   * still not fit, it breaks rather than reaching past the node. */
   .lx__node-label {
     font-weight: 600;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
   }
 
   .lx__node-kind {
@@ -1039,6 +1123,19 @@ const firstWalk = walks.get(defaultPath);
     outline-offset: 2px;
   }
 
+  /* The family bar switches the whole view below it, so it stands apart
+   * from the path bar inside that view. */
+  .lx__families {
+    padding-bottom: var(--lx-gap);
+    border-bottom: 1px solid var(--sl-color-hairline);
+  }
+
+  .lx__text-family + .lx__text-family {
+    margin-top: 1.5rem !important;
+    padding-top: var(--lx-gap);
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
   /* Once the script runs, the interactive view replaces the text. */
   .lx[data-lx-ready] .lx__text {
     display: none;
@@ -1071,6 +1168,12 @@ const firstWalk = walks.get(defaultPath);
     }
   }
 
+  @container (max-width: 18rem) {
+    .lx__nodes {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .lx__panel:not([hidden]),
     .lx__object:not([hidden]) {
@@ -1095,42 +1198,65 @@ const firstWalk = walks.get(defaultPath);
 </style>
 
 <script>
+  type PathModel = {
+    id: string;
+    walk: string[];
+    turnsAfter: string | null;
+    first: string | null;
+    parent: string | null;
+    own: string[];
+  };
   type Model = {
+    family: string;
     stages: { id: string; objects: string[] }[];
-    paths: { id: string; walk: string[]; turnsAfter: string | null; first: string | null }[];
+    paths: PathModel[];
     defaultPath: string;
     relations: { from: string; to: string; type: string }[];
     types: Record<string, { label: string; inverse: string }>;
   };
+  type Family = {
+    id: string;
+    view: HTMLElement;
+    owns: (stage: string) => boolean;
+    hasPath: (path: string) => boolean;
+    hasObject: (object: string) => boolean;
+    reset: () => void;
+    restore: (params: URLSearchParams) => void;
+    state: () => { path: string | null; stage: string; object: string | null };
+    render: (write?: boolean) => void;
+  };
 
+  const FAMILY_PARAM = 'lx-family';
   const STAGE_PARAM = 'lx-stage';
   const OBJECT_PARAM = 'lx-object';
   const PATH_PARAM = 'lx-path';
 
-  function start(root: HTMLElement) {
-    const model: Model = JSON.parse(root.dataset.lxModel || '{}');
-    const app = root.querySelector<HTMLElement>('[data-lx-app]');
-    if (!app || !model.stages?.length || !model.paths?.length) return;
+  // One family's view: the path, the stage and the selection a reader chose
+  // in it, and the controls that move them. `changed` writes the address, and
+  // is called only once the reader chose something.
+  function family(view: HTMLElement, changed: () => void): Family | null {
+    const model: Model = JSON.parse(view.dataset.lxModel || '{}');
+    if (!model.stages?.length || !model.paths?.length) return null;
 
     const stageObjects = new Map(model.stages.map((stage) => [stage.id, stage.objects]));
     const pathById = new Map(model.paths.map((path) => [path.id, path]));
     const lists = new Map(
-      [...root.querySelectorAll<HTMLElement>('[data-lx-steps]')].map((list) => [list.dataset.lxSteps!, list]),
+      [...view.querySelectorAll<HTMLElement>('[data-lx-steps]')].map((list) => [list.dataset.lxSteps!, list]),
     );
     const stepsOf = (id: string) => [...(lists.get(id)?.querySelectorAll<HTMLButtonElement>('[data-lx-step]') ?? [])];
-    const allSteps = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-step]')];
+    const allSteps = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-step]')];
     const stagePanels = new Map(
-      [...root.querySelectorAll<HTMLElement>('[data-lx-stage-panel]')].map((panel) => [panel.dataset.lxStagePanel, panel]),
+      [...view.querySelectorAll<HTMLElement>('[data-lx-stage-panel]')].map((panel) => [panel.dataset.lxStagePanel, panel]),
     );
-    const pathButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-path]')];
-    const summaries = [...root.querySelectorAll<HTMLElement>('[data-lx-path-summary]')];
-    const nodes = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-object]')];
+    const pathButtons = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-path]')];
+    const summaries = [...view.querySelectorAll<HTMLElement>('[data-lx-path-summary]')];
+    const nodes = [...view.querySelectorAll<HTMLButtonElement>('[data-lx-object]')];
     const objectPanels = new Map(
-      [...root.querySelectorAll<HTMLElement>('[data-lx-object-panel]')].map((panel) => [panel.dataset.lxObjectPanel, panel]),
+      [...view.querySelectorAll<HTMLElement>('[data-lx-object-panel]')].map((panel) => [panel.dataset.lxObjectPanel, panel]),
     );
-    const count = root.querySelector<HTMLElement>('[data-lx-count]');
-    const prev = root.querySelector<HTMLButtonElement>('[data-lx-prev]');
-    const next = root.querySelector<HTMLButtonElement>('[data-lx-next]');
+    const count = view.querySelector<HTMLElement>('[data-lx-count]');
+    const prev = view.querySelector<HTMLButtonElement>('[data-lx-prev]');
+    const next = view.querySelector<HTMLButtonElement>('[data-lx-next]');
 
     let pathId = model.defaultPath;
     let stageIndex = 0;
@@ -1139,11 +1265,14 @@ const firstWalk = walks.get(defaultPath);
     const walk = () => pathById.get(pathId)!.walk;
     const currentStage = () => walk()[stageIndex];
     // The path a stage belongs to when the current one does not walk it: the
-    // default if it walks it, else the one path whose own stage it is.
+    // default if it walks it, else the path whose own stage it is, else any
+    // path that walks it.
     const pathWalking = (stage: string) =>
       pathById.get(model.defaultPath)!.walk.includes(stage)
         ? model.defaultPath
-        : (model.paths.find((path) => path.walk.includes(stage))?.id ?? null);
+        : (model.paths.find((path) => path.own.includes(stage))?.id ??
+          model.paths.find((path) => path.walk.includes(stage))?.id ??
+          null);
 
     // The relation between the selected object and another, read from the
     // selected end. Two relations between one pair (a reference and an owner
@@ -1157,22 +1286,6 @@ const firstWalk = walks.get(defaultPath);
       const relation = found.find((one) => one.type === 'owns') ?? found[0];
       const type = model.types[relation.type];
       return { type: relation.type, label: relation.from === selected ? type.label : type.inverse };
-    };
-
-    // The default path writes no parameter, so a link from before there were
-    // paths and a link to the default path are the same link.
-    const writeUrl = () => {
-      try {
-        const url = new URL(location.href);
-        if (pathId === model.defaultPath) url.searchParams.delete(PATH_PARAM);
-        else url.searchParams.set(PATH_PARAM, pathId);
-        url.searchParams.set(STAGE_PARAM, currentStage());
-        if (selected) url.searchParams.set(OBJECT_PARAM, selected);
-        else url.searchParams.delete(OBJECT_PARAM);
-        history.replaceState(history.state, '', url);
-      } catch {
-        // A sandboxed frame can refuse replaceState; the explorer works without it.
-      }
     };
 
     // The URL changes only after the reader chose something, so a page that
@@ -1224,11 +1337,11 @@ const firstWalk = walks.get(defaultPath);
           if (badge) badge.textContent = id === selected ? 'Selected' : '';
         }
       }
-      for (const chip of root.querySelectorAll<HTMLElement>('.lx__involved [data-lx-select]')) {
+      for (const chip of view.querySelectorAll<HTMLElement>('.lx__involved [data-lx-select]')) {
         chip.setAttribute('aria-pressed', String(chip.dataset.lxSelect === selected));
       }
       for (const [id, panel] of objectPanels) panel.hidden = id !== selected;
-      if (write) writeUrl();
+      if (write) changed();
     };
 
     const focusStep = () => stepsOf(pathId)[stageIndex]?.focus();
@@ -1250,15 +1363,27 @@ const firstWalk = walks.get(defaultPath);
     };
 
     // A path chosen from the bar keeps the stage when the new path walks it
-    // too. Otherwise it opens where the new path differs: its first own stage,
-    // or, going back to the default, the stage the old path turned after.
+    // too. Otherwise it opens where the two differ: going back to a path the
+    // current one turned off, directly or through another, at the stage where
+    // it left that path; going anywhere else, at the new path's first own
+    // stage.
     const choosePath = (id: string) => {
       const target = pathById.get(id);
       if (!target || id === pathId) return;
       const stage = currentStage();
-      const from = pathById.get(pathId)!;
-      const keep = target.walk.includes(stage);
-      setPath(id, keep ? stage : (target.first ?? from.turnsAfter));
+      if (target.walk.includes(stage)) {
+        setPath(id, stage);
+        return;
+      }
+      let from = pathById.get(pathId);
+      for (let hops = 0; from?.parent && hops < model.paths.length; hops += 1) {
+        if (from.parent === id) {
+          setPath(id, from.turnsAfter);
+          return;
+        }
+        from = pathById.get(from.parent);
+      }
+      setPath(id, target.first);
     };
 
     const select = (id: string | null, reveal = false) => {
@@ -1300,7 +1425,7 @@ const firstWalk = walks.get(defaultPath);
         select(selected === id ? null : id);
       });
     }
-    root.addEventListener('click', (event) => {
+    view.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
       const chip = target.closest<HTMLElement>('[data-lx-select]');
       if (chip) select(chip.dataset.lxSelect!, true);
@@ -1322,22 +1447,111 @@ const firstWalk = walks.get(defaultPath);
       }
     });
 
-    // A link that carries a state restores it; anything it does not name keeps
-    // the default. A link that names a stage of another path and no path opens
-    // that stage's path.
+    const reset = () => {
+      pathId = model.defaultPath;
+      stageIndex = 0;
+      selected = null;
+    };
+
+    return {
+      id: model.family,
+      view,
+      owns: (stage) => stageObjects.has(stage),
+      hasPath: (path) => pathById.has(path),
+      hasObject: (object) => objectPanels.has(object),
+      reset,
+      // A link restores what it names of this family and keeps the default
+      // for the rest, so a value that belongs to another family is ignored. A
+      // link that names a stage of another path and no path opens that
+      // stage's path.
+      restore: (params) => {
+        reset();
+        const wantedStage = params.get(STAGE_PARAM) ?? '';
+        const wantedPath = params.get(PATH_PARAM);
+        if (wantedPath && pathById.has(wantedPath)) pathId = wantedPath;
+        else if (wantedStage) pathId = pathWalking(wantedStage) ?? model.defaultPath;
+        const wanted = walk().indexOf(wantedStage);
+        if (wanted >= 0) stageIndex = wanted;
+        const object = params.get(OBJECT_PARAM);
+        if (object && objectPanels.has(object)) selected = object;
+      },
+      state: () => ({ path: pathId === model.defaultPath ? null : pathId, stage: currentStage(), object: selected }),
+      render,
+    };
+  }
+
+  function start(root: HTMLElement) {
+    const app = root.querySelector<HTMLElement>('[data-lx-app]');
+    const familyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-lx-family]')];
+    const defaultFamily = root.dataset.lxDefaultFamily ?? '';
+    let current: Family | undefined;
+
+    // The default family and the default path write no parameter, so a link
+    // from before there were families or paths and a link to the defaults are
+    // the same link.
+    const writeUrl = () => {
+      if (!current) return;
+      try {
+        const url = new URL(location.href);
+        const state = current.state();
+        if (current.id === defaultFamily) url.searchParams.delete(FAMILY_PARAM);
+        else url.searchParams.set(FAMILY_PARAM, current.id);
+        if (state.path) url.searchParams.set(PATH_PARAM, state.path);
+        else url.searchParams.delete(PATH_PARAM);
+        url.searchParams.set(STAGE_PARAM, state.stage);
+        if (state.object) url.searchParams.set(OBJECT_PARAM, state.object);
+        else url.searchParams.delete(OBJECT_PARAM);
+        history.replaceState(history.state, '', url);
+      } catch {
+        // A sandboxed frame can refuse replaceState; the explorer works without it.
+      }
+    };
+
+    const all = [...root.querySelectorAll<HTMLElement>('[data-lx-family-view]')]
+      .map((view) => family(view, writeUrl))
+      .filter((one): one is Family => one !== null);
+    if (!app || all.length === 0) return;
+
+    const show = () => {
+      for (const one of all) one.view.hidden = one !== current;
+      for (const button of familyButtons) {
+        button.setAttribute('aria-pressed', String(button.dataset.lxFamily === current?.id));
+      }
+    };
+
+    // Another family starts afresh, at its default path and its first stage
+    // with nothing selected: no path, stage or object of the family left
+    // behind means anything in it.
+    const chooseFamily = (id: string) => {
+      const target = all.find((one) => one.id === id);
+      if (!target || target === current) return;
+      target.reset();
+      current = target;
+      show();
+      target.render();
+    };
+    for (const button of familyButtons) button.addEventListener('click', () => chooseFamily(button.dataset.lxFamily!));
+
+    // A link opens the family it names, or else the one its stage, its path or
+    // its object belongs to, in that order.
     const params = new URLSearchParams(location.search);
-    const wantedStage = params.get(STAGE_PARAM) ?? '';
-    const wantedPath = params.get(PATH_PARAM);
-    if (wantedPath && pathById.has(wantedPath)) pathId = wantedPath;
-    else if (wantedStage) pathId = pathWalking(wantedStage) ?? model.defaultPath;
-    const wanted = walk().indexOf(wantedStage);
-    if (wanted >= 0) stageIndex = wanted;
-    const object = params.get(OBJECT_PARAM);
-    if (object && objectPanels.has(object)) selected = object;
+    const named = (param: string, has: (one: Family, value: string) => boolean) => {
+      const value = params.get(param);
+      return value ? all.find((one) => has(one, value)) : undefined;
+    };
+    current =
+      named(FAMILY_PARAM, (one, value) => one.id === value) ??
+      named(STAGE_PARAM, (one, value) => one.owns(value)) ??
+      named(PATH_PARAM, (one, value) => one.hasPath(value)) ??
+      named(OBJECT_PARAM, (one, value) => one.hasObject(value)) ??
+      all.find((one) => one.id === defaultFamily) ??
+      all[0];
+    current.restore(params);
 
     app.hidden = false;
     root.dataset.lxReady = '';
-    render(false);
+    show();
+    current.render(false);
   }
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-lx]')) start(root);

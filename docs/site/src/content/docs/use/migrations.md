@@ -40,6 +40,10 @@ URL never talks to your registry.
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 draws this path beside the schema's, with who does what at each stage, and
 [Run one from the command line](#stage-by-stage) walks it.
+[The lifecycle explorer](../../reference/reconciliation/?lx-family=migration#lifecycle-explorer)
+steps through one run with the objects each stage touches, and follows it
+where it turns: a history with nothing pending, or a run that ends `Partial`
+or `Unknown` and how it is settled.
 
 ## The minimal resource
 
