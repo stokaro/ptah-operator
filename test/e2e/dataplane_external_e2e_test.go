@@ -554,11 +554,13 @@ func (d *dataPlane) assertGrantOnlyChangePlansUnderAlways(schema, publishReferen
 
 // externalViewState is how the external database holds the security_invoker
 // row's view: its options, a colon, and whether its body reads only rows with a
-// positive id. It is empty when the view does not exist.
+// positive id. It is empty when the view does not exist. PostgreSQL 15
+// qualifies the column when it prints the body, (e2e_widgets.id > 0), and 16
+// and later print (id > 0), so the pattern starts at the column name.
 func (d *dataPlane) externalViewState() string {
 	d.t.Helper()
 	return removeWhitespace(d.externalPGQuery(
-		"SELECT coalesce(array_to_string(c.reloptions, ','), '') || ':' || (pg_get_viewdef(c.oid) LIKE '%(id > 0)%')::text " +
+		"SELECT coalesce(array_to_string(c.reloptions, ','), '') || ':' || (pg_get_viewdef(c.oid) LIKE '%id > 0)%')::text " +
 			"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
 			"WHERE n.nspname = 'public' AND c.relname = '" + externalView + "' AND c.relkind = 'v'"))
 }
