@@ -189,8 +189,12 @@ func claimRewritten(family Family, conditions []metav1.Condition) *metav1.Condit
 // every harvest, those that end in Blocked included (consumeResultWithTransport,
 // refuseSchemaSource, the end of a Plan with nothing to publish and
 // blockVerification in internal/controller), from the clock of the manager that
-// wrote it. Ready's own lastTransitionTime cannot say it: Ready stays False from
-// the claim's OperationInProgress to the Blocked, and keeps its time.
+// wrote it. A failure the operator retries under the same claim
+// (retryOperationReporting), such as a proof whose read named another target,
+// writes no time of its own: its Blocked keeps the claim's, and the claim it
+// keeps means the document does not rest. Ready's own lastTransitionTime cannot
+// say it: Ready stays False from the claim's OperationInProgress to the Blocked,
+// and keeps its time.
 //
 // A migration's stamp is the lastTransitionTime of Progressing. Every claim takes
 // it to True and every write of Blocked takes it back to False, so the time is the
