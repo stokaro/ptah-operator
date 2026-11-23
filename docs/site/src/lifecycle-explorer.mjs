@@ -11,9 +11,12 @@
 //
 // The scenario is the one First schema walks: a PtahSchema named
 // `application` in the namespace `application`, read from a ConfigMap, under
-// `apply: OnApproval`, with a plan that changes something and nothing that
-// fails. Error and recovery branches, the migration family and the audit view
-// are later slices of #817.
+// `apply: OnApproval`, with a plan that changes something. Its stages are the
+// successful path. `paths` adds the ones that turn off it: a plan Ptah
+// refuses, a plan replaced before anyone approved it, and an Apply nobody can
+// account for. A path names the successful stage it turns after and the one it
+// comes back at, if it does, and `walkOf` joins them. The migration family and
+// the audit view are later slices of #817.
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -241,10 +244,10 @@ export const relations = [
 // touches, `inspect` the supported way to read it, `done` how to tell the
 // stage is over.
 export const scenario = {
-  id: 'schema-success',
-  title: 'A successful schema change',
+  id: 'schema-change',
+  title: 'One schema change',
   summary:
-    'A PtahSchema read from a ConfigMap under apply: OnApproval, from kubectl apply to In sync, with nothing refused and nothing failing. The commands use the names from First schema.',
+    'A PtahSchema read from a ConfigMap under apply: OnApproval, from kubectl apply to In sync. Choose a path to follow it where it turns: a plan Ptah refuses, a plan replaced before anyone approved it, or an Apply nobody can account for. The commands use the names from First schema.',
   stages: [
     {
       id: 'apply',
@@ -460,10 +463,306 @@ export const scenario = {
   ],
 };
 
+// The paths through the scenario. The first is the default, and its stages
+// are scenario.stages. Every other one turns after the successful stage
+// `turnsAfter` names, walks its own `stages`, and comes back at the successful
+// stage `rejoins` names, or ends on its own when it names none. A branch stage
+// is written like a successful one, and its id is unique across all paths, so
+// a link that names it names its path too.
+export const paths = [
+  {
+    id: 'success',
+    label: 'Successful',
+    title: 'A successful schema change',
+    summary: 'Nothing refused and nothing failing, from kubectl apply to In sync.',
+  },
+  {
+    id: 'refused',
+    label: 'Refused plan',
+    title: 'Ptah refuses the plan',
+    summary:
+      'The Plan runs, and Ptah refuses to plan the change under a code. No plan is published and nothing runs. The schema stops Blocked until an input changes, and then plans again.',
+    turnsAfter: 'observe',
+    rejoins: 'plan',
+    stages: [
+      {
+        id: 'refused-plan',
+        title: 'Ptah refuses the plan',
+        phase: 'Planning, then Blocked',
+        lead: 'executor',
+        actors: {
+          operator:
+            'Takes the database-realm Lease and creates a Plan Job, as on the successful path. It publishes no plan and leaves the schema Blocked. It does not try the Plan again at the failure retry: another Plan of the same schema against the same server, as the same account, gets the same answer.',
+          kubernetes: 'Runs the Plan Pod. The Job is collected five minutes after it finishes.',
+          executor:
+            'Ptah compares the schema with the database, then refuses under a code, from the plan or from the dry run of the saved plan: a view whose security option or definer the schema does not state, an owner the server would refuse, a backslash its sql_mode reads another way, or a declaration the target cannot host. Its sentence, which names the objects and says what to change, goes to the Plan Pod’s log.',
+        },
+        objects: ['job', 'lease', 'status'],
+        expect:
+          'Phase Blocked. Ready=False with reason PlanRefused and the message plan_refused: ptah refused to plan the change (<code>), and a PlanRefused Warning Event with the same message. PlanReady and ReconciliationFailed are false, and DatabaseReachable is true.',
+        inspect: [
+          { command: 'kubectl ptah schema application -n application', says: 'Phase Blocked, and Ready=False with reason PlanRefused and the code.' },
+          { command: 'kubectl events -n application --for ptahschema/application', says: 'The PlanRefused Warning, with the same message.' },
+        ],
+        done: 'The schema rests at Blocked with reason PlanRefused. No plan waits, so there is nothing to approve.',
+        limits: 'Blocked is a refusal, not a fault: the answer does not change until somebody changes an input. Status never carries Ptah’s sentence.',
+        links: [
+          { label: 'A Plan that stops without saying why', href: '../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why' },
+          { label: 'Blocked is a refusal, not a fault', href: '#blocked-is-a-refusal-not-a-fault' },
+        ],
+      },
+      {
+        id: 'refused-read',
+        title: 'Read why it refused',
+        phase: 'Blocked',
+        lead: 'you',
+        actors: {
+          you: 'Read the code in the message, then Ptah’s sentence: the line of the Plan Pod’s log that starts with ptah-runner: ptah reported:. Reading the log takes pods/log in the namespace.',
+          operator: 'Reads the source again at spec.interval, at once when a ConfigMap source or the spec changes, or on kubectl ptah refresh.',
+        },
+        objects: ['job', 'status'],
+        inspect: [
+          { command: 'kubectl -n application get jobs', says: 'The Plan Job, while it is kept.' },
+          {
+            command: 'kubectl logs -n application job/<plan job> -c ptah',
+            says: 'Ptah’s sentence, which names the objects and says what to change. Once the Job is gone, kubectl ptah refresh runs a new Plan, which writes a fresh log.',
+          },
+        ],
+        done: 'You know the code and the objects it names.',
+        links: [
+          { label: 'What Ptah refused, and what to do', href: '../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why' },
+          { label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' },
+        ],
+      },
+      {
+        id: 'refused-fix',
+        title: 'Change the input, then read again',
+        phase: 'Blocked, then Planning',
+        lead: 'you',
+        actors: {
+          you: 'Do what the refusal asks: change the declaration in the ConfigMap, list the object in spec.policy.exclude, or fix the server, for a role it does not hold, a privilege the login lacks or its sql_mode. Then ask for a read.',
+          operator:
+            'An edit to the ConfigMap or the spec starts the read at once. A refusal the server decides lifts only on the server, and nothing the operator watches says when, so the read waits for spec.interval or for kubectl ptah refresh. A refresh starts no Apply and approves nothing.',
+        },
+        objects: ['source', 'schema', 'status'],
+        expect: 'A new Plan. When Ptah plans the change, the walk goes on as on the successful path, at Publish the plan.',
+        inspect: [
+          {
+            command: 'kubectl ptah refresh schema/application -n application --wait',
+            says: 'Stays until the read it asked for has ended. Exit 8 means that read ended at Blocked again.',
+          },
+        ],
+        done: 'The next Plan publishes a plan.',
+        limits: 'The operator rolls nothing back and changes nothing on the server. Without --wait, refresh says only that the request was written, which is not the read.',
+        links: [
+          { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
+          { label: 'Reading again on request', href: '#reading-again-on-request' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'stale',
+    label: 'Stale plan',
+    title: 'The plan is replaced before approval',
+    summary:
+      'A plan waits for an approval, and an input changes before anyone approves it. The plan is retired, a fresh read makes its replacement, and only an approval of the replacement counts.',
+    turnsAfter: 'plan',
+    rejoins: 'decision',
+    stages: [
+      {
+        id: 'stale-input',
+        title: 'An input changes while the plan waits',
+        phase: 'AwaitingApproval, then Observing, Planning and AwaitingApproval',
+        lead: 'operator',
+        actors: {
+          you: 'Edit the ConfigMap or the schema’s spec while the plan waits. Another writer changing the database has the same effect.',
+          operator:
+            'A changed generation, policy, artifact, coordination key, route identity or observed state retires the plan before Apply. The operator clears status.plan, marks any approval of the old plan stale, reads the database again and plans again. The new plan’s PlanPublished entry names the old one as replaced, and a PlanStale Warning Event names both.',
+          executor: 'Runs a fresh Observe and Plan, as on the successful path.',
+        },
+        objects: ['schema', 'source', 'status', 'plan', 'job'],
+        expect:
+          'On the way, PlanReady=False with reason Stale and Ready=False with reason StalePlan. Then a new plan, phase AwaitingApproval, and ApprovalRequired=True with reason Waiting.',
+        inspect: [
+          {
+            command: 'kubectl events -n application --for ptahschema/application',
+            says: 'PlanStale: the old plan will not be applied, the new one replaced it before it ran, and an approval of the old one no longer counts.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'PlanPublished for the new plan, with replaced naming the old one. The Event can be lost; the journal entry is the record.',
+          },
+        ],
+        done: 'A replacement plan waits for an approval.',
+        limits: 'The replacement is another plan with its own fingerprint. Nothing about the old plan, its review or its approval carries over.',
+        links: [
+          { label: 'Where the path turns', href: '#where-the-path-turns' },
+          { label: 'Events', href: '../../troubleshoot/events/' },
+          { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+        ],
+      },
+      {
+        id: 'stale-approval',
+        title: 'An approval of the old plan approves nothing',
+        phase: 'AwaitingApproval',
+        lead: 'you',
+        actors: {
+          you: 'Answer kubectl ptah approve for the plan it showed you, and it reads the schema once more before it sends anything. A newer plan replaced that one, so it approves nothing and exits 4. Read the replacement, then approve that.',
+          kubernetes: 'Admission rejects an approval of a plan that is already stale, and one that names a plan UID or a fingerprint the current plan does not carry.',
+          operator: 'An approval stored before the plan was replaced gets Stale=True with reason PlanNoLongerCurrent and an ApprovalStale Warning Event. It is never consumed.',
+        },
+        objects: ['approval', 'plan', 'status'],
+        expect: 'kubectl ptah schema lists the old approval as Stale, naming a plan that is not the current one.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'The approvals that name the schema, with Accepted, Consumed and Stale, and whether each names the current plan.',
+          },
+          { command: 'kubectl ptah plan application -n application', says: 'The replacement, with its own fingerprint and statements.' },
+        ],
+        done: 'No approval counts for the replacement yet. The walk goes on at Approve that exact plan, for the replacement.',
+        links: [
+          { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+          { label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'uncertain',
+    label: 'Uncertain Apply',
+    title: 'An Apply nobody can account for',
+    summary:
+      'The Apply ends with no proof of what it did. The operator never runs the plan again: a fresh read-only observation establishes what the database holds, and the schema recovers forward from there.',
+    turnsAfter: 'execute',
+    stages: [
+      {
+        id: 'unknown-outcome',
+        title: 'The Apply ends without proof',
+        phase: 'Applying, then VerifyingConvergence',
+        lead: 'operator',
+        actors: {
+          executor: 'Ptah reports an error, or the run leaves nothing the manager can read: missing output, a timeout, a cancellation or malformed output.',
+          kubernetes: 'Keeps the Apply Job and its log for 24 hours after it finishes, the cleanup TTL of an Apply a person approved whose outcome is unknown.',
+          operator:
+            'Records every Apply error as an unknown outcome, because another Pod of the same Job may have run. It keeps the Lease under the Apply’s holder, records the proof it owes in status.pendingObservation, writes ApplyFinished with outcome Unknown, and permits only a read-only observation. The plan is never replayed, and the approval was spent at dispatch.',
+        },
+        objects: ['job', 'result', 'status', 'lease', 'approval'],
+        expect:
+          'Applying=False with reason OutcomeUnknown, ReconciliationFailed=True and Ready=False with reason ApplyOutcomeUnknown, and an ApplyOutcomeUnknown Warning Event. When the run wrote something to read, the condition’s message ends with the command that reads the Pod log.',
+        inspect: [
+          { command: 'kubectl ptah schema application -n application', says: 'Applying=False with reason OutcomeUnknown, and where the Pod log is.' },
+          {
+            command: 'kubectl ptah schema application -n application --details',
+            says: 'Pending proof: the Apply’s own result, OutcomeUnknown, and the time the database is not read before, while the Apply’s Pod could still run.',
+          },
+          { command: 'kubectl logs -n application job/<apply job> -c ptah', says: 'One line from the run, with the database’s words, after ptah-runner: ptah reported:.' },
+        ],
+        done: 'The outcome is recorded as unknown, and a proof is owed.',
+        limits:
+          'Unknown means nobody established the outcome. It does not mean the SQL failed: the database may hold the change, part of it or none of it. kubectl ptah approve --wait stops here with exit 8.',
+        links: [
+          { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
+          { label: 'A statement the database refused', href: '../../troubleshoot/condition-reasons/#a-statement-the-database-refused' },
+          { label: 'What a failed Apply leaves in its Pod log', href: '../../use/operations/#failed-apply-log' },
+        ],
+      },
+      {
+        id: 'unknown-proof',
+        title: 'Prove what the database holds',
+        phase: 'VerifyingConvergence',
+        lead: 'executor',
+        actors: {
+          operator:
+            'Runs a fresh Observe and Plan before anything else. If the Job’s creation or identity is uncertain, it first waits for the complete possible mutation deadline, renewing the Lease. The observation is bound to the plan’s target.',
+          kubernetes: 'Runs the two read-only Jobs.',
+          executor: 'Reads the database the plan named and plans the same scope. A Pod whose URL names another target is refused before it connects.',
+        },
+        objects: ['job', 'lease', 'status'],
+        expect: 'A no-change plan, or a plan with changes still to make.',
+        inspect: [
+          { command: 'kubectl ptah schema application -n application --details', says: 'Pending proof, until the observation settles it.' },
+          { command: 'kubectl -n application get ptahschema application -w', says: 'VerifyingConvergence, then InSync, or AwaitingApproval when changes remain.' },
+        ],
+        done: 'The observation settles the proof the Apply owed.',
+        limits:
+          'A proof whose target moved stops at Blocked with reason TargetIdentityChanged and keeps its claim and Lease, until the first target is back or a person settles it with kubectl ptah settle.',
+        links: [
+          { label: 'Where the path turns', href: '#where-the-path-turns' },
+          { label: 'A schema whose target moved', href: '../../use/recovery/#a-schema-whose-target-moved' },
+        ],
+      },
+      {
+        id: 'unknown-recover',
+        title: 'Recover forward',
+        phase: 'InSync, or AwaitingApproval',
+        lead: 'you',
+        actors: {
+          operator:
+            'With no change, it records InSync=True with reason ConvergedAfterUnknownOutcome and hands the Lease back. With changes, it publishes a new plan, which under OnApproval waits for a new approval, because the Apply spent the one it carried. It rolls nothing back.',
+          you: 'With no change, nothing more is owed. With a new plan, read it and decide again: it is another plan, and the earlier approval does not cover it. If the database needs repair first, repair it deliberately, then ask for a read so the observation produces a new plan.',
+        },
+        objects: ['status', 'plan', 'approval'],
+        expect: 'InSync=True with reason ConvergedAfterUnknownOutcome, or a new plan waiting with ApprovalRequired=True.',
+        inspect: [
+          { command: 'kubectl ptah plan application -n application', says: 'The new plan, when changes remain.' },
+          { command: 'kubectl ptah approve schema/application -n application --wait', says: 'A new approval, bound to the new plan, and a wait until it has run and been proved.' },
+          { command: 'kubectl ptah refresh schema/application -n application --wait', says: 'A read after a repair, rather than at the next interval.' },
+        ],
+        done: 'The schema is in sync, or a new plan is approved and goes through the stages from Claim and dispatch the Apply again.',
+        limits:
+          'Convergence after an unknown outcome credits no Apply with it. The schema records no status.applied for it, so kubectl ptah plan --applied does not show this plan.',
+        links: [
+          { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
+          { label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' },
+          { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+        ],
+      },
+      {
+        id: 'unknown-history',
+        title: 'Read what is recorded',
+        phase: 'InSync, or AwaitingApproval',
+        lead: 'you',
+        actors: {
+          you: 'Read the journal and the Events. ApplyFinished names the claim, the plan, the approval and the Job, and the statement the Apply stopped at where the database answered. Verified, joined to it by operationID, says what the proof found.',
+          operator: 'Keeps the journal in the status writes it already makes.',
+        },
+        objects: ['status', 'approval', 'plan'],
+        expect: 'ApplyFinished with outcome Unknown, then Verified with outcome InSync, or DriftRemains when changes remained.',
+        inspect: [
+          { command: 'kubectl ptah history schema/application -n application', says: 'The journal, with the approval the Apply spent.' },
+          { command: 'kubectl events -n application --for ptahschema/application', says: 'The ApplyOutcomeUnknown Warning, while Kubernetes keeps it, about an hour.' },
+        ],
+        done: 'You know what the operator recorded, and what it could not.',
+        limits:
+          'The journal carries no SQL text and no messages, and a converged schema does not say which statements ran. A proof that converged does not reconstruct what the Apply did.',
+        links: [
+          { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+          { label: 'What a resource kept of its past', href: '../../use/read-a-plan/#history' },
+        ],
+      },
+    ],
+  },
+];
+
+export const defaultPath = paths[0].id;
+
+// The stages a path walks, in order: the successful ones up to the stage it
+// turns after, its own, then the successful ones from the stage it rejoins at.
+// `main` is the successful path's stages, so the gate's self-test can pass a
+// model of its own.
+export function walkOf(path, main = scenario.stages) {
+  if (!path.turnsAfter) return main;
+  const turn = main.findIndex((stage) => stage.id === path.turnsAfter);
+  const rejoin = path.rejoins ? main.findIndex((stage) => stage.id === path.rejoins) : main.length;
+  return [...main.slice(0, turn + 1), ...(path.stages ?? []), ...main.slice(rejoin < 0 ? main.length : rejoin)];
+}
+
 // What this slice leaves to later ones, said on the page so a reader does not
-// take the absence of a branch for a path that cannot turn.
+// take the absence of a path for a path that cannot turn.
 export const notCovered = {
-  text: 'This walk takes the path with nothing refused and nothing failing. A refusal, a stale plan, an uncertain Apply and their recovery are drawn in the reference below, and versioned migrations have a walk of their own.',
+  text: 'Other turns, such as nothing to change, apply: Never or Always, a read that fails and a proof whose target moved, are drawn in the reference below, and versioned migrations have a walk of their own.',
   links: [
     { label: 'Where the path turns', href: '#where-the-path-turns' },
     { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
