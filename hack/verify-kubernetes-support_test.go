@@ -1187,7 +1187,7 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 			want: `step "app-token" must be the unconditional audited action invocation`,
 		},
 		"unpinned token action": {
-			old:  "        uses: " + createAppTokenAction + " # v3.3.0\n",
+			old:  "        uses: " + createAppTokenAction + " # v3.4.0\n",
 			new:  "        uses: actions/create-github-app-token@v3\n",
 			want: `step "app-token" must be the unconditional audited action invocation`,
 		},

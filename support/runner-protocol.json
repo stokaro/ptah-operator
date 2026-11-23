@@ -537,6 +537,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:6c0911bb813b7c079c1aa83c2bd5eaed851be2cdaa6db466e06530cde99f0480",
       "reason": "A plan Ptah reports failed with no refusal code, no target failure and no fault of the file now writes Ptah's sentence to the Plan Pod's log as a ptah-runner: ptah reported: line, as a coded refusal does (#1170). The frame keeps invalid_plan_output with the generic message, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:e5946fa26d8ac71205b0a0b7aff3455033df6f2b79efb7c7ca28ed6ee9316e58",
+      "reason": "Dependency updates the runner links, with no change to its own source: golang.org/x/crypto v0.59.0 with x/net v0.62.0, x/sys v0.50.0, x/term v0.48.0 and x/text v0.44.0; x/oauth2 v0.38.0; controller-runtime v0.25.3; prometheus/common v0.74.0; go-logr/logr v1.4.4; pandatix/go-abnf v0.5.5; go.yaml.in/yaml/v2 v2.4.5. What the runner accepts, enforces and returns is written in this repository and did not change, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }
