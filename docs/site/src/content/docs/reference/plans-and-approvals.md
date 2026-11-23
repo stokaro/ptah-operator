@@ -15,18 +15,22 @@ names, and what the controller recomputes from live inputs before an Apply may
 run: a changed input produces a different plan rather than a changed one.
 
 ```mermaid
-flowchart LR
+---
+config:
+  look: classic
+  themeVariables:
+    fontSize: 14px
+  flowchart:
+    wrappingWidth: 340
+    nodeSpacing: 16
+    rankSpacing: 26
+---
+flowchart TD
+  accTitle: What a plan fingerprint binds
+  accDescr: An OCI tag resolves to a digest, which a verification policy verifies. The plan fingerprint covers that policy and the inputs its box lists. An approval names the fingerprint, and Apply reconstructs and rehashes it.
   tag["OCI tag"] -->|resolve| digest["artifact digest"]
-  digest -->|verify| policy["verification policy<br/>UID + digest"]
-  policy --> plan["plan fingerprint"]
-  observed["observed state"] --> plan
-  desired["desired state"] --> plan
-  reconcile["spec.policy"] --> plan
-  realm["coordination digest"] --> plan
-  route["route identity digest"] --> plan
-  epoch["execution binding epoch<br/>controller-state version"] --> plan
-  ptah["Ptah version, executor,<br/>runner protocol"] --> plan
-  bytes["plan content digest"] --> plan
+  digest -->|verify| policy["verification policy<br/>UID and digest"]
+  policy --> plan["<b>plan fingerprint</b>, also over<br/>observed and desired state,<br/>spec.policy, coordination digest,<br/>route identity digest, execution<br/>binding epoch, controller-state<br/>version, Ptah version, executor,<br/>runner protocol, plan content digest"]
   plan --> approval["approval names the fingerprint"]
   approval --> apply["Apply reconstructs and rehashes"]
 ```
