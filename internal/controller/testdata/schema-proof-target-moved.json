@@ -1,0 +1,127 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "generation": 1,
+    "name": "app",
+    "namespace": "team-a"
+  },
+  "status": {
+    "activeOperation": {
+      "type": "Observe",
+      "id": "observe-operation",
+      "inputFingerprint": "",
+      "jobName": "ptah-observe-test",
+      "startedAt": "2026-08-30T11:59:00Z",
+      "attempt": 2,
+      "executionBindingID": "v1-33333333333333333333333333333333",
+      "coordinationDigest": "sha256:a24863719b4087961537b110d7100883345424490f6a809d7b2ed33e2f52c28c",
+      "targetIdentityDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "name": "database",
+          "key": "url"
+        }
+      },
+      "observationConnectTimeout": "0s",
+      "observationLockTimeout": "0s",
+      "source": {
+        "resolvedReference": "oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "transport": {}
+      },
+      "leaseDurationSeconds": 960
+    },
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "TargetIdentityChanged",
+        "message": "the URL Secret now holds another target than the plan this Apply ran from: another login, host, port, database or URL parameter, so no read can say what the Apply did; put the first URL back and the proof finishes, or give the proof up, which reads the database under the new URL and, under apply: Always, applies the next plan with no approval unless it is destructive or changes privileges: kubectl annotate ptahschema app -n team-a operator.ptah.run/settled-apply=apply-operation/sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --overwrite"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "TargetIdentityChanged",
+        "message": "The proof of the last Apply needs a person: ReconciliationFailed says what to do"
+      }
+    ],
+    "journal": {
+      "coveredSince": null,
+      "entries": [
+        {
+          "type": "OperationFailed",
+          "at": null,
+          "operation": "Observe",
+          "reason": "TargetIdentityChanged"
+        }
+      ]
+    },
+    "lastAttemptTime": null,
+    "nextReconciliationTime": "2026-08-30T12:00:30Z",
+    "observedGeneration": 1,
+    "pendingObservation": {
+      "outcome": "ApplySucceeded",
+      "applyOperationID": "apply-operation",
+      "applyJobName": "apply-job",
+      "applyJobUID": "apply-job-uid",
+      "applyGeneration": 1,
+      "plan": {
+        "name": "post-apply-plan",
+        "uid": "post-apply-plan-uid",
+        "fingerprint": "plan-fingerprint",
+        "contentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coordinationDigest": "sha256:a24863719b4087961537b110d7100883345424490f6a809d7b2ed33e2f52c28c",
+        "targetIdentityDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "actualStateFingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "desiredStateFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policyFingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "verificationPolicyUID": "verification-policy-v1-uid",
+        "verificationPolicyDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "executionBindingID": "v1-33333333333333333333333333333333",
+        "controllerImage": "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "controllerRevision": "controller-test-revision",
+        "controllerStateVersion": 1,
+        "ptahVersion": "v0.3.0",
+        "executorImage": "example.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runnerImage": "example.invalid/operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runnerProtocolVersion": 1,
+        "destructive": false,
+        "statementCount": 0,
+        "createdAt": null
+      },
+      "target": {
+        "engine": "PostgreSQL",
+        "urlFrom": {
+          "name": "database",
+          "key": "url"
+        }
+      },
+      "coordinationDigest": "sha256:a24863719b4087961537b110d7100883345424490f6a809d7b2ed33e2f52c28c",
+      "source": {
+        "resolvedReference": "oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "transport": {}
+      },
+      "connectTimeout": "0s",
+      "lockTimeout": "0s",
+      "leaseDurationSeconds": 960
+    },
+    "phase": "Blocked",
+    "plan": null
+  }
+}

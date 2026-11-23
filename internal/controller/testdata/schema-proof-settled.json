@@ -1,0 +1,78 @@
+{
+  "apiVersion": "operator.ptah.run/v1alpha1",
+  "kind": "PtahSchema",
+  "metadata": {
+    "generation": 1,
+    "name": "app",
+    "namespace": "team-a"
+  },
+  "status": {
+    "activeOperation": null,
+    "conditions": [
+      {
+        "type": "EngineSupported",
+        "status": "True",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "SupportedEngine",
+        "message": "Database engine \"PostgreSQL\" is supported"
+      },
+      {
+        "type": "ReconciliationFailed",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "ProofSettled",
+        "message": "A person settled the proof of the last Apply; no read established what that Apply did"
+      },
+      {
+        "type": "Ready",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "ProofSettled",
+        "message": "A person settled the proof of the last Apply; no read established what that Apply did"
+      },
+      {
+        "type": "InSync",
+        "status": "Unknown",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "ProofSettled",
+        "message": "A person settled the proof of the last Apply; no read established what that Apply did"
+      },
+      {
+        "type": "PlanReady",
+        "status": "False",
+        "observedGeneration": 1,
+        "lastTransitionTime": null,
+        "reason": "ProofSettled",
+        "message": "A person settled the proof of the last Apply; no read established what that Apply did"
+      }
+    ],
+    "journal": {
+      "coveredSince": null,
+      "entries": [
+        {
+          "type": "OperationFailed",
+          "at": null,
+          "operation": "Observe",
+          "reason": "TargetIdentityChanged"
+        },
+        {
+          "type": "Verified",
+          "at": null,
+          "operationID": "apply-operation",
+          "plan": "post-apply-plan",
+          "outcome": "Unknown"
+        }
+      ]
+    },
+    "lastAttemptTime": null,
+    "nextReconciliationTime": null,
+    "observedGeneration": 1,
+    "pendingObservation": null,
+    "phase": "Pending",
+    "plan": null
+  }
+}

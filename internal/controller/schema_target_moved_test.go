@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1162,4 +1163,74 @@ func lastJournalEntry(t *testing.T, schema *operatorv1alpha1.PtahSchema) operato
 	}
 	entries := schema.Status.Journal.Entries
 	return entries[len(entries)-1]
+}
+
+// targetMovedReadingPath is the stored schema of a proof whose read named another
+// target, as the first row of
+// TestAProofThatReadsAnotherTargetStopsAndSaysHowToEndIt leaves it, and
+// proofSettledReadingPath the one the read after a person's statement leaves.
+// kubectl ptah's wait rule is tested against both
+// (cmd/kubectl-ptah/target_moved_wait_test.go), so it cannot pass against a stop
+// the reconciler never writes.
+var (
+	targetMovedReadingPath  = filepath.Join("testdata", "schema-proof-target-moved.json")
+	proofSettledReadingPath = filepath.Join("testdata", "schema-proof-settled.json")
+)
+
+// TestTheTargetMovedReadingsAreWhatTheReconcilerStores keeps those readings to
+// the documents the reconciler stores. Each carries the claim and the proof it
+// owes, or the lack of them, and the journal a settlement is read from. The
+// journal is stamped by the wall clock as conditions are (patchStatus), so its
+// times are left out with the condition transition times.
+func TestTheTargetMovedReadingsAreWhatTheReconcilerStores(t *testing.T) {
+	t.Parallel()
+	schema := safetyPostApplyObserveSchema(t)
+	// The fixture starts the claim on the wall clock, and the retry keeps that
+	// time. A minute before the reconciler's fixed clock keeps it the same from
+	// run to run.
+	schema.Status.ActiveOperation.StartedAt = metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC))
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	reconciler, api := fakeReconciler(t, staticLogs{content: movedTargetFrame(t, schema, safetyOtherDigest, nil)}, schema, job, pod)
+	reconciler.Locks = targetlock.New(api, api, nil)
+	keep := func(path string, stored *operatorv1alpha1.PtahSchema) {
+		t.Helper()
+		var journal *operatorv1alpha1.LifecycleJournal
+		if stored.Status.Journal != nil {
+			journal = stored.Status.Journal.DeepCopy()
+			journal.CoveredSince = metav1.Time{}
+			for index := range journal.Entries {
+				journal.Entries[index].At, journal.Entries[index].LastAt = metav1.Time{}, nil
+			}
+		}
+		// A Lease epoch is a random nonce each attempt takes the realm under, and
+		// the claim's input fingerprint covers it. The claim and the proof it
+		// serves hold the same one, and the reading leaves out all three.
+		pending := stored.Status.PendingObservation.DeepCopy()
+		var operation *operatorv1alpha1.ActiveOperationStatus
+		if stored.Status.ActiveOperation != nil {
+			operation = stored.Status.ActiveOperation.DeepCopy()
+			if pending == nil || operation.LeaseEpoch == "" || operation.LeaseEpoch != pending.LeaseEpoch {
+				t.Fatalf("the claim holds Lease epoch %q and the proof %#v", operation.LeaseEpoch, pending)
+			}
+			operation.LeaseEpoch, operation.InputFingerprint, pending.LeaseEpoch = "", "", ""
+		}
+		keepSchemaReading(t, path, stored, map[string]any{
+			"activeOperation":    operation,
+			"pendingObservation": pending,
+			"journal":            journal,
+		})
+	}
+
+	stopped := reconcileSchema(t, reconciler, api, schema)
+	assertStopPrints(t, stopped, movedValue(), heldNothing)
+	if stopped.Status.ActiveOperation == nil {
+		t.Fatalf("the stop retired its claim: %#v", stopped.Status)
+	}
+	keep(targetMovedReadingPath, stopped)
+
+	setSettledApply(t, api, schema, movedValue())
+	settled := nextProofRead(t, reconciler, api, schema, "second", safetyOtherDigest, nil)
+	assertSettled(t, settled)
+	keep(proofSettledReadingPath, settled)
 }
