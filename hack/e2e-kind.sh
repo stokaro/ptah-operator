@@ -271,6 +271,13 @@ mysql_image_line() {
 	printf '%s\n' "$1" | sed -nE 's/^[^@]*:([1-9][0-9]*\.[0-9]+)([.-][^/:@]*)?@sha256:[0-9a-f]{64}$/\1/p'
 }
 
+# mysql_version_line prints the release line, major.minor, of the version an
+# official MySQL image declares as MYSQL_VERSION, such as 26.10 for
+# 26.10.0-1.el9, and nothing for a value that names no version.
+mysql_version_line() {
+	printf '%s\n' "$1" | sed -nE 's/^([1-9][0-9]*\.[0-9]+)\.[0-9]+([.-][^[:space:]]*)?$/\1/p'
+}
+
 # image_created_on reports whether Docker's created time for an image, the first
 # argument, falls on the date the second names.
 image_created_on() {
@@ -2874,14 +2881,17 @@ if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then
 fi
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
-# The official image installs the line it declares as MYSQL_MAJOR, so a tag whose
-# digest belongs to another line fails here instead of reporting this one proven.
+# The official image installs the release it declares as MYSQL_VERSION, so a tag
+# whose digest belongs to another line fails here instead of reporting this one
+# proven. MYSQL_MAJOR names the line only on an LTS image: an innovation image,
+# such as 26.10, declares MYSQL_MAJOR=innovation.
 mysql_image_environment=$(docker --context "$DOCKER_CONTEXT" image inspect \
 	--format '{{range .Config.Env}}{{println .}}{{end}}' "$E2E_MYSQL_SOURCE_IMAGE") ||
 	fail "could not read the environment $E2E_MYSQL_SOURCE_IMAGE declares"
-mysql_image_declared=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_MAJOR=//p')
+mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')
+mysql_image_declared=$(mysql_version_line "$mysql_image_version")
 [ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||
-	fail "$E2E_MYSQL_SOURCE_IMAGE names MySQL $E2E_MYSQL_LINE in its tag and declares MYSQL_MAJOR=$mysql_image_declared"
+	fail "$E2E_MYSQL_SOURCE_IMAGE names MySQL $E2E_MYSQL_LINE in its tag and declares MYSQL_VERSION=$mysql_image_version"
 if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then
 	mysql_image_created=$(docker --context "$DOCKER_CONTEXT" image inspect \
 		--format '{{.Created}}' "$E2E_MYSQL_SOURCE_IMAGE") ||

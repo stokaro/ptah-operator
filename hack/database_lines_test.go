@@ -771,6 +771,47 @@ func TestTheDriverAndThePhasesReadThePostgresImageAlike(t *testing.T) {
 	}
 }
 
+// The driver holds a MySQL image to its tag by the release the image installs.
+// An LTS image also names its line as MYSQL_MAJOR, and an innovation image names
+// no line there, so the version is the one value every official image carries.
+func TestTheDriverReadsAMySQLLineFromTheVersionTheImageInstalls(t *testing.T) {
+	t.Parallel()
+	functions := functionsFromDriver(t, "mysql_version_line")
+	for version, want := range map[string]string{
+		// What the pinned images declare: the baseline, 9.7 and 26.10.
+		"8.4.11-1.el9":  "8.4",
+		"9.7.4-1.el9":   "9.7",
+		"26.10.0-1.el9": "26.10",
+		// A hotfix release numbers a fourth part: the tag's build of
+		// 2026-11-23 declares this.
+		"26.10.0.1-1.el9": "26.10",
+		// A Debian build, and a version with no package suffix.
+		"8.0.40-1debian12": "8.0",
+		"8.4.11":           "8.4",
+		// What 26.10 declares as MYSQL_MAJOR, and other values that name no
+		// version.
+		"innovation":          "",
+		"9.7":                 "",
+		"26":                  "",
+		"":                    "",
+		"v9.7.4-1.el9":        "",
+		"09.7.4-1.el9":        "",
+		"9.7.4-1.el9 26.10.0": "",
+		"9.7.x":               "",
+	} {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+			got, err := runDriverFunction(functions, `mysql_version_line "$1"`, version)
+			if err != nil {
+				t.Fatalf("sh: %v", err)
+			}
+			if got != want {
+				t.Fatalf("mysql_version_line %q = %q, want %q", version, got, want)
+			}
+		})
+	}
+}
+
 // The age rule reads a date somebody typed. An added line's job is what holds that
 // date to the image, so the comparison has to refuse a digest built on another day,
 // and the driver has to make it.
@@ -805,9 +846,12 @@ func TestTheDriverHoldsAnAddedLinesDateToItsImage(t *testing.T) {
 	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, driver); err != nil {
 		t.Fatalf("verifyDatabaseImageDateCheck() error = %v", err)
 	}
+	versionRead := `mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')`
 	for _, check := range []string{
 		`image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`,
 		`image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`,
+		versionRead,
+		`mysql_image_declared=$(mysql_version_line "$mysql_image_version")`,
 		`[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`,
 	} {
 		if strings.Count(string(driver), check) != 1 {
@@ -816,5 +860,11 @@ func TestTheDriverHoldsAnAddedLinesDateToItsImage(t *testing.T) {
 		if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), check, "true ||", 1))); err == nil {
 			t.Fatalf("a driver that stopped making %q was accepted", check)
 		}
+	}
+	// The read that held 8.4 and 9.7 refuses 26.10, which declares
+	// MYSQL_MAJOR=innovation, so going back to it is a regression.
+	majorRead := strings.Replace(versionRead, "MYSQL_VERSION", "MYSQL_MAJOR", 1)
+	if err := verifyDatabaseImageDateCheck(e2eHarnessPath, []byte(strings.Replace(string(driver), versionRead, majorRead, 1))); err == nil {
+		t.Fatal("a driver that reads the MySQL line from MYSQL_MAJOR was accepted")
 	}
 }
