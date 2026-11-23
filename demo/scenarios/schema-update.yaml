@@ -65,7 +65,7 @@ steps:
     sync: converged
     expect:
       exit: 0
-      stdout_contains: ['ALTER TABLE "customers"', 'CREATE TABLE "orders"']
+      stdout_contains: ['ALTER TABLE "public"."customers"', 'CREATE TABLE "public"."orders"']
 
   - note: And the database has both, with the foreign key the declaration asked for.
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d orders"
