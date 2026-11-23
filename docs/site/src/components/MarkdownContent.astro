@@ -16,6 +16,7 @@
  */
 import '@astrojs/starlight/style/markdown.css';
 import FaqFilter from './FaqFilter.astro';
+import LifecycleExplorer from './LifecycleExplorer.astro';
 import MermaidRuntime from './MermaidRuntime.astro';
 
 const { entry } = Astro.locals.starlightRoute;
@@ -38,6 +39,29 @@ const questionCount = (entry.body?.match(/^### /gm) ?? []).length;
 // decide the column width on their own and leave the description a sliver; the
 // class is what the stylesheet needs to divide those columns itself.
 const isFieldReference = /^\| Field \| Type \| What it does \|$/m.test(entry.body ?? '');
+
+// The lifecycle explorer sits inside the Reconciliation page, before its
+// state diagrams, where the page marks it with an empty element. The page
+// stays Markdown for the reason the FAQ does -- every heading declares its
+// anchor as `{#id}` -- so the rendered content is split at the marker and the
+// component is rendered in its place, on the server, where a reader without
+// JavaScript and the search index find it too. Every other page renders its
+// slot untouched.
+const EXPLORER_MARKER = '<div data-lifecycle-explorer></div>';
+const isReconciliation = entry.id === 'reference/reconciliation' || entry.id === 'reference/reconciliation.md';
+let explorerSplit: [string, string] | null = null;
+if (isReconciliation) {
+  const html = await Astro.slots.render('default');
+  const parts = html.split(EXPLORER_MARKER);
+  // A marker that went missing, or appears twice, is a page that would render
+  // the explorer nowhere or in two places; the build refuses it instead.
+  if (parts.length !== 2) {
+    throw new Error(
+      `MarkdownContent: ${entry.id} has to carry ${EXPLORER_MARKER} exactly once; it carries it ${parts.length - 1} times`,
+    );
+  }
+  explorerSplit = [parts[0], parts[1]];
+}
 ---
 
 {isFaq && <FaqFilter count={questionCount} />}
@@ -45,5 +69,15 @@ const isFieldReference = /^\| Field \| Type \| What it does \|$/m.test(entry.bod
 <div
   class:list={['sl-markdown-content', isFaq && 'ptah-faq', isFieldReference && 'ptah-field-reference']}
 >
-  <slot />
+  {
+    explorerSplit ? (
+      <>
+        <Fragment set:html={explorerSplit[0]} />
+        <LifecycleExplorer />
+        <Fragment set:html={explorerSplit[1]} />
+      </>
+    ) : (
+      <slot />
+    )
+  }
 </div>

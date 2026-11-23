@@ -42,6 +42,8 @@ that names it.
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 shows where each command fits in a change's life: these read stages 2, 5 and 6,
 `approve` records stage 3, and `wait` watches stages 2 and 4.
+[The lifecycle explorer](../../reference/reconciliation/#lifecycle-explorer)
+steps through one schema change and gives the command for each stage.
 [Ptah Console](https://github.com/stokaro/ptah-console) is an optional interface
 to the same resources, and nothing on this page needs it.
 

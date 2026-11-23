@@ -64,6 +64,7 @@ jobs:
           npm run check:heading-anchors:selftest
           npm run check:faq-groups:selftest
           npm run check:faq-page:selftest
+          npm run check:lifecycle-explorer:selftest
           npm run check:diagram-size:selftest
           npm run check:navigation:selftest
           npm run check:build-info:selftest
@@ -142,6 +143,7 @@ jobs:
           npm run check:heading-anchors
           npm run check:faq-groups
           npm run check:faq-page
+          npm run check:lifecycle-explorer
           npm run check:diagram-size
           npm run check:build-info
           npm run check:demo-page

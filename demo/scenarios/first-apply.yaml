@@ -110,7 +110,7 @@ steps:
     run: kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
     expect:
       exit: 0
-      stdout_contains: ['CREATE TABLE "customers"']
+      stdout_contains: ['CREATE TABLE "public"."customers"']
 
   - note: And the database has it.
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d customers"

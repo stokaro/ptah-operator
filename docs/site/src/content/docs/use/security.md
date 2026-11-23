@@ -707,6 +707,19 @@ another resource, Job or Pod cannot acquire that identity. No per-operation
 Secret is created. A manager restart
 does not discard the stored result or require its original process key.
 
+Nothing else that reviews Kubernetes tokens should accept that audience either.
+An operation Pod runs as the execution ServiceAccount, or the namespace's
+`default` when the resource names none, and its result token proves that
+identity to anything that asks the API server with the token's own audience.
+Vault's Kubernetes auth method does that for a role that sets no `audience`:
+measured with Vault 2.0.4 on kind, the result token of an operation Pod logged in
+through such a role, and a role with `audience` set refused it. Set `audience`
+on every Vault role, or any other token reviewer's binding, that names the
+ServiceAccount your operations run as. Bind no cloud workload identity to that
+ServiceAccount: on GKE, Workload Identity serves the bound Google identity to
+every container in the Pod through the node's metadata server, the container
+that holds the database URL included.
+
 When `resultDelivery.enabled=false`, legacy Jobs instead write one frame to
 stdout. A Plan payload in that frame is sealed to a manager process key;
 logs hold ciphertext. Loss of that key can require another read-only Plan.

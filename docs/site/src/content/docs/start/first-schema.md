@@ -12,6 +12,9 @@ The page walks the path
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 draws, with `kubectl` and `kubectl ptah` alone, and
 [Stage by stage](#stage-by-stage) lists what to run and expect at each stage.
+The [lifecycle explorer](../../reference/reconciliation/#lifecycle-explorer)
+steps through the same run, with who acts at each stage and which objects it
+touches.
 [Ptah Console](https://github.com/stokaro/ptah-console) is optional, and no step
 here needs it.
 

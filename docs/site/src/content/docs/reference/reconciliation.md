@@ -9,6 +9,15 @@ rather than merged. What the operator is put together from is
 [Architecture](../architecture/); what enforces each promise, per family, is
 [Execution guarantees](../guarantees/).
 
+## Follow one schema change {#follow-one-schema-change}
+
+The explorer below walks one schema change from `kubectl apply` to `InSync`:
+who acts at each stage, which objects it touches, how they relate, and the
+command that shows it. Select a stage, or an object, to follow it. The
+sections after it are the precise reference it is taken from.
+
+<div data-lifecycle-explorer></div>
+
 ## From source to verified change {#from-source-to-verified-change}
 
 A change reaches a database along one path, whichever resource carries it. You

@@ -81,7 +81,7 @@ steps:
     sync: approved
     expect:
       exit: 0
-      stdout_contains: ['CREATE TABLE "customers"', "safe", "Fingerprint:", "Type yes to approve: yes",
+      stdout_contains: ['CREATE TABLE "public"."customers"', "safe", "Fingerprint:", "Type yes to approve: yes",
         "Approved: PtahSchemaApproval", reached applied]
       resource:
         kind: ptahschemaapproval

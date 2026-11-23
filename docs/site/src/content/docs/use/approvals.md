@@ -35,6 +35,9 @@ says why RBAC alone does not do it, and which groups to name.
 An approval names the schema with its UID, the plan with its UID and the plan's
 fingerprint, and nothing else a person writes: admission stamps who approved
 and when. Review the plan first.
+[The lifecycle explorer](../../reference/reconciliation/#lifecycle-explorer)
+shows where the decision falls in a schema change, and what the operator does
+with the approval once it is stored.
 
 A `PtahMigration` run also writes the approver's username to the
 [target database](../security/#approver-in-the-database), where it outlives the
