@@ -38,6 +38,63 @@ func TestPostgresImageMajorReadsOnlyADigestPinnedTag(t *testing.T) {
 	}
 }
 
+func TestMySQLImageLineReadsOnlyADigestPinnedTag(t *testing.T) {
+	t.Parallel()
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for image, want := range map[string]string{
+		"mysql:8.4" + digest:                              "8.4",
+		"mysql:9.7" + digest:                              "9.7",
+		"mysql:9.7.4" + digest:                            "9.7",
+		"mysql:9.7-oraclelinux9" + digest:                 "9.7",
+		"mysql:26.10" + digest:                            "26.10",
+		"registry.example:5000/mirror/mysql:9.7" + digest: "9.7",
+	} {
+		line, err := MySQLImageLine(image)
+		if err != nil || line != want {
+			t.Errorf("MySQLImageLine(%q) = %q, %v, want %q", image, line, err, want)
+		}
+	}
+	for _, image := range []string{
+		"mysql" + digest,
+		"registry.example:5000/mysql" + digest,
+		"mysql:9" + digest,
+		"mysql:lts" + digest,
+		"mysql:oraclelinux9-9.7" + digest,
+		"mysql:0.7" + digest,
+		"mysql:9.7",
+		"mysql:9.7@sha256:abc",
+		"",
+	} {
+		if line, err := MySQLImageLine(image); err == nil {
+			t.Errorf("MySQLImageLine(%q) = %q, want a refusal", image, line)
+		}
+	}
+}
+
+func TestDatabaseImageLineReadsEachEnginesOwnTag(t *testing.T) {
+	t.Parallel()
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for _, test := range []struct{ engine, image, want string }{
+		{"postgresql", "postgres:18-alpine" + digest, "18"},
+		{"mysql", "mysql:9.7" + digest, "9.7"},
+	} {
+		if line, err := DatabaseImageLine(test.engine, test.image); err != nil || line != test.want {
+			t.Errorf("DatabaseImageLine(%q, %q) = %q, %v, want %q", test.engine, test.image, line, err, test.want)
+		}
+	}
+	// A PostgreSQL tag names no minor, so MySQL refuses it, and an engine
+	// without a line in its tag is refused whatever the image.
+	for _, test := range []struct{ engine, image string }{
+		{"postgresql", "postgres:alpine" + digest},
+		{"mysql", "postgres:18-alpine" + digest},
+		{"mariadb", "mariadb:11.8" + digest},
+	} {
+		if line, err := DatabaseImageLine(test.engine, test.image); err == nil {
+			t.Errorf("DatabaseImageLine(%q, %q) = %q, want a refusal", test.engine, test.image, line)
+		}
+	}
+}
+
 func TestPostgresDataDirectoryFollowsTheVolumeTheImageDeclares(t *testing.T) {
 	t.Parallel()
 	for major, want := range map[int]string{

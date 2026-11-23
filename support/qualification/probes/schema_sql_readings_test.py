@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 import schema_sql_readings
-from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_postgresql_lines, comparable, contract,
+from schema_sql_readings import (LINE_WITNESSES, ROOT, CommandTimeout, Lab, added_lines, added_postgresql_lines, comparable, contract,
                                  contract_readings, documented_statements, received)
 
 READINGS = ROOT / 'testdata/e2e/readings'
@@ -36,6 +36,16 @@ class SchemaSQLReadingsTest(unittest.TestCase):
             self.assertEqual(witnessed, {operation for _, operation in LINE_WITNESSES})
             for name, _ in LINE_WITNESSES:
                 self.assertTrue((READINGS / f'postgresql-{major}-schema-{name}.jsonl').is_file())
+
+    def test_every_added_mysql_line_witnesses_every_operation(self):
+        lines = added_lines('mysql')
+        self.assertTrue(lines, 'the catalog adds no MySQL line, so this checks nothing')
+        readings = contract_readings('mysql')
+        for release, _ in lines:
+            witnessed = {operation for name, operation in readings if name.startswith(f'mysql-{release}-')}
+            self.assertEqual(witnessed, {operation for _, operation in LINE_WITNESSES})
+            for name, _ in LINE_WITNESSES:
+                self.assertTrue((READINGS / f'mysql-{release}-schema-{name}.jsonl').is_file())
 
     def test_statements_are_read_the_way_the_audit_reads_them(self):
         with tempfile.TemporaryDirectory() as directory:

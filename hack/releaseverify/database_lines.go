@@ -32,6 +32,10 @@ const (
 
 var databaseEvidenceRunPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 
+// databaseEngineNames are the words hack/verify-kubernetes-support.go names a
+// line's jobs with, which a release reads them by.
+var databaseEngineNames = map[string]string{"postgresql": "PostgreSQL", "mysql": "MySQL"}
+
 type databaseCatalogLine struct {
 	Engine      string `json:"engine"`
 	Line        string `json:"line"`
@@ -120,9 +124,13 @@ func verifySupportedDatabaseLines(ctx context.Context, client *http.Client, apiU
 // own conclusion is not read, because a failed cell on another line fails both. A
 // window or a suite that moved since the run leaves a job missing.
 func requiredDatabaseLineJobs(root string, line databaseCatalogLine) ([]string, error) {
-	major, err := phases.PostgresImageMajor(line.Image)
+	release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", databaseCatalogPath, err)
+	}
+	engine, known := databaseEngineNames[line.Engine]
+	if !known {
+		return nil, fmt.Errorf("%s: %s %s names an engine no job is named after", databaseCatalogPath, line.Engine, line.Line)
 	}
 	window, err := repositoryKubernetesSupportWindow(root)
 	if err != nil {
@@ -143,7 +151,7 @@ func requiredDatabaseLineJobs(root string, line databaseCatalogLine) ([]string, 
 	for _, minor := range strings.Split(window, ",") {
 		for _, suite := range suites {
 			if !leftOut[suite.Name] {
-				jobs = append(jobs, fmt.Sprintf("%s / Kubernetes %s on PostgreSQL %d %s", databaseLinesCallerJob, minor, major, suite.Name))
+				jobs = append(jobs, fmt.Sprintf("%s / Kubernetes %s on %s %s %s", databaseLinesCallerJob, minor, engine, release, suite.Name))
 			}
 		}
 	}

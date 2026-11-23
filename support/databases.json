@@ -23,15 +23,17 @@
     "the jobs every line shares, on this commit's supported minors and suites, at a",
     "commit that names this image. A re-pin or a new minor needs a new run.",
     "",
-    "The image tag has to name the major version, because the lifecycle holds both",
-    "PostgreSQL servers to it, baseline or added. imageCreated is the day Docker",
-    "reports for the digest on linux/amd64. The verifier refuses one under two weeks",
-    "old, and each job of an added line refuses a date that is not the image's own.",
+    "The image tag has to name the line, because the lifecycle holds what it runs to",
+    "it, baseline or added: both PostgreSQL servers to the major version, and the",
+    "line a MySQL image declares to the major.minor its tag names. imageCreated is",
+    "the day Docker reports for the digest on linux/amd64. The verifier refuses one",
+    "under two weeks old, and each job of an added line refuses a date that is not",
+    "the image's own.",
     "",
     "A suite can be left out only when the driver hands every one of its phases",
     "another engine, because that suite cannot say anything about this line. A",
-    "suite that runs both engines stays: its PostgreSQL half is the reason to run",
-    "it, and the suite is the smallest unit the driver selects."
+    "suite that runs both engines stays: its half on this line's engine is the",
+    "reason to run it, and the suite is the smallest unit the driver selects."
   ],
   "schemaVersion": 1,
   "baseline": [
@@ -110,6 +112,27 @@
         {
           "suite": "migration-authority-mysql",
           "reason": "Its one phase is the migration approval and runtime rows on MySQL. Its data-plane preparation starts PostgreSQL, and no row reads it."
+        }
+      ]
+    },
+    {
+      "engine": "mysql",
+      "line": "9.7.x",
+      "image": "mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446",
+      "imageCreated": "2026-11-03",
+      "state": "pending",
+      "leftOut": [
+        {
+          "suite": "migrations-postgresql",
+          "reason": "Its one phase is the versioned migration rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-faults-postgresql",
+          "reason": "Its one phase is the versioned migration fault rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-authority-postgresql",
+          "reason": "Its one phase is the migration approval and runtime rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
         }
       ]
     }

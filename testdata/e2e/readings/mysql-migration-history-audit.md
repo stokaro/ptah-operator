@@ -30,7 +30,9 @@ whether the table exists.
   2026-11-20 the v0.34.0 release image (`90e98f6c`) reproduced the v0.33.1 reading record for
   record. The v0.35.0 image adds one record, a `SELECT DATABASE()` after the first session's
   `sql_mode` read ([stokaro/ptah#6454](https://github.com/stokaro/ptah/pull/6454)), and changes
-  no other
+  no other. On 2026-11-23 the same probe with the v0.35.0 image on MySQL 9.7.4
+  (`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`)
+  reproduced this reading record for record
 - Client address: `172.19.0.3`
 - Database: `ptah_audit_history`
 

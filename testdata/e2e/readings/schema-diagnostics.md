@@ -591,6 +591,24 @@ resolves it to its `Postgres16` preset.
 are the line's witnesses, taken with `--postgresql-line 15` the same day, at
 67, 118 and 59 records. They are byte for byte the PostgreSQL 16 witnesses.
 
+## MySQL 9.7
+
+MySQL 9.7 adds no declaration. On November 23, 2026 the whole MySQL capture
+ran on MySQL 9.7.4
+(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`)
+with the v0.35.0 image, the server image being the only change to the
+procedure. All 32 readings, 2,711 records, matched the MySQL 8.4.11 ones with
+the same exit statuses: every statement, its command type, and the allowed
+Apply's `ptah_schema_apply_log` entries apart from the run id and entry time
+every run draws anew. The two migration History readings and the
+restored-history refusal matched too. The same capture against the pinned 8.4
+image, run beside it as a control, matched the checked-in readings as well.
+Ptah v0.35.0 certifies 9.7 and resolves it to its `MySQL84` preset.
+
+`mysql-9.7-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply` are
+the line's witnesses, taken with `--mysql-line 9.7` the same day, at 52, 99 and
+61 records. They match the MySQL 8.4 drift readings of the same names.
+
 ## The documented login
 
 A runner connects as the login
