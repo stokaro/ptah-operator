@@ -1033,6 +1033,10 @@ kubectl -n <namespace> get ptahschemaplan
 kubectl events -n <namespace> --for ptahschema/<name>
 ```
 
+[The lifecycle explorer](../../reference/reconciliation/#lifecycle-explorer)
+steps through a successful schema change with the phase and conditions each
+stage reaches.
+
 The complete stable condition-reason vocabulary is cataloged in
 [Condition reasons](../../troubleshoot/condition-reasons/). Automation should compare the
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
