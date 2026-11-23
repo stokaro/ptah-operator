@@ -283,7 +283,7 @@ func (f *faultRun) pgFingerprint(database string) string {
 	return f.query("postgresql", database, postgresSchemaFingerprintSQL)
 }
 
-// mysqlFingerprint is an MD5 of every column and index of the database but
+// mysqlFingerprint is a SHA-256 of every column and index of the database but
 // Ptah's schema apply log. Since v0.28.0 an Apply creates that table and writes
 // its started entry before its first statement, so an Apply held at the barrier
 // and then stopped has created it: measured on MySQL 8.4 with the v0.28.0
@@ -293,7 +293,7 @@ func (f *faultRun) pgFingerprint(database string) string {
 func (f *faultRun) mysqlFingerprint(database string) string {
 	f.t.Helper()
 	return f.query("mysql", database, `
-    SELECT MD5(COALESCE(GROUP_CONCAT(entry ORDER BY entry SEPARATOR '\n'), ''))
+    SELECT SHA2(COALESCE(GROUP_CONCAT(entry ORDER BY entry SEPARATOR '\n'), ''), 256)
     FROM (
       SELECT CONCAT(
         'column:', table_name, ':', LPAD(ordinal_position, 6, '0'), ':', column_name, ':',
@@ -311,16 +311,16 @@ func (f *faultRun) mysqlFingerprint(database string) string {
     ) AS managed_schema`)
 }
 
-// fingerprint is the engine's fingerprint, held to being an MD5.
+// fingerprint is the engine's fingerprint, held to the engine's digest format.
 func (f *faultRun) fingerprint(engine, database, description string) string {
 	f.t.Helper()
-	value := ""
+	value, format := "", pgSchemaFingerprint
 	if engine == "mysql" {
-		value = f.mysqlFingerprint(database)
+		value, format = f.mysqlFingerprint(database), mysqlSchemaFingerprint
 	} else {
 		value = f.pgFingerprint(database)
 	}
-	if !schemaFingerprint.MatchString(value) {
+	if !format.MatchString(value) {
 		f.fatalf("could not fingerprint %s", description)
 	}
 	return value

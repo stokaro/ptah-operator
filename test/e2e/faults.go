@@ -113,7 +113,10 @@ const (
 var (
 	leaseEpochPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
 	safeDatabaseName  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
-	schemaFingerprint = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	// pgSchemaFingerprint is an MD5 and mysqlSchemaFingerprint a SHA-256:
+	// MySQL 9.7 no longer has MD5().
+	pgSchemaFingerprint    = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	mysqlSchemaFingerprint = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	// publishedDigest is the line a schema publisher reports its artifact's
 	// digest on.
 	publishedDigest        = regexp.MustCompile(`^Digest: (sha256:[0-9a-f]{64})$`)
