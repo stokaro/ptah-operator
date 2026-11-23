@@ -1,0 +1,1 @@
+error: generate schema apply operations: unsupported feature: generated column public.items.total is VIRTUAL and the schema declares it STORED; the postgres planner cannot change a generated column's kind in place, so drop the column and add it back, or declare it VIRTUAL

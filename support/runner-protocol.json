@@ -532,6 +532,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e7c7779272be5864dbfc43eae79d7f8267e4a86760c6a102d77c52ccb603492a",
       "reason": "The comments on the Pending and VerifyingHistory migration phases in api/v1alpha1 now say when the controller writes each phase (#921). No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:6c0911bb813b7c079c1aa83c2bd5eaed851be2cdaa6db466e06530cde99f0480",
+      "reason": "A plan Ptah reports failed with no refusal code, no target failure and no fault of the file now writes Ptah's sentence to the Plan Pod's log as a ptah-runner: ptah reported: line, as a coded refusal does (#1170). The frame keeps invalid_plan_output with the generic message, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

@@ -655,9 +655,11 @@ var processID = regexp.MustCompile(`/proc/\d+/`)
 
 // TestARowFileSentenceIsCarriedOnlyWhole gives Observe and Plan failed documents
 // whose sentence is near the row-file refusal, and holds each to the code it had
-// and to a check that ran: none of it may reach the frame or the Pod log. The
-// near misses are the ways a database's answer reaches a failed sentence, and the
-// other refusals of a row file, which say nothing about the root.
+// and to a check that ran: none of it may reach the frame, and only a Plan's
+// reaches the Pod log, as Ptah's sentence of a failed plan does, without the
+// statement after it. The near misses are the ways a database's answer reaches a
+// failed sentence, and the other refusals of a row file, which say nothing about
+// the root.
 func TestARowFileSentenceIsCarriedOnlyWhole(t *testing.T) {
 	t.Parallel()
 
@@ -697,8 +699,14 @@ func TestARowFileSentenceIsCarriedOnlyWhole(t *testing.T) {
 				if len(executor.calls) != 2 {
 					t.Fatalf("ran %d children, want the failed command and its check", len(executor.calls))
 				}
+				if operation == "plan" {
+					if strings.Count(diagnostics, "ptah-runner: ptah reported: ") != 1 || strings.Contains(diagnostics, "SELECT") {
+						t.Fatalf("the Pod log does not carry the failed plan's sentence alone:\n%s", diagnostics)
+					}
+				}
 				for _, word := range []string{"CHECK-TEXT", "rows.yaml", "outside allowed root"} {
-					if strings.Contains(result.Error.Message, word) || strings.Contains(diagnostics, word) {
+					logged := operation != "plan" && strings.Contains(diagnostics, word)
+					if strings.Contains(result.Error.Message, word) || logged {
 						t.Fatalf("the runner repeated %q: %q\n%s", word, result.Error.Message, diagnostics)
 					}
 				}

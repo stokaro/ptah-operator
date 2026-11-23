@@ -24,3 +24,13 @@ there is a document a runner harness row prints, and
 `TestCommittedCapturesHaveNoStrayFile` refuses any other. The harness runs
 PostgreSQL 17 only, and no row against it can print this refusal: PostgreSQL 17
 has no virtual generated column.
+
+`schema-plan-postgres-18-v0.34.0.json` and `schema-plan-postgres-18-v0.34.0.stderr`
+are the same command run with the v0.34.0 release image,
+`ghcr.io/stokaro/ptah@sha256:8be4bebe660fcc427028ce854f815f5e5ae24854134d80d6ed9f00ab3aaaa1dc`,
+against the same server image, PostgreSQL 18.6, as its superuser, on an arm64
+host, on November 23, 2026, stored byte for byte. It exited 2 with the outcome
+`failed`, no refusal code and the same sentence. It read the same
+`desired.sql`, the database held the table that file declares, created with that
+statement, and `attgenerated` read `v`. The runner row that reads this capture
+holds a failed plan with no code to its log line.

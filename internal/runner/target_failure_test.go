@@ -198,8 +198,9 @@ func TestATargetThatCannotBeOpenedIsReportedByItsKind(t *testing.T) {
 // TestAFailureWithNoKnownKindKeepsItsCode holds a document that names no kind,
 // or one this runner has no sentence for, to the code the operation reported
 // before kinds existed. A kind outside the vocabulary is child text like the
-// message beside it, so neither crosses to the manager. An Apply's sentence stays
-// in the Pod log, and every other operation leaves it out of the log as well.
+// message beside it, so neither crosses to the manager. The sentence of an Apply
+// or a Plan stays in the Pod log, and every other operation leaves it out of the
+// log as well.
 func TestAFailureWithNoKnownKindKeepsItsCode(t *testing.T) {
 	t.Parallel()
 
@@ -231,8 +232,15 @@ func TestAFailureWithNoKnownKindKeepsItsCode(t *testing.T) {
 				if strings.Contains(crossing, "CHILD-TEXT") || strings.Contains(crossing, "db.internal.example") {
 					t.Fatalf("the frame or the summary carries what the child wrote:\n%s", crossing)
 				}
-				if !run.operation.Mutating() && strings.Contains(log, "CHILD-TEXT") {
+				// The Plan's own command logs the sentence of a plan that
+				// failed; its dry run, like every other read, does not.
+				planned := name == "plan"
+				decoded := kind != "7" && kind != `{"name":"CHILD-TEXT"}`
+				if !run.operation.Mutating() && !planned && strings.Contains(log, "CHILD-TEXT") {
 					t.Fatalf("a read-only operation logged what the child wrote:\n%s", log)
+				}
+				if planned && decoded && !strings.Contains(log, "ptah-runner: ptah reported: CHILD-TEXT") {
+					t.Fatalf("a failed plan did not log what Ptah said:\n%s", log)
 				}
 			})
 		}
