@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-23T07:39:56.942310+00:00",
+  "frozenAt": "2026-11-23T11:39:58.073385+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "b6e98514528eca6c6c48db2af4bcff048727c260e5bcdb47902064168cae6c3f"
+      "sha256": "52654bf3aac7d666bebf9b7426c6e1497cb1ccbb1b5432786efaf1955761c965"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "9f7782ed47f72bb202dad1987b88a9ebea11b74d5ea6b780d4a24ba2ccb68bf7"
+      "sha256": "d3f124e29400a9f5d95a3f0e71a20d086ed58ee4c0c5e856badd859a838271a9"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 137,
+  "revision": 138,
   "supersedes": {
-    "freezeCommit": "34d61f70bcc487308a23a95671e08ff050f3619c",
-    "sha256": "e7947a69254159f66690acd9a8bb5ea1b04e6c57bb1da89434e8418d0dd069d2"
+    "freezeCommit": "e73ee60f912e880a231e744b9ced5f1b0c7c0052",
+    "sha256": "a0118edb6e54799ea2cb5ac0b8755074ea0ebc68dc5a53595b8328806e047598"
   },
-  "revisionReason": "The golang:1.27.4-alpine digest moved in the kindnet qualification image, a Renovate update with no change to the build."
+  "revisionReason": "PostgreSQL 15.x joins the supported release lines: the databases page gains its row and edge's catalog entry names evidence run 45153382451."
 }

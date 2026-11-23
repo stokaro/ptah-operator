@@ -565,9 +565,10 @@ def contract_readings(engine):
 def parameter_detail(detail):
     """A statement's bound parameters as the contract spells them.
 
-    PostgreSQL 17 logs them as "Parameters: ...", and 16 logs the same detail as
-    "parameters: ...". The audit's postgresParameterDetail rewrites that one
-    prefix the same way, so a reading on 16 witnesses the same declarations.
+    PostgreSQL 17 logs them as "Parameters: ...", and 16 and 15 log the same
+    detail as "parameters: ...". The audit's postgresParameterDetail rewrites
+    that one prefix the same way, so a reading on 16 or 15 witnesses the same
+    declarations.
     """
     if detail.startswith('parameters: '):
         return 'Parameters: ' + detail[len('parameters: '):]

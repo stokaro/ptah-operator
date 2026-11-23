@@ -15,6 +15,7 @@ Kubernetes minor.
 | MySQL | 8.4.x LTS | `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb` |
 | PostgreSQL | 18.x | `postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5` |
 | PostgreSQL | 16.x | `postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28` |
+| PostgreSQL | 15.x | `postgres:15-alpine@sha256:1d4031d6ed0a9b774b365f99a3c16127217eb19f699d8d43fc43b732748601ef` |
 
 The immutable references identify the current matrix environments; they do
 not restrict production to one image vendor. Other release lines are
@@ -249,7 +250,7 @@ the commands an Observe and a Plan run, against PostgreSQL 17.11 and MySQL
 v0.23.0; the runner harness rows that hold the MySQL refusals pass unchanged at
 v0.26.0, v0.28.0, v0.29.0, v0.29.2, v0.29.3, v0.29.4, v0.29.5, v0.30.1, v0.31.0, v0.32.0, v0.33.0, v0.33.1, v0.34.0 and v0.35.0. The acceptance rows that
 change a database by hand and read what the next Observe or Plan reports run at
-the pinned build on PostgreSQL 16, 17 and 18 and on MySQL 8.4. They connect as
+the pinned build on PostgreSQL 15, 16, 17 and 18 and on MySQL 8.4. They connect as
 the login the statements above create, with `CREATE` on the database added only
 where the artifact declares an extension, or as a MySQL account that holds the
 grant above and nothing else. Another role or account makes each change they

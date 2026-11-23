@@ -572,6 +572,25 @@ are the line's witnesses, taken with `--postgresql-line 16` on the same day, at
 do, through the audit's own parser, which is what holds the label rewrite to a
 reading 16 wrote.
 
+## PostgreSQL 15
+
+PostgreSQL 15 adds no declaration either. On November 23, 2026 the whole
+PostgreSQL capture ran on PostgreSQL 15.19
+(`postgres:15-alpine@sha256:1d4031d6ed0a9b774b365f99a3c16127217eb19f699d8d43fc43b732748601ef`)
+with the v0.35.0 image, the server image being the only change to the
+procedure. All 30 readings, 2,478 records, had the record counts and exit
+statuses of the PostgreSQL 17 ones, and every statement and parameter value
+matched once the parameter label was read as the audits read it: 15 labels a
+statement's bound parameters `parameters: ` as 16 does, on 1,265 records. The
+allowed Apply's two `ptah_schema_apply_log` entries name another plan name and
+digest, because the plan's source fingerprint names the server, and both saved
+exclusion plans hold the same statements. Ptah v0.35.0 certifies 15 and
+resolves it to its `Postgres16` preset.
+
+`postgresql-15-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply`
+are the line's witnesses, taken with `--postgresql-line 15` the same day, at
+67, 118 and 59 records. They are byte for byte the PostgreSQL 16 witnesses.
+
 ## The documented login
 
 A runner connects as the login
