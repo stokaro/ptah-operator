@@ -51,9 +51,16 @@ func TestPreflightRetryHonorsTotalDeadlineAndCancellation(t *testing.T) {
 	}, time.Second)
 	server := startReceiver(t, receiver, certs, nil)
 	sender := testSender(t, server.URL, identity, certs)
-	sender.retry = RetryPolicy{Attempts: 8, Interval: time.Second, AttemptTimeout: 50 * time.Millisecond, TotalTimeout: 100 * time.Millisecond}
+	// The first attempt has the whole total deadline to reach the receiver, so a
+	// loaded machine still makes its one authority check, and the deadline ends
+	// long before the interval would start a second one.
+	sender.retry = RetryPolicy{Attempts: 2, Interval: 30 * time.Second, AttemptTimeout: 2 * time.Second, TotalTimeout: 2 * time.Second}
+	started := time.Now()
 	if err := sender.Check(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("preflight did not retain its total deadline: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= sender.retry.Interval {
+		t.Fatalf("preflight returned after %s, past the interval its total deadline cuts short", elapsed)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("preflight made %d authority checks across its deadline", calls.Load())
