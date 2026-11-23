@@ -13,8 +13,11 @@ rather than merged. What the operator is put together from is
 
 The explorer below walks one schema change from `kubectl apply` to `InSync`:
 who acts at each stage, which objects it touches, how they relate, and the
-command that shows it. Select a stage, or an object, to follow it. The
-sections after it are the precise reference it is taken from.
+command that shows it. Choose a path to follow the change where it turns: a
+plan Ptah refuses, a plan replaced before anyone approved it, or an Apply
+nobody can account for, and how each recovers. Select a stage, or an object,
+to follow it. The sections after it are the precise reference it is taken
+from.
 
 <div data-lifecycle-explorer></div>
 
