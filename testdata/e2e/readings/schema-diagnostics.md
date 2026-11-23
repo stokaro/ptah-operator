@@ -609,6 +609,24 @@ Ptah v0.35.0 certifies 9.7 and resolves it to its `MySQL84` preset.
 the line's witnesses, taken with `--mysql-line 9.7` the same day, at 52, 99 and
 61 records. They match the MySQL 8.4 drift readings of the same names.
 
+## MySQL 26.10
+
+MySQL 26.10 adds no declaration either. On November 23, 2026 the whole MySQL
+capture ran on MySQL 26.10.0
+(`mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999`)
+with the v0.35.0 image, the server image being the only change to the
+procedure. All 32 readings, 2,711 records, matched the MySQL 8.4.11 ones with
+the same exit statuses, the two migration History readings and the
+restored-history refusal included, and both saved exclusion plans are byte for
+byte the checked-in ones. The same capture against the pinned 8.4 image, run
+beside it as a control, matched as well. Ptah v0.35.0 certifies 26.10 and
+resolves it to its `MySQL84` preset.
+
+`mysql-26.10-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply` are
+the line's witnesses, taken with `--mysql-line 26.10` the same day, at 52, 99
+and 61 records. They match the MySQL 8.4 drift readings and the 9.7 witnesses
+of the same names.
+
 ## The documented login
 
 A runner connects as the login

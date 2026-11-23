@@ -41,7 +41,9 @@ MySQL one with a `SELECT DATABASE()` after the first session's `sql_mode` read
 History contract admits, so the MySQL reading here is v0.35.0's, one record
 more; no other record moved. On 2026-11-23 the v0.35.0 image reproduced the
 MySQL reading record for record on MySQL 9.7.4
-(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`).
+(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`)
+and on MySQL 26.10.0
+(`mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999`).
 They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
