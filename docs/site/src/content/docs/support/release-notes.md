@@ -19,17 +19,23 @@ out of silence.
 ## 0.2.19
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. Nothing else asks anything of you: the CRD schema version, the
-runner protocol and the executor, Ptah v0.35.0, are those of 0.2.18, so a plan
-waiting for an approval and the approval given for it carry over.
+on the upgrade. The CRD schema version and the runner protocol are those of
+0.2.18. The executor moves to Ptah v0.35.1, which retires the execution
+binding: approve again whatever was waiting, after the resource has read its
+database with v0.35.1 and planned. A read still running when the new manager
+starts runs again. An Apply whose Job 0.2.18 created is waited for rather than
+retired: the new manager reads its result under the v0.35.0 binding it was
+dispatched under, records the outcome it reported, and moves the binding on the
+next pass, so the upgrade needs no pause for Applies to end. [0.2.16](#0216)
+lists when such an Apply is still recorded `Unknown`.
 
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
-  supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x
-  or 18.x has nothing to change for that.
+  supported Kubernetes minor at Ptah v0.35.0. A cluster on 16.x, 17.x or 18.x
+  has nothing to change for that.
 - **MySQL 9.7.x joins the supported release lines.** Run 45223146080 of the same
   workflow passed the whole lifecycle on it on every supported Kubernetes minor
-  at the pinned Ptah build. A cluster on MySQL 8.4.x has nothing to change.
+  at Ptah v0.35.0. A cluster on MySQL 8.4.x has nothing to change.
 - **A Plan that Ptah fails without a refusal code logs Ptah's sentence.** The
   Plan Pod's log has one line, `ptah-runner: ptah reported:`, with the first
   line of what Ptah said, as a failed Apply already logged. The runner removes
