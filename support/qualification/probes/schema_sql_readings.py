@@ -401,7 +401,9 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
 def added_lines(engine):
     """The added lines of engine the catalog declares, as (release, image): 18 for PostgreSQL, 9.7 for MySQL."""
     catalog = json.loads((ROOT / 'support/databases.json').read_text())
-    return [(line['line'].removesuffix('.x'), line['image']) for line in catalog['added'] if line['engine'] == engine]
+    # The release comes before any label, such as a MySQL line's LTS.
+    return [(line['line'].split()[0].removesuffix('.x'), line['image'])
+            for line in catalog['added'] if line['engine'] == engine]
 
 
 def added_postgresql_lines():

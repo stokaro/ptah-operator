@@ -16,7 +16,7 @@ Kubernetes minor.
 | PostgreSQL | 18.x | `postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5` |
 | PostgreSQL | 16.x | `postgres:16-alpine@sha256:cbf42f0edc946c0bc1b8eeed62403734e1f25dc67a3491455d07a92fdb558b28` |
 | PostgreSQL | 15.x | `postgres:15-alpine@sha256:1d4031d6ed0a9b774b365f99a3c16127217eb19f699d8d43fc43b732748601ef` |
-| MySQL | 9.7.x | `mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446` |
+| MySQL | 9.7.x LTS | `mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446` |
 
 The immutable references identify the current matrix environments; they do
 not restrict production to one image vendor. Other release lines are

@@ -5907,15 +5907,16 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		}
 		// The lifecycle holds both PostgreSQL servers to the tag, and the line
 		// the MySQL image declares to its tag, so a green run proves the tag's
-		// line, whatever this row says. A baseline MySQL line may say more after
-		// it, as its LTS does. An added line may not: the witness test and the
-		// readings probe take its file stem from the line itself.
+		// line, whatever this row says. A MySQL line may name its LTS after the
+		// release, as 8.4 and 9.7 do, and nothing else: the witness test and the
+		// readings probe take an added line's file stem from the release before
+		// it, and the release check finds the row by the release its image names.
 		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		want := release + ".x"
-		if line.Line != want && (added || line.Engine != "mysql" || !strings.HasPrefix(line.Line, want+" ")) {
+		if line.Line != want && (line.Engine != "mysql" || line.Line != want+" LTS") {
 			return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
 		}
 		// Two rows that name one release would run jobs of the same names, and
