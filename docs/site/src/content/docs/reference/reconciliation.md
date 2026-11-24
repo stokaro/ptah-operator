@@ -27,9 +27,15 @@ deleting it does. Choose **Composed workflow** to follow a schema and a
 migration through one change to one database: expand the schema, backfill the
 data with a migration, wait for checks outside the operator, then contract.
 Each stage says what the operator ships and what a pipeline around it would
-have to add, because nothing in the operator sequences the stages. A related
-object is a link, so a stage, a source or an object can be shared or opened in
-a page of its own. The sections after it are the precise reference the
+have to add, because nothing in the operator sequences the stages. Choose a
+depth to read less of each entry in every view: **Overview** says who acts,
+what a step, an object or a source is for, and how you know a step is done;
+**Product** adds the state to expect, the commands, the decisions and what a
+step does not prove; **Implementation**, the default, adds what Kubernetes, the
+operator and the executor do underneath and where each object lives. The
+depth stays chosen from view to view and is kept in the address, and the text
+version follows it without JavaScript. A related object is a link, so a stage,
+a source or an object can be shared or opened in a page of its own. The sections after it are the precise reference the
 journey is taken from, and [Audit a database change](../../use/audit/) is the
 one for the audit view.
 

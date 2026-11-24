@@ -28,8 +28,104 @@
 // The audit view, the object map and the composed workflow, at the end, are
 // not scenarios: each covers both families, the audit view read by evidence
 // source, the object map by object, and the composed workflow as the stages
-// of one larger change that uses both. The depth levels are a later slice of
-// #817.
+// of one larger change that uses both.
+//
+// A depth says how much of each entry a reader sees, and `depthOf`, below,
+// names the depth each part of an entry first shows at. Every depth reads
+// the same entries, so a shallower one says less and never something else.
+
+// How much an entry says. Each depth shows everything the one before it
+// shows, and more. Implementation is every part, which is what the page
+// showed before there were depths, so a link that names no depth keeps
+// showing it.
+export const depths = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    text: 'Who acts at each step and what that step is for, what each object or source is, and how you know a step is done.',
+  },
+  {
+    id: 'product',
+    label: 'Product',
+    text: 'Adds the phase and the state to expect, the commands that act or inspect, the decisions, what a step does not prove, and what a change, a deletion or a loss leaves.',
+  },
+  {
+    id: 'implementation',
+    label: 'Implementation',
+    text: 'Adds what Kubernetes, the operator and the executor each do underneath, the objects each step touches, where each object lives, and the identifiers that join the record.',
+  },
+];
+export const defaultDepth = 'implementation';
+
+// The depth each part of an entry first shows at: a stage of the change
+// journey, an object of a family, an audit source, an object of the object
+// map, a stage of the composed workflow, and the blocks of a view that are
+// not one entry. An actor's text in a stage shows at `lead` when that actor
+// leads the stage, and at its own depth otherwise, so every stage says who
+// acts at every depth. A part not named here, such as a title, a
+// relationship, a choice that moves the reader on or a link to the
+// reference, shows at every depth.
+export const depthOf = {
+  stage: {
+    lead: 'overview',
+    you: 'overview',
+    done: 'overview',
+    phase: 'product',
+    operator: 'product',
+    expect: 'product',
+    inspect: 'product',
+    limits: 'product',
+    kubernetes: 'implementation',
+    executor: 'implementation',
+    objects: 'implementation',
+  },
+  object: {
+    purpose: 'overview',
+    writer: 'overview',
+    inspect: 'product',
+    lives: 'implementation',
+  },
+  source: {
+    establishes: 'overview',
+    cannot: 'overview',
+    records: 'product',
+    readers: 'product',
+    retention: 'product',
+    survives: 'product',
+    names: 'product',
+    gaps: 'product',
+    ids: 'implementation',
+  },
+  node: {
+    holds: 'overview',
+    writtenBy: 'overview',
+    change: 'product',
+    deletion: 'product',
+    inspect: 'product',
+    gap: 'product',
+    operator: 'implementation',
+    scope: 'implementation',
+  },
+  wstage: {
+    goal: 'overview',
+    person: 'overview',
+    gate: 'overview',
+    done: 'overview',
+    operator: 'product',
+    inspect: 'product',
+    decision: 'product',
+    limits: 'product',
+    objects: 'implementation',
+  },
+  block: {
+    auditMeasured: 'product',
+    auditIdentities: 'product',
+    auditGaps: 'product',
+    workflowPreconditions: 'product',
+    workflowDecisions: 'product',
+    workflowRecord: 'implementation',
+  },
+};
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -3075,7 +3171,7 @@ const workflowStages = [
     decision: 'w-dec-migration',
     decisionText:
       'An approval of the backfill plan. The expand’s schema approval does not reach it, and under apply: Always the run needs none.',
-    gate: 'Start only after Verified expand. The Lease would let this run take its turn before the expand, because it serializes the two resources and does not order them.',
+    gate: 'Start only after Verified expand. The Lease would let this run take its turn before the expand, because it serializes the two resources and does not decide which stage comes next.',
     done: 'The run ended, and status.lastRun records its outcome.',
     outcomes: [
       {
@@ -3369,7 +3465,7 @@ export const workflow = {
     'No resource records a stage as a whole, and no command prints one. A pipeline that runs the sequence can keep one record per stage, from what the resources already say.',
   readers: workflowReaders,
   distinctions: [
-    'The realm Lease serializes; it does not order. Two resources that share a realm never run at once, and either can take the next turn.',
+    'The realm Lease serializes: two resources that share a realm never run at once. It decides which runs now, not which stage comes next, so either can take the next turn.',
     'An approval of one family authorizes nothing in the other. Each plan waits for its own decision under its own policy, and no decision covers the order of the stages.',
     'Migration InSync proves the history, not the data. The checks are yours, and nothing in the cluster records them.',
     'A stop holds every later stage. Nothing downstream starts until the stopped stage is cleared and meets its completion criterion again.',
