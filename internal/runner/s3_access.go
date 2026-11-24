@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -248,9 +247,16 @@ func readS3Source(ctx context.Context, source S3Source, access s3Access, tempDir
 
 // s3Refusal is why reading an S3 source failed, as one sentence the status
 // may carry: the runner's own words, redacted and bounded as a pull's last
-// line is.
+// line is. A refusal whose error code names what a person changes ends with
+// that hint, kept whole: a long key can fill the bound, and the hint is what
+// says which permission or field to change.
 func s3Refusal(err error, redactor Redactor) error {
-	return errors.New(freeText(err.Error(), redactor, maxPullRefusalBytes))
+	hint := s3source.Hint(err)
+	if hint == "" {
+		return errors.New(freeText(err.Error(), redactor, maxPullRefusalBytes))
+	}
+	const separator = "; "
+	return errors.New(freeText(err.Error(), redactor, maxPullRefusalBytes-len(separator)-len(hint)) + separator + hint)
 }
 
 // FetchS3Source delivers the object version an S3 source was resolved to
@@ -260,7 +266,7 @@ func s3Refusal(err error, redactor Redactor) error {
 // to destination only if they give that digest. The container that holds the
 // database URL never sees the key pair, and reads only files that gave the
 // digest.
-func FetchS3Source(ctx context.Context, environment []string, destination, tempDir string, diagnostics io.Writer) error {
+func FetchS3Source(ctx context.Context, environment []string, destination, tempDir string) error {
 	environment, err := ResolveCredentialFiles(environment)
 	if err != nil {
 		return fmt.Errorf("%s: %w", CodeS3SourceRefused, err)
@@ -291,24 +297,13 @@ func FetchS3Source(ctx context.Context, environment []string, destination, tempD
 		return fmt.Errorf("%s: %w", CodeS3SourceRefused, accessRefused(CodeInvalidS3Access, err, redactor))
 	}
 	defer cleanup()
+	// The read holds the object to its digest and the files it returns to
+	// the bound content digest, and those files are what is written: nothing
+	// reads them back from disk between the check and the write. The runner
+	// binary reports the refusal, once.
 	read, err := readS3Source(ctx, source, access, tempDir)
 	if err != nil {
-		refusal := s3Refusal(err, redactor)
-		if diagnostics != nil {
-			_, _ = io.WriteString(diagnostics, refusal.Error()+"\n")
-		}
-		return fmt.Errorf("%s: %w", CodeS3SourceRefused, refusal)
-	}
-	// The read holds the files to the content digest already; this holds the
-	// fetch to the digest of what it is about to write, which is what the
-	// operation container reads.
-	digest, err := sourcecontent.Digest(read.Files)
-	if err != nil {
-		return fmt.Errorf("%s: %w", CodeS3SourceRefused, err)
-	}
-	if digest != source.ExpectedContentDigest || read.DownloadDigest != source.Digest {
-		return fmt.Errorf("%s: the fetch read %s from the object %s, not %s from %s",
-			CodeS3SourceRefused, digest, read.DownloadDigest, source.ExpectedContentDigest, source.Digest)
+		return fmt.Errorf("%s: %w", CodeS3SourceRefused, s3Refusal(err, redactor))
 	}
 	if err := sourcecontent.Write(destination, read.Files); err != nil {
 		return fmt.Errorf("%s: %w", CodeS3SourceRefused, err)
@@ -328,14 +323,11 @@ func runS3Resolve(ctx context.Context, config Config, environment []string, sour
 		return result
 	}
 	defer cleanup()
+	// The read refuses an object that does not give the pinned digest, so
+	// what it returns is that object.
 	read, err := readS3Source(ctx, source, access, config.TempDir)
 	if err != nil {
 		setResultError(&result, CodeS3SourceRefused, s3Refusal(err, redactor), redactor, config.Diagnostics)
-		return result
-	}
-	if read.DownloadDigest != source.Digest {
-		setResultError(&result, "invalid_resolve_output",
-			fmt.Errorf("the read gave the object %s, not %s", read.DownloadDigest, source.Digest), redactor, config.Diagnostics)
 		return result
 	}
 	result.ChildExitCode = 0

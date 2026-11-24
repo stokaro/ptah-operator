@@ -495,6 +495,10 @@ nor a checksum the bucket stores is this number. An object is at most
 64 MiB, and the files it selects at most 1,000 and 64 MiB. A larger object is
 refused as `s3_source_refused` at the Resolve and at every later fetch: the
 fetch's volumes are sized so that the bound refuses it, never the space left.
+A Resolve's refusal is in the status; a later fetch's status names only the
+`fetch-s3-source` step, and the refusal is in that step's log, as
+[the condition reasons page](../../troubleshoot/condition-reasons/#a-source-access-refused-before-the-fetch)
+shows.
 `format` and `path` select the files exactly as they do for an HTTPS download,
 and so does a migration sequence:
 
@@ -550,7 +554,25 @@ spec:
 ```
 
 A version is an upstream revision, not an identity: the digest still decides,
-and a version that serves other bytes is refused. In a bucket that keeps no
+and a version that serves other bytes is refused.
+
+A request for a version is authorized as `s3:GetObjectVersion`, not
+`s3:GetObject`. In a bucket that keeps versions, every operation after the
+Resolve asks for the version it recorded, so the key pair, or the bucket
+policy for an unsigned read, needs both on the objects it reads:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+  "Resource": "arn:aws:s3:::orders-releases/orders/*"
+}
+```
+
+With `s3:GetObject` alone the Resolve passes and every operation after it is
+refused with `AccessDenied` at its `fetch-s3-source` step, whose log ends with
+a hint that names `s3:GetObjectVersion`. A spec that names `versionId` asks for
+that version at the Resolve too, and is refused there, in the status. In a bucket that keeps no
 versions, Resolve records none, and every later operation reads whatever the
 key holds, held to the same two digests, so a write to the key fails the next
 operation until the spec pins the new bytes.

@@ -549,7 +549,7 @@ func TestFetchS3SourceDeliversTheBoundContent(t *testing.T) {
 			destination := filepath.Join(t.TempDir(), "source")
 			environment := s3FetchEnvironment(bucket.endpoint(), row.key, s3Digest(row.body), row.format, row.selects, row.path, digest,
 				append(s3Signed(bucket.authority(), bucket.caFile), row.extra...)...)
-			if err := FetchS3Source(t.Context(), environment, destination, t.TempDir(), nil); err != nil {
+			if err := FetchS3Source(t.Context(), environment, destination, t.TempDir()); err != nil {
 				t.Fatal(err)
 			}
 			delivered, err := sourcecontent.ReadTree(destination, 1<<20)
@@ -601,8 +601,7 @@ func TestFetchS3SourceRefusesOtherContent(t *testing.T) {
 			if destination == "" {
 				destination = filepath.Join(t.TempDir(), "source")
 			}
-			var diagnostics bytes.Buffer
-			err := FetchS3Source(t.Context(), row.environment, destination, t.TempDir(), &diagnostics)
+			err := FetchS3Source(t.Context(), row.environment, destination, t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), row.refusal) || !strings.HasPrefix(err.Error(), CodeS3SourceRefused) {
 				t.Fatalf("FetchS3Source() = %v, want a refusal naming %q", err, row.refusal)
 			}
@@ -614,8 +613,78 @@ func TestFetchS3SourceRefusesOtherContent(t *testing.T) {
 			if _, statErr := os.Stat(destination); statErr == nil {
 				t.Fatal("a refused fetch left files for the operation to read")
 			}
-			if strings.Contains(err.Error()+diagnostics.String(), s3TestSecretAccessKey) {
+			if strings.Contains(err.Error(), s3TestSecretAccessKey) {
 				t.Fatal("the refusal carries the secret access key")
+			}
+		})
+	}
+}
+
+// An endpoint's error document is the endpoint's to write, and one that
+// echoes the key pair and the session token back reaches the status only
+// redacted: the fetch's refusal names the code and the sentence with each
+// value replaced, in any case.
+func TestAnS3FetchRefusalCarriesNoKey(t *testing.T) {
+	t.Parallel()
+	bucket := newFakeS3(t)
+	echoed := "signed by " + s3TestAccessKeyID + " with " + strings.ToLower(s3TestSecretAccessKey) + " under " + s3TestSessionToken
+	bucket.put("app.tar.gz", fakeS3Object{status: http.StatusForbidden,
+		refusal: "<Error><Code>InvalidAccessKeyId</Code><Message>" + echoed + "</Message></Error>"})
+	environment := s3FetchEnvironment(bucket.endpoint(), "app.tar.gz", "sha256:"+strings.Repeat("e", 64), "TarGzip", "directory",
+		"app/db/migrations", contentDigest(t, s3TestMigrations),
+		append(s3Signed(bucket.authority(), bucket.caFile), EnvS3SessionToken+"="+s3TestSessionToken)...)
+	err := FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "403 Forbidden, InvalidAccessKeyId: signed by") {
+		t.Fatalf("FetchS3Source() = %v, want the endpoint's refusal", err)
+	}
+	for _, credential := range []string{s3TestAccessKeyID, s3TestSecretAccessKey, s3TestSessionToken} {
+		if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(credential)) {
+			t.Fatalf("the refusal %q carries %q", err, credential)
+		}
+	}
+}
+
+// A refusal to a request for the version a Resolve recorded ends with the
+// permission that version needs, whole, even when the object's name fills
+// the bound the refusal is held to.
+func TestAnS3FetchRefusalKeepsItsHint(t *testing.T) {
+	t.Parallel()
+	bucket := newFakeS3(t)
+	long := strings.Repeat("releases/", 100) + "app.tar.gz"
+	for _, key := range []string{"app.tar.gz", long} {
+		bucket.put(key, fakeS3Object{status: http.StatusForbidden,
+			refusal: "<Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>"})
+	}
+	for _, row := range []struct {
+		name, key, version string
+		hint               bool
+	}{
+		{name: "a version", key: "app.tar.gz", version: s3TestVersion, hint: true},
+		{name: "a version of a long key", key: long, version: s3TestVersion, hint: true},
+		{name: "the current object", key: "app.tar.gz"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			extra := s3Signed(bucket.authority(), bucket.caFile)
+			if row.version != "" {
+				extra = append(extra, EnvS3VersionID+"="+row.version)
+			}
+			environment := s3FetchEnvironment(bucket.endpoint(), row.key, "sha256:"+strings.Repeat("e", 64), "TarGzip", "directory",
+				"app/db/migrations", contentDigest(t, s3TestMigrations), extra...)
+			err := FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
+			// The long key's name fills the bound before the endpoint's code,
+			// which is what the hint has to survive.
+			if err == nil || (row.key != long && !strings.Contains(err.Error(), "AccessDenied")) {
+				t.Fatalf("FetchS3Source() = %v, want AccessDenied", err)
+			}
+			refusal := strings.TrimPrefix(err.Error(), CodeS3SourceRefused+": ")
+			if len(refusal) > maxPullRefusalBytes {
+				t.Fatalf("the refusal holds %d bytes, more than %d", len(refusal), maxPullRefusalBytes)
+			}
+			_, hint, hinted := strings.Cut(refusal, "; a request for a version is authorized as s3:GetObjectVersion")
+			hinted = hinted && strings.HasSuffix(hint, "in the bucket policy for an unsigned read")
+			if hinted != row.hint {
+				t.Fatalf("the refusal %q ends with the version permission hint: %v, want %v", refusal, hinted, row.hint)
 			}
 		})
 	}
@@ -647,7 +716,7 @@ func TestFetchS3SourceReadsTheKeyPairFromItsFiles(t *testing.T) {
 	extra = append(extra, EnvS3HostGrant+"="+bucket.authority(), EnvS3CASourceFile+"="+bucket.caFile, EnvS3CASHA256Grant+"="+gitTestDigest(ca))
 	environment := s3FetchEnvironment(bucket.endpoint(), "app.tar.gz", s3Digest(archive), "TarGzip", "directory", "app/db/migrations",
 		contentDigest(t, s3TestMigrations), extra...)
-	if err := FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir(), nil); err != nil {
+	if err := FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	request := bucket.received()[0]

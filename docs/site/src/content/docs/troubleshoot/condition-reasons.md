@@ -868,13 +868,6 @@ grant the Secret's owner wrote:
 the fetch-s3-source step refused the source's access, so the run never started: invalid_s3_access: the S3 credential is granted for the bucket "orders-private", not the source's
 ```
 
-An S3 read that the endpoint refuses, or that returns other bytes, is
-`s3_source_refused`, with the code and the message the endpoint answered, or
-both digests. It reaches the resource the same way: `ReconciliationFailed=True`
-on a schema and `Progressing=False` on a migration, with the reason
-`OperationFailed`, the message bounded to 512 bytes and redacted with the
-key pair.
-
 A schema carries it in `ReconciliationFailed`, a migration in `Progressing`,
 both with the reason `OperationFailed`, and the Warning Event carries the same
 sentence. An Apply stopped there ends uncertain, as an Apply whose result was
@@ -887,6 +880,29 @@ resource; the operation tries again at its failure retry interval.
 Any other failure of these steps names only the step and its exit status, as
 for the `fetch-schema` step above, and so does a step whose runner writes no
 refusal record, such as one from an earlier release.
+
+An S3 read that the endpoint refuses, or that returns other bytes or too many,
+is `s3_source_refused`. At a Resolve its message is the status's: the code and
+the sentence the endpoint answered, or both digests, or the bound, redacted
+with the key pair and held to 512 bytes. A schema carries it in
+`ReconciliationFailed=True`, a migration in `Progressing=True`, both with the
+reason `OperationFailed`. A refusal whose code names what to change ends with a
+hint, such as the permission a request for a version needs:
+
+```
+s3_source_refused: the S3 endpoint refused the object: GET s3://orders-releases/orders/orders-1.4.0.tar.gz version 3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY at objects.example.com answered 403 Forbidden, AccessDenied: Access Denied.; a request for a version is authorized as s3:GetObjectVersion, not s3:GetObject: grant s3:GetObjectVersion on the object to the key pair, or in the bucket policy for an unsigned read
+```
+
+The same refusal at a later operation's `fetch-s3-source` step is not a
+refused access, so the status names only the step, `the fetch-s3-source step
+exited 2, so the run never started`. That is where a version permission is
+usually missing: a Resolve that names no `versionId` asks for the current
+object, and every operation after it asks for the version it recorded. The
+sentence and the hint are in the step's log until the Job is collected:
+
+```bash
+kubectl logs -n application job/<job> -c fetch-s3-source
+```
 
 ## A Plan that stops without saying why
 

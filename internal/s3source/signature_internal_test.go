@@ -112,3 +112,69 @@ func TestASignatureCoversWhatTheRequestSends(t *testing.T) {
 		}
 	}
 }
+
+// TestARequestOutsideUSEast1IsSignedAsTheSDKSignsIt holds the whole request
+// path, from the object to the headers sent, to signatures the AWS SDK for Go
+// v2 (v1.48.0, aws/signer/v4 with DisableURIPathEscaping, as its S3 client
+// signs) computed once outside this repository for the same requests. AWS
+// publishes its S3 examples for us-east-1 only, so these are what hold the
+// region in the scope, and the second one holds an R2 endpoint's "auto" and a
+// session token. The headers a signature covers have to be the ones sent: a
+// date or a payload digest that was signed and not sent fails at every
+// server.
+func TestARequestOutsideUSEast1IsSignedAsTheSDKSignsIt(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, time.November, 23, 10, 0, 0, 0, time.UTC)
+	for _, vector := range []struct {
+		name        string
+		object      Object
+		credentials Credentials
+		want        string
+	}{
+		{
+			name: "eu-west-1, a version and an escaped key",
+			object: Object{
+				Endpoint: "https://s3.eu-west-1.amazonaws.com", Region: "eu-west-1", Bucket: "orders-artifacts",
+				Key: "orders/orders-1.4.0 rc.tar.gz", VersionID: "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY",
+			},
+			credentials: Credentials{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"},
+			want: "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261123/eu-west-1/s3/aws4_request, " +
+				"SignedHeaders=host;x-amz-content-sha256;x-amz-date, " +
+				"Signature=7e1d1c7564bdfb5ecbec55c900dbda9cc314e65a10582ffbf61becb38a1c21f2",
+		},
+		{
+			name: "auto, with a session token",
+			object: Object{
+				Endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com", Region: "auto", Bucket: "orders-artifacts", Key: "schema.sql",
+			},
+			credentials: Credentials{
+				AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+				SessionToken: "FwoGZXIvYXdzEXAMPLETOKEN",
+			},
+			want: "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20261123/auto/s3/aws4_request, " +
+				"SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, " +
+				"Signature=81114d880c8668fad4b56a1ed793e2742c7baad7f000280f25e38065e48c3cd7",
+		},
+	} {
+		t.Run(vector.name, func(t *testing.T) {
+			t.Parallel()
+			request, err := newRequest(t.Context(), vector.object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sign(request, vector.object.Region, vector.credentials, at)
+			if got := request.Header.Get("Authorization"); got != vector.want {
+				t.Fatalf("Authorization:\n got %s\nwant %s", got, vector.want)
+			}
+			for header, want := range map[string]string{
+				"X-Amz-Date":           "20261123T100000Z",
+				"X-Amz-Content-Sha256": emptyPayloadDigest,
+				"X-Amz-Security-Token": vector.credentials.SessionToken,
+			} {
+				if got := request.Header.Get(header); got != want {
+					t.Errorf("the request sends %s %q, the signature covers %q", header, got, want)
+				}
+			}
+		})
+	}
+}

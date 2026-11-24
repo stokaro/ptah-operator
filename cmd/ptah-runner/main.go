@@ -88,8 +88,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		"fetch-git-source":   {"Git", fetchGitSource, runner.FetchGitSource},
 		"fetch-https-source": {"HTTPS", fetchHTTPSSource, runner.FetchHTTPSSource},
 		"fetch-s3-source": {"S3", fetchS3Source,
-			func(ctx context.Context, _ string, environment []string, destination, tempDir string, _ runner.Executor, diagnostics io.Writer) error {
-				return runner.FetchS3Source(ctx, environment, destination, tempDir, diagnostics)
+			func(ctx context.Context, _ string, environment []string, destination, tempDir string, _ runner.Executor, _ io.Writer) error {
+				return runner.FetchS3Source(ctx, environment, destination, tempDir)
 			}},
 	}
 	fetchMode := ""

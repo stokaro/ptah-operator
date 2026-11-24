@@ -204,10 +204,16 @@ func (c Credentials) Validate() error {
 		return fmt.Errorf("%w: a secret access key without its access key ID", ErrCredential)
 	case c.SessionToken != "" && c.AccessKeyID == "":
 		return fmt.Errorf("%w: a session token without a key pair", ErrCredential)
-	case strings.ContainsAny(c.AccessKeyID, "/, \t\r\n"):
+	case strings.ContainsAny(c.AccessKeyID, "\r\n"):
+		// A line break is usually the end of the file the Secret was made
+		// from, and a request signed with it fails in the endpoint's words.
+		return fmt.Errorf("%w: the access key ID holds a line break", ErrCredential)
+	case strings.ContainsAny(c.AccessKeyID, "/, \t"):
 		// The ID is written into the Authorization header's credential
 		// scope, which a slash, a comma or a space would end early.
 		return fmt.Errorf("%w: the access key ID holds a slash, a comma or a space", ErrCredential)
+	case strings.ContainsAny(c.SecretAccessKey, "\r\n"):
+		return fmt.Errorf("%w: the secret access key holds a line break", ErrCredential)
 	case strings.ContainsAny(c.SessionToken, "\r\n"):
 		return fmt.Errorf("%w: the session token holds a line break", ErrCredential)
 	}
@@ -579,9 +585,11 @@ type errorDocument struct {
 func refusal(response *http.Response, object Object) error {
 	reason := response.Status
 	var document errorDocument
+	code := ""
 	if body, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes)); err == nil && len(body) > 0 {
 		if xml.Unmarshal(body, &document) == nil {
-			code, message := plain(document.Code), plain(document.Message)
+			code = plain(document.Code)
+			message := plain(document.Message)
 			switch {
 			case code != "" && message != "":
 				reason += ", " + code + ": " + message
@@ -590,10 +598,58 @@ func refusal(response *http.Response, object Object) error {
 			}
 		}
 	}
+	refused := &endpointRefusal{code: code, versioned: object.VersionID != ""}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return fmt.Errorf("%w: GET %s answered %s; every redirect is refused: name the endpoint and the region the bucket is served from", ErrRedirect, object, reason)
+		refused.err = fmt.Errorf("%w: GET %s answered %s; every redirect is refused: name the endpoint and the region the bucket is served from",
+			ErrRedirect, object, reason)
+		return refused
 	}
-	return fmt.Errorf("%w: GET %s answered %s", ErrStatus, object, reason)
+	refused.err = fmt.Errorf("%w: GET %s answered %s", ErrStatus, object, reason)
+	return refused
+}
+
+// endpointRefusal is an answer from the endpoint that was not the object. It
+// reads as the refusal it wraps, and keeps the error document's code and
+// whether the request named a version, which is what Hint reads.
+type endpointRefusal struct {
+	err       error
+	code      string
+	versioned bool
+}
+
+func (r *endpointRefusal) Error() string { return r.err.Error() }
+func (r *endpointRefusal) Unwrap() error { return r.err }
+
+// The hints Hint gives.
+const (
+	// versionPermissionHint answers AccessDenied to a request that named a
+	// version. Every operation after a Resolve names the version the Resolve
+	// recorded, and S3 authorizes that request as s3:GetObjectVersion, so a
+	// key pair or a bucket policy that grants only s3:GetObject resolves the
+	// source and then fails every operation after it.
+	versionPermissionHint = "a request for a version is authorized as s3:GetObjectVersion, not s3:GetObject: " +
+		"grant s3:GetObjectVersion on the object to the key pair, or in the bucket policy for an unsigned read"
+	// regionHint answers a signature whose scope names a region the endpoint
+	// does not serve the bucket from.
+	regionHint = "the request was signed for a region the endpoint does not serve the bucket from: set region to the bucket's region"
+)
+
+// Hint is what a person can change for a refusal err carries, when the
+// error document's code names it, and "" otherwise. It is not part of err's
+// message, so a caller that bounds the message can keep the hint whole. A
+// redirect needs none: its message says what to change.
+func Hint(err error) string {
+	refused, ok := errors.AsType[*endpointRefusal](err)
+	if !ok {
+		return ""
+	}
+	switch {
+	case refused.code == "AccessDenied" && refused.versioned:
+		return versionPermissionHint
+	case refused.code == "AuthorizationHeaderMalformed":
+		return regionHint
+	}
+	return ""
 }
 
 // plain is a field of an error document as one bounded line of printable

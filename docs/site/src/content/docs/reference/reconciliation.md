@@ -502,7 +502,9 @@ digests and says which version every operation reads.
 
 Every later operation reads the recorded version again, in an init container
 named `fetch-s3-source` that alone holds the key pair and the CA, held to both
-digests, and copies the files where the operation container reads them. A
+digests, and copies the files where the operation container reads them. S3
+authorizes a request for a version as `s3:GetObjectVersion`, which the key
+pair or the bucket policy has to grant beside `s3:GetObject`. A
 bucket that keeps no versions gives none to record, and the operation reads
 the key's current bytes under the same two digests. Nothing is cached or stored
 in the cluster.
@@ -514,7 +516,10 @@ and half a key pair or a session token without one, as `invalid_s3_access`. A
 redirect is refused, not followed. A refusal from the endpoint, a version other
 than the one asked for, or bytes that do not give a digest end the operation as
 `s3_source_refused`, whose message names the endpoint's code and message, the
-versions, or both digests.
+versions, or both digests, and ends with a hint when the code names what to
+change. A Resolve's refusal is the status's message. A later operation's
+`fetch-s3-source` step is not a refused access, so the status names only the
+step and its exit status, and the refusal is in that step's log.
 
 The source is read again at every interval. A plan binds the SHA-256 of the
 endpoint's authority, the bucket, the key and the path, joined by newlines,

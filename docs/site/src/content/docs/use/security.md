@@ -640,6 +640,13 @@ identity token, so a cloud identity bound to the operation's ServiceAccount,
 which every container in the Pod could reach, is never what signs. The fetch
 follows no redirect and uses no proxy.
 
+The key pair needs `s3:GetObject` on the objects a resource names and, in a
+bucket that keeps versions, `s3:GetObjectVersion`: every operation after a
+Resolve asks for the version the Resolve recorded, and S3 authorizes that
+request as `s3:GetObjectVersion`. A bucket policy that lets anyone read needs
+both for the same reason. Nothing needs `s3:ListBucket`, and without it S3
+answers a missing key with `AccessDenied` rather than `NoSuchKey`.
+
 Only the `fetch-s3-source` init container, and the Resolve container, mount
 the Secret and the CA, and no process starts while either holds the key: the
 runner signs and sends the request itself. The container that holds the

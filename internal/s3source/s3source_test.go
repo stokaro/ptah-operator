@@ -211,6 +211,21 @@ func TestAFetchReadsTheObjectItIsPinnedTo(t *testing.T) {
 			t.Errorf("the fetch asked for %q", got)
 		}
 	})
+
+	// A spec may name the null version itself: the object written before the
+	// bucket kept versions. The endpoint says it served "null", which is then
+	// the version asked for and not the absence of one.
+	t.Run("the null version the spec names", func(t *testing.T) {
+		o := options(server, ca, "unversioned.hcl", schema)
+		o.Object.VersionID = "null"
+		result, err := s3source.Fetch(t.Context(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.VersionID != "null" || b.last(t).URL.RawQuery != "versionId=null" {
+			t.Fatalf("the fetch asked for %q and recorded the version %q", b.last(t).URL.RawQuery, result.VersionID)
+		}
+	})
 }
 
 // TestAnObjectStoredEncodedIsHashedAsStored holds the fetch to the bytes the
@@ -371,6 +386,23 @@ func TestADownloadIsBounded(t *testing.T) {
 		message string
 	}{
 		{
+			name: "one byte past the bound with no declared length",
+			write: func(w http.ResponseWriter) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(bytes.Repeat([]byte("x"), s3source.MaxDownloadBytes+1))
+			},
+			want: s3source.ErrTooLarge, message: "gave more than 67108864 bytes",
+		},
+		{
+			name: "a body shorter than it declares",
+			write: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Length", "100")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("0123456789"))
+			},
+			want: s3source.ErrTruncated, message: "declared 100 bytes and gave 10",
+		},
+		{
 			name: "a declared length past the bound",
 			write: func(w http.ResponseWriter) {
 				w.Header().Set("Content-Length", strconv.Itoa(s3source.MaxDownloadBytes+1))
@@ -412,6 +444,79 @@ func TestADownloadIsBounded(t *testing.T) {
 				t.Fatalf("Fetch: %v, want %v naming %q", err, answer.want, answer.message)
 			}
 		})
+	}
+}
+
+// TestAnObjectOfTheBoundIsRead holds the bound to what it admits: an object
+// of exactly MaxDownloadBytes, sent with no declared length so that only the
+// copy can tell where it ends, is read and digested whole.
+func TestAnObjectOfTheBoundIsRead(t *testing.T) {
+	t.Parallel()
+	data := bytes.Repeat([]byte("x"), s3source.MaxDownloadBytes)
+	b := &bucket{answer: func(w http.ResponseWriter, _ *http.Request) bool {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return true
+	}}
+	server, ca := serve(t, b)
+	result, err := s3source.Fetch(t.Context(), options(server, ca, "schema.hcl", data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DownloadDigest != digestOf(data) || len(result.Files) != 1 || len(result.Files[0].Data) != s3source.MaxDownloadBytes {
+		t.Fatalf("the fetch read %s and %d files", result.DownloadDigest, len(result.Files))
+	}
+}
+
+// TestARefusalHintsAtWhatAPersonChanges holds Hint to the error codes whose
+// cause the spec or a grant names, and to nothing else. Every operation after
+// a Resolve names the version it recorded, which S3 authorizes as
+// s3:GetObjectVersion; the same AccessDenied without a version is a key pair
+// or a policy that does not grant the object at all, and gets no hint.
+func TestARefusalHintsAtWhatAPersonChanges(t *testing.T) {
+	t.Parallel()
+	answer := func(status int, code string) func(http.ResponseWriter, *http.Request) bool {
+		return func(w http.ResponseWriter, _ *http.Request) bool {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`<Error><Code>` + code + `</Code><Message>refused</Message></Error>`))
+			return true
+		}
+	}
+	for _, row := range []struct {
+		name, version, code string
+		status              int
+		hint                string
+	}{
+		{name: "AccessDenied to a request for a version", version: "v1", code: "AccessDenied", status: http.StatusForbidden,
+			hint: "s3:GetObjectVersion"},
+		{name: "AccessDenied to a request for the null version", version: "null", code: "AccessDenied", status: http.StatusForbidden,
+			hint: "s3:GetObjectVersion"},
+		{name: "AccessDenied to a request for the current object", code: "AccessDenied", status: http.StatusForbidden},
+		{name: "a signature for another region", code: "AuthorizationHeaderMalformed", status: http.StatusBadRequest,
+			hint: "set region to the bucket's region"},
+		{name: "a missing key", version: "v1", code: "NoSuchKey", status: http.StatusNotFound},
+		{name: "a signature mismatch", version: "v1", code: "SignatureDoesNotMatch", status: http.StatusForbidden},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			server, ca := serve(t, &bucket{answer: answer(row.status, row.code)})
+			o := options(server, ca, "schema.hcl", []byte("x"))
+			o.Object.VersionID = row.version
+			_, err := s3source.Fetch(t.Context(), o)
+			if !errors.Is(err, s3source.ErrStatus) || !strings.Contains(err.Error(), row.code) {
+				t.Fatalf("Fetch: %v, want a refusal naming %s", err, row.code)
+			}
+			hint := s3source.Hint(err)
+			if (row.hint == "") != (hint == "") || !strings.Contains(hint, row.hint) {
+				t.Fatalf("Hint: %q, want one naming %q", hint, row.hint)
+			}
+			if strings.Contains(err.Error(), hint) && hint != "" {
+				t.Fatal("the hint is part of the refusal's message, where a bound can cut it")
+			}
+		})
+	}
+	if hint := s3source.Hint(s3source.ErrStatus); hint != "" {
+		t.Fatalf("Hint of a refusal that carries no code: %q", hint)
 	}
 }
 
@@ -487,15 +592,24 @@ func TestCoordinatesTheAPIRefusesAreRefusedBeforeARequest(t *testing.T) {
 
 func TestHalfACredentialIsRefused(t *testing.T) {
 	t.Parallel()
-	for _, refused := range []s3source.Credentials{
-		{AccessKeyID: "AKID"},
-		{SecretAccessKey: "secret"},
-		{SessionToken: "token"},
-		{SecretAccessKey: "secret", SessionToken: "token"},
-		{AccessKeyID: "AK/ID", SecretAccessKey: "secret"},
+	for _, refused := range []struct {
+		credentials s3source.Credentials
+		message     string
+	}{
+		{s3source.Credentials{AccessKeyID: "AKID"}, "without its secret access key"},
+		{s3source.Credentials{SecretAccessKey: "secret"}, "without its access key ID"},
+		{s3source.Credentials{SessionToken: "token"}, "a session token without a key pair"},
+		{s3source.Credentials{SecretAccessKey: "secret", SessionToken: "token"}, "without its access key ID"},
+		{s3source.Credentials{AccessKeyID: "AK/ID", SecretAccessKey: "secret"}, "a slash, a comma or a space"},
+		{s3source.Credentials{AccessKeyID: "AK ID", SecretAccessKey: "secret"}, "a slash, a comma or a space"},
+		// A Secret made from a file often ends in a line break.
+		{s3source.Credentials{AccessKeyID: "AKID\n", SecretAccessKey: "secret"}, "the access key ID holds a line break"},
+		{s3source.Credentials{AccessKeyID: "AKID", SecretAccessKey: "secret\r\n"}, "the secret access key holds a line break"},
+		{s3source.Credentials{AccessKeyID: "AKID", SecretAccessKey: "secret", SessionToken: "to\nken"}, "the session token holds a line break"},
 	} {
-		if err := refused.Validate(); !errors.Is(err, s3source.ErrCredential) {
-			t.Errorf("Validate(%+v): %v", refused, err)
+		err := refused.credentials.Validate()
+		if !errors.Is(err, s3source.ErrCredential) || !strings.HasSuffix(err.Error(), refused.message) {
+			t.Errorf("Validate(%q): %v, want %q", refused.credentials, err, refused.message)
 		}
 	}
 	for _, admitted := range []s3source.Credentials{

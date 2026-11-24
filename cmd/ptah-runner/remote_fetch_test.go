@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -117,5 +121,38 @@ func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 				t.Fatalf("Ptah ran for a fetch the runner refused (stat error %v)", err)
 			}
 		})
+	}
+}
+
+// An S3 fetch the endpoint refuses says why once, on standard error, where
+// the kubelet reads the step's termination message from: the runner reads
+// the object itself, so there is no child output to report beside it.
+func TestAnS3FetchRefusalIsReportedOnce(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<Error><Code>AccessDenied</Code><Message>Access Denied for this fetch.</Message></Error>"))
+	}))
+	t.Cleanup(server.Close)
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{
+		runnerProtocol,
+		runner.EnvS3Endpoint + "=" + server.URL, runner.EnvS3Region + "=us-east-1", runner.EnvS3Bucket + "=orders",
+		runner.EnvS3Key + "=schema.sql", runner.EnvS3Digest + "=sha256:" + strings.Repeat("e", 64), runner.EnvS3Format + "=File",
+		runner.EnvS3Path + "=schema.sql", runner.EnvS3Selects + "=file", runner.EnvS3CASourceFile + "=" + ca,
+		runner.EnvExpectedContentDigest + "=sha256:" + strings.Repeat("d", 64),
+	}
+	binary, _ := fetchScript(t, 0)
+	var stdout, stderr bytes.Buffer
+	exitCode := run(context.Background(), []string{"--fetch-s3-source", t.TempDir() + "/source", "--ptah-binary", binary},
+		&stdout, &stderr, environment, "")
+	if exitCode != 2 || !strings.Contains(stderr.String(), runner.CodeS3SourceRefused+": ") {
+		t.Fatalf("run() = exit %d, stderr %q, want 2 and the S3 refusal", exitCode, stderr.String())
+	}
+	if count := strings.Count(stderr.String(), "Access Denied for this fetch."); count != 1 {
+		t.Fatalf("standard error says the refusal %d times, want once: %q", count, stderr.String())
 	}
 }

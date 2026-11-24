@@ -238,7 +238,7 @@ func TestARefusedAccessLeavesItsSentenceAndNoCredential(t *testing.T) {
 		return func(t *testing.T) error {
 			environment := s3FetchEnvironment("https://objects.example.com", "app/1.4.0/app.tar.gz", otherDigest, "TarGzip", "directory",
 				"app/db/migrations", otherDigest, extra...)
-			return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir(), nil)
+			return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
 		}
 	}
 
@@ -440,7 +440,7 @@ func TestTheGuardAndTheFetchSayWhatAResolveSays(t *testing.T) {
 					"directory", "app/db/migrations", "sha256:"+strings.Repeat("c", 64),
 					EnvS3AccessKeyID+"="+refusalUsername, EnvS3SecretAccessKey+"="+refusalPassword,
 					EnvS3HostGrant+"=objects.example.com", EnvS3BucketGrant+"=orders-private")
-				return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir(), nil)
+				return FetchS3Source(t.Context(), environment, filepath.Join(t.TempDir(), "source"), t.TempDir())
 			},
 		},
 	} {
