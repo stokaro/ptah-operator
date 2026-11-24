@@ -21,9 +21,11 @@ nobody can account for. A migration can find nothing pending, or end a run
 Select a stage, or an object, to follow it. Choose **Audit** to read the same
 record by evidence source instead: what each source can and cannot establish,
 what reads it, and what is left of it after a deletion or the loss of the
-cluster. The sections after it are the precise reference the journey is
-taken from, and [Audit a database change](../../use/audit/) is the one for the
-audit view.
+cluster. Choose **Object map** to read it by object: who writes each one, what
+it holds, what owns it and what it only names, whether it can change, and what
+deleting it does. The sections after it are the precise reference the journey
+is taken from, and [Audit a database change](../../use/audit/) is the one for
+the audit view.
 
 <div data-lifecycle-explorer></div>
 

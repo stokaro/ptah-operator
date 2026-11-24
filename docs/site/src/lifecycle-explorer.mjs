@@ -25,9 +25,10 @@
 // nobody accounted for. Stage, path and object ids are unique across families,
 // so a link that names one names its family too.
 //
-// The audit view, at the end, is not a scenario: it covers both families and
-// is read by evidence source rather than by stage. The composed workflow and
-// the depth levels are later slices of #817.
+// The audit view and the object map, at the end, are not scenarios: each
+// covers both families, the audit view read by evidence source and the object
+// map by object, rather than by stage. The composed workflow and the depth
+// levels are later slices of #817.
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -203,7 +204,7 @@ const schemaObjects = [
       'The lock every resource that can change one database takes turns through. It is keyed by a SHA-256 digest of the engine, the namespace and the coordinationKey, never by anything a credential carries. The schema holds it for a Plan, an Apply and the proof that follows, and hands it back after the proof.',
     lives: 'The coordination namespace, which is the release namespace unless the chart names another. No owner reference ties it to the schema.',
     inspect: [
-      { command: 'kubectl -n <operator namespace> get leases -o wide', says: 'Each Lease with its holder.' },
+      { command: 'kubectl -n <coordination namespace> get leases -o wide', says: 'Each Lease with its holder.' },
       { command: 'kubectl ptah schema application -n application --details', says: 'Lock release: a Lease the operation held that is still to be handed back.' },
     ],
     links: [
@@ -928,7 +929,7 @@ const migrationObjects = [
       'The lock every resource that can change one database takes turns through, so a schema and a migration of one database serialize. It is keyed by a SHA-256 digest of the engine, the namespace and the coordinationKey. A migration takes it for an Apply and nothing else: reading the history changes nothing. It hands it back once the run is accounted for, and keeps it while a run that reported nothing could still be writing.',
     lives: 'The coordination namespace, which is the release namespace unless the chart names another. No owner reference ties it to the migration.',
     inspect: [
-      { command: 'kubectl -n <operator namespace> get leases -o wide', says: 'Each Lease with its holder.' },
+      { command: 'kubectl -n <coordination namespace> get leases -o wide', says: 'Each Lease with its holder.' },
       { command: 'kubectl ptah migration orders -n application --details', says: 'Lock release: a Lease the run held that is still to be handed back.' },
     ],
     links: [
@@ -2226,5 +2227,580 @@ export const audit = {
   links: [
     { label: 'Audit a database change', href: '../../use/audit/' },
     { label: 'Reading the record', href: '../../use/audit/#reading' },
+  ],
+};
+
+// The object map: every kind the operator defines and every other object an
+// operation reads or writes, grouped by who writes it. Each says what it
+// holds, what the operator does with it, whether it can change and what
+// deleting it does, and its relations keep owner references apart from the
+// names, UIDs and digests objects carry. It is drawn from the architecture
+// page, the operations page's deletion sections and the API types, which hold
+// the immutability rules. Node ids carry the prefix o-, so they cannot
+// collide with a stage, a path, an object of a family or an audit source.
+const objectMapGroups = [
+  { id: 'person', label: 'A person writes' },
+  { id: 'operator', label: 'The operator writes' },
+  { id: 'outside', label: 'Outside the cluster' },
+];
+
+// Where an object lives. An owner reference cannot leave a namespace, so the
+// scope is what decides whether one object can own another.
+const objectMapScopes = [
+  { id: 'namespace', label: 'The resource’s namespace' },
+  { id: 'coordination', label: 'The coordination namespace' },
+  { id: 'cluster', label: 'Cluster-scoped' },
+  { id: 'outside', label: 'Outside the cluster' },
+];
+
+// Whether an object can change once written.
+const objectMapChanges = [
+  { id: 'editable', label: 'Editable' },
+  { id: 'immutable', label: 'Immutable' },
+  { id: 'partly', label: 'Partly immutable' },
+  { id: 'external', label: 'Not a Kubernetes object' },
+];
+
+// The relationship types the map draws: the journey's own, less the part of
+// one object it has no use for, and a database connection, which only the
+// map shows.
+const objectMapTypes = [
+  ...relationTypes.filter((type) => type.id !== 'contains'),
+  {
+    id: 'executes',
+    label: 'Runs SQL on',
+    inverse: 'SQL run by',
+    text: 'A database connection. Only the Ptah executor in an operation Pod opens one; the manager never does.',
+  },
+];
+
+const objectMapNodes = [
+  {
+    id: 'o-schema',
+    label: 'PtahSchema',
+    kind: 'PtahSchema',
+    group: 'person',
+    scope: 'namespace',
+    families: ['schema'],
+    writtenBy: 'You write the spec. Only the manager writes the status: admission refuses a status write from anyone else.',
+    holds:
+      'The desired state: the target database and the Secret key that holds its URL, the source of the desired schema, the policy a plan is held to, the interval and the suspension. Its status holds the phase, the conditions, the operation claim, the proof an Apply still owes and the lifecycle journal.',
+    operator:
+      'The schema controller reconciles it. It resolves the source, records each operation claim in status before it creates the Job, publishes plans, and reads each result back into status.',
+    change: {
+      verdict: 'editable',
+      text: 'The spec can change at any time. An edit moves the generation, and a changed input retires the plan computed from it rather than changing that plan.',
+    },
+    deletion:
+      'Deleting it never runs SQL. The finalizer operator.ptah.run/active-operation waits for an Apply’s Job to stop, records the outcome as unknown when nothing read the result, and hands the database Lease back. Its plans, Jobs and snapshots then go by garbage collection; its result records go once admission lets them. The database keeps what the last Apply left. Use the default propagation: --cascade=orphan is refused, and --cascade=foreground lets the garbage collector delete a running Apply’s Job first.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application', says: 'The phase, what holds the schema, its source, the plan waiting, the approvals that name it and every condition.' },
+      { command: 'kubectl ptah history schema/application -n application', says: 'The lifecycle journal, entry by entry.' },
+    ],
+    links: [
+      { label: 'PtahSchema fields', href: '../ptahschema/' },
+      { label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' },
+    ],
+  },
+  {
+    id: 'o-migration',
+    label: 'PtahMigration',
+    kind: 'PtahMigration',
+    group: 'person',
+    scope: 'namespace',
+    families: ['migration'],
+    writtenBy: 'You write the spec. Only the manager writes the status: admission refuses a status write from anyone else.',
+    holds:
+      'The desired state: the target database and the Secret key that holds its URL, the source of the migration files, the policy a run is held to, the interval and the suspension. Its status holds the phase, the conditions, the last reading of the revision table, the operation claim, the last run, a run nobody accounted for and the lifecycle journal.',
+    operator:
+      'The migration controller reconciles it. It resolves the source, reads the history with a Job, builds the plan from that reading, records each Apply claim in status before it creates the Job, and reads each result back into status.',
+    change: {
+      verdict: 'editable',
+      text: 'The spec can change at any time. An edit moves the generation, and a changed input retires the plan computed from it rather than changing that plan.',
+    },
+    deletion:
+      'Deleting it never runs SQL. The finalizer operator.ptah.run/migration-operation holds the deletion while a dispatched Apply’s Job is unfinished or a Pod it owns has not stopped. A claim that dispatched something then records the run Unknown, the Lease goes back, and the garbage collector deletes the Job and its Pod, the Pod’s log with it. Use the default propagation: --cascade=orphan is refused, and --cascade=foreground stops a running Apply between statements.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'The phase, the history read, the plan waiting, the last run, a run nobody accounted for and every condition.' },
+      { command: 'kubectl ptah history migration/orders -n application', says: 'The lifecycle journal, entry by entry.' },
+    ],
+    links: [
+      { label: 'PtahMigration fields', href: '../ptahmigration/' },
+      { label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' },
+    ],
+  },
+  {
+    id: 'o-schema-approval',
+    label: 'PtahSchemaApproval',
+    kind: 'PtahSchemaApproval',
+    group: 'person',
+    scope: 'namespace',
+    families: ['schema'],
+    writtenBy:
+      'The approver, who can be another person than the one who changed the schema; kubectl ptah approve creates it as that person. Admission stamps who approved and when, replacing anything a client wrote there. The manager writes only its status.',
+    holds: 'A decision about one exact plan: the schema by name and UID, the plan by name and UID, and the plan’s fingerprint. Its status says Accepted, Consumed or Stale.',
+    operator:
+      'The schema controller watches approvals and consumes one before the Apply it authorizes is dispatched, so it cannot authorize a second. It marks one Stale when the database, the artifact or the policy moved before it could run.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change: an approval is immutable; create a new approval instead.' },
+    deletion:
+      'It has no owner reference, so deleting the schema leaves it, and it goes with the namespace. Deleting it removes the object, and the journal still names the approver until the entry ages out of its bounds.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application', says: 'The approvals that name the schema, newest first, with Accepted, Consumed and Stale.' },
+      { command: 'kubectl describe ptahschemaapproval <name> -n application', says: 'One approval whole.' },
+    ],
+    links: [
+      { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+      { label: 'PtahSchemaApproval fields', href: '../ptahschemaapproval/' },
+    ],
+  },
+  {
+    id: 'o-migration-approval',
+    label: 'PtahMigrationApproval',
+    kind: 'PtahMigrationApproval',
+    group: 'person',
+    scope: 'namespace',
+    families: ['migration'],
+    writtenBy:
+      'The approver; kubectl ptah approve creates it as that person. Admission stamps who approved and when, and refuses an approval the current evidence no longer supports. The manager writes only its status.',
+    holds: 'A decision about one exact plan: the migration by name and UID, the plan by name and UID, and the plan’s fingerprint. It authorizes one execution.',
+    operator:
+      'The migration controller watches approvals and consumes one before the Apply it authorizes is dispatched. An approval deleted or replaced before then retires the claim.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change: an approval is immutable; create a new approval instead.' },
+    deletion:
+      'It has no owner reference, so deleting the migration leaves it, and it goes with the namespace. Deleting it removes the object, and the journal still names the approver until the entry ages out of its bounds.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'The approvals that name the migration, whether each names the current plan, and Consumed or Stale.' },
+      { command: 'kubectl ptah history migration/orders -n application', says: 'Every approval that names the migration, oldest first.' },
+    ],
+    links: [
+      { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+      { label: 'PtahMigrationApproval fields', href: '../ptahmigrationapproval/' },
+    ],
+  },
+  {
+    id: 'o-acknowledgment',
+    label: 'PtahMigrationRunAcknowledgment',
+    kind: 'PtahMigrationRunAcknowledgment',
+    group: 'person',
+    scope: 'namespace',
+    families: ['migration'],
+    writtenBy: 'A person who has accounted for a run nobody could. Admission stamps who acknowledged and when. The manager writes only its status.',
+    holds:
+      'The migration by name and UID, and the run by its operationID. It repairs nothing and approves nothing. Its status says Consumed, when it settled the run it names, or Stale.',
+    operator:
+      'The migration controller watches acknowledgments and takes one only for the run status.unresolvedRun records. It lifts the hold, and the history is read again before anything is planned.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change: an acknowledgment is immutable; create a new acknowledgment instead.' },
+    deletion:
+      'It has no owner reference, so deleting the migration leaves it, and it goes with the namespace. Deleting it removes the object; status.resolvedRun and the journal still name who acknowledged.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'Run acknowledgments: each with the operation it names, marked when that is the unresolved run, and Consumed or Stale.' },
+      { command: 'kubectl ptah history migration/orders -n application', says: 'Every acknowledgment that names the migration, oldest first.' },
+    ],
+    links: [
+      { label: 'Settling it by hand', href: '../../use/operations/#clear-unresolved-run' },
+      { label: 'PtahMigrationRunAcknowledgment fields', href: '../ptahmigrationrunacknowledgment/' },
+    ],
+  },
+  {
+    id: 'o-source',
+    label: 'Source ConfigMap',
+    kind: 'ConfigMap',
+    group: 'person',
+    scope: 'namespace',
+    families: ['schema', 'migration'],
+    writtenBy: 'You, or the tool that renders your manifests: Kustomize, Helm or a GitOps controller.',
+    holds: 'The schema file, or the numbered migration files, under the keys the resource selects. A key the resource does not name is not part of the source.',
+    operator:
+      'The manager reads it straight from the API server, never from a cache, and copies the selected keys into a snapshot. An edit to a selected key is read at once; an edit to any other key changes nothing.',
+    change: {
+      verdict: 'editable',
+      text: 'You can edit or replace it. A plan binds the ConfigMap’s UID and the content digest of the selected files, so a ConfigMap deleted and created again under the same name is a new source.',
+    },
+    deletion:
+      'An operation already running reads its snapshot and is not disturbed. The next read refuses a ConfigMap that does not exist, and nothing is planned from it.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application', says: 'Source: the ConfigMap’s name, beside the Snapshot every operation reads.' },
+      { command: 'kubectl ptah migration orders -n application', says: 'The same lines for a migration.' },
+    ],
+    links: [
+      { label: 'Deliver from a ConfigMap', href: '../../use/sources/#from-a-configmap' },
+      { label: 'A ConfigMap source', href: '#a-configmap-source' },
+    ],
+  },
+  {
+    id: 'o-secret',
+    label: 'Database Secret',
+    kind: 'Secret',
+    group: 'person',
+    scope: 'namespace',
+    families: ['schema', 'migration'],
+    writtenBy: 'You, or whatever manages your database credentials.',
+    holds:
+      'The database URL, with its user and password, under the key spec.target.urlFrom names. The resource names a Secret in its own namespace: there is deliberately no namespace field.',
+    operator:
+      'The manager never reads it and has no permission to. Only the operation Pod mounts it, and the runner refuses an Apply whose URL no longer hashes to the realm and the route identity its plan named.',
+    change: {
+      verdict: 'editable',
+      text: 'You can rotate the password: the target identity leaves it out. Another host, port, database, user or bound parameter is another target, and an Apply planned for the old one is refused.',
+    },
+    deletion: 'An operation Pod that mounts it cannot start, and the resource reports PodConfigurationError with the kubelet’s words. The operator keeps no copy.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application', says: 'Every condition: PodConfigurationError quotes the kubelet when a Pod cannot mount the Secret.' },
+    ],
+    gap: 'No kubectl ptah command reads a Secret, and none needs to: the operator never uses the value, and reading one takes get on secrets.',
+    links: [
+      { label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' },
+      { label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' },
+    ],
+  },
+  {
+    id: 'o-realm',
+    label: 'PtahRealm',
+    kind: 'PtahRealm',
+    group: 'person',
+    scope: 'cluster',
+    families: ['schema', 'migration'],
+    writtenBy: 'A cluster administrator. The chart grants the manager get, list and watch on realms and nothing more.',
+    holds:
+      'One physical database: the engine it speaks, the namespaces whose resources may claim it, written out by name, and whether more than one resource may manage it at once. It has no status.',
+    operator: 'The manager reads it from its cache before every claim, and a change to it wakes the resources that name it. It never writes it.',
+    change: {
+      verdict: 'partly',
+      text: 'The engine cannot change: a realm is one physical database. The namespaces and the sharing can. Removing a namespace refuses an idle resource there on the pass the change starts, and does not stop an operation already running.',
+    },
+    deletion:
+      'A resource that names a realm that does not exist is refused with RealmNotAuthorized at its next claim, and runs no Job. As with a namespace removed from it, an operation already running is not stopped.',
+    inspect: [{ command: 'kubectl get ptahrealm <name>', says: 'Its engine, its sharing and the namespaces it lists.' }],
+    gap: 'No kubectl ptah command prints the realm a resource claims or the realms that list a namespace, and none of the example roles for authors, approvers or diagnostics reaches realms.',
+    links: [
+      { label: 'A database more than one namespace manages', href: '../../use/operations/#a-database-more-than-one-namespace-manages' },
+      { label: 'PtahRealm fields', href: '../ptahrealm/' },
+    ],
+  },
+  {
+    id: 'o-schema-plan',
+    label: 'PtahSchemaPlan',
+    kind: 'PtahSchemaPlan',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['schema'],
+    writtenBy: 'The schema controller, from the result of a Plan Job.',
+    holds:
+      'The only thing an Apply may run, bound by its fingerprint to the schema UID, the content digest, the source, the observed and desired state, the policy, the target and the execution binding. Its status binds each chunk by UID, size and digest once every chunk was read back.',
+    operator: 'The manager writes it and does not watch it: a plan it wrote tells it nothing it did not already know.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change: a changed input makes another plan.' },
+    deletion:
+      'Owned by the schema, it goes with the schema by garbage collection, its chunks with it. The operator prunes no plan on its own. A plan that status or an approval still names is pinned, and deleting it leaves that field naming bytes nothing holds.',
+    inspect: [
+      { command: 'kubectl ptah plan application -n application', says: 'The plan’s identity and each statement under its severity, after the plugin checked every chunk.' },
+      { command: 'kubectl ptah plan application --applied -n application', says: 'The stored plan the last confirmed Apply ran.' },
+    ],
+    links: [
+      { label: 'Immutable bindings', href: '../plans-and-approvals/#immutable-bindings' },
+      { label: 'Which plans are pinned', href: '../../use/operations/#which-plans-are-pinned' },
+    ],
+  },
+  {
+    id: 'o-chunk',
+    label: 'PtahSchemaPlanChunk',
+    kind: 'PtahSchemaPlanChunk',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['schema'],
+    writtenBy: 'The schema controller, with the plan. Just before an Apply it also writes one ConfigMap per chunk, of the same size and name, for the Apply Pod to mount.',
+    holds: 'The plan’s SQL: at most sixteen chunks of at most 512 KiB, for a plan of at most 8 MiB.',
+    operator:
+      'Not watched, and never read from a cache: a cached read would start a cache of every chunk in the cluster, so the manager reads them straight from the API server.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change, and the ConfigMaps an Apply mounts are immutable too.' },
+    deletion: 'Owned by the plan, the chunks and their ConfigMaps go with it by garbage collection.',
+    inspect: [{ command: 'kubectl ptah plan application -n application', says: 'Reads every chunk, checks each against the plan, and prints the joined SQL.' }],
+    links: [
+      { label: 'Plan retention', href: '../../use/operations/#plan-retention' },
+      { label: 'PtahSchemaPlanChunk fields', href: '../ptahschemaplanchunk/' },
+    ],
+  },
+  {
+    id: 'o-migration-plan',
+    label: 'PtahMigrationPlan',
+    kind: 'PtahMigrationPlan',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['migration'],
+    writtenBy: 'The migration controller, from the history reading, with no Job.',
+    holds:
+      'The sequence an Apply may run: each pending version in order with its description and checksum, the history fingerprint and the version it was computed against, and the source by the content digest of its files. No SQL: the statements stay in the source.',
+    operator: 'The manager writes it and does not watch it.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change: a changed input makes another plan.' },
+    deletion:
+      'Owned by the migration, it goes with the migration by garbage collection. The operator prunes no plan on its own. A plan that status or an approval still names is pinned, and one status.unresolvedRun names is the only record of what a run nobody accounted for would have done.',
+    inspect: [
+      { command: 'kubectl ptah migration orders -n application', says: 'The plan, each version with its description. No SQL: the statements stay in the source.' },
+      { command: 'kubectl ptah migration orders -n application -o json', says: 'The same view as a document, with the plan’s fingerprint, for a script.' },
+    ],
+    links: [
+      { label: 'PtahMigrationPlan fields', href: '../ptahmigrationplan/' },
+      { label: 'Which plans are pinned', href: '../../use/operations/#which-plans-are-pinned' },
+    ],
+  },
+  {
+    id: 'o-snapshot',
+    label: 'Source snapshot',
+    kind: 'ConfigMap',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['schema', 'migration'],
+    writtenBy: 'The manager, from a source ConfigMap. Git, HTTPS and OCI sources have none: their Jobs fetch them.',
+    holds:
+      'The selected files, under the name ptah-src-<hash>, with a manifest of every file’s path, size and SHA-256. The content digest is the SHA-256 of that manifest. The files and the manifest fit in one ConfigMap: 1 MiB together.',
+    operator:
+      'Every operation mounts it, never the source, and an init container checks it against the content digest before the container that holds the database URL starts. The manager deletes a snapshot once nothing names it.',
+    change: { verdict: 'immutable', text: 'An immutable ConfigMap. An edit to a selected key makes a new snapshot rather than changing this one.' },
+    deletion:
+      'Owned by the resource, it goes with it. Deleted or replaced while an operation still needs it, that operation is refused rather than read from anywhere else; putting back the exact bytes, or editing the source so that it is read again, lets it continue.',
+    inspect: [{ command: 'kubectl ptah schema application -n application', says: 'Snapshot: the copy every operation reads, beside the source it was taken from.' }],
+    links: [{ label: 'A ConfigMap source', href: '#a-configmap-source' }],
+  },
+  {
+    id: 'o-job',
+    label: 'Operation Job',
+    kind: 'Job',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['schema', 'migration'],
+    writtenBy: 'The manager, one per operation, after it recorded the claim in status. The Job controller creates its Pod.',
+    holds:
+      'One operation: a Resolve, a Verify, an Observe, a Plan, a history read or an Apply. Its Pod runs ptah-runner, which starts the Ptah executor. The Pod holds no Kubernetes API credential: the token it mounts authenticates result delivery only.',
+    operator:
+      'The controllers watch the Jobs they own, and find an Apply’s executor through the Pods its Job owns. A read-only Job is removed five minutes after it finishes; an Apply Job gets its cleanup TTL once its result was read.',
+    change: { verdict: 'partly', text: 'The API server refuses a change to the Pod template of a Job that is not suspended. The operator writes the Job’s cleanup TTL.' },
+    deletion:
+      'Owned by the resource, never by a plan, it goes with the resource. Deleting a running Apply’s Job stops its executor on a node the API server can reach, and the resource keeps the database Lease until nothing the run started can still write. --cascade=orphan is refused for every caller. The Pod’s log goes with the Pod.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application --details', says: 'Active operation: the claim, the Job it names, and whether that Job is confirmed by UID.' },
+      { command: 'kubectl logs -n application job/<name> -c ptah', says: 'The executor’s log, while the Pod exists.' },
+    ],
+    gap: 'No kubectl ptah command reads a Job’s log or its Events; kubectl logs and kubectl events do, while the Job and its Pod exist.',
+    links: [
+      { label: 'One operation, end to end', href: '../execution/#one-operation-end-to-end' },
+      { label: 'What a failed Apply leaves in its Pod log', href: '../../use/operations/#failed-apply-log' },
+    ],
+  },
+  {
+    id: 'o-lease',
+    label: 'Database-realm Lease',
+    kind: 'Lease',
+    group: 'operator',
+    scope: 'coordination',
+    families: ['schema', 'migration'],
+    writtenBy: 'The manager, which has get, create and update on Leases in the coordination namespace and no Lease access anywhere else.',
+    holds:
+      'Which claim holds one database realm, and for which uninterrupted interval. It is keyed by a SHA-256 digest of the engine with the namespace and the coordinationKey, or with the PtahRealm’s name, never by anything a credential carries.',
+    operator:
+      'A claim takes it for a schema’s Plan, Apply and proof, and for a migration’s Apply only, renews it while the operation runs, and hands it back once nothing the operation started can still write.',
+    change: {
+      verdict: 'editable',
+      text: 'The manager renews it while it is held. A Lease that lapses and is taken again starts a new epoch, and a result produced across the change is discarded.',
+    },
+    deletion:
+      'No owner reference ties it to a resource, and none could: it lives in another namespace. Deleting a resource hands it back rather than deleting it. A Lease that changed hands retires the operation that held it.',
+    inspect: [
+      {
+        command: 'kubectl -n <coordination namespace> get leases -o wide',
+        says: 'Each Lease with its holder, the manager’s leader-election Lease among them. The coordination namespace is the release namespace unless the chart’s coordination.namespace names another.',
+      },
+      { command: 'kubectl ptah schema application -n application --details', says: 'Lock release: a Lease the operation held that is still to be handed back.' },
+    ],
+    gap: 'No kubectl ptah command reads the Lease itself: --details says only what the resource still owes it, and reading Leases takes access to the coordination namespace.',
+    links: [
+      { label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' },
+      { label: 'Four identities', href: '../architecture/#four-identities' },
+    ],
+  },
+  {
+    id: 'o-result',
+    label: 'PtahResultRecord',
+    kind: 'PtahResultRecord',
+    group: 'operator',
+    scope: 'namespace',
+    families: ['schema', 'migration'],
+    writtenBy:
+      'The manager: the credential an operation Pod delivers its result with, the result its receiver stores before it acknowledges, and a retired record once nothing pins the result.',
+    holds:
+      'One operation’s result: up to 256 KiB in one intent record with its bytes, digest and operation binding, or chunks and a completion record above that. Payloads are confidential, and read access belongs only to identities allowed to read operation SQL.',
+    operator:
+      'A background consumer checks a result’s binding and digest and reads it for the controller. A leader-only collector keeps active and recovery-pinned records, and deletes eligible ones at least an hour after retirement.',
+    change: { verdict: 'immutable', text: 'The spec refuses any change, and so do its owner references, for every writer, the garbage collector included.' },
+    deletion:
+      'A record is owned by the resource whose operation produced it, and its chunks by the record. Admission refuses to delete one, for every caller, a cluster administrator and the namespace controller included, while its Job exists or a recovery pin holds it, and until at least an hour after retirement. A namespace that ran an operation stays Terminating for about that hour.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application --details', says: 'The outcome the manager took from the result.' },
+      { command: 'kubectl get ptahresultrecords -n application', says: 'The records, by name and age.' },
+    ],
+    gap: 'No command reads a result payload, on purpose: payloads are confidential.',
+    links: [
+      { label: 'Durable result protocol', href: '../execution/#durable-result-protocol' },
+      { label: 'Deleting a namespace', href: '../../use/operations/#delete-namespace' },
+      { label: 'PtahResultRecord fields', href: '../ptahresultrecord/' },
+    ],
+  },
+  {
+    id: 'o-database',
+    label: 'Target database',
+    kind: 'Database',
+    group: 'outside',
+    scope: 'outside',
+    families: ['schema', 'migration'],
+    writtenBy: 'Through the operator, only the Ptah executor in an operation Pod writes to it, as the user in the URL. The manager never opens a database connection.',
+    holds:
+      'The schema objects and rows the resources manage, and the run logs Ptah keeps there: schema_migrations and schema_migrations_log for a migration, and ptah_schema_apply_log for a schema Apply where the login may insert into it.',
+    operator: 'Read by Observe, Plan and history Jobs, and changed only by an Apply. The manager decides from what those Jobs report.',
+    change: { verdict: 'external', text: 'Not a Kubernetes object. Anything with a login can change it, and the next reading reports what it finds.' },
+    deletion: 'Deleting a resource, its plans or its namespace runs no SQL and leaves every database object as it is.',
+    inspect: [
+      { command: 'kubectl ptah schema application -n application', says: 'Observed, with its time, and Drift, by category: what the last reading found.' },
+      { command: 'kubectl ptah migration orders -n application', says: 'What the database’s own history said at the last reading.' },
+    ],
+    gap: 'No command in this project reads the database directly: what the operator knows of it is what the last Job reported.',
+    links: [
+      { label: 'What a read does to the database', href: '../execution/#what-a-read-does-to-the-database' },
+      { label: 'Audit a database change', href: '../../use/audit/' },
+    ],
+  },
+  {
+    id: 'o-artifact',
+    label: 'OCI, Git or HTTPS source',
+    kind: 'Artifact',
+    group: 'outside',
+    scope: 'outside',
+    families: ['schema', 'migration'],
+    writtenBy:
+      'Whoever may push to the registry, the repository or the server. An OCI artifact is trusted by its verification policy, a Git source by the repository, an HTTPS source by the digest in the spec.',
+    holds: 'The schema file or the migration directory, at the digest, the commit or the tag the resource names.',
+    operator:
+      'Read only by Jobs. A Resolve Job fetches it and records its digest or commit, and every later operation fetches it again and refuses other content. The manager never reads the repository or its credential.',
+    change: {
+      verdict: 'external',
+      text: 'Not a Kubernetes object. A moved tag or branch is read again at the interval and retires the plan; bytes that no longer give the pinned digest are refused.',
+    },
+    deletion: 'A download that disappears fails the next Resolve, and nothing is planned or applied. What was resolved and applied before stays in the status.',
+    inspect: [
+      {
+        command: 'kubectl ptah schema application -n application',
+        says: 'What the last resolution recorded: the artifact, the repository with its ref and commit, or the download, and the content digest of the selected files.',
+      },
+    ],
+    links: [
+      { label: 'Deliver from a ConfigMap, Git or HTTPS', href: '../../use/sources/' },
+      { label: 'Mutable tags and registry outages', href: '../../use/operations/#mutable-tags-and-registry-outages' },
+    ],
+  },
+];
+
+// Every relationship once, from the object that carries or exercises it, as in
+// a family: the map lists each from both ends.
+const objectMapRelations = [
+  { from: 'o-schema', to: 'o-schema-plan', type: 'owns', text: 'Plans are owned by the schema and collected with it.' },
+  { from: 'o-schema', to: 'o-snapshot', type: 'owns', text: 'The snapshot is owned by the schema, and deleted once nothing names it.' },
+  { from: 'o-schema', to: 'o-job', type: 'owns', text: 'Every operation Job is owned by the schema. The plan does not own the Job.' },
+  { from: 'o-schema', to: 'o-result', type: 'owns', text: 'A result record is owned by the schema whose operation produced it.' },
+  { from: 'o-schema-plan', to: 'o-chunk', type: 'owns', text: 'The chunks, and the ConfigMaps an Apply mounts, are owned by the plan.' },
+  { from: 'o-migration', to: 'o-migration-plan', type: 'owns', text: 'Plans are owned by the migration and collected with it.' },
+  { from: 'o-migration', to: 'o-snapshot', type: 'owns', text: 'The snapshot is owned by the migration, and deleted once nothing names it.' },
+  { from: 'o-migration', to: 'o-job', type: 'owns', text: 'Every operation Job is owned by the migration. The plan does not own the Job.' },
+  { from: 'o-migration', to: 'o-result', type: 'owns', text: 'A result record is owned by the migration whose operation produced it.' },
+
+  { from: 'o-schema', to: 'o-source', type: 'references', text: 'spec.desired.configMap names it and the keys it selects.' },
+  { from: 'o-schema', to: 'o-artifact', type: 'references', text: 'spec.desired.ociRef, git or https names it in place of a ConfigMap.' },
+  { from: 'o-schema', to: 'o-secret', type: 'references', text: 'spec.target.urlFrom names the Secret and the key.' },
+  { from: 'o-schema', to: 'o-realm', type: 'references', text: 'spec.target.realmRef names it, in place of a coordinationKey.' },
+  { from: 'o-schema', to: 'o-schema-plan', type: 'references', text: 'status.plan names the current plan, and status.applied the one the last confirmed Apply ran.' },
+  { from: 'o-schema', to: 'o-job', type: 'references', text: 'status.activeOperation names the Job before the Job exists.' },
+  { from: 'o-schema-plan', to: 'o-schema', type: 'references', text: 'spec.schemaRef names the schema by name and UID.' },
+  { from: 'o-schema-plan', to: 'o-chunk', type: 'references', text: 'The plan status binds each chunk by UID, size and digest.' },
+  { from: 'o-schema-plan', to: 'o-source', type: 'references', text: 'spec.source binds a ConfigMap source by its UID and the content digest of the selected files.' },
+  {
+    from: 'o-schema-plan',
+    to: 'o-artifact',
+    type: 'references',
+    text: 'spec.artifactDigest pins an OCI artifact by digest; spec.source binds a Git or HTTPS source by a digest of its URL and path, and the content digest of the selected files.',
+  },
+  { from: 'o-schema-approval', to: 'o-schema', type: 'references', text: 'spec.schemaRef names the schema by name and UID.' },
+  { from: 'o-schema-approval', to: 'o-schema-plan', type: 'references', text: 'spec.planRef names the plan by name and UID, and spec.planFingerprint its fingerprint.' },
+
+  { from: 'o-migration', to: 'o-source', type: 'references', text: 'spec.artifact.configMap names it and the items it selects.' },
+  { from: 'o-migration', to: 'o-artifact', type: 'references', text: 'spec.artifact.ociRef, git or https names it in place of a ConfigMap.' },
+  { from: 'o-migration', to: 'o-secret', type: 'references', text: 'spec.target.urlFrom names the Secret and the key.' },
+  { from: 'o-migration', to: 'o-realm', type: 'references', text: 'spec.target.realmRef names it, in place of a coordinationKey.' },
+  { from: 'o-migration', to: 'o-migration-plan', type: 'references', text: 'status.plan names the current plan, and status.lastRun the plan a run carried out.' },
+  { from: 'o-migration', to: 'o-job', type: 'references', text: 'status.activeOperation names the Job before it exists, and status.lastRun names it by name and UID after it ran.' },
+  { from: 'o-migration', to: 'o-acknowledgment', type: 'references', text: 'status.resolvedRun names the acknowledgment that settled a run, and who made it.' },
+  { from: 'o-migration-plan', to: 'o-migration', type: 'references', text: 'spec.migrationRef names the migration by name and UID.' },
+  { from: 'o-migration-plan', to: 'o-source', type: 'references', text: 'spec.source binds a ConfigMap source by its UID and the content digest of the selected files.' },
+  {
+    from: 'o-migration-plan',
+    to: 'o-artifact',
+    type: 'references',
+    text: 'spec.artifactDigest pins an OCI artifact by digest; spec.source binds a Git or HTTPS source by a digest of its URL and path, and the content digest of the selected files.',
+  },
+  { from: 'o-migration-approval', to: 'o-migration', type: 'references', text: 'spec.migrationRef names the migration by name and UID.' },
+  { from: 'o-migration-approval', to: 'o-migration-plan', type: 'references', text: 'spec.planRef names the plan by name and UID, and spec.planFingerprint its fingerprint.' },
+  { from: 'o-acknowledgment', to: 'o-migration', type: 'references', text: 'spec.migrationRef names the migration by name and UID, and spec.operationID the run status.unresolvedRun records.' },
+
+  { from: 'o-job', to: 'o-snapshot', type: 'references', text: 'Each operation mounts the snapshot and checks it against the content digest first.' },
+  { from: 'o-job', to: 'o-chunk', type: 'references', text: 'A schema Apply mounts the chunk ConfigMaps and checks the whole document against the plan’s content digest.' },
+  {
+    from: 'o-job',
+    to: 'o-schema-plan',
+    type: 'references',
+    text: 'A schema Apply runs this plan’s SQL, held to its content digest and to the route identity it named. The plan does not own the Job.',
+  },
+  {
+    from: 'o-job',
+    to: 'o-migration-plan',
+    type: 'references',
+    text: 'A migration Apply carries the plan’s approved sequence, which Ptah compares with its own selection. The plan does not own the Job.',
+  },
+  { from: 'o-job', to: 'o-secret', type: 'references', text: 'The Pod mounts the database URL from the Secret.' },
+  { from: 'o-job', to: 'o-artifact', type: 'references', text: 'A Resolve fetches it, and every later operation fetches it again, held to the digest or commit recorded.' },
+  { from: 'o-lease', to: 'o-realm', type: 'references', text: 'Its name is a digest of the realm’s name and the engine, for a resource that names a realm.' },
+
+  { from: 'o-schema', to: 'o-lease', type: 'holds', text: 'The schema’s claim holds the Lease for a Plan, an Apply and the proof that follows.' },
+  { from: 'o-migration', to: 'o-lease', type: 'holds', text: 'The Apply claim holds the Lease for the run, and only the run.' },
+
+  { from: 'o-job', to: 'o-result', type: 'delivers', text: 'The Pod sends its result over TLS to the receiver, which stores it as PtahResultRecord before it acknowledges.' },
+  { from: 'o-result', to: 'o-schema', type: 'delivers', text: 'A background consumer reads the record, and the manager records the outcome in the schema’s status.' },
+  { from: 'o-result', to: 'o-migration', type: 'delivers', text: 'A background consumer reads the record, and the manager records the outcome in the migration’s status.' },
+
+  {
+    from: 'o-job',
+    to: 'o-database',
+    type: 'executes',
+    text: 'Only the Ptah executor in the Job’s Pod connects to the database: Observe, Plan and history reads read it, and an Apply changes it.',
+  },
+];
+
+export const objectMap = {
+  title: 'Every object, and how they relate',
+  summary:
+    'Every kind the operator defines and every other object an operation reads or writes: who writes it, what it holds, whether it can change, and what deleting it does. Select an object to see what owns it, what it names and what names it.',
+  textSummary:
+    'Every kind the operator defines and every other object an operation reads or writes, grouped by who writes it: what each holds, what the operator does with it, whether it can change, what deleting it does, and how it relates to the others.',
+  groups: objectMapGroups,
+  scopes: objectMapScopes,
+  changes: objectMapChanges,
+  types: objectMapTypes,
+  nodes: objectMapNodes,
+  relations: objectMapRelations,
+  distinctions: [
+    'An owner reference is what the garbage collector follows. A name, a UID or a digest is a reference, and deleting the object that carries one deletes nothing.',
+    'A resource owns its plans, its Jobs, its snapshots and its result records. A plan owns no Job: an Apply runs a plan, and the resource owns the Job that runs it.',
+    'Approvals and run acknowledgments have no owner. They stay when the resource they name is deleted, and go with the namespace.',
+    'An owner reference cannot leave its namespace. The database-realm Lease lives in the coordination namespace, so a resource holds it and does not own it.',
+    'Deleting any of these objects runs no SQL. Only an operation Pod reaches the database.',
+  ],
+  links: [
+    { label: 'The two resource families', href: '../architecture/#the-two-resource-families' },
+    { label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' },
+    { label: 'Deleting a namespace', href: '../../use/operations/#delete-namespace' },
   ],
 };
