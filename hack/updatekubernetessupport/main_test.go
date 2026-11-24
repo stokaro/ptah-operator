@@ -82,6 +82,11 @@ func TestBuildUpdatePlanSelectsNewestCompleteStableKindRelease(t *testing.T) {
 	if got := plan.manifest.Releases[1].NodeImage; got != "kindest/node:v1.36.1@sha256:"+digest("2") {
 		t.Fatalf("middle node image = %q", got)
 	}
+	// The updater does not read kind's source, so the pin stays the one read
+	// from v0.31.0, and the proposal's verification refuses it.
+	if got := plan.manifest.KindLoadBalancer; got != baseManifest().KindLoadBalancer {
+		t.Fatalf("kindLoadBalancer = %+v, want the pin carried as it was read", got)
+	}
 }
 
 func TestBuildUpdatePlanMovesSupportWindowForward(t *testing.T) {
@@ -274,11 +279,43 @@ func baseManifest() supportManifest {
 		WindowSize:    windowSize,
 		LastVerified:  "2026-07-01",
 		KindVersion:   "v0.31.0",
+		KindLoadBalancer: kindLoadBalancerPin{
+			KindVersion: "v0.31.0",
+			Image:       "docker.io/envoyproxy/envoy:v1.35.3@sha256:" + strings.Repeat("e", 64),
+		},
 		Releases: []release{
 			{Minor: "1.34", NodeImage: "kindest/node:v1.34.0@sha256:" + strings.Repeat("4", 64)},
 			{Minor: "1.35", NodeImage: "kindest/node:v1.35.0@sha256:" + strings.Repeat("5", 64)},
 			{Minor: "1.36", NodeImage: "kindest/node:v1.36.0@sha256:" + strings.Repeat("6", 64)},
 		},
+	}
+}
+
+// The updater rewrites support/kubernetes.json from what it decoded, so a field
+// it did not declare would be refused, and one it declared in another order
+// would move in every proposal. The repository's own manifest has to come back
+// byte for byte.
+func TestRepositoryManifestRoundTripsThroughTheUpdater(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", manifestRelativePath)
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	manifest, err := readManifest(path)
+	if err != nil {
+		t.Fatalf("readManifest() error = %v", err)
+	}
+	if manifest.KindLoadBalancer.Image == "" {
+		t.Fatal("readManifest() decoded no kindLoadBalancer.image from the repository manifest")
+	}
+	got, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("encode manifest: %v", err)
+	}
+	if got := string(append(got, '\n')); got != string(want) {
+		t.Fatalf("the updater rewrites %s as\n%s\nwant\n%s", path, got, want)
 	}
 }
 

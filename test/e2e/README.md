@@ -24,7 +24,9 @@ Helm must be version 4 or newer, and the driver refuses an older one: the suite
 reads the field ownership Helm's server-side apply leaves behind, which Helm 3
 does not produce.
 The Kind version must exactly match `support/kubernetes.json`; kubectl must be
-within one minor of the selected API server. The selected remote host only
+within one minor of the selected API server. The harness pulls the load
+balancer image that kind version runs by the digest `kindLoadBalancer` pins
+there, before kind runs, and removes it afterwards only if it pulled it. The selected remote host only
 needs the Docker daemon represented by the chosen context.
 
 Required inputs:

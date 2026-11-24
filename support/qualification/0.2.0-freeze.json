@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-23T17:03:30.705255+00:00",
+  "frozenAt": "2026-11-24T02:55:52+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -20,7 +20,7 @@
     },
     {
       "path": "support/kubernetes.json",
-      "sha256": "7276e891c2dafb11896f8736ff7d971a6a4933a5e7021060cf047365d848f416"
+      "sha256": "b47ea6bffd4493badc6182595f61dd959502836eca1936e4d84ec63cf038cace"
     },
     {
       "path": "support/e2e-suites.json",
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 139,
+  "revision": 140,
   "supersedes": {
-    "freezeCommit": "0c2aa71d3fc06ae7f38f5aeee8b279010859f08c",
-    "sha256": "2ec7563e872b5e05e43fb24ae2717bbb608788dd12f9589eec07ee5055a0407f"
+    "freezeCommit": "caf5065f36cbaaa107a39a2ff6d9c17ce10f80e7",
+    "sha256": "6c63a5ad51b8cc4a6ece68b0ea9b74eea4b8897f37e1be495cd22c881e1e8c52"
   },
-  "revisionReason": "MySQL 9.7.x joins the supported release lines on run 45223146080"
+  "revisionReason": "support/kubernetes.json pins the load balancer image kind v0.33.0 runs, which the acceptance harness now pulls itself. The supported minors, node images, kind version, lines, phases, cells, platforms, the profile and its targets are unchanged."
 }

@@ -57,12 +57,22 @@ var (
 )
 
 type supportManifest struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Policy        string    `json:"policy"`
-	WindowSize    int       `json:"windowSize"`
-	LastVerified  string    `json:"lastVerified"`
-	KindVersion   string    `json:"kindVersion"`
-	Releases      []release `json:"releases"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Policy        string `json:"policy"`
+	WindowSize    int    `json:"windowSize"`
+	LastVerified  string `json:"lastVerified"`
+	KindVersion   string `json:"kindVersion"`
+	// KindLoadBalancer is carried as it was read. The updater does not read
+	// kind's source, so a plan that moves kindVersion keeps a pin read from
+	// the previous kind, and the proposal's verification refuses it until
+	// someone pins the image the new kind names.
+	KindLoadBalancer kindLoadBalancerPin `json:"kindLoadBalancer"`
+	Releases         []release           `json:"releases"`
+}
+
+type kindLoadBalancerPin struct {
+	KindVersion string `json:"kindVersion"`
+	Image       string `json:"image"`
 }
 
 type release struct {

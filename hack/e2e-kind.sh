@@ -483,6 +483,24 @@ ACTUAL_KIND_VERSION=$(kind version | awk '{print $2}')
 [ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||
 	fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"
 
+# kind puts the API servers of a cluster with more than one control plane
+# behind a load balancer container. It names the image in
+# pkg/cluster/internal/loadbalancer and leaves the pull to docker run, which
+# tries once, so one failed fetch from Docker Hub's CDN ended job 138101616585
+# in kind create cluster. The manifest pins that reference by digest beside
+# the kind version it was read from, and verify-kubernetes-support.go refuses
+# a kindVersion the pin was not read from.
+KIND_LOAD_BALANCER_IMAGE=$(jq -r --arg kind "$EXPECTED_KIND_VERSION" \
+	'if .kindLoadBalancer.kindVersion == $kind then .kindLoadBalancer.image // empty else empty end' \
+	"$ROOT_DIR/support/kubernetes.json")
+[ -n "$KIND_LOAD_BALANCER_IMAGE" ] ||
+	fail "support manifest pins no load balancer image read from kind $EXPECTED_KIND_VERSION"
+is_pinned_image "$KIND_LOAD_BALANCER_IMAGE" ||
+	fail "kind load balancer image $KIND_LOAD_BALANCER_IMAGE must be pinned with @sha256:<64 lowercase hex>"
+# The name kind runs, and the same image by its pinned digest.
+KIND_LOAD_BALANCER_REFERENCE=${KIND_LOAD_BALANCER_IMAGE%@*}
+KIND_LOAD_BALANCER_PINNED=${KIND_LOAD_BALANCER_REFERENCE%:*}@${KIND_LOAD_BALANCER_IMAGE#*@}
+
 if [ -n "$E2E_IMAGE_EXPORT_DIR" ] && [ -n "$E2E_PREBUILT_IMAGE_DIR" ]; then
 	fail "E2E_IMAGE_EXPORT_DIR writes the task images and E2E_PREBUILT_IMAGE_DIR reads them; name one"
 fi
@@ -837,6 +855,8 @@ EXTERNAL_PG_CREATED=0
 EXTERNAL_PG_CONTAINER_ID=
 EXTERNAL_PG_IP=
 KIND_NODE_IMAGE_CREATED=0
+KIND_LOAD_BALANCER_IMAGE_CREATED=0
+KIND_LOAD_BALANCER_IMAGE_ID=
 KIND_NETWORK_CREATED=0
 CREATED_IMAGE_REFS=
 RELEASE_CHART_OUTPUT_PARENT=
@@ -1894,6 +1914,25 @@ run_go_phase() {
 	}
 }
 
+# remove_kind_load_balancer_image removes the load balancer image this run
+# pulled, after the cluster that ran it is gone. Docker removes the pinned
+# reference with the name kind runs, so the second removal normally finds
+# nothing; an image that is already gone is not a failure.
+remove_kind_load_balancer_image() {
+	[ "$KIND_LOAD_BALANCER_IMAGE_CREATED" -eq 1 ] || return 0
+	kind_load_balancer_removed=0
+	for kind_load_balancer_ref in "$KIND_LOAD_BALANCER_REFERENCE" "$KIND_LOAD_BALANCER_PINNED"; do
+		docker --context "$DOCKER_CONTEXT" image rm "$kind_load_balancer_ref" >/dev/null 2>&1 && continue
+		if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
+			docker --context "$DOCKER_CONTEXT" image inspect "$kind_load_balancer_ref" >/dev/null 2>&1; then
+			printf 'e2e: could not remove kind load balancer image %s from Docker context %s\n' \
+				"$kind_load_balancer_ref" "$SELECTED_DOCKER_CONTEXT" >&2
+			kind_load_balancer_removed=1
+		fi
+	done
+	return "$kind_load_balancer_removed"
+}
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
@@ -2050,6 +2089,9 @@ cleanup() {
 				cleanup_failed=1
 			fi
 		fi
+	fi
+	if [ "$KIND_LOAD_BALANCER_IMAGE_CREATED" -eq 1 ]; then
+		remove_kind_load_balancer_image || cleanup_failed=1
 	fi
 	if [ "$KIND_NETWORK_CREATED" -eq 1 ] &&
 		docker --context "$DOCKER_CONTEXT" network inspect kind >/dev/null 2>&1; then
@@ -2625,19 +2667,68 @@ inotify_limits() {
 		fail "the Docker host reported its inotify limits as '$limits'"
 	printf '%s\n' "$limits"
 }
+# pull_image_with_retries pulls the image $1 names unless the Docker host has
+# it, in up to three attempts five seconds apart; $2 says what the image is.
+pull_image_with_retries() {
+	pull_attempt=1
+	until docker --context "$DOCKER_CONTEXT" image inspect "$1" >/dev/null 2>&1 ||
+		docker --context "$DOCKER_CONTEXT" pull "$1"; do
+		[ "$pull_attempt" -lt 3 ] ||
+			fail "$2 $1 could not be pulled in $pull_attempt attempts"
+		printf 'e2e: pull attempt %s for %s failed; retrying\n' "$pull_attempt" "$1"
+		pull_attempt=$((pull_attempt + 1))
+		sleep 5
+	done
+}
+
+# prepare_kind_load_balancer_image gives the Docker host the image kind runs a
+# cluster's load balancer from, when the rendered configuration gives it one:
+# kind does that for more than one control plane. The image is pulled by its
+# pinned digest with the retries above and given the name kind runs, which
+# kind's docker run then finds without pulling. A name the host already has
+# is used only when it is the pinned image. KIND_LOAD_BALANCER_IMAGE_CREATED
+# records that this run pulled the image, so the cleanup removes that and
+# nothing that was there before.
+prepare_kind_load_balancer_image() {
+	kind_control_planes=$(grep -Ec '^[[:space:]]*-[[:space:]]*role:[[:space:]]*control-plane[[:space:]]*$' "$KIND_CONFIG" || :)
+	[ "${kind_control_planes:-0}" -gt 1 ] || return 0
+	if ! docker --context "$DOCKER_CONTEXT" image inspect "$KIND_LOAD_BALANCER_REFERENCE" >/dev/null 2>&1; then
+		if ! docker --context "$DOCKER_CONTEXT" image inspect "$KIND_LOAD_BALANCER_PINNED" >/dev/null 2>&1; then
+			KIND_LOAD_BALANCER_IMAGE_CREATED=1
+			pull_image_with_retries "$KIND_LOAD_BALANCER_PINNED" 'kind load balancer image'
+		fi
+		docker --context "$DOCKER_CONTEXT" tag "$KIND_LOAD_BALANCER_PINNED" "$KIND_LOAD_BALANCER_REFERENCE" ||
+			fail "could not name kind load balancer image $KIND_LOAD_BALANCER_PINNED $KIND_LOAD_BALANCER_REFERENCE"
+	fi
+	kind_load_balancer_named=$(docker --context "$DOCKER_CONTEXT" image inspect --format '{{.Id}}' "$KIND_LOAD_BALANCER_REFERENCE") ||
+		fail "the Docker host has no kind load balancer image $KIND_LOAD_BALANCER_REFERENCE"
+	kind_load_balancer_pinned=$(docker --context "$DOCKER_CONTEXT" image inspect --format '{{.Id}}' "$KIND_LOAD_BALANCER_PINNED") ||
+		fail "the Docker host has $KIND_LOAD_BALANCER_REFERENCE but not the pinned $KIND_LOAD_BALANCER_PINNED"
+	[ "$kind_load_balancer_named" = "$kind_load_balancer_pinned" ] ||
+		fail "$KIND_LOAD_BALANCER_REFERENCE on the Docker host is image $kind_load_balancer_named, not the pinned $KIND_LOAD_BALANCER_PINNED ($kind_load_balancer_pinned)"
+	KIND_LOAD_BALANCER_IMAGE_ID=$kind_load_balancer_pinned
+	printf 'e2e: kind load balancer image %s is the pinned %s\n' \
+		"$KIND_LOAD_BALANCER_REFERENCE" "$KIND_LOAD_BALANCER_PINNED"
+}
+
+# assert_kind_load_balancer_image holds that kind ran its load balancer from
+# the prepared image. kind spells the name in its own source, so a pin read
+# from another kind version leaves kind pulling a name of its own, once, and
+# this is where that shows.
+assert_kind_load_balancer_image() {
+	[ -n "$KIND_LOAD_BALANCER_IMAGE_ID" ] || return 0
+	kind_load_balancer_ran=$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Config.Image}} {{.Image}}' "${CLUSTER_NAME}-external-load-balancer") ||
+		fail "could not read the image kind's load balancer ${CLUSTER_NAME}-external-load-balancer runs"
+	[ "$kind_load_balancer_ran" = "$KIND_LOAD_BALANCER_REFERENCE $KIND_LOAD_BALANCER_IMAGE_ID" ] ||
+		fail "kind ran its load balancer as '$kind_load_balancer_ran', not the pinned $KIND_LOAD_BALANCER_REFERENCE ($KIND_LOAD_BALANCER_IMAGE_ID); pin the image kind $EXPECTED_KIND_VERSION names in pkg/cluster/internal/loadbalancer"
+}
+
 ensure_inotify_capacity() (
 	# The probe is the first container of the node image, so the image is
 	# pulled here with the retries kind's own pull would have given it.
 	# source-image-pulls already recorded whether this run brings it in.
-	node_pull_attempt=1
-	until docker --context "$DOCKER_CONTEXT" image inspect "$KIND_NODE_IMAGE" >/dev/null 2>&1 ||
-		docker --context "$DOCKER_CONTEXT" pull "$KIND_NODE_IMAGE"; do
-		[ "$node_pull_attempt" -lt 3 ] ||
-			fail "kind node image $KIND_NODE_IMAGE could not be pulled in $node_pull_attempt attempts"
-		printf 'e2e: pull attempt %s for %s failed; retrying\n' "$node_pull_attempt" "$KIND_NODE_IMAGE"
-		node_pull_attempt=$((node_pull_attempt + 1))
-		sleep 5
-	done
+	pull_image_with_retries "$KIND_NODE_IMAGE" 'kind node image'
 	before=$(inotify_limits)
 	instances=${before% *}
 	watches=${before#* }
@@ -2662,6 +2753,7 @@ ensure_inotify_capacity() (
 		"${after% *}" "${after#* }" "$instances" "$watches"
 )
 ensure_inotify_capacity
+prepare_kind_load_balancer_image
 
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 
@@ -2720,6 +2812,7 @@ if suite_runs_phase alerting || suite_runs_phase alerting-operations || suite_ru
 fi
 require_ready_nodes "after kind cluster creation"
 assert_kind_ha_topology
+assert_kind_load_balancer_image
 assert_kubelet_log_budget
 assert_api_server_endpoint_inventory
 assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"

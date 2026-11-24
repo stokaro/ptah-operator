@@ -21,13 +21,15 @@ The exact patch versions in this table are test environments, not a restriction 
 
 `support/kubernetes.json` is the machine-readable source of truth. It records the ordered minor window, the kind version, digest-pinned multi-architecture node images, and the UTC date of the last persisted upstream-verification checkpoint. CI builds its matrix directly from this file; it does not maintain a second version list.
 
+It also pins the image kind runs the load balancer of a cluster with more than one control plane from, as `kindLoadBalancer`: the name kind spells in `pkg/cluster/internal/loadbalancer` for the pinned kind version, its digest, and that kind version. kind leaves that pull to `docker run`, which tries once, so the acceptance harness pulls the image itself by digest, with the retries it gives the node image, and gives it the name kind runs. A name the Docker host already has is used only when it is the pinned image, and the harness removes the image afterwards only when it pulled it.
+
 The Helm `kubeVersion` range is a derived, packaged value because a chart cannot read a repository file after publication. Run this guard after changing support metadata:
 
 ```sh
 go run ./hack/verify-kubernetes-support.go
 ```
 
-The command performs no network requests. It fails when the manifest is malformed, minors are not consecutive, an image is not digest-pinned to the matching minor, the chart range differs, automation no longer consumes the generated matrix, the compiled Kubernetes API boundary has not been reviewed for the complete window, or `lastVerified` is in the future or more than 35 UTC days old. The frozen API digest includes every Kubernetes Job and Pod spec field reachable by the hook workloads plus the Job and Pod status graphs relied on by protected progress reporting. A new field therefore requires an explicit guard review before the support window can advance. The updater runs weekly. It proposes any support-bundle change immediately and records a date-only verification checkpoint after 21 days, leaving three weekly opportunities to merge that checkpoint before the next day after the 35-day limit becomes stale. Tests inject a fixed validation date with `-now YYYY-MM-DD`; ordinary CI always uses the current UTC date.
+The command performs no network requests. It fails when the manifest is malformed, minors are not consecutive, an image is not digest-pinned to the matching minor, the load balancer pin was not read from `kindVersion`, the chart range differs, automation no longer consumes the generated matrix, the compiled Kubernetes API boundary has not been reviewed for the complete window, or `lastVerified` is in the future or more than 35 UTC days old. The frozen API digest includes every Kubernetes Job and Pod spec field reachable by the hook workloads plus the Job and Pod status graphs relied on by protected progress reporting. A new field therefore requires an explicit guard review before the support window can advance. The updater runs weekly. It proposes any support-bundle change immediately and records a date-only verification checkpoint after 21 days, leaving three weekly opportunities to merge that checkpoint before the next day after the 35-day limit becomes stale. Tests inject a fixed validation date with `-now YYYY-MM-DD`; ordinary CI always uses the current UTC date.
 
 Live discovery is deliberately separate:
 
@@ -57,6 +59,8 @@ If live discovery or parsing fails, the workflow makes no support claim and open
 ## Patch refreshes
 
 Patch-level image refreshes are independent from minor-window changes. The same scheduled updater inspects official kind releases, opens or refreshes a pull request changing `kindVersion`, `lastVerified`, and affected `nodeImage` values, and lets the full matrix validate the update. A tag alone is not accepted: the manifest requires the registry digest so a later tag mutation cannot change CI silently.
+
+The updater does not read kind's source, so it carries `kindLoadBalancer` unchanged. A proposal that moves `kindVersion` fails its verification until the pin names the image the new kind version spells in `pkg/cluster/internal/loadbalancer/const.go`, pinned by its index digest, and that kind version.
 
 The matrix installs the chart, serves the CRDs, and exercises OCI resolution and verification, observation, planning, approval, application, failure recovery, and post-apply convergence. It also verifies the exact topology, three control planes and one worker, with the isolation worker present exactly where the suite declares it, requires every control-plane component to run once on every control-plane node, and configures the isolated registry on every node. The suite must consume the generated matrix and must not introduce a private list of Kubernetes versions.
 

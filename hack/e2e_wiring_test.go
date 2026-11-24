@@ -1634,9 +1634,27 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "inotify capacity check omitted",
-			old:         "ensure_inotify_capacity\n\nprintf 'e2e: creating kind cluster",
-			replacement: ": # inotify capacity check omitted\n\nprintf 'e2e: creating kind cluster",
+			old:         "ensure_inotify_capacity\nprepare_kind_load_balancer_image\n",
+			replacement: ": # inotify capacity check omitted\nprepare_kind_load_balancer_image\n",
 			wantError:   "inotify capacity before kind cluster creation",
+		},
+		{
+			name:        "kind load balancer image left to kind",
+			old:         "\nprepare_kind_load_balancer_image\n",
+			replacement: "\n: # kind load balancer image left to kind\n",
+			wantError:   "kind load balancer image before kind cluster creation",
+		},
+		{
+			name:        "kind load balancer pin read for any kind version",
+			old:         `'if .kindLoadBalancer.kindVersion == $kind then .kindLoadBalancer.image // empty else empty end' \`,
+			replacement: `'.kindLoadBalancer.image // empty' \`,
+			wantError:   "kind load balancer pin binding",
+		},
+		{
+			name:        "kind load balancer image check after kind omitted",
+			old:         "\nassert_kind_load_balancer_image\n",
+			replacement: "\n: # kind load balancer image check after kind omitted\n",
+			wantError:   "kind cluster creation call",
 		},
 		{
 			name:        "kind cluster creation omitted",
@@ -1827,10 +1845,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name: "post-creation HA topology assertion omitted",
 			old: "require_ready_nodes \"after kind cluster creation\"\n" +
 				"assert_kind_ha_topology\n" +
+				"assert_kind_load_balancer_image\n" +
 				"assert_kubelet_log_budget\n" +
 				"assert_api_server_endpoint_inventory",
 			replacement: "require_ready_nodes \"after kind cluster creation\"\n" +
 				": # HA topology assertion omitted\n" +
+				"assert_kind_load_balancer_image\n" +
 				"assert_kubelet_log_budget\n" +
 				"assert_api_server_endpoint_inventory",
 			wantError: "kind cluster creation",
@@ -2816,6 +2836,57 @@ func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
 		},
 	}
 	const invocation = `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+// The preparation of kind's load balancer image is held to what it does on
+// each state of the Docker host by a self-test, and that holds only while the
+// gate runs it.
+func TestVerifyKindLoadBalancerSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # kind load balancer self-test removed`,
+			wantError:   "kind load balancer self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh" || true`,
+			wantError:   "kind load balancer self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+		{
+			name: "self-test wired twice",
+			replacement: `"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh"` + "\n" +
+				`"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh"`,
+			wantError: "kind load balancer self-test wiring",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh"`
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

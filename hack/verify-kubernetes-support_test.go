@@ -77,13 +77,14 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
   "windowSize": 3,
   "lastVerified": %q,
   "kindVersion": "v0.32.0",
+  "kindLoadBalancer": {"kindVersion": "v0.32.0", "image": "docker.io/envoyproxy/envoy:v1.35.3@sha256:%s"},
   "releases": [
     {"minor": "1.35", "nodeImage": "kindest/node:v1.35.5@sha256:%s"},
     {"minor": "1.36", "nodeImage": "kindest/node:v1.36.1@sha256:%s"},
     {"minor": "1.37", "nodeImage": "kindest/node:v1.37.0@sha256:%s"}
   ]
 }
-`, test.lastVerified, strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64))
+`, test.lastVerified, strings.Repeat("4", 64), strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64))
 			if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 				t.Fatalf("write manifest: %v", err)
 			}
@@ -92,6 +93,101 @@ func TestLoadAndValidateManifestFreshness(t *testing.T) {
 				t.Fatalf("parse test date: %v", err)
 			}
 			_, _, err = loadAndValidateManifest(path, now.Add(test.timeOfDay))
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("loadAndValidateManifest() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("loadAndValidateManifest() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+// kind names its load balancer image in its own source and pulls it once, so
+// the pin the driver pulls first has to be the one read from the kind version
+// CI installs. A kind bump that left the pin behind would put kind back on
+// its own single pull, and nothing before a cluster run would show it.
+func TestLoadAndValidateManifestHoldsTheKindLoadBalancerPin(t *testing.T) {
+	t.Parallel()
+
+	digest := strings.Repeat("4", 64)
+	tests := []struct {
+		name      string
+		pin       string
+		wantError string
+	}{
+		{
+			name: "a pin read from kindVersion is accepted",
+			pin:  `{"kindVersion": "v0.33.0", "image": "docker.io/envoyproxy/envoy:v1.36.2@sha256:` + digest + `"}`,
+		},
+		{
+			name: "a registry with a port is accepted",
+			pin:  `{"kindVersion": "v0.33.0", "image": "registry.example:5000/kind/haproxy:2.9-alpine@sha256:` + digest + `"}`,
+		},
+		{
+			name:      "a pin read from the previous kind is refused",
+			pin:       `{"kindVersion": "v0.32.0", "image": "docker.io/envoyproxy/envoy:v1.36.2@sha256:` + digest + `"}`,
+			wantError: `kindLoadBalancer was read from kind "v0.32.0", not kindVersion v0.33.0`,
+		},
+		{
+			name:      "a missing pin is refused",
+			wantError: `kindLoadBalancer was read from kind "", not kindVersion v0.33.0`,
+		},
+		{
+			name:      "a tag without a digest is refused",
+			pin:       `{"kindVersion": "v0.33.0", "image": "docker.io/envoyproxy/envoy:v1.36.2"}`,
+			wantError: "must be the registry, repository and tag kind runs",
+		},
+		{
+			name:      "a digest without the tag kind runs is refused",
+			pin:       `{"kindVersion": "v0.33.0", "image": "docker.io/envoyproxy/envoy@sha256:` + digest + `"}`,
+			wantError: "must be the registry, repository and tag kind runs",
+		},
+		{
+			name:      "a name without the registry kind spells is refused",
+			pin:       `{"kindVersion": "v0.33.0", "image": "envoyproxy/envoy:v1.36.2@sha256:` + digest + `"}`,
+			wantError: "must be the registry, repository and tag kind runs",
+		},
+		{
+			name:      "an uppercase digest is refused",
+			pin:       `{"kindVersion": "v0.33.0", "image": "docker.io/envoyproxy/envoy:v1.36.2@sha256:` + strings.Repeat("A", 64) + `"}`,
+			wantError: "must be the registry, repository and tag kind runs",
+		},
+		{
+			name:      "an unknown field in the pin is refused",
+			pin:       `{"kindVersion": "v0.33.0", "image": "docker.io/envoyproxy/envoy:v1.36.2@sha256:` + digest + `", "platform": "linux/amd64"}`,
+			wantError: `unknown field "platform"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			pin := ""
+			if test.pin != "" {
+				pin = `  "kindLoadBalancer": ` + test.pin + ",\n"
+			}
+			manifest := fmt.Sprintf(`{
+  "schemaVersion": 1,
+  "policy": "upstream-active-minors",
+  "windowSize": 3,
+  "lastVerified": "2026-11-10",
+  "kindVersion": "v0.33.0",
+%s  "releases": [
+    {"minor": "1.35", "nodeImage": "kindest/node:v1.35.8@sha256:%s"},
+    {"minor": "1.36", "nodeImage": "kindest/node:v1.36.4@sha256:%s"},
+    {"minor": "1.37", "nodeImage": "kindest/node:v1.37.0@sha256:%s"}
+  ]
+}
+`, pin, strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64))
+			path := filepath.Join(t.TempDir(), "kubernetes.json")
+			if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+				t.Fatalf("write manifest: %v", err)
+			}
+			now := time.Date(2026, time.November, 24, 0, 0, 0, 0, time.UTC)
+			_, _, err := loadAndValidateManifest(path, now)
 			if test.wantError == "" {
 				if err != nil {
 					t.Fatalf("loadAndValidateManifest() error = %v", err)
