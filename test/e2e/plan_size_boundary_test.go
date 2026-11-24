@@ -85,24 +85,37 @@ func TestPlanSizeDatabasesHaveOneLength(t *testing.T) {
 
 func TestPlanSizeExecutableBoundary(t *testing.T) {
 	t.Parallel()
-	for _, dialect := range []string{"postgres", "mysql"} {
+	// Ptah v0.35.1 writes a MariaDB server's plans as MySQL's with the
+	// dialect mariadb, as the MariaDB 12.3 capture of 2026-11-24 saved them,
+	// so the MariaDB case is the MySQL reading in that dialect.
+	for _, test := range []struct{ engine, reading, dialect, other string }{
+		{"postgresql", "postgres", "postgres", "mysql"},
+		{"mysql", "mysql", "mysql", "mariadb"},
+		{"mysql", "mysql", "mariadb", "mysql"},
+	} {
+		engine, dialect := test.engine, test.dialect
 		t.Run(dialect, func(t *testing.T) {
 			t.Parallel()
-			small, err := os.ReadFile("../../testdata/e2e/readings/plan-size-small-" + dialect + ".json")
+			small, err := os.ReadFile("../../testdata/e2e/readings/plan-size-small-" + test.reading + ".json")
 			if err != nil {
 				t.Fatal(err)
 			}
+			read := []byte(`"dialect": "` + test.reading + `"`)
+			if bytes.Count(small, read) != 1 {
+				t.Fatalf("the %s reading does not name its dialect once", test.reading)
+			}
+			small = bytes.Replace(small, read, []byte(`"dialect": "`+dialect+`"`), 1)
 			base := len(small) - 32*6
 			repeated, suffix := (8388608-base)/6, (8388608-base)%6
 			count := 1
-			if dialect == "mysql" {
+			if engine == "mysql" {
 				count = 100
 			}
 			index := 0
 			defaults := regexp.MustCompile(`DEFAULT '[^']*'`)
 			document := defaults.ReplaceAllFunc(small, func([]byte) []byte {
 				n, x := repeated, suffix
-				if dialect == "mysql" {
+				if engine == "mysql" {
 					n, x = repeated/count, 0
 					if index < repeated%count {
 						n++
@@ -123,8 +136,11 @@ func TestPlanSizeExecutableBoundary(t *testing.T) {
 					Name: fmt.Sprintf("native-chunk-%d", i), Index: int32(i), Size: 524288, Digest: muDigest,
 				})
 			}
-			if err := executablePlanAtLimit(plan, document, dialect, repeated, suffix); err != nil {
+			if err := executablePlanAtLimit(plan, document, engine, dialect, repeated, suffix); err != nil {
 				t.Fatalf("the native executable boundary was refused: %v", err)
+			}
+			if executablePlanAtLimit(plan, document, engine, test.other, repeated, suffix) == nil {
+				t.Fatalf("a %s plan was accepted where the server plans in %s", dialect, test.other)
 			}
 			for name, mutate := range map[string]func(*ptahv1alpha1.PtahSchemaPlan){
 				"smaller size":          func(p *ptahv1alpha1.PtahSchemaPlan) { p.Spec.Size-- },
@@ -137,7 +153,7 @@ func TestPlanSizeExecutableBoundary(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					p := plan.DeepCopy()
 					mutate(p)
-					if executablePlanAtLimit(p, document, dialect, repeated, suffix) == nil {
+					if executablePlanAtLimit(p, document, engine, dialect, repeated, suffix) == nil {
 						t.Fatalf("accepted %s", name)
 					}
 				})
@@ -149,7 +165,7 @@ func TestPlanSizeExecutableBoundary(t *testing.T) {
 				"another table":              bytes.Replace(document, []byte("e2e_plan_size_limit"), []byte("e2e_plan_size_limiz"), 1),
 			} {
 				t.Run(name, func(t *testing.T) {
-					if executablePlanAtLimit(plan, altered, dialect, repeated, suffix) == nil {
+					if executablePlanAtLimit(plan, altered, engine, dialect, repeated, suffix) == nil {
 						t.Fatalf("accepted %s", name)
 					}
 				})

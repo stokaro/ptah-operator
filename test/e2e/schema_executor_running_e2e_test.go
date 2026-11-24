@@ -224,7 +224,7 @@ func (previous *faultRun) runningExecutorImageChanges() {
 				} else {
 					dialects := postgresDialects
 					if row.engine == "mysql" {
-						dialects = []string{"mysql", "mariadb"}
+						dialects = []string{f.planDialect(row.engine)}
 					}
 					if proof.result.ObservedDrift {
 						f.check(driftedObserveBound(settled, proof.result, dialects...), "bind the replacement executor's drift observation")

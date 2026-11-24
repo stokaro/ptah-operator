@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"cmp"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -271,6 +270,15 @@ func (d *dataPlane) captureCurrentPlan(schema string) currentPlan {
 	return d.plan
 }
 
+// planDialect is the dialect Ptah plans and reports a database of engine in, on
+// the server the driver named for this run.
+func (d *dataPlane) planDialect(engine string) string {
+	d.t.Helper()
+	dialect, err := planDialect(engine, d.in.MySQLServer)
+	d.check(err, "name the dialect a %s plan is written in", engine)
+	return dialect
+}
+
 // assertPlan waits for the schema to verify the digest and publish a plan,
 // and holds the plan to what published it: the source, target and execution
 // evidence on the schema, a committed content-addressed plan whose storage
@@ -278,10 +286,11 @@ func (d *dataPlane) captureCurrentPlan(schema string) currentPlan {
 // of the one Job each that produced it, bound to that evidence. withAfter
 // pauses the status writes as soon as the plan is published and returns the
 // checkpoint taken there, which bounds the result Jobs the proof reads.
-func (d *dataPlane) assertPlan(schema, reference, digest, dialect string, destructive bool,
+func (d *dataPlane) assertPlan(schema, reference, digest, engine string, destructive bool,
 	observeCheckpoint, planCheckpoint checkpoint, withAfter bool,
 ) *checkpoint {
 	d.t.Helper()
+	dialect := d.planDialect(engine)
 	d.waitForSchema(schema, "verified digest "+digest+" and a published plan", func(s *ptahv1alpha1.PtahSchema) bool {
 		status := s.Status
 		return status.Source.Digest == digest && status.Plan != nil && status.NextReconciliationTime != nil &&
@@ -792,17 +801,9 @@ func (d *dataPlane) assertDatabaseColumn(engine, column string, expected int) {
 	}
 }
 
-// mysqlExactIndexQuery counts the exact single-column index on e2e_widgets.name
-// of the uniqueness given.
-func mysqlExactIndexQuery(index string, nonUnique int) string {
-	return fmt.Sprintf("SELECT count(*) FROM (SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() "+
-		"AND table_name='e2e_widgets' AND index_name='%s' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=%d "+
-		"AND column_name='name' AND seq_in_index=1 AND expression IS NULL AND sub_part IS NULL)=1) AS exact_index", index, nonUnique)
-}
-
 func (d *dataPlane) assertMySQLUniqueIndex(expected int) {
 	d.t.Helper()
-	actual, err := d.mysql(mysqlExactIndexQuery("e2e_widgets_name_unique", 0))
+	actual, err := d.mysql(mysqlExactIndexQuery(d.in.MySQLServer, "e2e_widgets_name_unique", 0))
 	d.check(err, "count the MySQL unique index")
 	if removeWhitespace(actual) != strconv.Itoa(expected) {
 		d.fatalf("MySQL unique index count is %s, expected %d", removeWhitespace(actual), expected)
@@ -811,7 +812,7 @@ func (d *dataPlane) assertMySQLUniqueIndex(expected int) {
 
 func (d *dataPlane) assertMySQLPlainIndex(expected int) {
 	d.t.Helper()
-	actual, err := d.mysql(mysqlExactIndexQuery("e2e_widgets_name_idx", 1))
+	actual, err := d.mysql(mysqlExactIndexQuery(d.in.MySQLServer, "e2e_widgets_name_idx", 1))
 	d.check(err, "count the MySQL plain index")
 	if removeWhitespace(actual) != strconv.Itoa(expected) {
 		d.fatalf("MySQL plain index count is %s, expected %d", removeWhitespace(actual), expected)

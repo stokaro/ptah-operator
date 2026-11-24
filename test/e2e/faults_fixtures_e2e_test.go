@@ -289,26 +289,10 @@ func (f *faultRun) pgFingerprint(database string) string {
 // and then stopped has created it: measured on MySQL 8.4 with the v0.28.0
 // image, killed while its ALTER waited for the metadata lock. Ptah's own reads
 // leave the table out, and it holds no part of the declared schema these
-// proofs compare.
+// proofs compare. The query is mysqlFingerprintSQL for the server.
 func (f *faultRun) mysqlFingerprint(database string) string {
 	f.t.Helper()
-	return f.query("mysql", database, `
-    SELECT SHA2(COALESCE(GROUP_CONCAT(entry ORDER BY entry SEPARATOR '\n'), ''), 256)
-    FROM (
-      SELECT CONCAT(
-        'column:', table_name, ':', LPAD(ordinal_position, 6, '0'), ':', column_name, ':',
-        column_type, ':', is_nullable, ':', COALESCE(column_default, '<NULL>'), ':',
-        extra, ':', COALESCE(collation_name, '<NULL>'), ':', COALESCE(generation_expression, '<NULL>')) AS entry
-      FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
-      UNION ALL
-      SELECT CONCAT(
-        'index:', table_name, ':', index_name, ':', LPAD(seq_in_index, 6, '0'), ':',
-        non_unique, ':', COALESCE(column_name, '<NULL>'), ':', COALESCE(sub_part, 0), ':',
-        index_type, ':', COALESCE(collation, '<NULL>'), ':', COALESCE(expression, '<NULL>')) AS entry
-      FROM information_schema.statistics
-      WHERE table_schema = DATABASE() AND table_name <> 'ptah_schema_apply_log'
-    ) AS managed_schema`)
+	return f.query("mysql", database, mysqlFingerprintSQL(f.in.MySQLServer))
 }
 
 // fingerprint is the engine's fingerprint, held to the engine's digest format.

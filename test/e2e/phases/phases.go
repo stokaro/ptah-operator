@@ -197,6 +197,10 @@ type DataPlaneInputs struct {
 	// the test namespace.
 	PostgresImage string `env:"E2E_POSTGRES_IMAGE"`
 	MySQLImage    string `env:"E2E_MYSQL_IMAGE"`
+	// MySQLServer is the server that image runs for engine mysql: mysql, or
+	// mariadb on a MariaDB line. Ptah names the server it reached, so the
+	// plans and Observe reports of a MariaDB server say mariadb.
+	MySQLServer string `env:"E2E_MYSQL_SERVER"`
 	// RegistryHostAddress is the registry as the host reaches it, for the
 	// artifact no product command builds.
 	RegistryHostAddress string `env:"E2E_REGISTRY_HOST_ADDRESS"`

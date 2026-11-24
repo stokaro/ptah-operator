@@ -481,6 +481,44 @@ func TestAMariaDBLineIsHeldToItsOwnServersJobs(t *testing.T) {
 	}
 }
 
+// A line of the engine's own server names no server, and a row of the run's
+// commit that names MariaDB is another line even with the same release and
+// image, so it proves nothing about the MySQL one.
+func TestAMySQLLineIsNotProvenByAMariaDBRow(t *testing.T) {
+	t.Parallel()
+	image := "mysql:12.3@sha256:" + strings.Repeat("e", 64)
+	mysql := func(t *testing.T, then map[string]any) *databaseLineFixture {
+		t.Helper()
+		fixture := newDatabaseLineFixture(t, databaseLineSupported)
+		line := fixture.line()
+		line["engine"], line["line"], line["image"] = "mysql", "12.3.x", image
+		delete(line, "server")
+		fixture.writeCatalog(t)
+		lines, err := readDatabaseCatalogLines(fixture.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		required, err := requiredDatabaseLineJobs(fixture.root, lines[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture.jobs = nil
+		for _, name := range required {
+			fixture.addJob(name, "success")
+		}
+		fixture.then = []map[string]any{then}
+		return fixture
+	}
+	own := map[string]any{"engine": "mysql", "line": "12.3.x", "image": image, "state": "pending"}
+	if err := mysql(t, own).verify(t); err != nil {
+		t.Fatalf("a run green on the MySQL line was refused: %v", err)
+	}
+	mariadb := map[string]any{"engine": "mysql", "server": "mariadb", "line": "12.3.x", "image": image, "state": "pending"}
+	if err := mysql(t, mariadb).verify(t); err == nil || !strings.Contains(err.Error(), "this commit pins") {
+		t.Fatalf("a MySQL line proven by a MariaDB row: %v", err)
+	}
+}
+
 // Two lines proven by one run read it once, and each is held to its own jobs.
 func TestTwoLinesOnOneRunAreEachHeldToTheirOwnJobs(t *testing.T) {
 	t.Parallel()

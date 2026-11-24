@@ -4960,6 +4960,7 @@ var goPhaseBindings = map[string]string{
 	"E2E_ALERTMANAGER_IMAGE":        `$E2E_ALERTMANAGER_IMAGE`,
 	"E2E_POSTGRES_IMAGE":            `$E2E_POSTGRES_IMAGE`,
 	"E2E_MYSQL_IMAGE":               `$E2E_MYSQL_IMAGE`,
+	"E2E_MYSQL_SERVER":              `$E2E_MYSQL_SERVER`,
 	"E2E_REGISTRY_IP":               `$REGISTRY_IP`,
 	"E2E_REGISTRY_SERVICE":          `$REGISTRY_SERVICE`,
 	"E2E_REGISTRY_PORT":             `$E2E_REGISTRY_PORT`,

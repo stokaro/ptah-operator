@@ -478,7 +478,7 @@ func (f *faultRun) runnerTermination() {
 	if err := observationAdvanced(postfault, unknown.prefaultObservedAt); err != nil {
 		f.fatalf("recovery Observe did not advance the target observation evidence: %v", err)
 	}
-	if err := driftedObserveBound(postfault, observe.result.result, "mysql", "mariadb"); err != nil {
+	if err := driftedObserveBound(postfault, observe.result.result, f.planDialect("mysql")); err != nil {
 		f.fatalf("recovery Observe did not advance the target observation evidence: %v", err)
 	}
 	fresh := f.schemaPlan(postfault.Status.Plan.Name)

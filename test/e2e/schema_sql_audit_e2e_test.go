@@ -207,10 +207,7 @@ func (w *schemaRefusalWindow) resultControl(resource *ptahv1alpha1.PtahSchema, o
 	selected, err := w.inventory.diagnosticResult(resource, operation, f.observed.since(w.name, operation, before))
 	f.check(err, "select the successful schema SQL diagnostic result")
 	result := f.captureExactJobResult(w.name, operation, selected)
-	dialect := "postgres"
-	if w.audit.engine == "mysql" {
-		dialect = "mysql"
-	}
+	dialect := f.planDialect(w.audit.engine)
 	switch operation {
 	case "observe":
 		f.check(observedDriftBound(result, resource.Status.Target, dialect), "bind the SQL control to its observed state")

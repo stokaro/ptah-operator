@@ -355,7 +355,7 @@ func (a *alertingRun) planStoreLarge() {
 		e := a.readPlanStoreExport(p)
 		doc, err := e.document()
 		a.check(err, "reconstruct the actual stored payload")
-		a.check(executablePlanAtLimit(p, doc, "postgres", repeated, suffix), "require real full-size executable plan bytes")
+		a.check(executablePlanAtLimit(p, doc, "postgresql", "postgres", repeated, suffix), "require real full-size executable plan bytes")
 		archive, err := e.archive()
 		a.check(err, "export exact historical plan bytes")
 		path := filepath.Join(a.workDir, string(p.UID)+".plan.json.gz")

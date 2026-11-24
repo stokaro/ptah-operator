@@ -38,7 +38,7 @@ func (f *faultRun) destructivePolicyChanges() {
 			return destructivePolicyGate(schema, generation, true)
 		})
 		old := f.schemaPlan(approved.Status.Plan.Name)
-		f.check(committedPlan(old, name, digest, dialect, true, f.controller, f.stateVersion()), "read the original destructive plan")
+		f.check(committedPlan(old, name, digest, f.planDialect(engine), true, f.controller, f.stateVersion()), "read the original destructive plan")
 		initialObserve := sqlWindow.resultControl(approved, "observe", initialJobs)
 		initialPlan := sqlWindow.resultControl(approved, "plan", initialJobs)
 		revokedJobs := f.checkpointJobs(name, "")
@@ -86,7 +86,7 @@ func (f *faultRun) destructivePolicyChanges() {
 		})
 		fresh := f.schemaPlan(current.Status.Plan.Name)
 		restoredPlan := sqlWindow.resultControl(current, "plan", restoredJobs)
-		f.check(committedPlan(fresh, name, digest, dialect, true, f.controller, f.stateVersion()), "read the fresh destructive plan")
+		f.check(committedPlan(fresh, name, digest, f.planDialect(engine), true, f.controller, f.stateVersion()), "read the fresh destructive plan")
 		f.check(changedDestructivePolicyPlan(old, fresh), "bind the fresh decision to the changed destructive policy")
 		// The disabled policy stops before approval lookup. Stale cleanup is
 		// observable once the restored policy reaches its new approval gate.

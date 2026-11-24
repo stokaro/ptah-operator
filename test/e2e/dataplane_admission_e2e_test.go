@@ -299,7 +299,7 @@ func (d *dataPlane) assertAuthenticatedHTTPSCustomCA(digest string) {
 	proxyBefore := d.tlsProxyRequestCount()
 	before := d.checkpointJobs(goodSchema, "")
 	d.createCustomCASchemaResource(goodSchema, tlsProxyGoodAuthSecret, customCACoordinationKey)
-	d.assertPlan(goodSchema, d.tlsProxy.reference, digest, "postgres", false, before, before, false)
+	d.assertPlan(goodSchema, d.tlsProxy.reference, digest, "postgresql", false, before, before, false)
 	d.waitForSchema(goodSchema, "the authenticated HTTPS custom-CA source to reach a nonmutating approval boundary",
 		func(s *ptahv1alpha1.PtahSchema) bool { return customCAApprovalBoundary(s, time.Now()) })
 	after := d.checkpointJobs(goodSchema, "")

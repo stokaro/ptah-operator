@@ -55,6 +55,8 @@ class SchemaSQLReadingsTest(unittest.TestCase):
             {'engine': 'mysql', 'line': '9.7.x LTS', 'image': 'mysql:9.7'},
             {'engine': 'mysql', 'server': 'mariadb', 'line': '12.3.x', 'image': 'mariadb:12.3'},
             {'engine': 'postgresql', 'line': '18.x', 'image': 'postgres:18'},
+            # An empty server is the engine's own, as the witness test reads it.
+            {'engine': 'postgresql', 'server': '', 'line': '17.x', 'image': 'postgres:17'},
         ]}
         root = Path(temporary_directory(self))
         (root / 'support').mkdir()
@@ -62,7 +64,8 @@ class SchemaSQLReadingsTest(unittest.TestCase):
         with mock.patch.object(schema_sql_readings, 'ROOT', root):
             self.assertEqual(added_lines('mysql'), [('mysql-12.3', 'mysql:12.3', 'mysql'), ('mysql-9.7', 'mysql:9.7', 'mysql'),
                                                   ('mariadb-12.3', 'mariadb:12.3', 'mariadb')])
-            self.assertEqual(added_lines('postgresql'), [('postgresql-18', 'postgres:18', 'postgresql')])
+            self.assertEqual(added_lines('postgresql'), [('postgresql-18', 'postgres:18', 'postgresql'),
+                                                       ('postgresql-17', 'postgres:17', 'postgresql')])
 
     def test_statements_are_read_the_way_the_audit_reads_them(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -431,7 +431,7 @@ def added_lines(engine):
     lines = []
     for line in catalog['added']:
         if line['engine'] == engine:
-            server = line.get('server', engine)
+            server = line.get('server') or engine
             # The release comes before any label, such as a MySQL line's LTS.
             release = line['line'].split()[0].removesuffix('.x')
             lines.append((f"{server}-{release}", line['image'], server))

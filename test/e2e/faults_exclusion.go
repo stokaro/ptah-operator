@@ -46,9 +46,11 @@ func changedExcludedPolicyPlan(old, current *ptahv1alpha1.PtahSchemaPlan) error 
 	return nil
 }
 
-func excludedPolicyDocuments(old, current planDocument) error {
-	if old.FormatVersion != 1 || current.FormatVersion != 1 || old.Dialect != current.Dialect ||
-		(old.Dialect != "postgres" && old.Dialect != "mysql") ||
+// excludedPolicyDocuments holds the plans before and after the exclusion edit to
+// the scopes they were planned under, both in the dialect planDialect names
+// for the server, and to the one DROP the edit takes out.
+func excludedPolicyDocuments(old, current planDocument, dialect string) error {
+	if old.FormatVersion != 1 || current.FormatVersion != 1 || dialect == "" || old.Dialect != dialect || current.Dialect != dialect ||
 		len(old.Exclude) != 0 || !slices.Equal(current.Exclude, []string{excludedPolicyTable}) ||
 		!isTrue(old.Destructive) || !isFalse(current.Destructive) || len(old.Statements) != 2 || len(current.Statements) != 1 {
 		return errors.New("the native plans do not carry the original and narrowed scopes")
