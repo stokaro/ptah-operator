@@ -62,6 +62,11 @@ PostgreSQL servers are held to it. The tag of `E2E_MYSQL_SOURCE_IMAGE` has to
 name a MySQL release line, such as `8.4`, `9.7` or `26.10`, and the release the
 image declares as `MYSQL_VERSION` has to be on that line. `MYSQL_MAJOR` is not
 read: an innovation image such as 26.10 declares it as `innovation`.
+`E2E_MYSQL_SERVER` names the server that image runs for engine `mysql`: `mysql`,
+the default, or `mariadb`. A MariaDB image's tag names a MariaDB release line,
+such as `12.3`, and the release it declares as `MARIADB_VERSION`, such as
+`1:12.3.3+maria~ubu2404`, has to be on that line. Every MySQL phase runs on it
+unchanged, with the `mariadb` client its image ships in place of `mysql`.
 `E2E_POSTGRES_IMAGE_CREATED` and `E2E_MYSQL_IMAGE_CREATED`, when they are set,
 name the day Docker has to report for that engine's image.
 

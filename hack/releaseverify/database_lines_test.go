@@ -408,6 +408,79 @@ func TestADatabaseLineRunIsReadPageByPage(t *testing.T) {
 	}
 }
 
+// A MariaDB line runs under engine mysql, and its jobs and its row at the run's
+// commit are told from a MySQL line's by its server.
+func TestAMariaDBLineIsHeldToItsOwnServersJobs(t *testing.T) {
+	t.Parallel()
+	image := "mariadb:12.3@sha256:" + strings.Repeat("e", 64)
+	mariadb := func(t *testing.T) *databaseLineFixture {
+		t.Helper()
+		fixture := newDatabaseLineFixture(t, databaseLineSupported)
+		line := fixture.line()
+		line["engine"], line["server"], line["line"], line["image"] = "mysql", "mariadb", "12.3.x", image
+		fixture.writeCatalog(t)
+		lines, err := readDatabaseCatalogLines(fixture.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		required, err := requiredDatabaseLineJobs(fixture.root, lines[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		lifecycles := 0
+		for _, name := range required[len(gatePrerequisiteJobs):] {
+			if !strings.Contains(name, " on MariaDB 12.3 ") {
+				t.Fatalf("the release reads job %q for the MariaDB line", name)
+			}
+			lifecycles++
+		}
+		if lifecycles == 0 {
+			t.Fatal("the MariaDB line requires no lifecycle job")
+		}
+		fixture.jobs = nil
+		for _, name := range required {
+			fixture.addJob(name, "success")
+		}
+		fixture.then = []map[string]any{{"engine": "mysql", "server": "mariadb", "line": "12.3.x", "image": image, "state": "pending"}}
+		return fixture
+	}
+	if err := mariadb(t).verify(t); err != nil {
+		t.Fatalf("a run green on the MariaDB line was refused: %v", err)
+	}
+	for name, test := range map[string]struct {
+		mutate func(*testing.T, *databaseLineFixture)
+		want   string
+	}{
+		// The jobs a MySQL line of the release would run are not this line's.
+		"jobs named after MySQL": {
+			func(_ *testing.T, f *databaseLineFixture) {
+				for _, job := range f.jobs {
+					job["name"] = strings.Replace(job["name"].(string), " on MariaDB 12.3 ", " on MySQL 12.3 ", 1)
+				}
+			}, "on MariaDB 12.3",
+		},
+		"a commit whose row is the same release of MySQL": {
+			func(_ *testing.T, f *databaseLineFixture) { delete(f.then[0], "server") }, "this commit pins",
+		},
+		"a server no job is named after": {
+			func(t *testing.T, f *databaseLineFixture) {
+				f.line()["server"] = "percona"
+				f.writeCatalog(t)
+			}, "names a server no job is named after",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture := mariadb(t)
+			test.mutate(t, fixture)
+			err := fixture.verify(t)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verify() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 // Two lines proven by one run read it once, and each is held to its own jobs.
 func TestTwoLinesOnOneRunAreEachHeldToTheirOwnJobs(t *testing.T) {
 	t.Parallel()

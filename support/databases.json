@@ -30,6 +30,14 @@
     "under two weeks old, and each job of an added line refuses a date that is not",
     "the image's own.",
     "",
+    "server names the server an added line runs when it is not its engine's own:",
+    "mariadb, under engine mysql. The line keeps its engine, which is what a",
+    "resource names it by, and every phase of the engine runs on it. Its jobs,",
+    "artifacts and readings are named after the server, its row in the table names",
+    "the server before the release, and the lifecycle holds the image to the release",
+    "that server's image declares, MARIADB_VERSION where MySQL's declares",
+    "MYSQL_VERSION.",
+    "",
     "A suite can be left out only when the driver hands every one of its phases",
     "another engine, because that suite cannot say anything about this line. A",
     "suite that runs both engines stays: its half on this line's engine is the",
@@ -142,6 +150,28 @@
       "line": "26.10.x",
       "image": "mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999",
       "imageCreated": "2026-11-03",
+      "state": "pending",
+      "leftOut": [
+        {
+          "suite": "migrations-postgresql",
+          "reason": "Its one phase is the versioned migration rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-faults-postgresql",
+          "reason": "Its one phase is the versioned migration fault rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-authority-postgresql",
+          "reason": "Its one phase is the migration approval and runtime rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        }
+      ]
+    },
+    {
+      "engine": "mysql",
+      "server": "mariadb",
+      "line": "12.3.x",
+      "image": "mariadb:12.3@sha256:71541e69e0a1fbec2fa57d6b3b30d751c7847ca77ce66f5af4ffff48060c37c8",
+      "imageCreated": "2026-10-26",
       "state": "pending",
       "leftOut": [
         {

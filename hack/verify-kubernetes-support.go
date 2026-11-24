@@ -183,6 +183,9 @@ type matrixEntry struct {
 	// default.
 	MySQLSourceImage  string `json:"mysql_source_image,omitempty"`
 	MySQLImageCreated string `json:"mysql_image_created,omitempty"`
+	// The server that image runs when it is not MySQL's own, mariadb for a
+	// MariaDB line. The driver reads the release the image declares by it.
+	MySQLServer string `json:"mysql_server,omitempty"`
 	// The acceptance suite this job runs, in the acceptance matrix only. A job
 	// is one minor and one suite, so the four suites of a minor run at once
 	// against clusters of their own. The plain matrix keeps its old shape,
@@ -1320,6 +1323,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_POSTGRES_IMAGE_CREATED": "${{ matrix.postgres_image_created }}",
 		"E2E_MYSQL_SOURCE_IMAGE":     "${{ matrix.mysql_source_image }}",
 		"E2E_MYSQL_IMAGE_CREATED":    "${{ matrix.mysql_image_created }}",
+		"E2E_MYSQL_SERVER":           "${{ matrix.mysql_server }}",
 		// No Ptah source reaches a lifecycle job: the executor is the Ptah
 		// image the catalog pins beside this commit, copied by digest.
 		"E2E_PREBUILT_IMAGE_DIR": "${{ runner.temp }}/task-images",
@@ -5902,6 +5906,18 @@ const ciAcceptanceOutput = "${{ inputs.database_lines && 'database-lines' || 'ac
 // hands an added line's image to the one its engine reads.
 var databaseEngineNames = map[string]string{"postgresql": "PostgreSQL", "mysql": "MySQL"}
 
+// databaseServer is a server an added line can run in place of its engine's own.
+// It keeps the engine: a resource names it by the engine, and every phase of the
+// engine runs on it. Its jobs, artifacts and readings are named after it, so
+// none of them shares a name with a line of the engine's own server.
+type databaseServer struct {
+	engine, name string
+}
+
+// databaseServers are the servers a catalog row can name, by the word it names
+// them with, which is also the word the driver takes as E2E_MYSQL_SERVER.
+var databaseServers = map[string]databaseServer{"mariadb": {engine: "mysql", name: "MariaDB"}}
+
 var (
 	databaseEvidenceRun = regexp.MustCompile(`^[1-9][0-9]*$`)
 	pinnedImagePattern  = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
@@ -5909,8 +5925,20 @@ var (
 
 type databaseLine struct {
 	Engine string `json:"engine"`
+	// Server names the server the line runs when it is not the engine's own,
+	// such as mariadb under engine mysql.
+	Server string `json:"server,omitempty"`
 	Line   string `json:"line"`
 	Image  string `json:"image"`
+}
+
+// serverNames are the slug and the name the line's jobs, artifacts and readings
+// are named with: its server's, or its engine's when it names no server.
+func (line databaseLine) serverNames() (slug, name string) {
+	if server, named := databaseServers[line.Server]; named {
+		return line.Server, server.name
+	}
+	return line.Engine, databaseEngineNames[line.Engine]
 }
 
 type databaseLeftOutSuite struct {
@@ -5964,12 +5992,28 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		if !pinnedImagePattern.MatchString(line.Image) {
 			return fmt.Errorf("%s: %s %s must be pinned by digest: %q", path, line.Engine, line.Line, line.Image)
 		}
+		if line.Server != "" {
+			server, known := databaseServers[line.Server]
+			switch {
+			case !known:
+				return fmt.Errorf("%s: %s %s names server %q, which the driver cannot start; a line of the engine's own server names none",
+					path, line.Engine, line.Line, line.Server)
+			case server.engine != line.Engine:
+				return fmt.Errorf("%s: %s %s names server %q, which runs under engine %s", path, line.Engine, line.Line, line.Server, server.engine)
+			case !added:
+				// The driver's default is the engine's own server, and the
+				// baseline is what it runs when nothing names an image.
+				return fmt.Errorf("%s: the baseline %s line names server %q; a baseline line runs its engine's own server",
+					path, line.Engine, line.Server)
+			}
+		}
 		// The lifecycle holds both PostgreSQL servers to the tag, and the line
 		// the MySQL image declares to its tag, so a green run proves the tag's
 		// line, whatever this row says. A MySQL line may name its LTS after the
 		// release, as 8.4 and 9.7 do, and nothing else: the witness test and the
-		// readings probe take an added line's file stem from the release before
-		// it, and the release check finds the row by the release its image names.
+		// readings probe take an added line's file stem from its server and the
+		// release before the label, and the release check finds the row by its
+		// server and the release its image names.
 		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
@@ -5980,8 +6024,9 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		}
 		// Two rows that name one release would run jobs of the same names, and
 		// either run would read as the other's evidence, whatever each row adds
-		// after the release.
-		key := line.Engine + " " + release
+		// after the release. The same release of another server is another line.
+		server, _ := line.serverNames()
+		key := server + " " + release
 		if seen[key] {
 			return fmt.Errorf("%s: %s appears twice", path, key)
 		}
@@ -6054,14 +6099,21 @@ func verifyDatabaseCatalog(catalog databaseCatalog, suites e2eSuiteCatalog, driv
 // so it refuses nothing unless a run compares that date with the image.
 func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
 	return verifyOrderedSourceContract(driverPath, driver, []sourceContractStep{
+		// A job of the acceptance matrix names no server, and a MariaDB line's
+		// job names mariadb; either way the server decides which release the
+		// image is held to.
+		exactSourceLine("the MySQL server defaulted to MySQL's own", `E2E_MYSQL_SERVER=${E2E_MYSQL_SERVER:-mysql}`),
+		exactSourceLine("the server's release variable chosen",
+			`mysql_version_variable=$(mysql_server_version_variable "$E2E_MYSQL_SERVER")`),
+		exactSourceLine("any other server refused", `[ -n "$mysql_version_variable" ] ||`),
 		exactSourceLine("the PostgreSQL source image pulled", `mirror_task_image "$E2E_POSTGRES_SOURCE_IMAGE" postgresql`),
 		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
 		exactSourceLine("the MySQL source image pulled", `mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql`),
 		// An innovation image declares MYSQL_MAJOR=innovation, so the line is read
-		// from the release the image installs.
+		// from the release the image installs, in its server's variable.
 		exactSourceLine("the release the MySQL image installs read",
-			`mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')`),
+			`mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n "s/^$mysql_version_variable=//p")`),
 		exactSourceLine("the MySQL line read from that release",
 			`mysql_image_declared=$(mysql_version_line "$mysql_image_version")`),
 		exactSourceLine("the MySQL line held to the image", `[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`),
@@ -6151,8 +6203,15 @@ func verifyDatabasePage(catalog databaseCatalog, path string) error {
 	}
 	var expected strings.Builder
 	expected.WriteString("| Engine | Supported release line | Matrix image |\n| --- | --- | --- |\n")
+	// A line of another server keeps its engine in the first column, which is
+	// what a resource names it by, and names the server before its release.
 	row := func(line databaseLine) {
-		fmt.Fprintf(&expected, "| %s | %s | `%s` |\n", databaseEngineNames[line.Engine], line.Line, line.Image)
+		release := line.Line
+		if line.Server != "" {
+			_, server := line.serverNames()
+			release = server + " " + line.Line
+		}
+		fmt.Fprintf(&expected, "| %s | %s | `%s` |\n", databaseEngineNames[line.Engine], release, line.Image)
 	}
 	for _, line := range catalog.Baseline {
 		row(line)
@@ -6201,8 +6260,9 @@ func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog da
 			if leftOut[entry.Suite] {
 				continue
 			}
-			entry.Minor = fmt.Sprintf("%s on %s %s", entry.Minor, databaseEngineNames[line.Engine], release)
-			entry.MinorSlug = fmt.Sprintf("%s-%s-%s", entry.MinorSlug, line.Engine, strings.ReplaceAll(release, ".", "-"))
+			slug, name := line.serverNames()
+			entry.Minor = fmt.Sprintf("%s on %s %s", entry.Minor, name, release)
+			entry.MinorSlug = fmt.Sprintf("%s-%s-%s", entry.MinorSlug, slug, strings.ReplaceAll(release, ".", "-"))
 			switch line.Engine {
 			case "postgresql":
 				entry.PostgresSourceImage = line.Image
@@ -6210,6 +6270,7 @@ func databaseLineMatrix(minors []matrixEntry, suites e2eSuiteCatalog, catalog da
 			case "mysql":
 				entry.MySQLSourceImage = line.Image
 				entry.MySQLImageCreated = line.ImageCreated
+				entry.MySQLServer = line.Server
 			}
 			entries = append(entries, entry)
 		}

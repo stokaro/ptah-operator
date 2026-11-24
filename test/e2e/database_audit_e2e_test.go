@@ -41,7 +41,7 @@ func (a *databaseSQLAudit) start() {
 	a.started = true
 	a.t.Cleanup(a.close)
 	if a.engine == "mysql" {
-		a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=ON"`)
+		a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=ON"`)
 	} else {
 		a.exec("sh", "-ec", `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM SET log_statement='all'" -c "SELECT pg_reload_conf()"`)
 	}
@@ -55,7 +55,7 @@ func (a *databaseSQLAudit) close() {
 	defer cancel()
 	command := `PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -Atq -c "ALTER SYSTEM RESET log_statement" -c "SELECT pg_reload_conf()"`
 	if a.engine == "mysql" {
-		command = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
+		command = `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" ` + mysqlClient + ` --protocol=tcp -h 127.0.0.1 -uroot -e "SET GLOBAL general_log=OFF"`
 	}
 	if _, err := a.execute(ctx, "sh", "-ec", command); err != nil {
 		a.t.Errorf("could not stop %s SQL audit: %v", a.engine, err)
@@ -90,7 +90,7 @@ func (a *databaseSQLAudit) snapshot() sqlAuditCounts {
 	a.t.Helper()
 	a.start()
 	if a.engine == "mysql" {
-		raw := a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NB -e "$1"`, "sh",
+		raw := a.exec("sh", "-ec", `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot -NB -e "$1"`, "sh",
 			`SELECT IF(@@general_log=1 AND FIND_IN_SET('TABLE',@@log_output)>0,1,0);
 SELECT JSON_OBJECT('client',user_host,'count',COUNT(*)) FROM mysql.general_log WHERE command_type IN ('Query','Execute') GROUP BY user_host`)
 		if !bytes.HasPrefix(raw, []byte("1\n")) {
@@ -159,7 +159,7 @@ func (a *databaseSQLAudit) mysqlStatementSnapshot() []mysqlStatementRecord {
 	// not read. Retrying the read never takes a second snapshot.
 	path := fmt.Sprintf("/tmp/ptah-mysql-journal-%d", time.Now().UnixNano())
 	summary := a.exec("sh", "-ec", `umask 077
-MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1" > "$2.partial"
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot -NBr -e "$1" > "$2.partial"
 mv "$2.partial" "$2"
 wc -c < "$2"
 sha256sum "$2" | cut -d' ' -f1`, "sh",

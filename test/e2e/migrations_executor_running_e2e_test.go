@@ -98,7 +98,7 @@ func (m *migrationRun) runningTableBarrier(database, table string) func() {
 	if m.engine.name == "postgresql" {
 		command = append(command, `PGAPPNAME="$2" PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -c "$3"`, "sh", database, token, "BEGIN; LOCK TABLE "+table+" IN ACCESS SHARE MODE; SELECT pg_sleep(600); ROLLBACK")
 	} else {
-		command = append(command, `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`, "sh", database,
+		command = append(command, `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`, "sh", database,
 			"SELECT GET_LOCK('"+token+"_session', 0); LOCK TABLES "+table+" READ; SELECT GET_LOCK('"+token+"', 0); DO SLEEP(600); UNLOCK TABLES")
 		ready = "SELECT IS_USED_LOCK('" + token + "')"
 		cleanupQuery = "SELECT IS_USED_LOCK('" + token + "_session')"

@@ -36,8 +36,14 @@ var databaseEvidenceRunPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 // line's jobs with, which a release reads them by.
 var databaseEngineNames = map[string]string{"postgresql": "PostgreSQL", "mysql": "MySQL"}
 
+// databaseServerNames are the words it names the jobs of a line of another
+// server with, in place of the engine's.
+var databaseServerNames = map[string]string{"mariadb": "MariaDB"}
+
 type databaseCatalogLine struct {
-	Engine      string `json:"engine"`
+	Engine string `json:"engine"`
+	// Server is empty for a line of the engine's own server.
+	Server      string `json:"server"`
 	Line        string `json:"line"`
 	Image       string `json:"image"`
 	State       string `json:"state"`
@@ -131,6 +137,11 @@ func requiredDatabaseLineJobs(root string, line databaseCatalogLine) ([]string, 
 	engine, known := databaseEngineNames[line.Engine]
 	if !known {
 		return nil, fmt.Errorf("%s: %s %s names an engine no job is named after", databaseCatalogPath, line.Engine, line.Line)
+	}
+	if line.Server != "" {
+		if engine, known = databaseServerNames[line.Server]; !known {
+			return nil, fmt.Errorf("%s: %s %s names a server no job is named after", databaseCatalogPath, line.Engine, line.Line)
+		}
 	}
 	window, err := repositoryKubernetesSupportWindow(root)
 	if err != nil {
@@ -239,7 +250,9 @@ func checkDatabaseLineEvidence(evidence databaseLineEvidence, line databaseCatal
 	}
 	image := ""
 	for _, candidate := range evidence.catalog {
-		if candidate.Engine != line.Engine {
+		// MariaDB 12.3 and a MySQL 12.3 would name one release, so the server
+		// tells them apart.
+		if candidate.Engine != line.Engine || candidate.Server != line.Server {
 			continue
 		}
 		if named, err := phases.DatabaseImageLine(candidate.Engine, candidate.Image); err == nil && named == release {

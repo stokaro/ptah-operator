@@ -126,6 +126,10 @@ E2E_MYSQL_SOURCE_IMAGE=${E2E_MYSQL_SOURCE_IMAGE:-mysql:8.4@sha256:b3b90af2a6552a
 # else names it, so a run of the default image compares nothing.
 E2E_POSTGRES_IMAGE_CREATED=${E2E_POSTGRES_IMAGE_CREATED:-}
 E2E_MYSQL_IMAGE_CREATED=${E2E_MYSQL_IMAGE_CREATED:-}
+# The server E2E_MYSQL_SOURCE_IMAGE runs, mysql or mariadb. An added line of
+# MariaDB names it; the image is held to the release this server declares, and
+# every phase runs on it as engine MySQL.
+E2E_MYSQL_SERVER=${E2E_MYSQL_SERVER:-mysql}
 # The alerting phase's Prometheus and Alertmanager. Prometheus is the release
 # support/tools.json pins promtool from, so the rules run under the evaluator
 # their unit tests ran under.
@@ -272,10 +276,21 @@ mysql_image_line() {
 }
 
 # mysql_version_line prints the release line, major.minor, of the version an
-# official MySQL image declares as MYSQL_VERSION, such as 26.10 for
-# 26.10.0-1.el9, and nothing for a value that names no version.
+# official image declares: 26.10 for MySQL's MYSQL_VERSION=26.10.0-1.el9, 12.3
+# for MariaDB's MARIADB_VERSION=1:12.3.3+maria~ubu2404, which is a Debian
+# version with an epoch. It prints nothing for a value that names no version.
 mysql_version_line() {
-	printf '%s\n' "$1" | sed -nE 's/^([1-9][0-9]*\.[0-9]+)\.[0-9]+([.-][^[:space:]]*)?$/\1/p'
+	printf '%s\n' "$1" | sed -nE 's/^([0-9]+:)?([1-9][0-9]*\.[0-9]+)\.[0-9]+([.+~-][^[:space:]]*)?$/\2/p'
+}
+
+# mysql_server_version_variable prints the variable the official image of a
+# server declares the release it installs in: MYSQL_VERSION for mysql, and
+# MARIADB_VERSION for mariadb. It prints nothing for any other server.
+mysql_server_version_variable() {
+	case $1 in
+	mysql) printf '%s\n' MYSQL_VERSION ;;
+	mariadb) printf '%s\n' MARIADB_VERSION ;;
+	esac
 }
 
 # image_created_on reports whether Docker's created time for an image, the first
@@ -542,6 +557,9 @@ EXTERNAL_PG_DATA_DIRECTORY=$(postgres_data_directory "$E2E_POSTGRES_MAJOR")
 E2E_MYSQL_LINE=$(mysql_image_line "$E2E_MYSQL_SOURCE_IMAGE")
 [ -n "$E2E_MYSQL_LINE" ] ||
 	fail "E2E_MYSQL_SOURCE_IMAGE must name a MySQL release line, such as 8.4, in its tag: $E2E_MYSQL_SOURCE_IMAGE"
+mysql_version_variable=$(mysql_server_version_variable "$E2E_MYSQL_SERVER")
+[ -n "$mysql_version_variable" ] ||
+	fail "E2E_MYSQL_SERVER must be mysql or mariadb: $E2E_MYSQL_SERVER"
 
 # release_manifest_field prints the value of the one NAME= line the release
 # manifest carries, and fails on a field that is missing or repeated.
@@ -2974,17 +2992,18 @@ if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then
 fi
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
-# The official image installs the release it declares as MYSQL_VERSION, so a tag
-# whose digest belongs to another line fails here instead of reporting this one
+# The official image installs the release it declares, MYSQL_VERSION on MySQL and
+# MARIADB_VERSION on MariaDB, so a tag whose digest belongs to another line, or
+# an image of the other server, fails here instead of reporting this line
 # proven. MYSQL_MAJOR names the line only on an LTS image: an innovation image,
 # such as 26.10, declares MYSQL_MAJOR=innovation.
 mysql_image_environment=$(docker --context "$DOCKER_CONTEXT" image inspect \
 	--format '{{range .Config.Env}}{{println .}}{{end}}' "$E2E_MYSQL_SOURCE_IMAGE") ||
 	fail "could not read the environment $E2E_MYSQL_SOURCE_IMAGE declares"
-mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')
+mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n "s/^$mysql_version_variable=//p")
 mysql_image_declared=$(mysql_version_line "$mysql_image_version")
 [ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||
-	fail "$E2E_MYSQL_SOURCE_IMAGE names MySQL $E2E_MYSQL_LINE in its tag and declares MYSQL_VERSION=$mysql_image_version"
+	fail "$E2E_MYSQL_SOURCE_IMAGE names $E2E_MYSQL_SERVER $E2E_MYSQL_LINE in its tag and declares $mysql_version_variable=$mysql_image_version"
 if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then
 	mysql_image_created=$(docker --context "$DOCKER_CONTEXT" image inspect \
 		--format '{{.Created}}' "$E2E_MYSQL_SOURCE_IMAGE") ||

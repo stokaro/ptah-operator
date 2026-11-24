@@ -436,9 +436,14 @@ engine, which the verifier checks. The tag of a line's image has to name its maj
 version: the driver and the data plane hold both PostgreSQL servers to it, so a
 run cannot report a line it did not reach.
 
+A line of a server other than its engine's own names it in `server`: MariaDB,
+under engine `mysql`. Every phase of the engine runs on it, and its jobs,
+artifacts and readings are named after the server, so MariaDB 12.3 and a MySQL
+12.3 would be two lines.
+
 A new line can send SQL the audits have not seen. Run
-`support/qualification/probes/schema_sql_readings.py --postgresql-line <major>`
-and regenerate the contract, as
+`support/qualification/probes/schema_sql_readings.py --postgresql-line <major>`,
+`--mysql-line` or `--mariadb-line` and regenerate the contract, as
 [the readings](testdata/e2e/readings/schema-diagnostics.md#postgresql-18) describe.
 
 ## Where the task images come from

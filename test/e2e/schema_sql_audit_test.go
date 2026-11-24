@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"cmp"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -162,10 +163,15 @@ func schemaAuditReading(t *testing.T, engine, operation string) []byte {
 	return raw
 }
 
-// addedLineStems names the readings of each line of engine support/databases.json
-// adds, such as "postgresql-18" or "mysql-9.7". A line the catalog adds without
-// readings fails where its reading is read.
-func addedLineStems(t *testing.T, engine string) []string {
+// addedLine is a line support/databases.json adds: the server it runs, and the
+// stem its readings are named by.
+type addedLine struct{ server, stem string }
+
+// addedLines names the readings of each line of engine support/databases.json
+// adds by its server and release, such as "postgresql-18", "mysql-9.7", or
+// "mariadb-12.3" for a MariaDB line, which runs under engine mysql. A line the
+// catalog adds without readings fails where its reading is read.
+func addedLines(t *testing.T, engine string) []addedLine {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "support", "databases.json"))
 	if err != nil {
@@ -174,13 +180,14 @@ func addedLineStems(t *testing.T, engine string) []string {
 	var catalog struct {
 		Added []struct {
 			Engine string `json:"engine"`
+			Server string `json:"server"`
 			Line   string `json:"line"`
 		} `json:"added"`
 	}
 	if err := json.Unmarshal(raw, &catalog); err != nil {
 		t.Fatal(err)
 	}
-	var stems []string
+	var lines []addedLine
 	for _, line := range catalog.Added {
 		if line.Engine != engine {
 			continue
@@ -194,12 +201,13 @@ func addedLineStems(t *testing.T, engine string) []string {
 		if !found || release == "" {
 			t.Fatalf("added %s line %q does not name a release", engine, line.Line)
 		}
-		stems = append(stems, engine+"-"+release)
+		server := cmp.Or(line.Server, engine)
+		lines = append(lines, addedLine{server: server, stem: server + "-" + release})
 	}
-	if len(stems) == 0 {
+	if len(lines) == 0 {
 		t.Fatalf("support/databases.json adds no %s line, so no added line is witnessed", engine)
 	}
-	return stems
+	return lines
 }
 
 func schemaAuditActor(operation string) operationSQLClient {
@@ -400,16 +408,33 @@ func TestSchemaSQLContractHasActualWitnessesAtThePinnedSource(t *testing.T) {
 			// name where 17 selects an empty string, so that one declaration
 			// has a witness only on 18. PostgreSQL 16 and 15 send what 17 sends
 			// and spell the parameter detail differently. MySQL 9.7 and 26.10
-			// send what 8.4 sends.
-			counts := map[string]map[string]int{
-				"postgresql": {"observe": 67, "plan": 118, "stale-apply": 59},
-				"mysql":      {"observe": 26, "plan": 49, "stale-apply": 30},
-			}[engine]
-			for _, stem := range addedLineStems(t, engine) {
-				readings = append(readings,
-					witness{name: "drift-observe", operation: "observe", count: counts["observe"], stem: stem},
-					witness{name: "drift-plan", operation: "plan", count: counts["plan"], stem: stem},
-					witness{name: "drift-stale-apply", operation: "stale-apply", count: counts["stale-apply"], stem: stem})
+			// send what 8.4 sends. MariaDB 12.3 reads constraints, keys and
+			// tables through queries of its own and each table with SHOW
+			// CREATE TABLE, so it keeps the exclusion fixture's readings too:
+			// only they hold the table the exclusion rows keep out.
+			drift := func(observe, plan, staleApply int) []witness {
+				return []witness{
+					{name: "drift-observe", operation: "observe", count: observe},
+					{name: "drift-plan", operation: "plan", count: plan},
+					{name: "drift-stale-apply", operation: "stale-apply", count: staleApply},
+				}
+			}
+			lineWitnesses := map[string][]witness{
+				"postgresql": drift(67, 118, 59),
+				"mysql":      drift(26, 49, 30),
+				"mariadb": append(drift(30, 57, 33),
+					witness{name: "exclusion-wide-observe", operation: "observe", count: 31},
+					witness{name: "exclusion-wide-plan", operation: "plan", count: 59}),
+			}
+			for _, line := range addedLines(t, engine) {
+				witnesses, known := lineWitnesses[line.server]
+				if !known {
+					t.Fatalf("added %s line %s runs %s, which keeps no readings", engine, line.stem, line.server)
+				}
+				for _, reading := range witnesses {
+					reading.stem = line.stem
+					readings = append(readings, reading)
+				}
 			}
 			for _, reading := range readings {
 				actor := schemaAuditActor(reading.operation)

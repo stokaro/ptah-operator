@@ -26,7 +26,7 @@ func databaseSQL(ctx context.Context, cluster *harness.Cluster, namespace string
 			"sh", database, statement}
 	case "mysql":
 		command = []string{"sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" ` + mysqlClient + ` --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"`,
 			"sh", database, statement}
 	default:
 		return "", fmt.Errorf("unsupported engine %q", engine.name)
@@ -47,7 +47,7 @@ func serverSQL(ctx context.Context, cluster *harness.Cluster, namespace string, 
 			"sh", statement}
 	case "mysql":
 		command = []string{"sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" ` + mysqlClient + ` --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
 			"sh", statement}
 	default:
 		return "", fmt.Errorf("unsupported engine %q", engine.name)

@@ -4,9 +4,9 @@
 The executor's schema commands are run against disposable PostgreSQL 17 and
 MySQL 8.4 servers that journal every statement they receive, one isolated
 command per journal, following testdata/e2e/readings/schema-diagnostics.md.
-With --postgresql-line or --mysql-line it runs the stale-plan sequence on an
-added line from support/databases.json instead, and keeps the readings that
-witness each diagnostic operation on that server.
+With --postgresql-line, --mysql-line or --mariadb-line it runs the stale-plan
+sequence on an added line from support/databases.json instead, and keeps the
+readings that witness each diagnostic operation on that server.
 The journals are written in the shape the checked-in readings use, with the
 executor's client address rewritten to the address those readings name, so a
 reading taken with the pinned executor can be compared byte for byte with the
@@ -38,8 +38,14 @@ SERVERS = {
     'postgresql': 'postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73',
     'mysql': 'mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb',
 }
-# The readings an added PostgreSQL line keeps, and the operation each witnesses.
+# The readings an added line keeps, and the operation each witnesses.
 LINE_WITNESSES = (('drift-observe', 'observe'), ('drift-plan', 'plan'), ('drift-stale-apply', 'stale-apply'))
+# What a line of another server keeps beyond them. MariaDB reads each table with
+# SHOW CREATE TABLE, so the table the exclusion rows keep outside the managed
+# scope has statements of its own, and only an exclusion reading sends them.
+SERVER_WITNESSES = {'mariadb': (('exclusion-wide-observe', 'observe'), ('exclusion-wide-plan', 'plan'))}
+# The client each server's image ships. MariaDB's has no mysql since 11.0.
+CLIENTS = {'mysql': 'mysql', 'mariadb': 'mariadb'}
 DATABASE = 'ptah_audit_schema'
 ACCOUNT = 'ptah_audit'
 AUDIT_HOST = '172.19.0.3'
@@ -112,10 +118,14 @@ class Lab:
     page's grant.
     """
 
-    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST, server_image=None, documented=False):
+    def __init__(self, context, engine, image, database=DATABASE, address=AUDIT_HOST, server_image=None, documented=False,
+                 server=None):
         self.engine, self.image, self.database, self.address = engine, image, database, address
         self.documented = documented
         self.server_image = server_image or SERVERS[engine]
+        # The MariaDB image takes the MYSQL_ variables the MySQL one does, and
+        # journals into the same mysql.general_log; only its client differs.
+        self.client = CLIENTS.get(server or engine)
         self.docker = ['docker', '--context', context]
         self.name = f'ptah-sql-readings-{engine}-{secrets.token_hex(4)}'
         self.password = secrets.token_hex(16)
@@ -157,7 +167,7 @@ class Lab:
             # Over TCP: the image's temporary init server listens on the
             # socket alone and answers a socket probe just before it stops.
             probe = ['pg_isready', '-h', '127.0.0.1', '-U', ACCOUNT, '-d', self.database] if self.engine == 'postgresql' else \
-                ['mysql', '-h127.0.0.1', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
+                [self.client, '-h127.0.0.1', '-uroot', f'-p{self.password}', '-e', 'SELECT 1']
             try:
                 answered = run(self.docker + ['exec', server] + probe, check=False, timeout=PROBE_TIMEOUT).returncode == 0
             except CommandTimeout:
@@ -216,7 +226,7 @@ class Lab:
             return run(self.docker + ['exec', '-i', self.server, 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', role, '-d', self.database],
                        text.encode()).stdout
         user = ['-uroot', f'-p{self.password}'] if root else [f'-u{ACCOUNT}', f'-p{self.password}', self.database]
-        return run(self.docker + ['exec', '-i', self.server, 'mysql', '-N', '-B'] + user, text.encode()).stdout
+        return run(self.docker + ['exec', '-i', self.server, self.client, '-N', '-B'] + user, text.encode()).stdout
 
     def admin(self, text):
         """Run text in the database as the role that changes it behind the executor's back.
@@ -371,7 +381,19 @@ def capture(context, image, engine, out):
     return results
 
 
-def capture_stale_plan(context, image, engine, out, stem, server_image=None, keep=None, documented=False):
+def capture_exclusion_wide(context, image, engine, out, stem, server_image=None, server=None):
+    """Observe and plan the fault schema beside the table the exclusion rows keep outside the managed scope."""
+    results = {}
+    variant, setup, steps = next(scenario for scenario in scenarios(engine) if scenario[0] == 'exclusion-wide-')
+    with Lab(context, engine, image, server_image=server_image, server=server) as lab:
+        lab.seed(*setup['files'], statements=setup['statements'])
+        for operation, args, desired in steps:
+            code, rows, _ = lab.ptah(args, desired=desired)
+            write(out, f'{stem}{variant}{operation}.jsonl', rows, code, results)
+    return results
+
+
+def capture_stale_plan(context, image, engine, out, stem, server_image=None, keep=None, documented=False, server=None):
     """Save a plan, change the database under it, refuse the old plan, then observe, plan, validate and apply afresh."""
     results = {}
 
@@ -380,7 +402,7 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
             write(out, f'{stem}{name}.jsonl', rows, code, results)
 
     fault, v3 = f'{engine}-fault-v1.sql', f'{engine}-v3.sql'
-    with Lab(context, engine, image, server_image=server_image, documented=documented) as lab:
+    with Lab(context, engine, image, server_image=server_image, documented=documented, server=server) as lab:
         lab.seed(v3, statements=(CONTROL_V3,))
         code, rows, first = lab.ptah(PLAN, desired=fault)
         record('drift-plan-before', rows, code)
@@ -399,16 +421,26 @@ def capture_stale_plan(context, image, engine, out, stem, server_image=None, kee
 
 
 def added_lines(engine):
-    """The added lines of engine the catalog declares, as (release, image): 18 for PostgreSQL, 9.7 for MySQL."""
+    """The added lines of engine the catalog declares, as (stem, image, server).
+
+    The stem names the line's readings by its server and release: postgresql-18,
+    mysql-9.7, or mariadb-12.3 for a MariaDB line, which runs under engine mysql.
+    The server is the engine's own where the row names none.
+    """
     catalog = json.loads((ROOT / 'support/databases.json').read_text())
-    # The release comes before any label, such as a MySQL line's LTS.
-    return [(line['line'].split()[0].removesuffix('.x'), line['image'])
-            for line in catalog['added'] if line['engine'] == engine]
+    lines = []
+    for line in catalog['added']:
+        if line['engine'] == engine:
+            server = line.get('server', engine)
+            # The release comes before any label, such as a MySQL line's LTS.
+            release = line['line'].split()[0].removesuffix('.x')
+            lines.append((f"{server}-{release}", line['image'], server))
+    return lines
 
 
-def added_postgresql_lines():
-    """The added PostgreSQL lines the catalog declares, as (major, image)."""
-    return added_lines('postgresql')
+def line_witnesses(server):
+    """The readings an added line of server keeps, and the operation each witnesses."""
+    return LINE_WITNESSES + SERVER_WITNESSES.get(server, ())
 
 
 def migration_directory(engine, versions, root):
@@ -563,8 +595,8 @@ def contract_readings(engine):
                      (f'{engine}-schema-{stem}drift-stale-apply.jsonl', 'stale-apply')]
     if engine == 'mysql':
         readings += [('mysql-schema-lock-45-plan.jsonl', 'plan'), ('mysql-schema-lock-60-plan.jsonl', 'plan')]
-    for release, _ in added_lines(engine):
-        readings += [(f'{engine}-{release}-schema-{name}.jsonl', operation) for name, operation in LINE_WITNESSES]
+    for stem, _, server in added_lines(engine):
+        readings += [(f'{stem}-schema-{name}.jsonl', operation) for name, operation in line_witnesses(server)]
     return readings
 
 
@@ -597,7 +629,10 @@ def received(engine, path):
                 yield 'query', sql, parameter_detail(row.get('detail', ''))
         elif row['type'] in ('Query', 'Prepare', 'Execute'):
             sql = binascii.unhexlify(row['argumentHex']).decode()
-            yield row['type'], sql.replace(f"'{DATABASE}'", "'{{database}}'"), ''
+            # MariaDB also names the database as an identifier, in SHOW CREATE
+            # TABLE `ptah_audit_schema`.`e2e_widgets`.
+            sql = sql.replace(f"'{DATABASE}'", "'{{database}}'").replace(f'`{DATABASE}`', '`{{database}}`')
+            yield row['type'], sql, ''
 
 
 def contract(readings, ptah_commit, scope):
@@ -626,6 +661,7 @@ def main():
     parser.add_argument('--part', choices=('all', 'schema', 'migrations'), default='all')
     parser.add_argument('--postgresql-line', help='capture an added PostgreSQL line from support/databases.json, such as 18')
     parser.add_argument('--mysql-line', help='capture an added MySQL line from support/databases.json, such as 9.7')
+    parser.add_argument('--mariadb-line', help='capture an added MariaDB line from support/databases.json, such as 12.3')
     parser.add_argument('--compare', action='store_true',
                         help='compare every reading with the checked-in one instead of only writing it')
     parser.add_argument('--contract', help='instead of capturing, write the diagnostic contract the readings in --out witness')
@@ -648,16 +684,26 @@ def main():
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     results = {}
-    lines = {engine: release for engine, release in (('postgresql', args.postgresql_line), ('mysql', args.mysql_line)) if release}
-    for engine, release in lines.items():
-        if release not in dict(added_lines(engine)):
-            parser.error(f'support/databases.json adds no {engine} line {release}')
+    lines = []
+    for engine, server, release in (('postgresql', 'postgresql', args.postgresql_line), ('mysql', 'mysql', args.mysql_line),
+                                    ('mysql', 'mariadb', args.mariadb_line)):
+        if not release:
+            continue
+        declared = {stem: image for stem, image, _ in added_lines(engine)}
+        stem = f'{server}-{release}'
+        if stem not in declared:
+            parser.error(f'support/databases.json adds no {server} line {release}')
+        lines.append((engine, server, stem, declared[stem]))
     with tempfile.TemporaryDirectory(prefix='ptah-sql-readings-') as scratch:
-        for engine, release in lines.items():
-            results.update(capture_stale_plan(args.context, args.executor_image, engine, out,
-                                              f'{engine}-{release}-schema-',
-                                              server_image=dict(added_lines(engine))[release],
+        for engine, server, stem, image in lines:
+            # A line of another server keeps the exclusion readings too, which
+            # the stale-plan sequence does not take.
+            results.update(capture_stale_plan(args.context, args.executor_image, engine, out, f'{stem}-schema-',
+                                              server_image=image, server=server,
                                               keep={name for name, _ in LINE_WITNESSES}))
+            if server in SERVER_WITNESSES:
+                results.update(capture_exclusion_wide(args.context, args.executor_image, engine, out, f'{stem}-schema-',
+                                                      server_image=image, server=server))
         for engine in () if lines else args.engine or sorted(SERVERS):
             if args.part in ('all', 'schema'):
                 results.update(capture(args.context, args.executor_image, engine, out))

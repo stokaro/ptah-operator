@@ -189,7 +189,7 @@ func (d *dataPlane) psqlDefault(query string) (string, error) {
 // application user and returns its tab-separated output without a header.
 func (d *dataPlane) mysql(query string) (string, error) {
 	return d.execIn(mysqlService, "sh", "-ec",
-		`MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse "$1"`,
+		`MYSQL_PWD="$MYSQL_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse "$1"`,
 		"sh", query)
 }
 

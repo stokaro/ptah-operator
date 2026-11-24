@@ -134,6 +134,26 @@ func TestMySQLRestoredHistorySQLAuditUsesTheExactRefusedApply(t *testing.T) {
 	}
 }
 
+// The refused Apply MariaDB 12.3 ran under engine mysql sends what MySQL 8.4's
+// does, less five reads of restrict_fk_on_non_standard_key, a variable MariaDB
+// does not have, and one prepared GET_LOCK.
+func TestMySQLRestoredHistorySQLAuditAcceptsMariaDB(t *testing.T) {
+	t.Parallel()
+	rows, err := mysqlStatementJournal(restoreAuditReading(t, "mariadb-12.3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := append(mysqlAuditBaseline(), mysqlMigrationAuditReadingOf(t, "mariadb-12.3")...)
+	after := append(slices.Clone(before), rows...)
+	counts, err := mysqlMigrationRefusalSQLForJob(before, after, restoreAuditDatabase, mysqlAuditUser, restoreAuditClients(), "refused-job")
+	if err != nil || len(rows) != 91 || len(counts) != 1 || counts[mysqlAuditHost] != 39 {
+		t.Fatalf("MariaDB refused Apply: counts=%v error=%v", counts, err)
+	}
+	if _, err := mysqlMigrationRefusalSQLForJob(before, after, restoreAuditDatabase, mysqlAuditUser, restoreAuditClients(), "another-job"); err == nil {
+		t.Fatal("coordination SQL accepted without its exact refused Apply")
+	}
+}
+
 func TestMySQLRestoredHistorySQLAuditRejectsLostOrChangedEvidence(t *testing.T) {
 	t.Parallel()
 	rows, err := mysqlStatementJournal(restoreAuditReading(t, "mysql"))

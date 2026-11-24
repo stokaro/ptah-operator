@@ -640,6 +640,50 @@ readings and the 9.7 witnesses of the same names. The 9.7 and 26.10 witnesses
 are listed in [`schema-sql-capture.json`](schema-sql-capture.json) with the
 exit status the v0.35.1 capture gave, as the PostgreSQL lines' are.
 
+## MariaDB 12.3
+
+MariaDB 12.3 runs under engine `mysql`, and it adds 12 declarations. On
+November 24, 2026 the whole MySQL capture ran on MariaDB 12.3.3
+(`mariadb:12.3@sha256:71541e69e0a1fbec2fa57d6b3b30d751c7847ca77ce66f5af4ffff48060c37c8`)
+with the v0.35.1 image. The server image and the client the probe runs in it,
+`mariadb`, were the only changes to the procedure. All 32 readings had the exit
+statuses of the MySQL 8.4.11 ones, and none matched record for record: they
+hold 2,993 records where 8.4's hold 2,711. The same capture against the pinned
+8.4 image, run beside it as a control, matched the checked-in readings. The
+v0.35.0 image, run on MariaDB earlier the same day, sent the same statements
+record for record. Ptah v0.35.1 certifies 12.3 and resolves it to its
+`MariaDB1011` preset.
+
+Ptah reads MariaDB with its MySQL reader and changes four of its prepared
+queries. The index read selects `IGNORED` where MySQL's selects `IS_VISIBLE`,
+and `NULL` for the expression. The check-constraint read also selects each
+constraint's table and `LEVEL`. The key-constraint read selects `'YES'` where
+MySQL's reads `ENFORCED`. The table list reads sequences from
+`information_schema.TABLES`. Then it reads each table in the database with
+`SHOW CREATE TABLE`, which names the database as an identifier: MariaDB keeps
+an index's block-size hint on every table and reports it nowhere else, where
+MySQL keeps it only on a compressed table, and no fixture has one
+([index block sizes](https://github.com/stokaro/ptah/blob/ff4a4368f96968e6f43322e3e5dd27f2415e0013/internal/dbschema/mysql/index_block_size.go)).
+It skips its own apply log there: observed after an Apply, the database held
+`ptah_schema_apply_log`, and Ptah read only the fixture's three tables. It does
+not read `restrict_fk_on_non_standard_key`, which MariaDB does not have. Every
+added statement is a read of the catalog or a table definition, with no write,
+DDL, grant or transaction-control keyword.
+
+The contract names those statements once under engine `mysql`, beside MySQL's,
+and expands `` `{{database}}` `` as it expands `'{{database}}'`. A `SHOW CREATE
+TABLE` names its table, so each of the four fixture tables has a declaration of
+its own, and the excluded table's appears only in the exclusion readings. The
+audit admits them on a MySQL server too, which never sends them: one list per
+engine trades that for one contract, as the PostgreSQL 18 column read does.
+
+`mariadb-12.3-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply` are
+the line's witnesses, taken with `--mariadb-line 12.3` the same day, at 58, 111
+and 65 records, and `mariadb-12.3-schema-exclusion-wide-observe` and `-plan`
+witness the excluded table's two declarations, at 59 and 113.
+[`schema-sql-capture.json`](schema-sql-capture.json) lists them, and the two
+MariaDB migration readings, under the server image `mariadb-12.3`.
+
 ## The documented login
 
 A runner connects as the login

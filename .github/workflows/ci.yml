@@ -788,12 +788,14 @@ jobs:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images
-          # All four empty on the acceptance matrix, where the driver uses its own
-          # defaults. A job of an added line sets the pair its engine reads.
+          # All five empty on the acceptance matrix, where the driver uses its own
+          # defaults. A job of an added line sets the pair its engine reads, and
+          # a MariaDB line also names its server.
           E2E_POSTGRES_SOURCE_IMAGE: ${{ matrix.postgres_source_image }}
           E2E_POSTGRES_IMAGE_CREATED: ${{ matrix.postgres_image_created }}
           E2E_MYSQL_SOURCE_IMAGE: ${{ matrix.mysql_source_image }}
           E2E_MYSQL_IMAGE_CREATED: ${{ matrix.mysql_image_created }}
+          E2E_MYSQL_SERVER: ${{ matrix.mysql_server }}
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
           E2E_RELEASE_MANIFEST: ${{ steps.release-manifest.outputs.path }}
           E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz

@@ -44,10 +44,10 @@ func (a *databaseSQLAudit) createMySQLAccountWith(database string, documented bo
 	}
 	a.exec("sh", "-ec", `credential=$(printf '%s' "$MYSQL_PASSWORD" | sed "s/'/''/g")
 printf "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES';\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\n%s;\n" "$1" "$credential" "$2" |
-MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, grant)
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot >/dev/null`, "sh", user, grant)
 	if documented {
 		held := strings.TrimSpace(string(a.exec("sh", "-ec",
-			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
+			`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" `+mysqlClient+` --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"`,
 			"sh", documentedMySQLAccountQuery(user, database))))
 		if want := documentedMySQLAccountReading(); held != want {
 			a.t.Fatalf("MySQL account %s holds %s, and the documented account holds %s", user, held, want)

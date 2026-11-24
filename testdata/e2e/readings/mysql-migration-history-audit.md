@@ -78,3 +78,14 @@ This isolated CLI reading validates the parser and allowed History control.
 It is not Kubernetes approval-refusal evidence. That result requires the
 scenario's full journal window, migration/Job/Pod identities and freshly
 authorized successful Apply on the qualified artifacts.
+
+## MariaDB 12.3
+
+`mariadb-12.3-migration-history-audit.jsonl` is the same probe run on
+2026-11-24 with the v0.35.1 release image (`ff4a4368`) on MariaDB 12.3.3
+(`mariadb:12.3@sha256:71541e69e0a1fbec2fa57d6b3b30d751c7847ca77ce66f5af4ffff48060c37c8`),
+which runs under engine `mysql`. Its 20 records are this reading's less one
+Query: MariaDB has no `restrict_fk_on_non_standard_key`, and Ptah does not read
+it there. Every other statement, its command type and its order match, so the
+same predicate admits 10 received SQL execution records, and
+`TestMySQLMigrationSQLAuditAcceptsMariaDBHistory` holds it to the reading.

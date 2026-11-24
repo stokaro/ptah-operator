@@ -18,7 +18,15 @@ const mysqlAuditDatabase, mysqlAuditUser, mysqlAuditHost = "ptah_audit_history",
 
 func mysqlMigrationAuditReading(t *testing.T) []mysqlStatementRecord {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", "mysql-migration-history-audit.jsonl"))
+	return mysqlMigrationAuditReadingOf(t, "mysql")
+}
+
+// mysqlMigrationAuditReadingOf reads the History journal a MySQL-engine server
+// wrote: "mysql" for the MySQL 8.4 baseline, or an added line's stem such as
+// "mariadb-12.3".
+func mysqlMigrationAuditReadingOf(t *testing.T, stem string) []mysqlStatementRecord {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "e2e", "readings", stem+"-migration-history-audit.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +61,21 @@ func TestMySQLMigrationSQLAuditAcceptsActualHistory(t *testing.T) {
 	before[0].Client = "other[other] @  [" + mysqlAuditHost + "]"
 	if _, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, mysqlAuditClients()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// MariaDB 12.3 runs History under engine mysql, and the MySQL audit has to
+// accept what it sends: what MySQL 8.4 sends, less its read of
+// restrict_fk_on_non_standard_key, a variable MariaDB does not have.
+func TestMySQLMigrationSQLAuditAcceptsMariaDBHistory(t *testing.T) {
+	t.Parallel()
+	rows, before := mysqlMigrationAuditReadingOf(t, "mariadb-12.3"), mysqlAuditBaseline()
+	if len(rows) != 20 {
+		t.Fatalf("expected the complete 20-record reading, got %d", len(rows))
+	}
+	counts, err := mysqlMigrationRefusalSQL(before, append(slices.Clone(before), rows...), mysqlAuditDatabase, mysqlAuditUser, mysqlAuditClients())
+	if err != nil || len(counts) != 1 || counts[mysqlAuditHost] != 10 {
+		t.Fatalf("MariaDB History: counts=%v error=%v", counts, err)
 	}
 }
 
