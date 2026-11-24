@@ -26,8 +26,8 @@ database with v0.35.1 and planned. A read still running when the new manager
 starts runs again. An Apply whose Job 0.2.18 created is waited for rather than
 retired: the new manager reads its result under the v0.35.0 binding it was
 dispatched under, records the outcome it reported, and moves the binding on the
-next pass, so the upgrade needs no pause for Applies to end. [0.2.16](#0216)
-lists when such an Apply is still recorded `Unknown`.
+next pass, so the upgrade needs no pause for Applies to end. Such an Apply can
+still be recorded `Unknown` in the cases [0.2.16](#0216) names.
 
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
