@@ -15,9 +15,13 @@ The explorer below walks one change from `kubectl apply` to `InSync`, for a
 schema or for versioned migrations: who acts at each stage, which objects it
 touches, how they relate, and the command that shows it. Choose the family,
 then a path to follow the change where it turns. A schema change can meet a
-plan Ptah refuses, a plan replaced before anyone approved it, or an Apply
-nobody can account for. A migration can find nothing pending, or end a run
-`Partial` or `Unknown` that a reading or a person's acknowledgment settles.
+source that is refused, a database that already matches, a plan Ptah refuses,
+`apply: Never` or `Always`, a plan replaced before anyone approved it, a
+suspend while its Apply runs, or an Apply nobody can account for. A migration
+can find nothing pending, meet `apply: Never` or `Always`, a plan replaced
+before anyone approved it or a suspend while its run goes on, fail at a
+statement, or end a run `Partial` or `Unknown` that a reading or a person's
+acknowledgment settles.
 Select a stage, or an object, to follow it. Choose **Audit** to read the same
 record by evidence source instead: what each source can and cannot establish,
 what reads it, and what is left of it after a deletion or the loss of the
@@ -165,9 +169,10 @@ The operator rolls nothing back. Each branch has its own recovery, and
   approval of the old plan does not carry over. `kubectl ptah approve` approves
   nothing if the plan it showed was replaced. Read the replacement, then approve
   that.
-- **Schema, Apply uncertain.** Every Apply error is reported as
-  `ApplyOutcomeUnknown`, and the plan is never replayed. A fresh read-only
-  observation comes before anything else. If it finds no change the schema is
+- **Schema, Apply uncertain.** Once its Job may exist, every Apply error is
+  reported as `ApplyOutcomeUnknown`, and the plan is never replayed: a schema
+  Apply has no `Failed` outcome. A fresh read-only observation comes before
+  anything else. If it finds no change the schema is
   `InSync`, with reason `ConvergedAfterUnknownOutcome`; otherwise it plans
   again. That observation is bound to the plan's target: one whose URL names
   another is refused before it connects, and the resource stops, `Blocked`,
@@ -288,8 +293,8 @@ flowchart LR
   approval --> approvalRefreshes["<b>Resolving</b><br/>The interval ended before<br/>an approval was recorded"]
   approval --> approvalStale["<b>Observing</b><br/>The plan went stale"]
   applying --> applyEnded["<b>VerifyingConvergence</b><br/>The Job ended or was lost,<br/>whatever it reported"]
-  applying --> applyWithdrawn["<b>Observing, Verifying,</b><br/><b>AwaitingApproval,</b><br/><b>Pending or Suspended</b><br/>What the claim rests on<br/>moved before any Job<br/>existed"]
-  applying --> applyUnbuilt["<b>Failed</b><br/>The Job could not be built,<br/>or held to its admission<br/>snapshot. None exists, and<br/>the claim tries again"]
+  applying --> applyWithdrawn["<b>Observing, Verifying,</b><br/><b>AwaitingApproval,</b><br/><b>Pending or Suspended</b><br/>What the claim rests on<br/>moved before any Job<br/>existed, or the Job could<br/>not be built"]
+  applying --> applyUnbuilt["<b>Failed</b><br/>The Job could not be held<br/>to its admission snapshot.<br/>None exists, and the claim<br/>tries again"]
   proof --> proved["<b>InSync</b><br/>A fresh no-change plan"]
   proof --> changesRemain["<b>ReadyToApply,</b><br/><b>AwaitingApproval</b><br/><b>or Blocked</b><br/>Changes remain: as from<br/>Planning"]
   proof --> superseded["<b>Pending or Verifying</b><br/>A newer generation, policy<br/>or execution binding took<br/>over"]
@@ -352,6 +357,9 @@ where a discarded claim leaves a resource for one pass, not where it begins.
 
 A finished Apply Job never reaches `Failed`, whatever it reported. Every Apply
 error is an outcome nobody established, so the read-only proof comes next.
+Before a Job exists, an Apply Job that cannot be built retires the plan and the
+schema observes again, and one that cannot be held to its admission snapshot
+ends `Failed` with its claim kept.
 An upgrade that moves only the executor image or the Ptah version while an
 Apply runs leaves the resource in `Applying` until that Apply's result is read
 under the binding it was dispatched under; the binding moves after, and the
@@ -454,10 +462,11 @@ already at a branch tip is refused at the first one. The resource keeps what it
 applied. A tag stays on one commit on every server: to hold a resource at one
 commit there, name the tag.
 
-A refused pull says why in `ReconciliationFailed`, with the last line Ptah
-wrote: a submodule or an LFS pointer at the selected path, a host key the known
-hosts do not pin, a commit no branch or tag names on a server that gives
-commits only at a branch or tag.
+A refused pull says why in a schema's `ReconciliationFailed` and a
+migration's `Progressing`, with the last line Ptah wrote: a submodule or an
+LFS pointer at the selected path, a host key the known hosts do not pin, a
+commit no branch or tag names on a server that gives commits only at a branch
+or tag.
 
 A branch or a tag is read again at every interval. A commit that leaves the
 selected files as they were keeps the plan; other files retire it. A plan
@@ -490,10 +499,10 @@ refuses a redirect to another origin, and it refuses any redirect to
 not the URL's, a CA that does not give the `caSHA256` the credential's owner
 granted, a `caSHA256` with no CA selected, and a credential that mixes a token
 with a user name or a password.
-For a download Ptah refuses, `ReconciliationFailed` carries the last line it
-wrote: a digest that differs names the digest the server served and the one
-the spec pins, and an archive entry outside the archive or a symbolic link in
-the selection names the entry.
+For a download Ptah refuses, a schema's `ReconciliationFailed` and a
+migration's `Progressing` carry the last line it wrote: a digest that differs
+names the digest the server served and the one the spec pins, and an archive
+entry outside the archive or a symbolic link in the selection names the entry.
 
 The source is read again at every interval, by downloading it again. A
 download that changed or disappeared fails the Resolve, keeps what was resolved
@@ -553,9 +562,15 @@ target.
 
 `spec.suspend` prevents new Jobs. A Job already applying is still observed to a
 terminal result, because abandoning it would leave the database in a state
-nothing recorded. So is a read that serves a proof, and the proof keeps the
-Lease until it ends. A proof read whose Job this release cannot confirm, and
-which carries no cleanup TTL, waits for that Job to stop, as it would on a
+nothing recorded. Its result is not read: setting `spec.suspend` moved the
+generation, which is one of the inputs the Apply was claimed with, so the Apply
+ends `Unknown` whatever it did. A schema then owes a proof, which waits for
+resume and ends superseded, since the spec moved after the claim. A migration
+records the run in `status.unresolvedRun`, which stays until a history read
+after resume finds nothing pending or a person acknowledges the run. A read
+that serves a proof is observed to its end too, and the proof keeps the Lease
+until it ends. A proof read whose Job this release cannot confirm, and which
+carries no cleanup TTL, waits for that Job to stop, as it would on a
 resource that is not suspended, and gives it its cleanup TTL before it reads
 again. Any other read under way is dropped, and the status write that drops it
 stages the release of any Lease it holds. A read-only Job is created with its

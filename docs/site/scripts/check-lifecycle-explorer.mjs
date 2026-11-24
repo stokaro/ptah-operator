@@ -26,6 +26,9 @@
 //     link naming another family's stage, path or object alone opens that
 //     family, a value that belongs to another family than the one a link
 //     names is ignored, and the default family and path write no parameter;
+//   - every path says which scenario of #817 it walks, and each family walks
+//     every scenario it owes on a path that reaches the state the scenario
+//     turns on;
 //   - without JavaScript the text carries every family, every path, every
 //     stage with its commands, and every object;
 //   - at 390px and 320px wide neither the page nor the explorer scrolls
@@ -244,6 +247,7 @@ export function modelProblems(model) {
     }
     if (!stage.actors[stage.lead]) problems.push(`stage "${stage.id}" is led by "${stage.lead}", who does nothing in it`);
     if (stage.inspect.length === 0) problems.push(`stage "${stage.id}" says no way to inspect it`);
+    if ((stage.links ?? []).length === 0) problems.push(`stage "${stage.id}" links to nothing that says more`);
   }
   const branchIds = model.paths.slice(1).flatMap((path) => (path.stages ?? []).map((stage) => stage.id));
   for (const path of model.paths.slice(1)) {
@@ -278,6 +282,75 @@ export function modelProblems(model) {
   }
   for (const id of objectIds) {
     if (expectedRelations(id, model).listed.length === 0) problems.push(`the object "${id}" is related to nothing`);
+  }
+  return problems;
+}
+
+// The scenarios #817 names, and the families that walk each one. A scenario
+// is walked when a path of the family carries it and one of its stages names
+// the phase given here: the state the scenario turns on, which a path that
+// only mentions the scenario would not reach. A schema Apply that may have
+// started is never failed, so the ordinary failure is the migration's; the
+// unresolved run is the migration's own record.
+export const SCENARIO_REQUIRED = {
+  ids: ['success', 'nothing', 'never', 'always', 'stale', 'refusal', 'source', 'failure', 'unknown', 'unresolved', 'suspend'],
+  families: {
+    schema: {
+      success: 'InSync',
+      nothing: 'InSync',
+      never: 'Blocked',
+      always: 'ReadyToApply',
+      stale: 'AwaitingApproval',
+      refusal: 'Blocked',
+      source: 'Failed',
+      unknown: 'VerifyingConvergence',
+      suspend: 'Suspended',
+    },
+    migration: {
+      success: 'InSync',
+      nothing: 'InSync',
+      never: 'Planning',
+      always: 'Applying',
+      stale: 'Pending',
+      failure: 'HistoryDirty',
+      unresolved: 'Blocked',
+      suspend: 'Suspended',
+    },
+  },
+};
+
+// scenarioProblems judges the paths against the scenarios #817 names: every
+// path says which scenario it walks, from the list, and every scenario a
+// family owes is walked by one of its paths, reaching the state it turns on.
+// The default path walks the scenario's own stages. A state is found in a
+// stage's phase or in what it says to expect.
+export function scenarioProblems(models, required = SCENARIO_REQUIRED) {
+  const problems = [];
+  for (const id of required.ids) {
+    if (!Object.values(required.families).some((owed) => id in owed)) problems.push(`no family walks the scenario "${id}"`);
+  }
+  for (const [family, owed] of Object.entries(required.families)) {
+    const model = models.find((one) => one.id === family);
+    if (!model) {
+      problems.push(`the family "${family}" is missing`);
+      continue;
+    }
+    for (const path of model.paths) {
+      if (!path.scenario) problems.push(`the ${family} path "${path.id}" says no scenario`);
+      else if (!required.ids.includes(path.scenario)) problems.push(`the ${family} path "${path.id}" walks "${path.scenario}", which #817 does not name`);
+      else if (!(path.scenario in owed)) problems.push(`the ${family} path "${path.id}" walks "${path.scenario}", which the ${family} family does not have`);
+    }
+    for (const [scenario, state] of Object.entries(owed)) {
+      const paths = model.paths.filter((path) => path.scenario === scenario);
+      if (paths.length === 0) {
+        problems.push(`no ${family} path walks the scenario "${scenario}"`);
+        continue;
+      }
+      const reaches = paths.some((path) =>
+        ownStages(path, model).some((stage) => `${stage.phase} ${stage.expect ?? ''}`.includes(state)),
+      );
+      if (!reaches) problems.push(`no ${family} path that walks "${scenario}" reaches ${state}`);
+    }
   }
   return problems;
 }
@@ -2015,6 +2088,7 @@ function selftest() {
     actors: { you: 'act' },
     objects,
     inspect: [{ command: `cmd ${id}` }],
+    links: [{ label: `About ${id}`, href: `#${id}` }],
     ...extra,
   });
   const model = {
@@ -2079,6 +2153,7 @@ function selftest() {
   refuses('a relation to nowhere', modelProblems({ ...model, relations: [...model.relations, { from: 'a', to: 'z', type: 'owns' }] }), 'names "z"');
   refuses('a stage id used twice', modelProblems({ ...model, stages: [model.stages[0], model.stages[0], model.stages[2]] }), 'used twice');
   refuses('a branch stage that takes a successful id', modelProblems(withPath(model, 1, { stages: [stage('two', 'Aside', ['b'])] })), '"two" is used twice');
+  refuses('a stage that links nowhere', modelProblems(withPath(model, 1, { stages: [stage('side-a', 'Aside', ['b'], { links: [] })] })), '"side-a" links to nothing');
   refuses('a lead who does nothing', modelProblems({ ...model, stages: [{ ...model.stages[0], lead: 'executor' }, ...model.stages.slice(1)] }), 'who does nothing');
   refuses('an object related to nothing', modelProblems({ ...model, objects: [...model.objects, { id: 'd' }] }), '"d" is related to nothing');
   refuses('an empty scenario', modelProblems({ ...model, stages: [] }), 'no stages');
@@ -3429,6 +3504,52 @@ function selftest() {
     refuses(name, inPlaceProblems(spoiled), want);
   }
 
+  // The scenarios: every path says which it walks, and every scenario a
+  // family owes reaches its state.
+  const scenarioRequired = {
+    ids: ['success', 'never', 'gone'],
+    families: { a: { success: 'InSync', never: 'Blocked' }, b: { success: 'InSync', gone: 'Gone' } },
+  };
+  const scenarioModels = [
+    {
+      id: 'a',
+      stages: [{ id: 'a1', phase: 'Reading, then InSync' }],
+      paths: [
+        { id: 'a-ok', scenario: 'success' },
+        { id: 'a-never', scenario: 'never', turnsAfter: 'a1', stages: [{ id: 'a2', phase: 'Planning, then Blocked', expect: '' }] },
+      ],
+    },
+    {
+      id: 'b',
+      stages: [{ id: 'b1', phase: 'InSync' }],
+      paths: [
+        { id: 'b-ok', scenario: 'success' },
+        { id: 'b-gone', scenario: 'gone', turnsAfter: 'b1', stages: [{ id: 'b2', phase: 'Pending', expect: 'It is Gone.' }] },
+      ],
+    },
+  ];
+  if (scenarioProblems(scenarioModels, scenarioRequired).length !== 0) fail('scenarioProblems refused paths that hold', scenarioProblems(scenarioModels, scenarioRequired));
+  {
+    const models = families.map(familyModel);
+    if (scenarioProblems(models).length !== 0) fail('the explorer’s scenarios', scenarioProblems(models));
+  }
+  const withScenario = (family, id, change) =>
+    scenarioModels.map((model) =>
+      model.id === family ? { ...model, paths: model.paths.map((path) => (path.id === id ? { ...path, ...change } : path)) } : model,
+    );
+  for (const [name, models, required, want] of [
+    ['a path that says no scenario', withScenario('a', 'a-never', { scenario: undefined }), scenarioRequired, 'the a path "a-never" says no scenario'],
+    ['a scenario #817 does not name', withScenario('a', 'a-never', { scenario: 'sometimes' }), scenarioRequired, 'walks "sometimes", which #817 does not name'],
+    ['a scenario of the other family', withScenario('a', 'a-never', { scenario: 'gone' }), scenarioRequired, 'walks "gone", which the a family does not have'],
+    ['a scenario no path walks', withScenario('a', 'a-never', { scenario: 'success' }), scenarioRequired, 'no a path walks the scenario "never"'],
+    ['a path that never reaches its state', withScenario('a', 'a-never', { stages: [{ id: 'a2', phase: 'Planning', expect: 'It plans.' }] }), scenarioRequired, 'no a path that walks "never" reaches Blocked'],
+    ['a state only the default path reaches', withScenario('b', 'b-gone', { stages: [{ id: 'b2', phase: 'Pending', expect: '' }] }), scenarioRequired, 'no b path that walks "gone" reaches Gone'],
+    ['a family missing', scenarioModels.slice(0, 1), scenarioRequired, 'the family "b" is missing'],
+    ['a scenario no family walks', scenarioModels, { ...scenarioRequired, ids: [...scenarioRequired.ids, 'later'] }, 'no family walks the scenario "later"'],
+  ]) {
+    refuses(name, scenarioProblems(models, required), want);
+  }
+
   // The depths: the model, what the page tags, what each depth shows, the
   // address, what a move keeps, and the keyboard.
   const depthFixture = {
@@ -3619,7 +3740,7 @@ function selftest() {
   if (read.length === 0 || read.some((one) => !one.kind || !one.scope)) fail('crdKinds read the CRDs as', read);
 
   console.log(
-    'check-lifecycle-explorer.mjs --selftest: OK (the families, their models and their paths, nested turns, the ' +
+    'check-lifecycle-explorer.mjs --selftest: OK (the families, their models, their paths and the scenarios they walk, nested turns, the ' +
       'rendered view, the keyboard on every path and at every turn, each selection, the family switch and its reset, ' +
       'the text without JavaScript, shared links, the address, the narrow layout, the audit view: its model, ' +
       'its commands, its text, each loss and source, the view switch, its links and its keyboard, and the object ' +
@@ -5103,6 +5224,7 @@ async function main() {
 
   const models = families.map(familyModel);
   const problems = familiesProblems(models);
+  problems.push(...scenarioProblems(models));
   problems.push(...auditProblems(audit, models));
   problems.push(...objectMapProblems(objectMap, { kinds: crdKinds(), familyModels: models, auditModel: audit }));
   problems.push(...workflowProblems(workflow, { familyModels: models, auditModel: audit, map: objectMap, kinds: crdKinds() }));

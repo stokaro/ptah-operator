@@ -359,7 +359,7 @@ const schemaScenario = {
   id: 'schema-change',
   title: 'One schema change',
   summary:
-    'A PtahSchema read from a ConfigMap under apply: OnApproval, from kubectl apply to In sync. Choose a path to follow it where it turns: a plan Ptah refuses, a plan replaced before anyone approved it, or an Apply nobody can account for. The commands use the names from First schema.',
+    'A PtahSchema read from a ConfigMap under apply: OnApproval, from kubectl apply to In sync. Choose a path to follow it where it turns: a source that is refused, a database that already matches, a plan Ptah refuses, apply: Never or Always, a plan replaced before anyone approved it, a suspend while the Apply runs, or an Apply nobody can account for. A schema has no failed Apply: once its Job may have started, every error is an outcome nobody established. The commands use the names from First schema.',
   stages: [
     {
       id: 'apply',
@@ -586,12 +586,177 @@ const schemaPaths = [
   {
     id: 'success',
     label: 'Successful',
+    scenario: 'success',
     title: 'A successful schema change',
     summary: 'Nothing refused and nothing failing, from kubectl apply to In sync.',
   },
   {
+    id: 'source-refused',
+    label: 'Source refused',
+    scenario: 'source',
+    title: 'The source is refused before anything reads the database',
+    summary:
+      'The operator cannot take the source the schema names, or a policy refuses it. Nothing reads the database. A failure the next attempt could get past is retried; a refusal only a changed input can end waits for that input.',
+    turnsAfter: 'apply',
+    rejoins: 'source',
+    stages: [
+      {
+        id: 'source-refusal',
+        title: 'The ConfigMap source is refused',
+        phase: 'Failed',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Reads the ConfigMap itself, with no Job, and refuses it: the ConfigMap does not exist, it does not hold the key the schema selects, or the source policy does not name it in allowedConfigMaps or finds its files over maxContentBytes. It takes no claim and writes no snapshot. It starts again after spec.execution.failureRetryInterval, and at once on an edit to the ConfigMap, to the source policy or to the spec.',
+          kubernetes: 'Serves the ConfigMap and the source policy, or answers that one does not exist.',
+        },
+        objects: ['source', 'status', 'schema'],
+        expect:
+          'Phase Failed. ReconciliationFailed=True with reason ConfigurationError and a message that starts source refused: and names the rule. ArtifactResolved=False with reason ResolveFailed, and Ready=False with reason ConfigurationError. No Event. The journal records OperationFailed with reason ConfigurationError, once for the episode.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'Phase: Failed, and ReconciliationFailed with the rule that refused the source.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'OperationFailed, with reason ConfigurationError.',
+          },
+        ],
+        done: 'The refusal is recorded, and nothing has read the database.',
+        limits:
+          'Failed here is a refusal before any Job: no credential was sent and no SQL ran. A Git or HTTPS host the source policy does not name is refused the same way, before its Resolve Job exists.',
+        links: [
+          { label: 'A ConfigMap source', href: '#a-configmap-source' },
+          { label: 'A source policy', href: '#a-source-policy' },
+          { label: 'Source policies', href: '../../use/security/#source-policies' },
+        ],
+      },
+      {
+        id: 'source-other',
+        title: 'Git, HTTPS and OCI sources refuse in their own way',
+        phase: 'Resolving or Verifying, then Failed or Blocked',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Resolves a Git or HTTPS source in a Resolve Job. A ref that does not resolve, a commit or a download that does not answer the spec, or selected files over maxContentBytes fail the attempt: the claim stays, and a new Resolve Job runs after failureRetryInterval. An OCI artifact the verification policy refuses is not retried: the schema stops Blocked, plans nothing, and reads the artifact again at its interval.',
+          kubernetes: 'Runs the Resolve Job, and the Verify Job for an OCI artifact.',
+          executor: 'Resolves the ref, downloads the files or pulls the artifact, and reports what it read, or the last line Ptah wrote when it refused.',
+        },
+        objects: ['source', 'job', 'status'],
+        expect:
+          'A Git or HTTPS failure: phase Failed, ReconciliationFailed=True with the reason, and an OperationFailed Warning Event and journal entry on each attempt. An OCI refusal: phase Blocked, ArtifactVerified=False and Ready=False with reason PolicyRefused, and an ArtifactVerificationRefused Warning Event with the policy’s findings.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application --details',
+            says: 'Source: the ref, the commit or the digest, and Active operation: the Resolve attempt and its Job.',
+          },
+          {
+            command: 'kubectl events -n application --for ptahschema/application',
+            says: 'OperationFailed for each attempt, or ArtifactVerificationRefused with the findings.',
+          },
+        ],
+        done: 'The schema waits: for the next attempt after a failure, or for a changed artifact or policy after a refusal.',
+        limits:
+          'The verification policy refuses before any database access. A refusal under it ends only when the artifact or the policy changes: it is read again at the interval, or at once on kubectl ptah refresh.',
+        links: [
+          { label: 'A Git source', href: '#a-git-source' },
+          { label: 'An HTTPS source', href: '#an-https-source' },
+          { label: 'Blocked is a refusal, not a fault', href: '#blocked-is-a-refusal-not-a-fault' },
+        ],
+      },
+      {
+        id: 'source-fix',
+        title: 'Fix the input, and the source is read again',
+        phase: 'Failed or Blocked, then Observing',
+        lead: 'you',
+        actors: {
+          you: 'Fix what the message names: create the ConfigMap or the key, correct the spec, or ask whoever owns the source policy. For a Git, HTTPS or OCI source, publish the fix and run kubectl ptah refresh, so the next read does not wait for the interval.',
+          operator:
+            'Wakes at once on an edit to the spec, to a ConfigMap source or to the source policy, and reads the source again. Once it takes the source, the schema goes on to Observing.',
+        },
+        objects: ['source', 'schema', 'status'],
+        expect: 'ArtifactResolved=True, and phase Observing.',
+        inspect: [
+          {
+            command: 'kubectl ptah refresh schema/application -n application --wait',
+            says: 'Asks for a read now and waits for it to end.',
+          },
+          { command: 'kubectl ptah schema application -n application', says: 'Phase, and Source once the source is taken.' },
+        ],
+        done: 'The source is taken. The walk goes on at Pin the source.',
+        links: [{ label: 'Reading again on request', href: '#reading-again-on-request' }],
+      },
+    ],
+  },
+  {
+    id: 'nothing',
+    label: 'Nothing to change',
+    scenario: 'nothing',
+    title: 'The database already matches',
+    summary:
+      'The scoped Plan finds nothing to change. No plan is published, nothing asks for an approval and no Apply runs: a no-change plan is the proof, and the schema rests In sync until its next read.',
+    turnsAfter: 'observe',
+    stages: [
+      {
+        id: 'nothing-plan',
+        title: 'The plan finds no change',
+        phase: 'Planning, then InSync',
+        lead: 'executor',
+        actors: {
+          operator:
+            'Takes the database-realm Lease and creates the Plan Job, as on the successful path. A no-change result publishes no PtahSchemaPlan and no chunk, and clears status.plan. A no-change result that carries SQL is refused and tried again.',
+          kubernetes: 'Runs the Plan Job.',
+          executor: 'Runs the scoped plan and reports that nothing changes.',
+        },
+        objects: ['job', 'lease', 'status'],
+        expect:
+          'Phase InSync. InSync=True and DriftDetected=False with reason ScopedConverged, PlanReady=False with reason NoChanges, and Ready=True. An OperationCompleted Event for each read. The journal writes nothing: a read that changes nothing is not journaled.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'Phase: InSync, Drift: none, and No plan is published.',
+          },
+          {
+            command: 'kubectl ptah wait schema/application --for in-sync --timeout 10m -n application',
+            says: 'Returns as soon as the read ends.',
+          },
+        ],
+        done: 'In sync, with no plan, no approval and no Apply.',
+        limits: 'In sync means the managed scope matches as far as the login can read it. It says nothing about the data in the tables.',
+        links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+      },
+      {
+        id: 'nothing-rest',
+        title: 'It reads again at its interval',
+        phase: 'InSync',
+        lead: 'operator',
+        actors: {
+          you: 'Nothing to do. There is no plan to read or approve.',
+          operator:
+            'Reads the source, the database and the plan again at spec.interval, and at once after a spec edit, a change to a ConfigMap source or kubectl ptah refresh. A read that finds a change publishes a plan, and the walk is the successful one from Publish the plan.',
+        },
+        objects: ['status', 'schema'],
+        expect: 'Phase InSync between reads. The journal gains no entry from them.',
+        inspect: [
+          {
+            command: 'kubectl ptah plan application -n application',
+            says: 'Exits 3: a schema in sync has no current plan.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'Nothing new since the last change.',
+          },
+        ],
+        done: 'In sync, until the next read.',
+        links: [{ label: 'Reading again on request', href: '#reading-again-on-request' }],
+      },
+    ],
+  },
+  {
     id: 'refused',
     label: 'Refused plan',
+    scenario: 'refusal',
     title: 'Ptah refuses the plan',
     summary:
       'The Plan runs, and Ptah refuses to plan the change under a code. No plan is published and nothing runs. The schema stops Blocked until an input changes, and then plans again.',
@@ -675,8 +840,200 @@ const schemaPaths = [
     ],
   },
   {
+    id: 'never',
+    label: 'apply: Never',
+    scenario: 'never',
+    title: 'A plan the policy never applies',
+    summary:
+      'Under apply: Never the schema plans and stops. The plan is published and can be read, nobody can approve it, and no Apply runs until someone changes the policy.',
+    turnsAfter: 'observe',
+    rejoins: 'decision',
+    stages: [
+      {
+        id: 'never-plan',
+        title: 'Publish the plan, and stop',
+        phase: 'Planning, then Blocked',
+        lead: 'operator',
+        actors: {
+          you: 'Apply the PtahSchema with spec.policy.apply: Never, to see what a change would do without letting it run.',
+          operator:
+            'Publishes the plan and its chunks as on the successful path, then reads the policy: Never records plans and does not apply them. It reads again at spec.interval. The same bytes keep the same plan name, so nothing new is published.',
+          executor: 'Runs the scoped plans, as on the successful path.',
+        },
+        objects: ['plan', 'chunks', 'job', 'status'],
+        expect:
+          'Phase Blocked. ApprovalRequired=False and Ready=False with reason ApplyDisabled, and the message Policy records plans but does not apply them. The journal records PlanPublished with no approval asked for. No Event says the plan is held.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'Policy: apply Never, Ready: False with ApplyDisabled, and the plan with its statement count.',
+          },
+          { command: 'kubectl ptah plan application -n application', says: 'Every statement the change would run.' },
+        ],
+        done: 'A plan is published and held. Not one statement has run.',
+        limits:
+          'A destructive plan is held first by spec.policy.allowDestructive: while it is false, the reason is DestructiveChangesDisabled under every apply policy.',
+        links: [
+          { label: 'Read a plan', href: '../../use/read-a-plan/' },
+          { label: 'Blocked is a refusal, not a fault', href: '#blocked-is-a-refusal-not-a-fault' },
+        ],
+      },
+      {
+        id: 'never-hold',
+        title: 'Nothing approves it',
+        phase: 'Blocked',
+        lead: 'kubernetes',
+        actors: {
+          you: 'Read the plan. There is nothing to approve, and an approval written by hand is refused.',
+          kubernetes:
+            'Admission refuses a PtahSchemaApproval for a schema that is not waiting for one, with the message referenced schema is not awaiting approval.',
+          operator: 'Keeps the plan while its inputs hold, and reads again at the interval.',
+        },
+        objects: ['approval', 'plan', 'schema'],
+        expect: 'The approval is refused at create, and none is stored.',
+        inspect: [
+          {
+            command: 'kubectl ptah wait schema/application --for approval -n application',
+            says: 'Stops with exit 8: spec.policy holds the plan, with the reason.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'PlanPublished, and a statement count that does not say it asked for an approval.',
+          },
+        ],
+        done: 'The plan is held, and the database is untouched.',
+        limits: 'Never is not a review step: nothing records that anybody read the plan.',
+        links: [{ label: 'Waiting for the operator', href: '../../use/operations/#wait' }],
+      },
+      {
+        id: 'never-release',
+        title: 'Change the policy to let it run',
+        phase: 'Blocked, then AwaitingApproval',
+        lead: 'you',
+        actors: {
+          you: 'Set spec.policy.apply to OnApproval in the manifest and apply it. Always would run a plan that destroys nothing and changes no privilege with no approval at all.',
+          operator:
+            'The spec edit moves the generation, so it reads the source and the database again and plans again. The apply policy is not part of the plan’s identity, so the same bytes give the same plan, which now waits for an approval.',
+          executor: 'Runs a fresh Observe and Plan.',
+        },
+        objects: ['schema', 'plan', 'status'],
+        expect:
+          'Phase AwaitingApproval and ApprovalRequired=True. The journal adds no second PlanPublished for the same plan, so the entry written under Never still says no approval was asked for.',
+        inspect: [
+          {
+            command: 'kubectl ptah wait schema/application --for approval -n application',
+            says: 'Returns once the plan waits for an approval.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'The one PlanPublished entry, written while the policy was Never.',
+          },
+        ],
+        done: 'The plan waits for an approval. The walk goes on at Approve that exact plan.',
+        links: [{ label: 'Exact-plan approvals', href: '../../use/approvals/' }],
+      },
+    ],
+  },
+  {
+    id: 'always',
+    label: 'apply: Always',
+    scenario: 'always',
+    title: 'A plan the policy applies without an approval',
+    summary:
+      'Under apply: Always the policy authorizes a plan that destroys nothing and changes no privilege. A plan that does either still waits for an approval, or stops. Every other check holds as under OnApproval.',
+    turnsAfter: 'observe',
+    stages: [
+      {
+        id: 'always-plan',
+        title: 'The policy decides the plan',
+        phase: 'Planning, then ReadyToApply',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Publishes the plan, then reads the policy. Always permits a plan that destroys nothing and changes no privilege. A plan that changes privileges waits for an approval bound to it, with reason PrivilegeChanges. A destructive plan waits for an approval while allowDestructive is true, and stops Blocked while it is false.',
+          executor: 'Runs the scoped plans, as on the successful path.',
+        },
+        objects: ['plan', 'chunks', 'job', 'status'],
+        expect:
+          'Phase ReadyToApply. ApprovalRequired=False with reason NotRequired: Policy permits this plan without a separate approval: it destroys nothing and changes no privilege. Ready=False with reason ApplyPending. The journal records PlanPublished with no approval asked for.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'Policy: apply Always, and the plan, marked destructive or with the privileges it changes when it does either.',
+          },
+          { command: 'kubectl ptah plan application -n application', says: 'The statements the policy lets run.' },
+        ],
+        done: 'A plan is ready to run with no approval.',
+        limits:
+          'Always decides only who authorizes the plan. The source, the target, the Lease, the execution checks and the proof are the same as under OnApproval, and admission refuses an approval of a plan that waits for none.',
+        links: [
+          { label: 'Plans that change privileges', href: '../plans-and-approvals/#privilege-changes' },
+          { label: 'Where the path turns', href: '#where-the-path-turns' },
+        ],
+      },
+      {
+        id: 'always-dispatch',
+        title: 'Claim and dispatch with no approval',
+        phase: 'ReadyToApply, then Applying',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Writes the Apply claim, holds the Lease, persists the admission snapshot and dispatchStarted, and makes its one permitted create of the Apply Job, as on the successful path. There is no approval to consume. The conditions it writes read as they do for an approved plan.',
+          kubernetes: 'Schedules the Pod, held to its admission snapshot.',
+        },
+        objects: ['status', 'job', 'lease', 'chunks'],
+        expect:
+          'Phase Applying. Applying=True with reason ApprovedPlan and ApprovalRequired=False with reason Satisfied, though no approval exists, and an OperationStarted Event that names the Apply Job.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application --details',
+            says: 'Active operation: the Apply claim and the Job it names.',
+          },
+          {
+            command: 'kubectl events -n application --for ptahschema/application',
+            says: 'OperationStarted, naming the Apply Job.',
+          },
+        ],
+        done: 'The Apply Job exists and is bound to the claim.',
+        limits: 'ApprovedPlan names a plan the policy approved. It does not mean a person approved it.',
+        links: [{ label: 'The mutation lifecycle', href: '../mutation-lifecycle/' }],
+      },
+      {
+        id: 'always-record',
+        title: 'Run, prove, and read what authorized it',
+        phase: 'Applying, then VerifyingConvergence and InSync',
+        lead: 'you',
+        actors: {
+          executor: 'Runs the plan, delivers the result and proves it, as on the successful path.',
+          operator: 'Records ApplyFinished and Verified as it does for an approved plan, with no approval in either.',
+          you: 'Read the record. The policy is the authorization: the journal has no ApprovalAccepted entry, and its PlanPublished entry says no approval was asked for.',
+        },
+        objects: ['status', 'plan', 'result'],
+        expect: 'PlanPublished, ApplyFinished with outcome Succeeded and Verified with outcome InSync, and no ApprovalAccepted.',
+        inspect: [
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'The journal, with no approval and no approver.',
+          },
+          {
+            command: 'kubectl ptah schema application -n application',
+            says: 'Policy: apply Always, and Applied: the plan and when.',
+          },
+        ],
+        done: 'In sync, under the policy’s authorization.',
+        limits:
+          'A schema records no authorization of its own: the policy shows only as an Apply with no approval. Who set apply: Always is in the API audit log or in the repository the manifest came from.',
+        links: [
+          { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+          { label: 'Audit a database change', href: '../../use/audit/' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'stale',
     label: 'Stale plan',
+    scenario: 'stale',
     title: 'The plan is replaced before approval',
     summary:
       'A plan waits for an approval, and an input changes before anyone approves it. The plan is retired, a fresh read makes its replacement, and only an approval of the replacement counts.',
@@ -743,8 +1100,103 @@ const schemaPaths = [
     ],
   },
   {
+    id: 'suspended',
+    label: 'Suspended mid-Apply',
+    scenario: 'suspend',
+    title: 'Suspended while the Apply runs',
+    summary:
+      'Suspension stops new work, not an Apply already running: its SQL goes on. Suspending edits the spec, which changes the inputs the Apply was claimed with, so its outcome is recorded as unknown, whatever it did. The proof it owes waits for resume.',
+    turnsAfter: 'dispatch',
+    stages: [
+      {
+        id: 'suspend-request',
+        title: 'Suspend while the Apply runs',
+        phase: 'Applying',
+        lead: 'you',
+        actors: {
+          you: 'Run kubectl ptah suspend. It sets spec.suspend and nothing else.',
+          kubernetes: 'Bumps metadata.generation, as for any spec edit. Nothing deletes the Job or cancels its SQL.',
+          operator: 'Goes on supervising the Apply Job to its end, and renews the Lease.',
+          executor: 'Goes on applying the plan.',
+        },
+        objects: ['schema', 'job', 'lease'],
+        expect: 'Phase Applying, with Suspend: requested.',
+        inspect: [
+          {
+            command: 'kubectl ptah suspend schema/application -n application',
+            says: 'Sets spec.suspend, and says what the suspension does to the Apply in flight.',
+          },
+          { command: 'kubectl ptah schema application -n application', says: 'Phase: Applying and Suspend: requested.' },
+        ],
+        done: 'Suspension is requested, and the Apply runs on.',
+        limits: 'To have the Apply’s own result recorded, let it finish before suspending: kubectl ptah wait --for applied waits for it.',
+        links: [{ label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' }],
+      },
+      {
+        id: 'suspend-unknown',
+        title: 'The outcome is recorded as unknown',
+        phase: 'Applying, then Suspended',
+        lead: 'operator',
+        actors: {
+          operator:
+            'When the Job ends, compares the inputs the Apply was claimed with to the current ones. The generation is one of them and the suspend moved it, so the Apply is recorded as an unknown outcome without its result being read, even if it succeeded. Then it writes the suspension, owes a read-only proof, and keeps renewing the Apply’s Lease, so no other change can run in that database meanwhile.',
+          kubernetes: 'Keeps the Apply Job and its log.',
+        },
+        objects: ['status', 'job', 'lease', 'result'],
+        expect:
+          'An ApplyOutcomeUnknown Warning Event saying the operation inputs changed while the Job was running, and ApplyFinished with outcome Unknown in the journal. Then phase Suspended, Suspended=True with reason Requested, and Ready=False with reason Suspended.',
+        inspect: [
+          {
+            command: 'kubectl ptah schema application -n application --details',
+            says: 'Pending proof: suspension does not end it, and nothing else changes the database until it settles.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'ApplyFinished with outcome Unknown.',
+          },
+        ],
+        done: 'The Apply is recorded as unknown, and the proof waits for resume.',
+        limits: 'Unknown does not mean the SQL failed: the database may hold the change, part of it or none of it. The approval was spent at dispatch.',
+        links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+      },
+      {
+        id: 'suspend-resume',
+        title: 'Resume, and the database is read again',
+        phase: 'Suspended, then VerifyingConvergence, Pending and a new read',
+        lead: 'executor',
+        actors: {
+          you: 'Run kubectl ptah resume, with --for in-sync to follow it.',
+          operator:
+            'Runs the owed proof, an Observe and a Plan, under the Apply’s Lease. The spec changed after the Apply was claimed, so the proof cannot count that plan as converged: it ends superseded and hands the Lease back. The next pass reads the source and the database as on the successful path.',
+          executor: 'Reads the database and plans the scope again.',
+        },
+        objects: ['job', 'lease', 'status', 'plan'],
+        expect:
+          'Phase VerifyingConvergence, then Pending with Ready=False and reason DesiredStateChanged. The journal records Verified with outcome Superseded. The new read ends InSync with reason ScopedConverged, or publishes a plan that needs its own approval.',
+        inspect: [
+          {
+            command: 'kubectl ptah resume schema/application -n application --for in-sync',
+            says: 'Clears spec.suspend and waits for the schema to be in sync.',
+          },
+          {
+            command: 'kubectl ptah history schema/application -n application',
+            says: 'Verified with outcome Superseded, then what the new read found.',
+          },
+        ],
+        done: 'The schema reads anew, as from Pin the source, with no applied plan recorded for the suspended Apply.',
+        limits:
+          'No status.applied is written for the suspended Apply, and an InSync after it does not attribute the change to it.',
+        links: [
+          { label: 'Suspended, and losing a lock', href: '#suspended-and-losing-a-lock' },
+          { label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'uncertain',
     label: 'Uncertain Apply',
+    scenario: 'unknown',
     title: 'An Apply nobody can account for',
     summary:
       'The Apply ends with no proof of what it did. The operator never runs the plan again: a fresh read-only observation establishes what the database holds, and the schema recovers forward from there.',
@@ -863,7 +1315,7 @@ const schemaPaths = [
 // What the schema family leaves to the reference, said on the page so a
 // reader does not take the absence of a path for a path that cannot turn.
 const schemaNotCovered = {
-  text: 'Other turns, such as nothing to change, apply: Never or Always, a read that fails and a proof whose target moved, are drawn in the reference below.',
+  text: 'Other turns, such as a read that fails, a change to a table spec.policy.protectedTables fences off and a proof whose target moved, are drawn in the reference below.',
   links: [
     { label: 'Where the path turns', href: '#where-the-path-turns' },
     { label: 'Failure recovery', href: '../../use/operations/#failure-recovery' },
@@ -1096,7 +1548,7 @@ const migrationScenario = {
   id: 'migration-run',
   title: 'One migration run',
   summary:
-    'A PtahMigration read from a ConfigMap under the default apply: OnApproval, from kubectl apply to a history read that finds nothing left to apply. Choose a path to follow it where it turns: a history with nothing pending, or a run that ends Partial or Unknown and holds the migration until a reading or a person settles it. The commands use the names from Run versioned migrations.',
+    'A PtahMigration read from a ConfigMap under the default apply: OnApproval, from kubectl apply to a history read that finds nothing left to apply. Choose a path to follow it where it turns: a history with nothing pending, apply: Never or Always, a plan replaced before anyone approved it, a suspend while the run goes on, a run that fails at a statement, or one that ends Partial or Unknown and holds the migration until a reading or a person settles it. The commands use the names from Run versioned migrations.',
   stages: [
     {
       id: 'm-apply',
@@ -1351,12 +1803,14 @@ const migrationPaths = [
   {
     id: 'm-success',
     label: 'Successful',
+    scenario: 'success',
     title: 'A successful migration run',
     summary: 'Nothing refused and nothing failing, from kubectl apply to a history read with nothing pending.',
   },
   {
     id: 'm-nothing',
     label: 'Nothing pending',
+    scenario: 'nothing',
     title: 'The history has nothing pending',
     summary:
       'The history read finds every migration the files carry already applied. No plan is published, nothing asks for an approval, and no Apply runs.',
@@ -1412,8 +1866,370 @@ const migrationPaths = [
     ],
   },
   {
+    id: 'm-never',
+    label: 'apply: Never',
+    scenario: 'never',
+    title: 'A plan the policy never runs',
+    summary:
+      'Under apply: Never the migration reads its history, publishes a plan and rests in Planning. Nobody can approve the plan, and no run starts until someone changes the policy.',
+    turnsAfter: 'm-history',
+    stages: [
+      {
+        id: 'm-never-rest',
+        title: 'Publish the plan, and rest',
+        phase: 'Planning',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Publishes the plan as on the successful path, then reads the policy: under Never no approval is consulted and nothing runs from here. It reads the history again when its interval comes due.',
+          you: 'Read the plan and the files it names. To let it run, set spec.policy.apply to OnApproval, or to Always for no approval at all, and apply the manifest.',
+        },
+        objects: ['m-plan', 'm-status', 'migration'],
+        expect:
+          'Phase Planning. Ready=False and Progressing=False with reason ApplyDisabled, and ApprovalRequired=False with reason NotRequired: The apply policy is Never, so no approval is consulted.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Phase: Planning, Ready: False with ApplyDisabled, and the plan with each pending version.',
+          },
+          {
+            command: 'kubectl ptah wait migration/orders --for approval -n application',
+            says: 'Stops with exit 8: spec.policy holds the plan.',
+          },
+        ],
+        done: 'A plan is published and rests. Not one migration has run.',
+        limits:
+          'A migration under Never rests in Planning, where a schema under Never shows Blocked. Neither records that anybody read the plan, and kubectl ptah approve approves nothing.',
+        links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+      },
+    ],
+  },
+  {
+    id: 'm-always',
+    label: 'apply: Always',
+    scenario: 'always',
+    title: 'A plan the policy runs without an approval',
+    summary:
+      'Under apply: Always the policy authorizes every plan, and the run records that it did. The history checks, the Lease, the execution checks and the read back still hold.',
+    turnsAfter: 'm-history',
+    stages: [
+      {
+        id: 'm-always-claim',
+        title: 'The policy authorizes the run',
+        phase: 'Planning, then Applying',
+        lead: 'operator',
+        actors: {
+          operator:
+            'Publishes the plan, then claims the Apply at once, with no approval to find or consume, and dispatches it as on the successful path. The claim writes the conditions an approved run gets.',
+          kubernetes: 'Schedules the Pod, held to its admission snapshot.',
+        },
+        objects: ['m-plan', 'm-status', 'm-job', 'm-lease'],
+        expect:
+          'ApprovalRequired=False with reason NotRequired: The apply policy is Always, so no approval is required. Then phase Applying, with Progressing=True and reason ApprovedPlan and ApprovalRequired=False with reason Satisfied, though no approval exists.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application --details',
+            says: 'Active operation: the Apply claim and the Job it names.',
+          },
+          {
+            command: 'kubectl ptah approve migration/orders -n application',
+            says: 'Approves nothing and exits 4: the migration is not waiting for an approval.',
+          },
+        ],
+        done: 'The run’s Job exists, with no approval behind it.',
+        limits:
+          'A migration under Always never asks for an approval: a migration plan carries no destructive or privilege marking, as a schema plan does, for the policy to hold back. ApprovedPlan names a plan the policy approved, not one a person did.',
+        links: [{ label: 'The mutation lifecycle', href: '../mutation-lifecycle/' }],
+      },
+      {
+        id: 'm-always-record',
+        title: 'Read what authorized the run',
+        phase: 'Applying, then VerifyingHistory and InSync',
+        lead: 'you',
+        actors: {
+          executor: 'Runs the sequence and delivers the result, as on the successful path.',
+          operator:
+            'Records status.lastRun with the policy as its authorization, and the journal’s RunFinished carries the same. It writes no ApprovalAccepted. Then it reads the history back.',
+          you: 'Read the run: it says the policy authorized it.',
+        },
+        objects: ['m-status', 'm-result', 'm-job'],
+        expect:
+          'Authorized: spec.policy.apply Always, with no approval, on the last run and on RunFinished in the journal. Then phase InSync, as on the successful path.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Last run, with Authorized: spec.policy.apply Always, with no approval.',
+          },
+          {
+            command: 'kubectl ptah history migration/orders -n application',
+            says: 'RunFinished with the same Authorized line, and no ApprovalAccepted.',
+          },
+        ],
+        done: 'The run is recorded with the policy as its authorization, and read back.',
+        limits:
+          'The record names the policy, not who set it. Who wrote apply: Always is in the API audit log or in the repository the manifest came from.',
+        links: [{ label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' }],
+      },
+    ],
+  },
+  {
+    id: 'm-stale',
+    label: 'Stale plan',
+    scenario: 'stale',
+    title: 'The plan is replaced before approval',
+    summary:
+      'An input changes while the plan waits. The plan is dropped before anything runs, the next history read publishes the plan that matches, and an approval of the old one never counts.',
+    turnsAfter: 'm-plan',
+    rejoins: 'm-decision',
+    stages: [
+      {
+        id: 'm-stale-input',
+        title: 'An input changes while the plan waits',
+        phase: 'AwaitingApproval, then Pending, Reading and AwaitingApproval',
+        lead: 'operator',
+        actors: {
+          you: 'Edit the spec or the ConfigMap while the plan waits. Another writer moving the history has the same effect at the next read.',
+          operator:
+            'A spec edit, a changed source or source policy, or the interval coming due starts a fresh read. A plan that no longer matches its history, its source, its target, its execution binding or its policy is dropped: status.plan is cleared, with reason PlanNoLongerCurrent. The next history read publishes the plan that matches, and marks approvals of any other plan stale.',
+          executor: 'Runs a fresh History read.',
+        },
+        objects: ['m-status', 'm-plan', 'm-job', 'm-source'],
+        expect:
+          'On the way, phase Pending, with ApprovalRequired=False and Ready=False and reason PlanNoLongerCurrent. Then a new plan and phase AwaitingApproval. The journal records PlanPublished for the new plan, and names no replaced plan: a migration has no PlanStale Event.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'The new plan, and under Approvals each older one as not the current plan.',
+          },
+          { command: 'kubectl ptah history migration/orders -n application', says: 'PlanPublished for the new plan.' },
+        ],
+        done: 'A replacement plan waits for an approval.',
+        limits:
+          'A read that publishes the same plan again, with the same name and UID, as after an edit to the interval alone, keeps it, and an approval of it still counts.',
+        links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+      },
+      {
+        id: 'm-stale-approval',
+        title: 'An approval of the old plan approves nothing',
+        phase: 'AwaitingApproval',
+        lead: 'you',
+        actors: {
+          you: 'kubectl ptah approve reads the migration again before it sends anything. If a newer plan replaced the one it showed, it approves nothing and exits 4. Read the replacement, then approve that.',
+          kubernetes: 'Admission refuses an approval of a plan that is no longer current.',
+          operator:
+            'Marks an approval of the old plan Stale=True with reason PlanNoLongerCurrent once a read publishes another plan, with an ApprovalStale Warning Event on the approval. It is never consumed.',
+        },
+        objects: ['m-approval', 'm-plan', 'm-status'],
+        expect: 'kubectl ptah migration lists the old approval as Stale, naming a plan that is not the current one.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Approvals, newest first, each with whether it names the current plan.',
+          },
+          {
+            command: 'kubectl ptah approve migration/orders -n application --wait',
+            says: 'Shows the replacement and asks for a new decision.',
+          },
+        ],
+        done: 'No approval counts for the replacement yet. The walk goes on at Approve that exact plan, for the replacement.',
+        links: [{ label: 'Exact-plan approvals', href: '../../use/approvals/' }],
+      },
+    ],
+  },
+  {
+    id: 'm-suspended',
+    label: 'Suspended mid-run',
+    scenario: 'suspend',
+    title: 'Suspended while the run goes on',
+    summary:
+      'Suspension stops new work, not a run already started: it goes on. Suspending edits the spec, which changes the inputs the run was claimed with, so it is recorded as unknown. The migration holds every later run until a history read after resume, or a person, settles it.',
+    turnsAfter: 'm-dispatch',
+    stages: [
+      {
+        id: 'm-suspend-request',
+        title: 'Suspend while the run goes on',
+        phase: 'Applying',
+        lead: 'you',
+        actors: {
+          you: 'Run kubectl ptah suspend. It sets spec.suspend and nothing else.',
+          kubernetes: 'Bumps metadata.generation. Nothing deletes the Job or cancels its SQL.',
+          operator: 'Goes on supervising the run’s Job to its end, and renews the Lease.',
+          executor: 'Goes on running the approved sequence.',
+        },
+        objects: ['migration', 'm-job', 'm-lease'],
+        expect: 'Phase Applying, with Suspend: requested.',
+        inspect: [
+          {
+            command: 'kubectl ptah suspend migration/orders -n application',
+            says: 'Sets spec.suspend, and says what the suspension does to the Apply in flight.',
+          },
+          { command: 'kubectl ptah migration orders -n application', says: 'Phase: Applying and Suspend: requested.' },
+        ],
+        done: 'Suspension is requested, and the run goes on.',
+        limits: 'To have the run’s own result recorded, let it finish before suspending: kubectl ptah wait --for applied waits for it.',
+        links: [{ label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' }],
+      },
+      {
+        id: 'm-suspend-unknown',
+        title: 'The run is recorded as unknown',
+        phase: 'Applying, then Blocked and Suspended',
+        lead: 'operator',
+        actors: {
+          operator:
+            'When the Job ends, finds the inputs the run was claimed with changed, since the generation is one of them. It records the run as Unknown without reading its result, and sets status.unresolvedRun. Then it writes the suspension. A suspended migration takes no reading, so the record stays; an acknowledgment is still taken while suspended.',
+          kubernetes: 'Keeps the Job and its Pod log.',
+        },
+        objects: ['m-status', 'm-job', 'm-result'],
+        expect:
+          'A MigrationRunUncertain Warning Event, Blocked=True with reason ApplyOutcomeUnknown, and RunFinished with outcome Unknown in the journal. Then phase Suspended, with Ready=False and reason Suspended, while Blocked stays.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Phase: Suspended, Blocked: True with ApplyOutcomeUnknown, and the Unresolved run block.',
+          },
+          {
+            command: 'kubectl events -n application --for ptahmigration/orders',
+            says: 'MigrationRunUncertain, saying the inputs changed while the Job was running.',
+          },
+        ],
+        done: 'The run is recorded as unresolved, and nothing reads while the migration is suspended.',
+        limits: 'Unknown does not mean nothing ran. The approval was spent at dispatch.',
+        links: [{ label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' }],
+      },
+      {
+        id: 'm-suspend-resume',
+        title: 'Resume, and a reading settles it',
+        phase: 'Suspended, then Reading and InSync, or Blocked',
+        lead: 'executor',
+        actors: {
+          you: 'Run kubectl ptah resume, with --for in-sync to follow it.',
+          operator:
+            'Resuming moves the generation again, so it reads the source and the history. A reading of the same database with nothing pending settles the run: status.resolvedRun records it as settled by a history read, and the migration is InSync. A reading that still finds versions pending leaves it Blocked until a person acknowledges the run.',
+          executor: 'Reads the revision table.',
+        },
+        objects: ['m-status', 'm-job', 'migration'],
+        expect:
+          'Nothing pending: phase InSync, Ready=True with reason HistoryMatched, and Settled run: by a history read, with no journal entry and no Event for the settling. Versions pending: Blocked with reason ApplyOutcomeUnknown, naming how many.',
+        inspect: [
+          {
+            command: 'kubectl ptah resume migration/orders -n application --for in-sync',
+            says: 'Clears spec.suspend and waits for the migration to be in sync.',
+          },
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Settled run: by a history read, or the Unresolved run block that still holds it.',
+          },
+        ],
+        done: 'Settled by a reading, or held for a person, as on the Acknowledged path.',
+        limits: 'A reading settles the run only on the database it named, and says nothing about the data in the tables.',
+        links: [
+          { label: 'How it clears', href: '../../use/operations/#how-it-clears' },
+          { label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'm-failed',
+    label: 'Failed statement',
+    scenario: 'failure',
+    title: 'A run that fails at a statement',
+    summary:
+      'A migration fails at a statement and its transaction rolls back. The run is recorded as Failed, with the statement and the database’s error, and the row Ptah left holds the migration Blocked until a person repairs it with Ptah. Nothing retries it.',
+    turnsAfter: 'm-execute',
+    stages: [
+      {
+        id: 'm-failed-run',
+        title: 'The run fails at a statement',
+        phase: 'Applying, then VerifyingHistory',
+        lead: 'executor',
+        actors: {
+          executor:
+            'Ptah runs the migration in a transaction, the database refuses a statement, and the transaction rolls back. Ptah marks the revision row failed, and the runner reports the version, the statement and the database’s error.',
+          kubernetes: 'Keeps the Job and its Pod log for 24 hours after it finishes.',
+          operator:
+            'Records status.lastRun with outcome Failed, the version, the statement, the SQLSTATE or error number and where the Pod log is, then reads the history back.',
+        },
+        objects: ['m-status', 'm-job', 'm-result'],
+        expect:
+          'Last run: Failed, with the version, the statement and the error, and a MigrationRunFinished Warning. The journal records RunFinished with outcome Failed and Stopped at.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Last run: Failed, with the statement and the database’s error.',
+          },
+          {
+            command: 'kubectl ptah history migration/orders -n application',
+            says: 'RunFinished, with Stopped at: the version, the statement and the SQLSTATE.',
+          },
+        ],
+        done: 'The run is recorded as Failed, and the history is read next.',
+        limits:
+          'Failed means the statement’s transaction rolled back. A run that committed part of a migration is Partial, and one nobody can account for is Unknown: both are on the Partial or Unknown path.',
+        links: [{ label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' }],
+      },
+      {
+        id: 'm-failed-dirty',
+        title: 'The row it left holds the migration',
+        phase: 'VerifyingHistory, then Blocked',
+        lead: 'operator',
+        actors: {
+          executor: 'Reads the revision table, and reports the row the run left dirty.',
+          operator:
+            'Publishes no plan, marks the remaining approvals stale and stops Blocked. It reads the history again at its interval and stays Blocked while the row is there: a corrected artifact does not lift it.',
+        },
+        objects: ['m-status', 'm-job', 'm-approval'],
+        expect: 'Phase Blocked, with Blocked=True and reason HistoryDirty. The journal records Verified with outcome Blocked.',
+        inspect: [
+          {
+            command: 'kubectl ptah migration orders -n application',
+            says: 'Blocked: True with HistoryDirty, and no plan.',
+          },
+          {
+            command: 'kubectl ptah history migration/orders -n application',
+            says: 'Verified, with outcome Blocked.',
+          },
+        ],
+        done: 'Nothing runs until a person changes the row.',
+        limits: 'The operator never writes to the revision table.',
+        links: [{ label: 'Blocked is a refusal, not a fault', href: '#blocked-is-a-refusal-not-a-fault' }],
+      },
+      {
+        id: 'm-failed-repair',
+        title: 'Repair the row with Ptah, then decide again',
+        phase: 'Blocked, then Reading and AwaitingApproval',
+        lead: 'you',
+        actors: {
+          you: 'Ask Ptah what the row records, at the Ptah version the migration runs. Fix what made the statement fail, in the file or in the database, then follow Retry the migration: move the revision boundary back with ptah migrations set, ask for a read, and approve the plan it publishes.',
+          operator:
+            'At its next read, finds the row repaired and publishes a plan for what is pending. The failed run spent its approval, so the plan waits for a new one.',
+          executor: 'Reads the revision table again.',
+        },
+        objects: ['m-status', 'm-plan', 'm-approval'],
+        expect: 'Blocked=False, and phase AwaitingApproval with a new plan.',
+        inspect: [
+          {
+            command: 'ptah migrations status --db-url "$DATABASE_URL" --migrations-dir ./migrations',
+            says: 'Dirty Migration: the version, the state and how many statements it applied.',
+          },
+          {
+            command: 'kubectl ptah refresh migration/orders -n application --wait',
+            says: 'Reads the history now rather than at the interval.',
+          },
+        ],
+        done: 'A new plan waits for an approval.',
+        limits: 'Retry the migration, its checks and where to stop are on the recovery page, and this stage does not repeat them.',
+        links: [
+          { label: 'A migration that failed at a statement', href: '../../use/recovery/#failed-statement' },
+          { label: 'Retry the migration', href: '../../use/recovery/#retry-failed-migration' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'm-unresolved',
     label: 'Partial or Unknown',
+    scenario: 'unresolved',
     title: 'A run nobody can account for',
     summary:
       'The run ends Partial, having committed part of a migration, or Unknown, with evidence nobody could read. It is never retried. The migration publishes no plan and dispatches no Apply until a history read with nothing pending, or a person’s acknowledgment, settles the run.',
@@ -1514,6 +2330,7 @@ const migrationPaths = [
   {
     id: 'm-acknowledged',
     label: 'Acknowledged',
+    scenario: 'unresolved',
     title: 'A person acknowledges the run',
     summary:
       'The database is accounted for and still has work pending, which no reading can settle, so a person acknowledges that one run. The acknowledgment repairs nothing and approves nothing: the history is read again, and what is still pending is planned and waits for a new approval.',
@@ -1578,7 +2395,7 @@ const migrationPaths = [
 ];
 
 const migrationNotCovered = {
-  text: 'Other turns, such as an artifact the verification policy refuses, a history that is dirty, modified, out of order or ahead, a run that failed at a statement, a plan replaced before anyone approved it, apply: Never or Always and a read that fails, are drawn in the reference below.',
+  text: 'Other turns, such as a source that is refused, an artifact the verification policy refuses, a history that is modified, out of order or ahead, and a read that fails, are drawn in the reference below.',
   links: [
     { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
     { label: 'Where the path turns', href: '#where-the-path-turns' },
