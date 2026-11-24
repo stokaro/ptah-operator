@@ -545,7 +545,12 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:000ba6d9169be73463d12900bd63d2bfc66f544315c4cd6ea4879b54a210e861",
+      "sourceDigest": "sha256:15777d365382dfc21eb4b5304af27ecfa4749e5da96df58d2750b3cd2e7341ba",
+      "reason": "The comment on the Pending migration phase in api/v1alpha1 now says that a ConfigMap source, which the manager reads itself, moves a new migration straight to Reading, and only an OCI, Git or HTTPS source to Resolving. No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:786a5c55ed36ee23d31a60adf1189a3d8543dd5d2c081254eb83846310ec7bef",
       "reason": "The API types the runner links gained urlFromSecretProviderClass beside urlFrom in a target, a development database and a drift check's shadow, and urlFrom became optional (#831). The runner's own source did not change: it reads a database URL from the same file under the same variable whether a Secret volume or a SecretProviderClass's CSI volume holds it, and what it accepts, enforces and returns is the same, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]

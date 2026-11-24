@@ -183,7 +183,7 @@ condition below, at any stage.
 | 3 Decision | `kubectl ptah approve migration/orders -n application --wait` | Each version with its checksum, then `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
 | 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahmigration orders -w` | Phase `Applying`, then `VerifyingHistory` and `Reading` | The command ends with `reached applied` |
 | 5 Verification | `kubectl ptah migration orders -n application` | Phase `InSync`, `Ready=True`, reason `HistoryMatched`, `Pending: 0`, `Last run: Applied` | Read the history |
-| 6 History | The commands below | The journal holds `PlanPublished`, `ApprovalAccepted` and `RunFinished` with outcome `Succeeded`, and `status.history.revisions` a row for each migration | Add a migration: a file in the ConfigMap and an item in the resource |
+| 6 History | The commands below | The journal holds `PlanPublished`, `ApprovalAccepted`, `RunFinished` with outcome `Succeeded`, and `Verified` with outcome `InSync`, the first history read after the run; `status.history.revisions` holds a row for each migration | Add a migration: a file in the ConfigMap and an item in the resource |
 
 You can read the history at any stage, and reading it changes nothing:
 
