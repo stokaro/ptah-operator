@@ -37,7 +37,7 @@ Live discovery is deliberately separate:
 make update-kubernetes-support
 ```
 
-That command reads the official Kubernetes stable release, derives the consecutive three-minor maintained window, and selects a single stable official kind release containing digest-pinned node images for the entire window. It updates only the support manifest, the Helm `kubeVersion` range, and the generated table above.
+That command reads the official Kubernetes stable release, derives the consecutive three-minor maintained window, and selects a single stable official kind release containing digest-pinned node images for the entire window. When that release is not the kind version `kindLoadBalancer` was read from, it also reads `pkg/cluster/internal/loadbalancer/const.go` at the release's tag from the kind repository's raw files and resolves the image named there to its multi-platform index digest, anonymously, from the image's registry. It updates only the support manifest, the Helm `kubeVersion` range, and the generated table above, and it writes none of them until every read has succeeded.
 
 ## Moving the window
 
@@ -60,7 +60,7 @@ If live discovery or parsing fails, the workflow makes no support claim and open
 
 Patch-level image refreshes are independent from minor-window changes. The same scheduled updater inspects official kind releases, opens or refreshes a pull request changing `kindVersion`, `lastVerified`, and affected `nodeImage` values, and lets the full matrix validate the update. A tag alone is not accepted: the manifest requires the registry digest so a later tag mutation cannot change CI silently.
 
-The updater does not read kind's source, so it carries `kindLoadBalancer` unchanged. A proposal that moves `kindVersion` fails its verification until the pin names the image the new kind version spells in `pkg/cluster/internal/loadbalancer/const.go`, pinned by its index digest, and that kind version.
+A proposal that moves `kindVersion` also moves `kindLoadBalancer`: the image the new kind version spells in `pkg/cluster/internal/loadbalancer/const.go`, pinned by the digest of the index its registry serves for that tag, and that kind version. The updater refuses, naming `kindLoadBalancer` and the file it could not use, when the file is missing at the tag, does not declare exactly one string constant `Image` with a registry, repository and tag, or when the registry does not serve an index listing `linux/amd64` and `linux/arm64` whose bytes match the digest the registry reports. The workflow then fails and proposes nothing. A proposal that keeps `kindVersion` carries `kindLoadBalancer` unchanged and reads neither.
 
 The matrix installs the chart, serves the CRDs, and exercises OCI resolution and verification, observation, planning, approval, application, failure recovery, and post-apply convergence. It also verifies the exact topology, three control planes and one worker, with the isolation worker present exactly where the suite declares it, requires every control-plane component to run once on every control-plane node, and configures the isolated registry on every node. The suite must consume the generated matrix and must not introduce a private list of Kubernetes versions.
 

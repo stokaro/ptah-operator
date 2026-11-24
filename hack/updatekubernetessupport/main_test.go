@@ -82,8 +82,8 @@ func TestBuildUpdatePlanSelectsNewestCompleteStableKindRelease(t *testing.T) {
 	if got := plan.manifest.Releases[1].NodeImage; got != "kindest/node:v1.36.1@sha256:"+digest("2") {
 		t.Fatalf("middle node image = %q", got)
 	}
-	// The updater does not read kind's source, so the pin stays the one read
-	// from v0.31.0, and the proposal's verification refuses it.
+	// buildUpdatePlan reads no source: it carries the pin read from v0.31.0,
+	// and refreshKindLoadBalancer re-pins it for the kind the plan chose.
 	if got := plan.manifest.KindLoadBalancer; got != baseManifest().KindLoadBalancer {
 		t.Fatalf("kindLoadBalancer = %+v, want the pin carried as it was read", got)
 	}
