@@ -112,6 +112,11 @@ jobs:
           set -euo pipefail
           go test ./demo/...
           go run ./demo/cmd/record -root . -check
+      # The lifecycle explorer shows kubectl ptah commands to copy. Each has to
+      # be one the plugin parses, and a change to the explorer alone merges on
+      # this workflow, so the check runs here as well as in CI.
+      - name: The explorer's commands parse
+        run: go test ./cmd/kubectl-ptah/ -run '^TestExplorerCommand'
       - name: Build the development site
         working-directory: docs/site
         env:
