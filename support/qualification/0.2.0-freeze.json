@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-23T22:05:05.126918+00:00",
+  "frozenAt": "2026-11-24T04:23:18.300562+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "c471eb0a7354e3d717f1878e09b31e7ac14ffc9054bc7e4bffe984abca51b2a9"
+      "sha256": "be2df12e5b182d927ce21f40b378597482946864e50bcedad0a9acc8f018025b"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "c70d3fadca916210aa7961b27d10ef0a116f1415eb08ca555f3009879140d38c"
+      "sha256": "b6054c2046dcdfcf6d52e562ee3d2ff30099009a61eae5c089e4071b4ab8cc23"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "a7a29c591a4a66291ff47a998fe57ffd9105a2a192058f7ca1daa6947ed42ab2",
+    "sha256": "9bc56d0dd6f72d765159e5b9157c6c509110d5e964526e9b8aea842b9c6fded9",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 140,
+  "revision": 141,
   "supersedes": {
-    "freezeCommit": "caf5065f36cbaaa107a39a2ff6d9c17ce10f80e7",
-    "sha256": "6c63a5ad51b8cc4a6ece68b0ea9b74eea4b8897f37e1be495cd22c881e1e8c52"
+    "freezeCommit": "d7469f2331fe408881f896e609845c2296704de0",
+    "sha256": "0dc9351b5ebe2bd71542758d5d16d48ef1fd91be95444ef6ef9fdb296c3b89b1"
   },
   "revisionReason": "MySQL 9.7.x is labeled LTS"
 }

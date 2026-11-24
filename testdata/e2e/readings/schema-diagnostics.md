@@ -72,7 +72,13 @@ commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`, reproduced the PostgreSQL
 History reading and the PostgreSQL restored-history refusal and moved every
 other reading, as the comparison with v0.34.0 below says. The moved readings
 and the four saved exclusion plans here are v0.35.0's, and the contract names
-the new statements.
+the new statements. On November 24, 2026 the v0.35.0 image reproduced every
+checked-in PostgreSQL 17 and MySQL 8.4 reading again, and the v0.35.1 release
+image, commit `ff4a4368f96968e6f43322e3e5dd27f2415e0013`, reproduced every reading the
+same way, the PostgreSQL 18, 16 and 15 and MySQL 9.7 witnesses, both History
+readings and both restored-history refusals included, and all four saved
+exclusion plans byte for byte. No reading or saved plan changed; the contract
+and [`schema-sql-capture.json`](schema-sql-capture.json) name the new commit.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.

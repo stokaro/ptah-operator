@@ -42,7 +42,8 @@ History contract admits, so the MySQL reading here is v0.35.0's, one record
 more; no other record moved. On 2026-11-23 the v0.35.0 image reproduced the
 MySQL reading record for record on MySQL 9.7.4
 (`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`).
-They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+On 2026-11-24 the v0.35.1 release image (`ff4a4368`) reproduced both readings
+record for record. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`

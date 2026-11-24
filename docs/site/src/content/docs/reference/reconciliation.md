@@ -9,15 +9,35 @@ rather than merged. What the operator is put together from is
 [Architecture](../architecture/); what enforces each promise, per family, is
 [Execution guarantees](../guarantees/).
 
-## Follow one schema change {#follow-one-schema-change}
+## Follow one change {#follow-one-schema-change}
 
-The explorer below walks one schema change from `kubectl apply` to `InSync`:
-who acts at each stage, which objects it touches, how they relate, and the
-command that shows it. Choose a path to follow the change where it turns: a
+The explorer below walks one change from `kubectl apply` to `InSync`, for a
+schema or for versioned migrations: who acts at each stage, which objects it
+touches, how they relate, and the command that shows it. Choose the family,
+then a path to follow the change where it turns. A schema change can meet a
 plan Ptah refuses, a plan replaced before anyone approved it, or an Apply
-nobody can account for, and how each recovers. Select a stage, or an object,
-to follow it. The sections after it are the precise reference it is taken
-from.
+nobody can account for. A migration can find nothing pending, or end a run
+`Partial` or `Unknown` that a reading or a person's acknowledgment settles.
+Select a stage, or an object, to follow it. Choose **Audit** to read the same
+record by evidence source instead: what each source can and cannot establish,
+what reads it, and what is left of it after a deletion or the loss of the
+cluster. Choose **Object map** to read it by object: who writes each one, what
+it holds, what owns it and what it only names, whether it can change, and what
+deleting it does. Choose **Composed workflow** to follow a schema and a
+migration through one change to one database: expand the schema, backfill the
+data with a migration, wait for checks outside the operator, then contract.
+Each stage says what the operator ships and what a pipeline around it would
+have to add, because nothing in the operator sequences the stages. Choose a
+depth to read less of each entry in every view: **Overview** says who acts,
+what a step, an object or a source is for, and how you know a step is done;
+**Product** adds the state to expect, the commands, the decisions and what a
+step does not prove; **Implementation**, the default, adds what Kubernetes, the
+operator and the executor do underneath and where each object lives. The
+depth stays chosen from view to view and is kept in the address, and the text
+version follows it without JavaScript. A related object is a link, so a stage,
+a source or an object can be shared or opened in a page of its own. The sections after it are the precise reference the
+journey is taken from, and [Audit a database change](../../use/audit/) is the
+one for the audit view.
 
 <div data-lifecycle-explorer></div>
 
@@ -374,8 +394,9 @@ files, and copies them into an immutable snapshot ConfigMap named
 size and SHA-256 beside them. The content digest is the SHA-256 of that
 manifest, so the same files give the same digest whatever key they came from.
 There is no verification policy for such a source, so there is no Verify step
-and no `ArtifactVerified` condition; `ArtifactResolved` says
-`SnapshotTaken`.
+and no `ArtifactVerified` condition. A schema's `ArtifactResolved` says
+`SnapshotTaken`. A migration has no `ArtifactResolved` condition: its
+`Progressing` condition says `SnapshotTaken` until the history read starts.
 
 Every later operation that reads the files mounts the snapshot, never the
 source ConfigMap. An init container in the Pod checks the snapshot against the

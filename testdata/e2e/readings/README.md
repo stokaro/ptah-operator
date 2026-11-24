@@ -323,6 +323,11 @@ they stay. On November 22, 2026 the v0.35.0 release image
 `ghcr.io/stokaro/ptah@sha256:f76221499b83c232d737894daea53f8c3e1ebad20d6602f05b88ffae1134913a`
 (commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`) saved all three the same way,
 with the same statements and length, and again only the plan name and both
+fingerprints moved, so they stay. On November 24, 2026 the v0.35.1 release image
+`ghcr.io/stokaro/ptah@sha256:4b66856f2d0780ff697155575c97e900b7b7654d8141c6368ee77f79db2c90d5`
+(commit `ff4a4368f96968e6f43322e3e5dd27f2415e0013`) and the v0.35.0 one each saved all three
+the same way, against a disposable PostgreSQL 17.11 server as its superuser,
+byte for byte as each other. Against the files here only the plan name and both
 fingerprints moved, so they stay.
 
 Before them the plans were the ones the Ptah v0.29.3 release image

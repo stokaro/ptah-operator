@@ -14,6 +14,10 @@ team already reviews migrations in the repository that produces them.
 
 The two resources are independent. One database can have both, and they
 serialize against each other through the same lock.
+[The lifecycle explorer's composed workflow](../../reference/reconciliation/?lx-view=workflow#lifecycle-explorer)
+follows both through one change -- expand the schema, backfill with a
+migration, contract -- with what sharing the database takes, what each
+approval covers, and the gates no resource holds.
 
 ## What the operator does, in order
 
@@ -40,6 +44,10 @@ URL never talks to your registry.
 [From source to verified change](../../reference/reconciliation/#from-source-to-verified-change)
 draws this path beside the schema's, with who does what at each stage, and
 [Run one from the command line](#stage-by-stage) walks it.
+[The lifecycle explorer](../../reference/reconciliation/?lx-family=migration#lifecycle-explorer)
+steps through one run with the objects each stage touches, and follows it
+where it turns: a history with nothing pending, or a run that ends `Partial`
+or `Unknown` and how it is settled.
 
 ## The minimal resource
 
@@ -179,7 +187,7 @@ condition below, at any stage.
 | 3 Decision | `kubectl ptah approve migration/orders -n application --wait` | Each version with its checksum, then `Approved:`, with the identity admission stamped | The command stays for stages 4 and 5 |
 | 4 Execution | Nothing more. To watch from elsewhere, `kubectl -n application get ptahmigration orders -w` | Phase `Applying`, then `VerifyingHistory` and `Reading` | The command ends with `reached applied` |
 | 5 Verification | `kubectl ptah migration orders -n application` | Phase `InSync`, `Ready=True`, reason `HistoryMatched`, `Pending: 0`, `Last run: Applied` | Read the history |
-| 6 History | The commands below | The journal holds `PlanPublished`, `ApprovalAccepted` and `RunFinished` with outcome `Succeeded`, and `status.history.revisions` a row for each migration | Add a migration: a file in the ConfigMap and an item in the resource |
+| 6 History | The commands below | The journal holds `PlanPublished`, `ApprovalAccepted`, `RunFinished` with outcome `Succeeded`, and `Verified` with outcome `InSync`, the first history read after the run; `status.history.revisions` holds a row for each migration | Add a migration: a file in the ConfigMap and an item in the resource |
 
 You can read the history at any stage, and reading it changes nothing:
 
@@ -768,7 +776,7 @@ name the target's does not have: Ptah tells two MySQL databases apart by name
 alone, and refuses a shadow named like the target as the target, at stage
 `realm-check`.
 
-On MySQL and MariaDB the verified Ptah build, v0.35.0, compares a view, a
+On MySQL and MariaDB the verified Ptah build, v0.35.1, compares a view, a
 stored function and a MariaDB sequence under the target's database, as it does
 tables and triggers
 ([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)). Ptah v0.34.0
