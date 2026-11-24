@@ -179,6 +179,7 @@ const schemaObjects = [
     id: 'schema',
     label: 'PtahSchema',
     kind: 'PtahSchema',
+    hint: 'What the database should hold, where the schema comes from, and the policy a plan is held to',
     writer: 'you',
     purpose:
       'The desired state: which database, which source holds the schema, and the policy a plan is held to. You write its spec; only the manager writes its status.',
@@ -195,6 +196,7 @@ const schemaObjects = [
     id: 'source',
     label: 'Source ConfigMap and snapshot',
     kind: 'ConfigMap',
+    hint: 'The schema.sql you write, which the operator pins as a snapshot',
     writer: 'operator',
     purpose:
       'You write the ConfigMap that holds schema.sql. The manager copies the selected keys into an immutable snapshot ConfigMap named ptah-src-<hash>, with a manifest of every file’s path, size and SHA-256. Every later operation mounts the snapshot, never the source.',
@@ -211,6 +213,7 @@ const schemaObjects = [
     id: 'status',
     label: 'Status and conditions',
     kind: 'PtahSchema status',
+    hint: 'The operator’s record: phase, conditions, the claim, the proof owed and the journal',
     writer: 'operator',
     purpose:
       'Where the schema stands: status.phase as a summary, conditions as the stable interface, the operation claim in status.activeOperation, the proof an Apply still owes in status.pendingObservation, and the lifecycle journal in status.journal.',
@@ -230,6 +233,7 @@ const schemaObjects = [
     id: 'plan',
     label: 'PtahSchemaPlan',
     kind: 'PtahSchemaPlan',
+    hint: 'The exact SQL an Apply may run, immutable once published',
     writer: 'operator',
     purpose:
       'The only thing an Apply may run. Immutable and created by the controller. Its fingerprint binds the schema UID, the content digest, the source, the observed and desired state, the policy, the target and the execution binding. A changed input makes another plan rather than changing this one.',
@@ -247,6 +251,7 @@ const schemaObjects = [
     id: 'chunks',
     label: 'PtahSchemaPlanChunk',
     kind: 'PtahSchemaPlanChunk',
+    hint: 'The plan’s SQL, in immutable pieces',
     writer: 'operator',
     purpose:
       'The plan’s SQL: at most sixteen immutable chunks of at most 512 KiB, for a plan of at most 8 MiB. The plan status commits the chunk UIDs only after every chunk was read back and verified. Just before an Apply, the operator also writes one immutable ConfigMap per chunk, owned by the plan, for the Apply Pod to mount.',
@@ -263,6 +268,7 @@ const schemaObjects = [
     id: 'approval',
     label: 'PtahSchemaApproval',
     kind: 'PtahSchemaApproval',
+    hint: 'A person’s decision about one exact plan, by name and UID',
     writer: 'you',
     purpose:
       'A person’s decision about one exact plan. It names the schema by name and UID, the plan by name and UID, and the plan’s fingerprint. Admission stamps who approved and when, replacing anything a client wrote there. The approver can be another person than the one who changed the schema.',
@@ -280,6 +286,7 @@ const schemaObjects = [
     id: 'job',
     label: 'Operation Job',
     kind: 'Job',
+    hint: 'One operation in one Pod: Observe, Plan, Apply, or the proof after an Apply',
     writer: 'operator',
     purpose:
       'One Job per operation: Observe, Plan, Apply, and the Observe and Plan that prove an Apply. Its Pod runs ptah-runner, which starts the Ptah executor. Only this Pod touches the database, and it holds no Kubernetes API credential. A read-only Job is removed 300 seconds after it finishes; an Apply Job gets its cleanup TTL only once its result was read.',
@@ -296,6 +303,7 @@ const schemaObjects = [
     id: 'lease',
     label: 'Database-realm Lease',
     kind: 'Lease',
+    hint: 'The lock that lets one operation at a time change the database',
     writer: 'operator',
     purpose:
       'The lock every resource that can change one database takes turns through. It is keyed by a SHA-256 digest of the engine, the namespace and the coordinationKey, never by anything a credential carries. The schema holds it for a Plan, an Apply and the proof that follows, and hands it back after the proof.',
@@ -313,6 +321,7 @@ const schemaObjects = [
     id: 'result',
     label: 'PtahResultRecord',
     kind: 'PtahResultRecord',
+    hint: 'What a Job delivers, stored before the operator reads it',
     writer: 'operator',
     purpose:
       'The Job’s result, stored before its receipt. The receiver in the manager authenticates the operation, Job and Pod, persists the whole result, reads it back and only then acknowledges. A repeated delivery returns the same receipt and runs no SQL again. The receipt proves the result arrived, not that the SQL succeeded or that the database is in sync.',
@@ -1334,6 +1343,7 @@ const migrationObjects = [
     id: 'migration',
     label: 'PtahMigration',
     kind: 'PtahMigration',
+    hint: 'Which database, which migration files, and the policy a run is held to',
     writer: 'you',
     purpose:
       'The desired state: which database, which source holds the numbered migration files, and the policy a run is held to. You write its spec; only the manager writes its status.',
@@ -1353,6 +1363,7 @@ const migrationObjects = [
     id: 'm-source',
     label: 'Source ConfigMap and snapshot',
     kind: 'ConfigMap',
+    hint: 'The numbered migration files you write',
     writer: 'operator',
     purpose:
       'You write the ConfigMap that holds the migration files. The manager copies the items the migration selects into an immutable snapshot ConfigMap named ptah-src-<hash>, with a manifest of every file’s path, size and SHA-256. The History read and the Apply mount the snapshot, never the source, and the SQL an Apply runs comes from it.',
@@ -1369,6 +1380,7 @@ const migrationObjects = [
     id: 'm-status',
     label: 'Status and conditions',
     kind: 'PtahMigration status',
+    hint: 'The operator’s record: the history read, the last run, any unresolved run and the journal',
     writer: 'operator',
     purpose:
       'Where the migration stands: status.phase as a summary, conditions as the stable interface, the last reading of the revision table in status.history, the operation claim in status.activeOperation, the last run in status.lastRun, a run nobody accounted for in status.unresolvedRun and how one was settled in status.resolvedRun, and the lifecycle journal in status.journal.',
@@ -1394,6 +1406,7 @@ const migrationObjects = [
     id: 'm-plan',
     label: 'PtahMigrationPlan',
     kind: 'PtahMigrationPlan',
+    hint: 'The pending versions an Apply may run, each with its checksum',
     writer: 'operator',
     purpose:
       'The sequence an Apply may run: each pending version in order with its description and checksum, the history fingerprint and the version it was computed against, and the source by the content digest of its files. The manager builds it from the history reading, with no Job. It is immutable and holds no SQL. Its fingerprint binds the sequence, the history, the target and the execution binding, so a changed input makes another plan.',
@@ -1414,6 +1427,7 @@ const migrationObjects = [
     id: 'm-approval',
     label: 'PtahMigrationApproval',
     kind: 'PtahMigrationApproval',
+    hint: 'A person’s decision about one exact plan, by name and UID',
     writer: 'you',
     purpose:
       'A person’s decision about one exact plan. It names the migration by name and UID, the plan by name and UID, and the plan’s fingerprint, all three written out. Admission stamps who approved and when, and refuses an approval the current evidence no longer supports. It authorizes one execution.',
@@ -1434,6 +1448,7 @@ const migrationObjects = [
     id: 'm-acknowledgment',
     label: 'PtahMigrationRunAcknowledgment',
     kind: 'PtahMigrationRunAcknowledgment',
+    hint: 'A person’s statement that one unresolved run is accounted for',
     writer: 'you',
     purpose:
       'A person’s statement that one run nobody could account for has been accounted for. It names the migration by name and UID and the run by its operationID, and admission stamps who acknowledged and when. It repairs nothing and approves nothing: it lifts the hold, and the history is read again before anything is planned.',
@@ -1454,6 +1469,7 @@ const migrationObjects = [
     id: 'm-job',
     label: 'Operation Job',
     kind: 'Job',
+    hint: 'One operation in one Pod: a history read or an Apply',
     writer: 'operator',
     purpose:
       'One Job per operation that reads or changes the database, here History and Apply; an OCI artifact adds Resolve and Verify. Its Pod runs ptah-runner, which starts the Ptah executor once an init container has checked the snapshot against the content digest. Only this Pod touches the database: the manager holds no database credential. A History Job is removed 300 seconds after it finishes; an Apply Job gets its cleanup TTL only once its result was read.',
@@ -1473,6 +1489,7 @@ const migrationObjects = [
     id: 'm-lease',
     label: 'Database-realm Lease',
     kind: 'Lease',
+    hint: 'The lock a schema and a migration of one database take turns through',
     writer: 'operator',
     purpose:
       'The lock every resource that can change one database takes turns through, so a schema and a migration of one database serialize. It is keyed by a SHA-256 digest of the engine, the namespace and the coordinationKey. A migration takes it for an Apply and nothing else: reading the history changes nothing. It hands it back once the run is accounted for, and keeps it while a run that reported nothing could still be writing.',
@@ -1490,6 +1507,7 @@ const migrationObjects = [
     id: 'm-result',
     label: 'PtahResultRecord',
     kind: 'PtahResultRecord',
+    hint: 'What a Job delivers, stored before the operator reads it',
     writer: 'operator',
     purpose:
       'A Job’s result, stored before its receipt, for a History read as for an Apply. The receiver in the manager authenticates the operation, Job and Pod, persists the whole result, reads it back and only then acknowledges. A repeated delivery returns the same receipt and runs no SQL again. The receipt proves the result arrived, not that a migration applied or that the database holds every one.',
@@ -2403,6 +2421,118 @@ const migrationNotCovered = {
   ],
 };
 
+// The words the views use that Kubernetes or this operator gives a meaning a
+// reader cannot guess: the ones #817 names first, then the others the views
+// rely on without saying what they are. The page shows them with and without
+// the script.
+export const glossary = [
+  {
+    id: 'uid',
+    term: 'UID',
+    text: 'metadata.uid, which Kubernetes assigns when an object is created and never reuses. A name can be used again after a deletion and a UID cannot, so plans, approvals and journal entries name an object by name and UID: one recreated under the same name is another object.',
+    links: [{ label: 'Exact-plan approvals', href: '../../use/approvals/' }],
+  },
+  {
+    id: 'generation',
+    term: 'Generation',
+    text: 'metadata.generation, which the API server raises on every change to the spec and not on a status write. A status says which generation it describes in status.observedGeneration. Suspending and resuming edit the spec, so they move it too.',
+    links: [{ label: 'Suspended, and losing a lock', href: '#suspended-and-losing-a-lock' }],
+  },
+  {
+    id: 'fingerprint',
+    term: 'Fingerprint',
+    text: 'A digest of the inputs something was decided from. A plan’s fingerprint binds the source, the target, the observed and desired state, the policy and the execution binding, and an approval names it. A claim records the fingerprint of its inputs, the generation among them, and compares it again before dispatch and after the Job.',
+    links: [
+      { label: 'Immutable bindings', href: '../plans-and-approvals/#immutable-bindings' },
+      { label: 'Inputs that moved do not execute', href: '../guarantees/#inputs-that-moved-do-not-execute' },
+    ],
+  },
+  {
+    id: 'claim',
+    term: 'Claim',
+    text: 'The operation the operator has decided to run, written to status.activeOperation before its Job exists: its type, its id, the fingerprint of its inputs and the Job’s name. A manager that restarted finds the claim rather than a Job nobody expected. A claim is not evidence that anything ran.',
+    links: [{ label: 'Claim', href: '../mutation-lifecycle/#claim' }],
+  },
+  {
+    id: 'realm',
+    term: 'Realm',
+    text: 'Every resource that can change one physical database, whatever URL each uses to reach it. The resources of one realm take turns through one Lease. A PtahRealm lets more than one namespace manage the same database.',
+    links: [{ label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' }],
+  },
+  {
+    id: 'proof',
+    term: 'Proof',
+    text: 'The read-only reading after an Apply: a fresh Observe and a scoped Plan for a schema, a fresh history read for a migration. Only a plan with no change, or a history with nothing pending, shows the change landed. A Job’s exit code never does.',
+    links: [{ label: 'From source to verified change', href: '#from-source-to-verified-change' }],
+  },
+  {
+    id: 'unknown',
+    term: 'Unknown',
+    text: 'The outcome recorded when nobody can establish what an Apply did: its Pod was lost, its result never arrived or could not be read, or its inputs moved while it ran. It does not mean the SQL failed. A schema reads the database again before anything else; a migration runs nothing more until a reading or a person settles it. A condition whose status is Unknown is another thing: that condition is not decided.',
+    links: [{ label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' }],
+  },
+  {
+    id: 'lease',
+    term: 'Lease',
+    text: 'The coordination.k8s.io Lease of one realm, which the manager holds while an operation runs and renews until that operation is accounted for. It lets one operation run at a time and decides which runs now, not what runs next.',
+    links: [{ label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' }],
+  },
+  {
+    id: 'execution-binding',
+    term: 'Execution binding',
+    text: 'The components a plan was computed under: the controller-state version, the Ptah version, the executor image and the runner protocol. A change to any one retires the plans computed under the old set.',
+    links: [{ label: 'Four identities', href: '../architecture/#four-identities' }],
+  },
+  {
+    id: 'admission-snapshot',
+    term: 'Admission snapshot',
+    text: 'The Pod an operation may run as, written to the claim before its Job is created. The pass that writes it creates nothing, and a later pass refuses a Job whose template no longer matches it.',
+    links: [{ label: 'Resolve the admission envelope', href: '../mutation-lifecycle/#resolve-the-admission-envelope' }],
+  },
+  {
+    id: 'dispatch-started',
+    term: 'dispatchStarted',
+    text: 'The mark the operator writes to the claim before it creates an Apply Job. From then on a missing Job means the outcome is unknown, not that the Job should be created.',
+    links: [{ label: 'Cross the dispatch boundary', href: '../mutation-lifecycle/#cross-the-dispatch-boundary' }],
+  },
+  {
+    id: 'condition',
+    term: 'Condition',
+    text: 'An entry in status.conditions: a type such as Ready, a status of True, False or Unknown, a reason that keeps its meaning across releases, and a message. Conditions are what a script reads.',
+    links: [{ label: 'Condition reasons', href: '../../troubleshoot/condition-reasons/' }],
+  },
+  {
+    id: 'phase',
+    term: 'Phase',
+    text: 'status.phase, one word for where the resource stands, for a person to read. The conditions say why.',
+    links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+  },
+  {
+    id: 'journal',
+    term: 'Journal',
+    text: 'status.journal, the bounded record of what happened to the resource: plans published, approvals accepted, Applies and runs finished, and what the reading after them found. kubectl ptah history prints it.',
+    links: [{ label: 'The lifecycle journal', href: '#the-lifecycle-journal' }],
+  },
+  {
+    id: 'managed-scope',
+    term: 'Managed scope',
+    text: 'The part of the database a PtahSchema decides: everything its spec.policy.exclude does not leave out. Drift is read without exclusions, and a plan classifies only this scope as changed or converged.',
+    links: [{ label: 'Read a plan', href: '../../use/read-a-plan/' }],
+  },
+  {
+    id: 'revision-table',
+    term: 'Revision table',
+    text: 'The table Ptah keeps in the target database to record which migrations ran, schema_migrations, with schema_migrations_log beside it. A history read reads it; the operator never writes to it.',
+    links: [{ label: 'A migration that failed at a statement', href: '../../use/recovery/#failed-statement' }],
+  },
+  {
+    id: 'superseded',
+    term: 'Superseded',
+    text: 'The outcome of a proof that a newer generation, policy or execution binding took over before it ended. It says nothing about the Apply it followed, and the next read starts from the newer inputs.',
+    links: [{ label: 'Where the path turns', href: '#where-the-path-turns' }],
+  },
+];
+
 // The families a reader chooses between, the default first. Choosing another
 // starts it at its default path, at its first stage, with nothing selected.
 export const families = [
@@ -3193,6 +3323,7 @@ const objectMapNodes = [
     id: 'o-schema',
     label: 'PtahSchema',
     kind: 'PtahSchema',
+    hint: 'The desired schema, its target and its policy',
     group: 'person',
     scope: 'namespace',
     families: ['schema'],
@@ -3220,6 +3351,7 @@ const objectMapNodes = [
     id: 'o-migration',
     label: 'PtahMigration',
     kind: 'PtahMigration',
+    hint: 'The migration files’ source, their target and the policy a run is held to',
     group: 'person',
     scope: 'namespace',
     families: ['migration'],
@@ -3247,6 +3379,7 @@ const objectMapNodes = [
     id: 'o-schema-approval',
     label: 'PtahSchemaApproval',
     kind: 'PtahSchemaApproval',
+    hint: 'A decision about one exact schema plan',
     group: 'person',
     scope: 'namespace',
     families: ['schema'],
@@ -3271,6 +3404,7 @@ const objectMapNodes = [
     id: 'o-migration-approval',
     label: 'PtahMigrationApproval',
     kind: 'PtahMigrationApproval',
+    hint: 'A decision about one exact migration plan',
     group: 'person',
     scope: 'namespace',
     families: ['migration'],
@@ -3295,6 +3429,7 @@ const objectMapNodes = [
     id: 'o-acknowledgment',
     label: 'PtahMigrationRunAcknowledgment',
     kind: 'PtahMigrationRunAcknowledgment',
+    hint: 'A statement that one unresolved migration run is accounted for',
     group: 'person',
     scope: 'namespace',
     families: ['migration'],
@@ -3319,6 +3454,7 @@ const objectMapNodes = [
     id: 'o-source',
     label: 'Source ConfigMap',
     kind: 'ConfigMap',
+    hint: 'The ConfigMap you write with the schema or the migration files',
     group: 'person',
     scope: 'namespace',
     families: ['schema', 'migration'],
@@ -3345,6 +3481,7 @@ const objectMapNodes = [
     id: 'o-secret',
     label: 'Database Secret',
     kind: 'Secret',
+    hint: 'The database URL, with the user and password it connects as',
     group: 'person',
     scope: 'namespace',
     families: ['schema', 'migration'],
@@ -3371,6 +3508,7 @@ const objectMapNodes = [
     id: 'o-realm',
     label: 'PtahRealm',
     kind: 'PtahRealm',
+    hint: 'The grant that lets more than one namespace manage one database',
     group: 'person',
     scope: 'cluster',
     families: ['schema', 'migration'],
@@ -3395,6 +3533,7 @@ const objectMapNodes = [
     id: 'o-schema-plan',
     label: 'PtahSchemaPlan',
     kind: 'PtahSchemaPlan',
+    hint: 'The exact SQL an Apply may run, bound by its fingerprint',
     group: 'operator',
     scope: 'namespace',
     families: ['schema'],
@@ -3418,6 +3557,7 @@ const objectMapNodes = [
     id: 'o-chunk',
     label: 'PtahSchemaPlanChunk',
     kind: 'PtahSchemaPlanChunk',
+    hint: 'One immutable piece of a schema plan’s SQL',
     group: 'operator',
     scope: 'namespace',
     families: ['schema'],
@@ -3437,6 +3577,7 @@ const objectMapNodes = [
     id: 'o-migration-plan',
     label: 'PtahMigrationPlan',
     kind: 'PtahMigrationPlan',
+    hint: 'The pending versions an Apply may run, each with its checksum',
     group: 'operator',
     scope: 'namespace',
     families: ['migration'],
@@ -3460,6 +3601,7 @@ const objectMapNodes = [
     id: 'o-snapshot',
     label: 'Source snapshot',
     kind: 'ConfigMap',
+    hint: 'The operator’s pinned copy of a ConfigMap source',
     group: 'operator',
     scope: 'namespace',
     families: ['schema', 'migration'],
@@ -3478,6 +3620,7 @@ const objectMapNodes = [
     id: 'o-job',
     label: 'Operation Job',
     kind: 'Job',
+    hint: 'One operation, run in one Pod',
     group: 'operator',
     scope: 'namespace',
     families: ['schema', 'migration'],
@@ -3503,6 +3646,7 @@ const objectMapNodes = [
     id: 'o-lease',
     label: 'Database-realm Lease',
     kind: 'Lease',
+    hint: 'Which claim holds a database realm, for one uninterrupted interval',
     group: 'operator',
     scope: 'coordination',
     families: ['schema', 'migration'],
@@ -3534,6 +3678,7 @@ const objectMapNodes = [
     id: 'o-result',
     label: 'PtahResultRecord',
     kind: 'PtahResultRecord',
+    hint: 'One operation’s result, stored in immutable records',
     group: 'operator',
     scope: 'namespace',
     families: ['schema', 'migration'],
@@ -3561,6 +3706,7 @@ const objectMapNodes = [
     id: 'o-database',
     label: 'Target database',
     kind: 'Database',
+    hint: 'The database itself, with the revision table Ptah keeps in it',
     group: 'outside',
     scope: 'outside',
     families: ['schema', 'migration'],
@@ -3584,6 +3730,7 @@ const objectMapNodes = [
     id: 'o-artifact',
     label: 'OCI, Git or HTTPS source',
     kind: 'Artifact',
+    hint: 'A source outside the cluster: an OCI artifact, a Git commit or a download',
     group: 'outside',
     scope: 'outside',
     families: ['schema', 'migration'],

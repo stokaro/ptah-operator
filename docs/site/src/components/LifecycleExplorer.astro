@@ -20,10 +20,13 @@
  * the panel by its place in that path.
  *
  * The state a reader chose, the stage, the object, a path other than the
- * default and a family other than the default, is kept in the query string
- * with replaceState: the hash stays the page's own anchor, and the browser's
- * history gains no entry per click. Choosing another family starts it afresh,
- * so no path, stage or object of one family is carried into the other.
+ * default and a family other than the default, is kept in the query string,
+ * and the hash stays the page's own anchor. Each move the reader makes is an
+ * entry in the browser's history, so Back and Forward step through what they
+ * chose and a reload lands where they were; opening or restoring an address
+ * writes nothing, since the entry already holds it. Choosing another family
+ * starts it afresh, so no path, stage or object of one family is carried into
+ * the other.
  *
  * The audit view, the object map and the composed workflow sit beside the
  * change journey rather than inside a family: the audit view reads both
@@ -37,6 +40,14 @@
  * address names what it opens, so it can be opened in a new tab, copied, or
  * followed by a page whose script stopped. The script follows it in place.
  * In the text, the same links lead to the entry they name on this page.
+ *
+ * Every object of the change journey and every object of the object map
+ * carries a short hint, shown within the object's own width on hover or on
+ * keyboard focus, and hidden by Escape. Once an object is selected, a related
+ * object's hint says how the two are related instead. The panel a click or a
+ * tap opens says all of it, so the hint is never the only place a thing is
+ * said, and a touch screen shows no hint at all. The glossary follows the
+ * views and the text, so it reads the same with and without the script.
  *
  * The depth is a set of radio buttons above both, and the styles below hide
  * every part deeper than the one chosen, in the interactive view and in the
@@ -53,6 +64,7 @@ import {
   depthOf,
   depths,
   families,
+  glossary,
   objectMap,
   parentOf,
   relationTypes,
@@ -89,10 +101,14 @@ const pathHref = (journey: { family: string; path: string }) =>
     'lx-path': journey.path,
     'lx-stage': pathOf(journey)?.stages?.[0]?.id ?? null,
   });
+const stageHref = (familyId: string, pathId: string | null, id: string) =>
+  explorerHref({ 'lx-family': inFamily(familyId), 'lx-path': pathId, 'lx-stage': id });
 const sourceHref = (id: string) => explorerHref({ 'lx-view': 'audit', 'lx-source': id });
 const nodeHref = (id: string) => explorerHref({ 'lx-view': 'objects', 'lx-node': id });
 const textId = (id: string) => `lx-text-${id}`;
 const textHref = (id: string) => `#${textId(id)}`;
+const tipId = (scope: string, id: string) => `lx-tip-${scope}-${id}`;
+const termId = (id: string) => `lx-term-${id}`;
 const typeById = new Map(relationTypes.map((type) => [type.id, type]));
 
 // The actors a stage names, the lead first, then in the fixed order.
@@ -189,7 +205,7 @@ const views = families.map((family) => {
     })),
     defaultPath,
     relations: relations.map(({ from, to, type }) => ({ from, to, type })),
-    types: Object.fromEntries(relationTypes.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
+    types: Object.fromEntries(relationTypes.map((type) => [type.id, { label: type.label, inverse: type.inverse, text: type.text }])),
   };
 
   return {
@@ -280,7 +296,7 @@ const nodeRelations = (id: string) =>
 // What the script needs to mark the objects related to the one selected.
 const objectMapModel = {
   relations: objectMap.relations.map(({ from, to, type }) => ({ from, to, type })),
-  types: Object.fromEntries(objectMap.types.map((type) => [type.id, { label: type.label, inverse: type.inverse }])),
+  types: Object.fromEntries(objectMap.types.map((type) => [type.id, { label: type.label, inverse: type.inverse, text: type.text }])),
 };
 
 // Everything the composed workflow and its text are drawn from.
@@ -477,14 +493,14 @@ const workflowModel = {
                   <div class="lx__involved" {...part('stage', 'objects')}>
                     <span class="lx__label">Objects</span>
                     {stage.objects.map((id) => (
-                      <button type="button" class="lx__chip" data-lx-select={id}>
+                      <a class="lx__chip" href={objectHref(view.family.id, id)} data-lx-select={id} data-lx-link>
                         {breakable(view.objectById.get(id).label).map((part, index) => (
                           <>
                             {index > 0 && <wbr />}
                             {part}
                           </>
                         ))}
-                      </button>
+                      </a>
                     ))}
                   </div>
 
@@ -549,8 +565,14 @@ const workflowModel = {
               </p>
               <ul class="lx__nodes">
                 {view.objects.map((object) => (
-                  <li>
-                    <button type="button" class="lx__node" data-lx-object={object.id} aria-pressed="false">
+                  <li class="lx__has-tip">
+                    <button
+                      type="button"
+                      class="lx__node"
+                      data-lx-object={object.id}
+                      aria-pressed="false"
+                      aria-describedby={tipId(view.family.id, object.id)}
+                    >
                       <span class="lx__node-label">
                         {breakable(object.label).map((part, index) => (
                           <>
@@ -562,6 +584,9 @@ const workflowModel = {
                       {object.kind !== object.label && <span class="lx__node-kind">{object.kind}</span>}
                       <span class="lx__node-rel" data-lx-rel />
                     </button>
+                    <span class="lx__tip" role="tooltip" id={tipId(view.family.id, object.id)} data-lx-tip={object.hint}>
+                      {object.hint}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -633,12 +658,21 @@ const workflowModel = {
                   <p class="lx__goto">
                     <span class="lx__label">In stages</span>
                     {view.stagesOf(object.id).map((stage) => (
-                      <button type="button" class="lx__chip" data-lx-goto={stage.id}>
+                      <a
+                        class="lx__chip"
+                        href={stageHref(
+                          view.family.id,
+                          view.isBranch(stage.id) ? view.homePath(stage.id).id : null,
+                          stage.id,
+                        )}
+                        data-lx-goto={stage.id}
+                        data-lx-link
+                      >
                         {view.isBranch(stage.id)
                           ? `${view.homePath(stage.id).label}: `
                           : `${view.numberIn(view.defaultPath, stage.id)} `}
                         {stage.title}
-                      </button>
+                      </a>
                     ))}
                   </p>
                   <p class="lx__links">
@@ -882,8 +916,14 @@ const workflowModel = {
               <p class="lx__map-title">{group.label}</p>
               <ul class="lx__nodes">
                 {group.nodes.map((node) => (
-                  <li>
-                    <button type="button" class="lx__node" data-lx-node={node.id} aria-pressed="false">
+                  <li class="lx__has-tip">
+                    <button
+                      type="button"
+                      class="lx__node"
+                      data-lx-node={node.id}
+                      aria-pressed="false"
+                      aria-describedby={tipId('map', node.id)}
+                    >
                       <span class="lx__node-label">
                         {breakable(node.label).map((part, index) => (
                           <>
@@ -895,6 +935,9 @@ const workflowModel = {
                       {node.kind !== node.label && <span class="lx__node-kind">{node.kind}</span>}
                       <span class="lx__node-rel" data-lx-rel />
                     </button>
+                    <span class="lx__tip" role="tooltip" id={tipId('map', node.id)} data-lx-tip={node.hint}>
+                      {node.hint}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -1830,6 +1873,29 @@ const workflowModel = {
       </p>
     </div>
   </div>
+
+  <details class="lx__glossary" data-lx-glossary>
+    <summary class="lx__glossary-title">Terms the explorer uses</summary>
+    <dl class="lx__terms">
+      {
+        glossary.map((entry) => (
+          <div class="lx__term" id={termId(entry.id)} data-lx-term={entry.id}>
+            <dt>{entry.term}</dt>
+            <dd>
+              {entry.text} Read more:{' '}
+              {entry.links.map((link, index) => (
+                <>
+                  {index > 0 && ', '}
+                  <a href={link.href}>{link.label}</a>
+                </>
+              ))}
+              .
+            </dd>
+          </div>
+        ))
+      }
+    </dl>
+  </details>
 </section>
 
 <style>
@@ -2332,6 +2398,75 @@ const workflowModel = {
     border-top: 3px solid var(--ptah-amber);
   }
 
+  /* A hint sits under its object on hover or keyboard focus, inside the
+   * object's own width, so it never widens a phone-width column. It touches
+   * the object, so a pointer can move onto it and read it without it going
+   * away. A device that cannot hover shows none: a tap opens the panel, which
+   * says more, and a hint left behind by a tap would cover the next object.
+   * For the same reason a focus shows it only where the browser marks focus,
+   * which a click or a tap does not. Escape hides it until the pointer or the
+   * focus leaves. */
+  .lx__has-tip {
+    position: relative;
+  }
+
+  .lx__tip {
+    display: none;
+    position: absolute;
+    z-index: 3;
+    top: 100%;
+    left: 0;
+    right: 0;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 2px;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    font-size: var(--sl-text-xs);
+  }
+
+  @media (hover: hover) {
+    .lx__has-tip:hover > .lx__tip {
+      display: block;
+    }
+  }
+
+  .lx__node:focus-visible + .lx__tip {
+    display: block;
+  }
+
+  .lx__has-tip[data-lx-tip-dismissed] > .lx__tip {
+    display: none;
+  }
+
+  .lx__glossary {
+    margin-top: 1rem;
+    padding-top: var(--lx-gap);
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+
+  .lx__glossary-title {
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .lx__glossary-title:focus-visible {
+    outline: 2px solid var(--sl-color-accent);
+    outline-offset: 2px;
+  }
+
+  .lx__terms {
+    margin: var(--lx-gap) 0 0;
+  }
+
+  .lx__term dt {
+    font-weight: 600;
+  }
+
+  .lx__term dd {
+    margin: 0;
+  }
+
   /* A chip that is a link still reads as a chip. */
   .lx a.lx__chip {
     display: inline-block;
@@ -2784,7 +2919,7 @@ const workflowModel = {
     paths: PathModel[];
     defaultPath: string;
     relations: { from: string; to: string; type: string }[];
-    types: Record<string, { label: string; inverse: string }>;
+    types: Record<string, { label: string; inverse: string; text: string }>;
   };
   type Family = {
     id: string;
@@ -2812,7 +2947,7 @@ const workflowModel = {
   };
   type ObjectMapModel = {
     relations: { from: string; to: string; type: string }[];
-    types: Record<string, { label: string; inverse: string }>;
+    types: Record<string, { label: string; inverse: string; text: string }>;
   };
   type ObjectMap = {
     view: HTMLElement;
@@ -2924,7 +3059,13 @@ const workflowModel = {
       if (found.length === 0) return null;
       const relation = found.find((one) => one.type === 'owns') ?? found[0];
       const type = model.types[relation.type];
-      return { type: relation.type, label: relation.from === selected ? type.label : type.inverse };
+      return { type: relation.type, label: relation.from === selected ? type.label : type.inverse, text: type.text };
+    };
+
+    // An object's hint is its own, or how it relates to the one selected.
+    const hintFor = (node: HTMLElement, relation: { label: string; text: string } | null) => {
+      const tip = node.parentElement?.querySelector<HTMLElement>('[data-lx-tip]');
+      if (tip) tip.textContent = relation ? `${relation.label}: ${relation.text}` : (tip.dataset.lxTip ?? '');
     };
 
     // The URL changes only after the reader chose something, so a page that
@@ -2968,6 +3109,7 @@ const workflowModel = {
         node.setAttribute('aria-pressed', String(id === selected));
         const relation = selected && id !== selected ? relationTo(id) : null;
         const badge = node.querySelector<HTMLElement>('[data-lx-rel]');
+        hintFor(node, relation);
         if (relation) {
           node.dataset.related = relation.type;
           if (badge) badge.textContent = relation.label;
@@ -2977,7 +3119,8 @@ const workflowModel = {
         }
       }
       for (const chip of view.querySelectorAll<HTMLElement>('.lx__involved [data-lx-select]')) {
-        chip.setAttribute('aria-pressed', String(chip.dataset.lxSelect === selected));
+        if (chip.dataset.lxSelect === selected) chip.setAttribute('aria-current', 'true');
+        else chip.removeAttribute('aria-current');
       }
       for (const [id, panel] of objectPanels) panel.hidden = id !== selected;
       if (write) changed();
@@ -3074,7 +3217,7 @@ const workflowModel = {
         else setPath(choice.dataset.lxChoose!, following, true);
       }
       const goto = target.closest<HTMLElement>('[data-lx-goto]');
-      if (goto) {
+      if (goto && inPlace(event, goto)) {
         const stage = goto.dataset.lxGoto!;
         if (walk().includes(stage)) goTo(walk().indexOf(stage));
         else setPath(pathWalking(stage) ?? model.defaultPath, stage);
@@ -3237,7 +3380,13 @@ const workflowModel = {
       if (found.length === 0) return null;
       const relation = found.find((one) => one.type === 'owns') ?? found[0];
       const type = model.types[relation.type];
-      return { type: relation.type, label: relation.from === selected ? type.label : type.inverse };
+      return { type: relation.type, label: relation.from === selected ? type.label : type.inverse, text: type.text };
+    };
+
+    // An object's hint is its own, or how it relates to the one selected.
+    const hintFor = (node: HTMLElement, relation: { label: string; text: string } | null) => {
+      const tip = node.parentElement?.querySelector<HTMLElement>('[data-lx-tip]');
+      if (tip) tip.textContent = relation ? `${relation.label}: ${relation.text}` : (tip.dataset.lxTip ?? '');
     };
 
     const render = (write = true) => {
@@ -3246,6 +3395,7 @@ const workflowModel = {
         node.setAttribute('aria-pressed', String(id === selected));
         const relation = selected && id !== selected ? relationTo(id) : null;
         const badge = node.querySelector<HTMLElement>('[data-lx-rel]');
+        hintFor(node, relation);
         if (relation) {
           node.dataset.related = relation.type;
           if (badge) badge.textContent = relation.label;
@@ -3431,6 +3581,18 @@ const workflowModel = {
     let workflow: Workflow | null = null;
     let viewId = JOURNEY;
 
+    // A move the reader made is a new entry in the browser's history, so
+    // Back returns to the state before it. An address equal to the current
+    // one adds nothing. A sandboxed frame can refuse either call; the explorer
+    // works without them.
+    const remember = (url: URL) => {
+      try {
+        if (url.href !== location.href) history.pushState(history.state, '', url);
+      } catch {
+        // The state still applies; only the address does not follow it.
+      }
+    };
+
     // The default view, family and path write no parameter, so a link from
     // before there were views, families or paths and a link to the defaults
     // are the same link. Each view writes its own parameters and removes the
@@ -3470,9 +3632,9 @@ const workflowModel = {
           url.searchParams.set(STAGE_PARAM, state.stage);
           put(OBJECT_PARAM, state.object);
         }
-        history.replaceState(history.state, '', url);
+        remember(url);
       } catch {
-        // A sandboxed frame can refuse replaceState; the explorer works without it.
+        // An address the page cannot parse leaves the state as it is.
       }
     };
 
@@ -3612,25 +3774,54 @@ const workflowModel = {
     for (const choice of depthChoices) {
       choice.addEventListener('change', () => {
         if (!choice.checked) return;
-        try {
-          const url = new URL(location.href);
-          if (choice.value === defaultDepth) url.searchParams.delete(DEPTH_PARAM);
-          else url.searchParams.set(DEPTH_PARAM, choice.value);
-          history.replaceState(history.state, '', url);
-        } catch {
-          // A sandboxed frame can refuse replaceState; the depth still applies.
-        }
+        const url = new URL(location.href);
+        if (choice.value === defaultDepth) url.searchParams.delete(DEPTH_PARAM);
+        else url.searchParams.set(DEPTH_PARAM, choice.value);
+        remember(url);
       });
     }
-    const asked = new URLSearchParams(location.search).get(DEPTH_PARAM);
-    const depth = knownDepth(asked) ? asked : defaultDepth;
-    for (const choice of depthChoices) choice.checked = choice.value === depth;
+    const restoreDepth = (params: URLSearchParams) => {
+      const asked = params.get(DEPTH_PARAM);
+      const depth = knownDepth(asked) ? asked : defaultDepth;
+      for (const choice of depthChoices) choice.checked = choice.value === depth;
+    };
 
-    open(new URLSearchParams(location.search));
+    const initial = new URLSearchParams(location.search);
+    restoreDepth(initial);
+    open(initial);
     app.hidden = false;
     root.dataset.lxReady = '';
     show();
     renderAll(false);
+
+    // Escape hides every hint on screen without moving the pointer or the
+    // focus; a hint shows again once the pointer or the focus has left its
+    // object and come back.
+    const tipped = [...root.querySelectorAll<HTMLElement>('.lx__has-tip')];
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      for (const item of tipped) {
+        const tip = item.querySelector<HTMLElement>('.lx__tip');
+        if (tip && getComputedStyle(tip).display !== 'none') item.dataset.lxTipDismissed = '';
+      }
+    });
+    for (const item of tipped) {
+      const restore = () => delete item.dataset.lxTipDismissed;
+      item.addEventListener('pointerleave', restore);
+      item.addEventListener('focusout', restore);
+    }
+
+    // Back and Forward restore the state the entry's address names, as a
+    // link does, and write nothing: the entry already holds that address.
+    // A move to an anchor of the page is an entry too, and restores the
+    // state it was made from.
+    window.addEventListener('popstate', () => {
+      const params = new URLSearchParams(location.search);
+      restoreDepth(params);
+      open(params);
+      show();
+      renderAll(false);
+    });
   }
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-lx]')) start(root);

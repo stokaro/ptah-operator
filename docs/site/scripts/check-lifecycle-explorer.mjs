@@ -100,7 +100,24 @@
 //     full stop follows it; every distinct address opens what it names; a
 //     plain click follows it without loading the page again, and a click
 //     with a modifier opens it in a page of its own; and every link the text
-//     makes within the page leads to an entry of the text.
+//     makes within the page leads to an entry of the text; a stage's objects
+//     and an object's stages are links too;
+//   - each move a reader makes is one entry in the browser's history, and
+//     choosing what is already shown none; Back and Forward restore the
+//     state each entry names, a depth included; a reload lands where the
+//     reader was; opening an address adds no entry; and Back from an anchor
+//     of the page leaves the explorer as it was;
+//   - the glossary defines the terms #817 names and only terms the views
+//     use, each with a link to more, and shows every one of them with the
+//     script and without it, under its own id, reached by Tab and opened by
+//     Enter;
+//   - every object of the change journey and of the object map has a short
+//     hint, described as its tooltip, hidden at rest and shown by a pointer
+//     or a keyboard focus; the pointer can move onto it; Escape hides it and
+//     keeps the focus, and it shows again once the focus comes back; a click
+//     or a tap on a touch screen leaves none behind; a related object's hint
+//     says how it relates to the one selected; and at 390px and 320px a
+//     shown hint stays within its object.
 //
 //   node scripts/check-lifecycle-explorer.mjs [--dist <dir>] [--selftest]
 //
@@ -120,8 +137,10 @@ import {
   depthOf,
   depths,
   families,
+  glossary,
   objectMap,
   parentOf,
+  relationTypes,
   walkOf,
   workflow,
 } from '../src/lifecycle-explorer.mjs';
@@ -351,6 +370,214 @@ export function scenarioProblems(models, required = SCENARIO_REQUIRED) {
       );
       if (!reaches) problems.push(`no ${family} path that walks "${scenario}" reaches ${state}`);
     }
+  }
+  return problems;
+}
+
+// The terms #817 asks the glossary to define. The glossary may define more,
+// and every term it defines has to be one the views use.
+export const GLOSSARY_REQUIRED = ['uid', 'generation', 'fingerprint', 'claim', 'realm', 'proof', 'unknown'];
+
+// What the views say, for the glossary to be held to: every family, the
+// audit view, the object map and the composed workflow, and not the glossary.
+export const viewsContent = () => JSON.stringify([families, audit, objectMap, workflow]);
+
+// glossaryProblems judges the glossary: the terms #817 names are there, each
+// entry says what it is and where to read more, no id or term is defined
+// twice, and each term appears in what the views say, so the glossary defines
+// words a reader meets rather than words nobody uses.
+export function glossaryProblems(entries, content, required = GLOSSARY_REQUIRED) {
+  if (entries.length === 0) return ['the glossary is empty'];
+  const problems = [];
+  const ids = new Set();
+  const terms = new Set();
+  for (const entry of entries) {
+    const at = `the glossary entry "${entry.id}"`;
+    if (ids.has(entry.id)) problems.push(`${at} is defined twice`);
+    ids.add(entry.id);
+    const term = (entry.term ?? '').toLowerCase();
+    if (!term) problems.push(`${at} names no term`);
+    else if (terms.has(term)) problems.push(`the term "${entry.term}" is defined twice`);
+    terms.add(term);
+    if (!entry.text) problems.push(`${at} says nothing`);
+    if ((entry.links ?? []).length === 0) problems.push(`${at} links to nothing that says more`);
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (term && !new RegExp(`(^|[^a-z])${escaped}($|[^a-z])`, 'i').test(content)) {
+      problems.push(`the glossary defines "${entry.term}", which no view uses`);
+    }
+  }
+  for (const id of required) if (!ids.has(id)) problems.push(`the glossary does not define "${id}", which #817 names`);
+  return problems;
+}
+
+// glossaryRenderProblems judges the glossary on the page, with the script and
+// without it: every term the model defines is there once, under its own id,
+// with its words, Tab reaches the glossary, and Enter opens it so that every
+// term shows.
+export function glossaryRenderProblems(readings, entries) {
+  const problems = [];
+  for (const [mode, where] of [
+    ['scripted', 'with its script'],
+    ['quiet', 'without its script'],
+  ]) {
+    const reading = readings[mode];
+    if (!reading?.after?.present) {
+      problems.push(`${where} the page has no glossary`);
+      continue;
+    }
+    const { terms } = reading.after;
+    if (terms.length !== entries.length) problems.push(`${where} the glossary shows ${terms.length} terms, and the model defines ${entries.length}`);
+    for (const entry of entries) {
+      const one = terms.find((term) => term.id === entry.id);
+      const at = `${where} the term "${entry.term}"`;
+      if (!one) {
+        problems.push(`${where} the glossary leaves out "${entry.term}"`);
+        continue;
+      }
+      if (one.anchor !== `lx-term-${entry.id}`) problems.push(`${at} has the id ${one.anchor || 'none'}, not lx-term-${entry.id}`);
+      if (one.term !== entry.term) problems.push(`${at} reads "${one.term}"`);
+      if (!one.text.startsWith(entry.text)) problems.push(`${at} says something other than the model`);
+      if (!one.visible) problems.push(`${at} does not show once the glossary is open`);
+    }
+    if (!reading.tabbable) problems.push(`${where} Tab does not reach the glossary`);
+    if (!reading.after.open) problems.push(`${where} Enter does not open the glossary`);
+  }
+  return problems;
+}
+
+// The longest hint a pointer or a focus shows, in characters.
+export const HINT_LIMIT = 100;
+
+// Every object that carries a hint: each family's objects in the change
+// journey and the object map's, keyed as the page keys them.
+export const hintEntries = (familyList, map) => [
+  ...familyList.flatMap((family) =>
+    family.objects.map((object) => ({ key: `${family.id}:${object.id}`, label: object.label, hint: object.hint })),
+  ),
+  ...map.nodes.map((node) => ({ key: `map:${node.id}`, label: node.label, hint: node.hint })),
+];
+
+// hintProblems judges the hints in the model: every object has one, short
+// enough to read where it shows, one phrase rather than a paragraph, and more
+// than its name.
+export function hintProblems(entries) {
+  if (entries.length === 0) return ['no object carries a hint'];
+  const problems = [];
+  for (const { key, label, hint } of entries) {
+    const at = `the object ${key}`;
+    if (!hint) {
+      problems.push(`${at} has no hint`);
+      continue;
+    }
+    if (hint.length > HINT_LIMIT) problems.push(`${at} has a hint of ${hint.length} characters, over ${HINT_LIMIT}`);
+    if (/[.!?](\s|$)/.test(hint)) problems.push(`${at} has a hint of more than one phrase`);
+    if (hint.trim().toLowerCase() === (label ?? '').trim().toLowerCase()) problems.push(`${at} has a hint that only repeats its name`);
+  }
+  return problems;
+}
+
+// What the hint of `other` says while `selected` is selected: how the two
+// relate, read from the selected end, ownership first where both an owner
+// reference and a name join them, as the page reads it.
+export function relatedHint(relations, types, selected, other) {
+  const pair = relations.filter(
+    (relation) => (relation.from === selected && relation.to === other) || (relation.to === selected && relation.from === other),
+  );
+  if (pair.length === 0) return null;
+  const relation = pair.find((one) => one.type === 'owns') ?? pair[0];
+  const type = types.find((one) => one.id === relation.type);
+  return `${relation.from === selected ? type.label : type.inverse}: ${type.text}`;
+}
+
+// hintRenderProblems judges the hints on the page: every object the model
+// gives a hint describes itself with a tooltip that says it, hidden until a
+// pointer or a keyboard focus reaches the object and shown when one does; a
+// pointer can move onto a shown hint without hiding it; Escape hides it and
+// leaves the focus where it was, and it shows again once the focus has left
+// and come back; a click or a tap leaves no hint covering the next object;
+// with an object selected, a related object's hint says how the two relate;
+// and at a phone's width a shown hint stays within its object and widens
+// nothing.
+export function hintRenderProblems(reading, entries) {
+  if (reading.nodes.length === 0) return ['no object with a hint was found on the page'];
+  const problems = [];
+  const want = new Map(entries.map((one) => [one.key, one.hint]));
+  if (reading.nodes.length !== want.size) problems.push(`the page has ${reading.nodes.length} objects with a hint, and the model ${want.size}`);
+  for (const { key, tip } of reading.nodes) {
+    const at = `the object ${key}`;
+    if (!want.has(key)) problems.push(`${at} is not in the model`);
+    if (!tip) {
+      problems.push(`${at} is described by nothing`);
+      continue;
+    }
+    if (tip.role !== 'tooltip') problems.push(`${at} is described by ${tip.role ? `a ${tip.role}` : 'an element with no role'}, not a tooltip`);
+    if (tip.text !== want.get(key)) problems.push(`${at} has the hint "${tip.text}", not "${want.get(key)}"`);
+    if (tip.display !== 'none') problems.push(`${at} shows its hint before anything points at it`);
+  }
+  const { hovered, focused, clicked, tapped } = reading;
+  if (!hovered?.shown) problems.push(`pointing at ${hovered?.key ?? 'an object'} does not show its hint`);
+  else {
+    if (!hovered.hoverable) problems.push(`moving the pointer onto the hint of ${hovered.key} hides it`);
+    if (!hovered.escaped) problems.push(`Escape does not hide the hint of ${hovered.key} under the pointer`);
+  }
+  if (!focused?.shown) problems.push(`focusing ${focused?.key ?? 'an object'} with the keyboard does not show its hint`);
+  else {
+    if (!focused.escaped) problems.push(`Escape does not hide the hint of ${focused.key} with the focus on it`);
+    if (!focused.kept) problems.push(`Escape moves the focus off ${focused.key}`);
+    if (!focused.back) problems.push(`the hint of ${focused.key} does not show again once the focus left and came back`);
+  }
+  if (!clicked) problems.push('no object was clicked');
+  else if (clicked.shown) problems.push(`clicking ${clicked.key} leaves its hint on screen once the pointer has moved away`);
+  if (!tapped) problems.push('no object was tapped');
+  else if (tapped.shown) problems.push(`tapping ${tapped.key} on a touch screen leaves its hint over the next object`);
+  if (!reading.related) problems.push('no related object’s hint was read');
+  else if (reading.related.text !== reading.related.want) {
+    problems.push(`with ${reading.related.selected} selected, ${reading.related.key} has the hint "${reading.related.text}", not "${reading.related.want}"`);
+  }
+  if ((reading.narrow ?? []).length === 0) problems.push('no hint was measured at a narrow width');
+  for (const one of reading.narrow ?? []) {
+    if (!one.shown) problems.push(`at ${one.width}px focusing ${one.key} does not show its hint`);
+    if (one.page > one.viewport) problems.push(`at ${one.width}px the hint of ${one.key} widens the page to ${one.page}px`);
+    if (!one.inside) problems.push(`at ${one.width}px the hint of ${one.key} reaches past its object`);
+  }
+  return problems;
+}
+
+// historyProblems judges the explorer against the browser's history: a move
+// the reader makes is one entry and choosing what is already shown is none;
+// Back and Forward restore the state each entry names; a reload lands where
+// the reader was; opening an address adds nothing; a depth chosen is a move
+// like any other; and Back from an anchor of the page leaves the explorer as
+// it was. Each move has to change something, or Back would prove nothing.
+export function historyProblems(reading) {
+  const problems = [];
+  const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const say = (state) =>
+    Object.entries(state)
+      .map(([key, value]) => `${key} ${value ?? 'none'}`)
+      .join(', ');
+  const { entries, states } = reading;
+  if (entries.opened !== entries.atStart) problems.push(`opening an address adds ${entries.opened - entries.atStart} entries to the history`);
+  if (entries.moved !== entries.opened + 1) problems.push(`a move adds ${entries.moved - entries.opened} entries to the history, not 1`);
+  if (entries.again !== entries.moved) problems.push(`choosing the stage already shown adds ${entries.again - entries.moved} entries to the history`);
+  for (const [name, got, want] of [
+    ['Back after choosing an object', states.back, states.moved],
+    ['Back again', states.backAgain, states.start],
+    ['Forward', states.forward, states.moved],
+    ['a reload', states.reloaded, states.forward],
+    ['Back after choosing a depth', states.depthBack, states.beforeDepth],
+    ['Back from an anchor of the page', states.anchorBack, states.beforeAnchor],
+  ]) {
+    if (got?.left) problems.push(`${name} leaves the explorer for ${got.left}`);
+    else if (!got || !want) problems.push(`${name} was not measured`);
+    else if (!same(got, want)) problems.push(`${name} shows ${say(got)}, not ${say(want)}`);
+  }
+  for (const [name, after, before] of [
+    ['choosing a stage', states.moved, states.start],
+    ['choosing an object', states.selected, states.moved],
+    ['choosing a depth', states.depthChosen, states.beforeDepth],
+  ]) {
+    if (after && before && same(after, before)) problems.push(`${name} changed nothing, so Back after it proves nothing`);
   }
   return problems;
 }
@@ -1732,7 +1959,9 @@ export function workflowKeyboardProblems(reading) {
 // from the built page. In the interactive view each is an anchor whose
 // address names what it opens, with the value it selects in place; no
 // related object is left a button, which no address opens; a related name
-// stays inline, so the full stop after it cannot wrap alone; and in the text
+// stays inline, so the full stop after it cannot wrap alone, while a chip
+// stands alone in its row; a stage named in an object's panel is a link to
+// that stage; and in the text
 // every link within the page leads somewhere a reader without JavaScript
 // sees: an entry of the text or a heading of the page, never the hidden
 // view. The page's ids are each used once, or a link to one leads to
@@ -1746,10 +1975,10 @@ export function anchorProblems(reading, home) {
       problems.push(`without JavaScript the link ${href} leads ${target === 'app' ? 'into the hidden view' : 'nowhere'}`);
     }
   }
-  for (const kind of ['select', 'source', 'node', 'open']) {
+  for (const kind of ['select', 'stage', 'source', 'node', 'open']) {
     if (!app.some((one) => one.kind === kind)) problems.push(`the interactive view has no ${kind} link`);
   }
-  for (const { href, kind, value, family, display } of app) {
+  for (const { href, kind, value, family, display, chip } of app) {
     const at = `the ${kind} link ${href}`;
     const url = new URL(href, 'https://site.invalid/page/');
     const params = url.searchParams;
@@ -1760,6 +1989,12 @@ export function anchorProblems(reading, home) {
       if (named !== (family === home ? null : family)) problems.push(`${at} names the family ${named ?? 'none'}, and sits in ${family}`);
       if (params.has('lx-view')) problems.push(`${at} names a view`);
     }
+    if (kind === 'stage') {
+      if (params.get('lx-stage') !== value) problems.push(`${at} names ${params.get('lx-stage') ?? 'no stage'}, and goes to ${value}`);
+      const named = params.get('lx-family');
+      if (named !== (family === home ? null : family)) problems.push(`${at} names the family ${named ?? 'none'}, and sits in ${family}`);
+      if (params.has('lx-view') || params.has('lx-object')) problems.push(`${at} names more than a stage`);
+    }
     if (kind === 'source' && (params.get('lx-view') !== 'audit' || params.get('lx-source') !== value)) {
       problems.push(`${at} does not name the audit view and ${value}`);
     }
@@ -1767,7 +2002,7 @@ export function anchorProblems(reading, home) {
       problems.push(`${at} does not name the object map and ${value}`);
     }
     if (kind === 'open' && [...params.keys()].length === 0) problems.push(`${at} names nothing to open`);
-    if (kind !== 'source' && kind !== 'open' && display !== 'inline') problems.push(`${at} is laid out ${display}, not inline`);
+    if (kind !== 'source' && kind !== 'open' && !chip && display !== 'inline') problems.push(`${at} is laid out ${display}, not inline`);
   }
   if (buttons > 0) problems.push(`${buttons} related objects or sources are buttons, which no address opens`);
   for (const id of duplicates) problems.push(`the id "${id}" is used twice on the page`);
@@ -1813,7 +2048,7 @@ export function anchorLandingProblems(readings, home) {
 // address in a new page while the view it was made in stays as it was.
 export function inPlaceProblems(readings) {
   const problems = [];
-  for (const kind of ['select', 'source', 'node', 'open']) {
+  for (const kind of ['select', 'stage', 'source', 'node', 'open']) {
     if (!readings.plain.some((one) => one.kind === kind)) problems.push(`no ${kind} link was followed by a click`);
   }
   for (const { kind, href, reloaded, landed, kept, search } of readings.plain) {
@@ -3427,6 +3662,8 @@ function selftest() {
         { href: '?lx-view=audit&lx-source=a-one#lifecycle-explorer', kind: 'source', value: 'a-one', display: 'inline-block' },
         { href: '?lx-view=objects&lx-node=o-job#lifecycle-explorer', kind: 'node', value: 'o-job', display: 'inline' },
         { href: '?lx-view=objects&lx-node=o-res#lifecycle-explorer', kind: 'open', value: null, display: 'inline-block' },
+        { href: '?lx-stage=two#lifecycle-explorer', kind: 'stage', value: 'two', family: 'one', display: 'block', chip: true },
+        { href: '?lx-object=b#lifecycle-explorer', kind: 'select', value: 'b', family: 'one', display: 'block', chip: true },
       ],
       buttons: 0,
       duplicates: [],
@@ -3454,6 +3691,11 @@ function selftest() {
     ['a link that names nothing', spoilAnchor(4, { href: '#lifecycle-explorer' }), 'names nothing to open'],
     ['a relation link laid out as a block', spoilAnchor(3, { display: 'inline-block' }), 'is laid out inline-block, not inline'],
     ['a related object left a button', spoilAnchors({ buttons: 2 }), '2 related objects or sources are buttons'],
+    ['no stage link', spoilAnchors({ app: anchorsThatHold.anchors.app.filter((one) => one.kind !== 'stage') }), 'has no stage link'],
+    ['a stage link to another stage', spoilAnchor(5, { href: '?lx-stage=three#lifecycle-explorer' }), 'names three, and goes to two'],
+    ['a stage link that also selects', spoilAnchor(5, { href: '?lx-stage=two&lx-object=a#lifecycle-explorer' }), 'names more than a stage'],
+    ['a stage link without its family', spoilAnchor(5, { family: 'two' }), 'names the family none, and sits in two'],
+    ['a block that is not a chip', spoilAnchor(6, { chip: false }), 'is laid out block, not inline'],
     ['an id used twice', spoilAnchors({ duplicates: ['lx-text-a'] }), 'the id "lx-text-a" is used twice'],
   ]) {
     refuses(name, anchorProblems(spoiled, 'one'), want);
@@ -3483,6 +3725,7 @@ function selftest() {
   const clicksThatHold = {
     plain: [
       plain('select', '?lx-object=a#lifecycle-explorer', { kept: true, search: '?lx-stage=two&lx-object=a' }),
+      plain('stage', '?lx-stage=three#lifecycle-explorer'),
       plain('source', '?lx-view=audit&lx-source=a-one#lifecycle-explorer'),
       plain('node', '?lx-view=objects&lx-node=o-job#lifecycle-explorer'),
       plain('open', '?lx-view=objects&lx-node=o-res#lifecycle-explorer'),
@@ -3492,10 +3735,11 @@ function selftest() {
   const spoilClick = (index, change) => ({ ...clicksThatHold, plain: clicksThatHold.plain.map((one, at) => (at === index ? { ...one, ...change } : one)) });
   if (inPlaceProblems(clicksThatHold).length !== 0) fail('inPlaceProblems refused clicks that hold', inPlaceProblems(clicksThatHold));
   for (const [name, spoiled, want] of [
-    ['a link that loads the page', spoilClick(3, { reloaded: true }), 'loads the page again'],
-    ['a link that opens nothing', spoilClick(2, { landed: false }), 'does not open what it names'],
+    ['a link that loads the page', spoilClick(4, { reloaded: true }), 'loads the page again'],
+    ['a link that opens nothing', spoilClick(3, { landed: false }), 'does not open what it names'],
+    ['a stage link never clicked', { ...clicksThatHold, plain: clicksThatHold.plain.filter((one) => one.kind !== 'stage') }, 'no stage link was followed by a click'],
     ['a relation that leaves the stage', spoilClick(0, { kept: false }), 'does not keep the stage it was made at'],
-    ['a view opened with another address', spoilClick(3, { search: '?lx-view=objects' }), 'writes ?lx-view=objects, not ?lx-view=objects&lx-node=o-res'],
+    ['a view opened with another address', spoilClick(4, { search: '?lx-view=objects' }), 'writes ?lx-view=objects, not ?lx-view=objects&lx-node=o-res'],
     ['a kind of link never clicked', { ...clicksThatHold, plain: clicksThatHold.plain.slice(1) }, 'no select link was followed by a click'],
     ['no click with a modifier', { ...clicksThatHold, modified: null }, 'no link was clicked with a modifier'],
     ['a modified click that opens no page', { ...clicksThatHold, modified: { ...clicksThatHold.modified, opened: null } }, 'opens no page'],
@@ -3548,6 +3792,175 @@ function selftest() {
     ['a scenario no family walks', scenarioModels, { ...scenarioRequired, ids: [...scenarioRequired.ids, 'later'] }, 'no family walks the scenario "later"'],
   ]) {
     refuses(name, scenarioProblems(models, required), want);
+  }
+
+  // The glossary: its model against what the views say, and on the page.
+  const glossaryThatHolds = [
+    { id: 'uid', term: 'UID', text: 'An identifier.', links: [{ label: 'More', href: '#more' }] },
+    { id: 'claim', term: 'Claim', text: 'A decision.', links: [{ label: 'More', href: '#more' }] },
+  ];
+  const glossaryContent = 'The plan names the schema by UID, and the claim says which Job.';
+  const glossaryRequired = ['uid', 'claim'];
+  if (glossaryProblems(glossaryThatHolds, glossaryContent, glossaryRequired).length !== 0) {
+    fail('glossaryProblems refused a glossary that holds', glossaryProblems(glossaryThatHolds, glossaryContent, glossaryRequired));
+  }
+  if (glossaryProblems(glossary, viewsContent()).length !== 0) fail('the explorer’s glossary', glossaryProblems(glossary, viewsContent()));
+  const spoilTerm = (index, change) => glossaryThatHolds.map((one, at) => (at === index ? { ...one, ...change } : one));
+  for (const [name, entries, content, want] of [
+    ['an empty glossary', [], glossaryContent, 'the glossary is empty'],
+    ['a term #817 names left out', glossaryThatHolds.slice(1), glossaryContent, 'does not define "uid", which #817 names'],
+    ['a term nobody uses', spoilTerm(1, { term: 'Epoch' }), glossaryContent, 'defines "Epoch", which no view uses'],
+    ['a term found only inside a longer word', spoilTerm(0, { term: 'Ui' }), glossaryContent, 'defines "Ui", which no view uses'],
+    ['an entry with no words', spoilTerm(0, { text: '' }), glossaryContent, 'the glossary entry "uid" says nothing'],
+    ['an entry with no link', spoilTerm(0, { links: [] }), glossaryContent, 'links to nothing that says more'],
+    ['an entry with no term', spoilTerm(0, { term: '' }), glossaryContent, 'names no term'],
+    ['an id used twice', spoilTerm(1, { id: 'uid' }), glossaryContent, 'the glossary entry "uid" is defined twice'],
+    ['a term defined twice', spoilTerm(1, { term: 'uid' }), glossaryContent, 'the term "uid" is defined twice'],
+  ]) {
+    refuses(name, glossaryProblems(entries, content, glossaryRequired), want);
+  }
+
+  const shownTerms = glossaryThatHolds.map((one) => ({ id: one.id, anchor: `lx-term-${one.id}`, term: one.term, text: `${one.text} Read more: More.`, visible: true }));
+  const glossaryReading = { after: { present: true, open: true, terms: shownTerms }, tabbable: true };
+  const glossaryReadings = { scripted: glossaryReading, quiet: glossaryReading };
+  if (glossaryRenderProblems(glossaryReadings, glossaryThatHolds).length !== 0) {
+    fail('glossaryRenderProblems refused a glossary that holds', glossaryRenderProblems(glossaryReadings, glossaryThatHolds));
+  }
+  const spoilGlossary = (mode, change, termChange) => ({
+    ...glossaryReadings,
+    [mode]: {
+      ...glossaryReading,
+      ...change,
+      after: { ...glossaryReading.after, ...(change.after ?? {}), terms: termChange ? shownTerms.map((one, at) => (at === 0 ? { ...one, ...termChange } : one)) : (change.after?.terms ?? shownTerms) },
+    },
+  });
+  for (const [name, readings, want] of [
+    ['no glossary without the script', spoilGlossary('quiet', { after: { present: false } }), 'without its script the page has no glossary'],
+    ['a term left out', spoilGlossary('scripted', { after: { terms: shownTerms.slice(1) } }), 'with its script the glossary leaves out "UID"'],
+    ['a term under another id', spoilGlossary('quiet', {}, { anchor: 'uid' }), 'has the id uid, not lx-term-uid'],
+    ['a term with other words', spoilGlossary('scripted', {}, { text: 'Something else.' }), 'says something other than the model'],
+    ['a term that stays hidden', spoilGlossary('scripted', {}, { visible: false }), 'does not show once the glossary is open'],
+    ['a glossary Tab cannot reach', spoilGlossary('scripted', { tabbable: false }), 'with its script Tab does not reach the glossary'],
+    ['a glossary Enter does not open', spoilGlossary('quiet', { after: { open: false } }), 'without its script Enter does not open the glossary'],
+  ]) {
+    refuses(name, glossaryRenderProblems(readings, glossaryThatHolds), want);
+  }
+
+  // The hints: in the model, and on the page.
+  const hintsThatHold = [
+    { key: 'one:a', label: 'Alpha', hint: 'The first object, which the others name' },
+    { key: 'map:o-a', label: 'Alpha', hint: 'The same object, in the map' },
+  ];
+  if (hintProblems(hintsThatHold).length !== 0) fail('hintProblems refused hints that hold', hintProblems(hintsThatHold));
+  if (hintProblems(hintEntries(families, objectMap)).length !== 0) fail('the explorer’s hints', hintProblems(hintEntries(families, objectMap)));
+  const spoilHint = (change) => hintsThatHold.map((one, at) => (at === 0 ? { ...one, ...change } : one));
+  for (const [name, entries, want] of [
+    ['no hints at all', [], 'no object carries a hint'],
+    ['an object with no hint', spoilHint({ hint: undefined }), 'the object one:a has no hint'],
+    ['a hint too long to read', spoilHint({ hint: 'x'.repeat(HINT_LIMIT + 1) }), `over ${HINT_LIMIT}`],
+    ['a hint of two sentences', spoilHint({ hint: 'The first object. The others name it' }), 'more than one phrase'],
+    ['a hint that repeats the name', spoilHint({ hint: 'alpha' }), 'only repeats its name'],
+  ]) {
+    refuses(name, hintProblems(entries), want);
+  }
+  const relationsHere = [
+    { from: 'a', to: 'b', type: 'references' },
+    { from: 'a', to: 'b', type: 'owns' },
+    { from: 'c', to: 'a', type: 'references' },
+  ];
+  const typesHere = [
+    { id: 'owns', label: 'Owns', inverse: 'Owned by', text: 'An owner reference.' },
+    { id: 'references', label: 'Names', inverse: 'Named by', text: 'A name.' },
+  ];
+  for (const [name, got, want] of [
+    ['ownership first', relatedHint(relationsHere, typesHere, 'a', 'b'), 'Owns: An owner reference.'],
+    ['read from the selected end', relatedHint(relationsHere, typesHere, 'b', 'a'), 'Owned by: An owner reference.'],
+    ['the other direction', relatedHint(relationsHere, typesHere, 'a', 'c'), 'Named by: A name.'],
+    ['no relation', relatedHint(relationsHere, typesHere, 'b', 'c'), null],
+  ]) {
+    if (got !== want) fail(`relatedHint, ${name}`, [got, want]);
+  }
+  const hintReading = {
+    nodes: hintsThatHold.map((one) => ({ key: one.key, tip: { role: 'tooltip', text: one.hint, display: 'none' } })),
+    hovered: { key: 'one:a', shown: true, hoverable: true, escaped: true },
+    focused: { key: 'one:a', shown: true, escaped: true, kept: true, back: true },
+    clicked: { key: 'one:a', shown: false },
+    tapped: { key: 'one:a', shown: false },
+    related: { selected: 'a', key: 'one:b', text: 'Owns: An owner reference.', want: 'Owns: An owner reference.' },
+    narrow: [{ width: 320, key: 'one:a', shown: true, inside: true, page: 320, viewport: 320 }],
+  };
+  if (hintRenderProblems(hintReading, hintsThatHold).length !== 0) fail('hintRenderProblems refused hints that hold', hintRenderProblems(hintReading, hintsThatHold));
+  const spoilNode = (change) => ({ ...hintReading, nodes: hintReading.nodes.map((one, at) => (at === 0 ? { ...one, ...change } : one)) });
+  const spoilTip = (change) => spoilNode({ tip: { ...hintReading.nodes[0].tip, ...change } });
+  const spoilNarrow = (change) => ({ ...hintReading, narrow: [{ ...hintReading.narrow[0], ...change }] });
+  for (const [name, reading, want] of [
+    ['no object found', { ...hintReading, nodes: [] }, 'no object with a hint was found on the page'],
+    ['an object the page leaves out', { ...hintReading, nodes: hintReading.nodes.slice(1) }, 'the page has 1 objects with a hint, and the model 2'],
+    ['an object described by nothing', spoilNode({ tip: null }), 'the object one:a is described by nothing'],
+    ['a hint that is no tooltip', spoilTip({ role: null }), 'an element with no role, not a tooltip'],
+    ['a hint with other words', spoilTip({ text: 'Something else' }), 'has the hint "Something else"'],
+    ['a hint shown at rest', spoilTip({ display: 'block' }), 'shows its hint before anything points at it'],
+    ['a pointer that shows nothing', { ...hintReading, hovered: { key: 'one:a', shown: false } }, 'pointing at one:a does not show its hint'],
+    ['a hint the pointer cannot reach', { ...hintReading, hovered: { ...hintReading.hovered, hoverable: false } }, 'moving the pointer onto the hint of one:a hides it'],
+    ['a hovered hint Escape leaves', { ...hintReading, hovered: { ...hintReading.hovered, escaped: false } }, 'Escape does not hide the hint of one:a under the pointer'],
+    ['a focus that shows nothing', { ...hintReading, focused: { key: 'one:a', shown: false } }, 'focusing one:a with the keyboard does not show its hint'],
+    ['a focused hint Escape leaves', { ...hintReading, focused: { ...hintReading.focused, escaped: false } }, 'Escape does not hide the hint of one:a with the focus on it'],
+    ['an Escape that moves the focus', { ...hintReading, focused: { ...hintReading.focused, kept: false } }, 'Escape moves the focus off one:a'],
+    ['a hint Escape hides for good', { ...hintReading, focused: { ...hintReading.focused, back: false } }, 'does not show again once the focus left and came back'],
+    ['a click that leaves a hint', { ...hintReading, clicked: { key: 'one:a', shown: true } }, 'clicking one:a leaves its hint on screen'],
+    ['no click measured', { ...hintReading, clicked: null }, 'no object was clicked'],
+    ['a tap that leaves a hint', { ...hintReading, tapped: { key: 'one:a', shown: true } }, 'tapping one:a on a touch screen leaves its hint over the next object'],
+    ['no tap measured', { ...hintReading, tapped: null }, 'no object was tapped'],
+    ['a related hint that keeps its own words', { ...hintReading, related: { ...hintReading.related, text: 'The second object' } }, 'with a selected, one:b has the hint "The second object"'],
+    ['no related hint read', { ...hintReading, related: null }, 'no related object’s hint was read'],
+    ['no narrow width measured', { ...hintReading, narrow: [] }, 'no hint was measured at a narrow width'],
+    ['a hint hidden on a phone', spoilNarrow({ shown: false }), 'at 320px focusing one:a does not show its hint'],
+    ['a hint that widens the page', spoilNarrow({ page: 340 }), 'widens the page to 340px'],
+    ['a hint past its object', spoilNarrow({ inside: false }), 'reaches past its object'],
+  ]) {
+    refuses(name, hintRenderProblems(reading, hintsThatHold), want);
+  }
+
+  // The browser's history.
+  const historyState = (stage, object = null, depth = 'implementation') => ({ view: 'journey', family: 'one', path: 'main', stage, object, depth });
+  const historyThatHolds = {
+    entries: { atStart: 1, opened: 1, moved: 2, again: 2 },
+    states: {
+      start: historyState('two'),
+      moved: historyState('four'),
+      selected: historyState('four', 'a'),
+      back: historyState('four'),
+      backAgain: historyState('two'),
+      forward: historyState('four'),
+      reloaded: historyState('four'),
+      beforeDepth: historyState('four'),
+      depthChosen: historyState('four', null, 'overview'),
+      depthBack: historyState('four'),
+      beforeAnchor: historyState('three'),
+      anchorBack: historyState('three'),
+    },
+  };
+  if (historyProblems(historyThatHolds).length !== 0) fail('historyProblems refused a history that holds', historyProblems(historyThatHolds));
+  const spoilEntries = (change) => ({ ...historyThatHolds, entries: { ...historyThatHolds.entries, ...change } });
+  const spoilState = (change) => ({ ...historyThatHolds, states: { ...historyThatHolds.states, ...change } });
+  for (const [name, reading, want] of [
+    ['an address that adds an entry', spoilEntries({ opened: 2, moved: 3, again: 3 }), 'opening an address adds 1 entries to the history'],
+    ['a move that replaces the entry', spoilEntries({ moved: 1, again: 1 }), 'a move adds 0 entries to the history, not 1'],
+    ['the same stage that adds an entry', spoilEntries({ again: 3 }), 'choosing the stage already shown adds 1 entries'],
+    ['Back that keeps the object', spoilState({ back: historyState('four', 'a') }), 'Back after choosing an object shows'],
+    ['Back that skips a move', spoilState({ back: historyState('two') }), 'Back after choosing an object shows view journey, family one, path main, stage two'],
+    ['a second Back that stays', spoilState({ backAgain: historyState('four') }), 'Back again shows'],
+    ['Forward that does nothing', spoilState({ forward: historyState('two') }), 'Forward shows'],
+    ['a reload that starts afresh', spoilState({ reloaded: historyState('one') }), 'a reload shows'],
+    ['a depth Back does not restore', spoilState({ depthBack: historyState('four', null, 'overview') }), 'Back after choosing a depth shows'],
+    ['Back from an anchor that moves the explorer', spoilState({ anchorBack: historyState('one') }), 'Back from an anchor of the page shows'],
+    ['an anchor never followed', spoilState({ anchorBack: undefined }), 'Back from an anchor of the page was not measured'],
+    ['Back that leaves the page', spoilState({ back: { left: 'about:blank' }, backAgain: undefined }), 'Back after choosing an object leaves the explorer for about:blank'],
+    ['what Back left unmeasured', spoilState({ back: { left: 'about:blank' }, backAgain: undefined }), 'Back again was not measured'],
+    ['a move that changed nothing', spoilState({ moved: historyState('two'), back: historyState('two'), forward: historyState('two'), reloaded: historyState('two') }), 'choosing a stage changed nothing'],
+    ['a depth that changed nothing', spoilState({ depthChosen: historyState('four') }), 'choosing a depth changed nothing'],
+  ]) {
+    refuses(name, historyProblems(reading), want);
   }
 
   // The depths: the model, what the page tags, what each depth shows, the
@@ -3748,7 +4161,9 @@ function selftest() {
       'the composed workflow: its model against #817, its text, its view, every stage and stop, how a stop clears, its links ' +
       'and its keyboard, and the links between objects, sources and views: their addresses, where each lands and how a click ' +
       'follows it, and the depths: their model, the parts each entry carries, what each depth shows with and without the ' +
-      'script, the address, what a move keeps, and the keyboard)',
+      'script, the address, what a move keeps, and the keyboard, the glossary: its terms against #817 and the views, and on ' +
+      'the page with and without the script, the hints: in the model, at rest, on a pointer, on a focus, for a related ' +
+      'object and at a phone width, and the browser history: entries, Back, Forward, a reload, a depth and an anchor)',
   );
 }
 
@@ -4828,7 +5243,9 @@ const readAnchors = (page) =>
     const kindOf = (anchor) =>
       anchor.dataset.lxSelect !== undefined
         ? ['select', anchor.dataset.lxSelect]
-        : anchor.dataset.lxSourceSelect !== undefined
+        : anchor.dataset.lxGoto !== undefined
+          ? ['stage', anchor.dataset.lxGoto]
+          : anchor.dataset.lxSourceSelect !== undefined
           ? ['source', anchor.dataset.lxSourceSelect]
           : anchor.dataset.lxNodeSelect !== undefined
             ? ['node', anchor.dataset.lxNodeSelect]
@@ -4851,9 +5268,12 @@ const readAnchors = (page) =>
             value,
             family: anchor.closest('[data-lx-family-view]')?.dataset.lxFamilyView ?? null,
             display: getComputedStyle(anchor).display,
+            chip: anchor.classList.contains('lx__chip'),
           };
         }),
-        buttons: app.querySelectorAll('button[data-lx-node-select], button[data-lx-source-select], .lx__relations button[data-lx-select]').length,
+        buttons: app.querySelectorAll(
+          'button[data-lx-node-select], button[data-lx-source-select], button[data-lx-select], button[data-lx-goto]',
+        ).length,
         duplicates: [...new Set(ids.filter((id) => document.querySelectorAll(`#${CSS.escape(id)}`).length > 1))],
       },
     };
@@ -4888,7 +5308,9 @@ async function measureAnchors(browser, url, models, flow) {
       const link = page.locator(selector).filter({ visible: true }).first();
       if ((await link.count()) === 0) return;
       const href = await link.getAttribute('href');
-      const value = await link.evaluate((anchor) => anchor.dataset.lxSelect ?? anchor.dataset.lxSourceSelect ?? anchor.dataset.lxNodeSelect ?? null);
+      const value = await link.evaluate(
+        (anchor) => anchor.dataset.lxSelect ?? anchor.dataset.lxGoto ?? anchor.dataset.lxSourceSelect ?? anchor.dataset.lxNodeSelect ?? null,
+      );
       await mark();
       await link.click();
       const reloaded = !(await marked());
@@ -4909,6 +5331,13 @@ async function measureAnchors(browser, url, models, flow) {
       await follow('select', `${VIEW} [data-lx-object-panel="${object}"] a[data-lx-select]`, (got, href, value) => ({
         landed: got.object === value,
         kept: got.stage === first.stages[1].id,
+      })),
+    );
+    // A stage the related object is in, other than the one shown, from its
+    // panel.
+    push(
+      await follow('stage', `${VIEW} [data-lx-object-panel]:not([hidden]) a[data-lx-goto]:not([data-lx-goto="${first.stages[1].id}"])`, (got, href, value) => ({
+        landed: got.stage === value,
       })),
     );
     // An identity's source in the audit view.
@@ -5216,6 +5645,244 @@ async function measureDepthsWithoutScript(browser, url) {
   }
 }
 
+// Let a history traversal's popstate run before the page is read.
+const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+// The browser's history, driven: an address opened, moves made, Back,
+// Forward, a reload, a depth chosen and an anchor of the page followed. A
+// Back or a Forward that leaves the explorer ends the measurement there, with
+// the address it reached recorded, so what was not measured says so.
+async function measureHistory(browser, url, models) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  await page.addInitScript(() => {
+    window.lxEntriesAtStart = history.length;
+  });
+  const LEFT = new Error('the history left the explorer');
+  const counts = {};
+  const states = {};
+  try {
+    const [first] = models;
+    const entries = () => page.evaluate(() => history.length);
+    const at = async () => {
+      const got = await readViews(page);
+      return { view: got.view, family: got.family, path: got.path, stage: got.stage, object: got.object, depth: await readDepth(page) };
+    };
+    const traverse = async (name, move) => {
+      await move();
+      const on = await page.evaluate(() => Boolean(document.querySelector('#lifecycle-explorer[data-lx-ready]'))).catch(() => false);
+      if (!on) {
+        states[name] = { left: page.url() };
+        throw LEFT;
+      }
+      await settle(page);
+      states[name] = await at();
+    };
+    const back = (name) => traverse(name, () => page.goBack());
+    await open(page, `${url}?lx-stage=${first.stages[1].id}`);
+    counts.atStart = await page.evaluate(() => window.lxEntriesAtStart);
+    counts.opened = await entries();
+    states.start = await at();
+    const step = page.locator(`${VISIBLE_STEP}[data-lx-step="${first.stages[3].id}"]`);
+    await step.click();
+    states.moved = await at();
+    counts.moved = await entries();
+    await step.click();
+    counts.again = await entries();
+    await page.locator(`${VIEW} button[data-lx-object="${first.objects[0].id}"]`).click();
+    states.selected = await at();
+    await back('back');
+    await back('backAgain');
+    await traverse('forward', () => page.goForward());
+    await page.reload();
+    await page.locator(`${ROOT}[data-lx-ready]`).waitFor();
+    states.reloaded = await at();
+
+    states.beforeDepth = await at();
+    await chooseDepth(page, depths[0].id);
+    states.depthChosen = await at();
+    await back('depthBack');
+
+    // A stage whose panel links an anchor of this page.
+    const anchored = first.stages.find((stage) => (stage.links ?? []).some((link) => link.href.startsWith('#')));
+    if (anchored) {
+      await page.locator(`${VISIBLE_STEP}[data-lx-step="${anchored.id}"]`).click();
+      states.beforeAnchor = await at();
+      const href = anchored.links.find((link) => link.href.startsWith('#')).href;
+      await page.locator(`${VIEW} [data-lx-stage-panel="${anchored.id}"] a[href="${href}"]`).click();
+      await settle(page);
+      await back('anchorBack');
+    }
+  } catch (error) {
+    if (error !== LEFT) throw error;
+  } finally {
+    await context.close();
+  }
+  return { reading: { entries: counts, states }, thrown };
+}
+
+// The glossary, with the script and without it: what it holds, whether Tab
+// can reach it, and what Enter on it opens.
+async function measureGlossary(browser, url) {
+  const SUMMARY = `${ROOT} [data-lx-glossary] > summary`;
+  const read = (page) =>
+    page.evaluate(() => {
+      const glossary = document.querySelector('#lifecycle-explorer [data-lx-glossary]');
+      return {
+        present: Boolean(glossary),
+        open: glossary?.open ?? false,
+        terms: [...(glossary?.querySelectorAll('[data-lx-term]') ?? [])].map((one) => ({
+          id: one.dataset.lxTerm,
+          anchor: one.id,
+          term: one.querySelector('dt')?.textContent.trim() ?? '',
+          text: one.querySelector('dd')?.textContent.replace(/\s+/g, ' ').trim() ?? '',
+          visible: one.getClientRects().length > 0,
+        })),
+      };
+    });
+  const readings = {};
+  for (const scripted of [true, false]) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, javaScriptEnabled: scripted });
+    const page = await context.newPage();
+    try {
+      await open(page, url, { scripted });
+      const summary = page.locator(SUMMARY);
+      if ((await summary.count()) === 0) {
+        readings[scripted ? 'scripted' : 'quiet'] = { after: await read(page), tabbable: false };
+        continue;
+      }
+      const tabbable = await summary.evaluate((element) => element.tabIndex >= 0);
+      await summary.focus();
+      await page.keyboard.press('Enter');
+      readings[scripted ? 'scripted' : 'quiet'] = { after: await read(page), tabbable };
+    } finally {
+      await context.close();
+    }
+  }
+  return readings;
+}
+
+// The hints: every object's at rest, one shown by a pointer and one by a
+// focus, a related object's with another selected, and one shown at each
+// narrow width.
+async function measureHints(browser, url, models) {
+  const BUTTONS = `${ROOT} button[data-lx-object], ${ROOT} button[data-lx-node]`;
+  const tipOf = (page, selector) =>
+    page.locator(selector).evaluate((button) => {
+      const tip = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+      const item = button.closest('li');
+      if (!tip) return { shown: false, text: null, inside: false };
+      const box = tip.getBoundingClientRect();
+      const around = item?.getBoundingClientRect();
+      return {
+        shown: getComputedStyle(tip).display !== 'none',
+        text: tip.textContent.trim(),
+        inside: Boolean(around) && box.left >= around.left - 1 && box.right <= around.right + 1,
+      };
+    });
+  const thrown = [];
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  const reading = {};
+  try {
+    const [first] = models;
+    await open(page, url);
+    reading.nodes = await page.evaluate((selector) => {
+      return [...document.querySelectorAll(selector)].map((button) => {
+        const tip = document.getElementById(button.getAttribute('aria-describedby') ?? '');
+        const scope = button.dataset.lxNode !== undefined ? 'map' : (button.closest('[data-lx-family-view]')?.dataset.lxFamilyView ?? 'none');
+        return {
+          key: `${scope}:${button.dataset.lxObject ?? button.dataset.lxNode}`,
+          tip: tip ? { role: tip.getAttribute('role'), text: tip.textContent.trim(), display: getComputedStyle(tip).display } : null,
+        };
+      });
+    }, BUTTONS);
+    const button = (index) => `${VIEW} button[data-lx-object="${first.objects[index].id}"]`;
+    const shown = async (selector) => (await tipOf(page, selector)).shown;
+    const tipLocator = (selector) => page.locator(`${selector} + .lx__tip`);
+
+    // A pointer: onto the object, onto its hint, Escape.
+    await page.locator(button(0)).hover();
+    reading.hovered = { key: `${first.id}:${first.objects[0].id}`, shown: await shown(button(0)) };
+    if (reading.hovered.shown) {
+      // In steps, as a hand moves it, so a gap between the object and its
+      // hint is crossed rather than jumped.
+      const from = await page.locator(button(0)).boundingBox();
+      const to = await tipLocator(button(0)).boundingBox();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 20 });
+      reading.hovered.hoverable = await shown(button(0));
+      await page.keyboard.press('Escape');
+      reading.hovered.escaped = !(await shown(button(0)));
+    }
+    await page.mouse.move(0, 0);
+
+    // The keyboard: Tab onto the object, Escape, then away and back.
+    await page.locator(button(0)).focus();
+    await page.keyboard.press('Tab');
+    const onSecond = () => activeMatches(page, button(1));
+    reading.focused = { key: `${first.id}:${first.objects[1].id}`, shown: (await onSecond()) && (await shown(button(1))) };
+    if (reading.focused.shown) {
+      await page.keyboard.press('Escape');
+      reading.focused.escaped = !(await shown(button(1)));
+      reading.focused.kept = await onSecond();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Shift+Tab');
+      reading.focused.back = (await onSecond()) && (await shown(button(1)));
+    }
+
+    // A click with the mouse, which focuses the object too.
+    await page.locator(button(2)).click();
+    await page.mouse.move(0, 0);
+    reading.clicked = { key: `${first.id}:${first.objects[2].id}`, shown: await shown(button(2)) };
+    await page.locator(button(2)).click();
+    await page.mouse.move(0, 0);
+
+    const { from, to } = first.relations[0];
+    await page.locator(`${VIEW} button[data-lx-object="${from}"]`).click();
+    reading.related = {
+      selected: from,
+      key: `${first.id}:${to}`,
+      text: (await tipOf(page, `${VIEW} button[data-lx-object="${to}"]`)).text,
+      want: relatedHint(first.relations, relationTypes, from, to),
+    };
+  } finally {
+    await context.close();
+  }
+  // A tap on a touch screen, which cannot hover.
+  const touch = await browser.newContext({ viewport: NARROW[0], hasTouch: true, isMobile: true });
+  const phone = await touch.newPage();
+  try {
+    await open(phone, url);
+    const selector = `${VIEW} button[data-lx-object="${models[0].objects[0].id}"]`;
+    await phone.locator(selector).tap();
+    reading.tapped = { key: `${models[0].id}:${models[0].objects[0].id}`, shown: (await tipOf(phone, selector)).shown };
+  } finally {
+    await touch.close();
+  }
+
+  reading.narrow = [];
+  for (const viewport of NARROW) {
+    const narrow = await browser.newContext({ viewport });
+    const small = await narrow.newPage();
+    try {
+      await open(small, url);
+      const last = models[0].objects.at(-1).id;
+      const selector = `${VIEW} button[data-lx-object="${last}"]`;
+      await small.locator(selector).focus();
+      const tip = await tipOf(small, selector);
+      const width = await small.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
+      reading.narrow.push({ width: viewport.width, key: `${models[0].id}:${last}`, shown: tip.shown, inside: tip.inside, ...width });
+    } finally {
+      await narrow.close();
+    }
+  }
+  return { reading, thrown };
+}
+
 async function main() {
   if (process.argv.includes('--selftest')) {
     selftest();
@@ -5230,6 +5897,8 @@ async function main() {
   problems.push(...workflowProblems(workflow, { familyModels: models, auditModel: audit, map: objectMap, kinds: crdKinds() }));
   problems.push(...depthModelProblems({ depths, defaultDepth, depthOf }));
   problems.push(...commandProblems(explorerCommands(families, audit, objectMap, workflow)));
+  problems.push(...glossaryProblems(glossary, viewsContent()));
+  problems.push(...hintProblems(hintEntries(families, objectMap)));
   if (models[0]?.id !== defaultFamily) problems.push(`the default family is "${defaultFamily}", not the first family "${models[0]?.id}"`);
 
   const distIndex = process.argv.indexOf('--dist');
@@ -5267,6 +5936,11 @@ async function main() {
     if (quiet.present) problems.push(...objectMapTextProblems(quiet, objectMap));
     if (quiet.present) problems.push(...workflowTextProblems(quiet, workflow));
     if (quiet.present) {
+      // The hints first: a hint left on screen covers the object under it,
+      // and every measurement after this one clicks objects.
+      const hinted = await measureHints(browser, url, models);
+      problems.push(...hintRenderProblems(hinted.reading, hintEntries(families, objectMap)));
+      if (hinted.thrown.length > 0) problems.push(`the hints threw: ${hinted.thrown.join('; ')}`);
       const measured = await measure(browser, url, models);
       problems.push(...renderProblems(measured.render, models));
       if (measured.keyboard) {
@@ -5315,9 +5989,17 @@ async function main() {
         if (deep.thrown.length > 0) problems.push(`the depths threw: ${deep.thrown.join('; ')}`);
         problems.push(...depthShownProblems(await measureDepthsWithoutScript(browser, url), { ids, where: 'without its script', text: true }));
         tagged = deep.tags.entries.reduce((sum, one) => sum + one.parts.length, 0) + deep.tags.blocks.length;
+        const remembered = await measureHistory(browser, url, models);
+        problems.push(...historyProblems(remembered.reading));
+        if (remembered.thrown.length > 0) problems.push(`the history threw: ${remembered.thrown.join('; ')}`);
+        problems.push(...glossaryRenderProblems(await measureGlossary(browser, url), glossary));
       }
       problems.push(...overflowProblems(await measureNarrow(browser, url, models, audit, objectMap, workflow)));
     }
+  } catch (error) {
+    // What was measured before still counts, and the measurement that could
+    // not finish is a problem of its own rather than the end of the report.
+    problems.push(`a measurement could not finish: ${String(error?.message ?? error).split('\n')[0]}`);
   } finally {
     await browser.close();
     server.close();
@@ -5338,6 +6020,7 @@ async function main() {
       `${crdKinds().length} CRD kinds, the composed workflow's ${workflow.stages.length} stages and ` +
       `${workflow.stages.reduce((sum, stage) => sum + stage.outcomes.length, 0)} stops, ${anchors.links} linked addresses and ` +
       `${anchors.text} links in the text, ${tagged} parts at ${depths.length} depths, ` +
+      `${glossary.length} terms, ${hintEntries(families, objectMap).length} hints, Back, Forward and a reload, ` +
       `${explorerCommands(families, audit, objectMap, workflow).length} commands, and ` +
       `${NARROW.map((one) => `${one.width}px`).join(' and ')} wide)`,
   );
