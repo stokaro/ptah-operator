@@ -296,10 +296,10 @@ jobs:
         shell: bash
         run: make verify-source
 
-  # The race detector runs every package but the four shell mutation suites.
-  # Each row of those rewrites a fixture and runs the static verifier over it,
-  # which other ./hack tests already do under the detector, and the verify job
-  # runs every row without it.
+  # The race detector runs every package but the mutation suites. Each row of
+  # those rewrites a fixture and runs the static verifier over it, or
+  # type-checks test/e2e with one file rewritten, which other ./hack tests
+  # already do under the detector, and the verify job runs every row without it.
   race:
     name: Race detector
     runs-on: ubuntu-latest
@@ -347,7 +347,7 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-
             go-build-${{ runner.os }}-race-
-      - name: Run race coverage without the shell mutation suites
+      - name: Run race coverage without the mutation suites
         id: project-race
         shell: bash
         run: make test-race

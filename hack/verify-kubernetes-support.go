@@ -1526,7 +1526,7 @@ func verifyRunnerHarnessJob(path string, workflow workflowDocument) error {
 
 // verifyRaceJob holds the race detector to one unconditional job under the name
 // the support gate reads and a release requires. It runs make test-race, which
-// verifyMakeRaceTargets holds to every package but the shell mutation suites:
+// verifyMakeRaceTargets holds to every package but the mutation suites:
 // the verify job runs those without the detector.
 func verifyRaceJob(path string, workflow workflowDocument) error {
 	race := workflow.Jobs["race"]
@@ -1554,7 +1554,7 @@ func verifyRaceJob(path string, workflow workflowDocument) error {
 	if err := verifyGoBuildCacheStep(path, "race", raceSteps[3], "race"); err != nil {
 		return err
 	}
-	if raceSteps[4].Name != "Run race coverage without the shell mutation suites" ||
+	if raceSteps[4].Name != "Run race coverage without the mutation suites" ||
 		raceSteps[4].If != "" || raceSteps[4].Uses != "" || raceSteps[4].Run != "make test-race" ||
 		raceSteps[4].Shell != "bash" || raceSteps[4].WorkingDirectory != "" ||
 		len(raceSteps[4].With) != 0 || len(raceSteps[4].Env) != 0 {
@@ -4545,7 +4545,7 @@ func verifyMakeE2ETarget(path string) error {
 }
 
 // verifyMakeRaceTargets holds the race pass to its audited rule, and the tests
-// it skips to the shell mutation suites and nothing else. Those suites run only
+// it skips to the mutation suites and nothing else. Those suites run only
 // in the test target, so that target has to stay every package with nothing
 // skipped and a timeout ./hack fits in, and verify-source, which the verify job
 // runs, has to run it.
@@ -4557,7 +4557,9 @@ func verifyMakeRaceTargets(path string) error {
 	const skipped = "override RACE_MUTATION_TESTS := " +
 		"TestVerifyE2EHarnessRejectsCriticalMutations|" +
 		"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
-		"TestVerifyE2EChildScriptsRejectCriticalMutations"
+		"TestVerifyE2EChildScriptsRejectCriticalMutations|" +
+		"TestTheArtifactCheckRefusesAPhaseThatDropsOne|" +
+		"TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt"
 	assignments := regexp.MustCompile(`(?m)^(?:override[ \t]+)?RACE_MUTATION_TESTS[ \t]*[:+?!]?=[^\r\n]*$`).FindAll(contents, -1)
 	if len(assignments) != 1 || string(assignments[0]) != skipped {
 		return fmt.Errorf("%s: RACE_MUTATION_TESTS must be the exact audited list of suites the race pass skips", path)
@@ -4579,7 +4581,7 @@ func verifyMakeRaceTargets(path string) error {
 		return err
 	}
 	if exactMakeRule(parsed.lines, test.line) != fmt.Sprintf("test:\n\t$(GO) test -timeout=%dm ./...", makeTestTimeoutMinutes) {
-		return fmt.Errorf("%s: test must run every package with nothing skipped and a %d-minute timeout, because it is the only run of the shell mutation suites",
+		return fmt.Errorf("%s: test must run every package with nothing skipped and a %d-minute timeout, because it is the only run of the mutation suites",
 			path, makeTestTimeoutMinutes)
 	}
 	sources := parsed.rules["verify-source"]
@@ -4591,7 +4593,7 @@ func verifyMakeRaceTargets(path string) error {
 		prerequisites = prerequisites[:comment]
 	}
 	if !slices.Contains(strings.Fields(prerequisites), "test") {
-		return fmt.Errorf("%s: verify-source must run the test target, the only run of the shell mutation suites", path)
+		return fmt.Errorf("%s: verify-source must run the test target, the only run of the mutation suites", path)
 	}
 	return nil
 }

@@ -9,7 +9,7 @@ ENVTEST_INDEX ?= https://raw.githubusercontent.com/kubernetes-sigs/controller-to
 ENVTEST_BIN_DIR ?=
 CRD_SCHEMA_VERSION := 26
 CONTROLLER_STATE_VERSION := 1
-override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations
+override RACE_MUTATION_TESTS := TestVerifyE2EHarnessRejectsCriticalMutations|TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|TestVerifyE2EChildScriptsRejectCriticalMutations|TestTheArtifactCheckRefusesAPhaseThatDropsOne|TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt
 DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
@@ -95,10 +95,12 @@ runner-harness-write:
 	RUNNER_HARNESS_WRITE=1 $(RUNNER_HARNESS_TEST)
 
 test-race:
-	@# The skipped suites are the shell mutation tables. Each row rewrites a
-	@# fixture and runs the static verifier over it, which other ./hack tests
-	@# already do under the detector. The test target, and so verify-source,
-	@# runs them without it.
+	@# The skipped suites are mutation tables. Each row of the shell tables
+	@# rewrites a fixture and runs the static verifier over it, and each row of
+	@# the artifact tables type-checks test/e2e with one file rewritten, which
+	@# under the detector costs most of what ./hack takes. Other ./hack tests
+	@# run both checks under the detector over the real files. The test target,
+	@# and so verify-source, runs the tables without it.
 	$(GO) test -race -count=1 -timeout=10m -skip '^($(RACE_MUTATION_TESTS))$$' ./...
 
 # The acceptance phases under test/e2e build only with the e2e tag, so a plain
