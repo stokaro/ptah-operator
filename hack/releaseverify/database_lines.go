@@ -230,9 +230,19 @@ func checkDatabaseLineEvidence(evidence databaseLineEvidence, line databaseCatal
 	if run.Status != "completed" {
 		return fmt.Errorf("it is %s", run.Status)
 	}
+	// The run's row is found by the release its image names rather than by its
+	// text, so a label added after the run, such as a MySQL line's LTS, keeps
+	// the run as the line's evidence.
+	release, err := phases.DatabaseImageLine(line.Engine, line.Image)
+	if err != nil {
+		return err
+	}
 	image := ""
 	for _, candidate := range evidence.catalog {
-		if candidate.Engine == line.Engine && candidate.Line == line.Line {
+		if candidate.Engine != line.Engine {
+			continue
+		}
+		if named, err := phases.DatabaseImageLine(candidate.Engine, candidate.Image); err == nil && named == release {
 			image = candidate.Image
 		}
 	}

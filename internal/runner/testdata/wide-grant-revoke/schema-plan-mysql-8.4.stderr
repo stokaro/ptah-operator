@@ -1,0 +1,1 @@
+error: compare database schema: role "wide_reader" holds SELECT ON wide.*, which covers table t3, so a revoke on the table cannot take it: revoke SELECT ON wide.* from "wide_reader" instead, or grant the privilege on each table that needs it

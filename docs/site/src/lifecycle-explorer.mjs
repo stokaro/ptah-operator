@@ -25,10 +25,107 @@
 // nobody accounted for. Stage, path and object ids are unique across families,
 // so a link that names one names its family too.
 //
-// The audit view and the object map, at the end, are not scenarios: each
-// covers both families, the audit view read by evidence source and the object
-// map by object, rather than by stage. The composed workflow and the depth
-// levels are later slices of #817.
+// The audit view, the object map and the composed workflow, at the end, are
+// not scenarios: each covers both families, the audit view read by evidence
+// source, the object map by object, and the composed workflow as the stages
+// of one larger change that uses both.
+//
+// A depth says how much of each entry a reader sees, and `depthOf`, below,
+// names the depth each part of an entry first shows at. Every depth reads
+// the same entries, so a shallower one says less and never something else.
+
+// How much an entry says. Each depth shows everything the one before it
+// shows, and more. Implementation is every part, which is what the page
+// showed before there were depths, so a link that names no depth keeps
+// showing it.
+export const depths = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    text: 'Who acts at each step and what that step is for, what each object or source is, and how you know a step is done.',
+  },
+  {
+    id: 'product',
+    label: 'Product',
+    text: 'Adds the phase and the state to expect, the commands that act or inspect, the decisions, what a step does not prove, and what a change, a deletion or a loss leaves.',
+  },
+  {
+    id: 'implementation',
+    label: 'Implementation',
+    text: 'Adds what Kubernetes, the operator and the executor each do underneath, the objects each step touches, where each object lives, and the identifiers that join the record.',
+  },
+];
+export const defaultDepth = 'implementation';
+
+// The depth each part of an entry first shows at: a stage of the change
+// journey, an object of a family, an audit source, an object of the object
+// map, a stage of the composed workflow, and the blocks of a view that are
+// not one entry. An actor's text in a stage shows at `lead` when that actor
+// leads the stage, and at its own depth otherwise, so every stage says who
+// acts at every depth. A part not named here, such as a title, a
+// relationship, a choice that moves the reader on or a link to the
+// reference, shows at every depth.
+export const depthOf = {
+  stage: {
+    lead: 'overview',
+    you: 'overview',
+    done: 'overview',
+    phase: 'product',
+    operator: 'product',
+    expect: 'product',
+    inspect: 'product',
+    limits: 'product',
+    kubernetes: 'implementation',
+    executor: 'implementation',
+    objects: 'implementation',
+  },
+  object: {
+    purpose: 'overview',
+    writer: 'overview',
+    inspect: 'product',
+    lives: 'implementation',
+  },
+  source: {
+    establishes: 'overview',
+    cannot: 'overview',
+    records: 'product',
+    readers: 'product',
+    retention: 'product',
+    survives: 'product',
+    names: 'product',
+    gaps: 'product',
+    ids: 'implementation',
+  },
+  node: {
+    holds: 'overview',
+    writtenBy: 'overview',
+    change: 'product',
+    deletion: 'product',
+    inspect: 'product',
+    gap: 'product',
+    operator: 'implementation',
+    scope: 'implementation',
+  },
+  wstage: {
+    goal: 'overview',
+    person: 'overview',
+    gate: 'overview',
+    done: 'overview',
+    operator: 'product',
+    inspect: 'product',
+    decision: 'product',
+    limits: 'product',
+    objects: 'implementation',
+  },
+  block: {
+    auditMeasured: 'product',
+    auditIdentities: 'product',
+    auditGaps: 'product',
+    workflowPreconditions: 'product',
+    workflowDecisions: 'product',
+    workflowRecord: 'implementation',
+  },
+};
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -2802,5 +2899,580 @@ export const objectMap = {
     { label: 'The two resource families', href: '../architecture/#the-two-resource-families' },
     { label: 'Suspension and deletion', href: '../../use/operations/#suspension-and-deletion' },
     { label: 'Deleting a namespace', href: '../../use/operations/#delete-namespace' },
+  ],
+};
+
+// The composed workflow: a larger change made of the two families in turn,
+// expand, backfill and contract on one database, with the gate between each
+// stage and the next. Every stage runs on objects that exist today; the
+// sequence between them is kept by a person or a pipeline, and the view says
+// so stage by stage, keeping what the operator does apart from what moves
+// the sequence on. It is drawn from the operations page's sharing sections,
+// the migrations guide, the approvals guide and the schema controller's
+// policy gates. Ids carry the prefix w-, so they cannot collide with a
+// stage, a path, an object, an audit source or a node of the map.
+// Where a stage runs: in one of the two resources, or outside the operator.
+const workflowFamilies = [
+  { id: 'schema', label: 'PtahSchema' },
+  { id: 'migration', label: 'PtahMigration' },
+  { id: 'outside', label: 'Outside the operator' },
+];
+
+const workflowMarks = [
+  { id: 'shipped', label: 'Shipped', text: 'What the operator does in this release.' },
+  {
+    id: 'proposed',
+    label: 'Proposed',
+    text: 'Sequencing a person or a pipeline does today. No operator resource or controller does it.',
+  },
+];
+
+// What can stop a stage. A stage lists the ones that can happen there, each
+// with what clears it. A schema Apply has no outcome of its own between a
+// refusal and an unknown one: every failure after it starts stays unknown
+// until an observation settles it.
+const workflowOutcomes = [
+  {
+    id: 'w-refused',
+    label: 'Refused before SQL',
+    text: 'The resource stopped before any statement of the plan reached the database, with the reason on a condition. Nothing changed.',
+  },
+  {
+    id: 'w-stale',
+    label: 'Plan replaced',
+    text: 'An input changed while the plan waited for a decision. The plan is retired, and an approval of it approves nothing.',
+  },
+  {
+    id: 'w-failed',
+    label: 'Failed',
+    text: 'A migration failed and committed nothing, or the run stopped before it ran one. The revision table says which.',
+  },
+  {
+    id: 'w-unresolved',
+    label: 'Outcome unknown',
+    text: 'Nobody can say what the SQL did: a schema Apply that ended without proof, or a migration run that ended Partial or Unknown.',
+  },
+  {
+    id: 'w-drift',
+    label: 'Changes remain',
+    text: 'The read after the Apply found the managed scope still differs from the declaration.',
+  },
+  {
+    id: 'w-check-failed',
+    label: 'Check failed',
+    text: 'A check of the data or the application found what the contract would break.',
+  },
+];
+
+// What must hold before the first stage, for the two resources to manage one
+// database at all.
+const workflowPreconditions = [
+  {
+    id: 'w-pre-realm',
+    title: 'One realm for one database',
+    text: 'Both resources name the database the same way: the same spec.target.coordinationKey when both live in one namespace, or the same PtahRealm, with sharing: Shared and both namespaces listed, when they do not. Two keys for one database would let both run at once, whatever the connection URLs look like.',
+    objects: ['o-realm', 'o-lease'],
+    links: [
+      { label: 'A database more than one namespace manages', href: '../../use/operations/#a-database-more-than-one-namespace-manages' },
+    ],
+  },
+  {
+    id: 'w-pre-shared',
+    title: 'Both declare the sharing',
+    text: 'Each sets spec.target.sharedRealm: true. One that leaves it false blocks both with RealmConflict, and no Job runs. Naming the same realm is not enough on its own, and a PtahRealm with sharing: Exclusive admits one claimant whatever both declare.',
+    objects: ['o-schema', 'o-migration'],
+    links: [{ label: 'One database, one manager', href: '../../use/operations/#one-database-one-manager' }],
+  },
+  {
+    id: 'w-pre-scope',
+    title: 'Scopes that do not overlap',
+    text: 'The operator checks the declaration, never the disjointness. The schema manages everything its URL reaches that its spec.policy.exclude does not name, apart from Ptah’s own migration tables, which its reads leave out by name. A table a migration creates that the schema does not declare belongs in that exclude list, or the schema plans to drop it. A migration that checks drift needs its own exclude list to name the tables the schema manages.',
+    objects: ['o-schema', 'o-migration', 'o-database'],
+    links: [
+      { label: 'Check the schema against its history', href: '../../use/migrations/#drift-check' },
+      { label: 'One database, one manager', href: '../../use/operations/#one-database-one-manager' },
+    ],
+  },
+  {
+    id: 'w-pre-order',
+    title: 'An order kept outside the operator',
+    text: 'The realm Lease lets one operation run at a time: a schema’s Plan, Apply and proof, or a migration’s Apply. It decides which resource runs now, not which stage comes next, and a migration’s History read takes no lock at all. The order of the stages is kept by whoever starts each one only after the stage before it is done.',
+    objects: ['o-lease'],
+    links: [{ label: 'Concurrency and coordination', href: '../execution/#concurrency-and-coordination' }],
+  },
+];
+
+// What each decision authorizes, and what it leaves to the others.
+const workflowDecisions = [
+  {
+    id: 'w-dec-schema',
+    label: 'PtahSchemaApproval',
+    node: 'o-schema-approval',
+    covers:
+      'One Apply of one schema plan, named by the schema’s UID, the plan’s UID and its fingerprint, and through the fingerprint the artifact, the observed and desired state, the policy and the target the plan was made from. The Apply consumes it.',
+    notCovered:
+      'Any migration run, the next schema plan, a plan that replaced this one, the order of the stages, and what the rows hold. The approval given at Expand covers nothing at Contract.',
+  },
+  {
+    id: 'w-dec-migration',
+    label: 'PtahMigrationApproval',
+    node: 'o-migration-approval',
+    covers:
+      'One run of one migration plan, named by the migration’s UID, the plan’s UID and its fingerprint: the versions, their checksums and the history the plan was computed against. The run consumes it, and writes the approver into schema_migrations_log.',
+    notCovered:
+      'Any schema plan, the contract above all, a later plan of the same migration, and whether the run’s statements reached every row they were meant to.',
+  },
+  {
+    id: 'w-dec-policy',
+    label: 'apply: Always',
+    covers:
+      'A schema plan that destroys nothing and changes no privilege, and every migration plan, applied with no person deciding. The policy is the authorization, and the chart’s apply-policy guard decides who may choose it.',
+    notCovered:
+      'A destructive or privilege-changing schema plan, which waits for an approval under every policy. Every other check still holds: the source and its verification, the target, the realm and the proof after the Apply.',
+  },
+  {
+    id: 'w-dec-check',
+    label: 'Your checks',
+    covers: 'What you check: the rows, the application, and whatever still reads what the contract removes.',
+    notCovered:
+      'Nothing in the cluster records it. No condition, journal entry or approval stands in for it, and Migration InSync is not it.',
+  },
+];
+
+// The stages, in order. `family` is the resource family a stage runs in, or
+// outside for the stage the operator has no part in. `operator` is shipped
+// behavior and `gate` the proposed sequencing; `decision` names the decision
+// that authorizes the stage. `objects` are nodes of the object map, and an
+// outcome's `journey` names the change journey's path that walks it.
+const workflowStages = [
+  {
+    id: 'w-expand',
+    title: 'Expand',
+    family: 'schema',
+    goal: 'Add what the new code needs and remove nothing: here, a nullable column beside the one it replaces.',
+    person:
+      'Push a schema artifact that declares the new column, point the schema at it, read the plan, and approve that plan.',
+    inspect: [
+      {
+        command:
+          'kubectl ptah set-source schema/application -n application --oci oci://registry.example/acme/application@sha256:<digest> --for approval',
+        says: 'Points the schema at the artifact, pinned by digest, and waits until a plan of it waits for an approval. It sends nothing while an Apply runs.',
+      },
+      {
+        command: 'kubectl ptah plan application -n application',
+        says: 'Every statement under its severity. An expand plan adds and drops nothing.',
+      },
+      {
+        command: 'kubectl ptah approve schema/application -n application --wait',
+        says: 'Approves the plan it shows, as you, and waits until the operator applied it and read the database afterwards.',
+      },
+    ],
+    operator:
+      'Resolves and verifies the artifact, observes the database and plans within the managed scope. It publishes a PtahSchemaPlan and, under OnApproval, waits for an approval of that exact plan. Then it claims the realm Lease, records the claim in status.activeOperation and creates the Apply Job.',
+    decision: 'w-dec-schema',
+    decisionText:
+      'An approval of the expand plan. Under apply: Always the plan runs without one, since it destroys nothing, unless it changes a privilege.',
+    gate: 'Keep spec.policy.allowDestructive false through this stage, so a plan that would drop something stops at the policy instead of running. Go on once the Apply has ended.',
+    done: 'The Apply of the approved plan ended, and the schema records its outcome.',
+    outcomes: [
+      {
+        outcome: 'w-refused',
+        text: 'The artifact failed its verification policy, Ptah refused to plan the change, a destructive plan met allowDestructive: false, or the realm is contested because one claimant has not declared sharedRealm.',
+        recovery: 'Read the reason with kubectl ptah schema, change the input, and let it plan again.',
+        journey: { family: 'schema', path: 'refused' },
+      },
+      {
+        outcome: 'w-stale',
+        text: 'A new artifact, a policy edit, or a database that no longer reads as the plan saw it replaced the plan before anyone approved it.',
+        recovery: 'Read and approve the replacement. The approval of the first plan approves nothing.',
+        journey: { family: 'schema', path: 'stale' },
+      },
+      {
+        outcome: 'w-unresolved',
+        text: 'The Apply ended without proof of what it did. Any failure after the Apply started reads this way until an observation settles it.',
+        recovery:
+          'The operator never runs the plan again. A read-only observation proves what the database holds, and the schema recovers forward: in sync, or a new plan for what is left, which needs its own decision.',
+        journey: { family: 'schema', path: 'uncertain' },
+      },
+    ],
+    objects: ['o-schema', 'o-schema-plan', 'o-schema-approval', 'o-job', 'o-lease'],
+    links: [
+      { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+      { label: 'Moving to a new artifact', href: '../../use/operations/#set-source' },
+    ],
+  },
+  {
+    id: 'w-verify-expand',
+    title: 'Verified expand',
+    family: 'schema',
+    goal: 'Prove the database holds the expanded schema before anything depends on it.',
+    person: 'Wait until the schema rests in sync at the generation you set, and read what its journal recorded.',
+    inspect: [
+      {
+        command: 'kubectl ptah wait schema/application --for in-sync --timeout 10m -n application',
+        says: 'Exits 0 once the operator has observed the generation the schema had when the wait began, and the schema rests in sync. It exits 8 when the schema will not get there.',
+      },
+      {
+        command: 'kubectl ptah history schema/application -n application',
+        says: 'The Apply and the proof that followed it, entry by entry.',
+      },
+    ],
+    operator:
+      'Reads the database again after the Apply: a fresh observation, then a scoped plan that has to come out empty. Only that records the schema InSync, and the journal records the Apply Verified. The Lease is held through the proof.',
+    gate: 'Start the backfill only once this wait exits 0. A phase seen on one poll is not the proof.',
+    done: 'The schema is InSync, its observed generation is the one that carries the new source, and the journal records the Apply Verified InSync.',
+    limits:
+      'It proves the structure in the managed scope matches the declaration. It says nothing about the rows, or about anything spec.policy.exclude leaves out.',
+    outcomes: [
+      {
+        outcome: 'w-drift',
+        text: 'The journal records Verified DriftRemains: something changed the managed scope after the plan was made, and the schema plans what remains.',
+        recovery:
+          'Read the new plan before approving anything. A statement against an object the migration manages means the two scopes overlap: add the object to spec.policy.exclude rather than approving its change.',
+      },
+      {
+        outcome: 'w-unresolved',
+        text: 'The proof is still owed: the read after the Apply keeps failing, or the URL now names another database, which no read of the first can prove.',
+        recovery:
+          'Fix what stops the read, or put the first URL back. Only for a moved target can kubectl ptah settle give the proof up, and the journal then records the Apply Verified Unknown: check the database yourself before the backfill relies on it.',
+        journey: { family: 'schema', path: 'uncertain' },
+      },
+    ],
+    objects: ['o-schema', 'o-job', 'o-lease', 'o-database'],
+    links: [
+      { label: 'Waiting for the operator', href: '../../use/operations/#wait' },
+      { label: 'A schema whose target moved', href: '../../use/recovery/#a-schema-whose-target-moved' },
+    ],
+  },
+  {
+    id: 'w-backfill',
+    title: 'Backfill',
+    family: 'migration',
+    goal: 'Copy the old values into the new column, in a migration written to be safe to run twice.',
+    person:
+      'Push a migration artifact whose next version fills the new column, point the migration at it, read the plan, and approve it.',
+    inspect: [
+      {
+        command:
+          'kubectl ptah set-source migration/orders -n application --oci oci://registry.example/acme/orders-migrations@sha256:<digest> --for approval',
+        says: 'Points the migration at the artifact, pinned by digest, and waits until a plan of its pending versions waits for an approval.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The versions and checksums that would run. The statements are in the artifact, not in the plan.',
+      },
+      {
+        command: 'kubectl ptah approve migration/orders -n application --wait',
+        says: 'Approves the plan it shows, as you, and waits until the run ended and the history was read again.',
+      },
+    ],
+    operator:
+      'Resolves and verifies the artifact, reads the revision table in a History Job, and plans the versions the artifact holds and the database has not run. The manager computes that plan, and no Plan Job runs. Under OnApproval it waits for an approval of that exact plan, then claims the realm Lease, records the claim and creates the Apply Job.',
+    decision: 'w-dec-migration',
+    decisionText:
+      'An approval of the backfill plan. The expand’s schema approval does not reach it, and under apply: Always the run needs none.',
+    gate: 'Start only after Verified expand. The Lease would let this run take its turn before the expand, because it serializes the two resources and does not decide which stage comes next.',
+    done: 'The run ended, and status.lastRun records its outcome.',
+    outcomes: [
+      {
+        outcome: 'w-refused',
+        text: 'The artifact failed its verification policy, or the realm is contested because one claimant has not declared sharedRealm. No statement reached the database.',
+        recovery: 'Read the reason with kubectl ptah migration, fix the policy, the artifact or the declaration, and let it read again.',
+      },
+      {
+        outcome: 'w-stale',
+        text: 'A new artifact or a changed history replaced the plan before anyone approved it.',
+        recovery: 'Read and approve the replacement. An approval of the old plan approves nothing.',
+      },
+      {
+        outcome: 'w-failed',
+        text: 'A migration failed and committed nothing, which leaves a dirty revision row, or the run stopped before it ran one, as under a drift check that refused it.',
+        recovery:
+          'A person clears a dirty row before anything else runs. After a run that ran nothing, fix the cause: the migration reads its history again and plans the run anew, and under OnApproval it waits for a new approval, since the run consumed the one it carried.',
+      },
+      {
+        outcome: 'w-unresolved',
+        text: 'The run ended Partial, having committed part of a migration, or Unknown. It is never retried.',
+        recovery:
+          'The migration plans and runs nothing until a history read with nothing pending settles the run, or a person acknowledges it once the database is accounted for. An acknowledgment repairs nothing and approves nothing.',
+        journey: { family: 'migration', path: 'm-unresolved' },
+      },
+    ],
+    objects: ['o-migration', 'o-migration-plan', 'o-migration-approval', 'o-job', 'o-lease'],
+    links: [
+      { label: 'Approving a run', href: '../../use/migrations/#approving-a-run' },
+      { label: 'A migration that failed at a statement', href: '../../use/recovery/#failed-statement' },
+    ],
+  },
+  {
+    id: 'w-history',
+    title: 'Fresh History',
+    family: 'migration',
+    goal: 'Establish from the database’s own revision table that the backfill version ran.',
+    person: 'Wait until the migration rests in sync, and read the revision rows the reading after the run found.',
+    inspect: [
+      {
+        command: 'kubectl ptah wait migration/orders --for in-sync --timeout 10m -n application',
+        says: 'Exits 0 once the migration rests in sync at the generation it had when the wait began: the history read after the run found nothing pending.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application --details',
+        says: 'The revision rows the reading found, and each run whole.',
+      },
+    ],
+    operator:
+      'Reads the revision table again in a History Job after the run, and settles the run from that reading alone: the verdict is the database’s, not the Job’s exit status.',
+    gate: 'InSync here says every version the artifact holds is recorded applied. It is not the check that follows, and it does not stand in for it.',
+    done: 'The migration is InSync, status.lastRun is Applied, and status.history is a reading that began after the run.',
+    limits: 'The revision table records that the version ran. It does not say the statements reached every row they should have.',
+    outcomes: [
+      {
+        outcome: 'w-unresolved',
+        text: 'The run is recorded in status.unresolvedRun, and the reading after it cannot settle it.',
+        recovery:
+          'Establish what the run left in the database. A reading with nothing pending settles the run; if work is still pending, a person acknowledges that run, and what is pending is planned again and waits for a new approval.',
+        journey: { family: 'migration', path: 'm-acknowledged' },
+      },
+    ],
+    objects: ['o-migration', 'o-job', 'o-database'],
+    links: [
+      { label: 'What the run reports', href: '../../use/migrations/#what-the-run-reports' },
+      { label: 'A migration run nobody accounted for', href: '../../use/operations/#a-migration-run-nobody-accounted-for' },
+    ],
+  },
+  {
+    id: 'w-checks',
+    title: 'External checks',
+    family: 'outside',
+    goal: 'Check the data and the application for what no resource records: that the rows are right, and that nothing still needs what the contract removes.',
+    person:
+      'Run your own checks: a query that counts the rows the backfill left unset, the application’s tests against the new column, and a search for whatever still reads the old one.',
+    inspect: [
+      {
+        system: 'Your database client, with a login that may read the table.',
+        says: 'The rows themselves. No kubectl ptah command reads a table row.',
+      },
+      {
+        system: 'Your pipeline or your test suite.',
+        says: 'What the application does with the new column, and that nothing reads the old one.',
+      },
+    ],
+    operator: 'Nothing. No condition, approval or journal entry records this stage, and no resource waits for it.',
+    decision: 'w-dec-check',
+    decisionText: 'Your checks, and whoever runs them records that they passed.',
+    gate: 'The contract starts only once these checks pass. Migration InSync does not satisfy this gate.',
+    done: 'Every check passed, and your record says who ran which, when, and against which database.',
+    outcomes: [
+      {
+        outcome: 'w-check-failed',
+        text: 'Rows are still unset, or something still reads the old column.',
+        recovery:
+          'Hold the contract. Fix forward with another migration version, which goes through Backfill and Fresh History again, or change the application, then run the checks again.',
+      },
+    ],
+    objects: ['o-database'],
+    links: [{ label: 'Who the database’s log names', href: '../../use/migrations/#who-the-databases-log-names' }],
+  },
+  {
+    id: 'w-contract',
+    title: 'Contract',
+    family: 'schema',
+    goal: 'Remove what the old code needed, now that nothing reads it: here, the old column.',
+    person:
+      'Allow destructive changes on the schema, push a schema artifact without the old column, point the schema at it, read the plan, and approve it.',
+    inspect: [
+      {
+        command:
+          "kubectl patch ptahschema application -n application --type merge -p '{\"spec\":{\"policy\":{\"allowDestructive\":true}}}'",
+        says: 'Allows destructive changes before the new source arrives, so the destructive plan waits for an approval instead of stopping at the policy.',
+      },
+      {
+        command:
+          'kubectl ptah set-source schema/application -n application --oci oci://registry.example/acme/application@sha256:<digest> --for approval',
+        says: 'Points the schema at the contract artifact and waits until its plan waits for an approval.',
+      },
+      {
+        command: 'kubectl ptah plan application -n application',
+        says: 'Read every statement. It drops the old column and nothing else: a statement against an object the migration created means the two scopes overlap.',
+      },
+      {
+        command: 'kubectl ptah approve schema/application -n application --wait',
+        says: 'Approves the plan it shows, as you, and waits until the operator applied it and read the database afterwards.',
+      },
+    ],
+    operator:
+      'Plans as at Expand. A destructive plan stops Blocked with DestructiveChangesDisabled while allowDestructive is false, and no approval runs it. Once allowDestructive is true, the plan waits for an approval under every apply policy, Always included.',
+    decision: 'w-dec-schema',
+    decisionText: 'A new approval of the contract plan. The approval given at Expand was consumed by that Apply.',
+    gate: 'Start only after the checks passed.',
+    done: 'The Apply of the approved contract plan ended, and the schema records its outcome.',
+    outcomes: [
+      {
+        outcome: 'w-refused',
+        text: 'The plan met allowDestructive: false, Ptah refused to plan the change, or the artifact failed its policy.',
+        recovery: 'Read the reason with kubectl ptah schema, change the input or the policy, and let it plan again.',
+        journey: { family: 'schema', path: 'refused' },
+      },
+      {
+        outcome: 'w-stale',
+        text: 'An input changed before anyone approved the plan.',
+        recovery: 'Read and approve the replacement. The approval of the first plan approves nothing.',
+        journey: { family: 'schema', path: 'stale' },
+      },
+      {
+        outcome: 'w-unresolved',
+        text: 'The Apply ended without proof of what it did, so the old column may or may not be gone.',
+        recovery:
+          'A read-only observation proves what the database holds, and the schema recovers forward. The plan is never run again.',
+        journey: { family: 'schema', path: 'uncertain' },
+      },
+    ],
+    objects: ['o-schema', 'o-schema-plan', 'o-schema-approval', 'o-job', 'o-lease'],
+    links: [
+      { label: 'Exact-plan approvals', href: '../../use/approvals/' },
+      { label: 'Read a plan', href: '../../use/read-a-plan/' },
+    ],
+  },
+  {
+    id: 'w-verify-contract',
+    title: 'Verified contract',
+    family: 'schema',
+    goal: 'Prove the database no longer holds what the contract removed, and end the sequence.',
+    person:
+      'Wait until the schema rests in sync again, keep the plan the Apply ran beside your record, and only then set allowDestructive back to false: a policy edit while the proof is owed supersedes it.',
+    inspect: [
+      {
+        command: 'kubectl ptah wait schema/application --for in-sync --timeout 10m -n application',
+        says: 'Exits 0 once the schema rests in sync at the generation it had when the wait began.',
+      },
+      {
+        command: 'kubectl ptah plan application --applied -n application',
+        says: 'The stored plan the last confirmed Apply ran.',
+      },
+      {
+        command:
+          "kubectl patch ptahschema application -n application --type merge -p '{\"spec\":{\"policy\":{\"allowDestructive\":false}}}'",
+        says: 'Turns destructive changes off again once the wait exited 0.',
+      },
+    ],
+    operator:
+      'Reads the database again after the Apply, as at Verified expand, and records the schema InSync only from a scoped plan that came out empty.',
+    gate: 'The sequence ends here. With allowDestructive back to false, the next destructive plan stops at the policy again.',
+    done: 'The schema is InSync at the contract’s generation, and the journal records the Apply Verified InSync.',
+    limits: 'As at Verified expand: the structure in the managed scope, and nothing about the rows.',
+    outcomes: [
+      {
+        outcome: 'w-drift',
+        text: 'The journal records Verified DriftRemains, and the schema plans what remains.',
+        recovery: 'Read the new plan before approving it, as at Verified expand.',
+      },
+      {
+        outcome: 'w-unresolved',
+        text: 'The proof did not settle.',
+        recovery: 'Recover as at Verified expand, and do not count the contract done until a proof or your own reading of the database says so.',
+        journey: { family: 'schema', path: 'uncertain' },
+      },
+    ],
+    objects: ['o-schema', 'o-job', 'o-database'],
+    links: [{ label: 'Waiting for the operator', href: '../../use/operations/#wait' }],
+  },
+];
+
+// The record a pipeline can keep of each stage, from what the resources
+// already say. No resource keeps it whole, and no command prints it.
+const workflowRecord = [
+  {
+    id: 'w-rec-incarnation',
+    label: 'Resource and incarnation',
+    text: 'The kind, namespace, name and UID. A resource deleted and created again is another incarnation, and nothing recorded of the first applies to it.',
+  },
+  {
+    id: 'w-rec-source',
+    label: 'Source binding',
+    text: 'The artifact digest the plan was made from, or the Git commit or ConfigMap snapshot for those sources.',
+  },
+  { id: 'w-rec-plan', label: 'Plan', text: 'The plan’s name, UID and fingerprint.' },
+  {
+    id: 'w-rec-decision',
+    label: 'Decision or policy',
+    text: 'The approval’s name and UID and the approver admission stamped on it, or the apply policy that authorized the plan without one.',
+  },
+  {
+    id: 'w-rec-operation',
+    label: 'Operation',
+    text: 'The operation ID, and the name and UID of the Job the Apply or the run ran as.',
+  },
+  {
+    id: 'w-rec-outcome',
+    label: 'Outcome',
+    text: 'How the Apply or the run ended: for a schema, an Apply the proof settled or one recorded Unknown; for a migration, Applied, Failed, Partial or Unknown.',
+  },
+  {
+    id: 'w-rec-verification',
+    label: 'Verification',
+    text: 'The reading that proved it: the schema journal’s Verified entry, or the reading of the revision table a migration’s last run records.',
+  },
+  {
+    id: 'w-rec-recovery',
+    label: 'Recovery decision',
+    text: 'What cleared a stop and who decided: a run acknowledgment and who made it, a settled proof, or the plan that fixed forward, with its own decision.',
+  },
+  {
+    id: 'w-rec-checks',
+    label: 'Checks',
+    text: 'For the check stage, the pipeline’s own record of which checks ran, who ran them, when, and against which database. Nothing in the cluster holds it.',
+  },
+];
+
+// Where the record's fields are read today.
+const workflowReaders = [
+  {
+    command: 'kubectl ptah history schema/application -n application -o json',
+    says: 'The journal, entry by entry: each Apply’s operation ID, plan name, UID and fingerprint, the approval it consumed and its approver, the Job, the outcome and the Verified entry after it. It keeps at most 64 entries over 30 days.',
+  },
+  {
+    command: 'kubectl ptah schema application -n application -o json',
+    says: 'The schema’s UID and generation, its resolved source, its current plan with the approval and approver, and the plan the last confirmed Apply ran.',
+  },
+  {
+    command: 'kubectl ptah migration orders -n application -o json',
+    says: 'The migration’s UID and its last run whole: operation ID, plan reference and fingerprint, authorization by approval or by policy with the approver, artifact digest, source, Job, outcome and the reading after it.',
+  },
+  {
+    command: 'kubectl ptah history migration/orders -n application',
+    says: 'Every run the journal kept, and every approval and run acknowledgment that names the migration by name and UID.',
+  },
+];
+
+export const workflow = {
+  title: 'Expand, backfill, contract',
+  summary:
+    'A change that has to keep the old code working while the new code arrives, made of the two families in turn on one database. Select a stage to see who acts, what the operator does, which decision authorizes it and what must hold before the next one starts. Choose what stopped it to see what is held and what clears it.',
+  textSummary:
+    'A change that has to keep the old code working while the new code arrives, made of the two families in turn on one database: what must hold before the first stage, each stage with who acts, what the operator does and what moves the sequence on, what each decision covers, and the record a pipeline can keep.',
+  proposal: {
+    label: 'Proposed orchestration',
+    text: 'There is no Workflow or WorkflowRun resource, and no operator controller sequences these stages. Each stage runs on objects that exist today; a person or a pipeline starts each one after the stage before it is done.',
+  },
+  families: workflowFamilies,
+  marks: workflowMarks,
+  outcomes: workflowOutcomes,
+  preconditions: workflowPreconditions,
+  decisions: workflowDecisions,
+  stages: workflowStages,
+  record: workflowRecord,
+  recordText:
+    'No resource records a stage as a whole, and no command prints one. A pipeline that runs the sequence can keep one record per stage, from what the resources already say.',
+  readers: workflowReaders,
+  distinctions: [
+    'The realm Lease serializes: two resources that share a realm never run at once. It decides which runs now, not which stage comes next, so either can take the next turn.',
+    'An approval of one family authorizes nothing in the other. Each plan waits for its own decision under its own policy, and no decision covers the order of the stages.',
+    'Migration InSync proves the history, not the data. The checks are yours, and nothing in the cluster records them.',
+    'A stop holds every later stage. Nothing downstream starts until the stopped stage is cleared and meets its completion criterion again.',
+  ],
+  links: [
+    { label: 'One database, one manager', href: '../../use/operations/#one-database-one-manager' },
+    { label: 'Run versioned migrations', href: '../../use/migrations/' },
+    { label: 'Exact-plan approvals', href: '../../use/approvals/' },
   ],
 };

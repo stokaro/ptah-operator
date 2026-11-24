@@ -286,8 +286,14 @@ func TestKubectlPtahOperateVerbsAgainstTheAPIServer(t *testing.T) {
 			s.condition(operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "HistoryDirty", "Revision 7 is recorded dirty")
 		})
 
+		// The timeout is the wait's own clock, which moves by the interval
+		// each time the wait sleeps. With the real clock every read carries
+		// the wait's deadline, so a first read slower than the timeout ends
+		// the wait with nothing read, and the row would measure how fast the
+		// API server answered rather than what the timeout names.
+		const timeout, interval = 300 * time.Millisecond, 50 * time.Millisecond
 		_, err := operate.Wait(ctx, watcher, ref, operate.WaitOptions{
-			Target: operate.TargetInSync, Timeout: 300 * time.Millisecond, Interval: 50 * time.Millisecond,
+			Target: operate.TargetInSync, Timeout: timeout, Interval: interval, Clock: newStepClock(),
 		})
 
 		var timedOut *operate.TimeoutError
@@ -297,6 +303,33 @@ func TestKubectlPtahOperateVerbsAgainstTheAPIServer(t *testing.T) {
 			t.Fatalf("wait = %v (%+v); want a timeout naming phase Blocked and the HistoryDirty condition", err, timedOut)
 		}
 	})
+}
+
+// stepClock is a wait's clock whose sleeps return at once, having moved the
+// time on by the sleep. A wait given it times out after a fixed number of
+// reads, however long each takes.
+type stepClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func newStepClock() *stepClock {
+	return &stepClock{now: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *stepClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	fired := make(chan time.Time, 1)
+	fired <- c.now
+	return fired
 }
 
 // refreshDuringARead requests a read while one is under way, in phase with

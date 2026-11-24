@@ -19,22 +19,57 @@ out of silence.
 ## 0.2.19
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. Nothing else asks anything of you: the CRD schema version, the
-runner protocol and the executor, Ptah v0.35.0, are those of 0.2.18, so a plan
-waiting for an approval and the approval given for it carry over.
+on the upgrade. The CRD schema version and the runner protocol are those of
+0.2.18. The executor moves to Ptah v0.35.1, which retires the execution
+binding: approve again whatever was waiting, after the resource has read its
+database with v0.35.1 and planned. A read still running when the new manager
+starts runs again. An Apply whose Job 0.2.18 created is waited for rather than
+retired: the new manager reads its result under the v0.35.0 binding it was
+dispatched under, records the outcome it reported, and moves the binding on the
+next pass, so the upgrade needs no pause for Applies to end. Such an Apply can
+still be recorded `Unknown` in the cases [0.2.16](#0216) names.
 
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
-  supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x
-  or 18.x has nothing to change for that.
-- **MySQL 9.7.x joins the supported release lines.** Run 45223146080 of the same
-  workflow passed the whole lifecycle on it on every supported Kubernetes minor
-  at the pinned Ptah build. A cluster on MySQL 8.4.x has nothing to change.
+  supported Kubernetes minor at Ptah v0.35.0. A cluster on 16.x, 17.x or 18.x
+  has nothing to change for that.
+- **MySQL 9.7.x LTS joins the supported release lines.** Run 45223146080 of
+  the same workflow passed the whole lifecycle on it on every supported
+  Kubernetes minor at Ptah v0.35.0. A cluster on MySQL 8.4.x has nothing to
+  change.
 - **A Plan that Ptah fails without a refusal code logs Ptah's sentence.** The
   Plan Pod's log has one line, `ptah-runner: ptah reported:`, with the first
   line of what Ptah said, as a failed Apply already logged. The runner removes
   the password from a database URL in it; the host and the login can remain.
   A log collector that keeps operation Pod logs keeps that line too.
+- **A MySQL revoke on one table that a database grant keeps stops the
+  schema.** A `REVOKE` on one table cannot take a privilege the role holds on
+  the whole database: MySQL answers it with `ERROR 1147` and the role keeps
+  reading the table. Ptah v0.35.0 planned nothing for such a revoke and read the
+  schema as in sync. v0.35.1 refuses it
+  ([stokaro/ptah#6492](https://github.com/stokaro/ptah/pull/6492),
+  [#6512](https://github.com/stokaro/ptah/pull/6512)), and the `PtahSchema`
+  stops `Blocked` with
+  [`PlanRefused`](../../troubleshoot/condition-reasons/#a-plan-that-stops-without-saying-why)
+  and `plan_refused: ptah refused to plan the change (declaration-refused)`.
+  The Plan Pod's log names the grant, as in `role "wide_reader" holds SELECT ON
+  wide.*, which covers table t3, so a revoke on the table cannot take it`.
+  Measured on MySQL 8.4.11 with a SQL schema that revokes `SELECT` on one table
+  from a role granted `SELECT ON wide.*`. Revoke the privilege where it was
+  granted, or grant it on each table that needs it.
+- **A MySQL `GRANT ALL` on a table no longer plans changes every time.**
+  v0.35.0 read `ALL` as PostgreSQL's list on every engine
+  ([stokaro/ptah#6491](https://github.com/stokaro/ptah/pull/6491)). Measured on
+  MySQL 8.4.11, a schema that declares `GRANT ALL ON t1` to a role holding
+  exactly that planned six revokes, `ALTER`, `CREATE`, `CREATE VIEW`, `DROP`,
+  `INDEX` and `SHOW VIEW`, and `GRANT ALL` again, which leaves the role where it
+  was, so every Plan of such a schema had changes. v0.35.1 plans none.
+- **A revoke of `ALL PRIVILEGES` in a YAML or HCL schema revokes.** Ptah
+  v0.35.1 reads it as `ALL`
+  ([stokaro/ptah#6486](https://github.com/stokaro/ptah/pull/6486)), where
+  v0.35.0 revoked nothing for it and read the schema as in sync, so the first
+  Plan after the upgrade can hold revokes the schema always declared. The
+  operator did not measure this one.
 
 ## 0.2.18
 
