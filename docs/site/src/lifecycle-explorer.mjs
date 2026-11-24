@@ -3075,7 +3075,7 @@ const workflowStages = [
     decision: 'w-dec-migration',
     decisionText:
       'An approval of the backfill plan. The expand’s schema approval does not reach it, and under apply: Always the run needs none.',
-    gate: 'Start only after Verified expand. The Lease would let this run take its turn before the expand, because it serializes the two resources and does not order them.',
+    gate: 'Start only after Verified expand. The Lease would let this run take its turn before the expand, because it serializes the two resources and does not decide which stage comes next.',
     done: 'The run ended, and status.lastRun records its outcome.',
     outcomes: [
       {
@@ -3369,7 +3369,7 @@ export const workflow = {
     'No resource records a stage as a whole, and no command prints one. A pipeline that runs the sequence can keep one record per stage, from what the resources already say.',
   readers: workflowReaders,
   distinctions: [
-    'The realm Lease serializes; it does not order. Two resources that share a realm never run at once, and either can take the next turn.',
+    'The realm Lease serializes: two resources that share a realm never run at once. It decides which runs now, not which stage comes next, so either can take the next turn.',
     'An approval of one family authorizes nothing in the other. Each plan waits for its own decision under its own policy, and no decision covers the order of the stages.',
     'Migration InSync proves the history, not the data. The checks are yours, and nothing in the cluster records them.',
     'A stop holds every later stage. Nothing downstream starts until the stopped stage is cleared and meets its completion criterion again.',
