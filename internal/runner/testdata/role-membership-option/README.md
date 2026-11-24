@@ -18,6 +18,13 @@ so since v0.35.0 Ptah reports it under `role_memberships_modified`
 (stokaro/ptah#6424). `schema plan` of the same file planned
 `GRANT "harness_readers" TO "harness_vault" WITH ADMIN FALSE`.
 
+On November 24, 2026 the v0.35.1 release image that `support/ptah.json` now
+pins,
+`ghcr.io/stokaro/ptah@sha256:4b66856f2d0780ff697155575c97e900b7b7654d8141c6368ee77f79db2c90d5`,
+read a fresh server of the same PostgreSQL image prepared the same way, on an
+arm64 host, and printed the same document but for those two lines, exiting 1;
+its `schema plan` saved the plan v0.35.0 saved beside it, byte for byte.
+
 A runner harness row cannot print this yet: every file under
 `internal/dataplane/testdata` is a document a harness row prints, and no row
 declares roles in a YAML schema.

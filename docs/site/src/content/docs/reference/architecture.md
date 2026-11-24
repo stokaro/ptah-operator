@@ -151,6 +151,11 @@ creates to authorize exactly that plan.
 | Declared schema | `PtahSchema` | `PtahSchemaPlan` | `PtahSchemaApproval` |
 | Versioned migrations | `PtahMigration` | `PtahMigrationPlan` | `PtahMigrationApproval` |
 
+[The lifecycle explorer's object map](../reconciliation/?lx-view=objects#lifecycle-explorer)
+shows every kind below with the Jobs, Secrets, ConfigMaps and Lease around
+them, and separates the owner references garbage collection follows from the
+names a resource only reads.
+
 A schema plan's SQL lives in a seventh kind, `PtahSchemaPlanChunk`: up to
 sixteen immutable chunks the plan owns and binds by UID, size and digest, so
 reading a plan takes one RBAC rule on that kind. The migration family has no

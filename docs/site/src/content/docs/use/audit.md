@@ -13,6 +13,10 @@ installation: the API server's audit log, collected logs and backups.
 
 Every finding below comes from [one measured run](#the-measured-run) and says
 whether it was measured or only read from the code.
+[The lifecycle explorer's audit view](../../reference/reconciliation/?lx-view=audit#lifecycle-explorer)
+lays the same record out by source: what each one can and cannot establish,
+how it joins the others, what reads it, and what is left of it after a Job,
+the resource or the namespace is deleted, or the cluster is lost.
 
 ## The questions {#questions}
 

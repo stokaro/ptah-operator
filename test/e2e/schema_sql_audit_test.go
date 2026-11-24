@@ -185,7 +185,12 @@ func addedLineStems(t *testing.T, engine string) []string {
 		if line.Engine != engine {
 			continue
 		}
-		release, found := strings.CutSuffix(line.Line, ".x")
+		// The release comes before any label, such as a MySQL line's LTS.
+		fields := strings.Fields(line.Line)
+		if len(fields) == 0 {
+			t.Fatalf("added %s line %q does not name a release", engine, line.Line)
+		}
+		release, found := strings.CutSuffix(fields[0], ".x")
 		if !found || release == "" {
 			t.Fatalf("added %s line %q does not name a release", engine, line.Line)
 		}

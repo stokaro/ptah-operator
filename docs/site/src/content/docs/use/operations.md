@@ -597,6 +597,14 @@ re-examined on a bounded cadence: the shorter of the resource's `spec.interval`
 and one minute. Every claimant leaves `Blocked` within a minute of the last one
 declaring, whatever interval it runs on.
 
+The claimants serialize against each other through the same Lease: one
+operation runs at a time. The Lease decides which claimant runs now, not what
+runs next, so it does not make a migration wait for a schema change, or the
+other way round.
+[The lifecycle explorer's composed workflow](../../reference/reconciliation/?lx-view=workflow#lifecycle-explorer)
+walks a schema and a migration through one change to a shared database, with
+the order and the checks a pipeline around them has to hold.
+
 ### A database more than one namespace manages
 
 A coordination key belongs to its namespace. The realm it names is the engine,
@@ -2506,14 +2514,15 @@ database in a state nobody checked.
 
 Copy the resource's UID and the run's operation ID the operator published.
 `kubectl ptah migration orders -n application` prints both in its
-`Unresolved run` block, and so does:
+`Unresolved run` block: the operation ID on the `Operation` line, and the UID
+in the sentence that ends the block. In JSON they are the `uid` field and
+`unresolvedRun.operationID`:
 
 ```sh
-kubectl -n application get ptahmigration orders \
-  -o jsonpath='{.metadata.uid}{"\n"}{.status.unresolvedRun.operationID}{"\n"}'
+kubectl ptah migration orders -n application -o json
 ```
 
-and name them in a `PtahMigrationRunAcknowledgment`:
+Name them in a `PtahMigrationRunAcknowledgment`:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1

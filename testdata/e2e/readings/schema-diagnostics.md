@@ -72,7 +72,13 @@ commit `1ec0b95eea95afce6f50b5912311ce4822f0636b`, reproduced the PostgreSQL
 History reading and the PostgreSQL restored-history refusal and moved every
 other reading, as the comparison with v0.34.0 below says. The moved readings
 and the four saved exclusion plans here are v0.35.0's, and the contract names
-the new statements.
+the new statements. On November 24, 2026 the v0.35.0 image reproduced every
+checked-in PostgreSQL 17 and MySQL 8.4 reading again, and the v0.35.1 release
+image, commit `ff4a4368f96968e6f43322e3e5dd27f2415e0013`, reproduced every reading the
+same way, the PostgreSQL 18, 16 and 15 and MySQL 9.7 and 26.10 witnesses, both History
+readings and both restored-history refusals included, and all four saved
+exclusion plans byte for byte. No reading or saved plan changed; the contract
+and [`schema-sql-capture.json`](schema-sql-capture.json) name the new commit.
 [`schema-sql-capture.json`](schema-sql-capture.json) records the executor and
 server images, every command's exit status and record count, and the SHA-256 of
 each reading and saved plan.
@@ -619,13 +625,20 @@ procedure. All 32 readings, 2,711 records, matched the MySQL 8.4.11 ones with
 the same exit statuses, the two migration History readings and the
 restored-history refusal included, and both saved exclusion plans are byte for
 byte the checked-in ones. The same capture against the pinned 8.4 image, run
-beside it as a control, matched as well. Ptah v0.35.0 certifies 26.10 and
-resolves it to its `MySQL84` preset.
+beside it as a control, matched as well. On November 24, 2026 the v0.35.1
+release image ran the whole capture on 26.10.0 again, with the 8.4 control
+beside it, and both matched every checked-in reading the same way, with the
+same exit statuses and record counts, and both saved exclusion plans byte for
+byte. Ptah v0.35.0 and v0.35.1 certify 26.10 and resolve it to their `MySQL84`
+preset.
 
 `mysql-26.10-schema-drift-observe`, `-drift-plan` and `-drift-stale-apply` are
-the line's witnesses, taken with `--mysql-line 26.10` the same day, at 52, 99
-and 61 records. They match the MySQL 8.4 drift readings and the 9.7 witnesses
-of the same names.
+the line's witnesses, taken with `--mysql-line 26.10` on November 23, 2026, at
+52, 99 and 61 records, and taken again with the v0.35.1 image on November 24,
+2026 with the same records and exit statuses. They match the MySQL 8.4 drift
+readings and the 9.7 witnesses of the same names. The 9.7 and 26.10 witnesses
+are listed in [`schema-sql-capture.json`](schema-sql-capture.json) with the
+exit status the v0.35.1 capture gave, as the PostgreSQL lines' are.
 
 ## The documented login
 

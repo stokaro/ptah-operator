@@ -373,11 +373,13 @@ the container's private environment without printing it. Every observed Job UID
 must have a complete terminal log audit. Terminal Jobs are re-read by exact UID, their Pods
 are selected by controller owner UID rather than a reusable name label, and
 every exact terminated Pod and container is rechecked after its log scan before
-the Job UID is certified. Exact operation results are extracted from one
-complete integrity-bound frame of that runner protocol by the production
-parser, rather than inferred from Job success alone. Every parsed frame is also bound to the
-CR's persisted active-operation ID and Job UID and to the exact `ADDED` Job
-annotation, so a stale or foreign frame cannot satisfy the suite. Any stdout
+the Job UID is certified. Exact operation results are read by production
+code rather than inferred from Job success alone: for a Job built for durable
+delivery, from the result records the receiver stored, through the loader the
+manager uses; for a Job without it, from one complete integrity-bound frame of
+that runner protocol in the log, by the production parser. Every result is also
+bound to the CR's persisted active-operation ID and Job UID and to the exact
+`ADDED` Job annotation, so a stale or foreign result cannot satisfy the suite. Any stdout
 or stderr truncation is fatal because discarded output cannot be credential
 audited. Log followers cover the manager replacement and active-Pod deletion
 windows until natural EOF. The Pod-deletion proof adds and removes only its
@@ -474,8 +476,10 @@ Every wait audits the Jobs that finished since the last reading, before the
 controller's TTL can delete them: their objects, their Pods and every container
 log are scanned for the fixture credentials, and a completed operation Job's
 Job, Pod, settled log and result are kept in memory for the proofs that read
-its history later. Results are read with `resultframe`, which wraps the
-production parser. The phase keeps three ledgers in memory -- the Jobs it
+its history later. A durable Job's result is read from the records the
+receiver stored, even when its log is empty; a Job without delivery has its
+result read from the log with `resultframe`, which wraps the production
+parser. The phase keeps three ledgers in memory -- the Jobs it
 observed, and the Jobs it audited broadly and fully -- and the fault scenarios
 add to the same ledgers, so the closing audit holds every Job the phase saw,
 the fault Jobs included.

@@ -159,13 +159,22 @@ func TestADatabaseCatalogThatClaimsTooMuchIsRefused(t *testing.T) {
 			t.Fatalf("loadDatabaseCatalog() = %d added lines, %v, want the MySQL line read", len(catalog.Added), err)
 		}
 	})
+	t.Run("an added MySQL line that names its LTS", func(t *testing.T) {
+		t.Parallel()
+		added := fixtureAddedRow + ", " + mysqlRow("9.7.x LTS", "mysql:9.7"+digest)
+		catalog, err := loadDatabaseCatalog(writeDatabaseCatalog(t, fixtureAddedRow, added), databaseCatalogNow)
+		if err != nil || len(catalog.Added) != 2 {
+			t.Fatalf("loadDatabaseCatalog() = %d added lines, %v, want the MySQL LTS line read", len(catalog.Added), err)
+		}
+	})
 	for name, test := range map[string]struct{ line, image, want string }{
 		"a MySQL tag that names another line": {"9.7.x", "mysql:9.6" + digest, "names 9.6.x"},
 		"a MySQL tag that names only a major": {"9.7.x", "mysql:9" + digest, "MySQL release line"},
 		"a MySQL line that says more first":   {"LTS 9.7.x", "mysql:9.7" + digest, "names 9.7.x"},
 		"a MySQL line that runs on":           {"9.7.xx", "mysql:9.7" + digest, "names 9.7.x"},
-		// The witness test and the probe read an added line's stem from the line.
-		"an added MySQL line that says more after it": {"9.7.x LTS", "mysql:9.7" + digest, "names 9.7.x"},
+		// A MySQL line may name its LTS and nothing else after the release.
+		"an added MySQL line that says more after it":  {"9.7.x Innovation", "mysql:9.7" + digest, "names 9.7.x"},
+		"an added MySQL line that names its LTS first": {"LTS 9.7.x LTS", "mysql:9.7" + digest, "names 9.7.x"},
 		// The baseline already runs 8.4 under the same job names.
 		"an added MySQL release the baseline names": {"8.4.x", "mysql:8.4" + digest, "appears twice"},
 	} {
