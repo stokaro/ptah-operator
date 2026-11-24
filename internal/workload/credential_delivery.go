@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // A credential reaches an operation Pod as a file in a read-only Secret
@@ -24,7 +25,22 @@ import (
 // whatever mode the Job declares: 0400 reads back as 0440. Owning the file by
 // the operation user needs the volume user fields, which are alpha in every
 // supported minor and which the Job write guard refuses.
+//
+// A database URL from a SecretProviderClass is a file in a CSI volume of the
+// Secrets Store CSI driver instead, mounted in the same place and named by the
+// same variable. The driver fetches it from the store when the Pod starts,
+// with the Pod's ServiceAccount token, and writes it 0644 owned by root: its
+// CSIDriver declares fsGroupPolicy ReadWriteOnceWithFSType, and an ephemeral
+// volume has no fsType, so the kubelet applies no fsGroup. The volume is
+// mounted in the one container that reads it, so the mode reaches no other
+// process of the Pod. The volume attributes name the class and nothing else:
+// the class says what to fetch, and the provider how.
 const (
+	// SecretsStoreCSIDriver is the driver a SecretProviderClass volume names.
+	SecretsStoreCSIDriver = "secrets-store.csi.k8s.io"
+	// SecretProviderClassVolumeAttribute is the volume attribute naming the class.
+	SecretProviderClassVolumeAttribute = "secretProviderClass"
+
 	databaseURLVolumeName            = "database-url"
 	developmentDatabaseURLVolumeName = "development-database-url"
 	shadowDatabaseURLVolumeName      = "shadow-database-url"
@@ -47,23 +63,41 @@ const (
 var ociFetchPrefix = []string{"--fetch-oci-source", "--ptah-binary", ptahBinaryPath, "--"}
 
 // databaseCredential is the environment variable, volume and mount that give
-// one container the database URL selector names, as a file.
+// one container the database URL source names, as a file.
 //
-// The selector's optional flag is carried to the volume. An optional key the
-// Secret lacks then leaves no file, and the runner leaves the variable unset,
-// as the kubelet did when it resolved an optional key into the environment.
-func databaseCredential(fileVariable, volumeName, directory string, selector corev1.SecretKeySelector) (
-	corev1.EnvVar, corev1.Volume, corev1.VolumeMount,
+// A Secret key is projected as the file url. The selector's optional flag is
+// carried to the volume: an optional key the Secret lacks then leaves no file,
+// and the runner leaves the variable unset, as the kubelet did when it
+// resolved an optional key into the environment.
+//
+// A SecretProviderClass object is the file the class writes under that name
+// in a read-only CSI volume of the Secrets Store CSI driver. The class decides
+// which files the driver writes, so a name it does not write leaves no file,
+// and the runner leaves the variable unset the same way.
+func databaseCredential(fileVariable, volumeName, directory string, source urlsource.Source) (
+	corev1.EnvVar, corev1.Volume, corev1.VolumeMount, error,
 ) {
+	if err := source.Validate(); err != nil {
+		return corev1.EnvVar{}, corev1.Volume{}, corev1.VolumeMount{}, err
+	}
+	mount := corev1.VolumeMount{Name: volumeName, MountPath: directory, ReadOnly: true}
+	if class := source.Class; class != nil {
+		readOnly := true
+		volume := corev1.Volume{Name: volumeName, VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
+			Driver:           SecretsStoreCSIDriver,
+			ReadOnly:         &readOnly,
+			VolumeAttributes: map[string]string{SecretProviderClassVolumeAttribute: class.Name},
+		}}}
+		return literalEnv(fileVariable, directory+"/"+class.ObjectName), volume, mount, nil
+	}
+	selector := source.Secret
 	mode := credentialFileMode
 	volume := corev1.Volume{Name: volumeName, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 		SecretName: selector.Name,
 		Items:      []corev1.KeyToPath{{Key: selector.Key, Path: databaseURLFile, Mode: &mode}},
 		Optional:   copyBoolPointer(selector.Optional),
 	}}}
-	return literalEnv(fileVariable, directory+"/"+databaseURLFile),
-		volume,
-		corev1.VolumeMount{Name: volumeName, MountPath: directory, ReadOnly: true}
+	return literalEnv(fileVariable, directory+"/"+databaseURLFile), volume, mount, nil
 }
 
 // credentialItem is one optional key of a Secret, projected under name.

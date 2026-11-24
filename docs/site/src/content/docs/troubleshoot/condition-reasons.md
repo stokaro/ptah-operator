@@ -478,15 +478,17 @@ the login should not match, or grant the privilege.
 
 When an operation cannot open its connection to the target database, what the
 operator says about it starts with the kind of failure Ptah reported, then
-says what that kind means and names the Secret key the operation read the URL
-from:
+says what that kind means and names the Secret key, or the SecretProviderClass
+object, the operation read the URL from:
 
 ```
 database_unreachable: the target database did not answer: its host did not resolve, refused the connection, or did not respond in time. Check the host and port in the URL that Secret "orders-database" holds under key "url", and that the database is running and accepts connections from this namespace
 ```
 
 The Secret and the key are the ones `spec.target.urlFrom` named when the
-operation started. On every stage the sentence is the message of
+operation started. A target from a SecretProviderClass reads `the URL that
+SecretProviderClass "orders-database" writes as object "url"` in their place,
+for the class and the object `spec.target.urlFromSecretProviderClass` named. On every stage the sentence is the message of
 `DatabaseReachable=False`, whose reason names the kind. Where else it appears
 depends on the stage that failed:
 
@@ -500,7 +502,8 @@ depends on the stage that failed:
 `kubectl ptah schema` and `kubectl ptah migration` print each condition with
 its message, and the resource's status keeps the sentence whole. An Event
 keeps 512 bytes of it, which holds the whole sentence while the Secret's name
-and key together stay under 230 bytes.
+and key together stay under 230 bytes, or the class's name and object name
+under 216.
 
 | Kind | `DatabaseReachable` reason | What Ptah found | Where to look |
 | --- | --- | --- | --- |

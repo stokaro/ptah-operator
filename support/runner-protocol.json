@@ -542,6 +542,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e5946fa26d8ac71205b0a0b7aff3455033df6f2b79efb7c7ca28ed6ee9316e58",
       "reason": "Dependency updates the runner links, with no change to its own source: golang.org/x/crypto v0.59.0 with x/net v0.62.0, x/sys v0.50.0, x/term v0.48.0 and x/text v0.44.0; x/oauth2 v0.38.0; controller-runtime v0.25.3; prometheus/common v0.74.0; go-logr/logr v1.4.4; pandatix/go-abnf v0.5.5; go.yaml.in/yaml/v2 v2.4.5. What the runner accepts, enforces and returns is written in this repository and did not change, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:000ba6d9169be73463d12900bd63d2bfc66f544315c4cd6ea4879b54a210e861",
+      "reason": "The API types the runner links gained urlFromSecretProviderClass beside urlFrom in a target, a development database and a drift check's shadow, and urlFrom became optional (#831). The runner's own source did not change: it reads a database URL from the same file under the same variable whether a Secret volume or a SecretProviderClass's CSI volume holds it, and what it accepts, enforces and returns is the same, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

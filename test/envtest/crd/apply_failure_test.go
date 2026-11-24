@@ -31,7 +31,7 @@ func TestPtahSchemaStatusRefusesAMalformedApplyFailure(t *testing.T) {
 			Outcome: operatorv1alpha1.PendingObservationOutcomeUnknown, ApplyOperationID: settleApplyID,
 			ApplyJobName: "ptah-apply-aaa", ApplyJobUID: "apply-job-uid", ApplyGeneration: 1,
 			CoordinationDigest: coordinationDigest, LeaseDurationSeconds: 60,
-			Target: operatorv1alpha1.DatabaseTargetBinding{Engine: "PostgreSQL", URLFrom: corev1.SecretKeySelector{
+			Target: operatorv1alpha1.DatabaseTargetBinding{Engine: "PostgreSQL", URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "application-database"}, Key: "url"}},
 			Source: operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://ghcr.io/example/application-schema@" + artifactDigest, Digest: artifactDigest},

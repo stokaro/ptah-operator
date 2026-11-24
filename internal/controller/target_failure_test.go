@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // frameText stands for what a runner frame's message could carry: text the
@@ -34,9 +35,9 @@ func TestResultFailureWritesTheKindsSentence(t *testing.T) {
 
 	url := corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database-broken"}, Key: "url"}
 	for _, kind := range dataplane.TargetFailureKinds() {
-		want := targetfailure.Message(kind, url)
-		if failure := resultFailure(&runner.ResultError{Code: string(kind), Message: frameText}, url); failure.Error() != want {
-			t.Errorf("resultFailure(%s) = %q, want %q", kind, failure.Error(), want)
+		want := targetfailure.Message(kind, urlsource.OfSecret(url))
+		if failure := resultFailure(&runner.ResultError{Code: string(kind), Message: frameText}, urlsource.OfSecret(url)); failure.Error() != want {
+			t.Errorf("resultFailure(urlsource.OfSecret(%s)) = %q, want %q", kind, failure.Error(), want)
 		}
 	}
 }
@@ -57,7 +58,7 @@ func TestResultFailureReadsOnlyTheKindOfATargetFailure(t *testing.T) {
 		{
 			name:    "a kind",
 			failure: runner.ResultError{Code: "database_not_found", Message: frameText},
-			want:    targetfailure.Message(dataplane.TargetDatabaseNotFound, url),
+			want:    targetfailure.Message(dataplane.TargetDatabaseNotFound, urlsource.OfSecret(url)),
 		},
 		{
 			name:    "an exit status",
@@ -84,34 +85,78 @@ func TestResultFailureReadsOnlyTheKindOfATargetFailure(t *testing.T) {
 			failure: runner.ResultError{Code: "invalid_input", Message: strings.Repeat("x", 600)},
 			want:    "invalid_input: " + strings.Repeat("x", 512) + "...",
 		},
+		{
+			name:    "no target URL from a Secret",
+			failure: runner.ResultError{Code: "missing_target", Message: "PTAH_DB_URL is required"},
+			want:    "missing_target: PTAH_DB_URL is required",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if got := resultFailure(&test.failure, url).Error(); got != test.want {
+			if got := resultFailure(&test.failure, urlsource.OfSecret(url)).Error(); got != test.want {
 				t.Fatalf("resultFailure() = %q, want %q", got, test.want)
 			}
 		})
 	}
 }
 
-// TestTheSecretIsTheOneTheOperationRead names the Secret the claim bound when
+// TestResultFailureNamesTheClassObjectItFoundNoFileFor holds a target from a
+// SecretProviderClass to the operator's sentences: a kind names the class and
+// the object, and a run that found no URL file says which file the class did
+// not write, whatever the frame's message says.
+func TestResultFailureNamesTheClassObjectItFoundNoFileFor(t *testing.T) {
+	t.Parallel()
+
+	class := urlsource.Source{Class: &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "orders-store", ObjectName: "url"}}
+	unreachable := resultFailure(&runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText}, class).Error()
+	if want := targetfailure.Message(dataplane.TargetDatabaseUnreachable, class); unreachable != want {
+		t.Fatalf("resultFailure(class, unreachable) = %q, want %q", unreachable, want)
+	}
+	if !strings.Contains(unreachable, `SecretProviderClass "orders-store" writes as object "url"`) {
+		t.Fatalf("resultFailure(class, unreachable) = %q, which does not name the class object", unreachable)
+	}
+	missing := resultFailure(&runner.ResultError{Code: "missing_target", Message: frameText}, class).Error()
+	want := `missing_target: the operation found no file "url" in the volume of SecretProviderClass "orders-store". ` +
+		"Check that the class writes an object under that name, as its objectName or its objectAlias"
+	if missing != want {
+		t.Fatalf("resultFailure(class, missing_target) = %q, want %q", missing, want)
+	}
+}
+
+// TestTheSecretIsTheOneTheOperationRead names the place the claim bound when
 // it dispatched, which a later spec edit does not change, and the resource's
-// own only when a claim bound none.
+// own only when a claim bound none. A claim that bound a SecretProviderClass
+// object names it after the resource moved to a Secret, and the other way
+// round.
 func TestTheSecretIsTheOneTheOperationRead(t *testing.T) {
 	t.Parallel()
 
-	spec := corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "edited"}, Key: "dsn"}
-	bound := &operatorv1alpha1.DatabaseTargetBinding{URLFrom: corev1.SecretKeySelector{
+	spec := operatorv1alpha1.DatabaseTargetSpec{URLFrom: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "edited"}, Key: "dsn"}}
+	bound := &operatorv1alpha1.DatabaseTargetBinding{URLFrom: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "dispatched"}, Key: "url"}}
-	if got := operationURLSecret(bound, spec); got.Name != "dispatched" || got.Key != "url" {
-		t.Fatalf("operationURLSecret(bound) = %+v, want the binding's", got)
+	if got := operationURLSource(bound, spec); got.Secret == nil || got.Secret.Name != "dispatched" || got.Secret.Key != "url" {
+		t.Fatalf("operationURLSource(bound) = %+v, want the binding's", got)
+	}
+	class := &operatorv1alpha1.DatabaseTargetBinding{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+		Name: "orders-store", ObjectName: "url"}}
+	if got := operationURLSource(class, spec); got.Secret != nil || got.Class == nil || *got.Class != *class.URLFromSecretProviderClass {
+		t.Fatalf("operationURLSource(class binding) = %+v, want the binding's class", got)
+	}
+	classSpec := operatorv1alpha1.DatabaseTargetSpec{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+		Name: "edited-store", ObjectName: "dsn"}}
+	if got := operationURLSource(bound, classSpec); got.Class != nil || got.Secret == nil || got.Secret.Name != "dispatched" {
+		t.Fatalf("operationURLSource(bound, class spec) = %+v, want the binding's Secret", got)
 	}
 	for name, binding := range map[string]*operatorv1alpha1.DatabaseTargetBinding{
 		"no binding":            nil,
 		"a binding with no URL": {Engine: operatorv1alpha1.DatabaseEnginePostgreSQL},
 	} {
-		if got := operationURLSecret(binding, spec); got.Name != "edited" || got.Key != "dsn" {
-			t.Fatalf("operationURLSecret(%s) = %+v, want the spec's", name, got)
+		if got := operationURLSource(binding, spec); got.Secret == nil || got.Secret.Name != "edited" || got.Secret.Key != "dsn" {
+			t.Fatalf("operationURLSource(%s) = %+v, want the spec's", name, got)
+		}
+		if got := operationURLSource(binding, classSpec); got.Class == nil || got.Class.Name != "edited-store" {
+			t.Fatalf("operationURLSource(%s, class spec) = %+v, want the spec's class", name, got)
 		}
 	}
 }
@@ -173,7 +218,7 @@ func TestASchemaNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 	actual := safetyGetSchema(t, api, schema)
-	want := targetfailure.Message(dataplane.TargetDatabaseUnreachable, schema.Spec.Target.URLFrom)
+	want := targetfailure.Message(dataplane.TargetDatabaseUnreachable, urlsource.Source{Secret: schema.Spec.Target.URLFrom})
 	failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
 	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
 		failed.Message != want {
@@ -213,7 +258,7 @@ func TestAMigrationHistoryNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 			t.Parallel()
 			migration := migrationFixture()
 			if test.url != nil {
-				migration.Spec.Target.URLFrom = *test.url
+				migration.Spec.Target.URLFrom = test.url
 			}
 			migration.Status.ExecutionBinding = migrationExecutionBinding()
 			migration.Status.Artifact = resolvedMigrationArtifact()
@@ -234,7 +279,7 @@ func TestAMigrationHistoryNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			actual := readMigration(t, api, migration)
-			want := targetfailure.Message(dataplane.TargetPermissionDenied, migration.Spec.Target.URLFrom)
+			want := targetfailure.Message(dataplane.TargetPermissionDenied, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 			progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
 			if progressing == nil || progressing.Reason != string(operatorv1alpha1.ReasonOperationFailed) || progressing.Message != want {
 				t.Fatalf("Progressing = %#v, want OperationFailed with %q", progressing, want)
@@ -304,14 +349,14 @@ func TestAMigrationRunThatNeverSelectedSaysWhy(t *testing.T) {
 			name:    "a target that refused the credentials",
 			failure: &runner.ResultError{Code: string(dataplane.TargetAuthenticationFailed), Message: frameText},
 			want: func(migration *operatorv1alpha1.PtahMigration) string {
-				return targetfailure.Message(dataplane.TargetAuthenticationFailed, migration.Spec.Target.URLFrom)
+				return targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 			},
 		},
 		{
 			name:    "a target that did not answer",
 			failure: &runner.ResultError{Code: string(dataplane.TargetDatabaseUnreachable), Message: frameText},
 			want: func(migration *operatorv1alpha1.PtahMigration) string {
-				return targetfailure.Message(dataplane.TargetDatabaseUnreachable, migration.Spec.Target.URLFrom)
+				return targetfailure.Message(dataplane.TargetDatabaseUnreachable, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 			},
 		},
 		{
@@ -438,7 +483,7 @@ func TestAFrameWithAKindAndNoRunIsNotRepeated(t *testing.T) {
 		OperationID: operation.ID, ChildExitCode: 2, MutationStarted: true, Uncertain: true,
 		Error: &runner.ResultError{Code: string(dataplane.TargetTLSFailed), Message: frameText},
 	})
-	want := targetfailure.Message(dataplane.TargetTLSFailed, migration.Spec.Target.URLFrom)
+	want := targetfailure.Message(dataplane.TargetTLSFailed, urlsource.Source{Secret: migration.Spec.Target.URLFrom})
 	if reported.run != nil || reported.failure == nil || reported.failure.Error() != want {
 		t.Fatalf("frameMigrationApply() = %+v, want no run and the failure %q", reported, want)
 	}
@@ -450,23 +495,24 @@ func TestAMigrationNamesTheSecretItsClaimBound(t *testing.T) {
 	t.Parallel()
 
 	migration := migrationFixture()
-	migration.Spec.Target.URLFrom = corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "edited"}, Key: "dsn"}
-	if got := migrationURLSecret(migration); got.Name != "edited" || got.Key != "dsn" {
-		t.Fatalf("migrationURLSecret() with no claim = %+v, want the spec's", got)
+	migration.Spec.Target.URLFrom = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "edited"}, Key: "dsn"}
+	if got := migrationURLSource(migration); got.Secret == nil || got.Secret.Name != "edited" || got.Secret.Key != "dsn" {
+		t.Fatalf("migrationURLSource() with no claim = %+v, want the spec's", got)
 	}
 	migration.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{
-		Target: &operatorv1alpha1.DatabaseTargetBinding{URLFrom: corev1.SecretKeySelector{
+		Target: &operatorv1alpha1.DatabaseTargetBinding{URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "dispatched"}, Key: "url"}},
 	}
-	if got := migrationURLSecret(migration); got.Name != "dispatched" || got.Key != "url" {
-		t.Fatalf("migrationURLSecret() = %+v, want the claim's", got)
+	if got := migrationURLSource(migration); got.Secret == nil || got.Secret.Name != "dispatched" || got.Secret.Key != "url" {
+		t.Fatalf("migrationURLSource() = %+v, want the claim's", got)
 	}
 }
 
 // TestATargetFailureSentenceFitsStatusWhole holds every kind's sentence, for
-// the longest Secret name and key Kubernetes admits, under the 1024 bytes the
-// conditions and a run's message keep, and, for a name and key of a hundred
-// bytes each, under the 512 every failure Event keeps.
+// the longest Secret name and key, or SecretProviderClass name and object
+// name, the API admits, under the 1024 bytes the conditions and a run's
+// message keep, and, for names of a hundred bytes each, under the 512 every
+// failure Event keeps.
 func TestATargetFailureSentenceFitsStatusWhole(t *testing.T) {
 	t.Parallel()
 
@@ -475,16 +521,18 @@ func TestATargetFailureSentenceFitsStatusWhole(t *testing.T) {
 		length int
 		limit  int
 	}{
-		{"the longest name and key", 253, 1024},
-		{"a name and key of a hundred bytes", 100, migrationRunEventBytes},
+		{"the longest names", 253, 1024},
+		{"names of a hundred bytes", 100, migrationRunEventBytes},
 	} {
-		url := corev1.SecretKeySelector{
-			LocalObjectReference: corev1.LocalObjectReference{Name: strings.Repeat("n", test.length)},
-			Key:                  strings.Repeat("k", test.length),
-		}
-		for _, kind := range dataplane.TargetFailureKinds() {
-			if message := targetfailure.Message(kind, url); len(message) > test.limit {
-				t.Errorf("%s: %s is %d bytes, more than %d", test.name, kind, len(message), test.limit)
+		name, key := strings.Repeat("n", test.length), strings.Repeat("k", test.length)
+		for _, url := range []urlsource.Source{
+			urlsource.OfSecret(corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: key}),
+			{Class: &operatorv1alpha1.SecretProviderClassObjectSelector{Name: name, ObjectName: key}},
+		} {
+			for _, kind := range dataplane.TargetFailureKinds() {
+				if message := targetfailure.Message(kind, url); len(message) > test.limit {
+					t.Errorf("%s from %s: %s is %d bytes, more than %d", test.name, url.Holder(), kind, len(message), test.limit)
+				}
 			}
 		}
 	}

@@ -268,7 +268,7 @@ func storeStoppedSchema(t *testing.T, admin client.Client, namespace, target str
 		schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
 			Outcome: operatorv1alpha1.PendingObservationApplySucceeded, ApplyOperationID: settleApplyID,
 			ApplyGeneration: schema.Generation, CoordinationDigest: coordinationDigest, LeaseDurationSeconds: 60,
-			Target: operatorv1alpha1.DatabaseTargetBinding{Engine: "PostgreSQL", URLFrom: corev1.SecretKeySelector{
+			Target: operatorv1alpha1.DatabaseTargetBinding{Engine: "PostgreSQL", URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "application-database"}, Key: "url"}},
 			Source: operatorv1alpha1.SourceAccessBinding{
 				ResolvedReference: "oci://ghcr.io/example/application-schema@" + artifactDigest, Digest: artifactDigest},

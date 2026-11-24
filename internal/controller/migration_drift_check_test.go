@@ -28,7 +28,7 @@ func withDriftCheck(migration *operatorv1alpha1.PtahMigration) {
 
 func driftCheckPolicy() *operatorv1alpha1.MigrationDriftCheck {
 	return &operatorv1alpha1.MigrationDriftCheck{Shadow: operatorv1alpha1.DatabaseTargetRef{
-		URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-shadow"}, Key: "url"},
+		URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "orders-shadow"}, Key: "url"},
 	}}
 }
 
@@ -375,23 +375,32 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 // published from that history binds it; a read that names none under a check,
 // or one under no check, is retried rather than planned from, since a plan from
 // it would run with another check than the one asked for. A read under a check
-// names none when the Secret key holds no URL, which is the shadow being
-// unusable and is said so; a shadow under no check is a runner that answered
-// another question.
+// names none when the Secret key holds no URL, or the SecretProviderClass
+// wrote no file under the object's name, which is the shadow being unusable
+// and is said so in the words of the place it was read from; a shadow under
+// no check is a runner that answered another question.
 func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
 		name    string
 		checked bool
-		shadow  string
-		planned bool
-		reason  operatorv1alpha1.ConditionReason
-		says    string
+		// fromClass reads the shadow from a SecretProviderClass object.
+		fromClass bool
+		shadow    string
+		planned   bool
+		reason    operatorv1alpha1.ConditionReason
+		says      string
 	}{
 		{name: "a check and its shadow", checked: true, shadow: testShadowDigest, planned: true},
 		{
 			name: "a check and no shadow", checked: true, reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
 			says: `missing_shadow: the shadow database Secret key holds no URL. Check the URL that Secret "orders-shadow" holds under key "url"`,
+		},
+		{
+			name: "a check and no shadow file in the class volume", checked: true, fromClass: true,
+			reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
+			says: `missing_shadow: the SecretProviderClass volume holds no shadow database file. ` +
+				`Check the URL that SecretProviderClass "orders-shadow-store" writes as object "url"`,
 		},
 		{
 			name: "a shadow and no check", shadow: testShadowDigest, reason: operatorv1alpha1.ReasonOperationFailed,
@@ -403,6 +412,11 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 			migration := migrationFixture()
 			if row.checked {
 				migration.Spec.Policy.DriftCheck = driftCheckPolicy()
+			}
+			if row.fromClass {
+				migration.Spec.Policy.DriftCheck.Shadow = operatorv1alpha1.DatabaseTargetRef{
+					URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{Name: "orders-shadow-store", ObjectName: "url"},
+				}
 			}
 			migration.Status.ExecutionBinding = migrationExecutionBinding()
 			migration.Status.Artifact = resolvedMigrationArtifact()

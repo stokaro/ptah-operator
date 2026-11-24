@@ -28,7 +28,7 @@ func TestAlBlockedFixtureIsAnIsolatedRefusedCopy(t *testing.T) {
 			Target: ptahv1.DatabaseTargetSpec{
 				RealmRef:        &ptahv1.PtahRealmReference{Name: "shared"},
 				CoordinationKey: "e2e/producer",
-				URLFrom:         corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "producer-db"}, Key: "url"},
+				URLFrom:         &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "producer-db"}, Key: "url"},
 			},
 			Desired: ptahv1.SourceSpec{VerificationPolicyFrom: &corev1.ConfigMapKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "producer-policy"}, Key: "policy.yaml",

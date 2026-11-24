@@ -51,7 +51,7 @@ func mtMigration() *ptahv1alpha1.PtahMigration {
 		Spec: ptahv1alpha1.PtahMigrationSpec{
 			Target: ptahv1alpha1.DatabaseTargetSpec{
 				Engine: ptahv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "e2e/migrations/postgresql",
-				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: mtDatabaseSecret}, Key: "url"},
+				URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: mtDatabaseSecret}, Key: "url"},
 			},
 			Artifact: ptahv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.ptah-e2e.svc.cluster.local:5000/migrations/postgresql:stable",

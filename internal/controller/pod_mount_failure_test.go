@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 // A credential is a file in a Secret volume, and a Secret or a key the volume
@@ -24,7 +26,21 @@ const (
 	mountMissingSecret = `MountVolume.SetUp failed for volume "database-url" : secret "application-database" not found`
 	mountMissingKey    = `MountVolume.SetUp failed for volume "database-url" : references non-existent secret key: url`
 	mountWaitTimedOut  = `Unable to attach or mount volumes: unmounted volumes=[database-url], unattached volumes=[]: timed out waiting for the condition`
+	// What the Secrets Store CSI driver reports when the Vault provider's
+	// read is refused, which names the store's object and not the class, and
+	// when the class itself is missing, which names it.
+	mountStoreRefused = `MountVolume.SetUp failed for volume "database-url" : rpc error: code = Unknown desc = failed to mount secrets store objects for pod team-a/ptah-observe-app-abcde, err: rpc error: code = Unknown desc = error making mount request: couldn't read secret "url": Error making API request. Code: 403. Errors: * permission denied`
+	mountClassMissing = `MountVolume.SetUp failed for volume "database-url" : rpc error: code = Unknown desc = failed to get secretproviderclass team-a/application-store, error: SecretProviderClass.secrets-store.csi.x-k8s.io "application-store" not found`
 )
+
+// classVolume makes the Pod's database URL volume the one a
+// SecretProviderClass target gets.
+func classVolume(pod *corev1.Pod) {
+	pod.Spec.Volumes[0].VolumeSource = corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
+		Driver: workload.SecretsStoreCSIDriver, ReadOnly: new(true),
+		VolumeAttributes: map[string]string{workload.SecretProviderClassVolumeAttribute: "application-store"},
+	}}
+}
 
 // unmountedPod is the Pod of job on a node, every container waiting in the
 // default state the kubelet gives a Pod whose volumes it has not set up.
@@ -111,6 +127,23 @@ func TestPodConfigurationErrorReadsTheVolumeTheKubeletCouldNotSetUp(t *testing.T
 			},
 			want:        `MountVolume.SetUp failed for volume "registry-ca" : references non-existent config key: ca.pem (volume registry-ca reads ConfigMap team-a/registry-ca)`,
 			listsEvents: true,
+		},
+		{
+			name: "the store refused the class's read, which names no class",
+			mutate: func(f *fixture) {
+				classVolume(f.pod)
+				f.events = append(f.events, mountEvent(f.pod, "a", failedMountEventReason, mountStoreRefused, earlier))
+			},
+			want:        mountStoreRefused + " (volume database-url reads SecretProviderClass team-a/application-store)",
+			listsEvents: true,
+		},
+		{
+			name: "the class is missing, which the driver names",
+			mutate: func(f *fixture) {
+				classVolume(f.pod)
+				f.events = append(f.events, mountEvent(f.pod, "a", failedMountEventReason, mountClassMissing, earlier))
+			},
+			want: mountClassMissing, listsEvents: true,
 		},
 		{
 			// The Secret arrived without the key: the newer Event says so,

@@ -146,7 +146,7 @@ func contractMigrationFixture(
 		Spec: operatorv1alpha1.PtahMigrationSpec{
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
-				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
@@ -181,7 +181,7 @@ func contractMigrationFixture(
 		},
 		Target: &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
-			URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+			URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 		},
 	}
 	name, err := workload.NameForMigration(migration, operation)
@@ -205,7 +205,7 @@ func contractSchemaFixture(
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
 				CoordinationKey: "tenant-a/orders-primary",
-				URLFrom:         corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom:         &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Desired: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders:stable",

@@ -338,7 +338,7 @@ func migrationJobFixtureWith(
 		Spec: operatorv1alpha1.PtahMigrationSpec{
 			Target: operatorv1alpha1.DatabaseTargetSpec{
 				Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
-				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Artifact: operatorv1alpha1.SourceSpec{
 				OCIRef: "oci://registry.test/acme/orders-migrations:stable",
@@ -371,7 +371,7 @@ func migrationJobFixtureWith(
 		},
 		Target: &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
-			URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+			URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 		},
 		CoordinationDigest: digest('6'),
 	}

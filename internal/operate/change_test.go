@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -30,8 +31,10 @@ func stored(family operate.Family, uid types.UID, suspend bool, annotations map[
 		Labels:      map[string]string{"app.kubernetes.io/part-of": "shop"},
 		Annotations: annotations,
 	}
-	target := operatorv1alpha1.DatabaseTargetSpec{Engine: operatorv1alpha1.DatabaseEnginePostgreSQL}
-	target.URLFrom.Name, target.URLFrom.Key = "storefront-db", "url"
+	target := operatorv1alpha1.DatabaseTargetSpec{
+		Engine:  operatorv1alpha1.DatabaseEnginePostgreSQL,
+		URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "storefront-db"}, Key: "url"},
+	}
 	source := operatorv1alpha1.SourceSpec{OCIRef: "registry.example/shop/schema@sha256:" + strings.Repeat("a", 64)}
 	interval := metav1.Duration{Duration: 10 * time.Minute}
 	if family == operate.FamilyMigration {

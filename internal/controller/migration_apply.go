@@ -32,6 +32,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/sourcepolicy"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -304,10 +305,7 @@ func (r *MigrationReconciler) claimMigrationApply(
 		ExecutionNotAfter:    dispatchNotAfter.DeepCopy(),
 		PlanRef:              &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 		PlanFingerprint:      plan.Spec.Fingerprint,
-		Target: &operatorv1alpha1.DatabaseTargetBinding{
-			Engine:  migration.Spec.Target.Engine,
-			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
-		},
+		Target:               new(databaseTargetBinding(migration.Spec.Target)),
 	}
 	if approval != nil {
 		operation.ApprovalRef = &operatorv1alpha1.ImmutableObjectReference{Name: approval.Name, UID: approval.UID}
@@ -511,7 +509,7 @@ func (r *MigrationReconciler) frameMigrationApply(
 	}
 	reported.failure = errors.New("the Apply produced no readable account of what the database now holds")
 	if result.Error != nil {
-		reported.failure = resultFailure(result.Error, migrationURLSecret(migration))
+		reported.failure = resultFailure(result.Error, migrationURLSource(migration))
 	}
 	return reported
 }
@@ -551,14 +549,14 @@ func (run migrationRunAccount) takenFromAnyTarget() bool {
 	return jobclaim.MigrationRunUnresolved(run.outcome)
 }
 
-// migrationURLSecret is the Secret key the active migration operation read
-// its target URL from.
-func migrationURLSecret(migration *operatorv1alpha1.PtahMigration) corev1.SecretKeySelector {
+// migrationURLSource is where the active migration operation read its target
+// URL from.
+func migrationURLSource(migration *operatorv1alpha1.PtahMigration) urlsource.Source {
 	var bound *operatorv1alpha1.DatabaseTargetBinding
 	if operation := migration.Status.ActiveOperation; operation != nil {
 		bound = operation.Target
 	}
-	return operationURLSecret(bound, migration.Spec.Target.URLFrom)
+	return operationURLSource(bound, migration.Spec.Target)
 }
 
 // reportedMigrationRun is a run report in the terms status keeps. A missing
@@ -598,7 +596,7 @@ func (r *MigrationReconciler) reportedMigrationRun(
 		run.stoppedBeforeSelecting = true
 		if failure != nil {
 			if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
-				run.targetFailure = &targetFailureError{kind: kind, url: migrationURLSecret(migration)}
+				run.targetFailure = &targetFailureError{kind: kind, url: migrationURLSource(migration)}
 				run.message = run.targetFailure.Error()
 				run.log = applyLogSaysNothing
 			}

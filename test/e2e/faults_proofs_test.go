@@ -122,7 +122,7 @@ func proofBinding() *ptahv1alpha1.ExecutionBindingStatus {
 func proofTargetBinding() ptahv1alpha1.DatabaseTargetBinding {
 	return ptahv1alpha1.DatabaseTargetBinding{
 		Engine: "PostgreSQL",
-		URLFrom: corev1.SecretKeySelector{
+		URLFrom: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "e2e-fault-pg-restart-db"}, Key: "url",
 		},
 	}

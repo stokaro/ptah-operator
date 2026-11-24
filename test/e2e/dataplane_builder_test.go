@@ -31,7 +31,7 @@ func sourceContractSchema(mode ptahv1alpha1.RegistryAuthMode) *ptahv1alpha1.Ptah
 		Spec: ptahv1alpha1.PtahSchemaSpec{
 			Target: ptahv1alpha1.DatabaseTargetSpec{
 				Engine: ptahv1alpha1.DatabaseEnginePostgreSQL, CoordinationKey: "prod/team-a/orders-primary",
-				URLFrom: corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
+				URLFrom: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"},
 			},
 			Desired: ptahv1alpha1.SourceSpec{
 				OCIRef:           "oci://registry.example:5000/acme/schema:latest",

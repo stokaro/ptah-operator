@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/mutationlifecycle"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/schemaselector"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 const (
@@ -250,14 +251,21 @@ func migrationDataPlane(
 		if target == nil {
 			return nil, nil, nil, nil, errors.New("migration operation reaching the database carries no target binding")
 		}
-		environment, volumes, mounts = withDatabaseURL(environment, volumes, mounts, target.URLFrom)
+		var err error
+		environment, volumes, mounts, err = withDatabaseURL(environment, volumes, mounts, urlsource.OfBinding(*target))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
 		// The shadow a drift check replays into is read by the history read,
 		// which reports its identity for the plan to bind, and by the Apply,
 		// which checks against it. A resource that asks for no check mounts
 		// nothing, so its Jobs are the ones it ran before the field existed.
 		if check := migration.Spec.Policy.DriftCheck; check != nil {
-			variable, volume, mount := databaseCredential(runner.EnvShadowDatabaseURLFile,
-				shadowDatabaseURLVolumeName, shadowDatabaseURLDirectory, check.Shadow.URLFrom)
+			variable, volume, mount, err := databaseCredential(runner.EnvShadowDatabaseURLFile,
+				shadowDatabaseURLVolumeName, shadowDatabaseURLDirectory, urlsource.OfRef(check.Shadow))
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("shadow database: %w", err)
+			}
 			environment, volumes, mounts = append(environment, variable), append(volumes, volume), append(mounts, mount)
 		}
 		environment = append(environment,

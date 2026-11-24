@@ -1374,7 +1374,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.blockProofOnMovedTarget(ctx, schema, job, result.TargetIdentityDigest)
 	}
 	if result.Error != nil {
-		err := resultFailure(result.Error, operationURLSecret(operation.Target, schema.Spec.Target.URLFrom))
+		err := resultFailure(result.Error, operationURLSource(operation.Target, schema.Spec.Target))
 		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == verificationRefusedCode {
 			if !verificationRefusalHolds(result, schema.Status.Source.Digest, operation.VerificationPolicyDigest) ||
 				operation.VerificationPolicyUID == "" {
@@ -5198,10 +5198,16 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 		Complete(r)
 }
 
+// databaseTargetBinding is the key-free copy of target an operation claim
+// binds: the engine and where the URL comes from. A Secret target encodes as
+// it did before SecretProviderClass sources, so the operation IDs and input
+// fingerprints derived from it stay what they were.
 func databaseTargetBinding(target operatorv1alpha1.DatabaseTargetSpec) operatorv1alpha1.DatabaseTargetBinding {
-	binding := operatorv1alpha1.DatabaseTargetBinding{Engine: target.Engine}
-	target.URLFrom.DeepCopyInto(&binding.URLFrom)
-	return binding
+	return operatorv1alpha1.DatabaseTargetBinding{
+		Engine:                     target.Engine,
+		URLFrom:                    target.URLFrom.DeepCopy(),
+		URLFromSecretProviderClass: target.URLFromSecretProviderClass.DeepCopy(),
+	}
 }
 
 func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (map[string]any, error) {

@@ -12,13 +12,14 @@ import (
 	"strings"
 	"time"
 
-	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
-	"github.com/stokaro/ptah-operator/test/e2e/harness"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/test/e2e/harness"
 )
 
 type alNegativeFixtureRun struct {
@@ -57,9 +58,9 @@ func (a *alertingRun) negativeControls() {
 		family := alStalledReading(template).family
 		var source *corev1.SecretKeySelector
 		if family == "schema" {
-			source = &schema.Spec.Target.URLFrom
+			source = schema.Spec.Target.URLFrom
 		} else {
-			source = &migration.Spec.Target.URLFrom
+			source = migration.Spec.Target.URLFrom
 		}
 		original := &corev1.Secret{}
 		a.check(a.cluster.Client.Get(a.ctx, types.NamespacedName{Namespace: template.GetNamespace(), Name: source.Name}, original), "read the prepared target credential")

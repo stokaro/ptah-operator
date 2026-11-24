@@ -19,6 +19,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
@@ -249,7 +250,9 @@ func mountPending(pod *corev1.Pod) bool {
 // podMountFailure is the newest reason the kubelet recorded against pod for a
 // volume it could not set up, bounded, with the object the volume reads when
 // the kubelet's words do not name it: `references non-existent secret key:
-// url` names the key and not the Secret. Empty when the kubelet recorded none.
+// url` names the key and not the Secret, and a store's refusal through the
+// Secrets Store CSI driver names the store and not the SecretProviderClass.
+// Empty when the kubelet recorded none.
 func podMountFailure(ctx context.Context, reader client.Reader, pod *corev1.Pod) (string, error) {
 	events := &corev1.EventList{}
 	if err := reader.List(ctx, events, client.InNamespace(pod.Namespace),
@@ -286,6 +289,10 @@ func podMountFailure(ctx context.Context, reader client.Reader, pod *corev1.Pod)
 			kind, name = "Secret", volume.Secret.SecretName
 		case volume.ConfigMap != nil:
 			kind, name = "ConfigMap", volume.ConfigMap.Name
+		case volume.CSI != nil && volume.CSI.VolumeAttributes[workload.SecretProviderClassVolumeAttribute] != "":
+			// The provider's words about a store that refused the Pod, such
+			// as Vault's permission denied, name the store and not the class.
+			kind, name = "SecretProviderClass", volume.CSI.VolumeAttributes[workload.SecretProviderClassVolumeAttribute]
 		}
 		if kind != "" && !strings.Contains(cause, `"`+name+`"`) {
 			failure += fmt.Sprintf(" (volume %s reads %s %s/%s)", volumeName, kind, pod.Namespace, name)

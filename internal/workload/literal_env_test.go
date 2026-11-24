@@ -80,7 +80,7 @@ func TestResourceValuesReachTheProcessAsWritten(t *testing.T) {
 		exclude := []string{"public.a$$b", "$(PTAH_ACTOR)", "$(HOME)", "audit.log$", "$"}
 		migration := migrationFixture()
 		migration.Spec.Policy.DriftCheck = &operatorv1alpha1.MigrationDriftCheck{
-			Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: corev1.SecretKeySelector{
+			Shadow: operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: "ledger-shadow"}, Key: "url",
 			}},
 			Exclude: exclude,

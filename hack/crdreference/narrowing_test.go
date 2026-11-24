@@ -117,9 +117,13 @@ func TestGuardedRulesReadAsConditions(t *testing.T) {
 		path      string
 		condition string
 	}{
-		// spec.dev is absent from most resources; its rule opens with
-		// !has(self.dev).
-		{path: "spec.dev.urlFrom.name", condition: "where `dev` is set"},
+		// spec.dev is absent from most resources, and one that is there may
+		// read its URL from a SecretProviderClass instead; its rule opens
+		// with !has(self.dev) || !has(self.dev.urlFrom).
+		{path: "spec.dev.urlFrom.name", condition: "where `dev` and `dev.urlFrom` are set"},
+		// A target may read its URL from a SecretProviderClass, so the rule
+		// on its Secret key holds only where it names one.
+		{path: "spec.target.urlFrom.name", condition: "where `target.urlFrom` is set"},
 		// And an optional transport under a required parent.
 		{path: "spec.desired.transport.caFrom.name", condition: "where `desired.transport` and `desired.transport.caFrom` are set"},
 		// The guarded field is below this one, which is required and
@@ -137,11 +141,12 @@ func TestGuardedRulesReadAsConditions(t *testing.T) {
 		}
 	}
 
-	// And a rule nothing guards still reads as a requirement, so the
-	// qualification means something where it appears.
-	line := tableRow(t, string(contents), "reference/ptahschema.md", "spec.target.urlFrom.name")
-	if strings.Contains(line, "where `target") {
-		t.Fatalf("an unguarded rule was qualified as conditional:\n%s", line)
+	// And a rule no leading !has() guards still reads as a requirement, so
+	// the qualification means something where it appears. The account rule
+	// is a disjunction whose has() calls are inside its branches.
+	line := tableRow(t, string(contents), "reference/ptahschema.md", "spec.execution.serviceAccountName")
+	if strings.Contains(line, "where `") || !strings.Contains(line, requirementLead) {
+		t.Fatalf("an unguarded rule was qualified as conditional, or not stated as a requirement:\n%s", line)
 	}
 
 	// Every selector rule ends with !has(self.x.optional) || !self.x.optional

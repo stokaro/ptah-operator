@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ptahv1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -162,7 +163,7 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 		r.Spec.Dev = nil
 		r.Spec.Target.RealmRef = nil
 		r.Spec.Target.CoordinationKey = "e2e/negative/" + name
-		r.Spec.Target.URLFrom.Name = secret
+		alSecretTarget(&r.Spec.Target, secret)
 		r.Spec.Policy = ptahv1.ReconciliationPolicy{Apply: policy, AllowDestructive: true, LockTimeout: v.Spec.Policy.LockTimeout}
 		return r, nil
 	case *ptahv1.PtahMigration:
@@ -171,11 +172,22 @@ func alNegativeFixture(template client.Object, name, secret string, policy ptahv
 		r.Spec.Interval.Duration = alNegativeInterval
 		r.Spec.Target.RealmRef = nil
 		r.Spec.Target.CoordinationKey = "e2e/negative/" + name
-		r.Spec.Target.URLFrom.Name = secret
+		alSecretTarget(&r.Spec.Target, secret)
 		r.Spec.Policy = ptahv1.MigrationPolicy{Apply: policy, LockTimeout: v.Spec.Policy.LockTimeout}
 		return r, nil
 	}
 	return nil, errors.New("unsupported negative-control family")
+}
+
+// alSecretTarget points a copied target at secret and keeps the key the
+// producer read its URL from. A fixture names a Secret, so a class the
+// producer read its URL from does not carry over.
+func alSecretTarget(target *ptahv1.DatabaseTargetSpec, secret string) {
+	selector := &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: secret}}
+	if target.URLFrom != nil {
+		selector.Key = target.URLFrom.Key
+	}
+	target.URLFrom, target.URLFromSecretProviderClass = selector, nil
 }
 
 // alNegativeDatabaseUnchanged holds a control that never applied to an empty

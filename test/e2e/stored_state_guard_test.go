@@ -495,7 +495,7 @@ func TestStoredStateBaselineStartsAfterTheWriteBarrier(t *testing.T) {
 						case "binding":
 							r.Status.ExecutionBinding.Epoch = ftOtherEpoch
 						case "inputs":
-							r.Spec.Target.URLFrom.Name = "another-target"
+							r.Spec.Target.URLFrom = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "another-target"}, Key: "url"}
 						}
 					case *ptahv1alpha1.PtahMigration:
 						switch change {
@@ -504,7 +504,7 @@ func TestStoredStateBaselineStartsAfterTheWriteBarrier(t *testing.T) {
 						case "binding":
 							r.Status.ExecutionBinding.Epoch = ftOtherEpoch
 						case "inputs":
-							r.Spec.Target.URLFrom.Name = "another-target"
+							r.Spec.Target.URLFrom = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "another-target"}, Key: "url"}
 						}
 					}
 				}

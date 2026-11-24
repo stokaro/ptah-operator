@@ -3,9 +3,9 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "26"
-    operator.ptah.run/crd-schema-digest: "sha256:4b922170177a905611adba63e541f35a0d2e0f47a9a99a085fe9e131a690ef82"
+    operator.ptah.run/controller-state-version: "2"
+    operator.ptah.run/crd-schema-version: "27"
+    operator.ptah.run/crd-schema-digest: "sha256:05910bd90764657d383cc1ab90e7ef227a62cbdd872aac69d7e2feff62f0af21"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -356,9 +356,27 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
-                required:
-                - urlFrom
+                  urlFromSecretProviderClass:
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      objectName:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                        type: string
+                    required:
+                    - name
+                    - objectName
+                    type: object
+                    x-kubernetes-map-type: atomic
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                  rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
               execution:
                 default: {}
                 properties:
@@ -1035,13 +1053,31 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
+                  urlFromSecretProviderClass:
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                        type: string
+                      objectName:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                        type: string
+                    required:
+                    - name
+                    - objectName
+                    type: object
+                    x-kubernetes-map-type: atomic
                 required:
                 - engine
-                - urlFrom
                 type: object
                 x-kubernetes-validations:
                 - message: set exactly one of coordinationKey and realmRef
                   rule: has(self.coordinationKey) != has(self.realmRef)
+                - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                  rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
             required:
             - desired
             - target
@@ -1056,8 +1092,15 @@ spec:
                 || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds()
                 <= self.execution.activeDeadlineSeconds * 1000'
             - message: target.urlFrom must name a required Secret key
-              rule: self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size()
-                > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
+              rule: '!has(self.target.urlFrom) || (self.target.urlFrom.name.size()
+                > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional)
+                || !self.target.urlFrom.optional))'
+            - message: a URL from a SecretProviderClass needs execution.serviceAccountName
+                to name an account other than default
+              rule: (!has(self.target.urlFromSecretProviderClass) && (!has(self.dev)
+                || !has(self.dev.urlFromSecretProviderClass))) || (has(self.execution)
+                && has(self.execution.serviceAccountName) && self.execution.serviceAccountName.size()
+                > 0 && self.execution.serviceAccountName != 'default')
             - message: desired.verificationPolicyFrom must name a required ConfigMap
                 key
               rule: '!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size()
@@ -1071,8 +1114,9 @@ spec:
             - message: desired.https.path selects one file for a schema
               rule: '!has(self.desired.https) || self.desired.https.path != ''.'''
             - message: dev.urlFrom must name a required Secret key
-              rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
-                > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'
+              rule: '!has(self.dev) || !has(self.dev.urlFrom) || (self.dev.urlFrom.name.size()
+                > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional)
+                || !self.dev.urlFrom.optional))'
             - message: desired.transport.caFrom must name a required ConfigMap key
               rule: '!has(self.desired.transport) || !has(self.desired.transport.caFrom)
                 || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size()
@@ -1347,9 +1391,27 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
-                    required:
-                    - urlFrom
+                      urlFromSecretProviderClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          objectName:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                            type: string
+                        required:
+                        - name
+                        - objectName
+                        type: object
+                        x-kubernetes-map-type: atomic
                     type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                      rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
                   observationExclude:
                     items:
                       type: string
@@ -1608,9 +1670,25 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
+                      urlFromSecretProviderClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          objectName:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                            type: string
+                        required:
+                        - name
+                        - objectName
+                        type: object
+                        x-kubernetes-map-type: atomic
                     required:
                     - engine
-                    - urlFrom
                     type: object
                   targetIdentityDigest:
                     type: string
@@ -2410,9 +2488,27 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
-                    required:
-                    - urlFrom
+                      urlFromSecretProviderClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          objectName:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                            type: string
+                        required:
+                        - name
+                        - objectName
+                        type: object
+                        x-kubernetes-map-type: atomic
                     type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of urlFrom and urlFromSecretProviderClass
+                      rule: has(self.urlFrom) != has(self.urlFromSecretProviderClass)
                   dispatchedBy:
                     properties:
                       controllerImage:
@@ -2859,9 +2955,25 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
+                      urlFromSecretProviderClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                          objectName:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$
+                            type: string
+                        required:
+                        - name
+                        - objectName
+                        type: object
+                        x-kubernetes-map-type: atomic
                     required:
                     - engine
-                    - urlFrom
                     type: object
                 required:
                 - applyGeneration

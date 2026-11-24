@@ -11,6 +11,7 @@ import (
 	ptahv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // reachabilityFamily is one resource of the row: the readings it printed, its
@@ -76,7 +77,7 @@ func TestTargetRefusedCredentialsRefusesEveryOtherReading(t *testing.T) {
 	t.Parallel()
 	for _, family := range reachabilityFamilies() {
 		url := reachabilityURLKey(family.secret)
-		sentence := targetfailure.Message(dataplane.TargetAuthenticationFailed, url)
+		sentence := targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.OfSecret(url))
 		t.Run(family.name, func(t *testing.T) {
 			t.Parallel()
 			conditions, generation := readReachabilityReading(t, family.refused)
@@ -99,10 +100,10 @@ func TestTargetRefusedCredentialsRefusesEveryOtherReading(t *testing.T) {
 					reachable.Reason = string(ptahv1alpha1.ReasonDatabaseUnreachable)
 				},
 				"the reason with another kind's sentence": func(reachable *metav1.Condition) {
-					reachable.Message = targetfailure.Message(dataplane.TargetDatabaseUnreachable, url)
+					reachable.Message = targetfailure.Message(dataplane.TargetDatabaseUnreachable, urlsource.OfSecret(url))
 				},
 				"the sentence for another Secret": func(reachable *metav1.Condition) {
-					reachable.Message = targetfailure.Message(dataplane.TargetAuthenticationFailed, reachabilityURLKey(family.otherKey))
+					reachable.Message = targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.OfSecret(reachabilityURLKey(family.otherKey)))
 				},
 				"the generic failure reason": func(reachable *metav1.Condition) {
 					reachable.Reason = string(ptahv1alpha1.ReasonOperationFailed)
@@ -139,7 +140,7 @@ func TestTargetAnsweredAgainRefusesEveryOtherReading(t *testing.T) {
 	t.Parallel()
 	for _, family := range reachabilityFamilies() {
 		url := reachabilityURLKey(family.secret)
-		sentence := targetfailure.Message(dataplane.TargetAuthenticationFailed, url)
+		sentence := targetfailure.Message(dataplane.TargetAuthenticationFailed, urlsource.OfSecret(url))
 		t.Run(family.name, func(t *testing.T) {
 			t.Parallel()
 			conditions, generation := readReachabilityReading(t, family.recovered)

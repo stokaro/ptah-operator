@@ -89,9 +89,9 @@ func targetRefusals() []refusal {
 			want:   []cause{{"spec.target.engine", "Required value"}},
 		},
 		{
-			name:   "target.urlFrom is required",
+			name:   "target names no URL",
 			mutate: removing("spec", "target", "urlFrom"),
-			want:   []cause{{"spec.target.urlFrom", "Required value"}},
+			want:   []cause{{"spec.target", "set exactly one of urlFrom and urlFromSecretProviderClass"}},
 		},
 		{
 			name:   "target.urlFrom.key is required",
@@ -800,9 +800,9 @@ func TestPtahSchemaRefusals(t *testing.T) {
 			want:   []cause{{"spec.policy.protectedTables", "Too many"}},
 		},
 		refusal{
-			name:   "dev.urlFrom is required",
+			name:   "dev names no URL",
 			mutate: setting(map[string]any{}, "spec", "dev"),
-			want:   []cause{{"spec.dev.urlFrom", "Required value"}},
+			want:   []cause{{"spec.dev", "set exactly one of urlFrom and urlFromSecretProviderClass"}},
 		},
 		refusal{
 			name:   "dev.urlFrom optional",

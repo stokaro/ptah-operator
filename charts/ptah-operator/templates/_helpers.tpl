@@ -144,7 +144,7 @@ app.kubernetes.io/component: metrics
 {{- include "ptah-operator.crdManagerServiceAccountName" . -}}
 {{- end -}}
 
-{{- define "ptah-operator.controllerStateVersion" -}}1{{- end -}}
+{{- define "ptah-operator.controllerStateVersion" -}}2{{- end -}}
 
 {{- define "ptah-operator.admissionContractVersion" -}}1{{- end -}}
 

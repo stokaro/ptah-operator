@@ -66,7 +66,7 @@ spec:
   executorImage: ghcr.io/stokaro/ptah@sha256:1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014
   runnerProtocolVersion: 1
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
-  controllerStateVersion: 1
+  controllerStateVersion: 2
   # The manager that published the plan. Recorded, not bound: none of the
   # three is in the fingerprint, and a later release of the manager applies
   # this plan as it stands.
@@ -119,7 +119,7 @@ spec:
   executionBindingID: v1-9f8e7d6c5b4a39281706f5e4d3c2b1a0
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
   controllerRevision: a7d0119c0bd0d34e0b73f1d9e0e5c6aa0d9ff2b1
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```
 
 ### A plan that changes privileges
@@ -173,5 +173,5 @@ spec:
   runnerImage: ghcr.io/stokaro/ptah-runner@sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752
   runnerProtocolVersion: 1
   controllerImage: ghcr.io/stokaro/ptah-operator@sha256:fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13
-  controllerStateVersion: 1
+  controllerStateVersion: 2
 ```

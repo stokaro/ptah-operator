@@ -7,6 +7,7 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
 // TestEachKindHasItsSentence holds each kind to the sentence a condition, an
@@ -36,12 +37,12 @@ func TestEachKindHasItsSentence(t *testing.T) {
 		t.Fatalf("the table names %d kinds, the vocabulary %d", len(want), len(dataplane.TargetFailureKinds()))
 	}
 	for _, kind := range dataplane.TargetFailureKinds() {
-		if message := targetfailure.Message(kind, url); message != want[kind] {
+		if message := targetfailure.Message(kind, urlsource.OfSecret(url)); message != want[kind] {
 			t.Errorf("Message(%s) =\n%q\nwant\n%q", kind, message, want[kind])
 		}
 	}
 	for _, unknown := range []dataplane.TargetFailureKind{"", "lock_timeout", "DATABASE_UNREACHABLE"} {
-		if message := targetfailure.Message(unknown, url); message != "" {
+		if message := targetfailure.Message(unknown, urlsource.OfSecret(url)); message != "" {
 			t.Errorf("Message(%q) = %q, want no sentence", unknown, message)
 		}
 	}
@@ -54,7 +55,7 @@ func TestUnseenObjectsHaveTheirSentence(t *testing.T) {
 
 	url := corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "demo-database"}, Key: "url"}
 	got := targetfailure.UnseenObjectsMessage(dataplane.TargetPermissionDenied,
-		[]string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, url)
+		[]string{dataplane.UnseenTriggers, dataplane.UnseenRoutines}, urlsource.OfSecret(url))
 	want := "permission_denied: the target database server accepted the credentials, and the user cannot see every " +
 		`trigger and routine in the database. Grant the user in the URL that Secret "demo-database" holds under key "url" ` +
 		"the privileges that show them, which the MySQL authority section of the operator's supported databases page lists"
@@ -74,7 +75,7 @@ func TestUnseenObjectsHaveTheirSentence(t *testing.T) {
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
-			if got, want := targetfailure.UnseenObjectsMessage(row.kind, row.objects, url), targetfailure.Message(row.kind, url); got != want {
+			if got, want := targetfailure.UnseenObjectsMessage(row.kind, row.objects, urlsource.OfSecret(url)), targetfailure.Message(row.kind, urlsource.OfSecret(url)); got != want {
 				t.Fatalf("UnseenObjectsMessage() = %q, want Message's %q", got, want)
 			}
 		})

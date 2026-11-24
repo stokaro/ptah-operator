@@ -552,7 +552,7 @@ func applyClaimFor(
 		PlanRef:              &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 		Target: &operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  migration.Spec.Target.Engine,
-			URLFrom: *migration.Spec.Target.URLFrom.DeepCopy(),
+			URLFrom: migration.Spec.Target.URLFrom.DeepCopy(),
 		},
 	}
 	name, err := (fakeJobs{}).NameForMigration(migration, *operation)

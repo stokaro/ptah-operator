@@ -4,23 +4,29 @@ import (
 	"errors"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetfailure"
+	"github.com/stokaro/ptah-operator/internal/urlsource"
 )
 
-// operationURLSecret is the Secret key an operation read its target URL from:
-// the one its claim bound when it dispatched, and the resource's when a claim
+// operationURLSource is where an operation read its target URL from: the
+// place its claim bound when it dispatched, and the resource's when a claim
 // carries none.
-func operationURLSecret(bound *operatorv1alpha1.DatabaseTargetBinding, spec corev1.SecretKeySelector) corev1.SecretKeySelector {
-	if bound != nil && bound.URLFrom.Name != "" {
-		return bound.URLFrom
+func operationURLSource(bound *operatorv1alpha1.DatabaseTargetBinding, spec operatorv1alpha1.DatabaseTargetSpec) urlsource.Source {
+	if bound != nil {
+		if source := urlsource.OfBinding(*bound); source.Validate() == nil {
+			return source
+		}
 	}
-	return spec
+	return urlsource.OfTarget(spec)
 }
+
+// codeMissingTarget is the runner's code for an operation that had no target
+// URL to open: the variable naming the URL file was unset, or the file it
+// named was not there.
+const codeMissingTarget = "missing_target"
 
 // resultFailure is how a runner result's error reads in status and in an
 // Event: its code and its bounded message, as the runner wrote them, or, for
@@ -28,9 +34,20 @@ func operationURLSecret(bound *operatorv1alpha1.DatabaseTargetBinding, spec core
 // (targetfailure.Message). The runner's message for that code is not read, so
 // the kind and, for a MySQL user that cannot see every object, the kinds of
 // object, each from a closed vocabulary, are all that cross from the Pod.
-func resultFailure(failure *runner.ResultError, url corev1.SecretKeySelector) error {
+//
+// A URL from a SecretProviderClass that the runner found missing is the
+// operator's sentence too. The class decides which files the driver writes,
+// so an objectName the class does not write mounts cleanly and leaves no file,
+// and the runner's words name only the variable it could not set.
+func resultFailure(failure *runner.ResultError, url urlsource.Source) error {
 	if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 		return &targetFailureError{kind: kind, url: url, unseenObjects: failure.UnseenObjects}
+	}
+	if failure.Code == codeMissingTarget && url.Class != nil {
+		return resultCodeError{code: failure.Code, message: fmt.Sprintf(
+			"%s: the operation found no file %q in the volume of SecretProviderClass %q. Check that the class writes "+
+				"an object under that name, as its objectName or its objectAlias",
+			failure.Code, url.Class.ObjectName, url.Class.Name)}
 	}
 	return resultCodeError{code: failure.Code, message: resultCodeMessage(failure.Code, failure.Message)}
 }
@@ -48,7 +65,7 @@ func resultCodeMessage(code, message string) string {
 // one status write.
 type targetFailureError struct {
 	kind dataplane.TargetFailureKind
-	url  corev1.SecretKeySelector
+	url  urlsource.Source
 	// unseenObjects are the kinds of object a permission_denied read could
 	// not see, when the runner named them.
 	unseenObjects []string
