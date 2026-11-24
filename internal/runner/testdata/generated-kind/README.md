@@ -19,6 +19,14 @@ code `generated-kind` and lists the column under `generated_columns`
 (stokaro/ptah#6466). The v0.34.0 release image, run beside it, exited 2 with the
 outcome `failed` and no code.
 
+On November 24, 2026 the v0.35.1 release image that `support/ptah.json` now
+pins,
+`ghcr.io/stokaro/ptah@sha256:4b66856f2d0780ff697155575c97e900b7b7654d8141c6368ee77f79db2c90d5`,
+ran the same command against a fresh server of the same PostgreSQL image,
+prepared the same way, on an arm64 host, and printed
+`schema-plan-postgres-18.json` and `schema-plan-postgres-18.stderr` byte for
+byte. It exited 2.
+
 These files are not under `internal/dataplane/testdata`, because every file
 there is a document a runner harness row prints, and
 `TestCommittedCapturesHaveNoStrayFile` refuses any other. The harness runs

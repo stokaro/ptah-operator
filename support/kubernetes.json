@@ -4,6 +4,10 @@
   "windowSize": 3,
   "lastVerified": "2026-11-10",
   "kindVersion": "v0.33.0",
+  "kindLoadBalancer": {
+    "kindVersion": "v0.33.0",
+    "image": "docker.io/envoyproxy/envoy:v1.36.2@sha256:4972515dd9a069b44beb43cebba7851596e72a8c61cd7a7c33d8f48efc5280ba"
+  },
   "releases": [
     {
       "minor": "1.35",

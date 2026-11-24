@@ -208,6 +208,11 @@ func TestASupportedLineNeedsItsOwnJobsGreenAtACommitThatNamesItsImage(t *testing
 	if err := newDatabaseLineFixture(t, databaseLineSupported).verify(t); err != nil {
 		t.Fatalf("a run green on the line was refused: %v", err)
 	}
+	relabeled := newDatabaseLineFixture(t, databaseLineSupported)
+	relabeled.then[0]["line"] = "18.x, before a label"
+	if err := relabeled.verify(t); err != nil {
+		t.Fatalf("a run whose row read differently for the same release was refused: %v", err)
+	}
 
 	for name, test := range map[string]struct {
 		mutate func(*testing.T, *databaseLineFixture)

@@ -26,6 +26,9 @@
 //     link naming another family's stage, path or object alone opens that
 //     family, a value that belongs to another family than the one a link
 //     names is ignored, and the default family and path write no parameter;
+//   - every path says which scenario of #817 it walks, and each family walks
+//     every scenario it owes on a path that reaches the state the scenario
+//     turns on;
 //   - without JavaScript the text carries every family, every path, every
 //     stage with its commands, and every object;
 //   - at 390px and 320px wide neither the page nor the explorer scrolls
@@ -62,7 +65,42 @@
 //   - without JavaScript the text carries every object with what it holds,
 //     who writes it, whether it can change, what deleting it does, its
 //     commands and every relationship, and at 390px and 320px the object
-//     map fits with every object open.
+//     map fits with every object open;
+//   - the composed workflow has #817's stages in its order, each in the
+//     family that runs it, says it is proposed orchestration while no CRD
+//     defines a Workflow or a WorkflowRun, states what sharing one database
+//     takes, places each stop only where it can happen, authorizes each stage
+//     by its own family's decision, keeps the external checks apart from
+//     Migration InSync, and names every field of the stage record;
+//   - chosen from the view bar, by mouse or by keyboard, the composed
+//     workflow opens at its first stage with nothing stopped; each stage marks
+//     the stages before it done; each stop marks its stage stopped and every
+//     later stage held, in words, and says so; moving on, choosing another
+//     stage or choosing the stop again clears it; and a link that names a
+//     stage and a stop restores them, while a stop the stage cannot have is
+//     ignored;
+//   - without JavaScript the text carries the proposal, every precondition,
+//     every stage with what the operator does marked shipped and what moves
+//     it on marked proposed, every stop with what clears it, and every
+//     decision, record field and reader, and at 390px and 320px the workflow
+//     fits at every stage and every stop;
+//   - the depths are Overview, Product and Implementation in that order, the
+//     deepest the default; every part of every entry, in the interactive
+//     view and in the text, is tagged at the depth the content gives it, and
+//     each essential at Overview; at each depth chosen, with the script and
+//     without it, every part deeper than it is hidden and every other part
+//     shows, on a panel open on screen as well, and no link of the text leads
+//     to a part it hides; the choice is written to the address as lx-depth
+//     and the rest of the address left as it was; choosing a view, a family,
+//     a path, a stage or a link keeps it; a link that names a depth opens at
+//     it and one that names an unknown depth at the default; and the arrow
+//     keys choose it;
+//   - a related object, an identity's source and a link into another view is
+//     an anchor whose address opens what it names, laid out inline where a
+//     full stop follows it; every distinct address opens what it names; a
+//     plain click follows it without loading the page again, and a click
+//     with a modifier opens it in a page of its own; and every link the text
+//     makes within the page leads to an entry of the text.
 //
 //   node scripts/check-lifecycle-explorer.mjs [--dist <dir>] [--selftest]
 //
@@ -75,13 +113,24 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { audit, defaultFamily, families, objectMap, parentOf, walkOf } from '../src/lifecycle-explorer.mjs';
+import {
+  audit,
+  defaultDepth,
+  defaultFamily,
+  depthOf,
+  depths,
+  families,
+  objectMap,
+  parentOf,
+  walkOf,
+  workflow,
+} from '../src/lifecycle-explorer.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(scriptDir, '..');
 const PAGE = 'reference/reconciliation/';
 // The views of the view bar, the default first.
-export const VIEWS = ['journey', 'audit', 'objects'];
+export const VIEWS = ['journey', 'audit', 'objects', 'workflow'];
 const NARROW = [
   { width: 390, height: 844 },
   { width: 320, height: 700 },
@@ -198,6 +247,7 @@ export function modelProblems(model) {
     }
     if (!stage.actors[stage.lead]) problems.push(`stage "${stage.id}" is led by "${stage.lead}", who does nothing in it`);
     if (stage.inspect.length === 0) problems.push(`stage "${stage.id}" says no way to inspect it`);
+    if ((stage.links ?? []).length === 0) problems.push(`stage "${stage.id}" links to nothing that says more`);
   }
   const branchIds = model.paths.slice(1).flatMap((path) => (path.stages ?? []).map((stage) => stage.id));
   for (const path of model.paths.slice(1)) {
@@ -232,6 +282,75 @@ export function modelProblems(model) {
   }
   for (const id of objectIds) {
     if (expectedRelations(id, model).listed.length === 0) problems.push(`the object "${id}" is related to nothing`);
+  }
+  return problems;
+}
+
+// The scenarios #817 names, and the families that walk each one. A scenario
+// is walked when a path of the family carries it and one of its stages names
+// the phase given here: the state the scenario turns on, which a path that
+// only mentions the scenario would not reach. A schema Apply that may have
+// started is never failed, so the ordinary failure is the migration's; the
+// unresolved run is the migration's own record.
+export const SCENARIO_REQUIRED = {
+  ids: ['success', 'nothing', 'never', 'always', 'stale', 'refusal', 'source', 'failure', 'unknown', 'unresolved', 'suspend'],
+  families: {
+    schema: {
+      success: 'InSync',
+      nothing: 'InSync',
+      never: 'Blocked',
+      always: 'ReadyToApply',
+      stale: 'AwaitingApproval',
+      refusal: 'Blocked',
+      source: 'Failed',
+      unknown: 'VerifyingConvergence',
+      suspend: 'Suspended',
+    },
+    migration: {
+      success: 'InSync',
+      nothing: 'InSync',
+      never: 'Planning',
+      always: 'Applying',
+      stale: 'Pending',
+      failure: 'HistoryDirty',
+      unresolved: 'Blocked',
+      suspend: 'Suspended',
+    },
+  },
+};
+
+// scenarioProblems judges the paths against the scenarios #817 names: every
+// path says which scenario it walks, from the list, and every scenario a
+// family owes is walked by one of its paths, reaching the state it turns on.
+// The default path walks the scenario's own stages. A state is found in a
+// stage's phase or in what it says to expect.
+export function scenarioProblems(models, required = SCENARIO_REQUIRED) {
+  const problems = [];
+  for (const id of required.ids) {
+    if (!Object.values(required.families).some((owed) => id in owed)) problems.push(`no family walks the scenario "${id}"`);
+  }
+  for (const [family, owed] of Object.entries(required.families)) {
+    const model = models.find((one) => one.id === family);
+    if (!model) {
+      problems.push(`the family "${family}" is missing`);
+      continue;
+    }
+    for (const path of model.paths) {
+      if (!path.scenario) problems.push(`the ${family} path "${path.id}" says no scenario`);
+      else if (!required.ids.includes(path.scenario)) problems.push(`the ${family} path "${path.id}" walks "${path.scenario}", which #817 does not name`);
+      else if (!(path.scenario in owed)) problems.push(`the ${family} path "${path.id}" walks "${path.scenario}", which the ${family} family does not have`);
+    }
+    for (const [scenario, state] of Object.entries(owed)) {
+      const paths = model.paths.filter((path) => path.scenario === scenario);
+      if (paths.length === 0) {
+        problems.push(`no ${family} path walks the scenario "${scenario}"`);
+        continue;
+      }
+      const reaches = paths.some((path) =>
+        ownStages(path, model).some((stage) => `${stage.phase} ${stage.expect ?? ''}`.includes(state)),
+      );
+      if (!reaches) problems.push(`no ${family} path that walks "${scenario}" reaches ${state}`);
+    }
   }
   return problems;
 }
@@ -562,8 +681,8 @@ const PROJECTIONS = [
 ];
 
 // Every command the explorer shows, from the stages, the objects, the audit
-// sources and the object map, with where it is shown.
-export function explorerCommands(familyList, auditModel, map) {
+// sources, the object map and the composed workflow, with where it is shown.
+export function explorerCommands(familyList, auditModel, map, flow) {
   const commands = [];
   for (const family of familyList) {
     const stages = [...family.scenario.stages, ...family.paths.flatMap((path) => path.stages ?? [])];
@@ -582,6 +701,12 @@ export function explorerCommands(familyList, auditModel, map) {
   for (const node of map?.nodes ?? []) {
     for (const step of node.inspect ?? []) commands.push({ where: `the object map’s "${node.id}"`, command: step.command });
   }
+  for (const stage of flow?.stages ?? []) {
+    for (const step of stage.inspect ?? []) {
+      if (step.command) commands.push({ where: `the workflow’s "${stage.id}"`, command: step.command });
+    }
+  }
+  for (const reader of flow?.readers ?? []) commands.push({ where: 'the workflow’s stage record', command: reader.command });
   return commands;
 }
 
@@ -820,9 +945,10 @@ export function auditSelectionProblems(readings, auditModel) {
 // the change journey opens in the default family at its default path and
 // first stage with nothing selected, and writes none of the other views'
 // parameters.
-export function viewSwitchProblems(readings, familyModels) {
+export function viewSwitchProblems(readings, familyModels, flow) {
   const problems = [];
   const first = familyModels[0];
+  const firstStep = flow.stages[0].id;
   for (const to of VIEWS) {
     if (!readings.some((reading) => reading.to === to)) problems.push(`no switch went to the ${to} view`);
   }
@@ -830,12 +956,14 @@ export function viewSwitchProblems(readings, familyModels) {
     const at = `switching from ${from} to the ${to} view`;
     const search = new URLSearchParams(got.search);
     if (got.view !== to) problems.push(`${at} shows the ${got.view} view`);
+    if (got.outcome !== null) problems.push(`${at} keeps the stop ${got.outcome}`);
+    if (got.step !== firstStep) problems.push(`${at} leaves the composed workflow at ${got.step ?? 'no stage'}, not ${firstStep}`);
     if (to !== 'journey') {
       if (got.loss !== null) problems.push(`${at} keeps the loss ${got.loss}`);
       if (got.source !== null) problems.push(`${at} keeps the source ${got.source}`);
       if (got.node !== null) problems.push(`${at} keeps the object ${got.node}`);
       if (search.get('lx-view') !== to) problems.push(`${at} writes ${got.search || 'nothing'}, not lx-view=${to}`);
-      for (const param of ['lx-family', 'lx-path', 'lx-stage', 'lx-object', 'lx-loss', 'lx-source', 'lx-node']) {
+      for (const param of ['lx-family', 'lx-path', 'lx-stage', 'lx-object', 'lx-loss', 'lx-source', 'lx-node', 'lx-step', 'lx-outcome']) {
         if (search.has(param)) problems.push(`${at} writes ${got.search}, with ${param}`);
       }
       continue;
@@ -844,7 +972,7 @@ export function viewSwitchProblems(readings, familyModels) {
     if (got.path !== first.paths[0].id) problems.push(`${at} opens the path ${got.path ?? 'none'}, not ${first.paths[0].id}`);
     if (got.stage !== first.stages[0].id) problems.push(`${at} opens the stage ${got.stage ?? 'none'}, not ${first.stages[0].id}`);
     if (got.object !== null) problems.push(`${at} keeps ${got.object} selected`);
-    for (const param of ['lx-view', 'lx-loss', 'lx-source', 'lx-node', 'lx-family', 'lx-path', 'lx-object']) {
+    for (const param of ['lx-view', 'lx-loss', 'lx-source', 'lx-node', 'lx-family', 'lx-path', 'lx-object', 'lx-step', 'lx-outcome']) {
       if (search.has(param)) problems.push(`${at} writes ${got.search}, with ${param}`);
     }
     if (search.get('lx-stage') !== first.stages[0].id) problems.push(`${at} writes ${got.search || 'nothing'}, not lx-stage=${first.stages[0].id}`);
@@ -1178,6 +1306,780 @@ export function objectMapKeyboardProblems(reading) {
   return problems;
 }
 
+// What #817 asks of the composed workflow: its stages in this order, each in
+// the family that runs it, the preconditions for sharing one database, where
+// each stop can happen, the stages a decision authorizes and whose decision
+// that is, and the fields of the stage record. It is written here rather than
+// read from the model, so a model cannot relax a rule by changing what it
+// declares about itself.
+export const WORKFLOW_REQUIRED = {
+  stages: [
+    ['w-expand', 'schema'],
+    ['w-verify-expand', 'schema'],
+    ['w-backfill', 'migration'],
+    ['w-history', 'migration'],
+    ['w-checks', 'outside'],
+    ['w-contract', 'schema'],
+    ['w-verify-contract', 'schema'],
+  ],
+  preconditions: ['w-pre-realm', 'w-pre-shared', 'w-pre-scope', 'w-pre-order'],
+  // A schema Apply fails in no way between a refusal and an outcome nobody
+  // knows, so an ordinary failure is a migration's alone; only the check
+  // stage has a check to fail.
+  outcomes: {
+    'w-refused': ['schema', 'migration'],
+    'w-stale': ['schema', 'migration'],
+    'w-failed': ['migration'],
+    'w-unresolved': ['schema', 'migration'],
+    'w-drift': ['schema'],
+    'w-check-failed': ['outside'],
+  },
+  decided: ['w-expand', 'w-backfill', 'w-checks', 'w-contract'],
+  decisions: { schema: 'w-dec-schema', migration: 'w-dec-migration', outside: 'w-dec-check' },
+  policy: 'w-dec-policy',
+  record: [
+    'w-rec-incarnation',
+    'w-rec-source',
+    'w-rec-plan',
+    'w-rec-decision',
+    'w-rec-operation',
+    'w-rec-outcome',
+    'w-rec-verification',
+    'w-rec-recovery',
+  ],
+  // The orchestration the view calls proposed: no kind the CRDs define may
+  // be it.
+  proposedKinds: ['Workflow', 'WorkflowRun'],
+};
+
+// workflowProblems refuses a composed workflow the view could not render
+// honestly: stages out of the order #817 gives or in another family, an id
+// used twice or shared with another view, a proposal that does not say what
+// does not exist or a kind the CRDs now define, a precondition, a stop, a
+// decision or a record field left out, a stop at a stage where it cannot
+// happen, a resource stage that cannot end with an unknown outcome, a stage
+// authorized by another family's decision, a check stage that does not say
+// Migration InSync is not it, and a reference to an object, a path or a
+// decision that does not exist.
+export function workflowProblems(flow, { familyModels, auditModel, map, kinds, required = WORKFLOW_REQUIRED }) {
+  const problems = [];
+  const stages = flow.stages ?? [];
+  if (stages.length === 0) return ['the composed workflow has no stage'];
+  const familyIds = (flow.families ?? []).map((family) => family.id);
+  const outcomeIds = (flow.outcomes ?? []).map((outcome) => outcome.id);
+  const decisionIds = (flow.decisions ?? []).map((decision) => decision.id);
+  const preconditions = flow.preconditions ?? [];
+  const record = flow.record ?? [];
+  const nodeIds = new Set((map.nodes ?? []).map((node) => node.id));
+
+  const order = stages.map((stage) => stage.id).join(' ');
+  const wanted = required.stages.map(([id]) => id).join(' ');
+  if (order !== wanted) problems.push(`the composed workflow’s stages are ${order}, not ${wanted}`);
+  for (const [id, family] of required.stages) {
+    const stage = stages.find((one) => one.id === id);
+    if (stage && stage.family !== family) problems.push(`the stage "${id}" runs in "${stage.family}", not "${family}"`);
+  }
+
+  const taken = new Set([
+    ...familyModels.flatMap((model) => [
+      ...allStages(model).map((stage) => stage.id),
+      ...model.paths.map((path) => path.id),
+      ...model.objects.map((object) => object.id),
+    ]),
+    ...(auditModel.sources ?? []).map((source) => source.id),
+    ...nodeIds,
+  ]);
+  const seen = new Set();
+  for (const id of [
+    ...stages.map((stage) => stage.id),
+    ...outcomeIds,
+    ...decisionIds,
+    ...preconditions.map((one) => one.id),
+    ...record.map((field) => field.id),
+  ]) {
+    if (seen.has(id)) problems.push(`the composed workflow’s "${id}" is used twice`);
+    seen.add(id);
+    if (!id.startsWith('w-')) problems.push(`the composed workflow’s "${id}" lacks the prefix w-`);
+    if (taken.has(id)) problems.push(`the composed workflow’s "${id}" shares its id with another view`);
+  }
+
+  if (!filled(flow.proposal?.label) || !filled(flow.proposal?.text)) {
+    problems.push('the composed workflow does not say it is proposed orchestration');
+  }
+  for (const kind of required.proposedKinds) {
+    if (!new RegExp(`\\b${kind}\\b`).test(flow.proposal?.text ?? '')) {
+      problems.push(`the composed workflow’s proposal does not say there is no ${kind}`);
+    }
+    if (kinds.some((one) => one.kind === kind)) problems.push(`the CRDs define ${kind}, which the composed workflow calls proposed`);
+  }
+  const marks = (flow.marks ?? []).map((mark) => mark.id).join(' ');
+  if (marks !== 'shipped proposed') problems.push(`the composed workflow marks ${marks || 'nothing'}, not shipped and proposed`);
+  for (const mark of flow.marks ?? []) {
+    if (!filled(mark.label) || !filled(mark.text)) problems.push(`the mark "${mark.id}" says nothing`);
+  }
+
+  for (const id of required.preconditions) {
+    if (!preconditions.some((one) => one.id === id)) {
+      problems.push(`the composed workflow leaves out the precondition "${id}", which #817 asks for`);
+    }
+  }
+  for (const precondition of preconditions) {
+    const at = `the precondition "${precondition.id}"`;
+    if (!filled(precondition.title) || !filled(precondition.text)) problems.push(`${at} says nothing`);
+    if ((precondition.objects ?? []).length === 0) problems.push(`${at} names no object`);
+    for (const id of precondition.objects ?? []) {
+      if (!nodeIds.has(id)) problems.push(`${at} names "${id}", which the object map does not have`);
+    }
+    if ((precondition.links ?? []).length === 0) problems.push(`${at} links nothing`);
+  }
+
+  for (const id of Object.keys(required.outcomes)) {
+    if (!outcomeIds.includes(id)) problems.push(`the composed workflow leaves out the stop "${id}"`);
+  }
+  for (const outcome of flow.outcomes ?? []) {
+    if (!filled(outcome.label) || !filled(outcome.text)) problems.push(`the stop "${outcome.id}" says nothing`);
+    if (!required.outcomes[outcome.id]) problems.push(`the stop "${outcome.id}" is one this check does not know where it can happen`);
+    if (!stages.some((stage) => (stage.outcomes ?? []).some((one) => one.outcome === outcome.id))) {
+      problems.push(`the stop "${outcome.id}" stops no stage`);
+    }
+  }
+
+  for (const id of [...Object.values(required.decisions), required.policy]) {
+    if (!decisionIds.includes(id)) problems.push(`the composed workflow leaves out the decision "${id}"`);
+  }
+  for (const decision of flow.decisions ?? []) {
+    const at = `the decision "${decision.id}"`;
+    if (!filled(decision.label) || !filled(decision.covers) || !filled(decision.notCovered)) {
+      problems.push(`${at} does not say what it covers and what it does not`);
+    }
+    if (decision.node !== undefined && !nodeIds.has(decision.node)) {
+      problems.push(`${at} names "${decision.node}", which the object map does not have`);
+    }
+  }
+
+  for (const stage of stages) {
+    const at = `the stage "${stage.id}"`;
+    for (const field of ['title', 'goal', 'person', 'operator', 'gate', 'done']) {
+      if (!filled(stage[field])) problems.push(`${at} says nothing in ${field}`);
+    }
+    if (!familyIds.includes(stage.family)) problems.push(`${at} runs in "${stage.family}", which does not exist`);
+    if ((stage.inspect ?? []).length === 0) problems.push(`${at} says no way to act on it or inspect it`);
+    for (const step of stage.inspect ?? []) {
+      if (filled(step.command) === filled(step.system) || !filled(step.says)) {
+        problems.push(`${at} has a step that is not one command or one system with what it shows`);
+      }
+    }
+    if (required.decided.includes(stage.id) && !stage.decision) problems.push(`${at} names no decision, and #817 asks what authorizes it`);
+    if (stage.decision) {
+      const own = required.decisions[stage.family];
+      if (stage.decision !== own) problems.push(`${at} runs in "${stage.family}" and names the decision "${stage.decision}", not "${own}"`);
+      if (!filled(stage.decisionText)) problems.push(`${at} does not say what its decision is`);
+    }
+    const stops = (stage.outcomes ?? []).map((one) => one.outcome);
+    if (stops.length === 0) problems.push(`${at} can stop on nothing`);
+    if (new Set(stops).size !== stops.length) problems.push(`${at} lists a stop twice`);
+    if (stage.family !== 'outside' && !stops.includes('w-unresolved')) {
+      problems.push(`${at} runs SQL or proves it, and cannot end with an outcome nobody knows`);
+    }
+    for (const one of stage.outcomes ?? []) {
+      const where = `${at} stopped by "${one.outcome}"`;
+      if (!outcomeIds.includes(one.outcome)) problems.push(`${where}, which does not exist`);
+      else if (!(required.outcomes[one.outcome] ?? []).includes(stage.family)) {
+        problems.push(`${where}, which cannot happen in "${stage.family}"`);
+      }
+      if (!filled(one.text) || !filled(one.recovery)) problems.push(`${where} does not say what happened and what clears it`);
+      if (one.journey) {
+        const family = familyModels.find((model) => model.id === one.journey.family);
+        const path = family?.paths.find((candidate) => candidate.id === one.journey.path);
+        if (!path) problems.push(`${where} names the journey path "${one.journey.family}/${one.journey.path}", which does not exist`);
+        else if (path.id === family.paths[0].id) problems.push(`${where} names the successful path "${path.id}"`);
+      }
+    }
+    if ((stage.objects ?? []).length === 0) problems.push(`${at} names no object`);
+    for (const id of stage.objects ?? []) {
+      if (!nodeIds.has(id)) problems.push(`${at} names "${id}", which the object map does not have`);
+    }
+    if ((stage.links ?? []).length === 0) problems.push(`${at} links nothing`);
+    if (stage.family === 'outside' && !/\bInSync\b/.test(stage.gate ?? '')) {
+      problems.push(`${at} does not say that Migration InSync does not satisfy it`);
+    }
+  }
+
+  for (const id of required.record) {
+    if (!record.some((field) => field.id === id)) problems.push(`the stage record leaves out "${id}", which #817 asks for`);
+  }
+  for (const field of record) {
+    if (!filled(field.label) || !filled(field.text)) problems.push(`the stage record’s "${field.id}" says nothing`);
+  }
+  if (!filled(flow.recordText)) problems.push('the composed workflow does not say who keeps the stage record');
+  if ((flow.readers ?? []).length === 0) problems.push('the composed workflow says no way to read the stage record');
+  for (const reader of flow.readers ?? []) {
+    if (!filled(reader.command) || !filled(reader.says)) problems.push('a reader of the stage record lacks its command or what it shows');
+  }
+  if ((flow.distinctions ?? []).length === 0) problems.push('the composed workflow says nothing about what it keeps apart');
+  if ((flow.links ?? []).length === 0) problems.push('the composed workflow links nothing');
+  return problems;
+}
+
+// workflowTextProblems judges the composed workflow's text: the proposal,
+// both marks, every precondition, every stage in order with its commands,
+// what the operator does marked shipped and what moves it on marked proposed,
+// each stop it can stop on with what clears it, and every stop, decision,
+// record field and reader.
+export function workflowTextProblems(reading, flow) {
+  const problems = [];
+  const text = reading.workflow;
+  if (!text) return ['without JavaScript the text leaves out the composed workflow'];
+  if (!text.proposal.includes(flow.proposal.text)) problems.push('without JavaScript the composed workflow does not say it is proposed');
+  for (const mark of flow.marks) {
+    if (!text.marks.includes(mark.id)) problems.push(`without JavaScript the composed workflow leaves out the mark "${mark.id}"`);
+  }
+  for (const precondition of flow.preconditions) {
+    const block = text.preconditions.find((one) => one.id === precondition.id);
+    if (!block) problems.push(`without JavaScript the composed workflow leaves out the precondition "${precondition.id}"`);
+    else if (!block.text.includes(precondition.text)) problems.push(`without JavaScript the precondition "${precondition.id}" lacks its text`);
+  }
+  const order = text.stages.map((stage) => stage.id).join(' ');
+  const want = flow.stages.map((stage) => stage.id).join(' ');
+  if (order !== want) problems.push(`without JavaScript the composed workflow’s stages read ${order || 'nothing'}, not ${want}`);
+  for (const stage of flow.stages) {
+    const block = text.stages.find((one) => one.id === stage.id);
+    if (!block) continue;
+    for (const [what, value] of [
+      ['title', stage.title],
+      ['goal', stage.goal],
+      ['person', stage.person],
+      ['decision', stage.decisionText],
+      ['done', stage.done],
+      ['limits', stage.limits],
+      ...stage.inspect.map((step) => [`step ${JSON.stringify(step.command ?? step.system)}`, step.command ?? step.system]),
+    ]) {
+      if (value !== undefined && !block.text.includes(value)) problems.push(`without JavaScript the stage "${stage.id}" lacks its ${what}`);
+    }
+    if (!block.operator.includes(stage.operator) || !/\bshipped\b/i.test(block.operator)) {
+      problems.push(`without JavaScript the stage "${stage.id}" does not give what the operator does as shipped`);
+    }
+    if (!block.gate.includes(stage.gate) || !/\bproposed\b/i.test(block.gate)) {
+      problems.push(`without JavaScript the stage "${stage.id}" does not give what moves it on as proposed`);
+    }
+    const stops = stage.outcomes.map((one) => one.outcome).join(' ');
+    if (block.stops.join(' ') !== stops) {
+      problems.push(`without JavaScript the stage "${stage.id}" stops on ${block.stops.join(', ') || 'nothing'}, not ${stops.split(' ').join(', ')}`);
+    }
+    for (const one of stage.outcomes) {
+      if (!block.text.includes(one.text) || !block.text.includes(one.recovery)) {
+        problems.push(`without JavaScript the stage "${stage.id}" lacks what "${one.outcome}" holds or what clears it`);
+      }
+    }
+  }
+  for (const outcome of flow.outcomes) {
+    if (!text.outcomes.includes(outcome.id)) problems.push(`without JavaScript the composed workflow leaves out the stop "${outcome.id}"`);
+  }
+  for (const decision of flow.decisions) {
+    const block = text.decisions.find((one) => one.id === decision.id);
+    if (!block || !block.text.includes(decision.covers) || !block.text.includes(decision.notCovered)) {
+      problems.push(`without JavaScript the decision "${decision.id}" does not say what it covers and what it does not`);
+    }
+  }
+  for (const field of flow.record) {
+    if (!text.record.includes(field.id)) problems.push(`without JavaScript the stage record leaves out "${field.id}"`);
+  }
+  for (const reader of flow.readers) {
+    if (!text.text.includes(reader.command)) problems.push(`without JavaScript the stage record lacks the command ${JSON.stringify(reader.command)}`);
+  }
+  return problems;
+}
+
+// workflowRenderProblems judges the composed workflow once chosen: the view
+// bar, the workflow shown and every other view hidden, one step and one
+// panel per stage, the first stage open with nothing stopped, the proposal on
+// screen, each panel giving what the operator does as shipped and what moves
+// the stage on as proposed, and each stage tagged with what runs it.
+export function workflowRenderProblems(reading, flow) {
+  const problems = [];
+  const count = flow.stages.length;
+  if (reading.viewButtons !== VIEWS.length) problems.push(`the explorer has ${reading.viewButtons} view buttons, not ${VIEWS.length}`);
+  if (!reading.shown) problems.push('choosing the composed workflow does not show it');
+  for (const other of reading.othersShown) problems.push(`choosing the composed workflow leaves the ${other} view on screen`);
+  if (reading.steps !== count) problems.push(`the composed workflow has ${reading.steps} steps and the model ${count} stages`);
+  if (reading.panels !== count) problems.push(`the composed workflow has ${reading.panels} panels and the model ${count} stages`);
+  if (reading.visiblePanels.join(' ') !== flow.stages[0].id) {
+    problems.push(`the composed workflow opens with the panels ${reading.visiblePanels.join(', ') || 'none'}, not ${flow.stages[0].id}`);
+  }
+  if (reading.stopsShown !== 0 || reading.statusShown) problems.push('the composed workflow opens with a stop chosen');
+  if (!reading.proposalShown) problems.push('the composed workflow does not say on screen that it is proposed orchestration');
+  if (reading.shipped !== count) problems.push(`${reading.shipped} of ${count} stages give what the operator does as shipped`);
+  if (reading.proposed !== count) problems.push(`${reading.proposed} of ${count} stages give what moves them on as proposed`);
+  const label = new Map(flow.families.map((family) => [family.id, family.label]));
+  const tags = flow.stages.map((stage) => label.get(stage.family)).join(' | ');
+  if (reading.tags.join(' | ') !== tags) problems.push(`the stages are tagged ${reading.tags.join(', ')}, not ${tags.split(' | ').join(', ')}`);
+  return problems;
+}
+
+// The marks a reader at one stage should see on every step: the stages
+// before it done, the stage itself current or stopped, and the stages after
+// it ahead, or held when it stopped.
+export function expectedStepMarks(flow, index, outcome) {
+  const label = outcome ? flow.outcomes.find((one) => one.id === outcome)?.label : null;
+  return flow.stages.map((stage, at) => {
+    if (at < index) return ['done', 'Done'];
+    if (at === index) return outcome ? ['stopped', `Stopped: ${label}`] : ['current', ''];
+    return outcome ? ['held', 'Held'] : ['ahead', ''];
+  });
+}
+
+// The address a reader at one stage should find: the view, the stage unless
+// it is the first, and the stop.
+export function expectedWorkflowSearch(flow, index, outcome) {
+  const params = new URLSearchParams({ 'lx-view': 'workflow' });
+  if (index > 0) params.set('lx-step', flow.stages[index].id);
+  if (outcome) params.set('lx-outcome', outcome);
+  return `?${params}`;
+}
+
+// workflowWalkProblems judges every stage chosen in turn with nothing
+// stopped, and every stop each stage can stop on chosen there: the panel
+// shown, the count, the stop pressed and its detail shown alone, the mark on
+// every step in words, the status line, and the address written.
+export function workflowWalkProblems(readings, flow) {
+  const problems = [];
+  if (readings.steps.length !== flow.stages.length) {
+    problems.push(`${readings.steps.length} of the composed workflow’s ${flow.stages.length} stages were chosen`);
+  }
+  const marksProblem = (at, got, want) => {
+    const shown = (marks) => marks.map(([state, text]) => `${state}${text ? ` "${text}"` : ''}`).join(', ');
+    if (shown(got) !== shown(want)) problems.push(`${at} marks the steps ${shown(got)}, not ${shown(want)}`);
+  };
+  for (const reading of readings.steps) {
+    const index = flow.stages.findIndex((stage) => stage.id === reading.id);
+    const at = `choosing the stage "${reading.id}"`;
+    if (reading.current !== reading.id) problems.push(`${at} makes "${reading.current}" current`);
+    if (reading.panels.join(' ') !== reading.id) problems.push(`${at} shows the panels ${reading.panels.join(', ') || 'none'}`);
+    if (!reading.count.startsWith(`Stage ${index + 1} of ${flow.stages.length}: `)) problems.push(`${at} counts "${reading.count}"`);
+    marksProblem(at, reading.marks, expectedStepMarks(flow, index, null));
+    if (reading.status !== null) problems.push(`${at} says it stopped: "${reading.status}"`);
+    const search = expectedWorkflowSearch(flow, index, null);
+    if (reading.search !== search) problems.push(`${at} writes ${reading.search || 'nothing'}, not ${search}`);
+  }
+  const want = flow.stages.reduce((sum, stage) => sum + stage.outcomes.length, 0);
+  if (readings.stops.length !== want) problems.push(`${readings.stops.length} of the composed workflow’s ${want} stops were chosen`);
+  for (const reading of readings.stops) {
+    const index = flow.stages.findIndex((stage) => stage.id === reading.stage);
+    const outcome = flow.outcomes.find((one) => one.id === reading.outcome);
+    const at = `stopping "${reading.stage}" with "${reading.outcome}"`;
+    if (reading.pressed.join(' ') !== reading.outcome) problems.push(`${at} presses ${reading.pressed.join(', ') || 'nothing'}`);
+    if (reading.details.join(' ') !== reading.outcome) problems.push(`${at} shows the detail of ${reading.details.join(', ') || 'nothing'}`);
+    marksProblem(at, reading.marks, expectedStepMarks(flow, index, reading.outcome));
+    const later = flow.stages.slice(index + 1).map((stage) => stage.title);
+    const status = reading.status ?? '';
+    if (!status.includes(outcome?.label ?? reading.outcome) || !later.every((title) => status.includes(title))) {
+      problems.push(`${at} says "${status}", which does not name the stop and every stage it holds`);
+    }
+    const search = expectedWorkflowSearch(flow, index, reading.outcome);
+    if (reading.search !== search) problems.push(`${at} writes ${reading.search || 'nothing'}, not ${search}`);
+  }
+  // A stop is cleared by moving on, by choosing another stage, and by
+  // choosing it again: none of them leaves a stop or a held stage behind.
+  if (readings.clears.length === 0) problems.push('no stop was cleared');
+  for (const { how, want: stage, got } of readings.clears) {
+    const at = `clearing a stop by ${how}`;
+    if (got.step !== stage) problems.push(`${at} opens "${got.step}", not "${stage}"`);
+    if (got.outcome !== null) problems.push(`${at} keeps the stop "${got.outcome}"`);
+    if (got.held !== 0) problems.push(`${at} leaves ${got.held} stages held`);
+    if (new URLSearchParams(got.search).has('lx-outcome')) problems.push(`${at} writes ${got.search}, with lx-outcome`);
+  }
+  return problems;
+}
+
+// workflowLinkProblems judges pages opened from links into the composed
+// workflow. The stop pressed is read from the stage's own options, which a
+// stop the stage cannot have never presses, so the steps and the status line
+// are read as well: a stop nobody chose must hold no stage and say nothing,
+// and a stop the link names must be said.
+export function workflowLinkProblems(readings) {
+  const problems = [];
+  if (readings.length === 0) return ['no link into the composed workflow was opened'];
+  for (const { link, want, got } of readings) {
+    if (got.view !== want.view) problems.push(`the link ${link} opens the ${got.view} view, not ${want.view}`);
+    if (want.step !== undefined && got.step !== want.step) problems.push(`the link ${link} opens the stage ${got.step ?? 'none'}, not ${want.step}`);
+    if (got.outcome !== want.outcome) problems.push(`the link ${link} stops on ${got.outcome ?? 'nothing'}, not ${want.outcome ?? 'nothing'}`);
+    if (want.node !== undefined && got.node !== want.node) problems.push(`the link ${link} opens ${got.node ?? 'no object'}, not ${want.node ?? 'no object'}`);
+    if (got.view !== 'workflow') continue;
+    if (want.outcome === null && (got.held !== 0 || got.status !== null)) {
+      problems.push(`the link ${link} shows a stop nobody chose: ${got.held} stages held, and the status says "${got.status ?? ''}"`);
+    }
+    if (want.outcome !== null && got.status === null) problems.push(`the link ${link} says nothing of the stop ${want.outcome}`);
+  }
+  return problems;
+}
+
+// workflowKeyboardProblems judges the composed workflow by keyboard alone:
+// Tab and Enter from the heading choose it, Tab reaches the current step, the
+// arrow keys, End and Home move between stages, and Tab and Enter choose a
+// stop.
+export function workflowKeyboardProblems(reading) {
+  const problems = [];
+  if (!reading.chosen) problems.push('Tab and Enter from the heading do not choose the composed workflow');
+  if (!reading.step) problems.push('Tab does not reach the composed workflow’s current step');
+  if (!reading.arrow) problems.push('the arrow key does not move to the next stage of the composed workflow');
+  if (!reading.end) problems.push('End does not move to the last stage of the composed workflow');
+  if (!reading.home) problems.push('Home does not move to the first stage of the composed workflow');
+  if (!reading.stop) problems.push('Tab and Enter do not choose a stop of the composed workflow');
+  return problems;
+}
+
+// anchorProblems judges the links between objects, sources and views, read
+// from the built page. In the interactive view each is an anchor whose
+// address names what it opens, with the value it selects in place; no
+// related object is left a button, which no address opens; a related name
+// stays inline, so the full stop after it cannot wrap alone; and in the text
+// every link within the page leads somewhere a reader without JavaScript
+// sees: an entry of the text or a heading of the page, never the hidden
+// view. The page's ids are each used once, or a link to one leads to
+// whichever comes first.
+export function anchorProblems(reading, home) {
+  const problems = [];
+  const { text, app, buttons, duplicates } = reading.anchors;
+  if (!text.some((one) => one.target === 'text')) problems.push('the text links none of its own entries');
+  for (const { href, target } of text) {
+    if (target === 'app' || target === 'none') {
+      problems.push(`without JavaScript the link ${href} leads ${target === 'app' ? 'into the hidden view' : 'nowhere'}`);
+    }
+  }
+  for (const kind of ['select', 'source', 'node', 'open']) {
+    if (!app.some((one) => one.kind === kind)) problems.push(`the interactive view has no ${kind} link`);
+  }
+  for (const { href, kind, value, family, display } of app) {
+    const at = `the ${kind} link ${href}`;
+    const url = new URL(href, 'https://site.invalid/page/');
+    const params = url.searchParams;
+    if (url.pathname !== '/page/' || url.hash !== '#lifecycle-explorer') problems.push(`${at} does not lead to the explorer on this page`);
+    if (kind === 'select') {
+      if (params.get('lx-object') !== value) problems.push(`${at} names ${params.get('lx-object') ?? 'no object'}, and selects ${value}`);
+      const named = params.get('lx-family');
+      if (named !== (family === home ? null : family)) problems.push(`${at} names the family ${named ?? 'none'}, and sits in ${family}`);
+      if (params.has('lx-view')) problems.push(`${at} names a view`);
+    }
+    if (kind === 'source' && (params.get('lx-view') !== 'audit' || params.get('lx-source') !== value)) {
+      problems.push(`${at} does not name the audit view and ${value}`);
+    }
+    if (kind === 'node' && (params.get('lx-view') !== 'objects' || params.get('lx-node') !== value)) {
+      problems.push(`${at} does not name the object map and ${value}`);
+    }
+    if (kind === 'open' && [...params.keys()].length === 0) problems.push(`${at} names nothing to open`);
+    if (kind !== 'source' && kind !== 'open' && display !== 'inline') problems.push(`${at} is laid out ${display}, not inline`);
+  }
+  if (buttons > 0) problems.push(`${buttons} related objects or sources are buttons, which no address opens`);
+  for (const id of duplicates) problems.push(`the id "${id}" is used twice on the page`);
+  return problems;
+}
+
+// What an address into the explorer names, read the way the page reads it.
+export function landingFor(href, home) {
+  const params = new URL(href, 'https://site.invalid/page/').searchParams;
+  const view = params.get('lx-view') ?? 'journey';
+  if (view === 'audit') return { view, source: params.get('lx-source') };
+  if (view === 'objects') return { view, node: params.get('lx-node') };
+  if (view === 'workflow') return { view, step: params.get('lx-step'), outcome: params.get('lx-outcome') };
+  return {
+    view,
+    family: params.get('lx-family') ?? home,
+    path: params.get('lx-path') ?? undefined,
+    stage: params.get('lx-stage') ?? undefined,
+    object: params.get('lx-object'),
+  };
+}
+
+// anchorLandingProblems judges every distinct link of the interactive view,
+// opened as an address: the view it names is on screen with the value it
+// names chosen.
+export function anchorLandingProblems(readings, home) {
+  const problems = [];
+  if (readings.length === 0) return ['no link between objects, sources or views was opened'];
+  for (const { href, got } of readings) {
+    const want = landingFor(href, home);
+    for (const [key, value] of Object.entries(want)) {
+      if (value === undefined) continue;
+      if (got[key] !== value) problems.push(`the link ${href} opens with ${key} ${got[key] ?? 'none'}, not ${value ?? 'none'}`);
+    }
+  }
+  return problems;
+}
+
+// inPlaceProblems judges links followed by a click. A plain click opens what
+// the link names without loading the page again, keeps the rest of the view
+// it was made in, and writes the address the link names when it opens
+// another view; a click with a modifier is the browser's, and opens the
+// address in a new page while the view it was made in stays as it was.
+export function inPlaceProblems(readings) {
+  const problems = [];
+  for (const kind of ['select', 'source', 'node', 'open']) {
+    if (!readings.plain.some((one) => one.kind === kind)) problems.push(`no ${kind} link was followed by a click`);
+  }
+  for (const { kind, href, reloaded, landed, kept, search } of readings.plain) {
+    const at = `a plain click on the ${kind} link ${href}`;
+    if (reloaded) problems.push(`${at} loads the page again`);
+    if (!landed) problems.push(`${at} does not open what it names`);
+    if (kept === false) problems.push(`${at} does not keep the stage it was made at`);
+    if (kind === 'open') {
+      const want = new URL(href, 'https://site.invalid/page/').search;
+      if (search !== want) problems.push(`${at} writes ${search || 'nothing'}, not ${want}`);
+    }
+  }
+  if (!readings.modified) problems.push('no link was clicked with a modifier');
+  else {
+    const { href, opened, stayed } = readings.modified;
+    const want = new URL(href, 'https://site.invalid/page/').search;
+    if (opened !== want) problems.push(`a click with a modifier on ${href} opens ${opened ?? 'no page'}, not ${want}`);
+    if (!stayed) problems.push(`a click with a modifier on ${href} also changes the view it was made in`);
+  }
+  return problems;
+}
+
+// What #817 asks of the depths: Overview, Product and Implementation, in that
+// order, each showing more of the same entries. The parts are the ones the
+// renderer tags, kind by kind, and the essentials are the parts an entry
+// must say at Overview: who acts and what a person does, what an object or
+// a source is for, and how a reader knows a step is done.
+export const DEPTH_REQUIRED = {
+  ids: ['overview', 'product', 'implementation'],
+  parts: {
+    stage: ['lead', 'you', 'done', 'phase', 'operator', 'expect', 'inspect', 'limits', 'kubernetes', 'executor', 'objects'],
+    object: ['purpose', 'writer', 'inspect', 'lives'],
+    source: ['establishes', 'cannot', 'records', 'readers', 'retention', 'survives', 'names', 'gaps', 'ids'],
+    node: ['holds', 'writtenBy', 'change', 'deletion', 'inspect', 'gap', 'operator', 'scope'],
+    wstage: ['goal', 'person', 'gate', 'done', 'operator', 'inspect', 'decision', 'limits', 'objects'],
+    block: ['auditMeasured', 'auditIdentities', 'auditGaps', 'workflowPreconditions', 'workflowDecisions', 'workflowRecord'],
+  },
+  essentials: {
+    stage: ['lead', 'you', 'done'],
+    object: ['purpose', 'writer'],
+    source: ['establishes', 'cannot'],
+    node: ['holds', 'writtenBy'],
+    wstage: ['goal', 'person', 'gate', 'done'],
+  },
+};
+
+const rankOf = (ids, id) => ids.indexOf(id);
+
+// depthModelProblems judges the depths and the table of parts against what
+// #817 asks: three depths in order, the default the deepest so a link that
+// names none shows what it always showed, every part the renderer tags named
+// once at a depth that exists, each essential at Overview, and every kind of
+// entry saying more at each depth than at the one before.
+export function depthModelProblems({ depths, defaultDepth, depthOf }, required = DEPTH_REQUIRED) {
+  const problems = [];
+  const ids = (depths ?? []).map((one) => one.id);
+  if (ids.join(' ') !== required.ids.join(' ')) problems.push(`the depths are ${ids.join(', ') || 'none'}, not ${required.ids.join(', ')}`);
+  for (const one of depths ?? []) {
+    if (!one.label?.trim() || !one.text?.trim()) problems.push(`the depth "${one.id}" lacks its label or what it shows`);
+  }
+  if (defaultDepth !== required.ids.at(-1)) {
+    problems.push(`the default depth is "${defaultDepth}", not "${required.ids.at(-1)}", so a link that names no depth would show less than it did`);
+  }
+  const kinds = Object.keys(depthOf ?? {});
+  for (const kind of Object.keys(required.parts)) {
+    if (!kinds.includes(kind)) problems.push(`depthOf leaves out the kind "${kind}"`);
+  }
+  for (const kind of kinds) {
+    const want = required.parts[kind];
+    if (!want) {
+      problems.push(`depthOf names the kind "${kind}", which nothing renders`);
+      continue;
+    }
+    const parts = depthOf[kind];
+    for (const name of want) {
+      if (!(name in parts)) problems.push(`depthOf.${kind} leaves out the part "${name}"`);
+    }
+    for (const [name, at] of Object.entries(parts)) {
+      if (!want.includes(name)) problems.push(`depthOf.${kind} names "${name}", which nothing renders`);
+      if (!required.ids.includes(at)) problems.push(`depthOf.${kind}.${name} is "${at}", which is not a depth`);
+    }
+    for (const name of required.essentials[kind] ?? []) {
+      if (name in parts && parts[name] !== required.ids[0]) {
+        problems.push(`depthOf.${kind}.${name} first shows at "${parts[name]}", and ${required.ids[0]} has to say it`);
+      }
+    }
+    if (kind === 'block') continue;
+    for (const at of required.ids) {
+      if (!Object.values(parts).includes(at)) problems.push(`depthOf.${kind} shows nothing first at "${at}"`);
+    }
+  }
+  return problems;
+}
+
+// expectedParts is the parts one entry carries where it is rendered: the
+// interactive view's panel or the text's entry. A part of a field the entry
+// leaves out is not expected, an actor's row is `lead` when that actor
+// leads, and a source's names and closed gaps are listed in its panel alone,
+// since the text gives both a block of their own.
+export function expectedParts(kind, entry, where, context = {}) {
+  const parts = [];
+  const add = (name, when = true) => when && parts.push(name);
+  if (kind === 'stage') {
+    add('lead');
+    for (const actor of ['you', 'operator', 'kubernetes', 'executor']) add(actor, Boolean(entry.actors[actor]) && actor !== entry.lead);
+    add('phase');
+    add('objects');
+    add('expect', Boolean(entry.expect));
+    add('inspect');
+    add('done');
+    add('limits', Boolean(entry.limits));
+  } else if (kind === 'object') {
+    for (const name of ['purpose', 'writer', 'inspect', 'lives']) add(name);
+  } else if (kind === 'source') {
+    for (const name of ['records', 'establishes', 'cannot', 'ids', 'readers', 'retention', 'survives']) add(name);
+    add('names', where === 'app' && (context.identities ?? []).some((identity) => identity.recordedIn.includes(entry.id)));
+    add('gaps', where === 'app' && (context.gaps ?? []).some((gap) => gap.sources.includes(entry.id)));
+  } else if (kind === 'node') {
+    for (const name of ['holds', 'writtenBy', 'operator', 'scope', 'change', 'deletion', 'inspect']) add(name);
+    add('gap', Boolean(entry.gap));
+  } else if (kind === 'wstage') {
+    for (const name of ['goal', 'person', 'inspect', 'operator', 'gate', 'done', 'objects']) add(name);
+    add('decision', Boolean(entry.decision));
+    add('limits', Boolean(entry.limits));
+  }
+  return parts.sort();
+}
+
+// depthRenderProblems judges what the page tags against the content: every
+// entry, in the interactive view and in the text, carries each part it has
+// and no other, every tagged part sits at the depth the table gives it, and
+// every block is tagged in both.
+export function depthRenderProblems(reading, { depthOf, entries, context }) {
+  const problems = [];
+  const found = new Map((reading.entries ?? []).map((one) => [`${one.where} ${one.kind} ${one.id}`, one]));
+  for (const where of ['app', 'text']) {
+    for (const [kind, list] of Object.entries(entries)) {
+      for (const entry of list) {
+        const at = `the ${where === 'app' ? 'interactive view' : 'text'}’s ${kind} "${entry.id}"`;
+        const got = found.get(`${where} ${kind} ${entry.id}`);
+        if (!got) {
+          problems.push(`${at} is not rendered with its parts`);
+          continue;
+        }
+        const want = expectedParts(kind, entry, where, context);
+        const names = [...new Set(got.parts.map(([name]) => name))].sort();
+        if (names.join(' ') !== want.join(' ')) problems.push(`${at} carries the parts ${names.join(', ') || 'none'}, not ${want.join(', ')}`);
+      }
+    }
+    for (const name of Object.keys(depthOf.block)) {
+      if (!(reading.blocks ?? []).some((one) => one.where === where && one.name === name)) {
+        problems.push(`the ${where === 'app' ? 'interactive view' : 'text'} does not tag the block "${name}"`);
+      }
+    }
+  }
+  for (const one of reading.entries ?? []) {
+    for (const [name, at] of one.parts) {
+      const want = depthOf[one.kind]?.[name];
+      if (want !== at) problems.push(`the ${one.where}’s ${one.kind} "${one.id}" shows ${name} at "${at}", not "${want ?? 'nowhere'}"`);
+    }
+  }
+  for (const one of reading.blocks ?? []) {
+    if (depthOf.block[one.name] !== one.at) problems.push(`the ${one.where}’s block "${one.name}" shows at "${one.at}", not "${depthOf.block[one.name] ?? 'nowhere'}"`);
+  }
+  for (const stray of reading.strays ?? []) problems.push(`a part "${stray}" sits outside any entry or block`);
+  return problems;
+}
+
+// depthShownProblems judges the page at each depth chosen: every tagged part
+// shows when its depth is no deeper than the one chosen and is hidden when it
+// is; exactly the chosen depth's note shows; one entry of each kind, open on
+// screen, shows the parts it should and only those; and a link in the text
+// never leads to a part the depth hides. `where` says which page was read,
+// with or without its script, and `text` that the text has to be on screen.
+export function depthShownProblems(readings, { ids, where, text = false }) {
+  const problems = [];
+  for (const id of ids) {
+    if (!readings.some((one) => one.depth === id)) problems.push(`${where}: the depth "${id}" was never chosen`);
+  }
+  for (const reading of readings) {
+    const at = `${where} at ${reading.depth}`;
+    const rank = rankOf(ids, reading.depth);
+    if (reading.checked !== reading.depth) problems.push(`${at}: the choice reads "${reading.checked}"`);
+    if ((reading.notes ?? []).join(' ') !== reading.depth) problems.push(`${at}: the notes shown are ${(reading.notes ?? []).join(', ') || 'none'}, not ${reading.depth}`);
+    if ((reading.parts ?? []).length === 0) problems.push(`${at}: no part was read`);
+    const wrong = new Map();
+    for (const [place, part, depth, shown] of reading.parts ?? []) {
+      const should = rankOf(ids, depth) <= rank;
+      if (shown !== should) {
+        const key = `${place} ${part} ${shown ? 'shown' : 'hidden'}`;
+        wrong.set(key, (wrong.get(key) ?? 0) + 1);
+      }
+    }
+    for (const [key, count] of wrong) {
+      const [place, part, state] = key.split(' ');
+      problems.push(`${at}: ${count} ${place} ${part} part(s) are ${state}`);
+    }
+    for (const { kind, id, parts, want } of reading.open ?? []) {
+      const expected = [...new Set(want.filter(([, depth]) => rankOf(ids, depth) <= rank).map(([name]) => name))].sort();
+      const shown = [...new Set(parts)].sort();
+      if (shown.join(' ') !== expected.join(' ')) problems.push(`${at}: the ${kind} "${id}" on screen shows ${shown.join(', ') || 'nothing'}, not ${expected.join(', ')}`);
+    }
+    if (text && !reading.textShown) problems.push(`${at}: the text is not on screen`);
+    if (reading.textShown && !reading.links) problems.push(`${at}: no link of the text was read`);
+    for (const link of reading.hiddenTargets ?? []) problems.push(`${at}: the link ${link} leads to a part this depth hides`);
+  }
+  return problems;
+}
+
+// depthAddressProblems judges the address the depth choice writes: a depth
+// other than the default as lx-depth, the default as no parameter, and every
+// other parameter left as it was.
+export function depthAddressProblems(readings, { ids, defaultDepth }) {
+  const problems = [];
+  if (readings.length === 0) return ['no depth was chosen in the interactive view'];
+  for (const { depth, before, search } of readings) {
+    const got = new URLSearchParams(search);
+    const want = depth === defaultDepth ? null : depth;
+    if (got.get('lx-depth') !== want) problems.push(`choosing ${depth} writes ${search || 'nothing'}, with lx-depth ${got.get('lx-depth') ?? 'absent'}, not ${want ?? 'absent'}`);
+    got.delete('lx-depth');
+    const kept = new URLSearchParams(before);
+    kept.delete('lx-depth');
+    if (got.toString() !== kept.toString()) problems.push(`choosing ${depth} changes the rest of the address from ?${kept} to ?${got}`);
+  }
+  for (const id of ids) {
+    if (!readings.some((one) => one.depth === id)) problems.push(`the depth "${id}" was never chosen in the interactive view`);
+  }
+  return problems;
+}
+
+// depthKeepProblems judges what happens to a depth while the reader moves:
+// choosing a view, a family, a path, a stage or a link leaves it chosen and
+// in the address, and a link that names a depth opens at it, while one that
+// names none or a depth that does not exist opens at the default.
+export function depthKeepProblems({ moves, links }, { defaultDepth }) {
+  const problems = [];
+  if ((moves ?? []).length === 0) problems.push('no move was made with a depth chosen');
+  for (const { how, want, checked, search, hidden } of moves ?? []) {
+    if (checked !== want) problems.push(`${how} leaves the depth at ${checked}, not ${want}`);
+    if (new URLSearchParams(search).get('lx-depth') !== want) problems.push(`${how} writes ${search || 'nothing'}, without lx-depth=${want}`);
+    if (!hidden) problems.push(`${how} shows what ${want} hides`);
+  }
+  if ((links ?? []).length === 0) problems.push('no link that names a depth was opened');
+  for (const { link, want, got } of links ?? []) {
+    if (got.depth !== want.depth) problems.push(`the link ${link} opens at the depth ${got.depth}, not ${want.depth}`);
+    if (want.view && got.view !== want.view) problems.push(`the link ${link} opens the ${got.view} view, not ${want.view}`);
+  }
+  if (!(links ?? []).some((one) => one.want.depth === defaultDepth && /lx-depth=/.test(one.link))) {
+    problems.push('no link that names a depth nobody defined was opened');
+  }
+  return problems;
+}
+
+// depthKeyboardProblems judges the depth choice by keyboard: Tab from the
+// heading reaches it first, and the arrow keys choose the depth before and
+// after, which applies at once and is written to the address.
+export function depthKeyboardProblems(reading) {
+  const problems = [];
+  if (!reading.reached) problems.push('Tab from the heading does not reach the depth choice');
+  if (!reading.back) problems.push('the arrow key does not choose the shallower depth');
+  if (!reading.applied) problems.push('a depth chosen by keyboard does not hide what it hides');
+  if (!reading.written) problems.push('a depth chosen by keyboard is not written to the address');
+  if (!reading.forward) problems.push('the arrow key does not choose the deeper depth again');
+  return problems;
+}
+
 function selftest() {
   const stage = (id, title, objects, extra = {}) => ({
     id,
@@ -1186,6 +2088,7 @@ function selftest() {
     actors: { you: 'act' },
     objects,
     inspect: [{ command: `cmd ${id}` }],
+    links: [{ label: `About ${id}`, href: `#${id}` }],
     ...extra,
   });
   const model = {
@@ -1250,6 +2153,7 @@ function selftest() {
   refuses('a relation to nowhere', modelProblems({ ...model, relations: [...model.relations, { from: 'a', to: 'z', type: 'owns' }] }), 'names "z"');
   refuses('a stage id used twice', modelProblems({ ...model, stages: [model.stages[0], model.stages[0], model.stages[2]] }), 'used twice');
   refuses('a branch stage that takes a successful id', modelProblems(withPath(model, 1, { stages: [stage('two', 'Aside', ['b'])] })), '"two" is used twice');
+  refuses('a stage that links nowhere', modelProblems(withPath(model, 1, { stages: [stage('side-a', 'Aside', ['b'], { links: [] })] })), '"side-a" links to nothing');
   refuses('a lead who does nothing', modelProblems({ ...model, stages: [{ ...model.stages[0], lead: 'executor' }, ...model.stages.slice(1)] }), 'who does nothing');
   refuses('an object related to nothing', modelProblems({ ...model, objects: [...model.objects, { id: 'd' }] }), '"d" is related to nothing');
   refuses('an empty scenario', modelProblems({ ...model, stages: [] }), 'no stages');
@@ -1700,10 +2604,14 @@ function selftest() {
     ],
     auditFixture,
     { nodes: [{ id: 'o-n', inspect: [{ command: 'kubectl ptah migration o-n' }] }] },
+    {
+      stages: [{ id: 'w-s', inspect: [{ command: 'kubectl ptah wait schema/w-s --for in-sync' }, { system: 'A client.', says: 'Rows.' }] }],
+      readers: [{ command: 'kubectl ptah history schema/w' }],
+    },
   );
   if (
     shown.map((one) => one.where).join(' | ') !==
-    'the stage "s1" | the stage "s2" | the object "o" | the source "a-one" | the object map’s "o-n"'
+    'the stage "s1" | the stage "s2" | the object "o" | the source "a-one" | the object map’s "o-n" | the workflow’s "w-s" | the workflow’s stage record'
   ) {
     fail('explorerCommands read the commands as', shown);
   }
@@ -1754,7 +2662,7 @@ function selftest() {
     refuses(name, auditTextProblems(spoiled, auditFixture), want);
   }
 
-  const auditRender = { viewButtons: 3, shown: true, journeyShown: false, sourceButtons: 2, panels: 2, lossButtons: 4, visiblePanels: 0, marked: 0 };
+  const auditRender = { viewButtons: VIEWS.length, shown: true, journeyShown: false, sourceButtons: 2, panels: 2, lossButtons: 4, visiblePanels: 0, marked: 0 };
   if (auditRenderProblems(auditRender, auditFixture).length !== 0) {
     fail('auditRenderProblems refused a view that holds', auditRenderProblems(auditRender, auditFixture));
   }
@@ -1808,25 +2716,39 @@ function selftest() {
     refuses(name, auditSelectionProblems(spoiled, auditFixture), want);
   }
 
-  const toAudit = { to: 'audit', from: 'two on b-nested', got: { view: 'audit', loss: null, source: null, node: null, search: '?lx-view=audit' } };
+  const switchFlow = { stages: [{ id: 'w-a' }, { id: 'w-b' }] };
+  const rested = { step: 'w-a', outcome: null };
+  const toAudit = { to: 'audit', from: 'two on b-nested', got: { view: 'audit', loss: null, source: null, node: null, ...rested, search: '?lx-view=audit' } };
   const toJourney = {
     to: 'journey',
     from: 'the audit view after cluster with a-two',
-    got: { view: 'journey', family: 'one', path: 'main', stage: 'one', object: null, search: '?lx-stage=one' },
+    got: { view: 'journey', family: 'one', path: 'main', stage: 'one', object: null, ...rested, search: '?lx-stage=one' },
   };
   const toObjects = {
     to: 'objects',
     from: 'the audit view after cluster with a-two',
-    got: { view: 'objects', loss: null, source: null, node: null, search: '?lx-view=objects' },
+    got: { view: 'objects', loss: null, source: null, node: null, ...rested, search: '?lx-view=objects' },
   };
-  const switchesThatHold = [toAudit, toJourney, toObjects];
-  if (viewSwitchProblems(switchesThatHold, models).length !== 0) {
-    fail('viewSwitchProblems refused switches that hold', viewSwitchProblems(switchesThatHold, models));
+  const toWorkflow = {
+    to: 'workflow',
+    from: 'the object map with o-job open',
+    got: { view: 'workflow', loss: null, source: null, node: null, ...rested, search: '?lx-view=workflow' },
+  };
+  const switchesThatHold = [toAudit, toJourney, toObjects, toWorkflow];
+  if (viewSwitchProblems(switchesThatHold, models, switchFlow).length !== 0) {
+    fail('viewSwitchProblems refused switches that hold', viewSwitchProblems(switchesThatHold, models, switchFlow));
   }
   const spoilTo = (one, change) => [{ ...one, got: { ...one.got, ...change } }];
   for (const [name, spoiled, want] of [
-    ['no switch to the audit view', [toJourney], 'no switch went to the audit view'],
-    ['no switch to the journey', [toAudit], 'no switch went to the journey view'],
+    ['no switch to the audit view', [toJourney, toObjects, toWorkflow], 'no switch went to the audit view'],
+    ['no switch to the journey', [toAudit, toObjects, toWorkflow], 'no switch went to the journey view'],
+    ['no switch to the workflow', [toAudit, toJourney, toObjects], 'no switch went to the workflow view'],
+    ['a workflow left at the stage it was at', [toAudit, toJourney, toObjects, ...spoilTo(toWorkflow, { step: 'w-b' })], 'leaves the composed workflow at w-b, not w-a'],
+    ['a workflow that keeps its stop', [toAudit, toJourney, toObjects, ...spoilTo(toWorkflow, { outcome: 'w-failed' })], 'keeps the stop w-failed'],
+    ['a workflow that writes its stage', [toAudit, toJourney, toObjects, ...spoilTo(toWorkflow, { search: '?lx-view=workflow&lx-step=w-b' })], 'with lx-step'],
+    ['a workflow written as another view', [toAudit, toJourney, toObjects, ...spoilTo(toWorkflow, { search: '?lx-view=objects' })], 'not lx-view=workflow'],
+    ['an object map that keeps the workflow’s stop', [toAudit, toJourney, ...spoilTo(toObjects, { outcome: 'w-failed' }), toWorkflow], 'keeps the stop w-failed'],
+    ['a journey that keeps the workflow’s address', [toAudit, ...spoilTo(toJourney, { search: '?lx-stage=one&lx-outcome=w-failed' }), toObjects, toWorkflow], 'with lx-outcome'],
     ['an audit view that does not show', [...spoilTo(toAudit, { view: 'journey' }), toJourney], 'shows the journey view'],
     ['an audit view that keeps a loss', [...spoilTo(toAudit, { loss: 'cluster' }), toJourney], 'keeps the loss cluster'],
     ['an audit view that keeps a source', [...spoilTo(toAudit, { source: 'a-two' }), toJourney], 'keeps the source a-two'],
@@ -1859,7 +2781,7 @@ function selftest() {
       'with lx-node',
     ],
   ]) {
-    refuses(name, viewSwitchProblems(spoiled, models), want);
+    refuses(name, viewSwitchProblems(spoiled, models, switchFlow), want);
   }
 
   const auditLink = { link: '?lx-view=audit&lx-loss=cluster&lx-source=a-two', want: { view: 'audit', loss: 'cluster', source: 'a-two' } };
@@ -2065,7 +2987,7 @@ function selftest() {
   }
 
   const mapRender = {
-    viewButtons: 3,
+    viewButtons: VIEWS.length,
     shown: true,
     journeyShown: false,
     auditShown: false,
@@ -2080,7 +3002,7 @@ function selftest() {
     fail('objectMapRenderProblems refused a view that holds', objectMapRenderProblems(mapRender, mapFixture));
   }
   for (const [name, change, want] of [
-    ['a view button missing', { viewButtons: 2 }, '2 view buttons, not 3'],
+    ['a view button missing', { viewButtons: VIEWS.length - 1 }, `${VIEWS.length - 1} view buttons, not ${VIEWS.length}`],
     ['an object map that stays hidden', { shown: false }, 'does not show it'],
     ['a journey left on screen', { journeyShown: true }, 'leaves the change journey on screen'],
     ['an audit view left on screen', { auditShown: true }, 'leaves the audit view on screen'],
@@ -2152,16 +3074,681 @@ function selftest() {
   refuses('an object the keyboard cannot open', objectMapKeyboardProblems({ ...mapKeys, node: false }), 'open an object of the map');
   refuses('a related object the keyboard cannot follow', objectMapKeyboardProblems({ ...mapKeys, follow: false }), 'follow a related object');
 
+  // The composed workflow: a fixture of three stages, one per family that
+  // runs one, held to a requirement of its own size, then each way the model,
+  // the text, the view, the walk, the links and the keyboard can fall short.
+  const flowStage = (id, family, stops, extra = {}) => ({
+    id,
+    title: `Title ${id}`,
+    family,
+    goal: `Goal ${id}.`,
+    person: `Person ${id}.`,
+    inspect: [{ command: `kubectl ptah schema ${id}`, says: 'Says.' }],
+    operator: `Operator ${id}.`,
+    gate: `Gate ${id}.`,
+    done: `Done ${id}.`,
+    outcomes: stops.map((outcome) => ({ outcome, text: `Here ${id} ${outcome}.`, recovery: `Clears ${id} ${outcome}.` })),
+    objects: ['o-res'],
+    links: [{ label: 'L', href: '#l' }],
+    ...extra,
+  });
+  const flowDecision = (id, node) => ({ id, label: `Label ${id}`, ...(node ? { node } : {}), covers: `Covers ${id}.`, notCovered: `Not ${id}.` });
+  const flowFixture = {
+    families: [
+      { id: 'schema', label: 'S' },
+      { id: 'migration', label: 'M' },
+      { id: 'outside', label: 'X' },
+    ],
+    marks: [
+      { id: 'shipped', label: 'Shipped', text: 'Ships.' },
+      { id: 'proposed', label: 'Proposed', text: 'Proposes.' },
+    ],
+    proposal: { label: 'Proposed orchestration', text: 'There is no Workflow or WorkflowRun resource.' },
+    preconditions: [{ id: 'w-pre', title: 'Pre', text: 'Pre holds.', objects: ['o-realm'], links: [{ label: 'L', href: '#l' }] }],
+    outcomes: ['w-refused', 'w-failed', 'w-unresolved', 'w-check-failed'].map((id) => ({ id, label: `Label ${id}`, text: `Text ${id}.` })),
+    decisions: [flowDecision('w-dec-schema', 'o-ok'), flowDecision('w-dec-migration'), flowDecision('w-dec-check'), flowDecision('w-dec-policy')],
+    stages: [
+      flowStage('w-a', 'schema', ['w-refused', 'w-unresolved'], { decision: 'w-dec-schema', decisionText: 'Decided a.' }),
+      flowStage('w-b', 'migration', ['w-failed', 'w-unresolved'], { decision: 'w-dec-migration', decisionText: 'Decided b.', limits: 'Limits b.' }),
+      flowStage('w-c', 'outside', ['w-check-failed'], {
+        decision: 'w-dec-check',
+        decisionText: 'Decided c.',
+        gate: 'Migration InSync does not satisfy it.',
+        inspect: [{ system: 'A client.', says: 'Rows.' }],
+      }),
+    ],
+    record: [{ id: 'w-rec-a', label: 'A', text: 'Field a.' }],
+    recordText: 'Kept by a pipeline.',
+    readers: [{ command: 'kubectl ptah history schema/a', says: 'Reads.' }],
+    distinctions: ['Apart.'],
+    links: [{ label: 'L', href: '#l' }],
+  };
+  flowFixture.stages[0].outcomes[0].journey = { family: 'one', path: 'side' };
+  const flowRequired = {
+    stages: [
+      ['w-a', 'schema'],
+      ['w-b', 'migration'],
+      ['w-c', 'outside'],
+    ],
+    preconditions: ['w-pre'],
+    outcomes: { 'w-refused': ['schema', 'migration'], 'w-failed': ['migration'], 'w-unresolved': ['schema', 'migration'], 'w-check-failed': ['outside'] },
+    decided: ['w-a', 'w-b', 'w-c'],
+    decisions: { schema: 'w-dec-schema', migration: 'w-dec-migration', outside: 'w-dec-check' },
+    policy: 'w-dec-policy',
+    record: ['w-rec-a'],
+    proposedKinds: ['Workflow', 'WorkflowRun'],
+  };
+  const flowContext = (change = {}) => ({ familyModels: models, auditModel: auditFixture, map: mapFixture, kinds: mapKinds, required: flowRequired, ...change });
+  const withFlow = (change) => ({ ...flowFixture, ...change });
+  const withStage = (id, change) => ({ ...flowFixture, stages: flowFixture.stages.map((one) => (one.id === id ? { ...one, ...change } : one)) });
+  const stopsOf = (id, stops) => flowStage(id, 'x', stops).outcomes;
+  if (workflowProblems(flowFixture, flowContext()).length !== 0) {
+    fail('workflowProblems refused a workflow that holds', workflowProblems(flowFixture, flowContext()));
+  }
+  for (const [name, spoiled, context, want] of [
+    ['no stage at all', withFlow({ stages: [] }), flowContext(), 'has no stage'],
+    ['stages out of order', withFlow({ stages: [flowFixture.stages[1], flowFixture.stages[0], flowFixture.stages[2]] }), flowContext(), 'stages are w-b w-a w-c, not w-a w-b w-c'],
+    ['a stage dropped', withFlow({ stages: flowFixture.stages.slice(0, 2) }), flowContext(), 'stages are w-a w-b, not w-a w-b w-c'],
+    ['a stage in another family', withStage('w-a', { family: 'migration' }), flowContext(), '"w-a" runs in "migration", not "schema"'],
+    ['an id used twice', withFlow({ record: [...flowFixture.record, { id: 'w-a', label: 'A', text: 'T.' }] }), flowContext(), '"w-a" is used twice'],
+    ['an id without its prefix', withFlow({ record: [{ id: 'rec-a', label: 'A', text: 'T.' }] }), flowContext(), '"rec-a" lacks the prefix w-'],
+    ['an id another view uses', withFlow({ record: [...flowFixture.record, { id: 'o-res', label: 'A', text: 'T.' }] }), flowContext(), '"o-res" shares its id with another view'],
+    ['no proposal', withFlow({ proposal: { label: '', text: '' } }), flowContext(), 'does not say it is proposed orchestration'],
+    ['a proposal that leaves a kind unnamed', withFlow({ proposal: { label: 'P', text: 'There is no Workflow resource.' } }), flowContext(), 'does not say there is no WorkflowRun'],
+    ['a proposed kind the CRDs define', flowFixture, flowContext({ kinds: [...mapKinds, { file: 'w.yaml', kind: 'WorkflowRun', scope: 'Namespaced' }] }), 'the CRDs define WorkflowRun'],
+    ['no proposed mark', withFlow({ marks: flowFixture.marks.slice(0, 1) }), flowContext(), 'marks shipped, not shipped and proposed'],
+    ['a mark that says nothing', withFlow({ marks: [flowFixture.marks[0], { id: 'proposed', label: 'P', text: '' }] }), flowContext(), 'the mark "proposed" says nothing'],
+    ['a precondition dropped', withFlow({ preconditions: [] }), flowContext(), 'leaves out the precondition "w-pre"'],
+    ['a precondition on an unknown object', withFlow({ preconditions: [{ ...flowFixture.preconditions[0], objects: ['o-zz'] }] }), flowContext(), 'names "o-zz", which the object map does not have'],
+    ['a precondition that links nothing', withFlow({ preconditions: [{ ...flowFixture.preconditions[0], links: [] }] }), flowContext(), 'precondition "w-pre" links nothing'],
+    ['a stop left out', withFlow({ outcomes: flowFixture.outcomes.filter((one) => one.id !== 'w-failed') }), flowContext(), 'leaves out the stop "w-failed"'],
+    ['a stop that says nothing', withFlow({ outcomes: flowFixture.outcomes.map((one) => (one.id === 'w-failed' ? { ...one, text: '' } : one)) }), flowContext(), 'the stop "w-failed" says nothing'],
+    ['a stop nobody placed', withFlow({ outcomes: [...flowFixture.outcomes, { id: 'w-new', label: 'N', text: 'T.' }] }), flowContext(), '"w-new" is one this check does not know'],
+    ['a stop that stops no stage', withStage('w-b', { outcomes: stopsOf('w-b', ['w-unresolved']) }), flowContext(), 'the stop "w-failed" stops no stage'],
+    ['a decision left out', withFlow({ decisions: flowFixture.decisions.slice(0, 3) }), flowContext(), 'leaves out the decision "w-dec-policy"'],
+    ['a decision that hides what it leaves', withFlow({ decisions: [{ ...flowFixture.decisions[0], notCovered: '' }, ...flowFixture.decisions.slice(1)] }), flowContext(), 'does not say what it covers and what it does not'],
+    ['a decision on an unknown object', withFlow({ decisions: [{ ...flowFixture.decisions[0], node: 'o-zz' }, ...flowFixture.decisions.slice(1)] }), flowContext(), 'decision "w-dec-schema" names "o-zz"'],
+    ['a stage that says nothing of its gate', withStage('w-a', { gate: ' ' }), flowContext(), '"w-a" says nothing in gate'],
+    ['a stage that says nothing of the operator', withStage('w-b', { operator: '' }), flowContext(), '"w-b" says nothing in operator'],
+    ['a stage in no family', withStage('w-b', { family: 'elsewhere' }), flowContext(), 'runs in "elsewhere", which does not exist'],
+    ['a stage with no step', withStage('w-a', { inspect: [] }), flowContext(), 'says no way to act on it or inspect it'],
+    ['a step that is a command and a system', withStage('w-a', { inspect: [{ command: 'kubectl ptah plan a', system: 'S.', says: 'Says.' }] }), flowContext(), 'not one command or one system'],
+    ['a step that says nothing', withStage('w-c', { inspect: [{ system: 'S.' }] }), flowContext(), 'not one command or one system'],
+    ['a decided stage with no decision', withStage('w-b', { decision: undefined }), flowContext(), '"w-b" names no decision'],
+    ['a stage authorized by the other family', withStage('w-b', { decision: 'w-dec-schema' }), flowContext(), 'names the decision "w-dec-schema", not "w-dec-migration"'],
+    ['a decision without its text', withStage('w-a', { decisionText: '' }), flowContext(), '"w-a" does not say what its decision is'],
+    ['a stage that cannot stop', withStage('w-c', { outcomes: [] }), flowContext(), '"w-c" can stop on nothing'],
+    ['a stop listed twice', withStage('w-b', { outcomes: stopsOf('w-b', ['w-failed', 'w-unresolved', 'w-failed']) }), flowContext(), '"w-b" lists a stop twice'],
+    ['a resource stage that cannot end unknown', withStage('w-a', { outcomes: stopsOf('w-a', ['w-refused']) }), flowContext(), 'cannot end with an outcome nobody knows'],
+    ['a schema stage that fails like a migration', withStage('w-a', { outcomes: stopsOf('w-a', ['w-failed', 'w-unresolved']) }), flowContext(), '"w-failed", which cannot happen in "schema"'],
+    ['a check stopping a resource stage', withStage('w-b', { outcomes: stopsOf('w-b', ['w-check-failed', 'w-failed', 'w-unresolved']) }), flowContext(), '"w-check-failed", which cannot happen in "migration"'],
+    ['a stop of no kind', withStage('w-b', { outcomes: stopsOf('w-b', ['w-gone', 'w-failed', 'w-unresolved']) }), flowContext(), '"w-gone", which does not exist'],
+    ['a stop with nothing to clear it', withStage('w-b', { outcomes: [{ ...stopsOf('w-b', ['w-failed'])[0], recovery: '' }, stopsOf('w-b', ['w-unresolved'])[0]] }), flowContext(), 'does not say what happened and what clears it'],
+    ['a journey path that does not exist', withStage('w-a', { outcomes: [{ ...flowFixture.stages[0].outcomes[0], journey: { family: 'one', path: 'nowhere' } }, flowFixture.stages[0].outcomes[1]] }), flowContext(), '"one/nowhere", which does not exist'],
+    ['a journey path of another family', withStage('w-a', { outcomes: [{ ...flowFixture.stages[0].outcomes[0], journey: { family: 'two', path: 'side' } }, flowFixture.stages[0].outcomes[1]] }), flowContext(), '"two/side", which does not exist'],
+    ['a stop walked on the successful path', withStage('w-a', { outcomes: [{ ...flowFixture.stages[0].outcomes[0], journey: { family: 'one', path: 'main' } }, flowFixture.stages[0].outcomes[1]] }), flowContext(), 'names the successful path "main"'],
+    ['a stage on an unknown object', withStage('w-a', { objects: ['o-zz'] }), flowContext(), '"w-a" names "o-zz"'],
+    ['a stage that links nothing', withStage('w-a', { links: [] }), flowContext(), '"w-a" links nothing'],
+    ['a check stage InSync could pass', withStage('w-c', { gate: 'The contract waits for the checks.' }), flowContext(), 'does not say that Migration InSync does not satisfy it'],
+    ['a record field left out', withFlow({ record: [] }), flowContext(), 'stage record leaves out "w-rec-a"'],
+    ['a record field that says nothing', withFlow({ record: [{ id: 'w-rec-a', label: 'A', text: '' }] }), flowContext(), 'record’s "w-rec-a" says nothing'],
+    ['a record nobody keeps', withFlow({ recordText: '' }), flowContext(), 'does not say who keeps the stage record'],
+    ['a record nothing reads', withFlow({ readers: [] }), flowContext(), 'says no way to read the stage record'],
+    ['a reader without its command', withFlow({ readers: [{ says: 'S.' }] }), flowContext(), 'lacks its command or what it shows'],
+    ['nothing kept apart', withFlow({ distinctions: [] }), flowContext(), 'says nothing about what it keeps apart'],
+    ['a workflow that links nothing', withFlow({ links: [] }), flowContext(), 'the composed workflow links nothing'],
+  ]) {
+    refuses(name, workflowProblems(spoiled, context), want);
+  }
+  // The requirement this check holds the explorer to is #817's sequence.
+  if (WORKFLOW_REQUIRED.stages.map(([id]) => id).join(' ') !== 'w-expand w-verify-expand w-backfill w-history w-checks w-contract w-verify-contract') {
+    fail('WORKFLOW_REQUIRED names the stages', WORKFLOW_REQUIRED.stages);
+  }
+
+  const flowStageText = (stage) =>
+    [
+      stage.title,
+      stage.goal,
+      stage.person,
+      stage.decisionText ?? '',
+      stage.done,
+      stage.limits ?? '',
+      ...stage.inspect.map((step) => step.command ?? step.system),
+      ...stage.outcomes.flatMap((one) => [one.text, one.recovery]),
+    ].join(' ');
+  const flowText = {
+    workflow: {
+      proposal: `Proposed orchestration. ${flowFixture.proposal.text}`,
+      marks: ['shipped', 'proposed'],
+      preconditions: flowFixture.preconditions.map((one) => ({ id: one.id, text: `${one.title}. ${one.text}` })),
+      stages: flowFixture.stages.map((stage) => ({
+        id: stage.id,
+        text: flowStageText(stage),
+        operator: `The operator, shipped: ${stage.operator}`,
+        gate: `Moves on when, proposed: ${stage.gate}`,
+        stops: stage.outcomes.map((one) => one.outcome),
+      })),
+      outcomes: flowFixture.outcomes.map((one) => one.id),
+      decisions: flowFixture.decisions.map((one) => ({ id: one.id, text: `${one.covers} ${one.notCovered}` })),
+      record: flowFixture.record.map((one) => one.id),
+      text: flowFixture.readers.map((one) => one.command).join(' '),
+    },
+  };
+  const textStage = (id, change) => ({
+    workflow: { ...flowText.workflow, stages: flowText.workflow.stages.map((one) => (one.id === id ? { ...one, ...change } : one)) },
+  });
+  const textFlow = (change) => ({ workflow: { ...flowText.workflow, ...change } });
+  const stageA = flowFixture.stages[0];
+  if (workflowTextProblems(flowText, flowFixture).length !== 0) {
+    fail('workflowTextProblems refused a text that holds', workflowTextProblems(flowText, flowFixture));
+  }
+  for (const [name, spoiled, want] of [
+    ['no workflow text', { workflow: null }, 'leaves out the composed workflow'],
+    ['a text that does not say it is proposed', textFlow({ proposal: 'Orchestration.' }), 'does not say it is proposed'],
+    ['a mark dropped', textFlow({ marks: ['shipped'] }), 'leaves out the mark "proposed"'],
+    ['a precondition dropped', textFlow({ preconditions: [] }), 'leaves out the precondition "w-pre"'],
+    ['a precondition without its text', textFlow({ preconditions: [{ id: 'w-pre', text: 'Pre.' }] }), 'precondition "w-pre" lacks its text'],
+    ['a stage dropped', textFlow({ stages: flowText.workflow.stages.slice(1) }), 'stages read w-b w-c, not w-a w-b w-c'],
+    ['stages out of order', textFlow({ stages: [...flowText.workflow.stages].reverse() }), 'stages read w-c w-b w-a'],
+    ['a stage without its goal', textStage('w-a', { text: flowStageText({ ...stageA, goal: '' }) }), '"w-a" lacks its goal'],
+    ['a stage without its command', textStage('w-a', { text: flowStageText({ ...stageA, inspect: [] }) }), 'lacks its step "kubectl ptah schema w-a"'],
+    ['a stage without its decision', textStage('w-a', { text: flowStageText({ ...stageA, decisionText: '' }) }), '"w-a" lacks its decision'],
+    ['a stage without its limits', textStage('w-b', { text: flowStageText({ ...flowFixture.stages[1], limits: '' }) }), '"w-b" lacks its limits'],
+    ['the operator not marked shipped', textStage('w-a', { operator: `The operator: ${stageA.operator}` }), 'does not give what the operator does as shipped'],
+    ['the gate not marked proposed', textStage('w-a', { gate: `Moves on when: ${stageA.gate}` }), 'does not give what moves it on as proposed'],
+    ['the gate left out', textStage('w-a', { gate: 'Moves on when, proposed.' }), 'does not give what moves it on as proposed'],
+    ['a stop dropped from a stage', textStage('w-a', { stops: ['w-unresolved'] }), '"w-a" stops on w-unresolved, not w-refused, w-unresolved'],
+    ['a stop without what clears it', textStage('w-a', { text: flowStageText({ ...stageA, outcomes: [{ ...stageA.outcomes[0], recovery: 'x' }, stageA.outcomes[1]] }) }), 'lacks what "w-refused" holds or what clears it'],
+    ['a stop dropped from the list', textFlow({ outcomes: ['w-refused'] }), 'leaves out the stop "w-failed"'],
+    ['a decision without what it leaves', textFlow({ decisions: flowText.workflow.decisions.map((one) => ({ ...one, text: one.text.split(' Not')[0] })) }), 'does not say what it covers and what it does not'],
+    ['a record field dropped', textFlow({ record: [] }), 'stage record leaves out "w-rec-a"'],
+    ['a reader dropped', textFlow({ text: '' }), 'lacks the command "kubectl ptah history schema/a"'],
+  ]) {
+    refuses(name, workflowTextProblems(spoiled, flowFixture), want);
+  }
+
+  const flowRender = {
+    viewButtons: VIEWS.length,
+    shown: true,
+    othersShown: [],
+    steps: 3,
+    panels: 3,
+    visiblePanels: ['w-a'],
+    stopsShown: 0,
+    statusShown: false,
+    proposalShown: true,
+    shipped: 3,
+    proposed: 3,
+    tags: ['S', 'M', 'X'],
+  };
+  if (workflowRenderProblems(flowRender, flowFixture).length !== 0) {
+    fail('workflowRenderProblems refused a view that holds', workflowRenderProblems(flowRender, flowFixture));
+  }
+  for (const [name, change, want] of [
+    ['a view button missing', { viewButtons: VIEWS.length - 1 }, `view buttons, not ${VIEWS.length}`],
+    ['a workflow that stays hidden', { shown: false }, 'does not show it'],
+    ['another view left on screen', { othersShown: ['objects'] }, 'leaves the objects view on screen'],
+    ['a step missing', { steps: 2 }, '2 steps and the model 3 stages'],
+    ['a panel too many', { panels: 4 }, '4 panels and the model 3 stages'],
+    ['the second stage open first', { visiblePanels: ['w-b'] }, 'opens with the panels w-b, not w-a'],
+    ['two panels open', { visiblePanels: ['w-a', 'w-b'] }, 'opens with the panels w-a, w-b'],
+    ['a stop chosen at the start', { stopsShown: 1 }, 'opens with a stop chosen'],
+    ['a status line at the start', { statusShown: true }, 'opens with a stop chosen'],
+    ['no proposal on screen', { proposalShown: false }, 'does not say on screen that it is proposed'],
+    ['an operator part not marked shipped', { shipped: 2 }, '2 of 3 stages give what the operator does as shipped'],
+    ['a gate not marked proposed', { proposed: 2 }, '2 of 3 stages give what moves them on as proposed'],
+    ['a stage tagged with another family', { tags: ['S', 'S', 'X'] }, 'tagged S, S, X, not S, M, X'],
+  ]) {
+    refuses(name, workflowRenderProblems({ ...flowRender, ...change }, flowFixture), want);
+  }
+
+  const marksAt = (index, outcome) => expectedStepMarks(flowFixture, index, outcome);
+  if (JSON.stringify(marksAt(1, 'w-failed')) !== JSON.stringify([['done', 'Done'], ['stopped', 'Stopped: Label w-failed'], ['held', 'Held']])) {
+    fail('expectedStepMarks read a stop at w-b as', marksAt(1, 'w-failed'));
+  }
+  if (expectedWorkflowSearch(flowFixture, 0, null) !== '?lx-view=workflow' || expectedWorkflowSearch(flowFixture, 1, 'w-failed') !== '?lx-view=workflow&lx-step=w-b&lx-outcome=w-failed') {
+    fail('expectedWorkflowSearch read the address as', [expectedWorkflowSearch(flowFixture, 0, null), expectedWorkflowSearch(flowFixture, 1, 'w-failed')]);
+  }
+  const stepReading = (stage, index) => ({
+    id: stage.id,
+    current: stage.id,
+    panels: [stage.id],
+    count: `Stage ${index + 1} of 3: ${stage.title}`,
+    marks: marksAt(index, null),
+    status: null,
+    search: expectedWorkflowSearch(flowFixture, index, null),
+  });
+  const stopReading = (stage, index, outcome) => ({
+    stage: stage.id,
+    outcome,
+    pressed: [outcome],
+    details: [outcome],
+    marks: marksAt(index, outcome),
+    status: `Stopped at ${stage.title}: Label ${outcome}. Held: ${flowFixture.stages
+      .slice(index + 1)
+      .map((one) => one.title)
+      .join(', ')}.`,
+    search: expectedWorkflowSearch(flowFixture, index, outcome),
+  });
+  const cleared = (how, want) => ({ how, want, got: { step: want, outcome: null, held: 0, search: '?lx-view=workflow&lx-step=w-b' } });
+  const flowWalk = {
+    steps: flowFixture.stages.map(stepReading),
+    stops: flowFixture.stages.flatMap((stage, index) => stage.outcomes.map((one) => stopReading(stage, index, one.outcome))),
+    clears: [cleared('Next', 'w-b'), cleared('choosing it again', 'w-b')],
+  };
+  const withStep = (id, change) => ({ ...flowWalk, steps: flowWalk.steps.map((one) => (one.id === id ? { ...one, ...change } : one)) });
+  const withStop = (stage, outcome, change) => ({
+    ...flowWalk,
+    stops: flowWalk.stops.map((one) => (one.stage === stage && one.outcome === outcome ? { ...one, ...change } : one)),
+  });
+  const withClear = (change) => ({ ...flowWalk, clears: [{ ...flowWalk.clears[0], got: { ...flowWalk.clears[0].got, ...change } }] });
+  if (workflowWalkProblems(flowWalk, flowFixture).length !== 0) {
+    fail('workflowWalkProblems refused a walk that holds', workflowWalkProblems(flowWalk, flowFixture));
+  }
+  for (const [name, spoiled, want] of [
+    ['a stage never chosen', { ...flowWalk, steps: flowWalk.steps.slice(1) }, '2 of the composed workflow’s 3 stages were chosen'],
+    ['another stage made current', withStep('w-b', { current: 'w-a' }), 'choosing the stage "w-b" makes "w-a" current'],
+    ['another stage’s panel', withStep('w-b', { panels: ['w-c'] }), '"w-b" shows the panels w-c'],
+    ['a count of another stage', withStep('w-b', { count: 'Stage 1 of 3: Title w-a' }), 'counts "Stage 1 of 3'],
+    ['an earlier stage not marked done', withStep('w-c', { marks: [['done', 'Done'], ['ahead', ''], ['current', '']] }), 'marks the steps done "Done", ahead, current'],
+    ['a done stage marked in style alone', withStep('w-b', { marks: [['done', ''], ['current', ''], ['ahead', '']] }), 'marks the steps done, current, ahead'],
+    ['a status with nothing stopped', withStep('w-a', { status: 'Stopped.' }), 'says it stopped'],
+    ['the first stage written to the address', withStep('w-a', { search: '?lx-view=workflow&lx-step=w-a' }), 'not ?lx-view=workflow'],
+    ['a stage not written to the address', withStep('w-b', { search: '?lx-view=workflow' }), 'not ?lx-view=workflow&lx-step=w-b'],
+    ['a stop never chosen', { ...flowWalk, stops: flowWalk.stops.slice(1) }, '4 of the composed workflow’s 5 stops were chosen'],
+    ['another stop pressed', withStop('w-a', 'w-refused', { pressed: ['w-unresolved'] }), 'presses w-unresolved'],
+    ['two details at once', withStop('w-a', 'w-refused', { details: ['w-refused', 'w-unresolved'] }), 'shows the detail of w-refused, w-unresolved'],
+    ['a later stage not held', withStop('w-a', 'w-refused', { marks: [['stopped', 'Stopped: Label w-refused'], ['ahead', ''], ['held', 'Held']] }), 'marks the steps stopped "Stopped: Label w-refused", ahead, held'],
+    ['a held stage in style alone', withStop('w-a', 'w-refused', { marks: [['stopped', 'Stopped: Label w-refused'], ['held', ''], ['held', 'Held']] }), 'held, held "Held"'],
+    ['a stop that does not mark its stage', withStop('w-b', 'w-failed', { marks: [['done', 'Done'], ['current', ''], ['held', 'Held']] }), 'done "Done", current, held "Held"'],
+    ['a status that names no held stage', withStop('w-a', 'w-refused', { status: 'Stopped at Title w-a: Label w-refused.' }), 'does not name the stop and every stage it holds'],
+    ['no status for a stop', withStop('w-a', 'w-refused', { status: null }), 'does not name the stop'],
+    ['a stop not written to the address', withStop('w-b', 'w-failed', { search: '?lx-view=workflow&lx-step=w-b' }), 'not ?lx-view=workflow&lx-step=w-b&lx-outcome=w-failed'],
+    ['no stop cleared', { ...flowWalk, clears: [] }, 'no stop was cleared'],
+    ['a stop that moves with the stage', withClear({ outcome: 'w-failed' }), 'clearing a stop by Next keeps the stop "w-failed"'],
+    ['held stages left behind', withClear({ held: 1 }), 'leaves 1 stages held'],
+    ['a stop left in the address', withClear({ search: '?lx-view=workflow&lx-step=w-b&lx-outcome=w-failed' }), 'with lx-outcome'],
+    ['a clear that lands elsewhere', withClear({ step: 'w-c' }), 'opens "w-c", not "w-b"'],
+  ]) {
+    refuses(name, workflowWalkProblems(spoiled, flowFixture), want);
+  }
+
+  const flowLinks = [
+    {
+      link: '?lx-view=workflow&lx-step=w-b&lx-outcome=w-failed',
+      want: { view: 'workflow', step: 'w-b', outcome: 'w-failed' },
+      got: { view: 'workflow', step: 'w-b', outcome: 'w-failed', node: null, held: 1, status: 'Stopped at Title w-b: Label w-failed. Held: Title w-c.' },
+    },
+    {
+      link: '?lx-view=workflow&lx-step=w-c&lx-outcome=w-failed',
+      want: { view: 'workflow', step: 'w-c', outcome: null },
+      got: { view: 'workflow', step: 'w-c', outcome: null, node: null, held: 0, status: null },
+    },
+    { link: '?lx-view=objects&lx-step=w-b', want: { view: 'objects', outcome: null, node: null }, got: { view: 'objects', step: 'w-a', outcome: null, node: null, held: 2, status: null } },
+  ];
+  if (workflowLinkProblems(flowLinks).length !== 0) fail('workflowLinkProblems refused links that hold', workflowLinkProblems(flowLinks));
+  refuses('a link that opens the journey', workflowLinkProblems([{ ...flowLinks[0], got: { ...flowLinks[0].got, view: 'journey' } }]), 'opens the journey view, not workflow');
+  refuses('a link whose stage was dropped', workflowLinkProblems([{ ...flowLinks[0], got: { ...flowLinks[0].got, step: 'w-a' } }]), 'opens the stage w-a, not w-b');
+  refuses('a link whose stop was dropped', workflowLinkProblems([{ ...flowLinks[0], got: { ...flowLinks[0].got, outcome: null } }]), 'stops on nothing, not w-failed');
+  refuses('a stop the stage cannot have, taken', workflowLinkProblems([{ ...flowLinks[1], got: { ...flowLinks[1].got, outcome: 'w-failed' } }]), 'stops on w-failed, not nothing');
+  refuses(
+    'a stop the stage cannot have, shown on its steps',
+    workflowLinkProblems([{ ...flowLinks[1], got: { ...flowLinks[1].got, held: 0, status: 'Stopped at Title w-c: Label w-failed. No stage follows it.' } }]),
+    'shows a stop nobody chose: 0 stages held',
+  );
+  refuses('a stop the stage cannot have, holding the stages after it', workflowLinkProblems([{ ...flowLinks[1], got: { ...flowLinks[1].got, held: 1 } }]), 'shows a stop nobody chose: 1 stages held');
+  refuses('a stop the link names, never said', workflowLinkProblems([{ ...flowLinks[0], got: { ...flowLinks[0].got, status: null } }]), 'says nothing of the stop w-failed');
+  refuses('another view that opens an object nobody named', workflowLinkProblems([{ ...flowLinks[2], got: { ...flowLinks[2].got, node: 'o-job' } }]), 'opens o-job, not no object');
+  refuses('no link into the workflow', workflowLinkProblems([]), 'no link into the composed workflow');
+
+  const flowKeys = { chosen: true, step: true, arrow: true, end: true, home: true, stop: true };
+  if (workflowKeyboardProblems(flowKeys).length !== 0) fail('workflowKeyboardProblems refused keys that hold', workflowKeyboardProblems(flowKeys));
+  for (const [key, want] of [
+    ['chosen', 'do not choose the composed workflow'],
+    ['step', 'does not reach the composed workflow’s current step'],
+    ['arrow', 'the arrow key does not move'],
+    ['end', 'End does not move'],
+    ['home', 'Home does not move'],
+    ['stop', 'do not choose a stop'],
+  ]) {
+    refuses(`a workflow whose ${key} key fails`, workflowKeyboardProblems({ ...flowKeys, [key]: false }), want);
+  }
+
+  // The links between objects, sources and views.
+  const anchorsThatHold = {
+    anchors: {
+      text: [
+        { href: '#lx-text-o-res', target: 'text' },
+        { href: '#a-heading', target: 'page' },
+      ],
+      app: [
+        { href: '?lx-object=a#lifecycle-explorer', kind: 'select', value: 'a', family: 'one', display: 'inline' },
+        { href: '?lx-family=two&lx-object=x#lifecycle-explorer', kind: 'select', value: 'x', family: 'two', display: 'inline' },
+        { href: '?lx-view=audit&lx-source=a-one#lifecycle-explorer', kind: 'source', value: 'a-one', display: 'inline-block' },
+        { href: '?lx-view=objects&lx-node=o-job#lifecycle-explorer', kind: 'node', value: 'o-job', display: 'inline' },
+        { href: '?lx-view=objects&lx-node=o-res#lifecycle-explorer', kind: 'open', value: null, display: 'inline-block' },
+      ],
+      buttons: 0,
+      duplicates: [],
+    },
+  };
+  const spoilAnchor = (index, change) => ({
+    anchors: { ...anchorsThatHold.anchors, app: anchorsThatHold.anchors.app.map((one, at) => (at === index ? { ...one, ...change } : one)) },
+  });
+  const spoilAnchors = (change) => ({ anchors: { ...anchorsThatHold.anchors, ...change } });
+  if (anchorProblems(anchorsThatHold, 'one').length !== 0) fail('anchorProblems refused anchors that hold', anchorProblems(anchorsThatHold, 'one'));
+  for (const [name, spoiled, want] of [
+    ['a text that links nothing', spoilAnchors({ text: [] }), 'the text links none of its own entries'],
+    ['a text that links only headings', spoilAnchors({ text: [{ href: '#a-heading', target: 'page' }] }), 'the text links none of its own entries'],
+    ['a text link to nowhere', spoilAnchors({ text: [{ href: '#lx-text-gone', target: 'none' }] }), 'the link #lx-text-gone leads nowhere'],
+    ['a text link into the hidden view', spoilAnchors({ text: [{ href: '#x', target: 'app' }] }), 'leads into the hidden view'],
+    ['no relation link', spoilAnchors({ app: anchorsThatHold.anchors.app.filter((one) => one.kind !== 'select') }), 'has no select link'],
+    ['no link into another view', spoilAnchors({ app: anchorsThatHold.anchors.app.filter((one) => one.kind !== 'open') }), 'has no open link'],
+    ['a relation link to another object', spoilAnchor(0, { href: '?lx-object=b#lifecycle-explorer' }), 'names b, and selects a'],
+    ['a relation link without its family', spoilAnchor(1, { href: '?lx-object=x#lifecycle-explorer' }), 'names the family none, and sits in two'],
+    ['a relation link naming the default family', spoilAnchor(0, { href: '?lx-family=one&lx-object=a#lifecycle-explorer' }), 'names the family one, and sits in one'],
+    ['a relation link that leaves the explorer', spoilAnchor(0, { href: '?lx-object=a' }), 'does not lead to the explorer on this page'],
+    ['a relation link to another page', spoilAnchor(0, { href: '../other/?lx-object=a#lifecycle-explorer' }), 'does not lead to the explorer on this page'],
+    ['a source link to the journey', spoilAnchor(2, { href: '?lx-source=a-one#lifecycle-explorer' }), 'does not name the audit view and a-one'],
+    ['an object map link to another object', spoilAnchor(3, { href: '?lx-view=objects&lx-node=o-res#lifecycle-explorer' }), 'does not name the object map and o-job'],
+    ['a link that names nothing', spoilAnchor(4, { href: '#lifecycle-explorer' }), 'names nothing to open'],
+    ['a relation link laid out as a block', spoilAnchor(3, { display: 'inline-block' }), 'is laid out inline-block, not inline'],
+    ['a related object left a button', spoilAnchors({ buttons: 2 }), '2 related objects or sources are buttons'],
+    ['an id used twice', spoilAnchors({ duplicates: ['lx-text-a'] }), 'the id "lx-text-a" is used twice'],
+  ]) {
+    refuses(name, anchorProblems(spoiled, 'one'), want);
+  }
+
+  const landings = [
+    { href: '?lx-family=two&lx-object=x#lifecycle-explorer', got: { view: 'journey', family: 'two', object: 'x' } },
+    { href: '?lx-path=side&lx-stage=side-a#lifecycle-explorer', got: { view: 'journey', family: 'one', path: 'side', stage: 'side-a', object: null } },
+    { href: '?lx-view=audit&lx-source=a-one#lifecycle-explorer', got: { view: 'audit', source: 'a-one' } },
+    { href: '?lx-view=objects&lx-node=o-job#lifecycle-explorer', got: { view: 'objects', node: 'o-job' } },
+  ];
+  if (anchorLandingProblems(landings, 'one').length !== 0) fail('anchorLandingProblems refused landings that hold', anchorLandingProblems(landings, 'one'));
+  const spoilLanding = (index, change) => landings.map((one, at) => (at === index ? { ...one, got: { ...one.got, ...change } } : one));
+  for (const [name, spoiled, want] of [
+    ['an object link that opens the default family', spoilLanding(0, { family: 'one' }), 'opens with family one, not two'],
+    ['an object link that selects nothing', spoilLanding(0, { object: null }), 'opens with object none, not x'],
+    ['a path link that opens another path', spoilLanding(1, { path: 'main' }), 'opens with path main, not side'],
+    ['a path link at another stage', spoilLanding(1, { stage: 'one' }), 'opens with stage one, not side-a'],
+    ['a source link that opens the journey', spoilLanding(2, { view: 'journey' }), 'opens with view journey, not audit'],
+    ['an object map link that opens nothing', spoilLanding(3, { node: null }), 'opens with node none, not o-job'],
+    ['no link opened', [], 'no link between objects, sources or views was opened'],
+  ]) {
+    refuses(name, anchorLandingProblems(spoiled, 'one'), want);
+  }
+
+  const plain = (kind, href, extra = {}) => ({ kind, href, reloaded: false, landed: true, search: new URL(href, 'https://site.invalid/page/').search, ...extra });
+  const clicksThatHold = {
+    plain: [
+      plain('select', '?lx-object=a#lifecycle-explorer', { kept: true, search: '?lx-stage=two&lx-object=a' }),
+      plain('source', '?lx-view=audit&lx-source=a-one#lifecycle-explorer'),
+      plain('node', '?lx-view=objects&lx-node=o-job#lifecycle-explorer'),
+      plain('open', '?lx-view=objects&lx-node=o-res#lifecycle-explorer'),
+    ],
+    modified: { href: '?lx-view=objects&lx-node=o-res#lifecycle-explorer', opened: '?lx-view=objects&lx-node=o-res', stayed: true },
+  };
+  const spoilClick = (index, change) => ({ ...clicksThatHold, plain: clicksThatHold.plain.map((one, at) => (at === index ? { ...one, ...change } : one)) });
+  if (inPlaceProblems(clicksThatHold).length !== 0) fail('inPlaceProblems refused clicks that hold', inPlaceProblems(clicksThatHold));
+  for (const [name, spoiled, want] of [
+    ['a link that loads the page', spoilClick(3, { reloaded: true }), 'loads the page again'],
+    ['a link that opens nothing', spoilClick(2, { landed: false }), 'does not open what it names'],
+    ['a relation that leaves the stage', spoilClick(0, { kept: false }), 'does not keep the stage it was made at'],
+    ['a view opened with another address', spoilClick(3, { search: '?lx-view=objects' }), 'writes ?lx-view=objects, not ?lx-view=objects&lx-node=o-res'],
+    ['a kind of link never clicked', { ...clicksThatHold, plain: clicksThatHold.plain.slice(1) }, 'no select link was followed by a click'],
+    ['no click with a modifier', { ...clicksThatHold, modified: null }, 'no link was clicked with a modifier'],
+    ['a modified click that opens no page', { ...clicksThatHold, modified: { ...clicksThatHold.modified, opened: null } }, 'opens no page'],
+    ['a modified click followed in place', { ...clicksThatHold, modified: { ...clicksThatHold.modified, stayed: false } }, 'also changes the view it was made in'],
+  ]) {
+    refuses(name, inPlaceProblems(spoiled), want);
+  }
+
+  // The scenarios: every path says which it walks, and every scenario a
+  // family owes reaches its state.
+  const scenarioRequired = {
+    ids: ['success', 'never', 'gone'],
+    families: { a: { success: 'InSync', never: 'Blocked' }, b: { success: 'InSync', gone: 'Gone' } },
+  };
+  const scenarioModels = [
+    {
+      id: 'a',
+      stages: [{ id: 'a1', phase: 'Reading, then InSync' }],
+      paths: [
+        { id: 'a-ok', scenario: 'success' },
+        { id: 'a-never', scenario: 'never', turnsAfter: 'a1', stages: [{ id: 'a2', phase: 'Planning, then Blocked', expect: '' }] },
+      ],
+    },
+    {
+      id: 'b',
+      stages: [{ id: 'b1', phase: 'InSync' }],
+      paths: [
+        { id: 'b-ok', scenario: 'success' },
+        { id: 'b-gone', scenario: 'gone', turnsAfter: 'b1', stages: [{ id: 'b2', phase: 'Pending', expect: 'It is Gone.' }] },
+      ],
+    },
+  ];
+  if (scenarioProblems(scenarioModels, scenarioRequired).length !== 0) fail('scenarioProblems refused paths that hold', scenarioProblems(scenarioModels, scenarioRequired));
+  {
+    const models = families.map(familyModel);
+    if (scenarioProblems(models).length !== 0) fail('the explorer’s scenarios', scenarioProblems(models));
+  }
+  const withScenario = (family, id, change) =>
+    scenarioModels.map((model) =>
+      model.id === family ? { ...model, paths: model.paths.map((path) => (path.id === id ? { ...path, ...change } : path)) } : model,
+    );
+  for (const [name, models, required, want] of [
+    ['a path that says no scenario', withScenario('a', 'a-never', { scenario: undefined }), scenarioRequired, 'the a path "a-never" says no scenario'],
+    ['a scenario #817 does not name', withScenario('a', 'a-never', { scenario: 'sometimes' }), scenarioRequired, 'walks "sometimes", which #817 does not name'],
+    ['a scenario of the other family', withScenario('a', 'a-never', { scenario: 'gone' }), scenarioRequired, 'walks "gone", which the a family does not have'],
+    ['a scenario no path walks', withScenario('a', 'a-never', { scenario: 'success' }), scenarioRequired, 'no a path walks the scenario "never"'],
+    ['a path that never reaches its state', withScenario('a', 'a-never', { stages: [{ id: 'a2', phase: 'Planning', expect: 'It plans.' }] }), scenarioRequired, 'no a path that walks "never" reaches Blocked'],
+    ['a state only the default path reaches', withScenario('b', 'b-gone', { stages: [{ id: 'b2', phase: 'Pending', expect: '' }] }), scenarioRequired, 'no b path that walks "gone" reaches Gone'],
+    ['a family missing', scenarioModels.slice(0, 1), scenarioRequired, 'the family "b" is missing'],
+    ['a scenario no family walks', scenarioModels, { ...scenarioRequired, ids: [...scenarioRequired.ids, 'later'] }, 'no family walks the scenario "later"'],
+  ]) {
+    refuses(name, scenarioProblems(models, required), want);
+  }
+
+  // The depths: the model, what the page tags, what each depth shows, the
+  // address, what a move keeps, and the keyboard.
+  const depthFixture = {
+    depths: [
+      { id: 'overview', label: 'Overview', text: 'Less.' },
+      { id: 'product', label: 'Product', text: 'More.' },
+      { id: 'implementation', label: 'Implementation', text: 'All.' },
+    ],
+    defaultDepth: 'implementation',
+    depthOf: {
+      stage: { lead: 'overview', you: 'overview', done: 'overview', phase: 'product', operator: 'product', expect: 'product', inspect: 'product', limits: 'product', kubernetes: 'implementation', executor: 'implementation', objects: 'implementation' },
+      object: { purpose: 'overview', writer: 'overview', inspect: 'product', lives: 'implementation' },
+      source: { establishes: 'overview', cannot: 'overview', records: 'product', readers: 'product', retention: 'product', survives: 'product', names: 'product', gaps: 'product', ids: 'implementation' },
+      node: { holds: 'overview', writtenBy: 'overview', change: 'product', deletion: 'product', inspect: 'product', gap: 'product', operator: 'implementation', scope: 'implementation' },
+      wstage: { goal: 'overview', person: 'overview', gate: 'overview', done: 'overview', operator: 'product', inspect: 'product', decision: 'product', limits: 'product', objects: 'implementation' },
+      block: { auditMeasured: 'product', auditIdentities: 'product', auditGaps: 'product', workflowPreconditions: 'product', workflowDecisions: 'product', workflowRecord: 'implementation' },
+    },
+  };
+  const withDepthOf = (kind, change) => ({ ...depthFixture, depthOf: { ...depthFixture.depthOf, [kind]: { ...depthFixture.depthOf[kind], ...change } } });
+  const withoutPart = (kind, name) => {
+    const { [name]: dropped, ...rest } = depthFixture.depthOf[kind];
+    return { ...depthFixture, depthOf: { ...depthFixture.depthOf, [kind]: rest } };
+  };
+  if (depthModelProblems(depthFixture).length !== 0) fail('depthModelProblems refused depths that hold', depthModelProblems(depthFixture));
+  // The page's own model is held to the same rule.
+  if (depthModelProblems({ depths, defaultDepth, depthOf }).length !== 0) fail('the explorer’s depths', depthModelProblems({ depths, defaultDepth, depthOf }));
+  for (const [name, spoiled, want] of [
+    ['a depth missing', { ...depthFixture, depths: depthFixture.depths.slice(0, 2) }, 'the depths are overview, product, not overview, product, implementation'],
+    ['depths out of order', { ...depthFixture, depths: [...depthFixture.depths].reverse() }, 'the depths are implementation, product, overview'],
+    ['a depth that says nothing', { ...depthFixture, depths: [depthFixture.depths[0], { id: 'product', label: 'Product', text: ' ' }, depthFixture.depths[2]] }, 'the depth "product" lacks its label'],
+    ['a shallower default', { ...depthFixture, defaultDepth: 'product' }, 'the default depth is "product", not "implementation"'],
+    ['a kind left out', (() => { const { node, ...rest } = depthFixture.depthOf; return { ...depthFixture, depthOf: rest }; })(), 'depthOf leaves out the kind "node"'],
+    ['a kind nothing renders', { ...depthFixture, depthOf: { ...depthFixture.depthOf, chart: { bars: 'overview' } } }, 'depthOf names the kind "chart", which nothing renders'],
+    ['a part left out', withoutPart('stage', 'limits'), 'depthOf.stage leaves out the part "limits"'],
+    ['a part nothing renders', withDepthOf('object', { colour: 'product' }), 'depthOf.object names "colour", which nothing renders'],
+    ['a part at no depth', withDepthOf('source', { ids: 'deep' }), 'depthOf.source.ids is "deep", which is not a depth'],
+    ['a stage that hides who acts', withDepthOf('stage', { lead: 'product' }), 'depthOf.stage.lead first shows at "product"'],
+    ['a stage that hides when it is done', withDepthOf('stage', { done: 'implementation' }), 'depthOf.stage.done first shows at "implementation"'],
+    ['a source that hides what it cannot establish', withDepthOf('source', { cannot: 'product' }), 'depthOf.source.cannot first shows at "product"'],
+    ['a workflow stage that hides its gate', withDepthOf('wstage', { gate: 'product' }), 'depthOf.wstage.gate first shows at "product"'],
+    ['a kind that adds nothing at a depth', withDepthOf('object', { lives: 'product' }), 'depthOf.object shows nothing first at "implementation"'],
+  ]) {
+    refuses(name, depthModelProblems(spoiled), want);
+  }
+
+  const depthStage = { id: 's1', lead: 'executor', actors: { you: 'Y.', operator: 'O.', executor: 'E.' }, expect: 'X.', limits: '' };
+  if (expectedParts('stage', depthStage, 'app').join(' ') !== 'done expect inspect lead objects operator phase you') {
+    fail('expectedParts read a stage as', expectedParts('stage', depthStage, 'app'));
+  }
+  const depthSource = { id: 'a-one' };
+  const depthContext = { identities: [{ recordedIn: ['a-one'] }], gaps: [{ sources: ['a-two'] }] };
+  if (expectedParts('source', depthSource, 'app', depthContext).includes('gaps') || !expectedParts('source', depthSource, 'app', depthContext).includes('names')) {
+    fail('expectedParts read a source panel as', expectedParts('source', depthSource, 'app', depthContext));
+  }
+  if (expectedParts('source', depthSource, 'text', depthContext).includes('names')) fail('expectedParts gave the text a source’s names', []);
+  const depthEntries = { stage: [depthStage], source: [depthSource] };
+  const tagged = (where, kind, entry) => ({
+    where,
+    kind,
+    id: entry.id,
+    parts: expectedParts(kind, entry, where, depthContext).map((name) => [name, depthFixture.depthOf[kind][name]]),
+  });
+  const depthRendered = {
+    entries: ['app', 'text'].flatMap((where) => [tagged(where, 'stage', depthStage), tagged(where, 'source', depthSource)]),
+    blocks: ['app', 'text'].flatMap((where) => Object.entries(depthFixture.depthOf.block).map(([name, at]) => ({ where, name, at }))),
+    strays: [],
+  };
+  const renderContext = { depthOf: depthFixture.depthOf, entries: depthEntries, context: depthContext };
+  if (depthRenderProblems(depthRendered, renderContext).length !== 0) fail('depthRenderProblems refused tags that hold', depthRenderProblems(depthRendered, renderContext));
+  const spoilEntry = (where, kind, change) => ({
+    ...depthRendered,
+    entries: depthRendered.entries.map((one) => (one.where === where && one.kind === kind ? { ...one, ...change(one) } : one)),
+  });
+  for (const [name, spoiled, want] of [
+    ['an entry rendered without its parts', { ...depthRendered, entries: depthRendered.entries.filter((one) => !(one.where === 'text' && one.kind === 'stage')) }, 'the text’s stage "s1" is not rendered with its parts'],
+    ['a part left untagged', spoilEntry('app', 'stage', (one) => ({ parts: one.parts.filter(([part]) => part !== 'expect') })), 'carries the parts done, inspect, lead, objects, operator, phase, you, not done, expect,'],
+    ['the lead tagged as its actor', spoilEntry('app', 'stage', (one) => ({ parts: one.parts.map(([part, at]) => (part === 'lead' ? ['executor', 'implementation'] : [part, at])) })), 'carries the parts done, executor, expect'],
+    ['a part tagged at another depth', spoilEntry('text', 'stage', (one) => ({ parts: one.parts.map(([part, at]) => (part === 'done' ? [part, 'product'] : [part, at])) })), 'shows done at "product", not "overview"'],
+    ['a source’s names put in the text', spoilEntry('text', 'source', (one) => ({ parts: [...one.parts, ['names', 'product']] })), 'the text’s source "a-one" carries the parts cannot, establishes, ids, names'],
+    ['a block left untagged', { ...depthRendered, blocks: depthRendered.blocks.filter((one) => !(one.where === 'text' && one.name === 'workflowRecord')) }, 'the text does not tag the block "workflowRecord"'],
+    ['a block at another depth', { ...depthRendered, blocks: depthRendered.blocks.map((one) => (one.name === 'auditGaps' && one.where === 'app' ? { ...one, at: 'overview' } : one)) }, 'block "auditGaps" shows at "overview", not "product"'],
+    ['a part outside any entry', { ...depthRendered, strays: ['stage:done'] }, 'a part "stage:done" sits outside any entry or block'],
+  ]) {
+    refuses(name, depthRenderProblems(spoiled, renderContext), want);
+  }
+
+  const ids = depthFixture.depths.map((one) => one.id);
+  const shownAt = (depth) => ({
+    depth,
+    checked: depth,
+    notes: [depth],
+    parts: [
+      ['app', 'stage:done', 'overview', true],
+      ['app', 'stage:phase', 'product', rankOf(ids, depth) >= 1],
+      ['text', 'stage:objects', 'implementation', rankOf(ids, depth) >= 2],
+    ],
+    open: [{ kind: 'stage', id: 's1', parts: ['done', ...(rankOf(ids, depth) >= 1 ? ['phase'] : [])], want: [['done', 'overview'], ['phase', 'product']] }],
+    textShown: true,
+    links: 3,
+    hiddenTargets: [],
+  });
+  const shownThatHold = ids.map(shownAt);
+  if (depthShownProblems(shownThatHold, { ids, where: 'with its script' }).length !== 0) {
+    fail('depthShownProblems refused depths that hold', depthShownProblems(shownThatHold, { ids, where: 'with its script' }));
+  }
+  const spoilShown = (depth, change) => shownThatHold.map((one) => (one.depth === depth ? { ...one, ...change(one) } : one));
+  for (const [name, spoiled, want] of [
+    ['a depth never chosen', shownThatHold.slice(1), 'the depth "overview" was never chosen'],
+    ['a choice that reads another depth', spoilShown('product', () => ({ checked: 'implementation' })), 'the choice reads "implementation"'],
+    ['two notes at once', spoilShown('overview', () => ({ notes: ['overview', 'product'] })), 'the notes shown are overview, product'],
+    ['no note', spoilShown('overview', () => ({ notes: [] })), 'the notes shown are none'],
+    ['nothing read', spoilShown('overview', () => ({ parts: [] })), 'no part was read'],
+    ['a deeper part shown', spoilShown('overview', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:phase' ? [...p.slice(0, 3), true] : p)) })), '1 app stage:phase part(s) are shown'],
+    ['a part hidden at its own depth', spoilShown('product', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:phase' ? [...p.slice(0, 3), false] : p)) })), '1 app stage:phase part(s) are hidden'],
+    ['an essential hidden', spoilShown('overview', (one) => ({ parts: one.parts.map((p) => (p[1] === 'stage:done' ? [...p.slice(0, 3), false] : p)) })), '1 app stage:done part(s) are hidden'],
+    ['a panel on screen that hides its own part', spoilShown('product', (one) => ({ open: [{ ...one.open[0], parts: ['done'] }] })), 'the stage "s1" on screen shows done, not done, phase'],
+    ['a text link to a hidden part', spoilShown('overview', () => ({ hiddenTargets: ['#lx-text-w-dec-schema'] })), 'the link #lx-text-w-dec-schema leads to a part this depth hides'],
+    ['no text link read', spoilShown('product', () => ({ links: 0 })), 'at product: no link of the text was read'],
+  ]) {
+    refuses(name, depthShownProblems(spoiled, { ids, where: 'with its script' }), want);
+  }
+  for (const [name, spoiled, want] of [
+    ['the text off screen without the script', spoilShown('overview', () => ({ textShown: false })), 'without its script at overview: the text is not on screen'],
+  ]) {
+    refuses(name, depthShownProblems(spoiled, { ids, where: 'without its script', text: true }), want);
+  }
+  if (depthShownProblems(shownThatHold, { ids, where: 'without its script', text: true }).length !== 0) {
+    fail('depthShownProblems refused a text that holds', depthShownProblems(shownThatHold, { ids, where: 'without its script', text: true }));
+  }
+
+  const addressThatHolds = [
+    { depth: 'overview', before: '?lx-stage=plan&lx-object=job', search: '?lx-stage=plan&lx-object=job&lx-depth=overview' },
+    { depth: 'product', before: '?lx-stage=plan&lx-object=job&lx-depth=overview', search: '?lx-stage=plan&lx-object=job&lx-depth=product' },
+    { depth: 'implementation', before: '?lx-stage=plan&lx-object=job&lx-depth=product', search: '?lx-stage=plan&lx-object=job' },
+  ];
+  const addressContext = { ids, defaultDepth: 'implementation' };
+  if (depthAddressProblems(addressThatHolds, addressContext).length !== 0) fail('depthAddressProblems refused addresses that hold', depthAddressProblems(addressThatHolds, addressContext));
+  const spoilAddress = (index, change) => addressThatHolds.map((one, at) => (at === index ? { ...one, ...change } : one));
+  for (const [name, spoiled, want] of [
+    ['a depth not written', spoilAddress(0, { search: '?lx-stage=plan&lx-object=job' }), 'choosing overview writes ?lx-stage=plan&lx-object=job, with lx-depth absent, not overview'],
+    ['the default written', spoilAddress(2, { search: '?lx-stage=plan&lx-object=job&lx-depth=implementation' }), 'with lx-depth implementation, not absent'],
+    ['a depth that resets the stage', spoilAddress(1, { search: '?lx-depth=product' }), 'changes the rest of the address from ?lx-stage=plan&lx-object=job to ?'],
+    ['no depth chosen', [], 'no depth was chosen in the interactive view'],
+    ['a depth never chosen by click', addressThatHolds.slice(0, 2), 'the depth "implementation" was never chosen in the interactive view'],
+  ]) {
+    refuses(name, depthAddressProblems(spoiled, addressContext), want);
+  }
+
+  const keepThatHolds = {
+    moves: [{ how: 'choosing the audit view', want: 'overview', checked: 'overview', search: '?lx-view=audit&lx-depth=overview', hidden: true }],
+    links: [
+      { link: '?lx-depth=product', want: { depth: 'product' }, got: { depth: 'product', view: 'journey' } },
+      { link: '?lx-view=audit&lx-depth=overview', want: { depth: 'overview', view: 'audit' }, got: { depth: 'overview', view: 'audit' } },
+      { link: '?lx-depth=deep', want: { depth: 'implementation' }, got: { depth: 'implementation', view: 'journey' } },
+    ],
+  };
+  const keepContext = { defaultDepth: 'implementation' };
+  if (depthKeepProblems(keepThatHolds, keepContext).length !== 0) fail('depthKeepProblems refused moves that hold', depthKeepProblems(keepThatHolds, keepContext));
+  const spoilMove = (change) => ({ ...keepThatHolds, moves: [{ ...keepThatHolds.moves[0], ...change }] });
+  const spoilLink = (index, change) => ({ ...keepThatHolds, links: keepThatHolds.links.map((one, at) => (at === index ? { ...one, got: { ...one.got, ...change } } : one)) });
+  for (const [name, spoiled, want] of [
+    ['a view that resets the depth', spoilMove({ checked: 'implementation' }), 'choosing the audit view leaves the depth at implementation, not overview'],
+    ['a view that drops it from the address', spoilMove({ search: '?lx-view=audit' }), 'writes ?lx-view=audit, without lx-depth=overview'],
+    ['a move that shows what the depth hides', spoilMove({ hidden: false }), 'choosing the audit view shows what overview hides'],
+    ['no move made', { ...keepThatHolds, moves: [] }, 'no move was made with a depth chosen'],
+    ['a link whose depth is ignored', spoilLink(0, { depth: 'implementation' }), 'the link ?lx-depth=product opens at the depth implementation, not product'],
+    ['a link whose view is dropped', spoilLink(1, { view: 'journey' }), 'opens the journey view, not audit'],
+    ['an unknown depth taken', spoilLink(2, { depth: 'overview' }), 'the link ?lx-depth=deep opens at the depth overview, not implementation'],
+    ['no unknown depth tried', { ...keepThatHolds, links: keepThatHolds.links.slice(0, 2) }, 'no link that names a depth nobody defined was opened'],
+  ]) {
+    refuses(name, depthKeepProblems(spoiled, keepContext), want);
+  }
+
+  const depthKeys = { reached: true, back: true, applied: true, written: true, forward: true };
+  if (depthKeyboardProblems(depthKeys).length !== 0) fail('depthKeyboardProblems refused keys that hold', depthKeyboardProblems(depthKeys));
+  for (const [key, want] of [
+    ['reached', 'Tab from the heading does not reach the depth choice'],
+    ['back', 'does not choose the shallower depth'],
+    ['applied', 'does not hide what it hides'],
+    ['written', 'is not written to the address'],
+    ['forward', 'does not choose the deeper depth again'],
+  ]) {
+    refuses(`a depth choice whose ${key} fails`, depthKeyboardProblems({ ...depthKeys, [key]: false }), want);
+  }
+
   // The CRDs this tree ships are read, every one of them.
   const read = crdKinds();
   if (read.length === 0 || read.some((one) => !one.kind || !one.scope)) fail('crdKinds read the CRDs as', read);
 
   console.log(
-    'check-lifecycle-explorer.mjs --selftest: OK (the families, their models and their paths, nested turns, the ' +
+    'check-lifecycle-explorer.mjs --selftest: OK (the families, their models, their paths and the scenarios they walk, nested turns, the ' +
       'rendered view, the keyboard on every path and at every turn, each selection, the family switch and its reset, ' +
       'the text without JavaScript, shared links, the address, the narrow layout, the audit view: its model, ' +
       'its commands, its text, each loss and source, the view switch, its links and its keyboard, and the object ' +
-      'map: its model against the CRDs, its owner references, its text, each object and its marks, its links and its keyboard)',
+      'map: its model against the CRDs, its owner references, its text, each object and its marks, its links and its keyboard, ' +
+      'the composed workflow: its model against #817, its text, its view, every stage and stop, how a stop clears, its links ' +
+      'and its keyboard, and the links between objects, sources and views: their addresses, where each lands and how a click ' +
+      'follows it, and the depths: their model, the parts each entry carries, what each depth shows with and without the ' +
+      'script, the address, what a move keeps, and the keyboard)',
   );
 }
 
@@ -2253,9 +3840,17 @@ async function open(page, url, { scripted = true } = {}) {
     await page.locator(`${ROOT} [data-lx-app]:not([hidden])`).waitFor({ state: 'attached', timeout: 15_000 });
   } catch {
     const seen = await page
-      .evaluate(() => ({ title: document.title, present: Boolean(document.getElementById('lifecycle-explorer')) }))
+      .evaluate(() => ({
+        title: document.title,
+        present: Boolean(document.getElementById('lifecycle-explorer')),
+        state: document.readyState,
+        at: location.href,
+        scripts: document.scripts.length,
+      }))
       .catch(() => null);
-    const what = seen ? `the page "${seen.title}", explorer ${seen.present ? 'present' : 'absent'}` : 'no answer from the page';
+    const what = seen
+      ? `the page "${seen.title}" at ${seen.at}, ${seen.state}, with ${seen.scripts} scripts, explorer ${seen.present ? 'present' : 'absent'}`
+      : 'no answer from the page';
     throw new Error(`the explorer did not start at ${url}: ${what}${errors.length ? `; ${errors.join('; ')}` : ''}`);
   }
 }
@@ -2517,7 +4112,7 @@ async function measure(browser, url, models) {
 // the object map at rest and with every object open. One long word in one
 // panel is enough to push a phone column sideways, so no panel is left
 // unread.
-async function measureNarrow(browser, url, models, auditModel, map) {
+async function measureNarrow(browser, url, models, auditModel, map, flow) {
   const readings = [];
   for (const viewport of NARROW) {
     for (const javaScriptEnabled of [true, false]) {
@@ -2528,6 +4123,10 @@ async function measureNarrow(browser, url, models, auditModel, map) {
         await open(page, url, { scripted: javaScriptEnabled });
         if (!javaScriptEnabled) {
           readings.push(await readOverflow(page, `${at}, without JavaScript`));
+          for (const { id } of depths.slice(0, -1)) {
+            await chooseDepth(page, id);
+            readings.push(await readOverflow(page, `${at}, without JavaScript at the depth ${id}`));
+          }
           continue;
         }
         if ((await page.locator(VISIBLE_STEP).count()) === 0) {
@@ -2574,6 +4173,25 @@ async function measureNarrow(browser, url, models, auditModel, map) {
           await page.locator(`${OBJECTS_VIEW} [data-lx-node="${node.id}"]`).click();
           readings.push(await readOverflow(page, `${at}, object map with ${node.id} open`));
         }
+        await chooseView(page, 'workflow');
+        readings.push(await readOverflow(page, `${at}, workflow at rest`));
+        for (const stage of flow.stages) {
+          await chooseStep(page, stage.id);
+          readings.push(await readOverflow(page, `${at}, workflow at ${stage.id}`));
+          for (const { outcome } of stage.outcomes) {
+            await chooseStop(page, outcome);
+            readings.push(await readOverflow(page, `${at}, workflow at ${stage.id} stopped by ${outcome}`));
+          }
+        }
+        // Each shallower depth reflows what is left; the deepest is every
+        // reading above.
+        for (const { id } of depths.slice(0, -1)) {
+          await chooseDepth(page, id);
+          for (const view of ['journey', 'audit', 'objects', 'workflow']) {
+            await chooseView(page, view);
+            readings.push(await readOverflow(page, `${at}, ${view} at the depth ${id}`));
+          }
+        }
       } finally {
         await context.close();
       }
@@ -2592,7 +4210,7 @@ async function measureWithoutScript(browser, url) {
       if (!root) return { present: false };
       const visible = (element) => element && element.getClientRects().length > 0 && getComputedStyle(element).display !== 'none';
       const text = root.querySelector('[data-lx-text]');
-      const flat = (element) => element.textContent.replace(/\s+/g, ' ');
+      const flat = (element) => (element ? element.textContent.replace(/\s+/g, ' ') : '');
       return {
         present: true,
         appHidden: !visible(root.querySelector('[data-lx-app]')),
@@ -2637,6 +4255,29 @@ async function measureWithoutScript(browser, url) {
             })),
           };
         })(),
+        workflow: (() => {
+          const block = text?.querySelector('[data-lx-text-workflow]');
+          if (!block) return null;
+          return {
+            proposal: flat(block.querySelector('[data-lx-text-proposal]')),
+            marks: [...block.querySelectorAll('[data-lx-text-mark]')].map((item) => item.dataset.lxTextMark),
+            preconditions: [...block.querySelectorAll('[data-lx-text-precondition]')].map((item) => ({
+              id: item.dataset.lxTextPrecondition,
+              text: flat(item),
+            })),
+            stages: [...block.querySelectorAll('[data-lx-text-wstage]')].map((item) => ({
+              id: item.dataset.lxTextWstage,
+              text: flat(item),
+              operator: flat(item.querySelector('[data-lx-text-wpart="operator"]')),
+              gate: flat(item.querySelector('[data-lx-text-wpart="gate"]')),
+              stops: [...item.querySelectorAll('[data-lx-text-wstop]')].map((row) => row.dataset.lxTextWstop),
+            })),
+            outcomes: [...block.querySelectorAll('[data-lx-text-woutcome]')].map((item) => item.dataset.lxTextWoutcome),
+            decisions: [...block.querySelectorAll('[data-lx-text-decision]')].map((item) => ({ id: item.dataset.lxTextDecision, text: flat(item) })),
+            record: [...block.querySelectorAll('[data-lx-text-record]')].map((item) => item.dataset.lxTextRecord),
+            text: flat(block),
+          };
+        })(),
       };
     });
   } finally {
@@ -2656,10 +4297,12 @@ const readViews = (page) =>
     const root = document.getElementById('lifecycle-explorer');
     const audit = root?.querySelector('[data-lx-audit]');
     const objects = root?.querySelector('[data-lx-objects]');
+    const flow = root?.querySelector('[data-lx-workflow]');
     const shown = [
       ['journey', root?.querySelector('[data-lx-journey]')],
       ['audit', audit],
       ['objects', objects],
+      ['workflow', flow],
     ]
       .filter(([, element]) => element && !element.hidden)
       .map(([id]) => id);
@@ -2674,6 +4317,8 @@ const readViews = (page) =>
       path: familyView?.querySelector('[data-lx-path][aria-pressed="true"]')?.dataset.lxPath ?? null,
       stage: list?.querySelector('[data-lx-step][aria-current="step"]')?.dataset.lxStep ?? null,
       object: familyView?.querySelector('[data-lx-object][aria-pressed="true"]')?.dataset.lxObject ?? null,
+      step: flow?.querySelector('[data-lx-wstep][aria-current="step"]')?.dataset.lxWstep ?? null,
+      outcome: flow?.querySelector('[data-lx-wstage-panel]:not([hidden]) [data-lx-woutcome][aria-pressed="true"]')?.dataset.lxWoutcome ?? null,
       search: location.search,
     };
   });
@@ -2976,6 +4621,601 @@ async function measureObjectMap(browser, url, models, auditModel, map) {
   }
 }
 
+const WORKFLOW_VIEW = `${ROOT} [data-lx-workflow]`;
+
+// Where the composed workflow stands: the current stage, the panel shown,
+// the count, every step's state and mark, the status line, the stop pressed
+// and its detail shown, how many stages are held, and the address.
+const readWorkflow = (page) =>
+  page.evaluate(() => {
+    const flow = document.querySelector('#lifecycle-explorer [data-lx-workflow]');
+    const steps = [...flow.querySelectorAll('[data-lx-wstep]')];
+    const panels = [...flow.querySelectorAll('[data-lx-wstage-panel]')].filter((panel) => !panel.hidden);
+    const status = flow.querySelector('[data-lx-wstatus]');
+    return {
+      current: steps.find((step) => step.getAttribute('aria-current') === 'step')?.dataset.lxWstep ?? null,
+      panels: panels.map((panel) => panel.dataset.lxWstagePanel),
+      count: flow.querySelector('[data-lx-wcount]')?.textContent.trim() ?? '',
+      marks: steps.map((step) => [step.dataset.state ?? '', step.querySelector('[data-lx-wmark]')?.textContent.trim() ?? '']),
+      status: status && !status.hidden ? status.textContent.trim() : null,
+      pressed: panels.flatMap((panel) => [...panel.querySelectorAll('[data-lx-woutcome][aria-pressed="true"]')].map((one) => one.dataset.lxWoutcome)),
+      details: panels.flatMap((panel) => [...panel.querySelectorAll('[data-lx-wstop]')].filter((one) => !one.hidden).map((one) => one.dataset.lxWstop)),
+      held: steps.filter((step) => step.dataset.state === 'held').length,
+      search: location.search,
+    };
+  });
+
+const chooseStep = (page, id) => page.locator(`${WORKFLOW_VIEW} [data-lx-wstep="${id}"]`).click();
+const chooseStop = (page, id) => page.locator(`${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) [data-lx-woutcome="${id}"]`).click();
+
+// The links a reader may be handed into the composed workflow: the view
+// alone, a stage and a stop with it, a stage alone, a stop the stage it names
+// cannot have, a stage that does not exist, the view named with another
+// view's values, a stage of it named under another view, and a journey path
+// named in the place of a stage.
+function workflowLinksFor(flow, models, map) {
+  const [first] = models;
+  const stopped = flow.stages.find((stage, index) => index > 0 && stage.outcomes.length > 0);
+  const stop = stopped.outcomes.at(-1).outcome;
+  const other = flow.stages.find((stage) => !stage.outcomes.some((one) => one.outcome === stop));
+  const last = flow.stages.at(-1).id;
+  const firstStage = flow.stages[0].id;
+  return [
+    { link: '?lx-view=workflow', want: { view: 'workflow', step: firstStage, outcome: null } },
+    { link: `?lx-view=workflow&lx-step=${stopped.id}&lx-outcome=${stop}`, want: { view: 'workflow', step: stopped.id, outcome: stop } },
+    { link: `?lx-step=${last}`, want: { view: 'workflow', step: last, outcome: null } },
+    { link: `?lx-view=workflow&lx-step=${other.id}&lx-outcome=${stop}`, want: { view: 'workflow', step: other.id, outcome: null } },
+    { link: '?lx-view=workflow&lx-step=w-nowhere', want: { view: 'workflow', step: firstStage, outcome: null } },
+    { link: `?lx-view=workflow&lx-node=${map.nodes[0].id}&lx-stage=${first.stages[1].id}`, want: { view: 'workflow', step: firstStage, outcome: null, node: null } },
+    { link: `?lx-view=objects&lx-step=${stopped.id}&lx-outcome=${stop}`, want: { view: 'objects', outcome: null, node: null } },
+    { link: `?lx-step=${first.paths.at(-1).id}`, want: { view: 'journey', outcome: null } },
+  ];
+}
+
+// The composed workflow, driven: chosen from the bar, every stage chosen in
+// turn, every stop of every stage, each way a stop is cleared, the switches
+// into and out of it from states that are default in nothing, the links, and
+// the keyboard from the heading above the explorer.
+async function measureWorkflow(browser, url, models, flow) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  try {
+    await open(page, url);
+    await chooseView(page, 'workflow');
+    const render = await page.evaluate(() => {
+      const root = document.getElementById('lifecycle-explorer');
+      const flow = root.querySelector('[data-lx-workflow]');
+      const visible = (element) => element && element.getClientRects().length > 0 && getComputedStyle(element).display !== 'none';
+      const panels = [...(flow?.querySelectorAll('[data-lx-wstage-panel]') ?? [])];
+      return {
+        viewButtons: root.querySelectorAll('[data-lx-view]').length,
+        shown: visible(flow),
+        othersShown: [
+          ['journey', root.querySelector('[data-lx-journey]')],
+          ['audit', root.querySelector('[data-lx-audit]')],
+          ['objects', root.querySelector('[data-lx-objects]')],
+        ]
+          .filter(([, element]) => visible(element))
+          .map(([id]) => id),
+        steps: flow?.querySelectorAll('[data-lx-wstep]').length ?? 0,
+        panels: panels.length,
+        visiblePanels: panels.filter((panel) => visible(panel)).map((panel) => panel.dataset.lxWstagePanel),
+        stopsShown: [...(flow?.querySelectorAll('[data-lx-wstop]') ?? [])].filter((one) => visible(one)).length,
+        statusShown: visible(flow?.querySelector('[data-lx-wstatus]')),
+        proposalShown: visible(flow?.querySelector('[data-lx-proposal]')),
+        shipped: panels.filter((panel) => panel.querySelector('[data-lx-wpart="operator"] [data-mark="shipped"]')).length,
+        proposed: panels.filter((panel) => panel.querySelector('[data-lx-wpart="gate"] [data-mark="proposed"]')).length,
+        tags: panels.map((panel) => panel.querySelector('[data-lx-wfamily]')?.textContent.trim() ?? ''),
+      };
+    });
+
+    const steps = [];
+    for (const stage of flow.stages) {
+      await chooseStep(page, stage.id);
+      steps.push({ id: stage.id, ...(await readWorkflow(page)) });
+    }
+    const stops = [];
+    for (const stage of flow.stages) {
+      await chooseStep(page, stage.id);
+      for (const { outcome } of stage.outcomes) {
+        await chooseStop(page, outcome);
+        stops.push({ stage: stage.id, outcome, ...(await readWorkflow(page)) });
+      }
+    }
+
+    // A stop cleared by Next, by choosing an earlier stage, and by choosing
+    // it again.
+    const clears = [];
+    const clearing = async (how, want) => {
+      const got = await readWorkflow(page);
+      clears.push({ how, want, got: { step: got.current, outcome: got.pressed[0] ?? null, held: got.held, search: got.search } });
+    };
+    const [stopping] = flow.stages.filter((stage) => stage.outcomes.length > 0).slice(0, -1);
+    const after = flow.stages[flow.stages.indexOf(stopping) + 1];
+    await chooseStep(page, stopping.id);
+    await chooseStop(page, stopping.outcomes[0].outcome);
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wnext]`).click();
+    await clearing('Next', after.id);
+    await chooseStop(page, after.outcomes[0].outcome);
+    await chooseStep(page, stopping.id);
+    await clearing('choosing an earlier stage', stopping.id);
+    await chooseStop(page, stopping.outcomes[0].outcome);
+    await chooseStop(page, stopping.outcomes[0].outcome);
+    await clearing('choosing it again', stopping.id);
+
+    // The switches: from the workflow stopped at a later stage to each other
+    // view, and into the workflow from each of them left in a state that is
+    // default in nothing.
+    const switches = [];
+    const flowState = async () => {
+      const got = await readWorkflow(page);
+      return `the composed workflow at ${got.current} stopped by ${got.pressed[0] ?? 'nothing'}`;
+    };
+    const stopAt = async () => {
+      await chooseStep(page, after.id);
+      await chooseStop(page, after.outcomes.at(-1).outcome);
+    };
+    for (const to of ['journey', 'audit', 'objects']) {
+      await stopAt();
+      const from = await flowState();
+      await chooseView(page, to);
+      switches.push({ to, from, got: await readViews(page) });
+      let left;
+      if (to === 'journey') {
+        const other = models.at(-1);
+        await chooseFamily(page, other);
+        left = describe(await unsettle(page, other));
+      } else if (to === 'audit') {
+        await page.locator(`${AUDIT_VIEW} [data-lx-loss]`).last().click();
+        await page.locator(`${AUDIT_VIEW} [data-lx-source]`).last().click();
+        left = 'the audit view with a loss and a source';
+      } else {
+        await page.locator(`${OBJECTS_VIEW} [data-lx-node]`).last().click();
+        left = 'the object map with an object open';
+      }
+      await chooseView(page, 'workflow');
+      switches.push({ to: 'workflow', from: left, got: await readViews(page) });
+    }
+
+    const links = [];
+    for (const one of workflowLinksFor(flow, models, objectMap)) {
+      await open(page, `${url}${one.link}`);
+      const got = await readViews(page);
+      const flowNow = await readWorkflow(page);
+      links.push({ ...one, got: { view: got.view, step: got.step, outcome: got.outcome, node: got.node, held: flowNow.held, status: flowNow.status } });
+    }
+
+    const keyboard = { chosen: false, step: false, arrow: false, end: false, home: false, stop: false };
+    await open(page, url);
+    await focusHeading(page);
+    if (await tabTo(page, `${ROOT} [data-lx-view="workflow"]`, 20)) {
+      await page.keyboard.press('Enter');
+      keyboard.chosen = (await readViews(page)).view === 'workflow';
+    }
+    const current = `${WORKFLOW_VIEW} [data-lx-wstep][aria-current="step"]`;
+    if (keyboard.chosen) keyboard.step = await tabTo(page, current, 20);
+    if (keyboard.step) {
+      await page.keyboard.press('ArrowRight');
+      keyboard.arrow = (await readWorkflow(page)).current === flow.stages[1].id && (await activeMatches(page, current));
+      await page.keyboard.press('End');
+      keyboard.end = (await readWorkflow(page)).current === flow.stages.at(-1).id && (await activeMatches(page, current));
+      await page.keyboard.press('Home');
+      keyboard.home = (await readWorkflow(page)).current === flow.stages[0].id && (await activeMatches(page, current));
+    }
+    if (keyboard.home && (await tabTo(page, `${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) [data-lx-woutcome]`, 40))) {
+      const id = await page.evaluate(() => document.activeElement.dataset.lxWoutcome);
+      await page.keyboard.press('Enter');
+      keyboard.stop = (await readWorkflow(page)).pressed.join(' ') === id;
+    }
+
+    return { render, walk: { steps, stops, clears }, switches, links, keyboard, thrown };
+  } finally {
+    await context.close();
+  }
+}
+
+// The links between objects, sources and views, read from the page: every
+// link the text makes within the page and where it leads, every link of the
+// interactive view with what it selects in place and how it is laid out, the
+// related objects left buttons, and the page's ids used more than once.
+const readAnchors = (page) =>
+  page.evaluate(() => {
+    const root = document.getElementById('lifecycle-explorer');
+    const text = root.querySelector('[data-lx-text]');
+    const app = root.querySelector('[data-lx-app]');
+    const kindOf = (anchor) =>
+      anchor.dataset.lxSelect !== undefined
+        ? ['select', anchor.dataset.lxSelect]
+        : anchor.dataset.lxSourceSelect !== undefined
+          ? ['source', anchor.dataset.lxSourceSelect]
+          : anchor.dataset.lxNodeSelect !== undefined
+            ? ['node', anchor.dataset.lxNodeSelect]
+            : anchor.dataset.lxOpen !== undefined
+              ? ['open', null]
+              : ['none', null];
+    const ids = [...root.querySelectorAll('[id]')].map((element) => element.id);
+    return {
+      anchors: {
+        text: [...text.querySelectorAll('a[href^="#"]')].map((anchor) => {
+          const target = document.getElementById(decodeURIComponent(anchor.getAttribute('href').slice(1)));
+          const where = !target ? 'none' : text.contains(target) ? 'text' : app.contains(target) ? 'app' : 'page';
+          return { href: anchor.getAttribute('href'), target: where };
+        }),
+        app: [...app.querySelectorAll('a[data-lx-link]')].map((anchor) => {
+          const [kind, value] = kindOf(anchor);
+          return {
+            href: anchor.getAttribute('href'),
+            kind,
+            value,
+            family: anchor.closest('[data-lx-family-view]')?.dataset.lxFamilyView ?? null,
+            display: getComputedStyle(anchor).display,
+          };
+        }),
+        buttons: app.querySelectorAll('button[data-lx-node-select], button[data-lx-source-select], .lx__relations button[data-lx-select]').length,
+        duplicates: [...new Set(ids.filter((id) => document.querySelectorAll(`#${CSS.escape(id)}`).length > 1))],
+      },
+    };
+  });
+
+// The links, driven: every distinct address the interactive view links to
+// opened as a page, one link of each kind followed by a plain click with a
+// marker on the page that a reload would lose, and one followed with a
+// modifier, which has to open a page of its own.
+async function measureAnchors(browser, url, models, flow) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  try {
+    await open(page, url);
+    const reading = await readAnchors(page);
+
+    const landing = [];
+    for (const href of [...new Set(reading.anchors.app.map((one) => one.href))]) {
+      await open(page, new URL(href, url).toString());
+      landing.push({ href, got: await readViews(page) });
+    }
+
+    const mark = () => page.evaluate(() => {
+      window.lxMarker = true;
+    });
+    const marked = () => page.evaluate(() => window.lxMarker === true).catch(() => false);
+    // Only a link on screen is clicked, so a link the view lost is a link
+    // that was not followed rather than a wait that never ends.
+    const follow = async (kind, selector, landed) => {
+      const link = page.locator(selector).filter({ visible: true }).first();
+      if ((await link.count()) === 0) return;
+      const href = await link.getAttribute('href');
+      const value = await link.evaluate((anchor) => anchor.dataset.lxSelect ?? anchor.dataset.lxSourceSelect ?? anchor.dataset.lxNodeSelect ?? null);
+      await mark();
+      await link.click();
+      const reloaded = !(await marked());
+      if (reloaded) await page.locator(`${ROOT}[data-lx-ready]`).waitFor();
+      const got = await readViews(page);
+      return { kind, href, reloaded, got, ...landed(got, href, value) };
+    };
+    const plain = [];
+    const push = (one) => one && plain.push(one);
+
+    // A related object in the journey, from a stage other than the first.
+    const [first] = models;
+    const object = first.relations[0].from;
+    await open(page, url);
+    await page.locator(`${VISIBLE_STEP}[data-lx-step="${first.stages[1].id}"]`).click();
+    await page.locator(`${VIEW} [data-lx-object="${object}"]`).click();
+    push(
+      await follow('select', `${VIEW} [data-lx-object-panel="${object}"] a[data-lx-select]`, (got, href, value) => ({
+        landed: got.object === value,
+        kept: got.stage === first.stages[1].id,
+      })),
+    );
+    // An identity's source in the audit view.
+    await chooseView(page, 'audit');
+    push(await follow('source', `${AUDIT_VIEW} a[data-lx-source-select]`, (got, href, value) => ({ landed: got.source === value })));
+    // A related object in the object map.
+    await chooseView(page, 'objects');
+    await page.locator(`${OBJECTS_VIEW} [data-lx-node="${objectMap.nodes[0].id}"]`).click();
+    push(
+      await follow('node', `${OBJECTS_VIEW} [data-lx-node-panel]:not([hidden]) a[data-lx-node-select]`, (got, href, value) => ({
+        landed: got.node === value,
+      })),
+    );
+    // From the workflow into the object map, and into the change journey.
+    const opens = (got, href) => {
+      const want = landingFor(href, first.id);
+      return { landed: Object.entries(want).every(([key, value]) => value === undefined || got[key] === value), search: got.search };
+    };
+    await chooseView(page, 'workflow');
+    push(await follow('open', `${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) a[data-lx-open]`, opens));
+    const toJourney = flow.stages.flatMap((stage) => stage.outcomes.filter((one) => one.journey).map((one) => ({ stage: stage.id, outcome: one.outcome })))[0];
+    if (toJourney) {
+      await open(page, `${url}?lx-view=workflow&lx-step=${toJourney.stage}&lx-outcome=${toJourney.outcome}`);
+      push(await follow('open', `${WORKFLOW_VIEW} [data-lx-wstop]:not([hidden]) a[data-lx-open]`, opens));
+    }
+
+    // A link clicked with a modifier opens its address in a page of its own
+    // and leaves this one as it was.
+    let modified = null;
+    await open(page, `${url}?lx-view=workflow`);
+    const link = page.locator(`${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) a[data-lx-open]`).filter({ visible: true }).first();
+    if ((await link.count()) > 0) {
+      const href = await link.getAttribute('href');
+      const before = await readViews(page);
+      const popup = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
+      await link.click({ modifiers: ['ControlOrMeta'] });
+      const opened = await popup;
+      let search = null;
+      if (opened) {
+        await opened.waitForLoadState('domcontentloaded').catch(() => {});
+        search = new URL(opened.url()).search;
+        await opened.close();
+      }
+      const after = await readViews(page);
+      modified = { href, opened: search, stayed: JSON.stringify(after) === JSON.stringify(before) };
+    }
+
+    return { reading, landing, clicks: { plain, modified }, thrown };
+  } finally {
+    await context.close();
+  }
+}
+
+// The entries each depth is read on, the content they come from and the
+// identities and gaps a source panel names.
+const depthEntries = () => ({
+  stage: families.flatMap((family) => [...family.scenario.stages, ...family.paths.flatMap((path) => path.stages ?? [])]),
+  object: families.flatMap((family) => family.objects),
+  source: audit.sources,
+  node: objectMap.nodes,
+  wstage: workflow.stages,
+});
+const depthContext = () => ({ identities: audit.identities, gaps: audit.gaps });
+
+// Every tagged part of the page, by the entry or block it belongs to: an
+// entry is a panel of the interactive view or an entry of the text, and a
+// part of another kind inside it, or outside every entry and block, is a
+// stray.
+const readDepthTags = (page) =>
+  page.evaluate(() => {
+    const root = document.getElementById('lifecycle-explorer');
+    const app = root.querySelector('[data-lx-app]');
+    const text = root.querySelector('[data-lx-text]');
+    const kinds = [
+      ['stage', '[data-lx-stage-panel]', 'lxStagePanel', '[data-lx-text-stage]', 'lxTextStage'],
+      ['object', '[data-lx-object-panel]', 'lxObjectPanel', '[data-lx-text-object]', 'lxTextObject'],
+      ['source', '[data-lx-source-panel]', 'lxSourcePanel', '[data-lx-text-source]', 'lxTextSource'],
+      ['node', '[data-lx-node-panel]', 'lxNodePanel', '[data-lx-text-node]', 'lxTextNode'],
+      ['wstage', '[data-lx-wstage-panel]', 'lxWstagePanel', '[data-lx-text-wstage]', 'lxTextWstage'],
+    ];
+    const claimed = new Set();
+    const entries = [];
+    for (const [kind, appSelector, appKey, textSelector, textKey] of kinds) {
+      for (const [where, scope, selector, key] of [
+        ['app', app, appSelector, appKey],
+        ['text', text, textSelector, textKey],
+      ]) {
+        for (const element of scope.querySelectorAll(selector)) {
+          const parts = [...element.querySelectorAll(`[data-lx-part^="${kind}:"]`)];
+          for (const one of parts) claimed.add(one);
+          entries.push({
+            where,
+            kind,
+            id: element.dataset[key],
+            parts: parts.map((one) => [one.dataset.lxPart.slice(kind.length + 1), one.dataset.lxDepth]),
+          });
+        }
+      }
+    }
+    const blocks = [...root.querySelectorAll('[data-lx-part^="block:"]')].map((one) => {
+      claimed.add(one);
+      return { where: app.contains(one) ? 'app' : 'text', name: one.dataset.lxPart.slice('block:'.length), at: one.dataset.lxDepth };
+    });
+    const strays = [...root.querySelectorAll('[data-lx-part]')].filter((one) => !claimed.has(one)).map((one) => one.dataset.lxPart);
+    return { entries, blocks, strays };
+  });
+
+// What one depth shows: the choice, the note shown, every tagged part with
+// whether its own style hides it, the parts of each entry open on screen,
+// and, where the text is on screen, the links of it whose target the depth
+// hides.
+const readDepthShown = (page, opened) =>
+  page.evaluate((opened) => {
+    const root = document.getElementById('lifecycle-explorer');
+    const app = root.querySelector('[data-lx-app]');
+    const text = root.querySelector('[data-lx-text]');
+    const onScreen = (element) => element.getClientRects().length > 0;
+    return {
+      checked: root.querySelector('[data-lx-depth-choice]:checked')?.value ?? null,
+      notes: [...root.querySelectorAll('[data-lx-depth-note]')]
+        .filter((note) => getComputedStyle(note).display !== 'none')
+        .map((note) => note.dataset.lxDepthNote),
+      parts: [...root.querySelectorAll('[data-lx-part]')].map((one) => [
+        app.contains(one) ? 'app' : 'text',
+        one.dataset.lxPart,
+        one.dataset.lxDepth,
+        getComputedStyle(one).display !== 'none',
+      ]),
+      open: opened.map(({ kind, selector, key }) => {
+        const element = [...root.querySelectorAll(selector)].find(onScreen);
+        if (!element) return { kind, id: `none on screen for ${selector}`, parts: [], want: [['an entry', 'overview']] };
+        const tagged = [...element.querySelectorAll(`[data-lx-part^="${kind}:"]`)];
+        return {
+          kind,
+          id: element.dataset[key],
+          parts: tagged.filter(onScreen).map((one) => one.dataset.lxPart.slice(kind.length + 1)),
+          want: tagged.map((one) => [one.dataset.lxPart.slice(kind.length + 1), one.dataset.lxDepth]),
+        };
+      }),
+      textShown: onScreen(text),
+      links: [...text.querySelectorAll('a[href^="#"]')].filter(onScreen).length,
+      hiddenTargets: [...text.querySelectorAll('a[href^="#"]')]
+        .filter(onScreen)
+        .filter((link) => {
+          const target = document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+          return target && text.contains(target) && !onScreen(target);
+        })
+        .map((link) => link.getAttribute('href')),
+    };
+  }, opened);
+
+const chooseDepth = (page, id) => page.locator(`${ROOT} [data-lx-depth-choice][value="${id}"]`).check();
+const readDepth = (page) => page.evaluate(() => document.querySelector('#lifecycle-explorer [data-lx-depth-choice]:checked')?.value ?? null);
+
+// The panels a depth is read on in the interactive view, and the entries it
+// is read on in the text.
+const APP_OPENED = [
+  { kind: 'stage', selector: '[data-lx-stage-panel]', key: 'lxStagePanel' },
+  { kind: 'object', selector: '[data-lx-object-panel]', key: 'lxObjectPanel' },
+];
+const VIEW_OPENED = {
+  audit: [{ kind: 'source', selector: '[data-lx-source-panel]', key: 'lxSourcePanel' }],
+  objects: [{ kind: 'node', selector: '[data-lx-node-panel]', key: 'lxNodePanel' }],
+  workflow: [{ kind: 'wstage', selector: '[data-lx-wstage-panel]', key: 'lxWstagePanel' }],
+};
+const TEXT_OPENED = [
+  { kind: 'stage', selector: '[data-lx-text-stage]', key: 'lxTextStage' },
+  { kind: 'object', selector: '[data-lx-text-object]', key: 'lxTextObject' },
+  { kind: 'source', selector: '[data-lx-text-source]', key: 'lxTextSource' },
+  { kind: 'node', selector: '[data-lx-text-node]', key: 'lxTextNode' },
+  { kind: 'wstage', selector: '[data-lx-text-wstage]', key: 'lxTextWstage' },
+];
+
+// The depths, driven with the script: the tags read once; each depth chosen
+// on a stage and an object of the journey, a source, an object of the map and
+// a workflow stage, each read for what it shows and the address it writes;
+// the depth kept through every kind of move; links that name a depth; and
+// the keyboard.
+async function measureDepths(browser, url) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  try {
+    await open(page, url);
+    const tags = await readDepthTags(page);
+
+    // The stage of the default path that carries the most parts, so each
+    // depth hides something in it.
+    const [first] = families;
+    const stage = [...first.scenario.stages].sort(
+      (left, right) => expectedParts('stage', right, 'app').length - expectedParts('stage', left, 'app').length,
+    )[0];
+    const object = first.objects.find((one) => stage.objects.includes(one.id)) ?? first.objects[0];
+    const node = objectMap.nodes.find((one) => one.gap) ?? objectMap.nodes[0];
+    const source = audit.sources.find((one) => audit.identities.some((identity) => identity.recordedIn.includes(one.id))) ?? audit.sources[0];
+    const wstage = workflow.stages.find((one) => one.decision && one.limits) ?? workflow.stages[0];
+    const states = [
+      { search: `?lx-stage=${stage.id}&lx-object=${object.id}`, opened: APP_OPENED },
+      { search: `?lx-view=audit&lx-source=${source.id}`, opened: VIEW_OPENED.audit },
+      { search: `?lx-view=objects&lx-node=${node.id}`, opened: VIEW_OPENED.objects },
+      { search: `?lx-view=workflow&lx-step=${wstage.id}`, opened: VIEW_OPENED.workflow },
+    ];
+    const shown = [];
+    const address = [];
+    for (const state of states) {
+      await open(page, `${url}${state.search}`);
+      for (const id of depths.map((one) => one.id)) {
+        const before = await page.evaluate(() => location.search);
+        await chooseDepth(page, id);
+        const search = await page.evaluate(() => location.search);
+        if (state === states[0]) address.push({ depth: id, before, search });
+        shown.push({ depth: id, ...(await readDepthShown(page, state.opened)) });
+      }
+    }
+
+    // Every kind of move with Overview chosen. What it hides has to stay
+    // hidden wherever the move lands.
+    const [shallow] = depths;
+    const moves = [];
+    const keep = async (how) => {
+      const got = await page.evaluate(() => ({
+        search: location.search,
+        hidden: [...document.querySelectorAll('#lifecycle-explorer [data-lx-depth="product"], #lifecycle-explorer [data-lx-depth="implementation"]')].every(
+          (one) => getComputedStyle(one).display === 'none',
+        ),
+      }));
+      moves.push({ how, want: shallow.id, checked: await readDepth(page), ...got });
+    };
+    await open(page, url);
+    await chooseDepth(page, shallow.id);
+    for (const view of ['audit', 'objects', 'workflow', 'journey']) {
+      await chooseView(page, view);
+      await keep(`choosing the ${view} view`);
+    }
+    const other = families.at(-1);
+    await page.locator(`${ROOT} [data-lx-family="${other.id}"]`).click();
+    await keep('choosing another family');
+    const turned = other.paths.find((path) => path.turnsAfter);
+    await page.locator(`${VIEW} [data-lx-path="${turned.id}"]`).click();
+    await keep('choosing a path');
+    await page.locator(VISIBLE_STEP).nth(1).click();
+    await keep('choosing a stage');
+    await page.locator(`${VIEW} [data-lx-object]`).first().click();
+    await page.locator(`${VIEW} [data-lx-object-panel]:not([hidden]) a[data-lx-select]`).first().click();
+    await keep('following a related object');
+    await chooseView(page, 'workflow');
+    const stopped = workflow.stages.find((one) => one.outcomes.some((outcome) => outcome.journey));
+    const stop = stopped.outcomes.find((outcome) => outcome.journey);
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstep="${stopped.id}"]`).click();
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstage-panel]:not([hidden]) [data-lx-woutcome="${stop.outcome}"]`).click();
+    await page.locator(`${WORKFLOW_VIEW} [data-lx-wstop]:not([hidden]) a[data-lx-open]`).first().click();
+    await keep('following a link into another view');
+
+    const links = [];
+    for (const one of [
+      { link: '?lx-depth=product', want: { depth: 'product' } },
+      { link: `?lx-view=audit&lx-depth=${shallow.id}`, want: { depth: shallow.id, view: 'audit' } },
+      { link: '?lx-depth=deep', want: { depth: defaultDepth } },
+      { link: `?lx-depth=${defaultDepth}`, want: { depth: defaultDepth } },
+    ]) {
+      await open(page, `${url}${one.link}`);
+      links.push({ ...one, got: { depth: await readDepth(page), view: (await readViews(page)).view } });
+    }
+
+    const keyboard = { reached: false, back: false, applied: false, written: false, forward: false };
+    await open(page, url);
+    await focusHeading(page);
+    // The first stop inside the explorer is the depth chosen.
+    keyboard.reached = (await tabTo(page, `${ROOT} *`, 20)) && (await activeMatches(page, `${ROOT} [data-lx-depth-choice]:checked`));
+    if (keyboard.reached) {
+      await page.keyboard.press('ArrowLeft');
+      const back = depths.at(-2).id;
+      keyboard.back = (await readDepth(page)) === back;
+      keyboard.applied = await page.evaluate(
+        () => [...document.querySelectorAll('#lifecycle-explorer [data-lx-depth="implementation"]')].every((one) => getComputedStyle(one).display === 'none'),
+      );
+      keyboard.written = new URLSearchParams(await page.evaluate(() => location.search)).get('lx-depth') === back;
+      await page.keyboard.press('ArrowRight');
+      keyboard.forward = (await readDepth(page)) === defaultDepth && !(await page.evaluate(() => location.search)).includes('lx-depth');
+    }
+
+    return { tags, shown, address, keep: { moves, links }, keyboard, thrown };
+  } finally {
+    await context.close();
+  }
+}
+
+// The depths without the script: the choice is the radio buttons alone, and
+// the styles have to hide the same parts of the text. Read at rest, then at
+// each depth chosen.
+async function measureDepthsWithoutScript(browser, url) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, javaScriptEnabled: false });
+  const page = await context.newPage();
+  try {
+    await open(page, url, { scripted: false });
+    const readings = [{ depth: defaultDepth, ...(await readDepthShown(page, TEXT_OPENED)) }];
+    for (const id of depths.map((one) => one.id)) {
+      await chooseDepth(page, id);
+      readings.push({ depth: id, ...(await readDepthShown(page, TEXT_OPENED)) });
+    }
+    return readings;
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   if (process.argv.includes('--selftest')) {
     selftest();
@@ -2984,9 +5224,12 @@ async function main() {
 
   const models = families.map(familyModel);
   const problems = familiesProblems(models);
+  problems.push(...scenarioProblems(models));
   problems.push(...auditProblems(audit, models));
   problems.push(...objectMapProblems(objectMap, { kinds: crdKinds(), familyModels: models, auditModel: audit }));
-  problems.push(...commandProblems(explorerCommands(families, audit, objectMap)));
+  problems.push(...workflowProblems(workflow, { familyModels: models, auditModel: audit, map: objectMap, kinds: crdKinds() }));
+  problems.push(...depthModelProblems({ depths, defaultDepth, depthOf }));
+  problems.push(...commandProblems(explorerCommands(families, audit, objectMap, workflow)));
   if (models[0]?.id !== defaultFamily) problems.push(`the default family is "${defaultFamily}", not the first family "${models[0]?.id}"`);
 
   const distIndex = process.argv.indexOf('--dist');
@@ -3014,12 +5257,15 @@ async function main() {
   const { server, port } = await startServer(distRoot, base);
   const url = `http://127.0.0.1:${port}${base}/${PAGE}`;
   const browser = await chromium.launch();
+  let anchors = { links: 0, text: 0 };
+  let tagged = 0;
 
   try {
     const quiet = await measureWithoutScript(browser, url);
     problems.push(...textProblems(quiet, models));
     if (quiet.present) problems.push(...auditTextProblems(quiet, audit));
     if (quiet.present) problems.push(...objectMapTextProblems(quiet, objectMap));
+    if (quiet.present) problems.push(...workflowTextProblems(quiet, workflow));
     if (quiet.present) {
       const measured = await measure(browser, url, models);
       problems.push(...renderProblems(measured.render, models));
@@ -3046,9 +5292,31 @@ async function main() {
         problems.push(...objectMapLinkProblems(mapped.links));
         problems.push(...objectMapKeyboardProblems(mapped.keyboard));
         if (mapped.thrown.length > 0) problems.push(`the object map threw: ${mapped.thrown.join('; ')}`);
-        problems.push(...viewSwitchProblems([...audited.switches, ...mapped.switches], models));
+        const flowed = await measureWorkflow(browser, url, models, workflow);
+        problems.push(...workflowRenderProblems(flowed.render, workflow));
+        problems.push(...workflowWalkProblems(flowed.walk, workflow));
+        problems.push(...workflowLinkProblems(flowed.links));
+        problems.push(...workflowKeyboardProblems(flowed.keyboard));
+        if (flowed.thrown.length > 0) problems.push(`the composed workflow threw: ${flowed.thrown.join('; ')}`);
+        problems.push(...viewSwitchProblems([...audited.switches, ...mapped.switches, ...flowed.switches], models, workflow));
+        const linked = await measureAnchors(browser, url, models, workflow);
+        problems.push(...anchorProblems(linked.reading, defaultFamily));
+        problems.push(...anchorLandingProblems(linked.landing, defaultFamily));
+        problems.push(...inPlaceProblems(linked.clicks));
+        if (linked.thrown.length > 0) problems.push(`following the links threw: ${linked.thrown.join('; ')}`);
+        anchors = { links: linked.landing.length, text: linked.reading.anchors.text.length };
+        const deep = await measureDepths(browser, url);
+        const ids = depths.map((one) => one.id);
+        problems.push(...depthRenderProblems(deep.tags, { depthOf, entries: depthEntries(), context: depthContext() }));
+        problems.push(...depthShownProblems(deep.shown, { ids, where: 'with its script' }));
+        problems.push(...depthAddressProblems(deep.address, { ids, defaultDepth }));
+        problems.push(...depthKeepProblems(deep.keep, { defaultDepth }));
+        problems.push(...depthKeyboardProblems(deep.keyboard));
+        if (deep.thrown.length > 0) problems.push(`the depths threw: ${deep.thrown.join('; ')}`);
+        problems.push(...depthShownProblems(await measureDepthsWithoutScript(browser, url), { ids, where: 'without its script', text: true }));
+        tagged = deep.tags.entries.reduce((sum, one) => sum + one.parts.length, 0) + deep.tags.blocks.length;
       }
-      problems.push(...overflowProblems(await measureNarrow(browser, url, models, audit, objectMap)));
+      problems.push(...overflowProblems(await measureNarrow(browser, url, models, audit, objectMap, workflow)));
     }
   } finally {
     await browser.close();
@@ -3067,7 +5335,10 @@ async function main() {
       `the text without JavaScript, shared links, the audit view's ${audit.sources.length} sources, ` +
       `${audit.losses.length} losses, ${audit.identities.length} identities and ${audit.gaps.length} gaps, ` +
       `the object map's ${objectMap.nodes.length} objects and ${objectMap.relations.length} relationships against ` +
-      `${crdKinds().length} CRD kinds, ${explorerCommands(families, audit, objectMap).length} commands, and ` +
+      `${crdKinds().length} CRD kinds, the composed workflow's ${workflow.stages.length} stages and ` +
+      `${workflow.stages.reduce((sum, stage) => sum + stage.outcomes.length, 0)} stops, ${anchors.links} linked addresses and ` +
+      `${anchors.text} links in the text, ${tagged} parts at ${depths.length} depths, ` +
+      `${explorerCommands(families, audit, objectMap, workflow).length} commands, and ` +
       `${NARROW.map((one) => `${one.width}px`).join(' and ')} wide)`,
   );
 }

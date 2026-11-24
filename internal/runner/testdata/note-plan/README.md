@@ -35,6 +35,13 @@ superuser in the database `postgres`, on an arm64 host. Against the files here
 both fingerprints moved, with the plan's name and digest; the note and the
 statements are the same, so the files stay.
 
+On November 24, 2026 the v0.35.1 release image that `support/ptah.json` now
+pins,
+`ghcr.io/stokaro/ptah@sha256:4b66856f2d0780ff697155575c97e900b7b7654d8141c6368ee77f79db2c90d5`,
+and the v0.35.0 one each planned the same table against a fresh server of that
+PostgreSQL image, as its superuser in the database `postgres`, on an arm64 host,
+and printed and saved the same bytes as each other. The files stay.
+
 The database held a table whose generated column the schema file gives another
 expression:
 

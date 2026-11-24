@@ -41,8 +41,11 @@ MySQL one with a `SELECT DATABASE()` after the first session's `sql_mode` read
 History contract admits, so the MySQL reading here is v0.35.0's, one record
 more; no other record moved. On 2026-11-23 the v0.35.0 image reproduced the
 MySQL reading record for record on MySQL 9.7.4
-(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`).
-They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
+(`mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446`)
+and on MySQL 26.10.0
+(`mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999`).
+On 2026-11-24 the v0.35.1 release image (`ff4a4368`) reproduced both readings
+record for record, and the MySQL one on MySQL 26.10.0 as well. They exercise the migration selection guard used by the operator's `restoredHistoryProof`.
 
 The probe applied the repository's two-migration fixture, then removed
 migration 2's column and revision row. `migrations up --expect-sequence`
@@ -85,7 +88,7 @@ networks were removed; the borrowed images were preserved.
 
 - Reading: [mysql-restored-history-refusal.jsonl](mysql-restored-history-refusal.jsonl)
 - Server image: `mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb`
-- Reading SHA-256: `f087153d833359d8989cf741ef0b5e77707141e51d3edaeb25f7f7b1443834a6`
+- Reading SHA-256: `b4f213cd8d64fb0082f76892670bf27522aac34baa81873f6b1846072c98179c`
 
 ## Permitted diagnostic contract
 

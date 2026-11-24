@@ -499,8 +499,8 @@ read from writing is the command the runner runs, one fixed command line for
 each operation, and the audit below measures what those commands send. The
 runner opens no database connection of its own; it starts Ptah with the target
 URL in its environment. The behavior below was read from the source of the Ptah
-build [`support/ptah.json`](../../support/ptah/) pins, v0.35.0 at commit
-`1ec0b95e`.
+build [`support/ptah.json`](../../support/ptah/) pins, v0.35.1 at commit
+`ff4a4368`.
 
 | Operation | Runner command | What reaches the database |
 | --- | --- | --- |
@@ -541,10 +541,10 @@ isolated database, on PostgreSQL and on MySQL, and hold each one byte for byte
 to an exact list. For a `PtahSchema` the list is
 `test/e2e/schema-sql-contract.json`, matched by `test/e2e/schema_sql_audit.go`:
 the statements Observe, Plan and a stale Apply send for the acceptance schemas,
-captured from Ptah `1ec0b95e`, each with the operations that may send it. For
-History the lists are in `test/e2e/migration_sql_audit.go` and
-`test/e2e/migration_mysql_audit.go`, and what History sent at `c5fba763`, and
-again at `dc2decde`, `da2df4a5`, `37c98b00`, `f7c85bdc`, `90e98f6c` and `1ec0b95e`, is
+captured from Ptah `1ec0b95e` and reproduced at `ff4a4368`, each with the
+operations that may send it. For History the lists are in
+`test/e2e/migration_sql_audit.go` and `test/e2e/migration_mysql_audit.go`, and
+what History sent at `c5fba763`, and again at `dc2decde`, `da2df4a5`, `37c98b00`, `f7c85bdc`, `90e98f6c`, `1ec0b95e` and `ff4a4368`, is
 recorded in `testdata/e2e/readings/postgresql-migration-history-audit.md` and
 `mysql-migration-history-audit.md`: reads only, no table created. A statement
 from a read's Pod that its list does not hold fails the suite.

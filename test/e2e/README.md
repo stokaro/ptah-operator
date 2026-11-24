@@ -24,7 +24,9 @@ Helm must be version 4 or newer, and the driver refuses an older one: the suite
 reads the field ownership Helm's server-side apply leaves behind, which Helm 3
 does not produce.
 The Kind version must exactly match `support/kubernetes.json`; kubectl must be
-within one minor of the selected API server. The selected remote host only
+within one minor of the selected API server. The harness pulls the load
+balancer image that kind version runs by the digest `kindLoadBalancer` pins
+there, before kind runs, and removes it afterwards only if it pulled it. The selected remote host only
 needs the Docker daemon represented by the chosen context.
 
 Required inputs:
@@ -57,10 +59,11 @@ Overrides supplied with `E2E_REGISTRY_IMAGE`, `E2E_POSTGRES_SOURCE_IMAGE`, and
 `E2E_MYSQL_SOURCE_IMAGE` must also be digest-pinned. The tag of
 `E2E_POSTGRES_SOURCE_IMAGE` has to name a PostgreSQL major version, and both
 PostgreSQL servers are held to it. The tag of `E2E_MYSQL_SOURCE_IMAGE` has to
-name a MySQL release line, such as `8.4` or `9.7`, and the image has to declare
-that line as `MYSQL_MAJOR`. `E2E_POSTGRES_IMAGE_CREATED` and
-`E2E_MYSQL_IMAGE_CREATED`, when they are set, name the day Docker has to report
-for that engine's image.
+name a MySQL release line, such as `8.4`, `9.7` or `26.10`, and the release the
+image declares as `MYSQL_VERSION` has to be on that line. `MYSQL_MAJOR` is not
+read: an innovation image such as 26.10 declares it as `innovation`.
+`E2E_POSTGRES_IMAGE_CREATED` and `E2E_MYSQL_IMAGE_CREATED`, when they are set,
+name the day Docker has to report for that engine's image.
 
 `DOCKER_CONTEXT` defaults to `remote-dev-container`. The harness rejects the
 local default and OrbStack contexts, and it derives an SSH tunnel from the

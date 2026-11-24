@@ -117,11 +117,32 @@
     },
     {
       "engine": "mysql",
-      "line": "9.7.x",
+      "line": "9.7.x LTS",
       "image": "mysql:9.7@sha256:1954314de304d70fe85c67204d4676891ffa11dcd7caedaf5e9bc50b5f6be446",
       "imageCreated": "2026-11-03",
       "state": "supported",
       "evidenceRun": "45223146080",
+      "leftOut": [
+        {
+          "suite": "migrations-postgresql",
+          "reason": "Its one phase is the versioned migration rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-faults-postgresql",
+          "reason": "Its one phase is the versioned migration fault rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        },
+        {
+          "suite": "migration-authority-postgresql",
+          "reason": "Its one phase is the migration approval and runtime rows on PostgreSQL. Its data-plane preparation starts MySQL, and no row reads it."
+        }
+      ]
+    },
+    {
+      "engine": "mysql",
+      "line": "26.10.x",
+      "image": "mysql:26.10@sha256:b401608b19ffafbc6aa3d84523acf783078c8cf01e0f7ee1dc3ca75a5701a999",
+      "imageCreated": "2026-11-03",
+      "state": "pending",
       "leftOut": [
         {
           "suite": "migrations-postgresql",

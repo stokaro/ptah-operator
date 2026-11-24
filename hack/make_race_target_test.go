@@ -83,8 +83,8 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 				return replaceMakeSourceExactly(
 					t,
 					source,
-					"|TestVerifyE2EChildScriptsRejectCriticalMutations\n",
-					"|TestVerifyE2EChildScriptsRejectCriticalMutations|TestVerifyE2EWiring\n",
+					"|TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt\n",
+					"|TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt|TestVerifyE2EWiring\n",
 				)
 			},
 		},
@@ -94,8 +94,8 @@ func TestVerifyMakeRaceTargetsRejectsRuleBypasses(t *testing.T) {
 				return replaceMakeSourceExactly(
 					t,
 					source,
-					"|TestVerifyE2EChildScriptsRejectCriticalMutations\n",
-					"|TestVerifyE2EChildScriptsRejectCriticalMutations\nRACE_MUTATION_TESTS += TestVerifyE2EWiring\n",
+					"|TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt\n",
+					"|TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt\nRACE_MUTATION_TESTS += TestVerifyE2EWiring\n",
 				)
 			},
 		},

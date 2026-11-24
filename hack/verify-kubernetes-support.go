@@ -132,13 +132,31 @@ var (
 	kubernetesModule = regexp.MustCompile(`(?m)^[\t ]*(k8s\.io/(?:api|apiextensions-apiserver|apimachinery|client-go))[\t ]+v0\.([0-9]+)\.([0-9]+)(?:[\t ]|$)`)
 )
 
+// kindLoadBalancerImage is the name kind runs, spelled as kind spells it: a
+// registry host, a repository and a tag, then the digest the driver pulls.
+var kindLoadBalancerImage = regexp.MustCompile(`^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}$`)
+
 type supportManifest struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Policy        string    `json:"policy"`
-	WindowSize    int       `json:"windowSize"`
-	LastVerified  string    `json:"lastVerified"`
-	KindVersion   string    `json:"kindVersion"`
-	Releases      []release `json:"releases"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Policy        string `json:"policy"`
+	WindowSize    int    `json:"windowSize"`
+	LastVerified  string `json:"lastVerified"`
+	KindVersion   string `json:"kindVersion"`
+	// KindLoadBalancer is required: a manifest without it decodes to an empty
+	// pin, which no kindVersion matches.
+	KindLoadBalancer kindLoadBalancerPin `json:"kindLoadBalancer"`
+	Releases         []release           `json:"releases"`
+}
+
+// kindLoadBalancerPin is the image kind runs the load balancer of a cluster
+// with more than one control plane from, and the kind version whose
+// pkg/cluster/internal/loadbalancer it was read from. kind leaves that pull to
+// docker run, which tries once, so the driver pulls the image by this digest
+// with retries before kind runs. A pin read from another kind version is
+// refused here, before any cluster could show that kind runs another image.
+type kindLoadBalancerPin struct {
+	KindVersion string `json:"kindVersion"`
+	Image       string `json:"image"`
 }
 
 type release struct {
@@ -639,6 +657,18 @@ func loadAndValidateManifest(path string, now time.Time) (supportManifest, []par
 	}
 	if !kindVersion.MatchString(manifest.KindVersion) {
 		return supportManifest{}, nil, fmt.Errorf("%s: kindVersion %q is not a stable semantic version", path, manifest.KindVersion)
+	}
+	if manifest.KindLoadBalancer.KindVersion != manifest.KindVersion {
+		return supportManifest{}, nil, fmt.Errorf(
+			"%s: kindLoadBalancer was read from kind %q, not kindVersion %s; pin the image kind %s names in pkg/cluster/internal/loadbalancer",
+			path, manifest.KindLoadBalancer.KindVersion, manifest.KindVersion, manifest.KindVersion,
+		)
+	}
+	if !kindLoadBalancerImage.MatchString(manifest.KindLoadBalancer.Image) {
+		return supportManifest{}, nil, fmt.Errorf(
+			"%s: kindLoadBalancer.image %q must be the registry, repository and tag kind runs, pinned with @sha256:<64 lowercase hex>",
+			path, manifest.KindLoadBalancer.Image,
+		)
 	}
 
 	parsed := make([]parsedRelease, 0, len(manifest.Releases))
@@ -1496,7 +1526,7 @@ func verifyRunnerHarnessJob(path string, workflow workflowDocument) error {
 
 // verifyRaceJob holds the race detector to one unconditional job under the name
 // the support gate reads and a release requires. It runs make test-race, which
-// verifyMakeRaceTargets holds to every package but the shell mutation suites:
+// verifyMakeRaceTargets holds to every package but the mutation suites:
 // the verify job runs those without the detector.
 func verifyRaceJob(path string, workflow workflowDocument) error {
 	race := workflow.Jobs["race"]
@@ -1524,7 +1554,7 @@ func verifyRaceJob(path string, workflow workflowDocument) error {
 	if err := verifyGoBuildCacheStep(path, "race", raceSteps[3], "race"); err != nil {
 		return err
 	}
-	if raceSteps[4].Name != "Run race coverage without the shell mutation suites" ||
+	if raceSteps[4].Name != "Run race coverage without the mutation suites" ||
 		raceSteps[4].If != "" || raceSteps[4].Uses != "" || raceSteps[4].Run != "make test-race" ||
 		raceSteps[4].Shell != "bash" || raceSteps[4].WorkingDirectory != "" ||
 		len(raceSteps[4].With) != 0 || len(raceSteps[4].Env) != 0 {
@@ -3386,6 +3416,21 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			`fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"`,
 		}),
+		// The load balancer image the driver pulls is the one pinned for the
+		// kind version it just checked, and the names it pulls and tags are
+		// derived from that pin alone.
+		exactSourceLineSequence("kind load balancer pin binding", []string{
+			`KIND_LOAD_BALANCER_IMAGE=$(jq -r --arg kind "$EXPECTED_KIND_VERSION" \`,
+			`'if .kindLoadBalancer.kindVersion == $kind then .kindLoadBalancer.image // empty else empty end' \`,
+			`"$ROOT_DIR/support/kubernetes.json")`,
+			`[ -n "$KIND_LOAD_BALANCER_IMAGE" ] ||`,
+			`fail "support manifest pins no load balancer image read from kind $EXPECTED_KIND_VERSION"`,
+			`is_pinned_image "$KIND_LOAD_BALANCER_IMAGE" ||`,
+			`fail "kind load balancer image $KIND_LOAD_BALANCER_IMAGE must be pinned with @sha256:<64 lowercase hex>"`,
+			`# The name kind runs, and the same image by its pinned digest.`,
+			`KIND_LOAD_BALANCER_REFERENCE=${KIND_LOAD_BALANCER_IMAGE%@*}`,
+			`KIND_LOAD_BALANCER_PINNED=${KIND_LOAD_BALANCER_REFERENCE%:*}@${KIND_LOAD_BALANCER_IMAGE#*@}`,
+		}),
 		// 63 is the DNS label limit and 23 is the length of the
 		// "-external-load-balancer" container kind gives an HA cluster, a name
 		// the harness never spells and so cannot bound by inspection. Docker
@@ -3592,6 +3637,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
 		}),
 		exactSourceLine("inotify capacity before kind cluster creation", `ensure_inotify_capacity`),
+		// hack/e2e-kind-load-balancer-selftest.sh holds what the function does
+		// on each state of the Docker host; this holds that it runs before kind.
+		exactSourceLine("kind load balancer image before kind cluster creation", `prepare_kind_load_balancer_image`),
 		exactSourceLineSequence("kind cluster creation", []string{
 			`kind create cluster \`,
 			`--name "$CLUSTER_NAME" \`,
@@ -3609,6 +3657,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fi`,
 			`require_ready_nodes "after kind cluster creation"`,
 			`assert_kind_ha_topology`,
+			`assert_kind_load_balancer_image`,
 			`assert_kubelet_log_budget`,
 			`assert_api_server_endpoint_inventory`,
 		}),
@@ -4076,6 +4125,12 @@ func verifyStaticChecksWiring(files e2eWiringFiles) error {
 		// failure behind a second attempt, and one that stopped would fail
 		// the run on the race again.
 		exactSourceLine("kind create retry self-test wiring", `"$ROOT_DIR/hack/e2e-kind-create-retry-selftest.sh"`),
+		// The bootstrap pulls kind's load balancer image itself, and uses a
+		// name the Docker host already has only when it is the pinned image.
+		// A preparation that stopped refusing would let kind run whatever that
+		// name holds, and one that removed what it did not pull would take
+		// another run's image.
+		exactSourceLine("kind load balancer self-test wiring", `"$ROOT_DIR/hack/e2e-kind-load-balancer-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4095,8 +4150,12 @@ func verifyStaticChecksWiring(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-kind-create-retry-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the kind create retry self-test must be wired exactly once", files.staticChecks)
 	}
+	if bytes.Count(staticContents, []byte("e2e-kind-load-balancer-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the kind load balancer self-test must be wired exactly once", files.staticChecks)
+	}
 	for _, step := range []sourceContractStep{
 		staticContract[2], staticContract[3], staticContract[4], staticContract[5], staticContract[6],
+		staticContract[7],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
@@ -4486,7 +4545,7 @@ func verifyMakeE2ETarget(path string) error {
 }
 
 // verifyMakeRaceTargets holds the race pass to its audited rule, and the tests
-// it skips to the shell mutation suites and nothing else. Those suites run only
+// it skips to the mutation suites and nothing else. Those suites run only
 // in the test target, so that target has to stay every package with nothing
 // skipped and a timeout ./hack fits in, and verify-source, which the verify job
 // runs, has to run it.
@@ -4498,7 +4557,9 @@ func verifyMakeRaceTargets(path string) error {
 	const skipped = "override RACE_MUTATION_TESTS := " +
 		"TestVerifyE2EHarnessRejectsCriticalMutations|" +
 		"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
-		"TestVerifyE2EChildScriptsRejectCriticalMutations"
+		"TestVerifyE2EChildScriptsRejectCriticalMutations|" +
+		"TestTheArtifactCheckRefusesAPhaseThatDropsOne|" +
+		"TestTheArtifactCheckFollowsAPublishWhereverThePhaseReachesIt"
 	assignments := regexp.MustCompile(`(?m)^(?:override[ \t]+)?RACE_MUTATION_TESTS[ \t]*[:+?!]?=[^\r\n]*$`).FindAll(contents, -1)
 	if len(assignments) != 1 || string(assignments[0]) != skipped {
 		return fmt.Errorf("%s: RACE_MUTATION_TESTS must be the exact audited list of suites the race pass skips", path)
@@ -4520,7 +4581,7 @@ func verifyMakeRaceTargets(path string) error {
 		return err
 	}
 	if exactMakeRule(parsed.lines, test.line) != fmt.Sprintf("test:\n\t$(GO) test -timeout=%dm ./...", makeTestTimeoutMinutes) {
-		return fmt.Errorf("%s: test must run every package with nothing skipped and a %d-minute timeout, because it is the only run of the shell mutation suites",
+		return fmt.Errorf("%s: test must run every package with nothing skipped and a %d-minute timeout, because it is the only run of the mutation suites",
 			path, makeTestTimeoutMinutes)
 	}
 	sources := parsed.rules["verify-source"]
@@ -4532,7 +4593,7 @@ func verifyMakeRaceTargets(path string) error {
 		prerequisites = prerequisites[:comment]
 	}
 	if !slices.Contains(strings.Fields(prerequisites), "test") {
-		return fmt.Errorf("%s: verify-source must run the test target, the only run of the shell mutation suites", path)
+		return fmt.Errorf("%s: verify-source must run the test target, the only run of the mutation suites", path)
 	}
 	return nil
 }
@@ -5907,15 +5968,16 @@ func loadDatabaseCatalog(path string, now time.Time) (databaseCatalog, error) {
 		}
 		// The lifecycle holds both PostgreSQL servers to the tag, and the line
 		// the MySQL image declares to its tag, so a green run proves the tag's
-		// line, whatever this row says. A baseline MySQL line may say more after
-		// it, as its LTS does. An added line may not: the witness test and the
-		// readings probe take its file stem from the line itself.
+		// line, whatever this row says. A MySQL line may name its LTS after the
+		// release, as 8.4 and 9.7 do, and nothing else: the witness test and the
+		// readings probe take an added line's file stem from the release before
+		// it, and the release check finds the row by the release its image names.
 		release, err := phases.DatabaseImageLine(line.Engine, line.Image)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
 		want := release + ".x"
-		if line.Line != want && (added || line.Engine != "mysql" || !strings.HasPrefix(line.Line, want+" ")) {
+		if line.Line != want && (line.Engine != "mysql" || line.Line != want+" LTS") {
 			return fmt.Errorf("%s: the line is %q and its image names %s", path, line.Line, want)
 		}
 		// Two rows that name one release would run jobs of the same names, and
@@ -5998,6 +6060,12 @@ func verifyDatabaseImageDateCheck(driverPath string, driver []byte) error {
 		exactSourceLine("an added line's date read", `if [ -n "$E2E_POSTGRES_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the date held to the image", `image_created_on "$postgres_image_created" "$E2E_POSTGRES_IMAGE_CREATED" ||`),
 		exactSourceLine("the MySQL source image pulled", `mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql`),
+		// An innovation image declares MYSQL_MAJOR=innovation, so the line is read
+		// from the release the image installs.
+		exactSourceLine("the release the MySQL image installs read",
+			`mysql_image_version=$(printf '%s\n' "$mysql_image_environment" | sed -n 's/^MYSQL_VERSION=//p')`),
+		exactSourceLine("the MySQL line read from that release",
+			`mysql_image_declared=$(mysql_version_line "$mysql_image_version")`),
 		exactSourceLine("the MySQL line held to the image", `[ "$mysql_image_declared" = "$E2E_MYSQL_LINE" ] ||`),
 		exactSourceLine("an added MySQL line's date read", `if [ -n "$E2E_MYSQL_IMAGE_CREATED" ]; then`),
 		exactSourceLine("the MySQL date held to the image", `image_created_on "$mysql_image_created" "$E2E_MYSQL_IMAGE_CREATED" ||`),

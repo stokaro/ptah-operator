@@ -936,7 +936,7 @@ too long for another session's lock, refuses nothing about the plan. It reads
 a dry run`, or `(lock-timeout)`, and the Plan is tried again at the failure
 retry. A plan refused under either code reads `invalid_plan_output: plan
 command reported refused (stale-plan) rather than a plan` and is tried again
-too, though Ptah v0.35.0's `schema plan` takes no lock and reads no plan file,
+too, though Ptah v0.35.1's `schema plan` takes no lock and reads no plan file,
 so it raises neither. Every other code stops the schema, from the plan or from
 the dry run, one this release does not know included. A code Ptah adds later
 for a database that moved or was busy stops it as well, and the schema then
