@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.2.0",
-  "frozenAt": "2026-11-23T17:03:30.705255+00:00",
+  "frozenAt": "2026-11-24T00:19:51.759172+00:00",
   "profileSourceCommit": "1259f4d59343fef049307085e3ea77d2971677cb",
   "purpose": "Predeclared qualification requirements and targets. This freeze records no successful qualification run or production acceptance.",
   "decision": "Not assessed",
@@ -28,11 +28,11 @@
     },
     {
       "path": "support/ptah.json",
-      "sha256": "2ae83ef9ada51987708c1e7d229feb50bc007245b1834f4731a6f0a6fcbf1edb"
+      "sha256": "bcee79162d2883ed75117ced78938445c182ad4e7e1802067a7e5b3d6add8722"
     },
     {
       "path": "docs/site/src/content/docs/support/databases.md",
-      "sha256": "04ec3f6f2397ae4cac11fcbd18de5ced24d20e3d5803390018e5539b72715448"
+      "sha256": "9f3c54b91925db090b4670dfb6d55d31ec9fe22b2c05afea1dea89905795b2a4"
     },
     {
       "path": "support/qualification/kindnet/Dockerfile",
@@ -53,7 +53,7 @@
   ],
   "functionalMatrix": {
     "path": "support/qualification/0.2.0-functional-matrix.md",
-    "sha256": "a7a29c591a4a66291ff47a998fe57ffd9105a2a192058f7ca1daa6947ed42ab2",
+    "sha256": "9bc56d0dd6f72d765159e5b9157c6c509110d5e964526e9b8aea842b9c6fded9",
     "generatedFromCommit": "a8b90b5816e9e45d6ba97a1bf006918896d892e3",
     "command": "go run ./hack/acceptancecoverage",
     "kubernetesMinors": [
@@ -79,10 +79,10 @@
     "disposition": "v0.2.18 is the published predecessor of the next candidate. The upgrade from it is walked through both releases' guides by support/qualification/probes/fresh_install.py --upgrade-from on both platforms; the synthetic transition, refusal and recovery proofs remain required."
   },
   "reassessment": "Verify these hashes before a qualification run. Preserve this freeze and the original results if a profile revision changes a target. Final artifact identities and measured acceptance results are recorded separately under issues #583 and #584.",
-  "revision": 139,
+  "revision": 140,
   "supersedes": {
-    "freezeCommit": "0c2aa71d3fc06ae7f38f5aeee8b279010859f08c",
-    "sha256": "2ec7563e872b5e05e43fb24ae2717bbb608788dd12f9589eec07ee5055a0407f"
+    "freezeCommit": "caf5065f36cbaaa107a39a2ff6d9c17ce10f80e7",
+    "sha256": "6c63a5ad51b8cc4a6ece68b0ea9b74eea4b8897f37e1be495cd22c881e1e8c52"
   },
-  "revisionReason": "MySQL 9.7.x joins the supported release lines on run 45223146080"
+  "revisionReason": "Move the executor the edge row of support/ptah.json verifies from Ptah v0.35.0 to the v0.35.1 release image, and record in the edge row that the drift check measured again at v0.35.1 still replays each applied migration under its file's own transaction directive rather than under --tx-mode. v0.35.1 refuses a MySQL table revoke that a database-wide grant keeps, with the code declaration-refused, which a Plan reports as plan_refused and stops Blocked with PlanRefused, and plans a MySQL GRANT ALL once rather than on every plan. Every reading, every saved plan, the schema SQL contract's statements and the capacity bands are unchanged; the contract, the capture record and the calibration name the new commit. The functional matrix names the new build, and the databases page describes it. Phases, scenarios, suites, cells, platforms, the profile, its targets and every other input are unchanged."
 }
