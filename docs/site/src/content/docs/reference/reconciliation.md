@@ -18,8 +18,12 @@ then a path to follow the change where it turns. A schema change can meet a
 plan Ptah refuses, a plan replaced before anyone approved it, or an Apply
 nobody can account for. A migration can find nothing pending, or end a run
 `Partial` or `Unknown` that a reading or a person's acknowledgment settles.
-Select a stage, or an object, to follow it. The sections after it are the
-precise reference it is taken from.
+Select a stage, or an object, to follow it. Choose **Audit** to read the same
+record by evidence source instead: what each source can and cannot establish,
+what reads it, and what is left of it after a deletion or the loss of the
+cluster. The sections after it are the precise reference the journey is
+taken from, and [Audit a database change](../../use/audit/) is the one for the
+audit view.
 
 <div data-lifecycle-explorer></div>
 
