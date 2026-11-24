@@ -79,7 +79,7 @@ func ConfigMapPlanSource(revision operatorv1alpha1.ConfigMapSourceRevision, snap
 
 // SchemaPlanSource is what a plan computed from a schema's resolved source
 // binds: the artifact digest of an OCI source, or the source binding of a
-// ConfigMap, Git or HTTPS one. A source that has not been read yet binds
+// ConfigMap, Git, HTTPS or S3 one. A source that has not been read yet binds
 // nothing.
 func SchemaPlanSource(status operatorv1alpha1.SchemaSourceStatus) (string, *operatorv1alpha1.PlanSourceBinding) {
 	if git := status.Git; git != nil {
@@ -87,6 +87,9 @@ func SchemaPlanSource(status operatorv1alpha1.SchemaSourceStatus) (string, *oper
 	}
 	if https := status.HTTPS; https != nil {
 		return "", withPolicy(HTTPSPlanSource(https.URL, https.Path, https.ContentDigest), status.SourcePolicy)
+	}
+	if s3 := status.S3; s3 != nil {
+		return "", withPolicy(S3PlanSource(s3.Endpoint, s3.Bucket, s3.Key, s3.Path, s3.ContentDigest), status.SourcePolicy)
 	}
 	if status.ConfigMap != nil && status.Snapshot != nil {
 		return "", withPolicy(ConfigMapPlanSource(*status.ConfigMap, *status.Snapshot), status.SourcePolicy)
@@ -105,7 +108,7 @@ func withPolicy(source *operatorv1alpha1.PlanSourceBinding, policy *operatorv1al
 
 // MigrationPlanSource is what a plan computed from a migration's resolved
 // source binds: the artifact digest of an OCI source, or the source binding
-// of a ConfigMap, Git or HTTPS one.
+// of a ConfigMap, Git, HTTPS or S3 one.
 func MigrationPlanSource(
 	artifact *operatorv1alpha1.SourceAccessBinding,
 	revision *operatorv1alpha1.ConfigMapSourceRevision,
@@ -119,6 +122,9 @@ func MigrationPlanSource(
 	}
 	if https := artifact.HTTPS; https != nil {
 		return "", withPolicy(HTTPSPlanSource(https.URL, https.Path, https.ContentDigest), policy)
+	}
+	if s3 := artifact.S3; s3 != nil {
+		return "", withPolicy(S3PlanSource(s3.Endpoint, s3.Bucket, s3.Key, s3.Path, s3.ContentDigest), policy)
 	}
 	if artifact.Snapshot != nil {
 		if revision == nil {
@@ -178,24 +184,30 @@ func SamePlanSource(artifactA string, sourceA *operatorv1alpha1.PlanSourceBindin
 	return artifactA == artifactB && Equal(sourceA, sourceB)
 }
 
-// ValidateAccess holds an access binding to one of its four shapes: an OCI
-// reference pinned to a matching digest, a well-formed snapshot, a Git commit
-// or an HTTPS download, the last three with nothing that belongs to a
-// registry.
+// ValidateAccess holds an access binding to one of its five shapes: an OCI
+// reference pinned to a matching digest, a well-formed snapshot, a Git
+// commit, an HTTPS download or an S3 object version, the last four with
+// nothing that belongs to a registry.
 func ValidateAccess(binding operatorv1alpha1.SourceAccessBinding) error {
 	registry := binding.ResolvedReference != "" || binding.Digest != "" || binding.RegistryAuthFrom != nil ||
 		binding.Transport.PlainHTTP || binding.Transport.CAFrom != nil
 	if binding.Git != nil {
-		if binding.Snapshot != nil || binding.HTTPS != nil || registry {
+		if binding.Snapshot != nil || binding.HTTPS != nil || binding.S3 != nil || registry {
 			return errors.New("a Git access binding names no registry, no snapshot and no download")
 		}
 		return ValidateGit(*binding.Git)
 	}
 	if binding.HTTPS != nil {
-		if binding.Snapshot != nil || registry {
-			return errors.New("an HTTPS access binding names no registry and no snapshot")
+		if binding.Snapshot != nil || binding.S3 != nil || registry {
+			return errors.New("an HTTPS access binding names no registry, no snapshot and no object")
 		}
 		return ValidateHTTPS(*binding.HTTPS)
+	}
+	if binding.S3 != nil {
+		if binding.Snapshot != nil || registry {
+			return errors.New("an S3 access binding names no registry and no snapshot")
+		}
+		return ValidateS3(*binding.S3)
 	}
 	if binding.Snapshot == nil {
 		if err := ocireference.ValidatePinned(binding.ResolvedReference, binding.Digest); err != nil {
@@ -231,6 +243,10 @@ func AccessGives(binding operatorv1alpha1.SourceAccessBinding, artifactDigest st
 		return source != nil && artifactDigest == "" && source.Kind == operatorv1alpha1.SourceKindHTTPS &&
 			https.ContentDigest == source.ContentDigest && HTTPSRevision(https.URL, https.Path) == source.Revision
 	}
+	if s3 := binding.S3; s3 != nil {
+		return source != nil && artifactDigest == "" && source.Kind == operatorv1alpha1.SourceKindS3 &&
+			s3.ContentDigest == source.ContentDigest && S3Revision(s3.Endpoint, s3.Bucket, s3.Key, s3.Path) == source.Revision
+	}
 	if binding.Snapshot != nil {
 		return source != nil && artifactDigest == "" && binding.Snapshot.ContentDigest == source.ContentDigest
 	}
@@ -239,9 +255,10 @@ func AccessGives(binding operatorv1alpha1.SourceAccessBinding, artifactDigest st
 
 // SchemaAccess is the access binding a schema's resolved source gives later
 // operations: the snapshot of a ConfigMap source, the resolved commit of a
-// Git source or the resolved download of an HTTPS one with the spec's
-// credential and trust selectors, or nil for an OCI source, whose binding the
-// caller builds from the registry selectors.
+// Git source, the resolved download of an HTTPS one or the resolved object
+// version of an S3 one, with the spec's credential and trust selectors, or
+// nil for an OCI source, whose binding the caller builds from the registry
+// selectors.
 func SchemaAccess(spec operatorv1alpha1.SourceSpec, status operatorv1alpha1.SchemaSourceStatus) *operatorv1alpha1.SourceAccessBinding {
 	if status.Git != nil {
 		if spec.Git == nil {
@@ -254,6 +271,12 @@ func SchemaAccess(spec operatorv1alpha1.SourceSpec, status operatorv1alpha1.Sche
 			return nil
 		}
 		return &operatorv1alpha1.SourceAccessBinding{HTTPS: HTTPSAccess(*spec.HTTPS, *status.HTTPS)}
+	}
+	if status.S3 != nil {
+		if spec.S3 == nil {
+			return nil
+		}
+		return &operatorv1alpha1.SourceAccessBinding{S3: S3Access(*spec.S3, *status.S3)}
 	}
 	if status.Snapshot == nil {
 		return nil
@@ -396,14 +419,17 @@ func ValidateHTTPS(binding operatorv1alpha1.HTTPSSourceBinding) error {
 
 // SchemaSourceReady reports whether later operations may read a schema's
 // source: a verified OCI artifact, the snapshot of the ConfigMap the spec
-// names, or the Git commit or HTTPS download resolved for the source the spec
-// names.
+// names, or the Git commit, HTTPS download or S3 object version resolved for
+// the source the spec names.
 func SchemaSourceReady(spec operatorv1alpha1.SourceSpec, status operatorv1alpha1.SchemaSourceStatus) bool {
 	if status.Git != nil {
 		return GitResolved(spec.Git, status.Git)
 	}
 	if status.HTTPS != nil {
 		return HTTPSResolved(spec.HTTPS, status.HTTPS)
+	}
+	if status.S3 != nil {
+		return S3Resolved(spec.S3, status.S3)
 	}
 	if status.Snapshot != nil {
 		return spec.ConfigMap != nil && status.ConfigMap != nil && status.ConfigMap.Name == spec.ConfigMap.Name

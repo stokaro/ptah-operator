@@ -484,13 +484,53 @@ digest, under plan contract version 2, and does not bind the download digest:
 new bytes whose selected files are the same keep the plan once the spec names
 them, and another URL or path retires it.
 
+### An S3 source
+
+A schema or a migration whose `s3` names an endpoint, a region, a bucket, a
+key, the SHA-256 of the object's bytes, a format and a path reaches the bucket
+only from Jobs. Ptah has no S3 pull, so the runner reads the object itself:
+one path-style GetObject request, signed with Signature Version 4 by the key
+pair in `authFrom` or sent unsigned, downloaded to a private file and hashed as
+it is written. Nothing is read as a file or an archive before the digest
+matches, and the archive is then read by the rules Ptah's HTTPS pull applies,
+which the runner carries a copy of. Resolve reports the object digest, the
+content digest of the selected files and the version the endpoint served, if
+it served one. The status records the endpoint, region, bucket, key, version,
+format, path and both digests, and observation follows with no verification
+policy to check; `ArtifactResolved` says `DownloadVerified`, names both
+digests and says which version every operation reads.
+
+Every later operation reads the recorded version again, in an init container
+named `fetch-s3-source` that alone holds the key pair and the CA, held to both
+digests, and copies the files where the operation container reads them. A
+bucket that keeps no versions gives none to record, and the operation reads
+the key's current bytes under the same two digests. Nothing is cached or stored
+in the cluster.
+
+Before any request, the runner refuses a key pair whose Secret's `host` is not
+the endpoint's authority or whose `bucket` is not the source's, a CA that does
+not give the `caSHA256` the owner granted, a `caSHA256` with no CA selected,
+and half a key pair or a session token without one, as `invalid_s3_access`. A
+redirect is refused, not followed. A refusal from the endpoint, a version other
+than the one asked for, or bytes that do not give a digest end the operation as
+`s3_source_refused`, whose message names the endpoint's code and message, the
+versions, or both digests.
+
+The source is read again at every interval. A plan binds the SHA-256 of the
+endpoint's authority, the bucket, the key and the path, joined by newlines,
+with the content digest, under plan contract version 2, and binds neither the
+object digest, the version, the region nor the Secret: an object written again,
+or read from another version, whose selected files are the same keeps the plan
+once the spec names its digest, and another endpoint, bucket, key or path
+retires it.
+
 ### A source policy
 
-A ConfigMap, Git or HTTPS source may name a source policy with
+A ConfigMap, Git, HTTPS or S3 source may name a source policy with
 `sourcePolicyFrom`. Resolve checks the source against it: a ConfigMap's name
-and size before a snapshot is written, a Git or HTTPS host before the Resolve
-Job is made, and the size of the selected files before the commit or the
-download is recorded. A refused source
+and size before a snapshot is written, a Git or HTTPS host, or an S3 endpoint
+and bucket, before the Resolve Job is made, and the size of the selected files
+before the commit, the download or the object is recorded. A refused source
 fails with the rule named and plans nothing. The policy is recorded beside the
 resolution and bound into every plan computed from it, and a policy replaced
 in the cluster is read at once: the source is resolved again under it, and

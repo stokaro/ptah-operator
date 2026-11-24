@@ -36,7 +36,7 @@ decision.
 | `DifferenceNotPlannable` | The Plan found a difference Ptah cannot plan and saved only notes about it, such as a generated column's new expression on PostgreSQL before 17. `InSync` and `Ready` are false, nothing is published or applied, and `Ready` carries the notes. A read after an Apply that finds one ends the proof and records no Apply as converged. See [A difference Ptah cannot plan](#a-difference-ptah-cannot-plan). |
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
-| `DownloadVerified` | An HTTPS source's download gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests. |
+| `DownloadVerified` | An HTTPS source's download, or an S3 source's object, gave the digest the spec pins, and the content digest of the files it selects was recorded. The message names both digests, and for S3 the version every later operation reads. |
 | `DriftCheckUnsupported` | A migration Apply ran nothing because `spec.policy.driftCheck` could not decide: the target's schema cannot be read, the applied history cannot be replayed, the applied migrations fail on the shadow, Ptah refused a selector in its `exclude`, or the comparison could not describe an object. See [A migration whose drift check refused the run](#a-migration-whose-drift-check-refused-the-run). |
 | `DriftUndecided` | The Plan changed nothing because Ptah could not decide whether some declared objects exist, such as a PostgreSQL publication under a URL that reads some of the database's schemas. `DriftDetected` is unknown, `InSync` and `Ready` are false, nothing is published or applied, and `Ready` names each object and Ptah's reason. See [A declared object Ptah could not decide](#a-declared-object-ptah-could-not-decide). |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired execution binding: the executor image, Ptah version, runner protocol or controller-state version changed. A manager-only release does not produce it. |
@@ -635,7 +635,7 @@ desired_source_unreadable: schema.hcl: managed data file "../../proc/self/enviro
 desired_source_unreadable: schema.hcl: managed data file "/proc/self/environ" for table public.regions: a path starting at a root is outside allowed root "/work"
 ```
 
-A schema from a ConfigMap, Git or HTTPS source is one file under `/source`, outside
+A schema from a ConfigMap, Git, HTTPS or S3 source is one file under `/source`, outside
 that root, and no row file arrives beside it, so its row files are refused
 wherever the declaration puts them, as the first line shows. Publish a schema
 with rows with `ptah schema push`: its artifact carries the rows in the
@@ -849,7 +849,8 @@ file alone can be refused for, indexes included, with no database.
 Before an Observe, a Plan, or a migration's History or Apply fetches a source
 through a credential, an init container checks the access the credential's
 owner granted: `validate-source-authority` for an OCI source, and the
-`fetch-git-source` or `fetch-https-source` step itself for Git and HTTPS. A
+`fetch-git-source`, `fetch-https-source` or `fetch-s3-source` step itself for
+Git, HTTPS and S3. A
 Resolve checks the same grants first, so the step refuses what changed after
 it: a Secret whose grant now names another host, a `caSHA256` pin added to the
 Secret, or a check an upgrade added after the source resolved, such as the
@@ -859,6 +860,20 @@ of the same refusal, code and sentence:
 ```
 the validate-source-authority step refused the source's access, so the run never started: invalid_oci_access: registry credential is not granted for the OCI source authority
 ```
+
+For an S3 source the code is `invalid_s3_access`, and the sentence names the
+grant the Secret's owner wrote:
+
+```
+the fetch-s3-source step refused the source's access, so the run never started: invalid_s3_access: the S3 credential is granted for the bucket "orders-private", not the source's
+```
+
+An S3 read that the endpoint refuses, or that returns other bytes, is
+`s3_source_refused`, with the code and the message the endpoint answered, or
+both digests. It reaches the resource the same way: `ReconciliationFailed=True`
+on a schema and `Progressing=False` on a migration, with the reason
+`OperationFailed`, the message bounded to 512 bytes and redacted with the
+key pair.
 
 A schema carries it in `ReconciliationFailed`, a migration in `Progressing`,
 both with the reason `OperationFailed`, and the Warning Event carries the same

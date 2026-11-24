@@ -275,6 +275,19 @@ func Run(ctx context.Context, config Config) Result {
 	if config.Executor == nil {
 		config.Executor = OSExecutor{StopDelay: ChildStopDelay(terminationGrace)}
 	}
+	// An S3 source is read by the runner itself, since the pinned Ptah has no
+	// S3 pull, and only at a Resolve: every other operation reads the files
+	// its fetch container delivered.
+	if source, isS3 := S3SourceFromEnvironment(environment); isS3 {
+		_, isGit := GitSourceFromEnvironment(environment)
+		_, isHTTPS := HTTPSSourceFromEnvironment(environment)
+		if isGit || isHTTPS || config.Operation != OperationResolve || inputs.RequestedReference != "" {
+			setResultError(&result, "invalid_configuration",
+				errors.New("an S3 source reaches only a Resolve operation, and only alone"), redactor, config.Diagnostics)
+			return result
+		}
+		return runS3Resolve(ctx, config, environment, source, redactor, result)
+	}
 	// A Git or an HTTPS source resolves through Ptah's own pull, which the
 	// operation reaches with the credential its fetch container holds and
 	// nothing else.

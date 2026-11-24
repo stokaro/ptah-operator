@@ -25,5 +25,8 @@ func FetchGitSource(ctx context.Context, ptahBinary string, environment []string
 	if _, isHTTPS := HTTPSSourceFromEnvironment(environment); isHTTPS {
 		return fmt.Errorf("%s: the fetch names an HTTPS source as well", CodeGitSourceRefused)
 	}
+	if _, isS3 := S3SourceFromEnvironment(environment); isS3 {
+		return fmt.Errorf("%s: the fetch names an S3 source as well", CodeGitSourceRefused)
+	}
 	return fetchRemoteSource(ctx, ptahBinary, environment, source, destination, tempDir, executor, diagnostics)
 }

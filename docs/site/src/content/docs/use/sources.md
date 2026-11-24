@@ -1,13 +1,14 @@
 ---
-title: Deliver from a ConfigMap, Git or HTTPS
-description: Keep a schema or a migration sequence in a ConfigMap, a Git repository or a download pinned by digest, render it with Kustomize or Helm, reach a private server, and bound what a source may name.
+title: Deliver from a ConfigMap, Git, HTTPS or S3
+description: Keep a schema or a migration sequence in a ConfigMap, a Git repository, a download or an S3 object pinned by digest, render it with Kustomize or Helm, reach a private server, and bound what a source may name.
 ---
 
 A `PtahSchema` reads its desired schema, and a `PtahMigration` its migration
-directory, from one of four sources: an OCI artifact, a ConfigMap in the
-resource's namespace, a Git repository, or an HTTPS download pinned by its
-digest. This page covers the last three. None needs a registry or a
-verification policy, and each works for both resources.
+directory, from one of five sources: an OCI artifact, a ConfigMap in the
+resource's namespace, a Git repository, an HTTPS download pinned by its
+digest, or an object of an S3-compatible bucket pinned the same way. This page
+covers the last four. None needs a registry or a verification policy, and each
+works for both resources.
 
 Choose by what the files are trusted by. A ConfigMap is trusted by Kubernetes
 RBAC: whoever may write it may change the desired state, exactly as whoever
@@ -18,7 +19,9 @@ operator plans next. It fits a team that wants the operator to follow a
 branch or a tag itself. An HTTPS source is trusted by the digest in the spec:
 whoever may write the resource decides which bytes are read, and the server
 can only serve them or fail. It fits a team that already publishes release
-archives to an artifact server and wants no registry.
+archives to an artifact server and wants no registry. An S3 source is trusted
+the same way, by its digest, and fits a team whose release archives already
+go to a bucket.
 
 Whatever the source, the operator plans first and applies only what was
 approved or what `spec.policy` lets it apply, and every operation reads the
@@ -28,7 +31,7 @@ each source is resolved and what each operation checks.
 
 Moving a resource from one kind of source to another is an edit of its spec,
 in its manifest or with `kubectl edit`. `kubectl ptah set-source` changes the
-reference of an OCI source and refuses a ConfigMap, Git or HTTPS one: an
+reference of an OCI source and refuses a ConfigMap, Git, HTTPS or S3 one: an
 artifact also takes a verification policy, which those sources refuse, and
 only the person making the edit can name it.
 [Moving to a new artifact](../operations/#set-source) has the OCI case.
@@ -465,13 +468,178 @@ spec:
 The Job mounts the Secret into the container that downloads and into no
 other; the manager never reads it.
 
+## From S3
+
+`s3` names one object of an S3-compatible bucket and the SHA-256 of the exact
+bytes GetObject returns:
+
+```yaml
+spec:
+  desired:
+    s3:
+      endpoint: https://objects.example.com
+      region: us-east-1
+      bucket: inventory-schemas
+      key: inventory/1.4.0/schema.hcl
+      digest: sha256:<SHA-256 of the object's bytes>
+      format: File
+      path: schema.hcl
+```
+
+The digest is the whole trust decision, as for HTTPS. The fetch reads the
+object with one path-style GetObject request,
+`https://<endpoint>/<bucket>/<key>`, asks for the bytes as stored, and refuses
+bytes that do not give the digest before it reads any of them as a file or an
+archive. Take the digest of the file you uploaded: neither the object's ETag
+nor a checksum the bucket stores is this number. `format` and `path` select
+the files exactly as they do for an HTTPS download, and so does a migration
+sequence:
+
+```yaml
+spec:
+  artifact:
+    s3:
+      endpoint: https://objects.example.com
+      region: us-east-1
+      bucket: orders-releases
+      key: orders/orders-1.4.0.tar.gz
+      digest: sha256:<SHA-256 of the archive>
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+```
+
+`endpoint` is `https://` and an authority, with no path, credential, query or
+fragment, and it has no default: for AWS write the regional endpoint, such as
+`https://s3.eu-west-1.amazonaws.com`. Its host is ASCII, as an HTTPS URL's is.
+`region` is the region a request is signed for and names nothing else: MinIO's
+default is `us-east-1`, and Cloudflare R2 and Google Cloud Storage take
+`auto`. An endpoint that answers with a redirect to another region is refused
+rather than followed, with a message that says to name the endpoint and the
+region the bucket is served from. `bucket` is 3 to 63 lowercase letters,
+digits, dots, hyphens and underscores, starting and ending with a letter or a
+digit, and `key` is at most 1,024 bytes with no leading `/`, no empty, `.` or
+`..` element and no control character.
+
+The fetch speaks path-style addressing only. A provider that serves a bucket
+only under its own host name, virtual-hosted style, cannot be read this way.
+It has been run against an in-process server that implements GetObject; no S3
+implementation is measured yet.
+
+### Versions
+
+In a bucket that keeps versions, Resolve records the version the endpoint
+served, and every later operation reads that version, so a write to the key
+after Resolve does not change what an approved plan runs against. The next
+Resolve reads the current version again. `versionId` pins one version instead:
+
+```yaml
+spec:
+  desired:
+    s3:
+      endpoint: https://objects.example.com
+      region: us-east-1
+      bucket: inventory-schemas
+      key: inventory/schema.hcl
+      versionId: 3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY
+      digest: sha256:<SHA-256 of that version's bytes>
+      format: File
+      path: schema.hcl
+```
+
+A version is an upstream revision, not an identity: the digest still decides,
+and a version that serves other bytes is refused. In a bucket that keeps no
+versions, Resolve records none, and every later operation reads whatever the
+key holds, held to the same two digests, so a write to the key fails the next
+operation until the spec pins the new bytes.
+
+A plan is bound to the endpoint, the bucket, the key, the path and the content
+of the selected files. A new object digest, another version, another region
+or another Secret keeps the plan when the selected files are the same; another
+endpoint, bucket, key or path retires it.
+
+### Publish from CI
+
+Upload the object under a key that carries its version, take the digest of
+the file you uploaded, and write that digest into the manifest in the same
+change:
+
+```sh
+tar -czf orders-1.4.0.tar.gz orders-1.4.0/db/migrations
+digest="sha256:$(shasum -a 256 orders-1.4.0.tar.gz | cut -d' ' -f1)"
+aws s3 cp orders-1.4.0.tar.gz s3://orders-releases/orders/orders-1.4.0.tar.gz   --endpoint-url https://objects.example.com
+yq -i ".spec.artifact.s3.digest = \"$digest\"" deploy/orders-migrations.yaml
+```
+
+Keep every published object, or every version of one, for as long as a
+resource names it. When the object changes or disappears the resource behaves
+as it does for [an HTTPS download](#when-the-download-changes-or-disappears):
+the Resolve or the operation fails, nothing is planned or applied, and what
+was resolved and applied before stays in the status. Each Resolve and each
+operation that reads the files downloads the whole object, as for HTTPS, so
+[the cost of the interval](#the-cost-of-the-interval) applies, and a provider
+that bills per request bills each of them.
+
+### A private bucket
+
+Without `authFrom` the request is unsigned, as a public bucket takes. With it,
+the request is signed with Signature Version 4 by the key pair in a Secret in
+the resource's namespace, with fixed keys:
+
+- `accessKeyID` and `secretAccessKey`, the key pair, and `sessionToken` for a
+  temporary one;
+- `host`, the only endpoint authority, `host[:port]`, the key is used for;
+- `bucket`, if present, the only bucket it may sign for;
+- `caSHA256`, if present, the SHA-256 of the CA it may be sent under, which
+  `transport.caFrom` then has to select, as for HTTPS.
+
+```sh
+kubectl -n application create secret generic orders-objects \
+  --from-literal=host=objects.example.com \
+  --from-literal=bucket=orders-releases \
+  --from-literal=accessKeyID="$ACCESS_KEY_ID" \
+  --from-literal=secretAccessKey="$SECRET_ACCESS_KEY"
+```
+
+```yaml
+spec:
+  artifact:
+    s3:
+      endpoint: https://objects.example.com
+      region: us-east-1
+      bucket: orders-releases
+      key: orders/orders-1.4.0.tar.gz
+      digest: sha256:<SHA-256 of the archive>
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+      authFrom:
+        name: orders-objects
+```
+
+Before it sends any request the fetch refuses, with `invalid_s3_access`, an
+endpoint that is not `host`, a bucket that is not `bucket`, half a key pair, a
+session token without one, a CA that does not give `caSHA256`, and a
+`caSHA256` with no CA selected. The host compares as ASCII without case, as
+for HTTPS; write the values with `--from-literal`, since `--from-file` keeps a
+file's last newline and a `host` or `bucket` with one is refused. The Job
+mounts the Secret into the container that reads the object and into no other,
+and the manager never reads it.
+
+The key pair in the Secret is the only credential the fetch uses. It reads no
+`AWS_*` variable, no `~/.aws` file, no instance metadata and no web identity
+token, so a cloud identity bound to the Pod's ServiceAccount is never used,
+and a resource cannot borrow one. It follows no redirect, uses no proxy, and
+cannot read an object encrypted with a customer-provided key. A temporary key
+pair expires: whatever writes the Secret has to replace it before it does, and
+every Job started after the replacement reads the new one.
+
 ## What resolved
 
 `ArtifactResolved` says `SnapshotTaken` for a ConfigMap source,
-`CommitResolved` for a Git one and `DownloadVerified` for an HTTPS one, whose
-message names the download digest and the content digest. `kubectl ptah schema`
-and `kubectl ptah migration` print the source, the commit, snapshot or
-download, and the content digest; the status records the same:
+`CommitResolved` for a Git one and `DownloadVerified` for an HTTPS or an S3
+one, whose message names the download or object digest and the content digest,
+and for S3 the version every operation reads. `kubectl ptah schema` and
+`kubectl ptah migration` print the source, the commit, snapshot, download or
+object, and the content digest; the status records the same:
 
 ```sh
 kubectl -n application get ptahschema inventory \
@@ -481,6 +649,7 @@ kubectl -n application get ptahmigration orders \
 ```
 
 A plan computed from any of these sources is bound to that content and to
-the source's identity, the ConfigMap's UID, or the URL and path of a
-repository or a download, in place of an artifact digest. [Plans and approvals](../../reference/plans-and-approvals/)
+the source's identity, the ConfigMap's UID, the URL and path of a repository
+or a download, or the endpoint, bucket, key and path of an object, in place of
+an artifact digest. [Plans and approvals](../../reference/plans-and-approvals/)
 says what an approval binds.

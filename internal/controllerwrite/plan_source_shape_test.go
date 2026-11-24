@@ -14,7 +14,8 @@ import (
 
 // A plan computed from a source binds the source's revision in place of an
 // artifact digest, and the revision's form is the kind's: a ConfigMap's UID,
-// or the "sha256:" digest of the URL and the path for Git and HTTPS. Each row
+// or a "sha256:" digest for Git, HTTPS and S3: of the URL and the path, or of
+// the endpoint, bucket, key and path. Each row
 // recomputes the fingerprint and the contract version over the source it
 // holds, so a refusal can only come from the source check and an acceptance
 // shows the rest of the shape held.
@@ -40,6 +41,15 @@ func TestValidatePlanShapeHoldsEachSourceKindToItsRevision(t *testing.T) {
 		}},
 		{name: "an HTTPS source with an uppercase revision digest", refused: true, source: operatorv1alpha1.PlanSourceBinding{
 			Kind: operatorv1alpha1.SourceKindHTTPS, Revision: strings.ToUpper(shapeDigest('a')),
+		}},
+		{name: "an S3 source by the digest of its object and path", source: operatorv1alpha1.PlanSourceBinding{
+			Kind: operatorv1alpha1.SourceKindS3, Revision: shapeDigest('8'),
+		}},
+		{name: "an S3 source with its key as the revision", refused: true, source: operatorv1alpha1.PlanSourceBinding{
+			Kind: operatorv1alpha1.SourceKindS3, Revision: "s3://app-releases/app/1.4.0/app.tar.gz",
+		}},
+		{name: "an S3 source whose content digest is not one", refused: true, source: operatorv1alpha1.PlanSourceBinding{
+			Kind: operatorv1alpha1.SourceKindS3, Revision: shapeDigest('8'), ContentDigest: "sha256:abc",
 		}},
 		{name: "a Git source with its URL as the revision", refused: true, source: operatorv1alpha1.PlanSourceBinding{
 			Kind: operatorv1alpha1.SourceKindGit, Revision: "https://git.example.com/acme/app.git",

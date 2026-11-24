@@ -141,6 +141,50 @@ spec:
       key: policy.yaml
 ```
 
+### From one version of an archive in an S3 bucket
+
+The migration directory is a directory inside a `tar.gz` object in a
+versioned bucket, pinned by the SHA-256 of the object's bytes and by the
+version that holds them. Every operation reads that version, holds it to the
+digest before reading any entry, and refuses selected files other than the
+ones Resolve recorded, so a later upload under the same key changes nothing
+until the manifest names it. Without `versionId`, Resolve records the
+version the bucket served and every later operation reads that one.
+
+The Secret `orders-objects` holds `accessKeyID`, `secretAccessKey` and
+`host: objects.example.com`. The team's source policy allows only the bucket
+`objects.example.com/orders-releases` for an S3 source.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFrom:
+      name: orders-database
+      key: url
+  artifact:
+    s3:
+      endpoint: https://objects.example.com
+      region: eu-central-1
+      bucket: orders-releases
+      key: orders/1.4.0/orders-1.4.0.tar.gz
+      versionId: 3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY
+      digest: sha256:9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+      authFrom:
+        name: orders-objects
+    sourcePolicyFrom:
+      name: team-source-policy
+      key: policy.yaml
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set

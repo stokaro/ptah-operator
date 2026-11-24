@@ -11,10 +11,11 @@ import (
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
-// The Git and the HTTPS fetch modes take the directory and the Ptah binary,
+// The Git, HTTPS and S3 fetch modes take the directory and the Ptah binary,
 // refuse every other flag and each other, and reach the fetch of their own
 // kind: an HTTPS fetch with no HTTPS source configured is refused by the
-// HTTPS fetch, which names its code.
+// HTTPS fetch, which names its code. The S3 fetch starts no Ptah, and takes
+// the binary only so that the Job carries one argument shape.
 func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 	t.Parallel()
 	for _, row := range []struct {
@@ -62,6 +63,38 @@ func TestRunRefusesARemoteFetchItWasNotBuiltFor(t *testing.T) {
 			},
 			environment: []string{runnerProtocol},
 			refusal:     runner.CodeHTTPSSourceRefused + ": no HTTPS source is configured",
+		},
+		{
+			name: "an S3 fetch beside another mode's flag",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary, "--operation", "resolve"}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     "S3 fetch mode takes only --fetch-s3-source and --ptah-binary",
+		},
+		{
+			name: "an S3 and an HTTPS fetch together",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--fetch-https-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     "fetch mode takes only",
+		},
+		{
+			name: "an S3 fetch for another protocol",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runner.EnvRunnerProtocolVersion + "=" + strconv.Itoa(runner.ProtocolVersion+1)},
+			refusal:     runner.CodeRunnerProtocolMismatch,
+		},
+		{
+			name: "an S3 fetch with no S3 source",
+			arguments: func(binary, destination string) []string {
+				return []string{"--fetch-s3-source", destination, "--ptah-binary", binary}
+			},
+			environment: []string{runnerProtocol},
+			refusal:     runner.CodeS3SourceRefused + ": no S3 source is configured",
 		},
 		{
 			name: "a Git fetch with no Git source",

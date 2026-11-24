@@ -4,8 +4,9 @@
 //
 // Everything comes from the resource's status, which records no credential,
 // so neither does a view. A Git repository URL cannot carry one: the API
-// refuses a URL with user information other than an SSH user name, and an
-// HTTPS download URL with any user information at all.
+// refuses a URL with user information other than an SSH user name, an HTTPS
+// download URL with any user information at all, and an S3 endpoint with
+// anything after its authority.
 package sourceview
 
 import (
@@ -24,6 +25,8 @@ const (
 	KindGit Kind = "Git"
 	// KindHTTPS is a download pinned by its digest.
 	KindHTTPS Kind = "HTTPS"
+	// KindS3 is an object of an S3-compatible bucket pinned by its digest.
+	KindS3 Kind = "S3"
 )
 
 // View is one resolved source. The fields of the other kinds stay empty.
@@ -50,12 +53,23 @@ type View struct {
 	Commit     string                   `json:"commit,omitempty"`
 
 	// URL, Format and DownloadDigest are the download an HTTPS source names
-	// and the digest its bytes were held to; Path is what it selects.
+	// and the digest its bytes were held to; Path is what it selects. An S3
+	// source has a Format, a Path and a DownloadDigest too, the digest of
+	// the object's bytes.
 	URL            string `json:"url,omitempty"`
 	Format         string `json:"format,omitempty"`
 	DownloadDigest string `json:"downloadDigest,omitempty"`
 
-	// ContentDigest is the digest of a ConfigMap, Git or HTTPS source's
+	// Endpoint, Region, Bucket and Key are the object an S3 source names,
+	// and VersionID the version every operation reads, when the bucket keeps
+	// versions.
+	Endpoint  string `json:"endpoint,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Bucket    string `json:"bucket,omitempty"`
+	Key       string `json:"key,omitempty"`
+	VersionID string `json:"versionId,omitempty"`
+
+	// ContentDigest is the digest of a ConfigMap, Git, HTTPS or S3 source's
 	// selected files, the content a plan computed from them is bound to.
 	ContentDigest string `json:"contentDigest,omitempty"`
 	// SourcePolicyDigest is the content of the source policy the resolution
@@ -77,6 +91,10 @@ func FromSchema(status operatorv1alpha1.SchemaSourceStatus) *View {
 		view = gitView(status.Git.URL, status.Git.Ref, status.Git.Path, status.Git.Commit, status.Git.ContentDigest)
 	case status.HTTPS != nil:
 		view = httpsView(status.HTTPS.URL, status.HTTPS.Format, status.HTTPS.Path, status.HTTPS.Digest, status.HTTPS.ContentDigest)
+	case status.S3 != nil:
+		object := status.S3
+		view = s3View(object.Endpoint, object.Region, object.Bucket, object.Key, object.VersionID,
+			object.Format, object.Path, object.Digest, object.ContentDigest)
 	case status.Snapshot != nil || status.ConfigMap != nil:
 		view = configMapView(status.ConfigMap, status.Snapshot)
 	case status.ResolvedReference != "" || status.Digest != "":
@@ -105,6 +123,10 @@ func FromMigration(
 		view = gitView(artifact.Git.URL, artifact.Git.Ref, artifact.Git.Path, artifact.Git.Commit, artifact.Git.ContentDigest)
 	case artifact.HTTPS != nil:
 		view = httpsView(artifact.HTTPS.URL, artifact.HTTPS.Format, artifact.HTTPS.Path, artifact.HTTPS.Digest, artifact.HTTPS.ContentDigest)
+	case artifact.S3 != nil:
+		object := artifact.S3
+		view = s3View(object.Endpoint, object.Region, object.Bucket, object.Key, object.VersionID,
+			object.Format, object.Path, object.Digest, object.ContentDigest)
 	case artifact.Snapshot != nil:
 		view = configMapView(configMap, artifact.Snapshot)
 	default:
@@ -120,6 +142,13 @@ func gitView(url string, ref operatorv1alpha1.GitRef, path, commit, contentDiges
 
 func httpsView(url string, format operatorv1alpha1.HTTPSFormat, path, digest, contentDigest string) *View {
 	return &View{Kind: KindHTTPS, URL: url, Format: string(format), Path: path, DownloadDigest: digest, ContentDigest: contentDigest}
+}
+
+func s3View(endpoint, region, bucket, key, versionID string, format operatorv1alpha1.HTTPSFormat, path, digest, contentDigest string) *View {
+	return &View{
+		Kind: KindS3, Endpoint: endpoint, Region: region, Bucket: bucket, Key: key, VersionID: versionID,
+		Format: string(format), Path: path, DownloadDigest: digest, ContentDigest: contentDigest,
+	}
 }
 
 func configMapView(revision *operatorv1alpha1.ConfigMapSourceRevision, snapshot *operatorv1alpha1.SourceSnapshotBinding) *View {
@@ -170,6 +199,15 @@ func (v *View) Fields() []Field {
 			Field{"Format", v.Format},
 			Field{"Path", v.Path},
 			Field{"Download", v.DownloadDigest})
+	case KindS3:
+		fields = append(fields,
+			Field{"Source", "S3 s3://" + v.Bucket + "/" + v.Key},
+			Field{"Endpoint", v.Endpoint},
+			Field{"Region", v.Region},
+			Field{"Version", v.VersionID},
+			Field{"Format", v.Format},
+			Field{"Path", v.Path},
+			Field{"Object", v.DownloadDigest})
 	}
 	return append(fields,
 		Field{"Content", v.ContentDigest},

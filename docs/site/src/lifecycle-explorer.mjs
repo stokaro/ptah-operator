@@ -103,7 +103,7 @@ const schemaObjects = [
     ],
     links: [
       { label: 'A ConfigMap source', href: '#a-configmap-source' },
-      { label: 'Deliver from a ConfigMap, Git or HTTPS', href: '../../use/sources/#from-a-configmap' },
+      { label: 'Deliver from a ConfigMap, Git, HTTPS or S3', href: '../../use/sources/#from-a-configmap' },
     ],
   },
   {
@@ -809,7 +809,7 @@ const migrationObjects = [
     ],
     links: [
       { label: 'The migration lifecycle', href: '#the-migration-lifecycle' },
-      { label: 'Deliver from a ConfigMap, Git or HTTPS', href: '../../use/sources/#from-a-configmap' },
+      { label: 'Deliver from a ConfigMap, Git, HTTPS or S3', href: '../../use/sources/#from-a-configmap' },
     ],
   },
   {
@@ -1022,7 +1022,7 @@ const migrationScenario = {
       lead: 'operator',
       actors: {
         operator:
-          'Reads the ConfigMap from the API server and copies the selected files into an immutable snapshot, ptah-src-<hash>, owned by the migration. A ConfigMap source runs no Resolve Job and has no verification policy, so there is no Verify step and the phase goes straight to Reading. An OCI artifact takes a Resolve and a Verify Job here, and a Git or HTTPS source a Resolve Job.',
+          'Reads the ConfigMap from the API server and copies the selected files into an immutable snapshot, ptah-src-<hash>, owned by the migration. A ConfigMap source runs no Resolve Job and has no verification policy, so there is no Verify step and the phase goes straight to Reading. An OCI artifact takes a Resolve and a Verify Job here, and a Git, HTTPS or S3 source a Resolve Job.',
         kubernetes: 'Stores the snapshot ConfigMap.',
       },
       objects: ['m-source', 'm-status'],

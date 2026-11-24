@@ -19,10 +19,22 @@ out of silence.
 ## 0.2.19
 
 **Before you upgrade.** The manager image is new, so keep `--force-conflicts`
-on the upgrade. Nothing else asks anything of you: the CRD schema version, the
-runner protocol and the executor, Ptah v0.35.0, are those of 0.2.18, so a plan
+on the upgrade. A source may be an S3 object, so the CRD schema version moves
+from 26 to 27. Once this release's hook has updated the CRDs, 0.2.18's CRD hook
+refuses [a rollback](../../use/operations/#rollback) to 0.2.18, since they are
+newer than 0.2.18 reads. Nothing else asks anything of you: the runner
+protocol and the executor, Ptah v0.35.0, are those of 0.2.18, so a plan
 waiting for an approval and the approval given for it carry over.
 
+- **A schema or a migration can be read from an S3-compatible bucket.**
+  `spec.desired.s3` and `spec.artifact.s3` name an endpoint, a region, a
+  bucket, a key and the SHA-256 of the object's bytes, and the runner reads the
+  object with one path-style GetObject request, unsigned or signed with a key
+  pair from a Secret whose `host` and optional `bucket` keys the fetch is held
+  to. A versioned bucket's version is recorded at Resolve and read by every
+  later operation. A source policy bounds it with `allowedS3Buckets`. No AWS
+  credential chain or workload identity is read, and no redirect is followed.
+  [From S3](../../use/sources/#from-s3) has the fields.
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
   supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x

@@ -30,6 +30,8 @@ func TestLabelSpellsAnAPINameAsWords(t *testing.T) {
 		"plainHTTP":                     "Plain HTTP",
 		"httpsURL":                      "HTTPS URL",
 		"jsonPath":                      "JSON path",
+		"s3":                            "S3",
+		"versionId":                     "Version ID",
 	} {
 		if got := statusview.Label(name); got != want {
 			t.Errorf("Label(%q) = %q, want %q", name, got, want)

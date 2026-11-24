@@ -198,10 +198,10 @@ func (b Builder) gitFetch(
 		})
 }
 
-// remoteFetch builds the init container a Git or an HTTPS fetch runs in: the
-// runner, with the source volume to write and a work directory of its own,
-// and the access add gives it. It is the one container in the Pod that holds
-// the source's credential.
+// remoteFetch builds the init container a Git, an HTTPS or an S3 fetch runs
+// in: the runner, with the source volume to write and a work directory of its
+// own, and the access add gives it. It is the one container in the Pod that
+// holds the source's credential.
 func (b Builder) remoteFetch(
 	name, flag, destination string,
 	resources corev1.ResourceRequirements,
@@ -260,7 +260,7 @@ func sortEnvironment(environment []corev1.EnvVar) {
 
 // SourceAccessCode is the result code an init container's access refusal
 // carries, for the containers that check a source's access before a fetch: the
-// OCI guard, and the Git and HTTPS fetches, which check it themselves. It
+// OCI guard, and the Git, HTTPS and S3 fetches, which check it themselves. It
 // reports false for every other container, whose termination message is not
 // read for one.
 func SourceAccessCode(container string) (string, bool) {
@@ -271,6 +271,8 @@ func SourceAccessCode(container string) (string, bool) {
 		return runner.CodeInvalidGitAccess, true
 	case httpsFetchContainerName:
 		return runner.CodeInvalidHTTPSAccess, true
+	case s3FetchContainerName:
+		return runner.CodeInvalidS3Access, true
 	}
 	return "", false
 }

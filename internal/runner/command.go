@@ -377,6 +377,22 @@ func childEnvironment(environment []string) []string {
 		EnvHTTPSHostGrant,
 		EnvHTTPSCASHA256Grant,
 		EnvHTTPSCASourceFile,
+		EnvS3Endpoint,
+		EnvS3Region,
+		EnvS3Bucket,
+		EnvS3Key,
+		EnvS3VersionID,
+		EnvS3Digest,
+		EnvS3Format,
+		EnvS3Path,
+		EnvS3Selects,
+		EnvS3HostGrant,
+		EnvS3BucketGrant,
+		EnvS3CASHA256Grant,
+		EnvS3CASourceFile,
+		EnvS3AccessKeyID,
+		EnvS3SecretAccessKey,
+		EnvS3SessionToken,
 	)
 }
 

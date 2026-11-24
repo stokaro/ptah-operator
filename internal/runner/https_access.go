@@ -253,6 +253,9 @@ func FetchHTTPSSource(ctx context.Context, ptahBinary string, environment []stri
 	if _, isGit := GitSourceFromEnvironment(environment); isGit {
 		return fmt.Errorf("%s: the fetch names a Git source as well", CodeHTTPSSourceRefused)
 	}
+	if _, isS3 := S3SourceFromEnvironment(environment); isS3 {
+		return fmt.Errorf("%s: the fetch names an S3 source as well", CodeHTTPSSourceRefused)
+	}
 	return fetchRemoteSource(ctx, ptahBinary, environment, source, destination, tempDir, executor, diagnostics)
 }
 

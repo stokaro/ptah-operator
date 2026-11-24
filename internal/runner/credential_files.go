@@ -45,6 +45,12 @@ const (
 	EnvHTTPSUsernameFile = "PTAH_OPERATOR_HTTPS_USERNAME_FILE"
 	EnvHTTPSPasswordFile = "PTAH_OPERATOR_HTTPS_PASSWORD_FILE" // #nosec G101 -- the name of a variable, not a credential
 	EnvHTTPSTokenFile    = "PTAH_OPERATOR_HTTPS_TOKEN_FILE"    // #nosec G101 -- the name of a variable, not a credential
+	// EnvS3AccessKeyIDFile, EnvS3SecretAccessKeyFile and
+	// EnvS3SessionTokenFile name the files an S3 source's key pair and
+	// session token are projected into.
+	EnvS3AccessKeyIDFile     = "PTAH_OPERATOR_S3_ACCESS_KEY_ID_FILE"
+	EnvS3SecretAccessKeyFile = "PTAH_OPERATOR_S3_SECRET_ACCESS_KEY_FILE" // #nosec G101 -- the name of a variable, not a credential
+	EnvS3SessionTokenFile    = "PTAH_OPERATOR_S3_SESSION_TOKEN_FILE"     // #nosec G101 -- the name of a variable, not a credential
 
 	// envOCIUsername is the variable Ptah reads a registry username from.
 	envOCIUsername = "PTAH_OCI_USERNAME"
@@ -81,6 +87,9 @@ func CredentialFiles() []CredentialFile {
 		{File: EnvHTTPSUsernameFile, Value: EnvHTTPSUsername},
 		{File: EnvHTTPSPasswordFile, Value: EnvHTTPSPassword},
 		{File: EnvHTTPSTokenFile, Value: EnvHTTPSToken},
+		{File: EnvS3AccessKeyIDFile, Value: EnvS3AccessKeyID},
+		{File: EnvS3SecretAccessKeyFile, Value: EnvS3SecretAccessKey},
+		{File: EnvS3SessionTokenFile, Value: EnvS3SessionToken},
 	}
 }
 

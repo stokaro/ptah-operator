@@ -150,6 +150,50 @@ spec:
       key: policy.yaml
 ```
 
+### From one version of an archive in an S3 bucket
+
+The migration directory is a directory inside a `tar.gz` object in a
+versioned bucket, pinned by the SHA-256 of the object's bytes and by the
+version that holds them. Every operation reads that version, holds it to the
+digest before reading any entry, and refuses selected files other than the
+ones Resolve recorded, so a later upload under the same key changes nothing
+until the manifest names it. Without `versionId`, Resolve records the
+version the bucket served and every later operation reads that one.
+
+The Secret `orders-objects` holds `accessKeyID`, `secretAccessKey` and
+`host: objects.example.com`. The team's source policy allows only the bucket
+`objects.example.com/orders-releases` for an S3 source.
+
+```yaml
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: production/orders-primary
+    urlFrom:
+      name: orders-database
+      key: url
+  artifact:
+    s3:
+      endpoint: https://objects.example.com
+      region: eu-central-1
+      bucket: orders-releases
+      key: orders/1.4.0/orders-1.4.0.tar.gz
+      versionId: 3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY
+      digest: sha256:9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca7
+      format: TarGzip
+      path: orders-1.4.0/db/migrations
+      authFrom:
+        name: orders-objects
+    sourcePolicyFrom:
+      name: team-source-policy
+      key: policy.yaml
+```
+
 ### Beside a PtahSchema, over one database
 
 Both resources live in one namespace, name the same `coordinationKey` and set
@@ -347,7 +391,7 @@ spec:
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.artifact` | `object`, required | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key; where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key; where `artifact.https` is set, artifact.https.format is TarGzip or Zip: a migration directory comes in an archive. Artifact is the migration directory this history is matched against: an OCI artifact, a ConfigMap, a Git repository or an HTTPS archive. It reuses the schema path's source contract: fetching it never hands a registry, Git or HTTPS credential to the process that runs SQL. |
+| `spec.artifact` | `object`, required | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key; where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key; where `artifact.https` is set, artifact.https.format is TarGzip or Zip: a migration directory comes in an archive; where `artifact.s3` is set, artifact.s3.format is TarGzip or Zip: a migration directory comes in an archive. Artifact is the migration directory this history is matched against: an OCI artifact, a ConfigMap, a Git repository, an HTTPS archive or an S3 object. It reuses the schema path's source contract: fetching it never hands a registry, Git, HTTPS or S3 credential to the process that runs SQL. |
 | `spec.artifact.configMap` | `object` | ConfigMap selects files from a ConfigMap in this resource's namespace. Whoever may write that ConfigMap may change the desired state, exactly as whoever may write this resource can: Kubernetes RBAC on the namespace is what this source is trusted by. The manager copies the selected files into an immutable snapshot, and every operation reads the snapshot. |
 | `spec.artifact.configMap.items` | `[]object`, required | Items are the keys that become files, and the file each one becomes. A key cannot hold "/", so a nested directory is spelled out here. A key the list does not name is not part of the source, and editing it changes nothing. A schema selects exactly one file, whose extension tells Ptah its format; a migration directory selects up to 1,000. |
 | `spec.artifact.configMap.items[].key` | `string`, required | Key in the ConfigMap's data or binaryData. |
@@ -391,7 +435,23 @@ spec:
 | `spec.artifact.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
 | `spec.artifact.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `spec.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
-| `spec.artifact.sourcePolicyFrom` | `object` | SourcePolicyFrom names the immutable ConfigMap holding what a team refuses for a ConfigMap, Git or HTTPS source: the hosts a Git or an HTTPS source may name, the ConfigMaps a ConfigMap source may name, and the most the selected files may hold. A plan binds the policy's object and bytes, so another policy retires it. An OCI source has its verification policy instead, and the API refuses this beside ociRef. |
+| `spec.artifact.s3` | `object` | This resource requires: where `artifact.s3` is set, artifact.s3.format is TarGzip or Zip: a migration directory comes in an archive. S3 selects a file or a directory of one object in an S3-compatible bucket, pinned by the SHA-256 of the bytes GetObject returns. The manager never reads the object or its key pair: a Job's fetch container reads it, and every later operation reads the same version again and refuses other bytes or other content. Nothing is stored in the cluster. |
+| `spec.artifact.s3.authFrom` | `object` | AuthFrom names the Secret the fetch container reads the key pair from. The manager never reads it. Without it, the request is unsigned, as a public bucket takes. |
+| `spec.artifact.s3.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `spec.artifact.s3.bucket` | `string`, required | Bucket is the bucket's name. |
+| `spec.artifact.s3.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the exact bytes GetObject returns, the number sha256sum prints for the uploaded file. Nothing in the object is read before it matches. Neither the ETag nor a checksum the bucket stores is this number. |
+| `spec.artifact.s3.endpoint` | `string`, required | Endpoint is the S3 API's address: https:// and an authority, with no path, credential, query or fragment. The host is ASCII letters, digits, dots and hyphens, or an IPv6 address in brackets, with an optional port: write an internationalized name in its xn-- form. |
+| `spec.artifact.s3.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | This resource requires: where `artifact.s3` is set, artifact.s3.format is TarGzip or Zip: a migration directory comes in an archive. Format says how the object carries the files, as an HTTPS download does: File, the schema file itself; TarGzip or Zip, an archive. |
+| `spec.artifact.s3.key` | `string`, required | Key is the object's key: at most 1024 bytes, with no leading "/", no empty, "." or ".." element and no control character. |
+| `spec.artifact.s3.path` | `string`, required | Path is what the object selects. With File it is the one name the object is given, whose extension tells a schema's format. In an archive it is the schema file, or the migration directory, where "." is the root. Relative, separated by "/", with no empty or ".." element, no backslash and no control character. |
+| `spec.artifact.s3.region` | `string`, required | Region is the region a request is signed for. It names nothing else: the endpoint says where the request goes. MinIO's default is us-east-1, and R2 and Google Cloud Storage take auto. |
+| `spec.artifact.s3.transport` | `object` | Transport pins the endpoint: the CA its certificate chains to. |
+| `spec.artifact.s3.transport.caFrom` | `object` | CAFrom selects the only roots the endpoint's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `spec.artifact.s3.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `spec.artifact.s3.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `spec.artifact.s3.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `spec.artifact.s3.versionId` | `string` | VersionID selects one version of the object in a versioned bucket. Without it, a resolution reads the current version and records the version the server says it served, and every later operation reads that version. It is an upstream revision, not an identity: the digest still decides. |
+| `spec.artifact.sourcePolicyFrom` | `object` | SourcePolicyFrom names the immutable ConfigMap holding what a team refuses for a ConfigMap, Git, HTTPS or S3 source: the hosts a Git or an HTTPS source may name, the endpoints and buckets an S3 source may name, the ConfigMaps a ConfigMap source may name, and the most the selected files may hold. A plan binds the policy's object and bytes, so another policy retires it. An OCI source has its verification policy instead, and the API refuses this beside ociRef. |
 | `spec.artifact.sourcePolicyFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.artifact.sourcePolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.sourcePolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -401,7 +461,7 @@ spec:
 | `spec.artifact.transport.caFrom.name` | `string`, default `` | This resource requires: where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.transport.caFrom.optional` | `boolean` | This resource requires: where `artifact.transport` and `artifact.transport.caFrom` are set, artifact.transport.caFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
 | `spec.artifact.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.artifact.verificationPolicyFrom` | `object` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap, git and https: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
+| `spec.artifact.verificationPolicyFrom` | `object` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. It is required with ociRef and refused with configMap, git, https and s3: its rules are about OCI artifacts, and a policy nothing evaluates would read as a gate. |
 | `spec.artifact.verificationPolicyFrom.key` | `string`, required | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
 | `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.verificationPolicyFrom.optional` | `boolean` | This resource requires: where `artifact.verificationPolicyFrom` is set, artifact.verificationPolicyFrom must name a required ConfigMap key. Specify whether the ConfigMap or its key must be defined |
@@ -673,6 +733,23 @@ spec:
 | `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
 | `status.activeOperation.source.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.s3` | `object` | S3 is the object version an S3 source resolved, where to fetch it from, and the content it must give. |
+| `status.activeOperation.source.s3.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.activeOperation.source.s3.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.activeOperation.source.s3.bucket` | `string`, required | Bucket is the bucket's name. |
+| `status.activeOperation.source.s3.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.activeOperation.source.s3.digest` | `string`, required | Digest is the SHA-256 of the bytes GetObject returned. |
+| `status.activeOperation.source.s3.endpoint` | `string`, required | Endpoint is the S3 API's address. |
+| `status.activeOperation.source.s3.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the object carries the files. |
+| `status.activeOperation.source.s3.key` | `string`, required | Key is the object's key. |
+| `status.activeOperation.source.s3.path` | `string`, required | Path is what the object selects. |
+| `status.activeOperation.source.s3.region` | `string`, required | Region is the region a request is signed for. |
+| `status.activeOperation.source.s3.transport` | `object` | Transport pins the endpoint. |
+| `status.activeOperation.source.s3.transport.caFrom` | `object` | CAFrom selects the only roots the endpoint's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `status.activeOperation.source.s3.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.activeOperation.source.s3.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.activeOperation.source.s3.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.activeOperation.source.s3.versionId` | `string` | VersionID is the version every operation reads: the one the spec named, or the one the server served the resolution. A bucket that keeps no versions leaves it empty. |
 | `status.activeOperation.source.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
 | `status.activeOperation.source.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
 | `status.activeOperation.source.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
@@ -735,6 +812,23 @@ spec:
 | `status.artifact.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
 | `status.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
 | `status.artifact.resolvedReference` | `string` | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.artifact.s3` | `object` | S3 is the object version an S3 source resolved, where to fetch it from, and the content it must give. |
+| `status.artifact.s3.authFrom` | `object` | AuthFrom names the credential Secret. It is a selector, never the credential. |
+| `status.artifact.s3.authFrom.name` | `string`, required | Name of the Secret, in this resource's namespace. |
+| `status.artifact.s3.bucket` | `string`, required | Bucket is the bucket's name. |
+| `status.artifact.s3.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files. |
+| `status.artifact.s3.digest` | `string`, required | Digest is the SHA-256 of the bytes GetObject returned. |
+| `status.artifact.s3.endpoint` | `string`, required | Endpoint is the S3 API's address. |
+| `status.artifact.s3.format` | `string`, required, one of `File`, `TarGzip`, `Zip` | Format says how the object carries the files. |
+| `status.artifact.s3.key` | `string`, required | Key is the object's key. |
+| `status.artifact.s3.path` | `string`, required | Path is what the object selects. |
+| `status.artifact.s3.region` | `string`, required | Region is the region a request is signed for. |
+| `status.artifact.s3.transport` | `object` | Transport pins the endpoint. |
+| `status.artifact.s3.transport.caFrom` | `object` | CAFrom selects the only roots the endpoint's certificate may chain to. With authFrom, its Secret must hold caSHA256 with the selected bytes' digest, and a source whose Secret holds caSHA256 is refused without it. |
+| `status.artifact.s3.transport.caFrom.key` | `string`, required | The key to select from the ConfigMap's Data field. Keys in the BinaryData field are not currently propagated to container env vars. |
+| `status.artifact.s3.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
+| `status.artifact.s3.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
+| `status.artifact.s3.versionId` | `string` | VersionID is the version every operation reads: the one the spec named, or the one the server served the resolution. A bucket that keeps no versions leaves it empty. |
 | `status.artifact.snapshot` | `object` | Snapshot is the immutable ConfigMap a ConfigMap source's files were copied into, and the content it must hold. |
 | `status.artifact.snapshot.contentDigest` | `string`, required | ContentDigest is the content digest of the selected files: the SHA-256 of a manifest with one line per file, sorted by path, naming the file's SHA-256, its size and its path. |
 | `status.artifact.snapshot.name` | `string`, required | Name of the snapshot ConfigMap, in the resource's namespace. |
@@ -881,13 +975,13 @@ spec:
 | `status.lastRun.planRef` | `object` | PlanRef is the immutable plan the run carried out. The plan store reuses a byte-identical plan, so it says what was planned and not which execution this was: OperationID does. It pins the plan, as the pruning guide lists: it outlives a plan somebody deleted, or a prune with a list of pins from before this field, and then names bytes nothing holds, which a retention audit reports as a missing plan. |
 | `status.lastRun.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.lastRun.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
-| `status.lastRun.source` | `object` | Source is the source the run read its files from, for a ConfigMap, a Git commit or an HTTPS download. |
+| `status.lastRun.source` | `object` | Source is the source the run read its files from, for a ConfigMap, a Git commit, an HTTPS download or an S3 object. |
 | `status.lastRun.source.contentDigest` | `string`, required | ContentDigest is the content digest of the files the plan was computed from. |
-| `status.lastRun.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS` | Kind of source the plan was computed from. |
+| `status.lastRun.source.kind` | `string`, required, one of `ConfigMap`, `Git`, `HTTPS`, `S3` | Kind of source the plan was computed from. |
 | `status.lastRun.source.policy` | `object` | Policy is the source policy the source was checked against, when the resource names one. |
 | `status.lastRun.source.policy.digest` | `string`, required | Digest is "sha256:" and the SHA-256 of the policy document. |
 | `status.lastRun.source.policy.uid` | `string`, required | UID of the policy ConfigMap. Another ConfigMap under the same name is another policy. |
-| `status.lastRun.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. |
+| `status.lastRun.source.revision` | `string`, required | Revision is the source object the files were read from. For a ConfigMap it is the ConfigMap's UID: an edit to a key the source does not select keeps the plan, while another ConfigMap, or the same name deleted and created again, retires it even when the files match. For Git it is "sha256:" and the SHA-256 of the repository URL and the selected path, joined by a newline: another repository or another path retires the plan even when the files match, while a commit that leaves the selected files as they were keeps it, as an edit to an unselected key keeps a ConfigMap's. For HTTPS it is "sha256:" and the SHA-256 of the URL and the selected path, joined by a newline, and never the download digest: an archive published again as other bytes keeps the plan once the spec names its digest, if the selected files did not change. For S3 it is "sha256:" and the SHA-256 of the endpoint's authority, the bucket, the key and the selected path, joined by newlines, and never the object digest, the version or the region. |
 | `status.lastRun.startedAt` | `string`, required | StartedAt is when the run began. |
 | `status.lastRun.targetIdentityDigest` | `string` | TargetIdentityDigest is the credential-free identity of the database the run's result named. That is the database it opened, unless it refused before its child started because its Secret had moved: then it is the one the Secret held, which the run did not touch. A run that left no result names none, since it may have run nowhere, or against whatever its Secret held by then. |
 | `status.lastRun.verification` | `object` | Verification is the first reading of this run's database after the run ended. What a run claims and what the revision table holds are two statements, and this records the second. It is absent until that reading, for a run that named no database, since no reading can then be said to be of it, and for a run a release without this field recorded. |

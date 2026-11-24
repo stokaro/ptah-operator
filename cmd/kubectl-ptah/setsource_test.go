@@ -222,6 +222,10 @@ func TestSetSourceRefusesWhatItDoesNotChange(t *testing.T) {
 	git := onArtifact("migration", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahMigration)
 	git.Spec.Artifact = operatorv1alpha1.SourceSpec{Git: &operatorv1alpha1.GitSourceSpec{URL: "https://git.example/shop/orders",
 		Ref: operatorv1alpha1.GitRef{Branch: "main"}, Path: "."}}
+	object := onArtifact("schema", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahSchema)
+	object.Spec.Desired = operatorv1alpha1.SourceSpec{S3: &operatorv1alpha1.S3SourceSpec{Endpoint: "https://objects.example",
+		Region: "us-east-1", Bucket: "shop-schemas", Key: "storefront/schema.sql", Digest: "sha256:" + strings.Repeat("a", 64),
+		Format: operatorv1alpha1.HTTPSFormatFile, Path: "schema.sql"}}
 	applying := onArtifact("migration", operatorv1alpha1.ApplyPolicyOnApproval).(*operatorv1alpha1.PtahMigration)
 	applying.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
 	applying.Status.ActiveOperation = &operatorv1alpha1.MigrationOperationStatus{Type: "Apply", ID: "attempt", JobName: "ptah-apply-1",
@@ -242,6 +246,9 @@ func TestSetSourceRefusesWhatItDoesNotChange(t *testing.T) {
 			"spec.desired.verificationPolicyFrom", "  kubectl edit ptahschema storefront -n demo"}},
 		{"a Git source", "migration", git, []string{
 			"spec.artifact of ptahmigration/storefront in namespace demo names a Git source", "  kubectl edit ptahmigration storefront -n demo"}},
+		{"an S3 source", "schema", object, []string{
+			"spec.desired of ptahschema/storefront in namespace demo names an S3 source, not an OCI artifact. Nothing was changed.",
+			"  kubectl edit ptahschema storefront -n demo"}},
 		{"a migration Apply running", "migration", applying, []string{
 			"an Apply is running on ptahmigration/storefront in namespace demo (Job ptah-apply-1). Nothing was changed.",
 			"records the run as one nobody accounted for (Unknown)", "kubectl ptah wait migration/storefront --for applied -n demo waits for it"}},

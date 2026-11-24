@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "26"
-    operator.ptah.run/crd-schema-digest: "sha256:dc5f8b0bc71ea7a8b492ed1f3d1b2e710b1e016186ba980a39a7f0a221052ba4"
+    operator.ptah.run/crd-schema-version: "27"
+    operator.ptah.run/crd-schema-digest: "sha256:941d4349472eddff6e3cc30846981e558ae34605bfaad45e6c5b813bb8cc98bb"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -275,6 +275,92 @@ spec:
                     required:
                     - name
                     type: object
+                  s3:
+                    properties:
+                      authFrom:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      bucket:
+                        maxLength: 63
+                        minLength: 3
+                        pattern: ^[a-z0-9][a-z0-9._-]*[a-z0-9]$
+                        type: string
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      endpoint:
+                        maxLength: 267
+                        minLength: 9
+                        pattern: ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*\])(:[0-9]{1,5})?$
+                        type: string
+                      format:
+                        enum:
+                        - File
+                        - TarGzip
+                        - Zip
+                        type: string
+                      key:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^(?:[^./\x00-\x1f\x7f][^/\x00-\x1f\x7f]*|\.[^./\x00-\x1f\x7f][^/\x00-\x1f\x7f]*|\.\.[^/\x00-\x1f\x7f]+)(?:/(?:[^./\x00-\x1f\x7f][^/\x00-\x1f\x7f]*|\.[^./\x00-\x1f\x7f][^/\x00-\x1f\x7f]*|\.\.[^/\x00-\x1f\x7f]+))*$
+                        type: string
+                      path:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^(\.|(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+)(?:/(?:[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.[^./\\\x00-\x1f\x7f][^/\\\x00-\x1f\x7f]*|\.\.[^/\\\x00-\x1f\x7f]+))*)$
+                        type: string
+                      region:
+                        maxLength: 64
+                        minLength: 1
+                        pattern: ^[a-z0-9-]+$
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: caFrom must name a required ConfigMap key
+                          rule: '!has(self.caFrom) || (self.caFrom.name.size() > 0
+                            && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                            || !self.caFrom.optional))'
+                      versionId:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^[!-~]+$
+                        type: string
+                    required:
+                    - bucket
+                    - digest
+                    - endpoint
+                    - format
+                    - key
+                    - path
+                    - region
+                    type: object
+                    x-kubernetes-validations:
+                    - message: with format File, path is the one name the object is
+                        given
+                      rule: self.format != 'File' || (self.path != '.' && !self.path.contains('/'))
+                    - message: key holds at most 1024 bytes
+                      rule: bytes(self.key).size() <= 1024
                   sourcePolicyFrom:
                     properties:
                       key:
@@ -325,18 +411,19 @@ spec:
                     x-kubernetes-map-type: atomic
                 type: object
                 x-kubernetes-validations:
-                - message: set exactly one of ociRef, configMap, git and https
-                  rule: '[has(self.ociRef), has(self.configMap), has(self.git), has(self.https)].filter(set,
-                    set).size() == 1'
+                - message: set exactly one of ociRef, configMap, git, https and s3
+                  rule: '[has(self.ociRef), has(self.configMap), has(self.git), has(self.https),
+                    has(self.s3)].filter(set, set).size() == 1'
                 - message: verificationPolicyFrom is required with ociRef and refused
-                    with configMap, git and https
+                    with configMap, git, https and s3
                   rule: has(self.ociRef) == has(self.verificationPolicyFrom)
-                - message: registryAuthFrom is refused with configMap, git and https
+                - message: registryAuthFrom is refused with configMap, git, https
+                    and s3
                   rule: has(self.ociRef) || !has(self.registryAuthFrom)
-                - message: transport is refused with configMap, git and https
+                - message: transport is refused with configMap, git, https and s3
                   rule: has(self.ociRef) || !has(self.transport) || (!has(self.transport.caFrom)
                     && (!has(self.transport.plainHTTP) || !self.transport.plainHTTP))
-                - message: sourcePolicyFrom is for configMap, git and https sources
+                - message: sourcePolicyFrom is for configMap, git, https and s3 sources
                   rule: '!has(self.sourcePolicyFrom) || !has(self.ociRef)'
                 - message: sourcePolicyFrom must name a required ConfigMap key
                   rule: '!has(self.sourcePolicyFrom) || (self.sourcePolicyFrom.name.size()
@@ -1066,6 +1153,9 @@ spec:
             - message: 'artifact.https.format is TarGzip or Zip: a migration directory
                 comes in an archive'
               rule: '!has(self.artifact.https) || self.artifact.https.format != ''File'''
+            - message: 'artifact.s3.format is TarGzip or Zip: a migration directory
+                comes in an archive'
+              rule: '!has(self.artifact.s3) || self.artifact.s3.format != ''File'''
           status:
             properties:
               activeOperation:
@@ -1544,6 +1634,72 @@ spec:
                         type: object
                       resolvedReference:
                         type: string
+                      s3:
+                        properties:
+                          authFrom:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          bucket:
+                            type: string
+                          contentDigest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          digest:
+                            pattern: ^sha256:[0-9a-f]{64}$
+                            type: string
+                          endpoint:
+                            type: string
+                          format:
+                            enum:
+                            - File
+                            - TarGzip
+                            - Zip
+                            type: string
+                          key:
+                            type: string
+                          path:
+                            type: string
+                          region:
+                            type: string
+                          transport:
+                            properties:
+                              caFrom:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    default: ""
+                                    type: string
+                                  optional:
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                            x-kubernetes-validations:
+                            - message: caFrom must name a required ConfigMap key
+                              rule: '!has(self.caFrom) || (self.caFrom.name.size()
+                                > 0 && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                                || !self.caFrom.optional))'
+                          versionId:
+                            type: string
+                        required:
+                        - bucket
+                        - contentDigest
+                        - digest
+                        - endpoint
+                        - format
+                        - key
+                        - path
+                        - region
+                        type: object
                       snapshot:
                         properties:
                           contentDigest:
@@ -1586,10 +1742,11 @@ spec:
                           rule: '!self.plainHTTP || !has(self.caFrom)'
                     type: object
                     x-kubernetes-validations:
-                    - message: set exactly one of resolvedReference, snapshot, git
-                        and https
+                    - message: set exactly one of resolvedReference, snapshot, git,
+                        https and s3
                       rule: '[has(self.resolvedReference), has(self.snapshot), has(self.git),
-                        has(self.https)].filter(set, set).size() == 1'
+                        has(self.https), has(self.s3)].filter(set, set).size() ==
+                        1'
                   startedAt:
                     format: date-time
                     type: string
@@ -1805,6 +1962,72 @@ spec:
                     type: object
                   resolvedReference:
                     type: string
+                  s3:
+                    properties:
+                      authFrom:
+                        properties:
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      bucket:
+                        type: string
+                      contentDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      endpoint:
+                        type: string
+                      format:
+                        enum:
+                        - File
+                        - TarGzip
+                        - Zip
+                        type: string
+                      key:
+                        type: string
+                      path:
+                        type: string
+                      region:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                        x-kubernetes-validations:
+                        - message: caFrom must name a required ConfigMap key
+                          rule: '!has(self.caFrom) || (self.caFrom.name.size() > 0
+                            && self.caFrom.key.size() > 0 && (!has(self.caFrom.optional)
+                            || !self.caFrom.optional))'
+                      versionId:
+                        type: string
+                    required:
+                    - bucket
+                    - contentDigest
+                    - digest
+                    - endpoint
+                    - format
+                    - key
+                    - path
+                    - region
+                    type: object
                   snapshot:
                     properties:
                       contentDigest:
@@ -1847,10 +2070,10 @@ spec:
                       rule: '!self.plainHTTP || !has(self.caFrom)'
                 type: object
                 x-kubernetes-validations:
-                - message: set exactly one of resolvedReference, snapshot, git and
-                    https
+                - message: set exactly one of resolvedReference, snapshot, git, https
+                    and s3
                   rule: '[has(self.resolvedReference), has(self.snapshot), has(self.git),
-                    has(self.https)].filter(set, set).size() == 1'
+                    has(self.https), has(self.s3)].filter(set, set).size() == 1'
               blockedSince:
                 format: date-time
                 type: string
@@ -2489,6 +2712,7 @@ spec:
                         - ConfigMap
                         - Git
                         - HTTPS
+                        - S3
                         type: string
                       policy:
                         properties:

@@ -1,13 +1,15 @@
 // Package sourcepolicy reads and applies a source policy: what a team refuses
-// for every ConfigMap, Git and HTTPS source, held in an immutable ConfigMap a
-// resource selects with sourcePolicyFrom.
+// for every ConfigMap, Git, HTTPS and S3 source, held in an immutable
+// ConfigMap a resource selects with sourcePolicyFrom.
 //
-// The document is YAML with four optional rules:
+// The document is YAML with five optional rules:
 //
 //	allowedGitHosts:      # the only host[:port] a Git source may name
 //	  - git.example.com
 //	allowedHTTPSHosts:    # the only host[:port] an HTTPS source may name
 //	  - artifacts.example.com
+//	allowedS3Buckets:     # the only host[:port]/bucket an S3 source may name
+//	  - s3.eu-west-1.amazonaws.com/releases
 //	allowedConfigMaps:    # the only ConfigMaps a ConfigMap source may name
 //	  - inventory-schema
 //	maxContentBytes: 1048576   # the most the selected files may hold together
@@ -45,6 +47,7 @@ var ErrRefused = errors.New("the source policy refuses this source")
 type Policy struct {
 	AllowedGitHosts   *[]string `json:"allowedGitHosts,omitempty"`
 	AllowedHTTPSHosts *[]string `json:"allowedHTTPSHosts,omitempty"`
+	AllowedS3Buckets  *[]string `json:"allowedS3Buckets,omitempty"`
 	AllowedConfigMaps *[]string `json:"allowedConfigMaps,omitempty"`
 	MaxContentBytes   *int64    `json:"maxContentBytes,omitempty"`
 }
@@ -69,7 +72,8 @@ func Parse(document []byte) (Policy, error) {
 		return Policy{}, errors.New("the source policy's maxContentBytes is not positive")
 	}
 	for name, list := range map[string]*[]string{
-		"allowedGitHosts": policy.AllowedGitHosts, "allowedHTTPSHosts": policy.AllowedHTTPSHosts, "allowedConfigMaps": policy.AllowedConfigMaps,
+		"allowedGitHosts": policy.AllowedGitHosts, "allowedHTTPSHosts": policy.AllowedHTTPSHosts,
+		"allowedS3Buckets": policy.AllowedS3Buckets, "allowedConfigMaps": policy.AllowedConfigMaps,
 	} {
 		if list == nil {
 			continue
@@ -133,6 +137,28 @@ func (p Policy) CheckHTTPSHost(authority string) error {
 		return nil
 	}
 	return checkHost("allowedHTTPSHosts", *p.AllowedHTTPSHosts, authority)
+}
+
+// CheckS3Bucket refuses an S3 source whose endpoint authority, host[:port],
+// and bucket the policy does not name together as host[:port]/bucket. Hosts
+// compare as printable ASCII without case, and buckets exactly, since S3
+// bucket names are lowercase. allowedHTTPSHosts says nothing about an S3
+// source: an endpoint serves every bucket on it, and a team that allows one
+// has not allowed the rest.
+func (p Policy) CheckS3Bucket(authority, bucket string) error {
+	if p.AllowedS3Buckets == nil {
+		return nil
+	}
+	if err := sourcehost.CheckASCII(authority); err != nil {
+		return fmt.Errorf("%w: allowedS3Buckets compares hosts as ASCII: %w", ErrRefused, err)
+	}
+	if slices.ContainsFunc(*p.AllowedS3Buckets, func(entry string) bool {
+		host, entryBucket, found := strings.Cut(entry, "/")
+		return found && entryBucket == bucket && sourcehost.Equal(host, authority)
+	}) {
+		return nil
+	}
+	return fmt.Errorf("%w: allowedS3Buckets does not name %s/%s", ErrRefused, authority, bucket)
 }
 
 // checkHost refuses an authority that rule's list does not name. An

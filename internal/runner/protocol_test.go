@@ -614,6 +614,31 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 				CoordinationDigest: digest, ResolvedDownloadDigest: digest, ResolvedContentDigest: digest},
 		},
 		{
+			name: "an object version without a download",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-s3-version-only",
+				ResolvedCommit: strings.Repeat("a", 40), ResolvedContentDigest: digest, ResolvedVersionID: "v1"},
+		},
+		{
+			name: "an object version with a space",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-s3-version-space",
+				ResolvedDownloadDigest: digest, ResolvedContentDigest: digest, ResolvedVersionID: "v 1"},
+		},
+		{
+			name: "an object version past 1024 bytes",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-s3-version-long",
+				ResolvedDownloadDigest: digest, ResolvedContentDigest: digest, ResolvedVersionID: strings.Repeat("v", 1025)},
+		},
+		{
+			name: "an object version on an unrelated operation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationPlan, OperationID: "plan-s3",
+				CoordinationDigest: digest, ResolvedVersionID: "v1"},
+		},
+		{
+			name: "S3 access refusal after a child ran",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-s3-late-refusal",
+				ChildExitCode: 0, Error: &ResultError{Code: CodeInvalidS3Access, Message: "refused"}},
+		},
+		{
 			name: "HTTPS access refusal after a child ran",
 			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-https-late-refusal",
 				ChildExitCode: 0, Error: &ResultError{Code: "invalid_https_access", Message: "refused"}},
@@ -1091,6 +1116,21 @@ func TestParserAdmitsAGitResolution(t *testing.T) {
 	frame := handcraftedIntegrityValidFrame(t, result)
 	if parsed, err := ParseResultFor(frame, OperationResolve, "resolve-git"); err != nil || parsed.ResolvedCommit != result.ResolvedCommit {
 		t.Fatalf("ParseResultFor() = %#v, %v", parsed, err)
+	}
+}
+
+// An S3 resolution is an HTTPS one with the object version it read, which
+// may be at its bound.
+func TestParserAdmitsAnS3Resolution(t *testing.T) {
+	t.Parallel()
+	for _, version := range []string{"3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY", strings.Repeat("~", 1024)} {
+		result := Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-s3",
+			ResolvedDownloadDigest: "sha256:" + strings.Repeat("8", 64), ResolvedContentDigest: "sha256:" + strings.Repeat("9", 64),
+			ResolvedVersionID: version, ResolvedContentBytes: 12}
+		frame := handcraftedIntegrityValidFrame(t, result)
+		if parsed, err := ParseResultFor(frame, OperationResolve, "resolve-s3"); err != nil || !reflect.DeepEqual(parsed, result) {
+			t.Fatalf("ParseResultFor() = %#v, %v", parsed, err)
+		}
 	}
 }
 

@@ -30,6 +30,8 @@ const (
 	SourceGit SourceKind = "Git"
 	// SourceHTTPS is a download pinned by its digest.
 	SourceHTTPS SourceKind = "HTTPS"
+	// SourceS3 is an object of an S3-compatible bucket pinned by its digest.
+	SourceS3 SourceKind = "S3"
 	// SourceOther is a spec that names none of these, such as a kind of
 	// source a newer API added.
 	SourceOther SourceKind = "Other"
@@ -98,6 +100,8 @@ func sourceKind(spec operatorv1alpha1.SourceSpec) SourceKind {
 		return SourceGit
 	case spec.HTTPS != nil:
 		return SourceHTTPS
+	case spec.S3 != nil:
+		return SourceS3
 	case spec.OCIRef != "":
 		return SourceOCI
 	default:
@@ -245,9 +249,10 @@ type SourceResult struct {
 	Object client.Object
 }
 
-// SourceKindError is a resource whose source is a ConfigMap or Git, which
-// SetSource does not change: moving to an OCI artifact also takes a
-// verification policy, which only the person editing the resource can name.
+// SourceKindError is a resource whose source is a ConfigMap, Git, HTTPS or
+// S3 one, which SetSource does not change: moving to an OCI artifact also
+// takes a verification policy, which only the person editing the resource can
+// name.
 type SourceKindError struct {
 	Ref   Ref
 	Field string
@@ -258,7 +263,18 @@ func (e *SourceKindError) Error() string {
 	if e.Kind == SourceOther {
 		return fmt.Sprintf("%s of %s names no OCI artifact", e.Field, e.Ref)
 	}
-	return fmt.Sprintf("%s of %s names a %s source, not an OCI artifact", e.Field, e.Ref, e.Kind)
+	return fmt.Sprintf("%s of %s names %s source, not an OCI artifact", e.Field, e.Ref, withArticle(e.Kind))
+}
+
+// withArticle is a kind with the article it is read with: an HTTPS, an S3,
+// a Git.
+func withArticle(kind SourceKind) string {
+	switch kind {
+	case SourceHTTPS, SourceS3, SourceOCI:
+		return "an " + string(kind)
+	default:
+		return "a " + string(kind)
+	}
 }
 
 // ApplyRunningError is a resource with an Apply in flight whose Job may
@@ -313,7 +329,7 @@ func describeRequest(s Source) string {
 	case SourceOther:
 		return "a source that is not an OCI artifact"
 	default:
-		return "a " + string(s.Kind) + " source"
+		return withArticle(s.Kind) + " source"
 	}
 }
 
@@ -324,7 +340,7 @@ func describeRequest(s Source) string {
 // new artifact is held to them.
 //
 // It sends nothing when the spec already asks for pinned. It refuses a
-// resource whose source is a ConfigMap or Git (*SourceKindError) and one with
+// resource whose source is not an OCI artifact (*SourceKindError) and one with
 // an Apply in flight whose Job may exist (*ApplyRunningError).
 //
 // The patch tests metadata.uid, as every change here does, and carries the

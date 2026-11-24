@@ -22,6 +22,9 @@ var protectedEnvironmentKeys = []string{
 	EnvGitPassword,
 	EnvHTTPSPassword,
 	EnvHTTPSToken,
+	EnvS3AccessKeyID,
+	EnvS3SecretAccessKey,
+	EnvS3SessionToken,
 }
 
 type Redactor struct {

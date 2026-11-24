@@ -242,17 +242,17 @@ func TestSetSourceSendsNothingWhenTheSpecAlreadyAsksForIt(t *testing.T) {
 	}
 }
 
-func TestSetSourceRefusesAConfigMapGitOrHTTPSSource(t *testing.T) {
+func TestSetSourceRefusesASourceThatIsNotAnOCIArtifact(t *testing.T) {
 	t.Parallel()
 
 	for _, family := range families {
-		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit, operate.SourceHTTPS, operate.SourceOther} {
+		for _, kind := range []operate.SourceKind{operate.SourceConfigMap, operate.SourceGit, operate.SourceHTTPS, operate.SourceS3, operate.SourceOther} {
 			t.Run(string(family)+"/"+string(kind), func(t *testing.T) {
 				t.Parallel()
 
 				object := sourced(family, uidA, "")
 				source := operatorv1alpha1.SourceSpec{}
-				// Other is a spec that names none of the four, as one a newer
+				// Other is a spec that names none of the five, as one a newer
 				// API's kind of source would read here: there is no ociRef to
 				// replace.
 				switch kind {
@@ -268,6 +268,10 @@ func TestSetSourceRefusesAConfigMapGitOrHTTPSSource(t *testing.T) {
 					// know.
 					source.HTTPS = &operatorv1alpha1.HTTPSSourceSpec{URL: "https://artifacts.example/shop/schema.sql",
 						Digest: "sha256:" + strings.Repeat("a", 64), Format: operatorv1alpha1.HTTPSFormatFile, Path: "schema.sql"}
+				case operate.SourceS3:
+					source.S3 = &operatorv1alpha1.S3SourceSpec{Endpoint: "https://objects.example", Region: "us-east-1",
+						Bucket: "shop-schemas", Key: "schema.sql", Digest: "sha256:" + strings.Repeat("a", 64),
+						Format: operatorv1alpha1.HTTPSFormatFile, Path: "schema.sql"}
 				}
 				field := "spec.desired"
 				switch typed := object.(type) {
@@ -284,6 +288,14 @@ func TestSetSourceRefusesAConfigMapGitOrHTTPSSource(t *testing.T) {
 				var refused *operate.SourceKindError
 				if !errors.As(err, &refused) || refused.Kind != kind || refused.Field != field || len(rec.sent()) != 0 {
 					t.Fatalf("err = %v after %d patches; want a %s source refused before anything is sent", err, len(rec.sent()), kind)
+				}
+				// The refusal reads as a sentence for every kind it names.
+				if want := map[operate.SourceKind]string{
+					operate.SourceConfigMap: "names a ConfigMap source", operate.SourceGit: "names a Git source",
+					operate.SourceHTTPS: "names an HTTPS source", operate.SourceS3: "names an S3 source",
+					operate.SourceOther: "names no OCI artifact",
+				}[kind]; !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %q, want it to say %q", err, want)
 				}
 			})
 		}

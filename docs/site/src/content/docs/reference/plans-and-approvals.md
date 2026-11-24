@@ -48,14 +48,18 @@ derives different values from the same content -- and the approval and the
 apply policy were decided on them. The schema *name* is not in it — a name can
 be reused, so the UID is what identifies the resource.
 
-A plan computed from a ConfigMap, Git or HTTPS source binds `spec.source` in
-place of the artifact digest: the kind, a revision, the content digest of the
-selected files, and the source policy they were checked against. The revision
-is the ConfigMap's UID, or for Git and HTTPS the SHA-256 of the URL and the
-selected path. An HTTPS plan does not bind the download digest, so an archive
-published again as other bytes, with the same selected files, keeps its plan
-and its approval once the spec names the new digest; another URL, another path
-or other files make another plan.
+A plan computed from a ConfigMap, Git, HTTPS or S3 source binds `spec.source`
+in place of the artifact digest: the kind, a revision, the content digest of
+the selected files, and the source policy they were checked against. The
+revision is the ConfigMap's UID, for Git and HTTPS the SHA-256 of the URL and
+the selected path, and for S3 the SHA-256 of the endpoint's authority, the
+bucket, the key and the selected path, joined by newlines. An HTTPS plan does
+not bind the download digest, so an archive published again as other bytes,
+with the same selected files, keeps its plan and its approval once the spec
+names the new digest; another URL, another path or other files make another
+plan. An S3 plan binds neither the object digest, the version, the region nor
+the credential Secret, and keeps its plan and approval the same way; another
+endpoint, bucket, key or path, or other files, make another plan.
 
 The manager that published the plan is not in it either. The plan records the
 manager's image and revision and the runner image beside it, and a later

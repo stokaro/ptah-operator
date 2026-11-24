@@ -195,7 +195,7 @@ func httpsSourceRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard forgets the HTTPS volumes", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, shape,
-			`"git-credentials", "https-credentials"] && has(volume.secret)`, `"git-credentials"] && has(volume.secret)`),
+			`"git-credentials", "https-credentials", "s3-credentials"] && has(volume.secret)`, `"git-credentials", "s3-credentials"] && has(volume.secret)`),
 		Breaks: []string{resolveRow, observeRow},
 	})
 	c.mutation(policyenv.Mutation{
@@ -208,45 +208,45 @@ func httpsSourceRows(t *testing.T, c *catalog) {
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard lets an OCI fetch carry an HTTPS credential", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, shape,
-			`"fetch-schema"] && !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca"])`,
-			`"fetch-schema"] && !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts"])`),
+			`"fetch-schema"] && !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca", "s3-credentials", "s3-ca"])`,
+			`"fetch-schema"] && !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "s3-credentials", "s3-ca"])`),
 		Breaks: []string{credentialOnOCIRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard lets a snapshot copy carry an HTTPS CA", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, shape,
-			`"git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca"])) || (dyn(object).spec.template.spec.initContainers.map(container, container.name) == ["install-runner", "fetch-git-source"]`,
-			`"git-credentials", "git-ca", "git-known-hosts"])) || (dyn(object).spec.template.spec.initContainers.map(container, container.name) == ["install-runner", "fetch-git-source"]`),
+			`"git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca", "s3-credentials", "s3-ca"])) || (dyn(object).spec.template.spec.initContainers.map(container, container.name) == ["install-runner", "fetch-git-source"]`,
+			`"git-credentials", "git-ca", "git-known-hosts", "s3-credentials", "s3-ca"])) || (dyn(object).spec.template.spec.initContainers.map(container, container.name) == ["install-runner", "fetch-git-source"]`),
 		Breaks: []string{caOnSnapshotRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard lets a Git fetch carry an HTTPS credential", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, shape,
-			`"registry-ca-snapshot", "https-credentials", "https-ca"]))`, `"registry-ca-snapshot"]))`),
+			`"registry-ca-snapshot", "https-credentials", "https-ca", "s3-credentials", "s3-ca"]))`, `"registry-ca-snapshot", "s3-credentials", "s3-ca"]))`),
 		Breaks: []string{credentialOnGitRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "Job write guard lets any operation mount an HTTPS credential", Policies: []string{jobGuard},
 		Apply: policyenv.RewriteValidations(jobGuard, shape,
-			`== "resolve" || !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca"])`,
-			`== "resolve" || !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts"])`),
+			`== "resolve" || !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "https-credentials", "https-ca", "s3-credentials", "s3-ca"])`,
+			`== "resolve" || !dyn(object).spec.template.spec.volumes.exists(volume, volume.name in ["git-credentials", "git-ca", "git-known-hosts", "s3-credentials", "s3-ca"])`),
 		Breaks: []string{credentialOnVerifyRow}, Admits: true,
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard forgets the HTTPS kind", Policies: []string{planGuard},
-		Apply:  policyenv.RewriteValidations(planGuard, manifest, `kind in ["Git", "HTTPS"]`, `kind in ["Git"]`),
+		Apply:  policyenv.RewriteValidations(planGuard, manifest, `kind in ["Git", "HTTPS", "S3"]`, `kind in ["Git", "S3"]`),
 		Breaks: []string{planRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "migration plan write guard forgets the HTTPS kind", Policies: []string{migrationPlanGuard},
-		Apply:  policyenv.RewriteValidations(migrationPlanGuard, manifest, `kind in ["Git", "HTTPS"]`, `kind in ["Git"]`),
+		Apply:  policyenv.RewriteValidations(migrationPlanGuard, manifest, `kind in ["Git", "HTTPS", "S3"]`, `kind in ["Git", "S3"]`),
 		Breaks: []string{migrationPlanRow},
 	})
 	c.mutation(policyenv.Mutation{
 		Name: "plan write guard takes any HTTPS revision", Policies: []string{planGuard},
 		Apply: policyenv.RewriteValidations(planGuard, manifest,
-			`kind in ["Git", "HTTPS"] && dyn(object).spec.source.revision.matches("^sha256:[0-9a-f]{64}$")`,
-			`kind in ["Git", "HTTPS"] && dyn(object).spec.source.revision != ""`),
+			`kind in ["Git", "HTTPS", "S3"] && dyn(object).spec.source.revision.matches("^sha256:[0-9a-f]{64}$")`,
+			`kind in ["Git", "HTTPS", "S3"] && dyn(object).spec.source.revision != ""`),
 		Breaks: []string{urlPlanRow}, Admits: true,
 	})
 }

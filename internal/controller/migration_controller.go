@@ -842,15 +842,19 @@ func (r *MigrationReconciler) claimMigration(
 		// credential, so no Resolve Job and no Verify step.
 		return r.resolveMigrationConfigMapSource(ctx, migration)
 	}
-	if operationType == operatorv1alpha1.MigrationOperationResolve && (migration.Spec.Artifact.Git != nil || migration.Spec.Artifact.HTTPS != nil) {
-		// A host the source policy does not allow gets no Job: the
-		// credential is never sent there.
+	if operationType == operatorv1alpha1.MigrationOperationResolve &&
+		(migration.Spec.Artifact.Git != nil || migration.Spec.Artifact.HTTPS != nil || migration.Spec.Artifact.S3 != nil) {
+		// A host or a bucket the source policy does not allow gets no Job:
+		// the credential is never sent there.
 		policy, _, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
 		if err == nil {
-			if git := migration.Spec.Artifact.Git; git != nil {
-				err = checkGitSource(policy, git, 0)
-			} else {
+			switch {
+			case migration.Spec.Artifact.Git != nil:
+				err = checkGitSource(policy, migration.Spec.Artifact.Git, 0)
+			case migration.Spec.Artifact.HTTPS != nil:
 				err = checkHTTPSSource(policy, migration.Spec.Artifact.HTTPS, 0)
+			default:
+				err = checkS3Source(policy, migration.Spec.Artifact.S3, 0)
 			}
 		}
 		if err != nil {
@@ -1584,6 +1588,33 @@ func (r *MigrationReconciler) consumeMigrationResult(
 				operatorv1alpha1.ReasonDownloadVerified, httpsResolvedMessage(revision)+"; the history is read next")
 			break
 		}
+		if object := migration.Spec.Artifact.S3; object != nil {
+			revision, err := s3Resolution(object, result)
+			if err != nil {
+				return r.retryMigrationOperation(ctx, migration, job, err)
+			}
+			policy, policyBinding, err := sourcePolicyFor(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact)
+			if err == nil {
+				err = checkS3Source(policy, object, result.ResolvedContentBytes)
+			}
+			if err != nil {
+				if errors.Is(err, errSourceRefused) {
+					return r.retryMigrationOperation(ctx, migration, job, err)
+				}
+				return ctrl.Result{}, err
+			}
+			migration.Status.Artifact = &operatorv1alpha1.SourceAccessBinding{S3: sourcebinding.S3Access(*object, revision)}
+			migration.Status.ConfigMap = nil
+			migration.Status.SourcePolicy = policyBinding
+			// The Resolve Job held the object to the pinned digest, which is
+			// the whole trust decision: the history is read next.
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			meta.RemoveStatusCondition(&migration.Status.Conditions, operatorv1alpha1.ConditionMigrationArtifactVerified)
+			endMigrationRefusal(migration, operatorv1alpha1.ReasonDownloadVerified, migrationSourceResolvedMessage)
+			setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+				operatorv1alpha1.ReasonDownloadVerified, s3ResolvedMessage(revision)+"; the history is read next")
+			break
+		}
 		if !sha256DigestPattern.MatchString(result.ResolvedDigest) || result.ResolvedReference == "" {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the resolve result carries no immutable reference"))
 		}
@@ -1831,8 +1862,8 @@ func (r *MigrationReconciler) refuseMigrationDirectory(
 const migrationPlanLeftMessage = "A reading of the database ended somewhere other than the plan this approval names, so that plan needs a new approval if it is published again"
 
 // migrationSourceResolvedMessage is what a refusal's conditions say once a Git,
-// HTTPS or ConfigMap source was read: none has a verification policy to refuse
-// it.
+// HTTPS, S3 or ConfigMap source was read: none has a verification policy to
+// refuse it.
 const migrationSourceResolvedMessage = "The source was read, and nothing refuses it"
 
 // endMigrationRefusal takes the verification policy's refusal off the
@@ -2540,7 +2571,8 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 	migration *operatorv1alpha1.PtahMigration,
 	operationType operatorv1alpha1.MigrationOperationType,
 ) (string, error) {
-	if migration.Spec.Artifact.ConfigMap == nil && migration.Spec.Artifact.Git == nil && migration.Spec.Artifact.HTTPS == nil {
+	if migration.Spec.Artifact.ConfigMap == nil && migration.Spec.Artifact.Git == nil && migration.Spec.Artifact.HTTPS == nil &&
+		migration.Spec.Artifact.S3 == nil {
 		if _, err := ocireference.Parse(migration.Spec.Artifact.OCIRef); err != nil {
 			return "", errors.New("the artifact reference must be an OCI reference without credentials, whitespace, or query data")
 		}
@@ -2621,6 +2653,17 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			inputs["source_https_digest"] = download.Digest
 			inputs["source_content_digest"] = download.ContentDigest
 		}
+		// An S3 source adds the object version it was resolved to and its
+		// content.
+		if object := migration.Status.Artifact.S3; object != nil {
+			inputs["source_s3_endpoint"] = object.Endpoint
+			inputs["source_s3_bucket"] = object.Bucket
+			inputs["source_s3_key"] = object.Key
+			inputs["source_s3_version_id"] = object.VersionID
+			inputs["source_s3_path"] = object.Path
+			inputs["source_s3_digest"] = object.Digest
+			inputs["source_content_digest"] = object.ContentDigest
+		}
 	}
 	if git := migration.Spec.Artifact.Git; git != nil {
 		// The repository, ref, path, credential and trust a Resolve Job is
@@ -2640,6 +2683,15 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 			return "", fmt.Errorf("digest the HTTPS source: %w", err)
 		}
 		inputs["https_source"] = source
+	}
+	if object := migration.Spec.Artifact.S3; object != nil {
+		// The endpoint, region, bucket, key, version, digest, format, path,
+		// credential and trust a Resolve Job is built from.
+		source, err := fingerprint.DigestCanonicalJSON(object)
+		if err != nil {
+			return "", fmt.Errorf("digest the S3 source: %w", err)
+		}
+		inputs["s3_source"] = source
 	}
 	if operationType == operatorv1alpha1.MigrationOperationVerify {
 		binding, err := policy.ConfigMapBinding(ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom)
@@ -3378,6 +3430,14 @@ func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operator
 			binding.Transport = *spec.Transport.DeepCopy()
 		}
 		return &operatorv1alpha1.SourceAccessBinding{HTTPS: binding}
+	}
+	if object := migration.Status.Artifact.S3; object != nil {
+		binding := object.DeepCopy()
+		if spec := migration.Spec.Artifact.S3; spec != nil {
+			binding.AuthFrom = spec.AuthFrom.DeepCopy()
+			binding.Transport = *spec.Transport.DeepCopy()
+		}
+		return &operatorv1alpha1.SourceAccessBinding{S3: binding}
 	}
 	source := &operatorv1alpha1.SourceAccessBinding{
 		ResolvedReference: migration.Status.Artifact.ResolvedReference,

@@ -13,12 +13,14 @@ import (
 // The codes of a source whose access the runner refused before Ptah ran: the
 // credential owner's grants, the trust the source selects, or the coordinates
 // a credential would be sent to. A Resolve or a Verify reports them in its
-// frame. The init container that checks the access before a fetch reports the
+// frame; an S3 source has no Ptah to run, and its check comes before the
+// runner sends a request. The init container that checks the access before a fetch reports the
 // same code and the same words in an access refusal.
 const (
 	CodeInvalidOCIAccess   = "invalid_oci_access"
 	CodeInvalidGitAccess   = "invalid_git_access"
 	CodeInvalidHTTPSAccess = "invalid_https_access"
+	CodeInvalidS3Access    = "invalid_s3_access"
 )
 
 // An access refusal is the reason a source-access check refused a fetch,
@@ -59,8 +61,8 @@ const (
 
 // AccessRefusal is the record of a refused source access.
 type AccessRefusal struct {
-	// Code is CodeInvalidOCIAccess, CodeInvalidGitAccess or
-	// CodeInvalidHTTPSAccess.
+	// Code is CodeInvalidOCIAccess, CodeInvalidGitAccess,
+	// CodeInvalidHTTPSAccess or CodeInvalidS3Access.
 	Code string `json:"code"`
 	// Message is the check's sentence, redacted and bounded.
 	Message string `json:"message"`
@@ -175,7 +177,7 @@ func ParseAccessRefusal(message string) (AccessRefusal, error) {
 
 func (r AccessRefusal) validate() error {
 	switch r.Code {
-	case CodeInvalidOCIAccess, CodeInvalidGitAccess, CodeInvalidHTTPSAccess:
+	case CodeInvalidOCIAccess, CodeInvalidGitAccess, CodeInvalidHTTPSAccess, CodeInvalidS3Access:
 	default:
 		return errors.New("the access refusal carries a code that is not a source access refusal")
 	}

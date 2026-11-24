@@ -63,6 +63,50 @@ func TestFromSchemaNamesTheKindItResolvedAndWhatItResolvedTo(t *testing.T) {
 			},
 		},
 		{
+			name: "a versioned S3 archive under a source policy",
+			status: operatorv1alpha1.SchemaSourceStatus{
+				S3: &operatorv1alpha1.S3SourceRevision{
+					Endpoint: "https://objects.example.com:9000", Region: "us-east-1", Bucket: "app-releases",
+					Key: "app/1.4.0/app.tar.gz", VersionID: "3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY",
+					Format: operatorv1alpha1.HTTPSFormatTarGzip, Path: "app/db/schema.hcl", Digest: download, ContentDigest: contentDigest,
+				},
+				SourcePolicy: policy,
+			},
+			want: []sourceview.Field{
+				{"Source", "S3 s3://app-releases/app/1.4.0/app.tar.gz"},
+				{"Endpoint", "https://objects.example.com:9000"},
+				{"Region", "us-east-1"},
+				{"Version", "3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY"},
+				{"Format", "TarGzip"},
+				{"Path", "app/db/schema.hcl"},
+				{"Object", download},
+				{"Content", contentDigest},
+				{"Source policy", policyDigest},
+			},
+		},
+		{
+			// A bucket that keeps no versions leaves the field empty, as a
+			// policy that is not there leaves its own.
+			name: "an unversioned S3 file",
+			status: operatorv1alpha1.SchemaSourceStatus{
+				S3: &operatorv1alpha1.S3SourceRevision{
+					Endpoint: "https://objects.example.com", Region: "auto", Bucket: "app-schemas", Key: "schema.sql",
+					Format: operatorv1alpha1.HTTPSFormatFile, Path: "schema.sql", Digest: download, ContentDigest: contentDigest,
+				},
+			},
+			want: []sourceview.Field{
+				{"Source", "S3 s3://app-schemas/schema.sql"},
+				{"Endpoint", "https://objects.example.com"},
+				{"Region", "auto"},
+				{"Version", ""},
+				{"Format", "File"},
+				{"Path", "schema.sql"},
+				{"Object", download},
+				{"Content", contentDigest},
+				{"Source policy", ""},
+			},
+		},
+		{
 			name: "a ConfigMap and its snapshot",
 			status: operatorv1alpha1.SchemaSourceStatus{
 				ConfigMap: &operatorv1alpha1.ConfigMapSourceRevision{Name: "app-schema", UID: "cm-uid"},
@@ -157,6 +201,24 @@ func TestFromMigrationReadsTheArtifactBindingAndTheConfigMapBesideIt(t *testing.
 			policy: policy,
 			want: &sourceview.View{
 				Kind: sourceview.KindHTTPS, URL: "https://artifacts.example.com/acme/orders-1.4.0.tar.gz",
+				Format: "TarGzip", Path: "orders-1.4.0/db/migrations", DownloadDigest: download,
+				ContentDigest: contentDigest, SourcePolicyDigest: policyDigest,
+			},
+		},
+		{
+			// The binding names no OCI digest and no download URL, so a
+			// view that fell through to either would print an empty source.
+			name: "an S3 archive",
+			artifact: &operatorv1alpha1.SourceAccessBinding{S3: &operatorv1alpha1.S3SourceBinding{
+				Endpoint: "https://objects.example.com:9000", Region: "us-east-1", Bucket: "orders-releases",
+				Key: "orders/1.4.0.tar.gz", VersionID: "v7", Digest: download,
+				Format: operatorv1alpha1.HTTPSFormatTarGzip, Path: "orders-1.4.0/db/migrations", ContentDigest: contentDigest,
+				AuthFrom: &operatorv1alpha1.S3AuthSource{Name: "orders-keys"},
+			}},
+			policy: policy,
+			want: &sourceview.View{
+				Kind: sourceview.KindS3, Endpoint: "https://objects.example.com:9000", Region: "us-east-1",
+				Bucket: "orders-releases", Key: "orders/1.4.0.tar.gz", VersionID: "v7",
 				Format: "TarGzip", Path: "orders-1.4.0/db/migrations", DownloadDigest: download,
 				ContentDigest: contentDigest, SourcePolicyDigest: policyDigest,
 			},

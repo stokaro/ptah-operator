@@ -542,6 +542,11 @@
       "protocolVersion": 1,
       "sourceDigest": "sha256:e5946fa26d8ac71205b0a0b7aff3455033df6f2b79efb7c7ca28ed6ee9316e58",
       "reason": "Dependency updates the runner links, with no change to its own source: golang.org/x/crypto v0.59.0 with x/net v0.62.0, x/sys v0.50.0, x/term v0.48.0 and x/text v0.44.0; x/oauth2 v0.38.0; controller-runtime v0.25.3; prometheus/common v0.74.0; go-logr/logr v1.4.4; pandatix/go-abnf v0.5.5; go.yaml.in/yaml/v2 v2.4.5. What the runner accepts, enforces and returns is written in this repository and did not change, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:d7d883aa385f6adc80c8fa0552c75ae05e66445b06a8706b99f00a9639f115a8",
+      "reason": "Read an S3 source (#679). A Resolve with an S3 source reads one object itself, with no Ptah child: a path-style GetObject signed with Signature Version 4 from the key-pair files, or unsigned, held to the pinned object digest before any byte is read as an archive. Its frame carries resolvedDownloadDigest, the content digest and bytes, and resolvedVersionId, the version the endpoint served. A new fetch mode, --fetch-s3-source, reads the bound version before an operation, held to both digests. Before any request the runner refuses as invalid_s3_access a key pair for another endpoint or bucket, half a key pair, a token or grant with no key pair, a CA that does not give its granted digest and a CA pin with no CA; what the endpoint refuses is s3_source_refused. Other sources are unchanged, and an older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }
