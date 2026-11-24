@@ -322,9 +322,9 @@ func TestAPlanIsNotCurrentAfterTheExcludeListChanged(t *testing.T) {
 	}
 }
 
-// The history read and the Apply mount the shadow, so its Secret and key are
-// inputs of the claim beside the target's, even at one generation; a resource
-// without a check adds nothing to them.
+// The history read and the Apply mount the shadow, so its Secret and key, or
+// its class and object, are inputs of the claim beside the target's, even at
+// one generation; a resource without a check adds nothing to them.
 func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	t.Parallel()
 	migration, _ := awaitingApprovalFixture(t)
@@ -350,6 +350,22 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	excluded := inputs(func(check *operatorv1alpha1.MigrationDriftCheck) {
 		check.Exclude = []string{"public.job_queue", "reporting.*"}
 	})
+	// A class object of the Secret's names is another place, and so is
+	// another class or another object of it.
+	inClass := func(name, object string) func(*operatorv1alpha1.MigrationDriftCheck) {
+		return func(check *operatorv1alpha1.MigrationDriftCheck) {
+			check.Shadow = operatorv1alpha1.DatabaseTargetRef{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+				Name: name, ObjectName: object,
+			}}
+		}
+	}
+	secretShadow := driftCheckPolicy().Shadow.URLFrom
+	class := inputs(inClass(secretShadow.Name, secretShadow.Key))
+	otherClass := inputs(inClass("other-shadow", secretShadow.Key))
+	otherObject := inputs(inClass(secretShadow.Name, "other"))
+	if again := inputs(inClass(secretShadow.Name, secretShadow.Key)); again != class {
+		t.Fatalf("one class shadow has inputs %s and %s", class, again)
+	}
 	if again := inputs(nil); again != unchecked {
 		t.Fatalf("a resource without a check moved its inputs from %s to %s", unchecked, again)
 	}
@@ -363,9 +379,15 @@ func TestTheShadowIsAnInputOfAClaimOnlyWhenSet(t *testing.T) {
 	}
 	for name, value := range map[string]string{
 		"no check": unchecked, "another Secret": renamed, "another key": rekeyed, "an exclude list": excluded,
+		"a class object of the Secret's names": class, "another class": otherClass, "another object": otherObject,
 	} {
 		if value == checked {
 			t.Errorf("the claim's inputs with %s are the ones with the check: %s", name, value)
+		}
+	}
+	for name, value := range map[string]string{"another class": otherClass, "another object": otherObject} {
+		if value == class {
+			t.Errorf("the claim's inputs with %s are the ones with the first class object: %s", name, value)
 		}
 	}
 }
@@ -399,7 +421,7 @@ func TestAHistoryReadNamesTheShadowThePolicyAsksFor(t *testing.T) {
 		{
 			name: "a check and no shadow file in the class volume", checked: true, fromClass: true,
 			reason: operatorv1alpha1.ReasonShadowDatabaseUnavailable,
-			says: `missing_shadow: the SecretProviderClass volume holds no shadow database file. ` +
+			says: `missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty). ` +
 				`Check the URL that SecretProviderClass "orders-shadow-store" writes as object "url"`,
 		},
 		{

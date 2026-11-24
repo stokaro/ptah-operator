@@ -116,8 +116,9 @@ func TestResultFailureNamesTheClassObjectItFoundNoFileFor(t *testing.T) {
 		t.Fatalf("resultFailure(class, unreachable) = %q, which does not name the class object", unreachable)
 	}
 	missing := resultFailure(&runner.ResultError{Code: "missing_target", Message: frameText}, class).Error()
-	want := `missing_target: the operation found no file "url" in the volume of SecretProviderClass "orders-store". ` +
-		"Check that the class writes an object under that name, as its objectName or its objectAlias"
+	want := `missing_target: the operation found no URL in file "url" (missing or empty) in the volume of ` +
+		`SecretProviderClass "orders-store". Check that the class writes an object under that name, as its objectName ` +
+		"or its objectAlias"
 	if missing != want {
 		t.Fatalf("resultFailure(class, missing_target) = %q, want %q", missing, want)
 	}
@@ -231,6 +232,124 @@ func TestASchemaNamesWhyItsTargetCouldNotBeOpened(t *testing.T) {
 		t.Fatalf("OperationFailed event = %q, want the sentence", event)
 	}
 	assertNoFrameText(t, recorder, actual.Status)
+}
+
+// classDevSentence is the refusal of a Plan whose development database file
+// the class "orders-development-store" did not write as "dev-url".
+const classDevSentence = `missing_dev: the Plan found no URL in file "dev-url" (missing or empty) in the volume of ` +
+	`SecretProviderClass "orders-development-store", and computes no plan without its development database. Check ` +
+	"that the class writes an object under that name, as its objectName or its objectAlias"
+
+// TestASchemaPlanNamesTheDevelopmentDatabaseItsClassDidNotWrite harvests a Plan
+// the runner refused because the development database file its
+// SecretProviderClass should write held no URL. The schema publishes no plan,
+// and the condition and the Event name the class and the object rather than
+// the variable the runner could not set.
+func TestASchemaPlanNamesTheDevelopmentDatabaseItsClassDidNotWrite(t *testing.T) {
+	t.Parallel()
+
+	schema := safetyApplySchema(t)
+	schema.Status.Phase = operatorv1alpha1.PhasePlanning
+	schema.Status.Plan = nil
+	schema.Status.Source.Verified = true
+	schema.Status.Source.Digest = testDigest
+	schema.Status.Source.ResolvedReference = "oci://registry.example/team/schema@" + testDigest
+	schema.Status.Target.DriftReportDigest = testDigest
+	schema.Spec.Dev = &operatorv1alpha1.DatabaseTargetRef{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+		Name: "orders-development-store", ObjectName: "dev-url"}}
+	schema.Status.ActiveOperation.Type = operatorv1alpha1.OperationPlan
+	schema.Status.ActiveOperation.ID = "plan-operation"
+	schema.Status.ActiveOperation.JobName = "plan-job"
+	schema.Status.ActiveOperation.LeaseEpoch = testLeaseEpoch
+	schema.Status.ActiveOperation.ObservationDev = schema.Spec.Dev.DeepCopy()
+	bindActiveInput(t, schema)
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	frame := safetyRunnerFrame(t, runner.Result{
+		ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationPlan, OperationID: "plan-operation",
+		ChildExitCode:      -1,
+		CoordinationDigest: schema.Status.ActiveOperation.CoordinationDigest,
+		Error:              &runner.ResultError{Code: runner.CodeMissingDev, Message: frameText},
+	})
+	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod)
+	reconciler.Locks = targetlock.New(api, api, nil)
+	recorder := record.NewFakeRecorder(32)
+	reconciler.Recorder = recorder
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := safetyGetSchema(t, api, schema)
+	want := classDevSentence
+	failed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed == nil || failed.Status != metav1.ConditionTrue || failed.Reason != string(operatorv1alpha1.ReasonOperationFailed) ||
+		failed.Message != want {
+		t.Fatalf("ReconciliationFailed = %#v, want OperationFailed with %q", failed, want)
+	}
+	if event := findEvent(recorder, "Warning OperationFailed"); event != "Warning OperationFailed "+want {
+		t.Fatalf("OperationFailed event = %q, want the sentence", event)
+	}
+	if actual.Status.Plan != nil {
+		t.Fatalf("the refused Plan recorded a plan: %#v", actual.Status.Plan)
+	}
+	plans := &operatorv1alpha1.PtahSchemaPlanList{}
+	if err := api.List(context.Background(), plans, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(plans.Items) != 0 {
+		t.Fatalf("the refused Plan published %d plans", len(plans.Items))
+	}
+	assertNoFrameText(t, recorder, actual.Status)
+}
+
+// TestSchemaResultFailureNamesWhereTheDevelopmentURLComesFrom holds a
+// missing_dev refusal to the place the Plan read the URL from: a class object
+// or a Secret key, never the frame's message. A missing_dev from a claim that
+// names no development database, and a target refusal beside a class
+// development database, read as resultFailure reads them.
+func TestSchemaResultFailureNamesWhereTheDevelopmentURLComesFrom(t *testing.T) {
+	t.Parallel()
+
+	target := operatorv1alpha1.DatabaseTargetSpec{URLFrom: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url"}}
+	classDev := &operatorv1alpha1.DatabaseTargetRef{URLFromSecretProviderClass: &operatorv1alpha1.SecretProviderClassObjectSelector{
+		Name: "orders-development-store", ObjectName: "dev-url"}}
+	secretDev := &operatorv1alpha1.DatabaseTargetRef{URLFrom: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "development"}, Key: "url"}}
+	for _, row := range []struct {
+		name    string
+		dev     *operatorv1alpha1.DatabaseTargetRef
+		failure runner.ResultError
+		want    string
+	}{
+		{
+			name: "a class development database", dev: classDev,
+			failure: runner.ResultError{Code: runner.CodeMissingDev, Message: frameText},
+			want:    classDevSentence,
+		},
+		{
+			name: "a Secret development database", dev: secretDev,
+			failure: runner.ResultError{Code: runner.CodeMissingDev, Message: frameText},
+			want: "missing_dev: the development database Secret key holds no URL, and the Plan computes no plan without its " +
+				`development database. Check the URL that Secret "development" holds under key "url"`,
+		},
+		{
+			name: "no development database", failure: runner.ResultError{Code: runner.CodeMissingDev, Message: "unbound"},
+			want: "missing_dev: unbound",
+		},
+		{
+			name: "a target refusal beside a class development database", dev: classDev,
+			failure: runner.ResultError{Code: "missing_target", Message: "PTAH_DB_URL is required"},
+			want:    "missing_target: PTAH_DB_URL is required",
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			operation := &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationPlan, ObservationDev: row.dev}
+			if got := schemaResultFailure(&row.failure, operation, target).Error(); got != row.want {
+				t.Fatalf("schemaResultFailure() = %q, want %q", got, row.want)
+			}
+		})
+	}
 }
 
 // TestAMigrationHistoryNamesWhyItsTargetCouldNotBeOpened is the same reading

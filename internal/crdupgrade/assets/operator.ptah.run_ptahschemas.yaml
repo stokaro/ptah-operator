@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "27"
-    operator.ptah.run/crd-schema-digest: "sha256:05910bd90764657d383cc1ab90e7ef227a62cbdd872aac69d7e2feff62f0af21"
+    operator.ptah.run/crd-schema-digest: "sha256:2ed53407a6fc36d6ab45e7f2d94d2a177c4a8bca9440f64b3f8b185909e65d1e"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -1101,6 +1101,11 @@ spec:
                 || !has(self.dev.urlFromSecretProviderClass))) || (has(self.execution)
                 && has(self.execution.serviceAccountName) && self.execution.serviceAccountName.size()
                 > 0 && self.execution.serviceAccountName != 'default')
+            - message: dev.urlFromSecretProviderClass must name another SecretProviderClass
+                than target.urlFromSecretProviderClass
+              rule: '!has(self.dev) || !has(self.dev.urlFromSecretProviderClass) ||
+                !has(self.target.urlFromSecretProviderClass) || self.dev.urlFromSecretProviderClass.name
+                != self.target.urlFromSecretProviderClass.name'
             - message: desired.verificationPolicyFrom must name a required ConfigMap
                 key
               rule: '!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size()

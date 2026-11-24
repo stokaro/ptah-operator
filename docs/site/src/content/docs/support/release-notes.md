@@ -49,9 +49,19 @@ and the executor, Ptah v0.35.0, are those of 0.2.18.
   the class nor the store. A resource that sets it has to name
   `spec.execution.serviceAccountName`, and not `default`, since the store
   trusts that account; bind the store's role to an audience no token in the
-  Pod carries. [Credentials from a SecretProviderClass](../../reference/credentials-and-admission/#secret-provider-class)
+  Pod carries. A development database or a shadow from a class names another
+  class than the target's. An object the class does not write, or writes
+  empty, stops the operation that reads it, and the status names the class and
+  the object.
+  [Credentials from a SecretProviderClass](../../reference/credentials-and-admission/#secret-provider-class)
   has the contract. A resource that keeps `urlFrom` needs no change to its
   spec.
+- **A Plan no longer runs without the development database it names.** A
+  `PtahSchema` Plan whose `spec.dev` Secret key held an empty URL ran, and
+  Ptah planned without a development database. The runner now refuses such a
+  Plan with `missing_dev` before Ptah starts, as it refuses one whose class
+  writes no URL, and the message names the Secret key or the class object to
+  fix.
 - **PostgreSQL 15.x joins the supported release lines.** Run 45153382451 of
   the Added database lines workflow passed the whole lifecycle on it on every
   supported Kubernetes minor at the pinned Ptah build. A cluster on 16.x, 17.x

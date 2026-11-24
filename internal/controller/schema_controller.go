@@ -1374,7 +1374,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return r.blockProofOnMovedTarget(ctx, schema, job, result.TargetIdentityDigest)
 	}
 	if result.Error != nil {
-		err := resultFailure(result.Error, operationURLSource(operation.Target, schema.Spec.Target))
+		err := schemaResultFailure(result.Error, operation, schema.Spec.Target)
 		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == verificationRefusedCode {
 			if !verificationRefusalHolds(result, schema.Status.Source.Digest, operation.VerificationPolicyDigest) ||
 				operation.VerificationPolicyUID == "" {

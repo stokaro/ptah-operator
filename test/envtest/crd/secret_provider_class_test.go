@@ -12,7 +12,8 @@ import (
 const (
 	oneURLSource    = "set exactly one of urlFrom and urlFromSecretProviderClass"
 	classAccount    = "a URL from a SecretProviderClass needs execution.serviceAccountName to name an account other than default"
-	shadowNotTarget = "policy.driftCheck.shadow.urlFromSecretProviderClass must name another object than target.urlFromSecretProviderClass"
+	shadowNotTarget = "policy.driftCheck.shadow.urlFromSecretProviderClass must name another SecretProviderClass than target.urlFromSecretProviderClass"
+	devNotTarget    = "dev.urlFromSecretProviderClass must name another SecretProviderClass than target.urlFromSecretProviderClass"
 )
 
 // fromClass rewrites a base so its target reads its URL from a
@@ -128,6 +129,16 @@ func TestAURLFromASecretProviderClassRefusals(t *testing.T) {
 				}, "spec", "dev"),
 				want: []cause{{"spec.dev", oneURLSource}},
 			},
+			refusal{
+				name:   "a development database naming the target's class object",
+				mutate: setting(map[string]any{"urlFromSecretProviderClass": map[string]any{"name": "application-store", "objectName": "url"}}, "spec", "dev"),
+				want:   []cause{{"spec", devNotTarget}},
+			},
+			refusal{
+				name:   "a development database naming another object of the target's class",
+				mutate: setting(map[string]any{"urlFromSecretProviderClass": map[string]any{"name": "application-store", "objectName": "dev-url"}}, "spec", "dev"),
+				want:   []cause{{"spec", devNotTarget}},
+			},
 		)
 		assertRefusals(t, fromClass(schemaBase(namespace)), rows)
 		// The account rule reads the development database too: a Secret
@@ -150,10 +161,15 @@ func TestAURLFromASecretProviderClassRefusals(t *testing.T) {
 				want:   []cause{{"spec", shadowNotTarget}},
 			},
 			refusal{
+				name:   "a shadow naming another object of the target's class",
+				mutate: setting(map[string]any{"urlFromSecretProviderClass": map[string]any{"name": "application-store", "objectName": "shadow-url"}}, shadow...),
+				want:   []cause{{"spec", shadowNotTarget}},
+			},
+			refusal{
 				name: "a shadow naming a Secret key and a class",
 				mutate: setting(map[string]any{
 					"urlFrom":                    map[string]any{"name": "application-shadow", "key": "url"},
-					"urlFromSecretProviderClass": map[string]any{"name": "application-store", "objectName": "shadow-url"},
+					"urlFromSecretProviderClass": map[string]any{"name": "application-shadow-store", "objectName": "url"},
 				}, shadow...),
 				want: []cause{{"spec.policy.driftCheck.shadow", oneURLSource}},
 			},
@@ -192,9 +208,6 @@ func TestAURLFromASecretProviderClassIsStored(t *testing.T) {
 		{name: "a Secret development database beside a class target", base: fromClass(schemaBase(namespace)),
 			value: map[string]any{"urlFrom": map[string]any{"name": "dev-database", "key": "url"}}, path: []string{"spec", "dev"}},
 		{name: "a migration target", base: fromClass(migrationBase(namespace))},
-		{name: "another object of the target's class as the shadow", base: fromClass(driftCheckedMigrationBase(namespace)),
-			value: map[string]any{"urlFromSecretProviderClass": class("application-store", "shadow-url")},
-			path:  []string{"spec", "policy", "driftCheck", "shadow"}},
 		{name: "the target's object name in another class as the shadow", base: fromClass(driftCheckedMigrationBase(namespace)),
 			value: map[string]any{"urlFromSecretProviderClass": class("application-shadow-store", "url")},
 			path:  []string{"spec", "policy", "driftCheck", "shadow"}},

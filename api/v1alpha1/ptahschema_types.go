@@ -105,6 +105,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution) || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds() <= self.execution.activeDeadlineSeconds * 1000",message="policy.lockTimeout must not exceed execution.activeDeadlineSeconds"
 // +kubebuilder:validation:XValidation:rule="!has(self.target.urlFrom) || (self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size() > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional))",message="target.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="(!has(self.target.urlFromSecretProviderClass) && (!has(self.dev) || !has(self.dev.urlFromSecretProviderClass))) || (has(self.execution) && has(self.execution.serviceAccountName) && self.execution.serviceAccountName.size() > 0 && self.execution.serviceAccountName != 'default')",message="a URL from a SecretProviderClass needs execution.serviceAccountName to name an account other than default"
+// +kubebuilder:validation:XValidation:rule="!has(self.dev) || !has(self.dev.urlFromSecretProviderClass) || !has(self.target.urlFromSecretProviderClass) || self.dev.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name",message="dev.urlFromSecretProviderClass must name another SecretProviderClass than target.urlFromSecretProviderClass"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.verificationPolicyFrom) || (self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size() > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional))",message="desired.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.configMap) || self.desired.configMap.items.size() == 1",message="desired.configMap selects exactly one file for a schema"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.git) || self.desired.git.path != '.'",message="desired.git.path selects one file for a schema"
@@ -121,6 +122,12 @@ type PtahSchemaSpec struct {
 	Desired SourceSpec `json:"desired"`
 	// Dev is a scratch database Ptah may use where a comparison needs one. It
 	// is never the target, and nothing it holds is kept.
+	//
+	// A Plan whose development database file holds no URL stops before Ptah
+	// starts: a class object the class does not write, or a Secret key or
+	// class object that is empty. A class development database names a class
+	// other than the target's, since each URL is its own volume and one Pod
+	// would mount the class twice.
 	Dev *DatabaseTargetRef `json:"dev,omitempty"`
 	// Policy decides what may happen without a person: whether a plan applies
 	// itself, whether a destructive one is permitted at all, what counts as
@@ -245,8 +252,8 @@ type SecretProviderClassObjectSelector struct {
 	// ObjectName is the file the class writes the URL to: the objectName, or
 	// the alias, the class gives the object. It is one file name, of the
 	// characters a Secret key may hold, and not "." or "..", or starting
-	// with "..". A name the class does not write leaves the operation with
-	// no URL.
+	// with "..". A name the class does not write leaves no file, and the
+	// operation that reads the URL stops and names the class and the object.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^\.?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$`

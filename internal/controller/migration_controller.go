@@ -2742,7 +2742,7 @@ func shadowReadFailure(migration *operatorv1alpha1.PtahMigration, refusal string
 // in the words of the place it was read from.
 func missingShadow(migration *operatorv1alpha1.PtahMigration) string {
 	if migration.Spec.Policy.DriftCheck.Shadow.URLFromSecretProviderClass != nil {
-		return "missing_shadow: the SecretProviderClass volume holds no shadow database file"
+		return "missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty)"
 	}
 	return "missing_shadow: the shadow database Secret key holds no URL"
 }

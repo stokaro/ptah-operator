@@ -38,18 +38,48 @@ const codeMissingTarget = "missing_target"
 // A URL from a SecretProviderClass that the runner found missing is the
 // operator's sentence too. The class decides which files the driver writes,
 // so an objectName the class does not write mounts cleanly and leaves no file,
-// and the runner's words name only the variable it could not set.
+// and the runner's words name only the variable it could not set. The runner
+// does not say whether the file was missing or empty, so the sentence names
+// both.
 func resultFailure(failure *runner.ResultError, url urlsource.Source) error {
 	if kind, known := dataplane.ParseTargetFailureKind(failure.Code); known {
 		return &targetFailureError{kind: kind, url: url, unseenObjects: failure.UnseenObjects}
 	}
 	if failure.Code == codeMissingTarget && url.Class != nil {
 		return resultCodeError{code: failure.Code, message: fmt.Sprintf(
-			"%s: the operation found no file %q in the volume of SecretProviderClass %q. Check that the class writes "+
-				"an object under that name, as its objectName or its objectAlias",
+			"%s: the operation found no URL in file %q (missing or empty) in the volume of SecretProviderClass %q. "+
+				"Check that the class writes an object under that name, as its objectName or its objectAlias",
 			failure.Code, url.Class.ObjectName, url.Class.Name)}
 	}
 	return resultCodeError{code: failure.Code, message: resultCodeMessage(failure.Code, failure.Message)}
+}
+
+// schemaResultFailure is resultFailure for a schema operation, which also
+// names the development database a Plan read. The runner refuses a Plan whose
+// development database file holds no URL (runner.CodeMissingDev) before Ptah
+// starts, and the sentence names the place the URL comes from, for the reason
+// resultFailure names a target's: a SecretProviderClass object, missing or
+// empty, or a Secret key, which the kubelet holds present, holding nothing.
+func schemaResultFailure(failure *runner.ResultError, operation *operatorv1alpha1.ActiveOperationStatus,
+	spec operatorv1alpha1.DatabaseTargetSpec,
+) error {
+	if failure.Code == runner.CodeMissingDev && operation.ObservationDev != nil {
+		dev := urlsource.OfRef(*operation.ObservationDev)
+		switch {
+		case dev.Class != nil:
+			return resultCodeError{code: failure.Code, message: fmt.Sprintf(
+				"%s: the Plan found no URL in file %q (missing or empty) in the volume of SecretProviderClass %q, "+
+					"and computes no plan without its development database. Check that the class writes an object "+
+					"under that name, as its objectName or its objectAlias",
+				failure.Code, dev.Class.ObjectName, dev.Class.Name)}
+		case dev.Secret != nil:
+			return resultCodeError{code: failure.Code, message: fmt.Sprintf(
+				"%s: the development database Secret key holds no URL, and the Plan computes no plan without its "+
+					"development database. Check the URL that %s",
+				failure.Code, dev.Holder())}
+		}
+	}
+	return resultFailure(failure, operationURLSource(operation.Target, spec))
 }
 
 // resultCodeMessage is how a runner's code and message read in status: the

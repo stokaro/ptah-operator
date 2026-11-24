@@ -7,9 +7,10 @@ import "strconv"
 // (#831). Schema version 27 makes urlFrom one of two sibling fields of a
 // schema's target and development database and of a migration's target and
 // drift-check shadow. Each place gains a rule that exactly one is set; the
-// spec rules that read urlFrom are guarded by has(); two new spec rules read
+// spec rules that read urlFrom are guarded by has(); the new spec rules read
 // only the new field: that a class names a ServiceAccount other than default,
-// and that a migration's shadow names another class object than its target.
+// and that a schema's development database and a migration's shadow name
+// another class than the target.
 //
 // The verifier cannot tell on its own that no stored object fails them. None
 // does: a version 26 schema required urlFrom in each place and had no
@@ -40,6 +41,9 @@ const (
 	ruleSchemaClassAccount = "(!has(self.target.urlFromSecretProviderClass) && (!has(self.dev) || " +
 		"!has(self.dev.urlFromSecretProviderClass))) || (has(self.execution) && has(self.execution.serviceAccountName) && " +
 		"self.execution.serviceAccountName.size() > 0 && self.execution.serviceAccountName != 'default')"
+	ruleSchemaDevClassIsNotTarget = "!has(self.dev) || !has(self.dev.urlFromSecretProviderClass) || " +
+		"!has(self.target.urlFromSecretProviderClass) || " +
+		"self.dev.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name"
 
 	ruleMigrationShadowSecret = "!has(self.policy) || !has(self.policy.driftCheck) || " +
 		"!has(self.policy.driftCheck.shadow.urlFrom) || (self.policy.driftCheck.shadow.urlFrom.name.size() > 0 && " +
@@ -51,9 +55,7 @@ const (
 		"self.policy.driftCheck.shadow.urlFrom.key != self.target.urlFrom.key"
 	ruleMigrationShadowClassIsNotTarget = "!has(self.policy) || !has(self.policy.driftCheck) || " +
 		"!has(self.policy.driftCheck.shadow.urlFromSecretProviderClass) || !has(self.target.urlFromSecretProviderClass) || " +
-		"self.policy.driftCheck.shadow.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name || " +
-		"self.policy.driftCheck.shadow.urlFromSecretProviderClass.objectName != " +
-		"self.target.urlFromSecretProviderClass.objectName"
+		"self.policy.driftCheck.shadow.urlFromSecretProviderClass.name != self.target.urlFromSecretProviderClass.name"
 	ruleMigrationTargetSecret = ruleSchemaTargetSecret
 	ruleMigrationClassAccount = "(!has(self.target.urlFromSecretProviderClass) && (!has(self.policy) || " +
 		"!has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass))) || " +
@@ -77,6 +79,7 @@ func secretProviderClassTransitions() []string {
 		rule(schemas, "spec", ruleSchemaDevSecret),
 		rule(schemas, "spec", ruleSchemaTargetSecret),
 		rule(schemas, "spec", ruleSchemaClassAccount),
+		rule(schemas, "spec", ruleSchemaDevClassIsNotTarget),
 		rule(schemas, "spec.dev", ruleOneURLSource),
 		rule(schemas, "spec.target", ruleOneURLSource),
 		rule(schemas, "status.activeOperation.observationDev", ruleOneURLSource),

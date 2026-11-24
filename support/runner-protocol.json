@@ -550,8 +550,8 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:786a5c55ed36ee23d31a60adf1189a3d8543dd5d2c081254eb83846310ec7bef",
-      "reason": "The API types the runner links gained urlFromSecretProviderClass beside urlFrom in a target, a development database and a drift check's shadow, and urlFrom became optional (#831). The runner's own source did not change: it reads a database URL from the same file under the same variable whether a Secret volume or a SecretProviderClass's CSI volume holds it, and what it accepts, enforces and returns is the same, so a controller of either side reads what this runner writes. Protocol 1 stays."
+      "sourceDigest": "sha256:493e5f106edd552d9fda474fe680be4dd20b101e4060d212c098c60646c41d39",
+      "reason": "The API types the runner links gained urlFromSecretProviderClass beside urlFrom in a target, a development database and a drift check's shadow, and urlFrom became optional (#831). The runner reads a database URL from the same file under the same variable whether a Secret volume or a SecretProviderClass's CSI volume holds it. A Job that names a development database file and gets no URL from it, because the class did not write the object or the file is empty, is refused with missing_dev before the child, rather than plan without a development database. Only a Plan's Job names that file, and no variable was added. The refusal is an error code and message in the frame every release reads, so a controller of either side reads what this runner writes. Protocol 1 stays."
     }
   ]
 }

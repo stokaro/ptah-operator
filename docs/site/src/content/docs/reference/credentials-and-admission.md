@@ -46,7 +46,8 @@ credentials in one process.
 Every credential reaches the container that needs it as a file in a read-only
 Secret volume, mounted in that container and no other. A database URL from
 [a SecretProviderClass](#secret-provider-class) is a file in a read-only CSI
-volume instead, at the same path and named by the same variable:
+volume instead, in the same directory under the object's name, and named by
+the same variable:
 
 | Credential | File | Variable naming the file |
 | --- | --- | --- |
@@ -174,12 +175,14 @@ driver's words. [Admission](#admission) holds every operation Pod to the volume
 its Job declares, so neither a webhook nor another writer can point it at
 another class or another driver.
 
-The operator names a class and an object and nothing else, so every provider
-gets the same volume. How the provider authenticates, Vault's Kubernetes auth
-method or a cloud provider's workload identity, is between the provider and the
-Pod's ServiceAccount. Only Vault has been run, as
-[What was run](#secret-provider-class-measured) says, and this page names a
-provider only after a run against it.
+The operator supports Vault, through the Vault provider and Vault's
+Kubernetes auth method, with a [static role](#secret-provider-class-rotation)
+for the database user; [What was run](#secret-provider-class-measured) lists
+the versions. The operator names a class and an object and nothing else, so
+another provider gets the same volume, but no other provider has been run. A
+cloud provider authenticates through a workload identity bound to the Pod's
+ServiceAccount, and [the security page](../../use/security/#pod-logs-carry-plans)
+says why no workload identity is bound to the operation account.
 
 ### The account the store trusts {#secret-provider-class-account}
 
@@ -249,19 +252,27 @@ Pod two files and no URL.
 
 `objectName` is the file the class writes the URL to: the object's `objectName`
 in the class, or its `objectAlias` where the class sets one. The API holds it to
-one file name. A name the class does not write still mounts, and leaves no file:
+one file name. A name the class does not write still mounts, and leaves no file,
+and an object the class writes empty reads the same:
 
 | URL | What the operation reports |
 | --- | --- |
-| The target's | `missing_target: the operation found no file "url" in the volume of SecretProviderClass "orders-database". Check that the class writes an object under that name, as its objectName or its objectAlias` |
-| A drift check's shadow | The history read publishes no plan, with reason `ShadowDatabaseUnavailable`: `missing_shadow: the SecretProviderClass volume holds no shadow database file. Check the URL that SecretProviderClass "orders-shadow-database" writes as object "url"`, and why the shadow has to be named |
-| A `PtahSchema`'s development database | Nothing. The Plan runs as it does with no development database, so check that the class writes the object before you rely on it |
+| The target's | `missing_target: the operation found no URL in file "url" (missing or empty) in the volume of SecretProviderClass "orders-database". Check that the class writes an object under that name, as its objectName or its objectAlias` |
+| A drift check's shadow | The history read publishes no plan, with reason `ShadowDatabaseUnavailable`: `missing_shadow: the SecretProviderClass volume holds no URL in the shadow database file (missing or empty). Check the URL that SecretProviderClass "orders-shadow-database" writes as object "url"`, and why the shadow has to be named |
+| A `PtahSchema`'s development database | The Plan stops before Ptah starts, and is retried: `missing_dev: the Plan found no URL in file "dev-url" (missing or empty) in the volume of SecretProviderClass "orders-development-database", and computes no plan without its development database. Check that the class writes an object under that name, as its objectName or its objectAlias` |
 
-The driver writes every object a class lists into every volume that mounts the
-class. A class that lists the target's URL beside a development or a shadow URL
-puts both files in each of those volumes, so an operation that reads one of
-them, such as a `PtahSchema`'s Observe, which reads no development database,
-holds the other too. Give each URL a class of its own.
+The API refuses a development database or a shadow that names the target's
+class, whichever object it names: each URL is its own volume, and the Pod would
+mount the class twice. The driver writes every object a class lists into every
+volume that mounts the class, so a class that lists the target's URL beside
+another one puts both files in the target's volume, and an operation that reads
+only the target, such as a `PtahSchema`'s Observe, holds the other URL too.
+Give each URL a class of its own that lists only that URL.
+
+List no `secretObjects` in a class an operation mounts. With the driver chart's
+`syncSecret.enabled`, the driver copies what it mounted into a Secret owned by
+the mounting Pod's owner, the operation's Job, and the URL is in a Kubernetes
+Secret again, which this path exists to avoid.
 
 The file is mode `0644` and owned by root, not the `0440` and group 65532 of a
 Secret volume's file. The driver declares `fsGroupPolicy:

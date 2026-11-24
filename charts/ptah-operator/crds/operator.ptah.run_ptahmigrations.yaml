@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "2"
     operator.ptah.run/crd-schema-version: "27"
-    operator.ptah.run/crd-schema-digest: "sha256:fa3dad92d5d5b28ed84f07f8a210ce6ccf74ebd4cfb5f52d80cbf49060f27240"
+    operator.ptah.run/crd-schema-digest: "sha256:b5d88875875a29f64d48fc89b20c6a2da87c5f6d27186a8dad73191d05c72ded"
     controller-gen.kubebuilder.io/version: v0.23.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -1093,11 +1093,10 @@ spec:
                 != self.target.urlFrom.name || self.policy.driftCheck.shadow.urlFrom.key
                 != self.target.urlFrom.key'
             - message: policy.driftCheck.shadow.urlFromSecretProviderClass must name
-                another object than target.urlFromSecretProviderClass
+                another SecretProviderClass than target.urlFromSecretProviderClass
               rule: '!has(self.policy) || !has(self.policy.driftCheck) || !has(self.policy.driftCheck.shadow.urlFromSecretProviderClass)
                 || !has(self.target.urlFromSecretProviderClass) || self.policy.driftCheck.shadow.urlFromSecretProviderClass.name
-                != self.target.urlFromSecretProviderClass.name || self.policy.driftCheck.shadow.urlFromSecretProviderClass.objectName
-                != self.target.urlFromSecretProviderClass.objectName'
+                != self.target.urlFromSecretProviderClass.name'
             - message: a URL from a SecretProviderClass needs execution.serviceAccountName
                 to name an account other than default
               rule: (!has(self.target.urlFromSecretProviderClass) && (!has(self.policy)

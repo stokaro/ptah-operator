@@ -66,11 +66,24 @@ func TestSecretProviderClassBreakHoldsForEveryVersion26Object(t *testing.T) {
 		{name: "migration shadow Secret is not the target", rule: ruleMigrationShadowSecretIsNotTarget,
 			holds:   append(append([]map[string]any{}, migrations...), map[string]any{"target": byClass, "policy": shadow(bySecret)}, map[string]any{"target": bySecret, "policy": shadow(byClass)}),
 			refuses: []map[string]any{{"target": bySecret, "policy": shadow(bySecret)}}},
-		{name: "migration shadow class is not the target", rule: ruleMigrationShadowClassIsNotTarget,
+		{name: "schema dev class is not the target's", rule: ruleSchemaDevClassIsNotTarget,
+			holds: append(append([]map[string]any{}, schemas...),
+				map[string]any{"target": byClass, "dev": map[string]any{"urlFromSecretProviderClass": class("orders-dev-store", "url")}},
+				map[string]any{"target": byClass, "dev": bySecret},
+				map[string]any{"target": bySecret, "dev": byClass}),
+			refuses: []map[string]any{
+				{"target": byClass, "dev": byClass},
+				{"target": byClass, "dev": map[string]any{"urlFromSecretProviderClass": class("orders-store", "dev-url")}},
+			}},
+		{name: "migration shadow class is not the target's", rule: ruleMigrationShadowClassIsNotTarget,
 			holds: append(append([]map[string]any{}, migrations...),
-				map[string]any{"target": byClass, "policy": shadow(map[string]any{"urlFromSecretProviderClass": class("orders-store", "shadow-url")})},
-				map[string]any{"target": byClass, "policy": shadow(map[string]any{"urlFromSecretProviderClass": class("orders-shadow", "url")})}),
-			refuses: []map[string]any{{"target": byClass, "policy": shadow(byClass)}}},
+				map[string]any{"target": byClass, "policy": shadow(map[string]any{"urlFromSecretProviderClass": class("orders-shadow", "url")})},
+				map[string]any{"target": byClass, "policy": shadow(bySecret)},
+				map[string]any{"target": bySecret, "policy": shadow(byClass)}),
+			refuses: []map[string]any{
+				{"target": byClass, "policy": shadow(byClass)},
+				{"target": byClass, "policy": shadow(map[string]any{"urlFromSecretProviderClass": class("orders-store", "shadow-url")})},
+			}},
 		{name: "migration class account", rule: ruleMigrationClassAccount,
 			holds: append(append([]map[string]any{}, migrations...), map[string]any{"target": byClass, "execution": account}, map[string]any{"target": bySecret, "policy": shadow(byClass), "execution": account}),
 			refuses: []map[string]any{
@@ -97,7 +110,7 @@ func TestSecretProviderClassBreakHoldsForEveryVersion26Object(t *testing.T) {
 			}
 		})
 	}
-	if got := len(secretProviderClassBreak.transitions); got != 14 {
-		t.Fatalf("the break declares %d transitions, the generated CRDs make 14", got)
+	if got := len(secretProviderClassBreak.transitions); got != 15 {
+		t.Fatalf("the break declares %d transitions, the generated CRDs make 15", got)
 	}
 }

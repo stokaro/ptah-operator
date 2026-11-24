@@ -583,14 +583,8 @@ func (i buildInput) dataPlane() (
 				literalEnv("PTAH_PROTECTED_TABLES", encodeStringArray(i.operation.ObservationProtectedTables)))
 		}
 	case operatorv1alpha1.OperationApply:
-		target := operatorv1alpha1.DatabaseTargetBinding{
-			Engine:                     i.schema.Spec.Target.Engine,
-			URLFrom:                    i.schema.Spec.Target.URLFrom,
-			URLFromSecretProviderClass: i.schema.Spec.Target.URLFromSecretProviderClass,
-		}
-		if i.operation.Target != nil {
-			target = *i.operation.Target
-		}
+		// validate refused an Apply whose claim binds no target.
+		target := *i.operation.Target
 		projections, err := planstore.VolumeSources(i.plan)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("build plan projection: %w", err)

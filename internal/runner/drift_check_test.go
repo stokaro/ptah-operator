@@ -239,6 +239,40 @@ func TestAMigrationHistoryReportsTheShadowIdentityAndHidesTheShadow(t *testing.T
 	}
 }
 
+// A shadow file the Job names and nobody wrote, which is what a
+// SecretProviderClass that does not write the object leaves, is a history
+// read with no shadow: it reports none, and the manager refuses the read for a
+// policy that asks for a check (missing_shadow). An Apply whose plan binds the
+// shadow is refused before its child.
+func TestAShadowFileNobodyWroteIsNoShadow(t *testing.T) {
+	t.Parallel()
+	absent := filepath.Join(t.TempDir(), "url")
+
+	document := `{"contract_version":2,"command":"migrations status","current_version":2,"total_migrations":4,"has_pending_changes":true,"pending_migrations":[3,4]}`
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: document}}}
+	history := Run(context.Background(), Config{
+		Operation:   OperationMigrationHistory,
+		Environment: withRunnerProtocol(append(migrationEnvironment("drift-history-absent"), EnvShadowDatabaseURLFile+"="+absent)),
+		Executor:    executor,
+	})
+	if history.Error != nil || history.MigrationHistory == nil {
+		t.Fatalf("Run() = %#v, want the history", history)
+	}
+	if history.ShadowIdentityDigest != "" {
+		t.Fatalf("ShadowIdentityDigest = %q for a file nobody wrote, want none", history.ShadowIdentityDigest)
+	}
+
+	apply := &scriptedExecutor{t: t}
+	environment := append(migrationApplyEnvironment(t, "drift-apply-absent"),
+		EnvShadowDatabaseURLFile+"="+absent, envExpectedShadowDigest+"="+shadowDigest(t, testShadowURL))
+	result := Run(context.Background(), Config{
+		Operation: OperationMigrationApply, Environment: withRunnerProtocol(environment), Executor: apply,
+	})
+	if result.Error == nil || result.Error.Code != "missing_shadow" || len(apply.calls) != 0 || result.MutationStarted {
+		t.Fatalf("Run() = %#v after %d calls, want missing_shadow before the child", result.Error, len(apply.calls))
+	}
+}
+
 // The history read refuses the shadow the Apply would refuse, before a plan
 // binds it and a person approves the plan: one that is the target under a
 // login or session of its own, and one with no identity. Another database on
