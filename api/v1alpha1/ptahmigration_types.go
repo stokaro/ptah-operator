@@ -13,8 +13,10 @@ type MigrationPhase string
 const (
 	// MigrationPhasePending is a migration whose plan or operation claim the
 	// controller discarded because its inputs changed. The next pass starts
-	// the read-only chain again from resolution. A new migration has no phase
-	// until its first pass, which moves it to Resolving.
+	// the read-only chain again from the source. A new migration has no phase
+	// until its first pass. An OCI, Git, HTTPS or S3 source moves it to
+	// Resolving while a Resolve Job runs; a ConfigMap source, which the manager
+	// reads itself, moves it straight to Reading.
 	MigrationPhasePending MigrationPhase = "Pending"
 	// MigrationPhaseResolving is resolving the artifact reference to a digest.
 	MigrationPhaseResolving MigrationPhase = "Resolving"

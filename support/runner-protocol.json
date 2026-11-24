@@ -545,8 +545,13 @@
     },
     {
       "protocolVersion": 1,
-      "sourceDigest": "sha256:2a179174934cbdac872408775f83c9fa5cf45bbba5f0a3d0a2bbc82a631f49d6",
-      "reason": "Read an S3 source (#679). A Resolve with an S3 source reads one object itself, with no Ptah child: a path-style GetObject signed with Signature Version 4 from the key-pair files, or unsigned, held to the pinned object digest before any byte is read as an archive. Its frame carries resolvedDownloadDigest, the content digest and bytes, and resolvedVersionId, the version the endpoint served. A new fetch mode, --fetch-s3-source, reads the bound version before an operation, held to both digests, and never writes the object past the 64 MiB bound. Before any request the runner refuses as invalid_s3_access a key pair for another endpoint or bucket, half a key pair, a token or grant with no key pair, a CA that does not give its granted digest and a CA pin with no CA; what the endpoint refuses is s3_source_refused. Other sources are unchanged, and an older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
+      "sourceDigest": "sha256:15777d365382dfc21eb4b5304af27ecfa4749e5da96df58d2750b3cd2e7341ba",
+      "reason": "The comment on the Pending migration phase in api/v1alpha1 now says that a ConfigMap source, which the manager reads itself, moves a new migration straight to Reading, and only an OCI, Git or HTTPS source to Resolving. No type, value or frame changed, so a controller of either side reads what this runner writes. Protocol 1 stays."
+    },
+    {
+      "protocolVersion": 1,
+      "sourceDigest": "sha256:77b992c57d7eb699a6bba43885cd7ad44f1ce89edb0361c070fb5183e03c5cae",
+      "reason": "Read an S3 source (#679). A Resolve with an S3 source reads one object itself, with no Ptah child: a path-style GetObject, signed with SigV4 from the key-pair files or unsigned, held to the pinned object digest before it is read as an archive. Its frame carries resolvedDownloadDigest, the content digest and bytes, and resolvedVersionId, the version the endpoint served. A new fetch mode, --fetch-s3-source, reads the bound version before an operation, held to both digests, and writes no byte past the 64 MiB bound. Before any request the runner refuses as invalid_s3_access a key pair for another endpoint or bucket, half a key pair, a token or grant with no key pair, a CA that does not give its granted digest and a CA pin with no CA; what the endpoint refuses is s3_source_refused, with a hint naming s3:GetObjectVersion when a version is denied. Other sources are unchanged, and an older manager meets none of it: its Jobs run its own runner, and it harvests only Jobs its binding rebuilds. Protocol 1 stays."
     }
   ]
 }

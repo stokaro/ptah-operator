@@ -1,5 +1,5 @@
 // The lifecycle explorer's content: one scenario per resource family, the
-// objects each touches and how they relate. LifecycleExplorer.astro renders it
+// objects each touches and how they relate, and the evidence an audit reads. LifecycleExplorer.astro renders it
 // twice, as the interactive view and as the text a reader without JavaScript,
 // a search index or a printer gets, and scripts/check-lifecycle-explorer.mjs
 // holds the page to it. Nothing here is rendered by hand anywhere else.
@@ -23,8 +23,11 @@
 // joins them. A path turns off the successful path, or off another path when
 // the stage it names is that path's own, as an acknowledgment turns off a run
 // nobody accounted for. Stage, path and object ids are unique across families,
-// so a link that names one names its family too. The audit view, the composed
-// workflow and the depth levels are later slices of #817.
+// so a link that names one names its family too.
+//
+// The audit view, at the end, is not a scenario: it covers both families and
+// is read by evidence source rather than by stage. The composed workflow and
+// the depth levels are later slices of #817.
 
 // The four parties a stage can name, in the order every stage lists them.
 export const actors = [
@@ -1533,3 +1536,695 @@ export function walkOf(path, model, seen = new Set()) {
   const rejoin = path.rejoins ? before.findIndex((stage) => stage.id === path.rejoins) : before.length;
   return [...before.slice(0, turn + 1), ...(path.stages ?? []), ...before.slice(rejoin < 0 ? before.length : rejoin)];
 }
+
+// The audit view: each place a change leaves evidence, what it can and cannot
+// establish, how it joins the others, the command that reads it, how long it
+// lasts, and what is left of it after a loss. It is drawn from Audit a database
+// change (use/audit.md), whose survival table one run measured. `basis` says
+// whether a verdict was measured there or read from the code or this site.
+// Source ids carry the prefix a-, so they cannot collide with a stage, a path
+// or an object.
+const auditLosses = [
+  { id: 'job', label: 'Job deleted', text: 'Someone deletes an operation Job, and its Pods and their logs go with it.' },
+  { id: 'resource', label: 'Resource deleted', text: 'Someone deletes the PtahSchema or the PtahMigration.' },
+  { id: 'namespace', label: 'Namespace deleted', text: 'Someone deletes the namespace that holds the resource.' },
+  { id: 'cluster', label: 'Cluster lost', text: 'The cluster is gone, its control-plane nodes with it.' },
+];
+
+// What is left of a source after a loss. `outside` is a source the cluster
+// loses and a system outside it can keep, if the installation set one up.
+const auditVerdicts = [
+  { id: 'kept', label: 'Kept' },
+  { id: 'gone', label: 'Gone' },
+  { id: 'outside', label: 'Only if kept outside' },
+];
+
+const auditBases = [
+  { id: 'measured', label: 'measured' },
+  { id: 'read', label: 'read, not measured' },
+];
+
+const auditGroups = [
+  { id: 'resource', label: 'On the resource' },
+  { id: 'objects', label: 'Objects in the namespace' },
+  { id: 'streams', label: 'Logs outside the namespace' },
+  { id: 'database', label: 'In the target database' },
+];
+
+const auditSources = [
+  {
+    id: 'a-status',
+    label: 'Status and conditions',
+    group: 'resource',
+    records:
+      'What the operator last read and decided: the phase, and the conditions with observedGeneration; the claim in flight in status.activeOperation, with its operationID, attempt and Job; and when the next read is due. A schema adds its last observation in status.target, status.applied and, after an Apply, the proof still owed in status.pendingObservation. A migration adds its history read in status.history, status.lastRun with the source and the authorization the run used, and a run nobody accounted for in status.unresolvedRun.',
+    establishes:
+      'Where the resource stands now and how fresh that is, dated by the observation’s or the history read’s own time: what is running, and what is still owed before a verdict.',
+    cannot:
+      'What happened before the newest run, since every pass rewrites it, or who wrote the spec. It is the current state, not a history.',
+    ids: [
+      'metadata.uid, which tells this resource from a later one under the same name',
+      'metadata.generation against status.observedGeneration',
+      'status.activeOperation.operationID',
+      'the plan’s name, UID and fingerprint, and the Job’s name and UID',
+    ],
+    readers: [
+      {
+        command: 'kubectl ptah schema application -n application --details',
+        says: 'Every status field the plugin knows: the claim, the proof owed and the lock owed.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application --details',
+        says: 'The same for a migration, with the history read, the last run and a run nobody accounted for.',
+      },
+    ],
+    retention:
+      'Rewritten by every pass, and by the manager alone: the chart refuses a status write from anyone else, a cluster administrator included.',
+    survives: {
+      job: {
+        verdict: 'kept',
+        basis: 'read',
+        text: 'A dispatched Apply whose Job is deleted before its result was delivered ends Unknown, and the operator does not create the Job again.',
+      },
+      resource: { verdict: 'gone', basis: 'measured', text: 'It goes with the resource.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'It goes with the namespace.' },
+      cluster: {
+        verdict: 'gone',
+        basis: 'measured',
+        text: 'A restore through the API brings back the spec without it: the status write is refused, a cluster administrator’s too.',
+      },
+    },
+    links: [
+      { label: 'Every status field the plugin knows', href: '../../use/read-a-plan/#details' },
+      { label: 'Who can change the record', href: '../../use/audit/#integrity' },
+    ],
+  },
+  {
+    id: 'a-journal',
+    label: 'Lifecycle journal',
+    group: 'resource',
+    records:
+      'One entry per significant event, in status.journal: PlanPublished; ApprovalAccepted, with the approval’s name, UID and approver; ApplyFinished or RunFinished, with the outcome, the operationID, the plan, the Job and, for a failure, the statement it stopped at with the SQLSTATE; Verified, for the first proof or history read after it; RunAcknowledged; and OperationFailed, by reason. It carries condition reasons, never messages.',
+    establishes:
+      'The order of events for this resource, joined by UID: which plan, which approval, which Job, and how each run ended and was verified.',
+    cannot:
+      'Spec edits, suspends and deletions, which only the API audit log records, or anything older than its bounds.',
+    ids: ['the approval’s UID', 'the plan’s name, UID and fingerprint', 'operationID', 'the Job’s UID'],
+    readers: [
+      {
+        command: 'kubectl ptah history schema/application -n application',
+        says: 'The journal, with the plans and approvals each entry names, and from when it is complete.',
+      },
+      {
+        command: 'kubectl ptah history migration/orders -n application',
+        says: 'The same for a migration: each run with its approval or policy, its outcome and its verification.',
+      },
+    ],
+    retention:
+      'At most 64 entries, none more than 30 days older than the newest, while the resource exists. Only the manager writes it.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'The entries name the Job and do not depend on it.' },
+      resource: { verdict: 'gone', basis: 'measured', text: 'It goes with the resource, whatever its bounds say.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'It goes with the namespace.' },
+      cluster: { verdict: 'gone', basis: 'measured', text: 'A resource restored through the API starts an empty one.' },
+    },
+    links: [
+      { label: 'The lifecycle journal', href: '#the-lifecycle-journal' },
+      { label: 'What the operator records', href: '../../use/audit/#coverage' },
+    ],
+  },
+  {
+    id: 'a-plans',
+    label: 'Plans and chunks',
+    group: 'objects',
+    records:
+      'A PtahSchemaPlan and its PtahSchemaPlanChunks hold the exact SQL of a schema change and its fingerprint. A PtahMigrationPlan holds the versions with their checksums and its fingerprint; the statements are in the source.',
+    establishes:
+      'What an approval approved: the approval binds the plan’s UID and fingerprint, and a changed spec of a plan or a chunk is refused.',
+    cannot:
+      'That the plan ran, which the journal and the database say. Immutable is not protected: anyone allowed to delete a plan can, and deleting the resource collects its plans.',
+    ids: ['the plan’s name and UID', 'its fingerprint', 'the owner reference to the resource’s UID'],
+    readers: [
+      {
+        command: 'kubectl ptah plan application -n application',
+        says: 'The SQL of the schema plan waiting to run, after the plugin checked every chunk against the plan.',
+      },
+      {
+        command: 'kubectl ptah plan application --applied -n application',
+        says: 'The SQL the last confirmed Apply ran, while that plan is still stored.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The migration plan waiting to run, by name, with each pending version and its description. -o json adds each checksum and the fingerprint.',
+      },
+    ],
+    retention: 'The operator prunes none. They are owned by the resource and collected with it.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'A plan does not own the Job that ran it.' },
+      resource: { verdict: 'gone', basis: 'measured', text: 'They are collected with their owner.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'They go with the namespace.' },
+      cluster: {
+        verdict: 'gone',
+        basis: 'measured',
+        text: 'Restored through the API, they are collected within seconds: their owner references name the old UIDs.',
+      },
+    },
+    links: [
+      { label: 'Export a plan before deleting it', href: '../../use/operations/#export-a-plan-before-deleting-it' },
+      { label: 'What survives', href: '../../use/audit/#survival' },
+    ],
+  },
+  {
+    id: 'a-source',
+    label: 'Source snapshot and artifact',
+    group: 'objects',
+    records:
+      'What a plan was computed from. A ConfigMap source is copied into an immutable snapshot ConfigMap named ptah-src-<hash>, which the resource owns, and a plan binds the ConfigMap’s UID with the content. An OCI source is bound by its digest, a Git source by its commit and content digest, and an HTTPS or an S3 source by the digest its spec pins.',
+    establishes: 'Which bytes a plan, and the run that carried it out, were computed from.',
+    cannot:
+      'Who wrote the source. The operator keeps no copy of an OCI, Git, HTTPS or S3 artifact: the registry, the Git host, the web server or the bucket keeps it on its own terms.',
+    ids: ['the content digest', 'the OCI digest, the Git commit or the download digest', 'the snapshot’s name'],
+    readers: [
+      {
+        command: 'kubectl ptah schema application -n application',
+        says: 'Source and Snapshot for a ConfigMap, or the artifact, the commit or the download digest of another kind, with the content digest.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'The same lines for the source a migration resolved.',
+      },
+    ],
+    retention:
+      'The snapshot is owned by the resource. After each resolution the manager deletes the snapshots nothing still reads, and the plan keeps the digest. A hosted artifact is kept by its host.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Nothing in it depends on the Job.' },
+      resource: {
+        verdict: 'outside',
+        basis: 'read',
+        text: 'The snapshot is collected with its owner; an OCI, Git, HTTPS or S3 artifact stays where it is hosted.',
+      },
+      namespace: {
+        verdict: 'outside',
+        basis: 'read',
+        text: 'The snapshot goes with the namespace; a hosted artifact stays where it is.',
+      },
+      cluster: {
+        verdict: 'outside',
+        basis: 'read',
+        text: 'The snapshot is gone; a hosted artifact stays for as long as its host keeps it.',
+      },
+    },
+    links: [
+      { label: 'A ConfigMap source', href: '#a-configmap-source' },
+      { label: 'Sources', href: '../../use/sources/' },
+    ],
+  },
+  {
+    id: 'a-decisions',
+    label: 'Approvals and acknowledgments',
+    group: 'objects',
+    records:
+      'A PtahSchemaApproval or a PtahMigrationApproval names the resource, the plan and its fingerprint; a PtahMigrationRunAcknowledgment names the migration and the run’s operationID. Admission stamps the username, UID and groups the API server authenticated, the time and mutationRequestUID, and stores the requester’s identity in place of any other a request names. Conditions say whether it was consumed or went stale.',
+    establishes:
+      'Who approved which exact plan, or acknowledged which run, and when, as the API server authenticated them.',
+    cannot:
+      'Who asked for the change, or that a second person approved it unless approvals.requireDistinctApprover is on. An impersonated approval names the impersonated user, and a shared credential names everyone who holds it as one.',
+    ids: [
+      'the decision’s UID',
+      'the plan’s name, UID and fingerprint, or the run’s operationID',
+      'mutationRequestUID, which is not the API audit event’s auditID',
+    ],
+    readers: [
+      {
+        command: 'kubectl ptah history schema/application -n application',
+        says: 'Every stored approval that names the schema, with its stamp and its conditions.',
+      },
+      {
+        command: 'kubectl ptah history migration/orders -n application',
+        says: 'The same for a migration, its acknowledgments included.',
+      },
+    ],
+    retention:
+      'A changed spec is refused. They have no owner, so deleting the resource keeps them, and anyone allowed to delete the kind can remove one.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Nothing in them depends on the Job.' },
+      resource: { verdict: 'kept', basis: 'measured', text: 'They have no owner reference.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'They go with the namespace.' },
+      cluster: {
+        verdict: 'gone',
+        basis: 'measured',
+        text: 'A restore through the API refuses them: their plans are gone, and an acknowledgment names the old migration’s UID.',
+      },
+    },
+    links: [
+      { label: 'Approvals', href: '../../use/approvals/' },
+      { label: 'Identity', href: '../../use/audit/#identity' },
+    ],
+  },
+  {
+    id: 'a-results',
+    label: 'Result records',
+    group: 'objects',
+    records:
+      'PtahResultRecord objects: the result an operation Pod delivers, in parts, and the key material its delivery uses. The receiver in the manager authenticates the operation, the Job and the Pod, checks every part, and stores the whole result and reads it back before it acknowledges.',
+    establishes:
+      'That a result reached the manager whole, so a lost acknowledgment, a manager restart or a deleted Pod costs no second execution. They are how the manager recovers a result, not a record for people.',
+    cannot:
+      'That the SQL succeeded or that the resource is in sync: the receipt proves delivery and nothing else. Ordinary inspection reads no record, since a payload can hold SQL and a credential record a private key.',
+    ids: ['the owner reference to the resource’s UID', 'the operation, the Job and the Pod the receiver authenticated'],
+    readers: [
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'Last run: the outcome the manager took from the result. No command prints a record’s payload.',
+      },
+    ],
+    retention:
+      'A changed spec is refused. They are owned by the resource, and deleting one is refused for about an hour after its delivery is retired.',
+    survives: {
+      job: {
+        verdict: 'kept',
+        basis: 'read',
+        text: 'An accepted record survives the Pod and its logs, so the result is read without them.',
+      },
+      resource: {
+        verdict: 'kept',
+        basis: 'measured',
+        text: 'For about an hour: the garbage collector’s deletes are refused until the window ends.',
+      },
+      namespace: {
+        verdict: 'gone',
+        basis: 'measured',
+        text: 'They hold the namespace in Terminating for up to an hour, then go with it.',
+      },
+      cluster: { verdict: 'gone', basis: 'measured', text: 'They go with the cluster.' },
+    },
+    links: [
+      { label: 'Durable result protocol', href: '../execution/#durable-result-protocol' },
+      { label: 'A quota on result records', href: '../../use/operations/#result-record-quota' },
+    ],
+  },
+  {
+    id: 'a-jobs',
+    label: 'Jobs and Pod logs',
+    group: 'objects',
+    records:
+      'The operation Job and its Pod. The Pod log holds the runner’s lines and, for a failed Apply, a line that starts ptah-runner: ptah reported: followed by what the database answered.',
+    establishes: 'Why an Apply failed, in the database’s own words, while the Job is kept.',
+    cannot:
+      'Anything an audit can keep: the Job goes within minutes or a day, and the line can carry a role, a host, a database name and values read from a row.',
+    ids: ['the Job’s name and UID, which status and the journal record'],
+    readers: [
+      {
+        command: 'kubectl logs -n application job/<apply job> -c ptah',
+        says: 'The Pod log, while the Job is kept. When an Apply does not succeed, its condition or its Event names this command with the Job’s name; kubectl ptah has no log reader of its own.',
+      },
+      {
+        command: 'kubectl ptah migration orders -n application',
+        says: 'Last run: its outcome, its Job by name and UID, and its operation.',
+      },
+    ],
+    retention:
+      'Five minutes after the Job finishes. A day for an Apply that did not succeed when a person approved it or, for a migration, when the run stops the resource.',
+    survives: {
+      job: { verdict: 'gone', basis: 'read', text: 'The Pods and their logs go with the Job.' },
+      resource: { verdict: 'gone', basis: 'measured', text: 'They go with the resource, the failed Apply’s 24-hour Job included.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'They go with the namespace.' },
+      cluster: { verdict: 'gone', basis: 'measured', text: 'They go with the cluster.' },
+    },
+    links: [
+      { label: 'What a failed Apply leaves in its Pod log', href: '../../use/operations/#failed-apply-log' },
+      { label: 'Output handling', href: '../../use/security/#output-handling' },
+    ],
+  },
+  {
+    id: 'a-events',
+    label: 'Events',
+    group: 'objects',
+    records: 'Normal and Warning Events about the resource: claims, completions, refusals and approvals taken.',
+    establishes: 'What a reader of kubectl describe should notice now.',
+    cannot:
+      'A record. The recorder can drop an Event: in the measured run an approval reached no Event while the journal recorded it. Each reason has its own budget since, and an Event can still be lost.',
+    ids: ['the involved object: the resource’s kind, name and UID'],
+    readers: [
+      {
+        command: 'kubectl events -n application --for ptahschema/application',
+        says: 'The Events of the last hour, oldest first. This is kubectl’s own reader; kubectl ptah adds none.',
+      },
+    ],
+    retention: 'About an hour.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'For their hour.' },
+      resource: { verdict: 'kept', basis: 'measured', text: 'For their hour.' },
+      namespace: { verdict: 'gone', basis: 'measured', text: 'They go with the namespace.' },
+      cluster: {
+        verdict: 'outside',
+        basis: 'measured',
+        text: 'Gone from the cluster, as measured. An Event exporter keeps a copy of the ones the API server received.',
+      },
+    },
+    links: [
+      { label: 'An Event can be lost', href: '../../troubleshoot/events/#an-event-can-be-lost' },
+      { label: 'What no family records', href: '../../use/audit/#not-recorded' },
+    ],
+  },
+  {
+    id: 'a-manager-log',
+    label: 'Manager log and journal lines',
+    group: 'streams',
+    records:
+      'Two streams from the manager’s container. On standard error, diagnostic lines with the namespace, the name, the operation, the attempt and the phase, and no plan, approver or outcome. On standard output, from 0.2.11, one JSON line per journal entry the manager stored, marked "logger":"journal", with the resource’s kind, namespace, name and UID.',
+    establishes:
+      'Once a collector ships them, a copy of the journal that outlives the resource, its namespace and the cluster.',
+    cannot:
+      'Who wrote a line: it carries no signature, and whoever controls the manager’s output, the collector or the store can drop lines or add some. A line can be missing: the manager stopped between the write and the line, its queue of 1,024 filled, or the kubelet rotated the log before the collector read it.',
+    ids: ['the resource’s UID', 'the entry’s operationID, approvalUID and plan UID'],
+    readers: [
+      {
+        command: 'kubectl -n ptah-system logs -l app.kubernetes.io/component=controller -c manager --tail=-1',
+        says: 'Both streams of every running manager; the journal lines carry "logger":"journal". A store of collected lines is read with that store’s own tools, and kubectl ptah reads neither.',
+      },
+    ],
+    retention:
+      'With the manager’s Pod, until the kubelet rotates the log, at 10 MiB by default, or an upgrade replaces the Pod. Past that, for as long as the installation’s collector keeps it.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Nothing in it depends on the Job.' },
+      resource: {
+        verdict: 'kept',
+        basis: 'measured',
+        text: 'In the manager’s log. The measured run predates the journal lines.',
+      },
+      namespace: { verdict: 'kept', basis: 'measured', text: 'The manager runs in its own namespace.' },
+      cluster: { verdict: 'outside', basis: 'measured', text: 'Gone from the cluster, as measured. A collector keeps what it shipped out.' },
+    },
+    links: [
+      { label: 'The journal in the manager’s log', href: '../../use/audit/#journal-lines' },
+      { label: 'Log collection', href: '../../use/audit/#log-collection' },
+    ],
+  },
+  {
+    id: 'a-api-audit',
+    label: 'Kubernetes API audit log',
+    group: 'streams',
+    records:
+      'Every request the installation’s audit policy matches: who sent it, as whom, the answer, and at the levels that keep them what was sent and stored. From 0.2.11 the create of an approval or an acknowledgment also carries audit annotations from the webhook that stamped it: its mutationRequestUID and the username.',
+    establishes:
+      'Who wrote a spec, who suspended or deleted what, and who sent an impersonated approval, in user beside impersonatedUser. For who approved a schema change, it is the record the database login cannot rewrite.',
+    cannot:
+      'Anything its policy does not log: the operator neither needs nor configures one, and a managed control plane owns its own. At Metadata a dry-run delete reads like a real one. mutationRequestUID is not the event’s auditID; the webhook’s annotation is what joins the two.',
+    ids: [
+      'auditID',
+      'the annotation <webhook>/mutationRequestUID on the create of a decision',
+      'objectRef’s namespace and name; a delete names the UID it removed in responseStatus.details.uid',
+    ],
+    readers: [
+      {
+        system: 'The store the installation ships the API server’s audit log to, read with that store’s own tools.',
+        says: 'No kubectl ptah command reads it. Joining one change across the record says which fields to match.',
+      },
+    ],
+    retention: 'As the installation keeps it. A log left on the control-plane nodes goes with them.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'The delete included.' },
+      resource: { verdict: 'kept', basis: 'measured', text: 'With the delete that removed it.' },
+      namespace: {
+        verdict: 'kept',
+        basis: 'measured',
+        text: 'At RequestResponse a namespace deletion’s line lists every object it removed, status included.',
+      },
+      cluster: { verdict: 'outside', basis: 'measured', text: 'Gone with the nodes, as measured, unless it was shipped off them.' },
+    },
+    links: [
+      { label: 'An API audit policy', href: '../../use/audit/#audit-policy' },
+      { label: 'Joining one change across the record', href: '../../use/audit/#joins' },
+    ],
+  },
+  {
+    id: 'a-console',
+    label: 'Ptah Console audit stream',
+    group: 'streams',
+    records:
+      'From the optional Ptah Console: one JSON line per action on its standard error, mapping the console account to the Kubernetes identity it acted as, with the API server’s Audit-Id.',
+    establishes: 'Which console account made a request, joined to its API audit event by the Audit-Id.',
+    cannot:
+      'Anything done without the console: a kubectl or GitOps write never reaches it. All of this is read from the console’s code, not measured.',
+    ids: ['the Audit-Id, which is the API audit event’s auditID'],
+    readers: [
+      {
+        system: 'Wherever the installation collects the console’s standard error, read with that store’s own tools.',
+        says: 'The console is optional, and nothing else on this page needs it.',
+      },
+    ],
+    retention: 'As the installation keeps it.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Nothing in it depends on the Job.' },
+      resource: { verdict: 'kept', basis: 'read', text: 'Nothing in it depends on the resource.' },
+      namespace: { verdict: 'kept', basis: 'read', text: 'Unless the console runs in that namespace.' },
+      cluster: { verdict: 'outside', basis: 'read', text: 'Only where its lines were collected outside the cluster.' },
+    },
+    links: [
+      { label: 'Ptah Console', href: 'https://github.com/stokaro/ptah-console' },
+      { label: 'Log collection', href: '../../use/audit/#log-collection' },
+    ],
+  },
+  {
+    id: 'a-revisions',
+    label: 'Revision table',
+    group: 'database',
+    records:
+      'schema_migrations, which Ptah keeps in the target database for a migration: one row per version, with its checksum, its state and when it was applied. Each history read copies the newest rows, up to 64, into status.history.revisions. A schema has no revision table.',
+    establishes:
+      'Which versions the database holds, whatever happened to the cluster: what a history read compares the source against, and what a restored migration reads.',
+    cannot:
+      'Who ran or approved a version, which the execution log says, or that nobody changed it: the login that runs migrations can write it.',
+    ids: ['the version', 'the checksum'],
+    readers: [
+      {
+        command: 'kubectl ptah migration orders -n application --details',
+        says: 'History read: the newest rows as the operator last read them.',
+      },
+      {
+        command: 'ptah migrations status --db-url "$DATABASE_URL" --migrations-dir ./migrations',
+        says: 'Ptah’s own reading of the table against a copy of the files.',
+      },
+    ],
+    retention: 'Until someone changes the table. Nothing done to the cluster reaches it.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Unchanged.' },
+      resource: { verdict: 'kept', basis: 'measured', text: 'Unchanged.' },
+      namespace: { verdict: 'kept', basis: 'measured', text: 'Unchanged.' },
+      cluster: {
+        verdict: 'kept',
+        basis: 'measured',
+        text: 'Unchanged. A migration restored through the API read the dirty revision a failed run left, and stopped.',
+      },
+    },
+    links: [
+      { label: 'Run versioned migrations', href: '../../use/migrations/' },
+      { label: 'What survives a lost cluster', href: '../../use/recovery/#what-survives-a-lost-cluster' },
+    ],
+  },
+  {
+    id: 'a-db-log',
+    label: 'Execution logs in the database',
+    group: 'database',
+    records:
+      'schema_migrations_log for a migration and, since Ptah v0.28.0, ptah_schema_apply_log for a schema: a row as a run starts and one as it ends, with the outcome and the statement it stopped at. A migration’s rows name the approver in actor, with actor_source provided, and from 0.2.13 rows in either log name it, with actor_origin and the run’s operationID in run_reference.',
+    establishes:
+      'Who approved each run, by username, and how it ended, after the cluster is gone. From 0.2.13, run_reference joins a row to the journal’s operationID.',
+    cannot:
+      'Who the actor really is: actor is a name the operator passed, actor_source reads provided, and the login that runs the SQL can rewrite every row. Under the documented MySQL grant a schema’s first Apply loses both of its rows.',
+    ids: ['run_reference, the journal’s operationID', 'run_id, which is Ptah’s own', 'actor and actor_origin'],
+    readers: [
+      {
+        command: 'PTAH_DB_URL="$DATABASE_URL" ptah migrations log',
+        says: 'The migration log. On MySQL the URL needs parseTime=true.',
+      },
+      {
+        command:
+          'SELECT logged_at, run_id, seq, state, plan_name, plan_digest, actor, actor_source, actor_origin, run_reference FROM ptah_schema_apply_log ORDER BY logged_at, run_id, seq;',
+        says: 'A schema’s apply log, in the database’s own client.',
+      },
+    ],
+    retention: 'Until someone deletes the rows. The operator deletes none.',
+    survives: {
+      job: { verdict: 'kept', basis: 'read', text: 'Unchanged.' },
+      resource: { verdict: 'kept', basis: 'measured', text: 'Unchanged, as measured for schema_migrations_log.' },
+      namespace: { verdict: 'kept', basis: 'measured', text: 'Unchanged, as measured for schema_migrations_log.' },
+      cluster: {
+        verdict: 'kept',
+        basis: 'measured',
+        text: 'Unchanged. The measured run predates ptah_schema_apply_log, a table in the same database.',
+      },
+    },
+    links: [
+      { label: 'In the database', href: '../../use/audit/#in-the-database' },
+      { label: 'Privacy', href: '../../use/audit/#privacy' },
+    ],
+  },
+];
+
+// The identities an audit keeps apart, each with the sources that record it.
+const auditIdentities = [
+  {
+    id: 'author',
+    label: 'Spec author',
+    text: 'Whoever wrote the PtahSchema or PtahMigration spec, a suspend included. A GitOps controller writes as its ServiceAccount, and the person is in the repository’s history. The journal and the database name no author.',
+    recordedIn: ['a-api-audit'],
+    note: 'With approvals.requireDistinctApprover on, the annotations operator.ptah.run/last-spec-writer-username and -uid name the last writer until the next edit.',
+  },
+  {
+    id: 'approver',
+    label: 'Approver',
+    text: 'The identity admission stamped on the approval: the username, UID and groups the API server authenticated. Under apply: Always there is none; the policy authorized the run.',
+    recordedIn: ['a-decisions', 'a-journal', 'a-db-log', 'a-api-audit'],
+    note: 'An impersonated approval names the impersonated user everywhere but the API audit log, which names the sender in user.',
+  },
+  {
+    id: 'executor',
+    label: 'Executor identity',
+    text: 'What ran the SQL: the operation Pod, as the execution ServiceAccount or the namespace’s default, and in the database the login in the resource’s URL Secret. The manager creates the Job and runs no SQL.',
+    recordedIn: ['a-jobs', 'a-api-audit'],
+    note: 'The spec names the ServiceAccount, so the audit log holds it with the write that set it. The journal names the Job, not the identity it ran as, and only the database’s own audit facility, where the installation turns one on, records the login’s session.',
+  },
+  {
+    id: 'actor',
+    label: 'Database actor',
+    text: 'The actor column of the database’s logs: a name the operator passes to Ptah, the approver’s username or system:ptah-operator:apply-always:<namespace>/<name>. It is not the login that ran the SQL.',
+    recordedIn: ['a-db-log'],
+    note: 'actor_source reads provided, a name taken on trust, and the login can rewrite it. actor_origin says whether it came from admission or from policy.',
+  },
+];
+
+// The gaps #817 names and the ones #801 decided to build, each with the
+// release that closed it. A documentation version older than that release is
+// built from a tree that still describes the gap.
+const auditGaps = [
+  {
+    issue: 787,
+    version: '0.2.10',
+    title: 'Why an Apply failed',
+    text: 'A failed Apply’s Pod log says what the database answered, the status says where to read it, and an Apply a person approved keeps that Job for a day.',
+    sources: ['a-jobs', 'a-status'],
+  },
+  {
+    issue: 800,
+    version: '0.2.10',
+    title: 'Who approved a migration, in the database',
+    text: 'Each schema_migrations_log row names the approver in actor.',
+    sources: ['a-db-log'],
+  },
+  {
+    issue: 802,
+    version: '0.2.10',
+    title: 'One outcome per migration run',
+    text: 'The journal records one RunFinished per execution.',
+    sources: ['a-journal'],
+  },
+  {
+    issue: 803,
+    version: '0.2.10',
+    title: 'An approval name used again',
+    text: 'The journal tells approvals apart by UID, so a new approval under an old name keeps an entry of its own.',
+    sources: ['a-journal', 'a-decisions'],
+  },
+  {
+    issue: 804,
+    version: '0.2.10',
+    title: 'What a migration run carried out',
+    text: 'status.lastRun records the source and the authorization a run used, and approve --wait waits for the plan that was reviewed.',
+    sources: ['a-status', 'a-source'],
+  },
+  {
+    issue: 806,
+    version: '0.2.10',
+    title: 'OCI policy refusals',
+    text: 'A verification policy that refuses an OCI artifact is reported as PolicyRefused.',
+    sources: ['a-status'],
+  },
+  {
+    issue: 814,
+    version: '0.2.11',
+    title: 'Status and history through kubectl ptah',
+    text: 'kubectl ptah history prints the journal with the decisions it names, and --details prints every status field the plugin knows.',
+    sources: ['a-status', 'a-journal', 'a-decisions'],
+  },
+  {
+    issue: 1064,
+    version: '0.2.11',
+    title: 'Identifiers on a schema’s ApplyFinished',
+    text: 'A schema’s ApplyFinished names the plan, the approval, the operationID, the Job and the statement it stopped at, as a migration’s RunFinished does.',
+    sources: ['a-journal'],
+  },
+  {
+    issue: 1065,
+    version: '0.2.11',
+    title: 'Journal lines in the manager’s log',
+    text: 'The manager writes each journal entry it stores as one JSON line on its standard output.',
+    sources: ['a-manager-log'],
+  },
+  {
+    issue: 1066,
+    version: '0.2.11',
+    title: 'The stamp in the API audit log',
+    text: 'The stamping webhooks name mutationRequestUID and the username in the create’s audit annotations.',
+    sources: ['a-api-audit', 'a-decisions'],
+  },
+  {
+    issue: 1063,
+    version: '0.2.12',
+    title: 'Log rows the database refused',
+    text: 'RunFinished and status.lastRun.migrationLog say which rows were lost, and RunLogged is False with LogEntriesLost.',
+    sources: ['a-db-log', 'a-journal'],
+  },
+  {
+    issue: 1062,
+    version: '0.2.13',
+    title: 'The approver and the operation in both database logs',
+    text: 'Rows in either log name the approver, with actor_origin, and the run’s operationID in run_reference.',
+    sources: ['a-db-log'],
+  },
+];
+
+// The improvements #801 left deferred. Nothing tracks them, and one gets an
+// issue of its own only if it comes back.
+const auditDeferred = [
+  { id: 'one-database', title: 'One database’s history across the resources that managed it', text: 'No command reads it.' },
+  {
+    id: 'export',
+    title: 'An export of the journal to an external sink',
+    text: 'The journal lines carry the same entries through an existing log pipeline.',
+  },
+  {
+    id: 'actor-uid',
+    title: 'A UID in place of the approver’s name in the database',
+    text: 'The name is personal data in a log nothing deletes from; the setting waits for someone to ask for it.',
+  },
+];
+
+export const audit = {
+  title: 'Establish what happened',
+  summary:
+    'Each place a change leaves evidence: what it can establish and what it cannot, how it joins the others, the command that reads it, and how long it lasts. Choose a loss to see what is left after it, and select a source for the detail.',
+  textSummary:
+    'Each place a change leaves evidence: what it can establish and what it cannot, how it joins the others, the command that reads it, how long it lasts, and what is left of it after a Job, the resource or the namespace is deleted, or the cluster is lost.',
+  measured:
+    'A verdict marked measured comes from one run on 2026-11-12: the operator built from master at cd01025a, chart 0.2.10, with Ptah v0.23.0, Kubernetes 1.36.4, PostgreSQL 17.11 and MySQL 8.4.11. One marked read comes from the code or this site, and that run did not exercise it.',
+  measuredLink: { label: 'The measured run', href: '../../use/audit/#the-measured-run' },
+  losses: auditLosses,
+  verdicts: auditVerdicts,
+  bases: auditBases,
+  groups: auditGroups,
+  sources: auditSources,
+  identities: auditIdentities,
+  distinctions: [
+    'Immutable is not protected. A plan, a chunk, an approval and an acknowledgment refuse a changed spec, and anyone allowed to delete them can. RBAC on delete is the control, and the API audit log is where a deletion shows.',
+    'Bounded is not archived. The journal keeps 64 entries for at most 30 days, while the resource exists. What outlives the cluster is what the installation keeps, the collected journal lines, the API audit log and backups, beside the database’s own logs.',
+  ],
+  gaps: auditGaps,
+  deferred: auditDeferred,
+  deferredLink: { label: 'the decisions in #1049', href: 'https://github.com/stokaro/ptah-operator/pull/1049' },
+  links: [
+    { label: 'Audit a database change', href: '../../use/audit/' },
+    { label: 'Reading the record', href: '../../use/audit/#reading' },
+  ],
+};
