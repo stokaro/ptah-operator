@@ -29,7 +29,25 @@
 //   - without JavaScript the text carries every family, every path, every
 //     stage with its commands, and every object;
 //   - at 390px and 320px wide neither the page nor the explorer scrolls
-//     sideways, at any stage of any path or with any object selected.
+//     sideways, at any stage of any path or with any object selected;
+//   - the audit view covers every evidence source, loss, identity and gap
+//     #817 asks for, each source says what it records, what it cannot
+//     establish, how it joins the others, what reads it and what is left of
+//     it after every loss, and every identity and gap names sources that
+//     exist;
+//   - no command the explorer shows is a jq filter, a JSONPath, Go-template
+//     or custom-columns projection, or a raw object dump;
+//   - chosen from the view bar, by mouse or by keyboard, the audit view
+//     opens with nothing chosen, each loss marks every source with its
+//     verdict in words, each source opens its own panel, and an identity's
+//     source opens that source;
+//   - switching views starts the target afresh and writes only its own
+//     parameters, and a link that names the audit view, a loss or a source
+//     opens it, while one whose audit values name nothing opens the journey;
+//   - without JavaScript the text carries every source with its readers and
+//     its verdict after every loss, every identity and every gap, and at
+//     390px and 320px the audit view fits after every loss and with every
+//     source open.
 //
 //   node scripts/check-lifecycle-explorer.mjs [--dist <dir>] [--selftest]
 //
@@ -42,7 +60,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { defaultFamily, families, parentOf, walkOf } from '../src/lifecycle-explorer.mjs';
+import { audit, defaultFamily, families, parentOf, walkOf } from '../src/lifecycle-explorer.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(scriptDir, '..');
@@ -492,6 +510,350 @@ export function urlProblems(reading) {
   return problems;
 }
 
+// What #817 asks the audit view to cover, written down once so that a source,
+// a loss, an identity or a gap dropped from the model fails here rather than
+// leaving a page that quietly says less. Each source the epic lists is one
+// id; the losses, the identities and the gaps are its own.
+export const AUDIT_REQUIRED = {
+  sources: [
+    'a-status',
+    'a-journal',
+    'a-plans',
+    'a-source',
+    'a-decisions',
+    'a-jobs',
+    'a-results',
+    'a-revisions',
+    'a-db-log',
+    'a-api-audit',
+    'a-console',
+  ],
+  losses: ['job', 'resource', 'namespace', 'cluster'],
+  identities: ['author', 'approver', 'executor', 'actor'],
+  gaps: [787, 800, 802, 803, 804, 806],
+};
+
+// A projection or a raw dump in a command is what the epic rules out of the
+// normal inspection path: the supported read is a kubectl ptah command, or a
+// named system read with its own tools.
+const PROJECTIONS = [
+  [/(^|[\s|])jq(\s|$)/, 'a jq filter'],
+  [/jsonpath/i, 'a JSONPath projection'],
+  [/go-template/i, 'a Go template'],
+  [/custom-columns/i, 'a custom-columns projection'],
+  [/\bkubectl\b.*\bget\b.*\s-o\s*(json|yaml)\b/, 'a raw object dump'],
+];
+
+// Every command the explorer shows, from the stages, the objects and the
+// audit sources, with where it is shown.
+export function explorerCommands(familyList, auditModel) {
+  const commands = [];
+  for (const family of familyList) {
+    const stages = [...family.scenario.stages, ...family.paths.flatMap((path) => path.stages ?? [])];
+    for (const stage of stages) {
+      for (const step of stage.inspect) commands.push({ where: `the stage "${stage.id}"`, command: step.command });
+    }
+    for (const object of family.objects) {
+      for (const step of object.inspect ?? []) commands.push({ where: `the object "${object.id}"`, command: step.command });
+    }
+  }
+  for (const source of auditModel.sources) {
+    for (const reader of source.readers ?? []) {
+      if (reader.command) commands.push({ where: `the source "${source.id}"`, command: reader.command });
+    }
+  }
+  return commands;
+}
+
+export function commandProblems(commands) {
+  const problems = [];
+  if (commands.length === 0) return ['the explorer shows no command'];
+  for (const { where, command } of commands) {
+    for (const [pattern, what] of PROJECTIONS) {
+      if (pattern.test(command)) problems.push(`${where} shows ${what}: ${JSON.stringify(command)}`);
+    }
+  }
+  return problems;
+}
+
+const filled = (value) => typeof value === 'string' && value.trim() !== '';
+
+// auditProblems refuses an audit model the view could not render honestly:
+// a source, a loss, an identity or a gap the epic asks for left out, an id
+// used twice or shared with a family, a source missing what each one owes, a
+// survival verdict for a loss that does not exist or missing for one that
+// does, and a reference from an identity or a gap to a source that does not
+// exist.
+export function auditProblems(auditModel, familyModels, required = AUDIT_REQUIRED) {
+  const problems = [];
+  const sources = auditModel.sources ?? [];
+  if (sources.length === 0) return ['the audit view has no source'];
+  const sourceIds = sources.map((source) => source.id);
+  const lossIds = (auditModel.losses ?? []).map((loss) => loss.id);
+  const verdictIds = (auditModel.verdicts ?? []).map((verdict) => verdict.id);
+  const basisIds = (auditModel.bases ?? []).map((basis) => basis.id);
+  const groupIds = (auditModel.groups ?? []).map((group) => group.id);
+
+  for (const [what, ids] of [
+    ['source', sourceIds],
+    ['loss', lossIds],
+    ['identity', (auditModel.identities ?? []).map((identity) => identity.id)],
+    ['gap', (auditModel.gaps ?? []).map((gap) => gap.issue)],
+  ]) {
+    const seen = new Set();
+    for (const id of ids) {
+      if (seen.has(id)) problems.push(`the audit ${what} "${id}" is used twice`);
+      seen.add(id);
+    }
+  }
+  const familyIds = new Set(
+    familyModels.flatMap((model) => [
+      ...allStages(model).map((stage) => stage.id),
+      ...model.paths.map((path) => path.id),
+      ...model.objects.map((object) => object.id),
+    ]),
+  );
+  for (const id of sourceIds) {
+    if (!id.startsWith('a-')) problems.push(`the audit source "${id}" lacks the prefix a-`);
+    if (familyIds.has(id)) problems.push(`the audit source "${id}" shares its id with a family`);
+  }
+
+  for (const id of required.sources) {
+    if (!sourceIds.includes(id)) problems.push(`the audit view leaves out the source "${id}" the epic asks for`);
+  }
+  if (lossIds.join(' ') !== required.losses.join(' ')) {
+    problems.push(`the audit losses are ${lossIds.join(', ') || 'none'}, not ${required.losses.join(', ')}`);
+  }
+  const identityIds = (auditModel.identities ?? []).map((identity) => identity.id);
+  if (identityIds.join(' ') !== required.identities.join(' ')) {
+    problems.push(`the audit identities are ${identityIds.join(', ') || 'none'}, not ${required.identities.join(', ')}`);
+  }
+  const gapIssues = (auditModel.gaps ?? []).map((gap) => gap.issue);
+  for (const issue of required.gaps) {
+    if (!gapIssues.includes(issue)) problems.push(`the audit view leaves out the gap #${issue} the epic asks for`);
+  }
+
+  for (const group of auditModel.groups ?? []) {
+    if (!sources.some((source) => source.group === group.id)) problems.push(`the audit group "${group.id}" holds no source`);
+  }
+  for (const source of sources) {
+    const at = `the audit source "${source.id}"`;
+    if (!groupIds.includes(source.group)) problems.push(`${at} is in the group "${source.group}", which does not exist`);
+    for (const field of ['label', 'records', 'establishes', 'cannot', 'retention']) {
+      if (!filled(source[field])) problems.push(`${at} says nothing in ${field}`);
+    }
+    if (!(source.ids ?? []).some(filled)) problems.push(`${at} names no correlation identifier`);
+    if ((source.readers ?? []).length === 0) problems.push(`${at} names no reader`);
+    for (const reader of source.readers ?? []) {
+      if (filled(reader.command) === filled(reader.system)) {
+        problems.push(`${at} has a reader with ${reader.command ? 'both a command and a system' : 'neither a command nor a system'}`);
+      }
+      if (!filled(reader.says)) problems.push(`${at} has a reader that does not say what it shows`);
+    }
+    if ((source.links ?? []).length === 0) problems.push(`${at} links nothing`);
+    const survives = source.survives ?? {};
+    for (const loss of lossIds) {
+      const verdict = survives[loss];
+      if (!verdict) {
+        problems.push(`${at} says nothing about what is left after "${loss}"`);
+        continue;
+      }
+      if (!verdictIds.includes(verdict.verdict)) problems.push(`${at} gives "${loss}" the verdict "${verdict.verdict}", which does not exist`);
+      if (!basisIds.includes(verdict.basis)) problems.push(`${at} gives "${loss}" the basis "${verdict.basis}", which does not exist`);
+      if (!filled(verdict.text)) problems.push(`${at} gives "${loss}" no text`);
+    }
+    for (const loss of Object.keys(survives)) {
+      if (!lossIds.includes(loss)) problems.push(`${at} has a verdict for "${loss}", which is not a loss`);
+    }
+  }
+
+  for (const identity of auditModel.identities ?? []) {
+    const at = `the identity "${identity.id}"`;
+    if (!filled(identity.label) || !filled(identity.text)) problems.push(`${at} has no label or text`);
+    if ((identity.recordedIn ?? []).length === 0) problems.push(`${at} is recorded nowhere`);
+    for (const id of identity.recordedIn ?? []) {
+      if (!sourceIds.includes(id)) problems.push(`${at} is recorded in "${id}", which is not a source`);
+    }
+  }
+  for (const gap of auditModel.gaps ?? []) {
+    const at = `the gap #${gap.issue}`;
+    if (!Number.isInteger(gap.issue) || gap.issue <= 0) problems.push(`${at} is not an issue number`);
+    if (!/^\d+\.\d+\.\d+$/.test(gap.version ?? '')) problems.push(`${at} names no release that closed it`);
+    if (!filled(gap.title) || !filled(gap.text)) problems.push(`${at} has no title or text`);
+    if ((gap.sources ?? []).length === 0) problems.push(`${at} names no source`);
+    for (const id of gap.sources ?? []) {
+      if (!sourceIds.includes(id)) problems.push(`${at} names "${id}", which is not a source`);
+    }
+  }
+  if ((auditModel.deferred ?? []).length === 0) problems.push('the audit view lists nothing deferred');
+  return problems;
+}
+
+// auditTextProblems judges the audit view's text, the one a reader without
+// JavaScript, a crawler or a printer gets: every source with its records,
+// what it cannot establish, its readers and its verdict after every loss;
+// every identity; and every gap with a link to its issue.
+export function auditTextProblems(reading, auditModel) {
+  const problems = [];
+  if (!reading.audit) return ['without JavaScript the text leaves out the audit view'];
+  const { sources, identities, gaps } = reading.audit;
+  for (const source of auditModel.sources) {
+    const block = sources.find((one) => one.id === source.id);
+    if (!block) {
+      problems.push(`without JavaScript the audit text leaves out the source "${source.id}"`);
+      continue;
+    }
+    for (const [what, text] of [
+      ['label', source.label],
+      ['records', source.records],
+      ['cannot', source.cannot],
+      ['retention', source.retention],
+    ]) {
+      if (!block.text.includes(text)) problems.push(`without JavaScript the source "${source.id}" lacks its ${what}`);
+    }
+    for (const reader of source.readers) {
+      const shown = reader.command ?? reader.system;
+      if (!block.text.includes(shown)) problems.push(`without JavaScript the source "${source.id}" lacks the reader ${JSON.stringify(shown)}`);
+    }
+    for (const loss of auditModel.losses) {
+      if (!block.survives.includes(loss.id)) problems.push(`without JavaScript the source "${source.id}" says nothing after "${loss.id}"`);
+    }
+  }
+  for (const identity of auditModel.identities) {
+    if (!identities.includes(identity.id)) problems.push(`without JavaScript the audit text leaves out the identity "${identity.id}"`);
+  }
+  for (const gap of auditModel.gaps) {
+    const shown = gaps.find((one) => one.issue === String(gap.issue));
+    if (!shown) problems.push(`without JavaScript the audit text leaves out the gap #${gap.issue}`);
+    else if (!shown.href.endsWith(`/issues/${gap.issue}`)) problems.push(`without JavaScript the gap #${gap.issue} links ${shown.href}`);
+  }
+  return problems;
+}
+
+// auditRenderProblems judges the audit view once chosen: the view bar, the
+// view shown and the journey hidden, one button and one panel per source, one
+// button per loss, and nothing open before the reader chose it.
+export function auditRenderProblems(reading, auditModel) {
+  const problems = [];
+  if (reading.viewButtons !== 2) problems.push(`the explorer has ${reading.viewButtons} view buttons, not 2`);
+  if (!reading.shown) problems.push('choosing the audit view does not show it');
+  if (reading.journeyShown) problems.push('choosing the audit view leaves the change journey on screen');
+  if (reading.sourceButtons !== auditModel.sources.length) {
+    problems.push(`the audit view has ${reading.sourceButtons} source buttons and the model ${auditModel.sources.length} sources`);
+  }
+  if (reading.panels !== auditModel.sources.length) {
+    problems.push(`the audit view has ${reading.panels} source panels and the model ${auditModel.sources.length} sources`);
+  }
+  if (reading.lossButtons !== auditModel.losses.length) {
+    problems.push(`the audit view has ${reading.lossButtons} loss buttons and the model ${auditModel.losses.length} losses`);
+  }
+  if (reading.visiblePanels !== 0) problems.push(`the audit view opens with ${reading.visiblePanels} source panels shown`);
+  if (reading.marked !== 0) problems.push(`the audit view opens with ${reading.marked} sources marked by a loss`);
+  return problems;
+}
+
+// auditSelectionProblems judges each loss and each source chosen: a loss
+// marks every source with the verdict the model gives it, in words as well as
+// in style, and presses its button alone; a source opens its own panel alone,
+// marks the chosen loss's row in it, and presses its button alone.
+export function auditSelectionProblems(readings, auditModel) {
+  const problems = [];
+  const label = new Map(auditModel.verdicts.map((verdict) => [verdict.id, verdict.label]));
+  for (const loss of auditModel.losses) {
+    const reading = readings.losses.find((one) => one.loss === loss.id);
+    if (!reading) {
+      problems.push(`the loss "${loss.id}" was never chosen`);
+      continue;
+    }
+    if (reading.pressed.join(' ') !== loss.id) problems.push(`choosing "${loss.id}" presses ${reading.pressed.join(', ') || 'nothing'}`);
+    for (const source of auditModel.sources) {
+      const want = source.survives[loss.id].verdict;
+      const got = reading.verdicts[source.id];
+      if (!got) problems.push(`after "${loss.id}" the source "${source.id}" is not on screen`);
+      else if (got.verdict !== want || got.badge !== label.get(want)) {
+        problems.push(`after "${loss.id}" the source "${source.id}" reads ${got.verdict ?? 'nothing'} "${got.badge}", not ${want} "${label.get(want)}"`);
+      }
+    }
+  }
+  for (const source of auditModel.sources) {
+    const reading = readings.sources.find((one) => one.source === source.id);
+    if (!reading) {
+      problems.push(`the source "${source.id}" was never selected`);
+      continue;
+    }
+    if (reading.panels.join(' ') !== source.id) problems.push(`selecting "${source.id}" shows the panels ${reading.panels.join(', ') || 'none'}`);
+    if (reading.pressed.join(' ') !== source.id) problems.push(`selecting "${source.id}" presses ${reading.pressed.join(', ') || 'nothing'}`);
+    if (reading.current !== reading.loss) {
+      problems.push(`selecting "${source.id}" after "${reading.loss}" marks the row ${reading.current ?? 'none'}`);
+    }
+  }
+  if (readings.chip) {
+    const { want, got } = readings.chip;
+    if (got !== want) problems.push(`an identity’s source "${want}" opens ${got ?? 'nothing'}`);
+  } else problems.push('no identity’s source was followed');
+  return problems;
+}
+
+// viewSwitchProblems judges each switch between the views, made from a state
+// that is default in nothing: the audit view opens with no loss and no
+// source and writes lx-view alone; the change journey opens in the default
+// family at its default path and first stage with nothing selected, and
+// writes none of the audit view's parameters.
+export function viewSwitchProblems(readings, familyModels) {
+  const problems = [];
+  const first = familyModels[0];
+  for (const to of ['audit', 'journey']) {
+    if (!readings.some((reading) => reading.to === to)) problems.push(`no switch went to the ${to} view`);
+  }
+  for (const { to, from, got } of readings) {
+    const at = `switching from ${from} to the ${to} view`;
+    const search = new URLSearchParams(got.search);
+    if (got.view !== to) problems.push(`${at} shows the ${got.view} view`);
+    if (to === 'audit') {
+      if (got.loss !== null) problems.push(`${at} keeps the loss ${got.loss}`);
+      if (got.source !== null) problems.push(`${at} keeps the source ${got.source}`);
+      if (search.get('lx-view') !== 'audit') problems.push(`${at} writes ${got.search || 'nothing'}, not lx-view=audit`);
+      for (const param of ['lx-family', 'lx-path', 'lx-stage', 'lx-object', 'lx-loss', 'lx-source']) {
+        if (search.has(param)) problems.push(`${at} writes ${got.search}, with ${param}`);
+      }
+      continue;
+    }
+    if (got.family !== first.id) problems.push(`${at} opens the family ${got.family ?? 'none'}, not ${first.id}`);
+    if (got.path !== first.paths[0].id) problems.push(`${at} opens the path ${got.path ?? 'none'}, not ${first.paths[0].id}`);
+    if (got.stage !== first.stages[0].id) problems.push(`${at} opens the stage ${got.stage ?? 'none'}, not ${first.stages[0].id}`);
+    if (got.object !== null) problems.push(`${at} keeps ${got.object} selected`);
+    for (const param of ['lx-view', 'lx-loss', 'lx-source', 'lx-family', 'lx-path', 'lx-object']) {
+      if (search.has(param)) problems.push(`${at} writes ${got.search}, with ${param}`);
+    }
+    if (search.get('lx-stage') !== first.stages[0].id) problems.push(`${at} writes ${got.search || 'nothing'}, not lx-stage=${first.stages[0].id}`);
+  }
+  return problems;
+}
+
+// auditLinkProblems judges pages opened from links into the audit view, and
+// links that name the audit view and a journey value together.
+export function auditLinkProblems(readings) {
+  const problems = [];
+  if (readings.length === 0) return ['no link into the audit view was opened'];
+  for (const { link, want, got } of readings) {
+    if (got.view !== want.view) problems.push(`the link ${link} opens the ${got.view} view, not ${want.view}`);
+    if (got.loss !== want.loss) problems.push(`the link ${link} chooses the loss ${got.loss ?? 'none'}, not ${want.loss ?? 'none'}`);
+    if (got.source !== want.source) problems.push(`the link ${link} opens ${got.source ?? 'no source'}, not ${want.source ?? 'no source'}`);
+    if (want.family && got.family !== want.family) problems.push(`the link ${link} opens the family ${got.family ?? 'none'}, not ${want.family}`);
+  }
+  return problems;
+}
+
+// auditKeyboardProblems judges the audit view by keyboard alone: Tab and
+// Enter from the heading choose it, then a loss, then a source.
+export function auditKeyboardProblems(reading) {
+  const problems = [];
+  if (!reading.chosen) problems.push('Tab and Enter from the heading do not choose the audit view');
+  if (!reading.loss) problems.push('Tab and Enter do not reach and choose a loss');
+  if (!reading.source) problems.push('Tab and Enter do not reach and open a source');
+  return problems;
+}
+
 function selftest() {
   const stage = (id, title, objects, extra = {}) => ({
     id,
@@ -908,10 +1270,269 @@ function selftest() {
   refuses('another family that is not written', urlProblems({ ...goodUrl, familySearch: '?lx-stage=b-two' }), 'not lx-family=two');
   refuses('another family’s stage that is not written', urlProblems({ ...goodUrl, familySearch: '?lx-family=two' }), 'family two writes ?lx-family=two, with no stage');
 
+
+  // The audit view: a model of two sources, held to what it requires of
+  // itself, then each way the model, the text, the view and the links can
+  // fall short.
+  const verdict = (id) => ({ verdict: id, basis: 'read', text: `after, ${id}` });
+  const auditSource = (id) => ({
+    id,
+    label: `Label ${id}`,
+    group: 'g',
+    records: `Records ${id}.`,
+    establishes: 'Establishes.',
+    cannot: `Cannot ${id}.`,
+    retention: `Kept ${id}.`,
+    ids: ['uid'],
+    readers: [{ command: `kubectl ptah schema ${id}`, says: 'Says.' }],
+    links: [{ label: 'More', href: '#more' }],
+    survives: { job: verdict('kept'), resource: verdict('gone'), namespace: verdict('gone'), cluster: verdict('gone') },
+  });
+  const identity = (id) => ({ id, label: `Who ${id}`, text: 'Text.', recordedIn: ['a-one'] });
+  const auditFixture = {
+    losses: ['job', 'resource', 'namespace', 'cluster'].map((id) => ({ id, label: id })),
+    verdicts: [
+      { id: 'kept', label: 'Kept' },
+      { id: 'gone', label: 'Gone' },
+    ],
+    bases: [{ id: 'measured' }, { id: 'read' }],
+    groups: [{ id: 'g' }],
+    sources: [auditSource('a-one'), { ...auditSource('a-two'), readers: [{ system: 'A store of its own.', says: 'Says.' }] }],
+    identities: ['author', 'approver', 'executor', 'actor'].map(identity),
+    gaps: [{ issue: 1, version: '0.1.0', title: 'Title', text: 'Text.', sources: ['a-one'] }],
+    deferred: [{ id: 'later', title: 'Later', text: 'Text.' }],
+  };
+  const auditRequired = {
+    sources: ['a-one', 'a-two'],
+    losses: ['job', 'resource', 'namespace', 'cluster'],
+    identities: ['author', 'approver', 'executor', 'actor'],
+    gaps: [1],
+  };
+  const withSource = (index, change) => ({
+    ...auditFixture,
+    sources: auditFixture.sources.map((source, at) => (at === index ? { ...source, ...change } : source)),
+  });
+  if (auditProblems(auditFixture, models, auditRequired).length !== 0) {
+    fail('auditProblems refused a model that holds', auditProblems(auditFixture, models, auditRequired));
+  }
+  for (const [name, spoiled, want] of [
+    ['a required source dropped', { ...auditFixture, sources: [auditFixture.sources[0]] }, 'leaves out the source "a-two"'],
+    ['a source id used twice', { ...auditFixture, sources: [auditFixture.sources[0], auditFixture.sources[0], auditFixture.sources[1]] }, 'source "a-one" is used twice'],
+    ['a source without its prefix', withSource(1, { id: 'two-b' }), 'lacks the prefix a-'],
+    ['a source id a family uses', withSource(1, { id: 'b-one' }), 'shares its id with a family'],
+    ['a source in no group', withSource(0, { group: 'nowhere' }), 'group "nowhere", which does not exist'],
+    ['a group with no source', { ...auditFixture, groups: [{ id: 'g' }, { id: 'empty' }] }, 'group "empty" holds no source'],
+    ['a source that cannot establish nothing', withSource(0, { cannot: ' ' }), 'says nothing in cannot'],
+    ['a source with no retention', withSource(0, { retention: '' }), 'says nothing in retention'],
+    ['a source with no identifier', withSource(0, { ids: [] }), 'names no correlation identifier'],
+    ['a source with no reader', withSource(0, { readers: [] }), 'names no reader'],
+    ['a reader that is neither', withSource(0, { readers: [{ says: 'Says.' }] }), 'neither a command nor a system'],
+    ['a reader that is both', withSource(0, { readers: [{ command: 'c', system: 's', says: 'Says.' }] }), 'both a command and a system'],
+    ['a reader that says nothing', withSource(0, { readers: [{ command: 'c' }] }), 'does not say what it shows'],
+    ['a source with no link', withSource(0, { links: [] }), 'links nothing'],
+    [
+      'a loss with no verdict',
+      withSource(0, { survives: { job: verdict('kept'), resource: verdict('gone'), namespace: verdict('gone') } }),
+      'what is left after "cluster"',
+    ],
+    ['an unknown verdict', withSource(0, { survives: { ...auditFixture.sources[0].survives, job: verdict('lost') } }), 'the verdict "lost", which does not exist'],
+    [
+      'an unknown basis',
+      withSource(0, { survives: { ...auditFixture.sources[0].survives, job: { ...verdict('kept'), basis: 'guessed' } } }),
+      'the basis "guessed", which does not exist',
+    ],
+    ['a verdict with no text', withSource(0, { survives: { ...auditFixture.sources[0].survives, job: { ...verdict('kept'), text: '' } } }), 'gives "job" no text'],
+    ['a verdict for no loss', withSource(0, { survives: { ...auditFixture.sources[0].survives, upgrade: verdict('kept') } }), '"upgrade", which is not a loss'],
+    ['a loss dropped', { ...auditFixture, losses: auditFixture.losses.slice(0, 3) }, 'the audit losses are job, resource, namespace,'],
+    ['an identity dropped', { ...auditFixture, identities: auditFixture.identities.slice(0, 3) }, 'the audit identities are author, approver, executor,'],
+    [
+      'an identity recorded nowhere',
+      { ...auditFixture, identities: [{ ...identity('author'), recordedIn: [] }, ...auditFixture.identities.slice(1)] },
+      'identity "author" is recorded nowhere',
+    ],
+    [
+      'an identity recorded in no source',
+      { ...auditFixture, identities: [{ ...identity('author'), recordedIn: ['a-nowhere'] }, ...auditFixture.identities.slice(1)] },
+      'recorded in "a-nowhere", which is not a source',
+    ],
+    ['a required gap dropped', { ...auditFixture, gaps: [] }, 'leaves out the gap #1'],
+    ['a gap with no release', { ...auditFixture, gaps: [{ ...auditFixture.gaps[0], version: 'soon' }] }, 'names no release that closed it'],
+    ['a gap naming no source', { ...auditFixture, gaps: [{ ...auditFixture.gaps[0], sources: ['a-nowhere'] }] }, 'names "a-nowhere", which is not a source'],
+    ['nothing deferred', { ...auditFixture, deferred: [] }, 'lists nothing deferred'],
+  ]) {
+    refuses(name, auditProblems(spoiled, models, auditRequired), want);
+  }
+  refuses('no audit source at all', auditProblems({ ...auditFixture, sources: [] }, models, auditRequired), 'has no source');
+
+  // Commands: every one the explorer shows is read, and a projection or a raw
+  // dump in any of them is refused.
+  const shown = explorerCommands(
+    [
+      {
+        scenario: { stages: [{ id: 's1', inspect: [{ command: 'kubectl ptah schema s1' }] }] },
+        paths: [{ id: 'p', stages: [{ id: 's2', inspect: [{ command: 'kubectl ptah plan s2' }] }] }],
+        objects: [{ id: 'o', inspect: [{ command: 'kubectl ptah history schema/o' }] }],
+      },
+    ],
+    auditFixture,
+  );
+  if (shown.map((one) => one.where).join(' | ') !== 'the stage "s1" | the stage "s2" | the object "o" | the source "a-one"') {
+    fail('explorerCommands read the commands as', shown);
+  }
+  if (commandProblems(shown).length !== 0) fail('commandProblems refused supported commands', commandProblems(shown));
+  for (const [name, command, want] of [
+    ['a jq filter', 'kubectl -n ptah-system logs -l app=x -c manager | jq -c .', 'a jq filter'],
+    ['jq on its own', "jq -c 'select(.logger == \"journal\")' journal.log", 'a jq filter'],
+    ['a JSONPath projection', "kubectl get ptahmigration orders -o jsonpath='{.status.phase}'", 'a JSONPath projection'],
+    ['a Go template', "kubectl get ptahschema x -o go-template='{{.status.phase}}'", 'a Go template'],
+    ['custom columns', 'kubectl get ptahschemas -o custom-columns=NAME:.metadata.name', 'a custom-columns projection'],
+    ['a raw dump', 'kubectl -n application get ptahschemaapprovals -o yaml', 'a raw object dump'],
+  ]) {
+    refuses(name, commandProblems([...shown, { where: 'the stage "x"', command }]), want);
+  }
+  refuses('no command at all', commandProblems([]), 'shows no command');
+
+  const auditText = {
+    audit: {
+      sources: auditFixture.sources.map((source) => ({
+        id: source.id,
+        text: `${source.label}. ${source.records} ${source.cannot} ${source.retention} ${source.readers
+          .map((reader) => reader.command ?? reader.system)
+          .join(' ')}`,
+        survives: ['job', 'resource', 'namespace', 'cluster'],
+      })),
+      identities: ['author', 'approver', 'executor', 'actor'],
+      gaps: [{ issue: '1', href: 'https://github.com/stokaro/ptah-operator/issues/1' }],
+    },
+  };
+  const textSource = (index, change) => ({
+    audit: { ...auditText.audit, sources: auditText.audit.sources.map((source, at) => (at === index ? { ...source, ...change } : source)) },
+  });
+  if (auditTextProblems(auditText, auditFixture).length !== 0) {
+    fail('auditTextProblems refused a text that holds', auditTextProblems(auditText, auditFixture));
+  }
+  for (const [name, spoiled, want] of [
+    ['no audit text', { audit: null }, 'leaves out the audit view'],
+    ['a source dropped from the text', { audit: { ...auditText.audit, sources: [auditText.audit.sources[0]] } }, 'leaves out the source "a-two"'],
+    ['a source without its records', textSource(0, { text: 'Label a-one. Cannot a-one. Kept a-one. kubectl ptah schema a-one' }), 'lacks its records'],
+    ['a source without its limits', textSource(0, { text: 'Label a-one. Records a-one. Kept a-one. kubectl ptah schema a-one' }), 'lacks its cannot'],
+    ['a source without its command', textSource(0, { text: 'Label a-one. Records a-one. Cannot a-one. Kept a-one.' }), 'lacks the reader "kubectl ptah schema a-one"'],
+    ['a source without its system', textSource(1, { text: 'Label a-two. Records a-two. Cannot a-two. Kept a-two.' }), 'lacks the reader "A store of its own."'],
+    ['a loss left unsaid', textSource(1, { survives: ['job', 'resource', 'namespace'] }), 'source "a-two" says nothing after "cluster"'],
+    ['an identity dropped from the text', { audit: { ...auditText.audit, identities: ['author', 'approver', 'executor'] } }, 'leaves out the identity "actor"'],
+    ['a gap dropped from the text', { audit: { ...auditText.audit, gaps: [] } }, 'leaves out the gap #1'],
+    ['a gap linking elsewhere', { audit: { ...auditText.audit, gaps: [{ issue: '1', href: 'https://github.com/stokaro/ptah-operator/issues/10' }] } }, 'gap #1 links'],
+  ]) {
+    refuses(name, auditTextProblems(spoiled, auditFixture), want);
+  }
+
+  const auditRender = { viewButtons: 2, shown: true, journeyShown: false, sourceButtons: 2, panels: 2, lossButtons: 4, visiblePanels: 0, marked: 0 };
+  if (auditRenderProblems(auditRender, auditFixture).length !== 0) {
+    fail('auditRenderProblems refused a view that holds', auditRenderProblems(auditRender, auditFixture));
+  }
+  for (const [name, change, want] of [
+    ['a view button missing', { viewButtons: 1 }, '1 view buttons'],
+    ['an audit view that stays hidden', { shown: false }, 'does not show it'],
+    ['a journey left on screen', { journeyShown: true }, 'leaves the change journey on screen'],
+    ['a source button missing', { sourceButtons: 1 }, '1 source buttons'],
+    ['a source panel too many', { panels: 3 }, '3 source panels'],
+    ['a loss button missing', { lossButtons: 3 }, '3 loss buttons'],
+    ['a panel open at the start', { visiblePanels: 1 }, 'opens with 1 source panels shown'],
+    ['sources marked at the start', { marked: 2 }, 'opens with 2 sources marked'],
+  ]) {
+    refuses(name, auditRenderProblems({ ...auditRender, ...change }, auditFixture), want);
+  }
+
+  const lossReading = (loss) => ({
+    loss,
+    pressed: [loss],
+    verdicts: Object.fromEntries(
+      auditFixture.sources.map((source) => {
+        const id = source.survives[loss].verdict;
+        return [source.id, { verdict: id, badge: id === 'kept' ? 'Kept' : 'Gone' }];
+      }),
+    ),
+  });
+  const auditSelection = {
+    losses: auditFixture.losses.map((loss) => lossReading(loss.id)),
+    sources: auditFixture.sources.map((source) => ({ source: source.id, loss: 'cluster', panels: [source.id], pressed: [source.id], current: 'cluster' })),
+    chip: { want: 'a-one', got: 'a-one' },
+  };
+  const withLoss = (change) => ({ ...auditSelection, losses: [{ ...auditSelection.losses[0], ...change }, ...auditSelection.losses.slice(1)] });
+  const withPicked = (change) => ({ ...auditSelection, sources: [{ ...auditSelection.sources[0], ...change }, ...auditSelection.sources.slice(1)] });
+  if (auditSelectionProblems(auditSelection, auditFixture).length !== 0) {
+    fail('auditSelectionProblems refused readings that hold', auditSelectionProblems(auditSelection, auditFixture));
+  }
+  for (const [name, spoiled, want] of [
+    ['a loss never chosen', { ...auditSelection, losses: auditSelection.losses.slice(1) }, 'loss "job" was never chosen'],
+    ['two losses pressed', withLoss({ pressed: ['job', 'cluster'] }), 'choosing "job" presses job, cluster'],
+    ['a wrong verdict', withLoss({ verdicts: { ...lossReading('job').verdicts, 'a-one': { verdict: 'gone', badge: 'Gone' } } }), 'reads gone "Gone", not kept "Kept"'],
+    ['a verdict in style alone', withLoss({ verdicts: { ...lossReading('job').verdicts, 'a-one': { verdict: 'kept', badge: '' } } }), 'reads kept "", not kept "Kept"'],
+    ['a source off screen', withLoss({ verdicts: { 'a-one': lossReading('job').verdicts['a-one'] } }), 'source "a-two" is not on screen'],
+    ['a source never selected', { ...auditSelection, sources: auditSelection.sources.slice(1) }, 'source "a-one" was never selected'],
+    ['another source’s panel', withPicked({ panels: ['a-two'] }), 'selecting "a-one" shows the panels a-two'],
+    ['two panels at once', withPicked({ panels: ['a-one', 'a-two'] }), 'shows the panels a-one, a-two'],
+    ['two sources pressed', withPicked({ pressed: ['a-one', 'a-two'] }), 'selecting "a-one" presses a-one, a-two'],
+    ['the chosen loss unmarked in the panel', withPicked({ current: null }), 'marks the row none'],
+    ['an identity’s source that opens nothing', { ...auditSelection, chip: { want: 'a-one', got: null } }, 'opens nothing'],
+    ['no identity’s source followed', { ...auditSelection, chip: null }, 'no identity’s source was followed'],
+  ]) {
+    refuses(name, auditSelectionProblems(spoiled, auditFixture), want);
+  }
+
+  const toAudit = { to: 'audit', from: 'two on b-nested', got: { view: 'audit', loss: null, source: null, search: '?lx-view=audit' } };
+  const toJourney = {
+    to: 'journey',
+    from: 'the audit view after cluster with a-two',
+    got: { view: 'journey', family: 'one', path: 'main', stage: 'one', object: null, search: '?lx-stage=one' },
+  };
+  const switchesThatHold = [toAudit, toJourney];
+  if (viewSwitchProblems(switchesThatHold, models).length !== 0) {
+    fail('viewSwitchProblems refused switches that hold', viewSwitchProblems(switchesThatHold, models));
+  }
+  const spoilTo = (one, change) => [{ ...one, got: { ...one.got, ...change } }];
+  for (const [name, spoiled, want] of [
+    ['no switch to the audit view', [toJourney], 'no switch went to the audit view'],
+    ['no switch to the journey', [toAudit], 'no switch went to the journey view'],
+    ['an audit view that does not show', [...spoilTo(toAudit, { view: 'journey' }), toJourney], 'shows the journey view'],
+    ['an audit view that keeps a loss', [...spoilTo(toAudit, { loss: 'cluster' }), toJourney], 'keeps the loss cluster'],
+    ['an audit view that keeps a source', [...spoilTo(toAudit, { source: 'a-two' }), toJourney], 'keeps the source a-two'],
+    ['an audit view that does not write itself', [...spoilTo(toAudit, { search: '' }), toJourney], 'not lx-view=audit'],
+    ['an audit view that keeps a stage', [...spoilTo(toAudit, { search: '?lx-view=audit&lx-stage=b-one' }), toJourney], 'with lx-stage'],
+    ['a journey in the family it was left in', [toAudit, ...spoilTo(toJourney, { family: 'two' })], 'opens the family two, not one'],
+    ['a journey on the path it was left on', [toAudit, ...spoilTo(toJourney, { path: 'side' })], 'opens the path side, not main'],
+    ['a journey at the stage it was left at', [toAudit, ...spoilTo(toJourney, { stage: 'two' })], 'opens the stage two, not one'],
+    ['a journey with its object still selected', [toAudit, ...spoilTo(toJourney, { object: 'a' })], 'keeps a selected'],
+    ['a journey that keeps the audit view’s address', [toAudit, ...spoilTo(toJourney, { search: '?lx-stage=one&lx-source=a-two' })], 'with lx-source'],
+    ['a journey that writes no stage', [toAudit, ...spoilTo(toJourney, { search: '' })], 'not lx-stage=one'],
+  ]) {
+    refuses(name, viewSwitchProblems(spoiled, models), want);
+  }
+
+  const auditLink = { link: '?lx-view=audit&lx-loss=cluster&lx-source=a-two', want: { view: 'audit', loss: 'cluster', source: 'a-two' } };
+  const journeyLink = { link: '?lx-source=a&lx-loss=one', want: { view: 'journey', loss: null, source: null, family: 'one' } };
+  const linksThatHold = [
+    { ...auditLink, got: { ...auditLink.want, family: 'one' } },
+    { ...journeyLink, got: journeyLink.want },
+  ];
+  if (auditLinkProblems(linksThatHold).length !== 0) fail('auditLinkProblems refused links that hold', auditLinkProblems(linksThatHold));
+  refuses('a link that opens the journey', auditLinkProblems([{ ...auditLink, got: { ...auditLink.want, view: 'journey' } }]), 'opens the journey view, not audit');
+  refuses('a link whose loss was dropped', auditLinkProblems([{ ...auditLink, got: { ...auditLink.want, loss: null } }]), 'chooses the loss none, not cluster');
+  refuses('a link whose source was dropped', auditLinkProblems([{ ...auditLink, got: { ...auditLink.want, source: null } }]), 'opens no source, not a-two');
+  refuses('a link into the wrong family', auditLinkProblems([{ ...journeyLink, got: { ...journeyLink.want, family: 'two' } }]), 'opens the family two, not one');
+  refuses('no link into the audit view', auditLinkProblems([]), 'no link into the audit view');
+
+  const keysThatHold = { chosen: true, loss: true, source: true };
+  if (auditKeyboardProblems(keysThatHold).length !== 0) fail('auditKeyboardProblems refused keys that hold', auditKeyboardProblems(keysThatHold));
+  refuses('a view the keyboard cannot choose', auditKeyboardProblems({ ...keysThatHold, chosen: false }), 'do not choose the audit view');
+  refuses('a loss the keyboard cannot choose', auditKeyboardProblems({ ...keysThatHold, loss: false }), 'choose a loss');
+  refuses('a source the keyboard cannot open', auditKeyboardProblems({ ...keysThatHold, source: false }), 'open a source');
+
   console.log(
     'check-lifecycle-explorer.mjs --selftest: OK (the families, their models and their paths, nested turns, the ' +
       'rendered view, the keyboard on every path and at every turn, each selection, the family switch and its reset, ' +
-      'the text without JavaScript, shared links, the address, and the narrow layout)',
+      'the text without JavaScript, shared links, the address, the narrow layout, and the audit view: its model, ' +
+      'its commands, its text, each loss and source, the view switch, its links and its keyboard)',
   );
 }
 
@@ -1262,10 +1883,11 @@ async function measure(browser, url, models) {
 
 // The narrow layouts, in each family: at rest, at each path's turn with its
 // choices on screen, at every stage of every path once, with every object
-// open, and without JavaScript, where the text is what is on screen. One
+// open, and without JavaScript, where the text is what is on screen. Then
+// the audit view: at rest, after every loss, and with every source open. One
 // long word in one panel is enough to push a phone column sideways, so no
 // panel is left unread.
-async function measureNarrow(browser, url, models) {
+async function measureNarrow(browser, url, models, auditModel) {
   const readings = [];
   for (const viewport of NARROW) {
     for (const javaScriptEnabled of [true, false]) {
@@ -1306,6 +1928,16 @@ async function measureNarrow(browser, url, models) {
             await page.locator(`${VIEW} [data-lx-object="${object.id}"]`).click();
           }
         }
+        await chooseView(page, 'audit');
+        readings.push(await readOverflow(page, `${at}, audit at rest`));
+        for (const loss of auditModel.losses) {
+          await page.locator(`${AUDIT_VIEW} [data-lx-loss="${loss.id}"]`).click();
+          readings.push(await readOverflow(page, `${at}, audit after ${loss.id}`));
+        }
+        for (const source of auditModel.sources) {
+          await page.locator(`${AUDIT_VIEW} [data-lx-source="${source.id}"]`).click();
+          readings.push(await readOverflow(page, `${at}, audit with ${source.id} open`));
+        }
       } finally {
         await context.close();
       }
@@ -1341,8 +1973,206 @@ async function measureWithoutScript(browser, url) {
           })),
           objects: [...family.querySelectorAll('[data-lx-text-object]')].map((item) => item.dataset.lxTextObject),
         })),
+        audit: (() => {
+          const block = text?.querySelector('[data-lx-text-audit]');
+          if (!block) return null;
+          return {
+            sources: [...block.querySelectorAll('[data-lx-text-source]')].map((item) => ({
+              id: item.dataset.lxTextSource,
+              text: flat(item),
+              survives: [...item.querySelectorAll('[data-lx-text-survives]')].map((row) => row.dataset.lxTextSurvives),
+            })),
+            identities: [...block.querySelectorAll('[data-lx-text-identity]')].map((item) => item.dataset.lxTextIdentity),
+            gaps: [...block.querySelectorAll('[data-lx-text-gap]')].map((item) => ({
+              issue: item.dataset.lxTextGap,
+              href: item.querySelector('a')?.getAttribute('href') ?? '',
+            })),
+          };
+        })(),
       };
     });
+  } finally {
+    await context.close();
+  }
+}
+
+const AUDIT_VIEW = `${ROOT} [data-lx-audit]`;
+const chooseView = (page, id) => page.locator(`${ROOT} [data-lx-view="${id}"]`).click();
+
+// Which view is on screen, the loss and the source the audit view holds, and
+// the family, path, stage and object the change journey holds, with the
+// address the explorer wrote.
+const readAudit = (page) =>
+  page.evaluate(() => {
+    const root = document.getElementById('lifecycle-explorer');
+    const audit = root?.querySelector('[data-lx-audit]');
+    const auditShown = Boolean(audit && !audit.hidden);
+    const journeyShown = Boolean(root?.querySelector('[data-lx-journey]') && !root.querySelector('[data-lx-journey]').hidden);
+    const familyView = [...(root?.querySelectorAll('[data-lx-family-view]') ?? [])].find((view) => !view.hidden);
+    const list = familyView?.querySelector('[data-lx-steps]:not([hidden])');
+    let view = 'neither';
+    if (auditShown && journeyShown) view = 'both';
+    else if (auditShown) view = 'audit';
+    else if (journeyShown) view = 'journey';
+    return {
+      view,
+      loss: audit?.querySelector('[data-lx-loss][aria-pressed="true"]')?.dataset.lxLoss ?? null,
+      source: [...(audit?.querySelectorAll('[data-lx-source-panel]') ?? [])].find((panel) => !panel.hidden)?.dataset.lxSourcePanel ?? null,
+      family: root?.querySelector('[data-lx-family][aria-pressed="true"]')?.dataset.lxFamily ?? null,
+      path: familyView?.querySelector('[data-lx-path][aria-pressed="true"]')?.dataset.lxPath ?? null,
+      stage: list?.querySelector('[data-lx-step][aria-current="step"]')?.dataset.lxStep ?? null,
+      object: familyView?.querySelector('[data-lx-object][aria-pressed="true"]')?.dataset.lxObject ?? null,
+      search: location.search,
+    };
+  });
+
+// The links a reader may be handed into the audit view: the view alone, a
+// loss and a source with it, a source or a loss alone, the view named with
+// a journey value, and audit values that name nothing.
+function auditLinksFor(models, auditModel) {
+  const [first] = models;
+  const other = models.at(-1);
+  const firstSource = auditModel.sources[0].id;
+  const lastSource = auditModel.sources.at(-1).id;
+  const firstLoss = auditModel.losses[0].id;
+  const lastLoss = auditModel.losses.at(-1).id;
+  return [
+    { link: '?lx-view=audit', want: { view: 'audit', loss: null, source: null } },
+    { link: `?lx-view=audit&lx-loss=${lastLoss}&lx-source=${lastSource}`, want: { view: 'audit', loss: lastLoss, source: lastSource } },
+    { link: `?lx-source=${firstSource}`, want: { view: 'audit', loss: null, source: firstSource } },
+    { link: `?lx-loss=${firstLoss}`, want: { view: 'audit', loss: firstLoss, source: null } },
+    {
+      link: `?lx-view=audit&lx-family=${other.id}&lx-stage=${other.stages[1].id}&lx-source=${lastSource}`,
+      want: { view: 'audit', loss: null, source: lastSource },
+    },
+    {
+      link: `?lx-source=${first.objects[0].id}&lx-loss=${first.stages[0].id}`,
+      want: { view: 'journey', loss: null, source: null, family: first.id },
+    },
+  ];
+}
+
+// The audit view, driven: chosen from the bar, every loss, every source with
+// the last loss still chosen, an identity's source followed, the switches
+// between the views from states that are default in nothing, the links, and
+// the keyboard from the heading above the explorer.
+async function measureAudit(browser, url, models, auditModel) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const thrown = [];
+  page.on('pageerror', (error) => thrown.push(String(error)));
+  try {
+    await open(page, url);
+    await chooseView(page, 'audit');
+    const render = await page.evaluate(() => {
+      const root = document.getElementById('lifecycle-explorer');
+      const audit = root.querySelector('[data-lx-audit]');
+      const visible = (element) => element && element.getClientRects().length > 0 && getComputedStyle(element).display !== 'none';
+      const panels = [...(audit?.querySelectorAll('[data-lx-source-panel]') ?? [])];
+      return {
+        viewButtons: root.querySelectorAll('[data-lx-view]').length,
+        shown: visible(audit),
+        journeyShown: visible(root.querySelector('[data-lx-journey]')),
+        sourceButtons: audit?.querySelectorAll('[data-lx-source]').length ?? 0,
+        panels: panels.length,
+        visiblePanels: panels.filter((panel) => visible(panel)).length,
+        lossButtons: audit?.querySelectorAll('[data-lx-loss]').length ?? 0,
+        marked: audit?.querySelectorAll('[data-lx-source][data-verdict]').length ?? 0,
+      };
+    });
+
+    const losses = [];
+    for (const loss of auditModel.losses) {
+      await page.locator(`${AUDIT_VIEW} [data-lx-loss="${loss.id}"]`).click();
+      losses.push(
+        await page.evaluate((id) => {
+          const audit = document.querySelector('#lifecycle-explorer [data-lx-audit]');
+          return {
+            loss: id,
+            pressed: [...audit.querySelectorAll('[data-lx-loss][aria-pressed="true"]')].map((button) => button.dataset.lxLoss),
+            verdicts: Object.fromEntries(
+              [...audit.querySelectorAll('[data-lx-source]')].map((node) => [
+                node.dataset.lxSource,
+                { verdict: node.dataset.verdict ?? null, badge: node.querySelector('[data-lx-verdict]')?.textContent ?? '' },
+              ]),
+            ),
+          };
+        }, loss.id),
+      );
+    }
+    const sources = [];
+    for (const source of auditModel.sources) {
+      await page.locator(`${AUDIT_VIEW} [data-lx-source="${source.id}"]`).click();
+      sources.push(
+        await page.evaluate((id) => {
+          const audit = document.querySelector('#lifecycle-explorer [data-lx-audit]');
+          const shown = [...audit.querySelectorAll('[data-lx-source-panel]')].filter((panel) => !panel.hidden);
+          return {
+            source: id,
+            loss: audit.querySelector('[data-lx-loss][aria-pressed="true"]')?.dataset.lxLoss ?? null,
+            panels: shown.map((panel) => panel.dataset.lxSourcePanel),
+            pressed: [...audit.querySelectorAll('[data-lx-source][aria-pressed="true"]')].map((node) => node.dataset.lxSource),
+            current: shown[0]?.querySelector('[data-lx-survives][data-current]')?.dataset.lxSurvives ?? null,
+          };
+        }, source.id),
+      );
+    }
+    // An identity's source other than the one open now.
+    const opened = auditModel.sources.at(-1).id;
+    const want = (await page.$$eval(`${AUDIT_VIEW} [data-lx-source-select]`, (chips) => chips.map((chip) => chip.dataset.lxSourceSelect))).find(
+      (id) => id !== opened,
+    );
+    let chip = null;
+    if (want) {
+      await page.locator(`${AUDIT_VIEW} [data-lx-source-select="${want}"]`).first().click();
+      chip = { want, got: (await readAudit(page)).source };
+    }
+
+    // The switches: from the audit view with a loss and a source, from the
+    // journey left in another family at its last path, stage and object, and
+    // from the audit view again.
+    const switches = [];
+    const auditState = (state) => `the audit view after ${state.loss ?? 'no loss'} with ${state.source ?? 'no source'}`;
+    let left = await readAudit(page);
+    await chooseView(page, 'journey');
+    switches.push({ to: 'journey', from: auditState(left), got: await readAudit(page) });
+    const other = models.at(-1);
+    await chooseFamily(page, other);
+    const journeyLeft = await unsettle(page, other);
+    await chooseView(page, 'audit');
+    switches.push({ to: 'audit', from: describe(journeyLeft), got: await readAudit(page) });
+    await page.locator(`${AUDIT_VIEW} [data-lx-loss]`).last().click();
+    await page.locator(`${AUDIT_VIEW} [data-lx-source]`).last().click();
+    left = await readAudit(page);
+    await chooseView(page, 'journey');
+    switches.push({ to: 'journey', from: auditState(left), got: await readAudit(page) });
+
+    const links = [];
+    for (const one of auditLinksFor(models, auditModel)) {
+      await open(page, `${url}${one.link}`);
+      const got = await readAudit(page);
+      links.push({ ...one, got: { view: got.view, loss: got.loss, source: got.source, family: got.family } });
+    }
+
+    const keyboard = { chosen: false, loss: false, source: false };
+    await open(page, url);
+    await focusHeading(page);
+    if (await tabTo(page, `${ROOT} [data-lx-view="audit"]`, 20)) {
+      await page.keyboard.press('Enter');
+      keyboard.chosen = (await readAudit(page)).view === 'audit';
+    }
+    if (keyboard.chosen && (await tabTo(page, `${AUDIT_VIEW} [data-lx-loss]`, 20))) {
+      const id = await page.evaluate(() => document.activeElement.dataset.lxLoss);
+      await page.keyboard.press('Enter');
+      keyboard.loss = (await readAudit(page)).loss === id;
+    }
+    if (keyboard.loss && (await tabTo(page, `${AUDIT_VIEW} [data-lx-source]`, 20))) {
+      const id = await page.evaluate(() => document.activeElement.dataset.lxSource);
+      await page.keyboard.press('Enter');
+      keyboard.source = (await readAudit(page)).source === id;
+    }
+
+    return { render, selection: { losses, sources, chip }, switches, links, keyboard, thrown };
   } finally {
     await context.close();
   }
@@ -1356,6 +2186,8 @@ async function main() {
 
   const models = families.map(familyModel);
   const problems = familiesProblems(models);
+  problems.push(...auditProblems(audit, models));
+  problems.push(...commandProblems(explorerCommands(families, audit)));
   if (models[0]?.id !== defaultFamily) problems.push(`the default family is "${defaultFamily}", not the first family "${models[0]?.id}"`);
 
   const distIndex = process.argv.indexOf('--dist');
@@ -1387,6 +2219,7 @@ async function main() {
   try {
     const quiet = await measureWithoutScript(browser, url);
     problems.push(...textProblems(quiet, models));
+    if (quiet.present) problems.push(...auditTextProblems(quiet, audit));
     if (quiet.present) {
       const measured = await measure(browser, url, models);
       problems.push(...renderProblems(measured.render, models));
@@ -1400,7 +2233,16 @@ async function main() {
         problems.push(...deepLinkProblems(measured.deepLinks));
       }
       if (measured.thrown.length > 0) problems.push(`the explorer threw: ${measured.thrown.join('; ')}`);
-      problems.push(...overflowProblems(await measureNarrow(browser, url, models)));
+      if (measured.render?.ready) {
+        const audited = await measureAudit(browser, url, models, audit);
+        problems.push(...auditRenderProblems(audited.render, audit));
+        problems.push(...auditSelectionProblems(audited.selection, audit));
+        problems.push(...viewSwitchProblems(audited.switches, models));
+        problems.push(...auditLinkProblems(audited.links));
+        problems.push(...auditKeyboardProblems(audited.keyboard));
+        if (audited.thrown.length > 0) problems.push(`the audit view threw: ${audited.thrown.join('; ')}`);
+      }
+      problems.push(...overflowProblems(await measureNarrow(browser, url, models, audit)));
     }
   } finally {
     await browser.close();
@@ -1416,7 +2258,9 @@ async function main() {
     `check-lifecycle-explorer.mjs: OK (${models.length} families, ${count((model) => model.paths.length)} paths and ` +
       `${count((model) => allStages(model).length)} stages by keyboard, every turn, the family switch, ` +
       `${count((model) => model.objects.length)} objects and ${count((model) => model.relations.length)} relationships, ` +
-      `the text without JavaScript, shared links, and ${NARROW.map((one) => `${one.width}px`).join(' and ')} wide)`,
+      `the text without JavaScript, shared links, the audit view's ${audit.sources.length} sources, ` +
+      `${audit.losses.length} losses, ${audit.identities.length} identities and ${audit.gaps.length} gaps, ` +
+      `${explorerCommands(families, audit).length} commands, and ${NARROW.map((one) => `${one.width}px`).join(' and ')} wide)`,
   );
 }
 
