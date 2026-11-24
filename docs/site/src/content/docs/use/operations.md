@@ -2506,14 +2506,15 @@ database in a state nobody checked.
 
 Copy the resource's UID and the run's operation ID the operator published.
 `kubectl ptah migration orders -n application` prints both in its
-`Unresolved run` block, and so does:
+`Unresolved run` block: the operation ID on the `Operation` line, and the UID
+in the sentence that ends the block. In JSON they are the `uid` field and
+`unresolvedRun.operationID`:
 
 ```sh
-kubectl -n application get ptahmigration orders \
-  -o jsonpath='{.metadata.uid}{"\n"}{.status.unresolvedRun.operationID}{"\n"}'
+kubectl ptah migration orders -n application -o json
 ```
 
-and name them in a `PtahMigrationRunAcknowledgment`:
+Name them in a `PtahMigrationRunAcknowledgment`:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
