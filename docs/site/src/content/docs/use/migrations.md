@@ -776,7 +776,7 @@ name the target's does not have: Ptah tells two MySQL databases apart by name
 alone, and refuses a shadow named like the target as the target, at stage
 `realm-check`.
 
-On MySQL and MariaDB the verified Ptah build, v0.35.0, compares a view, a
+On MySQL and MariaDB the verified Ptah build, v0.35.1, compares a view, a
 stored function and a MariaDB sequence under the target's database, as it does
 tables and triggers
 ([stokaro/ptah#6416](https://github.com/stokaro/ptah/pull/6416)). Ptah v0.34.0
